@@ -42,7 +42,7 @@ from toolang.work.state import (
 )
 from toolang.work.store import JobRecord, open_job_store
 from toolang.state.durable import scan_durable_state
-from toolang.state.prepared import PreparedEntry, load_prepared_locks
+from toolang.state.prepared import PreparedEntry
 from toolang.agent.features import (
     ROUTER_COMPONENTS,
     RUNNER_COMPONENTS,
@@ -147,7 +147,7 @@ def snapshot_context(
         raise TypeError("enabled_components is required")
     components = normalize_component_names(tuple(components))
     durable = scan_durable_state(context.root, context.name)
-    prepared = load_prepared_locks(context.root, context.name)
+    agent_state = context.get_agent_state()
     runs = context.store.list_runs(limit=None)
     operational_facts: dict[str, object] = {
         "active_runs": sum(run.status in {"pending", "running"} for run in runs),
@@ -156,7 +156,7 @@ def snapshot_context(
         ),
     }
     durable_operational_facts: dict[str, object] = {
-        "prepared_fingerprint": prepared.fingerprint,
+        "prepared_fingerprint": agent_state.fingerprint,
         **operational_facts,
     }
     recent_runs = context.store.list_runs(limit=20)
@@ -197,7 +197,11 @@ def snapshot_context(
             },
             "operational_facts": durable_operational_facts,
         },
-        "prepared": prepared.to_snapshot(),
+        "prepared": {
+            "fingerprint": agent_state.fingerprint,
+            "root_version": agent_state.root_version.hex(),
+            "home_version": agent_state.home_version.hex(),
+        },
         "state": {
             **context.get_agent_state().to_snapshot(),
             **operational_facts,
@@ -626,7 +630,7 @@ def _cap_summary_item(context: ApiContext, entry: PreparedEntry) -> dict[str, ob
 
 def _cap_detail_item(context: ApiContext, entry: PreparedEntry) -> dict[str, object]:
     item = _cap_summary_item(context, entry)
-    content_path = context.root / entry.path
+    content_path = Path(entry.path)
     content = (
         content_path.read_text(encoding="utf-8") if content_path.is_file() else None
     )

@@ -32,11 +32,9 @@ import toolang.cli.impl.invoke.runner as cli_invoke
 import toolang.cli.impl.invoke.rendering as invoke_rendering
 import toolang.cli.common.version as cli_version
 import toolang.cli.caps.cli as caps_cli
-import toolang.cli.caps.commands as caps_commands
 from toolang.cli.common.context import CliContext
 import toolang.cli.common.output as cli_output
 from toolang.cli.common.progress import CliProgress
-from toolang.state import watcher as state_watcher
 from toolang.config.log import DEFAULT_AGENT_LOG_SPEC
 from toolang.config.log_spec import PY_LOG_ENV_VAR
 from toolang.execution.events import RunEnd, RunStarting, StepEnd, StepBegin
@@ -640,11 +638,13 @@ def test_cli_clone_copies_agent_without_caps(tmp_path: Path) -> None:
     source_home = toolang_root / "agents" / "alice"
     (source_home / "skills" / "reviewer").mkdir(parents=True, exist_ok=True)
     (source_home / ".caps").mkdir(parents=True, exist_ok=True)
+    (source_home / ".prepared").mkdir(parents=True, exist_ok=True)
     (source_home / "agent.too").write_text("agent alice\n", encoding="utf-8")
     (source_home / "skills" / "reviewer" / "SKILL.md").write_text(
         "# Reviewer\n", encoding="utf-8"
     )
     (source_home / ".caps" / "lock.json").write_text("{}", encoding="utf-8")
+    (source_home / ".prepared" / "current").write_text("cached", encoding="utf-8")
 
     result = runner.invoke(
         cli.app,
@@ -660,6 +660,7 @@ def test_cli_clone_copies_agent_without_caps(tmp_path: Path) -> None:
         toolang_root / "agents" / "bob" / "skills" / "reviewer" / "SKILL.md"
     ).is_file()
     assert not (toolang_root / "agents" / "bob" / ".caps").exists()
+    assert not (toolang_root / "agents" / "bob" / ".prepared").exists()
 
 
 def test_cli_clone_remote_shorthand_defaults_target_name(
@@ -1284,7 +1285,7 @@ def test_cli_progress_summarizes_updated_caps() -> None:
             phase="cap.materialize",
             label="Materialize skill",
             status="running",
-            detail="agents/alice/.caps/ref/skills/review/SKILL.md",
+            detail="referenced/skills/review/SKILL.md",
         )
     )
     progress(
@@ -3349,11 +3350,9 @@ def test_cli_info_avatar_matches_logo_proportions() -> None:
     assert "▄▄▄▄████" in avatar
 
 
-def test_cli_info_reads_cap_counts_from_prepared_locks(
+def test_cli_info_reads_cap_counts_from_prepared_generation(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from toolang.state.prepared import write_prepared_lock
-
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     _create_cap(
@@ -3378,18 +3377,10 @@ def test_cli_info_reads_cap_counts_from_prepared_locks(
             "---\n"
         ),
     )
-    durable = cap_state.scan_durable_state(toolang_root, "alice")
-    shared_lock, shared_files = cap_state.build_visibility_lock(
-        durable, visibility="shared"
-    )
-    private_lock, private_files = cap_state.build_visibility_lock(
-        durable, visibility="private"
-    )
-    write_prepared_lock(toolang_root, shared_lock, files=shared_files)
-    write_prepared_lock(toolang_root, private_lock, files=private_files)
+    agent_up.prepare_agent(toolang_root=toolang_root, agent_name="alice")
 
     def fail_list_entries(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("info should use prepared locks for cap counts")
+        raise AssertionError("info should use prepared generations for cap counts")
 
     monkeypatch.setattr(cap_state, "list_entries", fail_list_entries)
 
@@ -3406,9 +3397,13 @@ def test_cli_info_reads_cap_counts_from_prepared_locks(
     assert "0 prompts" in result.stdout
 
 
-def test_cli_info_rebuilds_missing_prepared_lock(tmp_path: Path, monkeypatch) -> None:
-    import shutil
-    from toolang.state.prepared import private_lock_path
+def test_cli_info_republishes_missing_prepared_current(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from toolang.state.generation import (
+        load_current_version,
+        prepared_current_path,
+    )
 
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
@@ -3421,9 +3416,9 @@ def test_cli_info_rebuilds_missing_prepared_lock(tmp_path: Path, monkeypatch) ->
         text="---\ndescription: Say hello.\n---\n# Hello\n",
     )
     agent_up.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    lock_path = private_lock_path(toolang_root, "alice")
-    assert lock_path.is_file()
-    shutil.rmtree(lock_path.parent)
+    current_path = prepared_current_path(toolang_root, "alice")
+    version = load_current_version(toolang_root, "alice")
+    current_path.unlink()
 
     def fail_list_entries(*_args: object, **_kwargs: object) -> None:
         raise AssertionError(
@@ -3440,7 +3435,7 @@ def test_cli_info_rebuilds_missing_prepared_lock(tmp_path: Path, monkeypatch) ->
 
     assert result.exit_code == 0
     assert "1 skill" in result.stdout
-    assert lock_path.is_file()
+    assert load_current_version(toolang_root, "alice") == version
     assert "Prepared 1 cap" in result.stderr
 
 
@@ -5386,11 +5381,12 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
         'reviewer = { ref = "github://acme/agents/skills/reviewer@main" }'
         in config_text
     )
+    from toolang.state.generation import load_home_prepared
+
+    prepared = load_home_prepared(toolang_root, "alice")
     assert (
-        toolang_root
-        / "agents"
-        / "alice"
-        / ".caps"
+        prepared.generation_dir
+        / "files"
         / "wired"
         / "skills"
         / "reviewer"
@@ -5865,7 +5861,7 @@ def test_cli_cap_new_save_does_not_resolve_program_remote_uses(
         "_fetch_github_directory",
         lambda ref: {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"},
     )
-    state_watcher.prepare_locks(cap_state.scan_durable_state(toolang_root, "alice"))
+    agent_up.prepare_agent(toolang_root=toolang_root, agent_name="alice")
 
     monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: "Saved psyche.\n")
     monkeypatch.setattr(
@@ -9367,17 +9363,17 @@ def test_standalone_caps_list_prepares_agent_once_with_progress(
         text="---\ndescription: Review changes\n---\n# Reviewer\n",
     )
     calls = 0
-    original_prepare_locks = caps_commands.state_watcher.prepare_locks
+    original_prepare_agent = agent_up.prepare_agent
 
-    def counted_prepare_locks(*args, **kwargs):
+    def counted_prepare_agent(*args, **kwargs):
         nonlocal calls
         calls += 1
-        return original_prepare_locks(*args, **kwargs)
+        return original_prepare_agent(*args, **kwargs)
 
     monkeypatch.setattr(
-        caps_commands.state_watcher,
-        "prepare_locks",
-        counted_prepare_locks,
+        agent_up,
+        "prepare_agent",
+        counted_prepare_agent,
     )
 
     result = _invoke_caps_app(
@@ -9407,17 +9403,17 @@ def test_standalone_cap_kind_list_prepares_agent_once_with_progress(
         text="---\ndescription: Review changes\n---\n# Reviewer\n",
     )
     calls = 0
-    original_prepare_locks = caps_commands.state_watcher.prepare_locks
+    original_prepare_agent = agent_up.prepare_agent
 
-    def counted_prepare_locks(*args, **kwargs):
+    def counted_prepare_agent(*args, **kwargs):
         nonlocal calls
         calls += 1
-        return original_prepare_locks(*args, **kwargs)
+        return original_prepare_agent(*args, **kwargs)
 
     monkeypatch.setattr(
-        caps_commands.state_watcher,
-        "prepare_locks",
-        counted_prepare_locks,
+        agent_up,
+        "prepare_agent",
+        counted_prepare_agent,
     )
 
     result = _invoke_caps_app(

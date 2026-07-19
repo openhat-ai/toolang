@@ -25,7 +25,7 @@ def prepare_root_mounts(
             sandbox_path=sandbox_root / "config.toml",
         )
     ]
-    for directory_name in (".caps", *_ROOT_MOUNT_DIR_NAMES):
+    for directory_name in (".prepared", *_ROOT_MOUNT_DIR_NAMES):
         local_path = local_root / directory_name
         local_path.mkdir(parents=True, exist_ok=True)
         mounts.append(

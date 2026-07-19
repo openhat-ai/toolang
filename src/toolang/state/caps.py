@@ -25,17 +25,10 @@ from ..common.progress import ProgressSink, emit_progress
 from toolang.state.prepared import (
     EntryKind,
     PreparedEntry,
-    PreparedLock,
     SourceForm,
     SourceOrigin,
     PreparedVisibility,
     PreparedSource,
-    load_private_lock,
-    load_shared_lock,
-    private_lock_path,
-    private_prepared_dir,
-    shared_lock_path,
-    shared_prepared_dir,
 )
 from ..lang.ast import CapDecl
 from toolang.common.selectors import (
@@ -309,12 +302,16 @@ class _RemoteEntryRequest:
 @dataclass(frozen=True, slots=True)
 class _CachedRemoteEntry:
     ref: str
-    authored_ref: str | None
-    source_fingerprint: str
     files: tuple[tuple[str, bytes], ...]
 
 
-_RemoteEntryCacheKey = tuple[PreparedVisibility, EntryKind, str, str | None, int | None]
+_RemoteEntryCacheKey = tuple[
+    PreparedVisibility,
+    EntryKind,
+    str,
+    str | None,
+    str,
+]
 _RemoteEntryCache = Mapping[_RemoteEntryCacheKey, _CachedRemoteEntry]
 
 
@@ -382,8 +379,6 @@ def entry_ref(entry: PreparedEntry, *, agent_name: str) -> str:
 def entry_definition_file(entry: PreparedEntry) -> str:
     """Return the authored file that defines or links one prepared entry."""
 
-    if entry.source.form == "file":
-        return entry.path
     return entry.source.path
 
 
@@ -507,16 +502,13 @@ def _collect_visibility_entries_with_files(
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
-    effective_remote_cache = remote_cache
-    if effective_remote_cache is None and not materialize_remote:
-        effective_remote_cache = _existing_remote_cache(durable, visibility=visibility)
     local_entries = collect_local_entries(durable, visibility=visibility, kinds=kinds)
     remote_entries, files = _collect_remote_entries(
         durable,
         visibility=visibility,
         kinds=kinds,
         materialize=materialize_remote,
-        remote_cache=effective_remote_cache,
+        remote_cache=remote_cache,
         progress=progress,
     )
     embedded_entries, embedded_files = _collect_program_embedded_entries(
@@ -530,7 +522,7 @@ def _collect_visibility_entries_with_files(
         visibility=visibility,
         kinds=kinds,
         materialize=materialize_remote,
-        remote_cache=effective_remote_cache,
+        remote_cache=remote_cache,
         progress=progress,
     )
     files.update(embedded_files)
@@ -541,34 +533,14 @@ def _collect_visibility_entries_with_files(
     return entries, files
 
 
-def _existing_remote_cache(
-    durable: DurableState,
-    *,
-    visibility: PreparedVisibility | None,
-) -> _RemoteEntryCache | None:
-    cache: dict[_RemoteEntryCacheKey, _CachedRemoteEntry] = {}
-    visibilities = ("shared", "private") if visibility is None else (visibility,)
-    for item_visibility in visibilities:
-        try:
-            lock = (
-                load_shared_lock(durable.toolang_root)
-                if item_visibility == "shared"
-                else load_private_lock(durable.toolang_root, durable.agent_name)
-            )
-        except (FileNotFoundError, KeyError, TypeError, ValueError):
-            continue
-        cache.update(remote_entry_cache(durable.toolang_root, lock))
-    return cache or None
-
-
-def build_visibility_lock(
+def materialize_visibility(
     durable: DurableState,
     *,
     visibility: PreparedVisibility,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
-) -> tuple[PreparedLock, dict[str, bytes]]:
-    """Build one prepared lock and any materialized files for one visibility."""
+) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
+    """Build prepared cap entries and materialized files for one visibility."""
 
     emit_progress(
         progress,
@@ -586,29 +558,6 @@ def build_visibility_lock(
         progress=progress,
     )
     _ensure_no_conflicts(entries)
-    updated_at = datetime.now(timezone.utc).isoformat()
-    if visibility == "shared":
-        prepared_dir = shared_prepared_dir(durable.toolang_root)
-        lock_path = shared_lock_path(durable.toolang_root)
-    else:
-        prepared_dir = private_prepared_dir(durable.toolang_root, durable.agent_name)
-        lock_path = private_lock_path(durable.toolang_root, durable.agent_name)
-    result = (
-        PreparedLock(
-            visibility=visibility,
-            updated_at=updated_at,
-            fingerprint=_lock_fingerprint(durable.toolang_root, entries, files),
-            input_fingerprint=visibility_input_fingerprint(
-                durable, visibility=visibility
-            ),
-            entries=entries,
-            program_source=None,
-            prepared_dir=prepared_dir,
-            lock_path=lock_path,
-            lock_mtime_ns=0,
-        ),
-        files,
-    )
     emit_progress(
         progress,
         id=f"prepare.visibility:{visibility}",
@@ -617,135 +566,37 @@ def build_visibility_lock(
         status="ok",
         detail=f"{len(entries)} entries",
     )
-    return result
+    return entries, files
 
 
-def remote_entry_cache(
-    toolang_root: Path,
-    lock: PreparedLock,
-) -> dict[_RemoteEntryCacheKey, _CachedRemoteEntry]:
-    """Return reusable remote artifacts from one existing prepared lock."""
+def generation_remote_cache(
+    durable: DurableState,
+    *,
+    visibility: PreparedVisibility,
+    entries: tuple[PreparedEntry, ...],
+) -> _RemoteEntryCache:
+    """Build reusable remote inputs from one immutable generation."""
 
-    cache: dict[_RemoteEntryCacheKey, _CachedRemoteEntry] = {}
-    manifest = _load_lock_manifest_optional(lock)
-    for entry in lock.entries:
+    cache: _RemoteEntryCache = {}
+    for entry in entries:
         if entry.source.origin != "remote":
             continue
-        if manifest is not None and not _entry_artifact_matches_manifest(
-            toolang_root, entry, manifest
-        ):
+        files = _cache_entry_files(durable.toolang_root, entry)
+        authored_ref = entry.source.authored_ref
+        if files is None or authored_ref is None:
             continue
         key = _remote_entry_cache_key(
-            visibility=lock.visibility,
+            visibility=visibility,
             kind=entry.kind,
             form=entry.source.form,
             name=entry.name if entry.source.form == "wired" else None,
-            source_line=entry.source.line,
+            authored_ref=authored_ref,
         )
-        files = _cache_entry_files(toolang_root, entry)
-        if files is None:
-            continue
         cache[key] = _CachedRemoteEntry(
             ref=entry.ref,
-            authored_ref=_entry_authored_ref(manifest, entry)
-            if manifest is not None
-            else None,
-            source_fingerprint=entry.source.fingerprint,
             files=files,
         )
     return cache
-
-
-def _load_lock_manifest_optional(lock: PreparedLock) -> dict[str, object] | None:
-    try:
-        return cast(
-            dict[str, object], json.loads(lock.lock_path.read_text(encoding="utf-8"))
-        )
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def _entry_artifact_matches_manifest(
-    toolang_root: Path,
-    entry: PreparedEntry,
-    manifest: dict[str, object],
-) -> bool:
-    item = _entry_artifact_manifest(entry, manifest)
-    if item is None:
-        return False
-    entry_path = toolang_root / entry.path
-    if entry.shape == "file":
-        return entry_path.is_file() and item.get("fingerprint") == _file_fingerprint(
-            entry_path
-        )
-    if not entry_path.parent.is_dir():
-        return False
-    expected = _artifact_child_fingerprints(item)
-    actual = {
-        str(path.relative_to(entry_path.parent)): _file_fingerprint(path)
-        for path in sorted(
-            child for child in entry_path.parent.rglob("*") if child.is_file()
-        )
-    }
-    return actual == expected
-
-
-def _entry_authored_ref(
-    manifest: dict[str, object],
-    entry: PreparedEntry,
-) -> str | None:
-    if entry.source.form != "ref" or entry.source.line is None:
-        return None
-    prepared = cast(dict[str, object], manifest.get("prepared", {}))
-    program = cast(dict[str, object], prepared.get("program", {}))
-    for item in cast(list[dict[str, object]], program.get("uses", [])):
-        if item.get("kind") == entry.kind and item.get("line") == entry.source.line:
-            ref = item.get("ref")
-            return ref if isinstance(ref, str) else None
-    return None
-
-
-def _entry_artifact_manifest(
-    entry: PreparedEntry,
-    manifest: dict[str, object],
-) -> dict[str, object] | None:
-    prepared = cast(dict[str, object], manifest.get("prepared", {}))
-    for item in cast(list[dict[str, object]], prepared.get("caps", [])):
-        if item.get("kind") != entry.kind or item.get("name") != entry.name:
-            continue
-        origin = item.get("origin")
-        if (
-            isinstance(origin, dict)
-            and cast(dict[str, object], origin).get("ref") != entry.ref
-        ):
-            continue
-        artifact_index = item.get("artifact")
-        if not isinstance(artifact_index, int):
-            return None
-        bucket = cast(
-            dict[str, object],
-            cast(dict[str, object], manifest.get("artifacts", {})).get(
-                entry.source.form, {}
-            ),
-        )
-        artifacts = cast(list[dict[str, object]], bucket.get("items", []))
-        if artifact_index >= len(artifacts):
-            return None
-        return artifacts[artifact_index]
-    return None
-
-
-def _artifact_child_fingerprints(item: dict[str, object]) -> dict[str, str]:
-    root = Path(str(item.get("path", "")))
-    result: dict[str, str] = {}
-    for child in cast(list[dict[str, object]], item.get("items", [])):
-        child_path = Path(str(child.get("path", "")))
-        try:
-            relative_path = child_path.relative_to(root)
-        except ValueError:
-            return {}
-        result[str(relative_path)] = str(child.get("fingerprint", ""))
-    return result
 
 
 def _remote_entry_cache_key(
@@ -754,9 +605,15 @@ def _remote_entry_cache_key(
     kind: EntryKind,
     form: SourceForm,
     name: str | None,
-    source_line: int | None,
+    authored_ref: str,
 ) -> _RemoteEntryCacheKey:
-    return (visibility, kind, form, name if form == "wired" else None, source_line)
+    return (
+        visibility,
+        kind,
+        form,
+        name if form == "wired" else None,
+        authored_ref,
+    )
 
 
 def _cache_entry_files(
@@ -788,21 +645,9 @@ def _cached_remote_entry(
         kind=request.kind,
         form=request.form,
         name=request.name,
-        source_line=request.source_line,
+        authored_ref=request.ref,
     )
-    cached = remote_cache.get(key)
-    if cached is None:
-        return None
-    if (
-        "://" in request.ref
-        and canonicalize_remote_ref(request.kind, request.ref) == cached.ref
-    ):
-        return cached
-    if request.form == "ref" and request.ref in {cached.ref, cached.authored_ref}:
-        return cached
-    if cached.source_fingerprint != request.source_fingerprint:
-        return None
-    return cached
+    return remote_cache.get(key)
 
 
 def _remap_cached_remote_files(
@@ -842,44 +687,6 @@ def _emit_cached_remote_progress(
         status="ok",
         detail="cached",
     )
-
-
-def visibility_input_fingerprint(
-    durable: DurableState,
-    *,
-    visibility: PreparedVisibility,
-) -> str:
-    """Return the authored input fingerprint for one visibility lock."""
-
-    return _durable_files_fingerprint(
-        _visibility_input_files(durable, visibility=visibility)
-    )
-
-
-def visibility_lock_content_fingerprint(toolang_root: Path, lock: PreparedLock) -> str:
-    """Recompute one visibility lock fingerprint from current local content."""
-
-    return _lock_fingerprint(
-        toolang_root,
-        lock.entries,
-        _prepared_materialized_files(toolang_root, lock.entries),
-    )
-
-
-def effective_cap_entries(
-    shared_lock: PreparedLock,
-    private_lock: PreparedLock,
-) -> tuple[PreparedEntry, ...]:
-    """Return the runtime-visible cap set after visibility precedence is applied."""
-
-    effective: dict[tuple[str, str], PreparedEntry] = {}
-    for entry in shared_lock.entries:
-        if entry.kind in CAP_KINDS:
-            effective[(entry.kind, entry.name)] = entry
-    for entry in private_lock.entries:
-        if entry.kind in CAP_KINDS:
-            effective[(entry.kind, entry.name)] = entry
-    return tuple(sorted(effective.values(), key=_entry_sort_key))
 
 
 def durable_entries_snapshot(
@@ -1068,114 +875,6 @@ def _dedupe_entries(entries: tuple[PreparedEntry, ...]) -> tuple[PreparedEntry, 
     return tuple(sorted(by_ref.values(), key=_entry_sort_key))
 
 
-def _visibility_input_files(
-    durable: DurableState,
-    *,
-    visibility: PreparedVisibility,
-) -> tuple[DurableFile, ...]:
-    if visibility == "shared":
-        return tuple(
-            item
-            for item in durable.files
-            if item.origin == "root" and item.category in {"config", "cap"}
-        )
-    return tuple(
-        item
-        for item in durable.files
-        if item.origin == "agent"
-        and item.category in {"config", "cap", "job", "program"}
-    )
-
-
-def _durable_files_fingerprint(files: tuple[DurableFile, ...]) -> str:
-    digest = hashlib.sha256()
-    for item in files:
-        digest.update(item.relative_path.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(item.category.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(item.origin.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(item.digest.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(str(item.size).encode("utf-8"))
-        digest.update(b"\n")
-    return digest.hexdigest()
-
-
-def _lock_fingerprint(
-    toolang_root: Path,
-    entries: tuple[PreparedEntry, ...],
-    materialized_files: Mapping[str, bytes],
-) -> str:
-    payload = [
-        {
-            "kind": entry.kind,
-            "name": entry.name,
-            "shape": entry.shape,
-            "ref": entry.ref,
-            "path": entry.path,
-            "source": {
-                "origin": entry.source.origin,
-                "form": entry.source.form,
-                "path": entry.source.path,
-                "fingerprint": entry.source.fingerprint,
-            },
-            "meta": entry.to_data()["meta"],
-            "content_fingerprint": _content_fingerprint(
-                toolang_root, entry, materialized_files
-            ),
-        }
-        for entry in sorted(entries, key=_entry_sort_key)
-    ]
-    text = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _prepared_materialized_files(
-    toolang_root: Path,
-    entries: tuple[PreparedEntry, ...],
-) -> dict[str, bytes]:
-    files: dict[str, bytes] = {}
-    for entry in entries:
-        if entry.source.form == "file":
-            continue
-        entry_path = toolang_root / entry.path
-        if entry.shape == "dir":
-            root = entry_path.parent
-            if not root.is_dir():
-                raise FileNotFoundError(f"prepared entry directory not found: {root}")
-            for path in sorted(item for item in root.rglob("*") if item.is_file()):
-                files[str(path.relative_to(toolang_root))] = path.read_bytes()
-            continue
-        if not entry_path.is_file():
-            raise FileNotFoundError(f"prepared entry file not found: {entry_path}")
-        files[entry.path] = entry_path.read_bytes()
-    return files
-
-
-def _content_fingerprint(
-    toolang_root: Path,
-    entry: PreparedEntry,
-    materialized_files: Mapping[str, bytes],
-) -> str:
-    if entry.source.form == "file":
-        entry_path = toolang_root / entry.path
-        if entry.shape == "dir":
-            return _dir_fingerprint(entry_path.parent)
-        return hashlib.sha256(entry_path.read_bytes()).hexdigest()
-    if entry.shape == "dir":
-        return _materialized_dir_fingerprint(
-            Path(entry.path).parent, materialized_files
-        )
-    return hashlib.sha256(materialized_files[entry.path]).hexdigest()
-
-
 def _dir_fingerprint(path: Path) -> str:
     digest = hashlib.sha256()
     files = sorted(item for item in path.rglob("*") if item.is_file())
@@ -1183,24 +882,6 @@ def _dir_fingerprint(path: Path) -> str:
         digest.update(str(item.relative_to(path)).encode("utf-8"))
         digest.update(b"\0")
         digest.update(hashlib.sha256(item.read_bytes()).hexdigest().encode("utf-8"))
-        digest.update(b"\n")
-    return digest.hexdigest()
-
-
-def _materialized_dir_fingerprint(
-    root_relative_dir: Path,
-    files: Mapping[str, bytes],
-) -> str:
-    digest = hashlib.sha256()
-    selected = sorted(
-        (Path(path), content)
-        for path, content in files.items()
-        if Path(path).is_relative_to(root_relative_dir)
-    )
-    for path, content in selected:
-        digest.update(str(path.relative_to(root_relative_dir)).encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(hashlib.sha256(content).hexdigest().encode("utf-8"))
         digest.update(b"\n")
     return digest.hexdigest()
 
@@ -1274,8 +955,6 @@ def _collect_remote_entries(
         kinds=kinds,
     )
     return _materialize_remote_entry_requests(
-        durable.toolang_root,
-        durable.agent_name,
         requests,
         materialize=materialize,
         remote_cache=remote_cache,
@@ -1357,8 +1036,6 @@ def _collect_program_use_entries(
             )
         )
     return _materialize_remote_entry_requests(
-        durable.toolang_root,
-        durable.agent_name,
         tuple(requests),
         materialize=materialize,
         remote_cache=remote_cache,
@@ -1398,8 +1075,6 @@ def _collect_program_embedded_entries(
             )
         seen[key] = cap.span.line
         entry, entry_files = _embedded_entry_from_cap(
-            durable.toolang_root,
-            durable.agent_name,
             kind=kind,
             cap=cap,
             relative_program_path=relative_program_path,
@@ -1418,8 +1093,6 @@ def _embedded_cap_kind(cap: CapDecl) -> EntryKind | None:
 
 
 def _embedded_entry_from_cap(
-    toolang_root: Path,
-    agent_name: str,
     *,
     kind: EntryKind,
     cap: CapDecl,
@@ -1427,10 +1100,7 @@ def _embedded_entry_from_cap(
     program_path: Path,
     source_line: int,
 ) -> tuple[PreparedEntry, dict[str, bytes]]:
-    del toolang_root
-    relative_entry_path = _relative_embedded_entry_path(
-        agent_name, kind=kind, name=cap.name
-    )
+    relative_entry_path = _relative_embedded_entry_path(kind=kind, name=cap.name)
     content = _embedded_materialized_content(cap)
     return (
         PreparedEntry(
@@ -1454,19 +1124,11 @@ def _embedded_entry_from_cap(
 
 
 def _relative_embedded_entry_path(
-    agent_name: str,
     *,
     kind: EntryKind,
     name: str,
 ) -> Path:
-    return (
-        Path("agents")
-        / agent_name
-        / ".caps"
-        / "inline"
-        / DIR_NAME_BY_KIND[kind]
-        / f"{name}.md"
-    )
+    return Path("inline") / DIR_NAME_BY_KIND[kind] / f"{name}.md"
 
 
 def _embedded_materialized_content(cap: CapDecl) -> bytes:
@@ -1477,8 +1139,6 @@ def _embedded_materialized_content(cap: CapDecl) -> bytes:
 
 
 def _remote_entry_from_ref(
-    toolang_root: Path,
-    agent_name: str,
     *,
     visibility: PreparedVisibility,
     kind: EntryKind,
@@ -1515,8 +1175,6 @@ def _remote_entry_from_ref(
     if name is None:
         name = remote_entry_name(kind, canonical_ref)
     relative_entry_path = _relative_remote_entry_path(
-        agent_name,
-        visibility=visibility,
         kind=kind,
         name=name,
         form=form,
@@ -1569,6 +1227,7 @@ def _remote_entry_from_ref(
                 path=str(relative_config_path),
                 updated_at=_mtime_text(source_mtime_ns),
                 fingerprint=source_fingerprint,
+                authored_ref=ref,
                 line=source_line,
             ),
             meta=_load_meta_text(entry_content.decode("utf-8")),
@@ -1611,8 +1270,6 @@ def _remote_entry_from_ref(
 
 
 def _materialize_remote_entry_requests(
-    toolang_root: Path,
-    agent_name: str,
     requests: tuple[_RemoteEntryRequest, ...],
     *,
     materialize: bool,
@@ -1623,8 +1280,6 @@ def _materialize_remote_entry_requests(
         return (), {}
     if not materialize:
         return _materialize_remote_entry_requests_serial(
-            toolang_root,
-            agent_name,
             requests,
             materialize=materialize,
             remote_cache=remote_cache,
@@ -1643,8 +1298,6 @@ def _materialize_remote_entry_requests(
         futures = {
             executor.submit(
                 _remote_entry_from_request,
-                toolang_root,
-                agent_name,
                 request,
                 materialize=materialize,
                 remote_cache=remote_cache,
@@ -1677,8 +1330,6 @@ def _materialize_remote_entry_requests(
 
 
 def _materialize_remote_entry_requests_serial(
-    toolang_root: Path,
-    agent_name: str,
     requests: tuple[_RemoteEntryRequest, ...],
     *,
     materialize: bool,
@@ -1689,8 +1340,6 @@ def _materialize_remote_entry_requests_serial(
     files: dict[str, bytes] = {}
     for request in requests:
         entry, entry_files = _remote_entry_from_request(
-            toolang_root,
-            agent_name,
             request,
             materialize=materialize,
             remote_cache=remote_cache,
@@ -1702,8 +1351,6 @@ def _materialize_remote_entry_requests_serial(
 
 
 def _remote_entry_from_request(
-    toolang_root: Path,
-    agent_name: str,
     request: _RemoteEntryRequest,
     *,
     materialize: bool,
@@ -1711,8 +1358,6 @@ def _remote_entry_from_request(
     progress: ProgressSink | None,
 ) -> tuple[PreparedEntry, dict[str, bytes]]:
     return _remote_entry_from_ref(
-        toolang_root,
-        agent_name,
         visibility=request.visibility,
         kind=request.kind,
         ref=request.ref,
@@ -1759,19 +1404,13 @@ def _emit_remote_entry_pending(
 
 
 def _relative_remote_entry_path(
-    agent_name: str,
     *,
-    visibility: PreparedVisibility,
     kind: EntryKind,
     name: str,
     form: Literal["wired", "ref"],
 ) -> Path:
-    prefix = (
-        Path(".caps")
-        if visibility == "shared"
-        else Path("agents") / agent_name / ".caps"
-    )
-    root = prefix / form / DIR_NAME_BY_KIND[kind] / name
+    bucket = "referenced" if form == "ref" else "wired"
+    root = Path(bucket) / DIR_NAME_BY_KIND[kind] / name
     if kind == "skill":
         return root / "SKILL.md"
     return root.with_suffix(".md")

@@ -145,6 +145,21 @@ def scan_durable_state(toolang_root: Path, agent_name: str) -> DurableState:
     )
 
 
+def scan_root_durable_state(toolang_root: Path) -> DurableState:
+    """Capture only root-authored files for shared preparation."""
+
+    files = tuple(
+        sorted(_root_durable_files(toolang_root), key=lambda item: item.relative_path)
+    )
+    return DurableState(
+        toolang_root=toolang_root,
+        agent_name="",
+        files=files,
+        fingerprint=_fingerprint(files),
+        scanned_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
 def is_durable_path(toolang_root: Path, agent_name: str, path: Path) -> bool:
     """Return whether one path belongs to durable authored state."""
 
@@ -170,21 +185,7 @@ def is_durable_path(toolang_root: Path, agent_name: str, path: Path) -> bool:
 
 def _durable_files(toolang_root: Path, agent_name: str) -> list[DurableFile]:
     agent_dir = toolang_root / "agents" / agent_name
-    files: list[DurableFile] = []
-    files.extend(
-        _collect_file(
-            toolang_root, toolang_root / "config.toml", category="config", origin="root"
-        )
-    )
-    for directory_name in CAP_DIRECTORY_NAMES:
-        files.extend(
-            _collect_directory(
-                toolang_root,
-                toolang_root / directory_name,
-                category="cap",
-                origin="root",
-            )
-        )
+    files = _root_durable_files(toolang_root)
     files.extend(
         _collect_file(
             toolang_root, agent_dir / "config.toml", category="config", origin="agent"
@@ -202,6 +203,25 @@ def _durable_files(toolang_root: Path, agent_name: str) -> list[DurableFile]:
         files.extend(
             _collect_directory(
                 toolang_root, agent_dir / directory_name, category="cap", origin="agent"
+            )
+        )
+    return files
+
+
+def _root_durable_files(toolang_root: Path) -> list[DurableFile]:
+    files: list[DurableFile] = []
+    files.extend(
+        _collect_file(
+            toolang_root, toolang_root / "config.toml", category="config", origin="root"
+        )
+    )
+    for directory_name in CAP_DIRECTORY_NAMES:
+        files.extend(
+            _collect_directory(
+                toolang_root,
+                toolang_root / directory_name,
+                category="cap",
+                origin="root",
             )
         )
     return files

@@ -15,7 +15,7 @@ from toolang.execution.records import UpdateKind
 from toolang.execution.store import RunStore
 from toolang.plugin.models.resolution import select_model_selectors
 from toolang.state.agent import AgentState
-from toolang.state.prepared import PreparedLocks, PreparedVisibility
+from toolang.state.prepared import PreparedVisibility
 from toolang.plugin.tools.loading import load_runtime_tools
 from toolang.state.watcher import StateWatcher
 
@@ -68,7 +68,7 @@ async def run(
         interval_ms=interval_ms,
         debounce_ms=debounce_ms,
     ):
-        _append_entry_change_updates(store, watcher.previous_locks, watcher.locks)
+        _append_entry_change_updates(store, previous, state)
         _apply_state(
             root=root,
             name=name,
@@ -119,8 +119,8 @@ def _apply_state(
 
 def _append_entry_change_updates(
     store: RunStore,
-    before: PreparedLocks | None,
-    after: PreparedLocks | None,
+    before: AgentState | None,
+    after: AgentState | None,
 ) -> None:
     before_entries = _entry_change_snapshot(before)
     after_entries = _entry_change_snapshot(after)
@@ -136,20 +136,18 @@ def _append_entry_change_updates(
 
 
 def _entry_change_snapshot(
-    locks: PreparedLocks | None,
+    state: AgentState | None,
 ) -> dict[tuple[PreparedVisibility, str, str], tuple[str, str, str]]:
-    if locks is None:
+    if state is None:
         return {}
     snapshot: dict[tuple[PreparedVisibility, str, str], tuple[str, str, str]] = {}
-    for visibility, lock in (
-        ("shared", locks.shared_lock),
-        ("private", locks.private_lock),
-    ):
-        for entry in lock.entries:
+    layers = (("shared", state.root.caps), ("private", state.home.caps))
+    for visibility, entries in layers:
+        for entry in entries:
             snapshot[(visibility, entry.kind, entry.name)] = (
                 entry.ref,
                 entry.source.fingerprint,
-                entry.path,
+                entry.source.path,
             )
     return snapshot
 

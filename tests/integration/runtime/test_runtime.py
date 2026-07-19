@@ -84,7 +84,7 @@ from toolang.base.types.sandbox import (
     SandboxStartResult,
     SandboxState,
 )
-from toolang.state.caps import build_visibility_lock, list_entries
+from toolang.state.caps import list_entries, materialize_visibility
 from toolang.state import caps as cap_state
 from toolang.plugin.config import ChannelBinding
 from toolang.config.log_spec import PY_LOG_ENV_VAR
@@ -106,13 +106,10 @@ from toolang.agent import state_updates as watch
 from toolang.plugin.tools.loading import load_runtime_tools, runtime_tool_config
 from toolang.work import files as file_requests
 from toolang.state.durable import scan_durable_state
-from toolang.state.agent import load_agent_state
+from toolang.state import prepare as state_prepare
 from toolang.state import watcher as state_watcher
 from toolang.state.prepared import (
-    PreparedLocks,
     PreparedVisibility,
-    load_prepared_locks,
-    write_prepared_lock,
 )
 from toolang.plugin.loops.basic import BasicLoop
 from toolang.plugin.models.loading import load_model_adapters, load_model_providers
@@ -226,6 +223,7 @@ def _emit_trace(context: ApiContext, event) -> None:
 
 
 def test_executor_stop_projects_command_and_canceled_run(tmp_path: Path) -> None:
+    _agents(tmp_path).create("alice")
     context = _build_context(
         toolang_root=tmp_path,
         agent_name="alice",
@@ -2314,8 +2312,10 @@ def test_chat_stream_allows_tool_only_turns(tmp_path: Path) -> None:
 
 
 def test_create_app_is_pure_route_assembly(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    _agents(toolang_root).create("alice")
     context = _build_context(
-        toolang_root=tmp_path / "toolang",
+        toolang_root=toolang_root,
         agent_name="alice",
         enabled_features=("chat", "inspect"),
     )
@@ -2737,9 +2737,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(
         enabled_features=("manage", "inspect"),
     )
     initial_state_fingerprint = context.get_agent_state().fingerprint
-    initial_prepared_fingerprint = load_prepared_locks(
-        toolang_root, "alice"
-    ).fingerprint
+    initial_prepared_fingerprint = initial_state_fingerprint
     app = _create_test_app(context)
 
     with TestClient(app) as client:
@@ -3274,7 +3272,7 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
 
 def test_trigger_logger_names_are_flat() -> None:
     assert watch.logger.name == "toolang.watch"
-    assert state_watcher.prepare_logger.name == "toolang.prepare"
+    assert state_prepare.logger.name == "toolang.prepare"
     assert poll.logger.name == "toolang.poll"
 
 
@@ -3734,7 +3732,14 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(
     assert {
         mount.sandbox_path.relative_to(request.sandbox_root).as_posix()
         for mount in request.mounts
-    } == {"config.toml", ".caps", "psyches", "skills", "services", "prompts"}
+    } == {
+        "config.toml",
+        ".prepared",
+        "psyches",
+        "skills",
+        "services",
+        "prompts",
+    }
     assert request.run_command[:7] == (
         "toolang",
         "--root",
@@ -4365,18 +4370,12 @@ def test_prepare_reload_refreshes_prepared_and_agent_state(tmp_path: Path) -> No
             _write_text(prompt_path, "---\ndescription: v2\n---\nPrompt v2\n")
             refreshed = await _wait_for_fingerprint_change(context, initial_fingerprint)
             assert refreshed
-            prepared = load_prepared_locks(context.root, context.name)
-            assert prepared.shared_lock.entries == ()
-            assert not prepared.shared_lock.lock_path.is_file()
-            assert prepared.private_lock.lock_path.is_file()
-            assert (
-                context.get_agent_state().fingerprint
-                == load_agent_state(prepared).fingerprint
-            )
-            assert context.get_agent_state().program is initial_program
+            current = context.get_agent_state()
+            assert current.root.caps == ()
+            assert current.program == initial_program
             assert any(
-                entry.path == "agents/alice/prompts/rewrite.md"
-                for entry in prepared.private_lock.entries
+                entry.source.path == "agents/alice/prompts/rewrite.md"
+                for entry in current.home.caps
             )
 
     asyncio.run(run_test())
@@ -4440,9 +4439,7 @@ def test_runtime_tool_plugin_config_maps_service_caps_to_service_use(
         "env: LINEAR_API_KEY, API_KEY\n"
         "---\n",
     )
-    durable = scan_durable_state(toolang_root, "alice")
-    prepared = state_watcher.prepare_locks(durable)
-    state = load_agent_state(prepared)
+    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
 
     config = runtime_tool_config(
         plugin_config=load_named_config(
@@ -4470,6 +4467,7 @@ def test_prepare_materializes_remote_entries_from_config(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
+    _agents(toolang_root).create("alice")
     monkeypatch.setattr(
         cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
     )
@@ -4496,19 +4494,14 @@ def test_prepare_materializes_remote_entries_from_config(
     )
     assert config_path == toolang_root / "config.toml"
 
-    durable = scan_durable_state(toolang_root, "alice")
-    prepared = state_watcher.prepare_locks(durable)
-    state = load_agent_state(prepared)
+    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
 
-    assert (toolang_root / ".caps" / "wired" / "prompts" / "rewrite.md").is_file()
-    assert [entry.source.origin for entry in prepared.shared_lock.entries] == ["remote"]
-    assert [entry.source.form for entry in prepared.shared_lock.entries] == ["wired"]
-    assert prepared.shared_lock.entries[0].path == ".caps/wired/prompts/rewrite.md"
-    assert (
-        prepared.shared_lock.entries[0].ref
-        == "github://acme/agents/prompts/rewrite.md@main"
-    )
-    assert [entry.path for entry in state.caps] == [".caps/wired/prompts/rewrite.md"]
+    assert [entry.source.origin for entry in state.root.caps] == ["remote"]
+    assert [entry.source.form for entry in state.root.caps] == ["wired"]
+    assert state.root.caps[0].ref == "github://acme/agents/prompts/rewrite.md@main"
+    assert [Path(entry.path) for entry in state.caps] == [
+        state.root.generation_dir / "files" / "wired" / "prompts" / "rewrite.md"
+    ]
 
 
 def test_remote_skill_shorthand_probes_agent_skills_and_skills_repos(
@@ -4608,22 +4601,19 @@ def test_remote_skill_add_canonicalizes_github_tree_url(
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(
         encoding="utf-8"
     )
-    durable = scan_durable_state(toolang_root, "alice")
-    prepared = state_watcher.prepare_locks(durable)
+    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
 
     assert (
         'answers = { ref = "github://brave/brave-search-skills/skills/answers@main" }'
         in config_text
     )
     assert (
-        prepared.private_lock.entries[0].ref
+        state.home.caps[0].ref
         == "github://brave/brave-search-skills/skills/answers@main"
     )
     assert (
-        toolang_root
-        / "agents"
-        / "alice"
-        / ".caps"
+        state.home.generation_dir
+        / "files"
         / "wired"
         / "skills"
         / "answers"
@@ -4656,12 +4646,11 @@ def test_remote_skill_add_canonicalizes_github_skill_file_url(
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(
         encoding="utf-8"
     )
-    durable = scan_durable_state(toolang_root, "alice")
-    prepared = state_watcher.prepare_locks(durable)
+    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
 
     expected_ref = "github://vercel-labs/agent-browser/skills/agent-browser@main"
     assert f'agent-browser = {{ ref = "{expected_ref}" }}' in config_text
-    assert prepared.private_lock.entries[0].ref == expected_ref
+    assert state.home.caps[0].ref == expected_ref
 
 
 def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(
@@ -4689,14 +4678,13 @@ def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(
         encoding="utf-8"
     )
-    durable = scan_durable_state(toolang_root, "alice")
-    prepared = state_watcher.prepare_locks(durable)
+    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
 
     expected_ref = (
         "github://vercel-labs/agent-browser/skills/agent-browser@refs/heads/main"
     )
     assert f'agent-browser = {{ ref = "{expected_ref}" }}' in config_text
-    assert prepared.private_lock.entries[0].ref == expected_ref
+    assert state.home.caps[0].ref == expected_ref
 
 
 def test_state_watcher_refresh_records_remote_cap_updates(
@@ -4723,8 +4711,7 @@ def test_state_watcher_refresh_records_remote_cap_updates(
         kind="skill",
         ref="acme/pdf",
     )
-    initial = state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-    state = load_agent_state(initial)
+    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
     _wire_cap(
         toolang_root,
         "alice",
@@ -4741,20 +4728,17 @@ def test_state_watcher_refresh_records_remote_cap_updates(
 
     watcher = state_watcher.StateWatcher(toolang_root, "alice", state)
     next_state = watcher.refresh()
-    watch._append_entry_change_updates(
-        cast(RunStore, Store()), watcher.previous_locks, watcher.locks
-    )
+    watch._append_entry_change_updates(cast(RunStore, Store()), state, next_state)
 
     assert ("skill_changed", {"name": "review", "visibility": "private"}) in updates
     assert next_state.fingerprint != state.fingerprint
-    assert next_state.program is state.program
+    assert next_state.program == state.program
 
 
 def test_state_watcher_reparses_changed_program(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
-    initial = state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-    state = load_agent_state(initial)
+    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
     watcher = state_watcher.StateWatcher(toolang_root, "alice", state)
 
     _write_text(
@@ -4779,8 +4763,7 @@ def test_agent_state_config_is_deeply_immutable(tmp_path: Path) -> None:
         '[runtime]\nmodels = ["home"]\n',
     )
 
-    prepared = state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-    state = load_agent_state(prepared)
+    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
     runtime = cast(Any, state.config["runtime"])
 
     assert runtime["sandbox"] == "none"
@@ -4789,485 +4772,6 @@ def test_agent_state_config_is_deeply_immutable(tmp_path: Path) -> None:
         cast(Any, state.config)["runtime"] = {}
     with pytest.raises(TypeError):
         runtime["sandbox"] = "docker"
-
-
-def test_prepare_reuses_remote_caps_when_visibility_inputs_and_outputs_match(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    toolang_root = tmp_path / "toolang"
-    fetches: list[str] = []
-
-    monkeypatch.setattr(
-        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
-    )
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
-
-    def fake_fetch(ref):
-        fetches.append(ref.render())
-        return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
-
-    monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_fetch)
-    _wire_cap(
-        toolang_root,
-        "alice",
-        visibility="private",
-        kind="skill",
-        ref="acme/pdf",
-    )
-
-    first = state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-    monkeypatch.setattr(
-        cap_state,
-        "_fetch_github_directory",
-        lambda ref: pytest.fail(f"unexpected remote fetch: {ref.render()}"),
-    )
-    second = state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-
-    assert fetches == ["github://acme/agents/skills/pdf@main"]
-    assert second.fingerprint == first.fingerprint
-
-
-def test_prepare_rebuilds_stale_lock_schema_as_cache_miss(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    toolang_root = tmp_path / "toolang"
-    _agents(toolang_root).create("alice")
-    config_path = toolang_root / "agents" / "alice" / "config.toml"
-    config_path.write_text(
-        '[skills]\npdf = { ref = "github://acme/agents/skills/pdf@main" }\n',
-        encoding="utf-8",
-    )
-    lock_path = toolang_root / "agents" / "alice" / ".caps" / "lock.json"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path.write_text(
-        json.dumps(
-            {
-                "visibility": "private",
-                "updated_at": "2026-04-18T00:00:00Z",
-                "fingerprint": "stale",
-                "input_fingerprint": "stale",
-                "entries": [
-                    {
-                        "kind": "skill",
-                        "name": "pdf",
-                        "shape": "dir",
-                        "ref": "github://acme/agents/skills/pdf@main",
-                        "path": "agents/alice/.caps/wired/skills/pdf/SKILL.md",
-                        "source": {
-                            "origin": "remote",
-                            "path": "agents/alice/config.toml",
-                            "updated_at": "2026-04-18T00:00:00Z",
-                            "fingerprint": "stale",
-                        },
-                        "meta": {"description": "stale"},
-                    }
-                ],
-                "program": {
-                    "agent_name": "alice",
-                    "source_path": "agents/alice/agent.too",
-                    "source_text": "agent alice\n",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    monkeypatch.setattr(
-        cap_state,
-        "_fetch_github_directory",
-        lambda ref: {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"},
-    )
-
-    prepared = state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-
-    assert prepared.private_lock.entries[0].source.form == "wired"
-    assert '"form": "wired"' in lock_path.read_text(encoding="utf-8")
-
-
-def test_prepare_reuses_private_remote_caps_when_shared_inputs_change(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    toolang_root = tmp_path / "toolang"
-    fetches: list[str] = []
-
-    monkeypatch.setattr(
-        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
-    )
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
-
-    def fake_fetch(ref):
-        fetches.append(ref.render())
-        return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
-
-    monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_fetch)
-    _wire_cap(
-        toolang_root,
-        "alice",
-        visibility="private",
-        kind="skill",
-        ref="acme/pdf",
-    )
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-
-    _put_cap(
-        toolang_root,
-        "alice",
-        visibility="shared",
-        kind="prompt",
-        name="style",
-        body="Use a direct style.",
-    )
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-
-    assert fetches == ["github://acme/agents/skills/pdf@main"]
-
-
-def test_prepare_reuses_private_remote_caps_when_local_cap_changes(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    toolang_root = tmp_path / "toolang"
-    fetches: list[str] = []
-
-    monkeypatch.setattr(
-        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
-    )
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
-
-    def fake_fetch(ref):
-        fetches.append(ref.render())
-        return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
-
-    monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_fetch)
-    _wire_cap(
-        toolang_root,
-        "alice",
-        visibility="private",
-        kind="skill",
-        ref="acme/pdf",
-    )
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-
-    monkeypatch.setattr(
-        cap_state,
-        "_fetch_github_directory",
-        lambda ref: pytest.fail(f"unexpected remote fetch: {ref.render()}"),
-    )
-    _put_cap(
-        toolang_root,
-        "alice",
-        visibility="private",
-        kind="prompt",
-        name="style",
-        body="Use a direct style.",
-    )
-    prepared = state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-
-    assert fetches == ["github://acme/agents/skills/pdf@main"]
-    assert [(entry.kind, entry.name) for entry in prepared.private_lock.entries] == [
-        ("prompt", "style"),
-        ("skill", "pdf"),
-    ]
-
-
-def test_concurrent_agent_prepare_reuses_shared_lock_after_another_agent_updates(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    toolang_root = tmp_path / "toolang"
-    fetches: list[str] = []
-    fetch_lock = threading.Lock()
-
-    monkeypatch.setattr(
-        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
-    )
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
-
-    _agents(toolang_root).create("alice")
-    _agents(toolang_root).create("bob")
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "bob"))
-    _wire_cap(
-        toolang_root,
-        "default",
-        visibility="shared",
-        kind="prompt",
-        ref="acme/style",
-    )
-
-    def fake_fetch(ref) -> bytes:
-        with fetch_lock:
-            fetches.append(ref.render())
-        time.sleep(0.05)
-        return b"Use direct language.\n"
-
-    original_load_prepared_optional = state_watcher._load_prepared_optional
-    ready = threading.Barrier(2)
-
-    def delayed_load_prepared_optional(root: Path, agent_name: str):
-        prepared = original_load_prepared_optional(root, agent_name)
-        if agent_name in {"alice", "bob"}:
-            ready.wait(timeout=2.0)
-        return prepared
-
-    monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
-    monkeypatch.setattr(
-        state_watcher, "_load_prepared_optional", delayed_load_prepared_optional
-    )
-
-    results: list[object] = []
-    errors: list[BaseException] = []
-
-    def prepare(agent_name: str) -> None:
-        try:
-            results.append(
-                state_watcher.prepare_locks(
-                    scan_durable_state(toolang_root, agent_name)
-                )
-            )
-        except BaseException as exc:
-            errors.append(exc)
-
-    threads = [
-        threading.Thread(target=prepare, args=(agent_name,))
-        for agent_name in ("alice", "bob")
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=2.0)
-
-    assert not any(thread.is_alive() for thread in threads)
-    assert errors == []
-    assert fetches == ["github://acme/agents/prompts/style.md@main"]
-    assert len(results) == 2
-    assert all(
-        len(cast(PreparedLocks, result).shared_lock.entries) == 1 for result in results
-    )
-
-
-def test_concurrent_prepare_reuses_private_lock_for_same_agent(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    toolang_root = tmp_path / "toolang"
-    fetches: list[str] = []
-    fetch_lock = threading.Lock()
-
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
-    _agents(toolang_root).create("alice")
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-    _wire_cap(
-        toolang_root,
-        "alice",
-        visibility="private",
-        kind="prompt",
-        ref="acme/style",
-    )
-
-    def fake_fetch(ref) -> bytes:
-        with fetch_lock:
-            fetches.append(ref.render())
-        time.sleep(0.05)
-        return b"Use direct language.\n"
-
-    original_load_prepared_optional = state_watcher._load_prepared_optional
-    ready = threading.Barrier(2)
-
-    def delayed_load_prepared_optional(root: Path, agent_name: str):
-        prepared = original_load_prepared_optional(root, agent_name)
-        ready.wait(timeout=2.0)
-        return prepared
-
-    monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
-    monkeypatch.setattr(
-        state_watcher, "_load_prepared_optional", delayed_load_prepared_optional
-    )
-    durable = scan_durable_state(toolang_root, "alice")
-    results: list[object] = []
-    errors: list[BaseException] = []
-
-    def prepare() -> None:
-        try:
-            results.append(state_watcher.prepare_locks(durable))
-        except BaseException as exc:
-            errors.append(exc)
-
-    threads = [threading.Thread(target=prepare) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=2.0)
-
-    assert not any(thread.is_alive() for thread in threads)
-    assert errors == []
-    assert fetches == ["github://acme/agents/prompts/style.md@main"]
-    assert len(results) == 2
-    assert all(
-        len(cast(PreparedLocks, result).private_lock.entries) == 1 for result in results
-    )
-
-
-def test_prepare_reuses_program_ref_caps_when_inline_program_changes(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    toolang_root = tmp_path / "toolang"
-    fetches: list[str] = []
-
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
-
-    def fake_fetch(ref):
-        fetches.append(ref.render())
-        return b"Remote psyche body.\n"
-
-    monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
-    _agents(toolang_root).create("alice")
-    program_path = toolang_root / "agents" / "alice" / "agent.too"
-    program_path.write_text(
-        "agent alice\n\nwith psyche github://acme/agents/psyches/steady.md@main\n",
-        encoding="utf-8",
-    )
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-    assert fetches == ["github://acme/agents/psyches/steady.md@main"]
-
-    fetches.clear()
-    program_path.write_text(
-        program_path.read_text(encoding="utf-8") + "\npsyche local:\n  Inline body.\n",
-        encoding="utf-8",
-    )
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-
-    assert fetches == []
-
-
-def test_prepare_fetches_only_changed_program_ref_cap(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    toolang_root = tmp_path / "toolang"
-    fetches: list[str] = []
-
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
-
-    def fake_fetch(ref):
-        fetches.append(ref.render())
-        return b"Remote psyche body.\n"
-
-    monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
-    _agents(toolang_root).create("alice")
-    program_path = toolang_root / "agents" / "alice" / "agent.too"
-    program_path.write_text(
-        "agent alice\n\n"
-        "with psyche github://acme/agents/psyches/steady.md@main\n"
-        "with psyche github://acme/agents/psyches/change.md@main\n",
-        encoding="utf-8",
-    )
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-    assert sorted(fetches) == [
-        "github://acme/agents/psyches/change.md@main",
-        "github://acme/agents/psyches/steady.md@main",
-    ]
-
-    fetches.clear()
-    program_path.write_text(
-        program_path.read_text(encoding="utf-8").replace(
-            "github://acme/agents/psyches/change.md@main",
-            "github://acme/agents/psyches/changed.md@main",
-        ),
-        encoding="utf-8",
-    )
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-
-    assert fetches == ["github://acme/agents/psyches/changed.md@main"]
-
-
-def test_list_entries_reuses_prepared_program_ref_resolution(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    toolang_root = tmp_path / "toolang"
-
-    monkeypatch.setattr(
-        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
-    )
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
-    monkeypatch.setattr(
-        cap_state, "_fetch_github_file", lambda ref: b"Remote psyche body.\n"
-    )
-    _agents(toolang_root).create("alice")
-    program_path = toolang_root / "agents" / "alice" / "agent.too"
-    program_path.write_text(
-        "agent alice\n\nwith psyche acme/steady\n",
-        encoding="utf-8",
-    )
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-
-    monkeypatch.setattr(
-        cap_state,
-        "_github_repo_default_branch",
-        lambda owner, repo: pytest.fail(
-            f"unexpected remote branch lookup: {owner}/{repo}"
-        ),
-    )
-    entries = cap_state.list_entries(
-        toolang_root, "alice", visibility="private", kinds={"psyche"}
-    )
-
-    assert [(entry.name, entry.ref) for entry in entries] == [
-        ("steady", "github://acme/agents/psyches/steady.md@main")
-    ]
-
-
-def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    toolang_root = tmp_path / "toolang"
-    fetch_count = 0
-
-    monkeypatch.setattr(
-        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
-    )
-    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
-
-    def fake_fetch(ref):
-        nonlocal fetch_count
-        fetch_count += 1
-        return {
-            "SKILL.md": f"---\ndescription: PDF {fetch_count}\n---\n# PDF\n".encode()
-        }
-
-    monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_fetch)
-    _wire_cap(
-        toolang_root,
-        "alice",
-        visibility="private",
-        kind="skill",
-        ref="acme/pdf",
-    )
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-    prepared_file = (
-        toolang_root
-        / "agents"
-        / "alice"
-        / ".caps"
-        / "wired"
-        / "skills"
-        / "pdf"
-        / "SKILL.md"
-    )
-    prepared_file.write_text(
-        "---\ndescription: Corrupt\n---\n# Corrupt\n", encoding="utf-8"
-    )
-
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-
-    assert fetch_count == 2
-    assert "PDF 2" in prepared_file.read_text(encoding="utf-8")
 
 
 def test_remote_skill_add_rejects_missing_github_tree_url(
@@ -5310,31 +4814,15 @@ def test_prepare_materializes_remote_skill_directory(
 
     monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_directory)
 
-    durable = scan_durable_state(toolang_root, "alice")
-    prepared = state_watcher.prepare_locks(durable)
+    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
+    skill_dir = state.home.generation_dir / "files" / "wired" / "skills" / "pdf"
 
     assert (
-        toolang_root
-        / "agents"
-        / "alice"
-        / ".caps"
-        / "wired"
-        / "skills"
-        / "pdf"
-        / "SKILL.md"
+        skill_dir / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: PDF work\n---\n# PDF\n"
-    assert (
-        toolang_root
-        / "agents"
-        / "alice"
-        / ".caps"
-        / "wired"
-        / "skills"
-        / "pdf"
-        / "REFERENCE.md"
-    ).read_text(encoding="utf-8") == "# Reference\n"
-    assert prepared.private_lock.entries[0].meta["description"] == "PDF work"
-    assert prepared.private_lock.entries[0].source.form == "wired"
+    assert (skill_dir / "REFERENCE.md").read_text(encoding="utf-8") == "# Reference\n"
+    assert state.home.caps[0].meta["description"] == "PDF work"
+    assert state.home.caps[0].source.form == "wired"
 
 
 def test_prepare_materializes_remote_skill_from_program_use(
@@ -5355,46 +4843,30 @@ def test_prepare_materializes_remote_skill_from_program_use(
         },
     )
 
-    durable = scan_durable_state(toolang_root, "alice")
-    prepared = state_watcher.prepare_locks(durable)
-    state = load_agent_state(prepared)
+    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
 
-    skill_path = (
-        toolang_root
-        / "agents"
-        / "alice"
-        / ".caps"
-        / "ref"
-        / "skills"
-        / "fund"
-        / "SKILL.md"
-    )
+    skill_path = Path(state.caps[0].path)
     assert skill_path.read_text(encoding="utf-8").startswith(
         "---\ndescription: github://coinbase/"
     )
-    entry = prepared.private_lock.entries[0]
+    entry = state.home.caps[0]
     assert entry.name == "fund"
     assert entry.ref == "github://coinbase/agentic-wallet-skills/skills/fund@main"
     assert entry.source.origin == "remote"
     assert entry.source.form == "ref"
     assert entry.source.path == "agents/alice/agent.too"
     assert entry.source.line == 3
-    assert [entry.path for entry in state.caps] == [
-        "agents/alice/.caps/ref/skills/fund/SKILL.md"
+    assert [Path(entry.path) for entry in state.caps] == [
+        state.home.generation_dir
+        / "files"
+        / "referenced"
+        / "skills"
+        / "fund"
+        / "SKILL.md"
     ]
     with pytest.raises(TypeError):
         cast(Any, state.caps[0].meta)["description"] = "Changed"
-    lock_data = json.loads(
-        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    program = cast(
-        dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"]
-    )
-    uses = cast(list[dict[str, object]], program["uses"])
-    assert uses[0]["cap"] == 0
-    assert "prepared" not in uses[0]
+    assert state.program.withs[0].reference.startswith("https://github.com/")
 
 
 def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None:
@@ -5417,41 +4889,16 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
         ),
     )
 
-    durable = scan_durable_state(toolang_root, "alice")
-    prepared = state_watcher.prepare_locks(durable)
-    state = load_agent_state(prepared)
+    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
 
-    psyche_path = (
-        toolang_root
-        / "agents"
-        / "alice"
-        / ".caps"
-        / "inline"
-        / "psyches"
-        / "reviewer.md"
-    )
+    inline_dir = state.home.generation_dir / "files" / "inline"
+    psyche_path = inline_dir / "psyches" / "reviewer.md"
     assert psyche_path.read_text(encoding="utf-8") == "Prefer concrete findings."
-    service_path = (
-        toolang_root
-        / "agents"
-        / "alice"
-        / ".caps"
-        / "inline"
-        / "services"
-        / "github.md"
-    )
+    service_path = inline_dir / "services" / "github.md"
     service_content = service_path.read_text(encoding="utf-8")
     assert "description: Use when the agent needs GitHub MCP access." in service_content
     assert "Use this service when the agent needs GitHub access." in service_content
-    prompt_path = (
-        toolang_root
-        / "agents"
-        / "alice"
-        / ".caps"
-        / "inline"
-        / "prompts"
-        / "summarize.md"
-    )
+    prompt_path = inline_dir / "prompts" / "summarize.md"
     prompt_content = prompt_path.read_text(encoding="utf-8")
     assert (
         prompt_content
@@ -5463,7 +4910,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
             "Target audience: {{audience}}\n"
         ).rstrip()
     )
-    entries_by_kind = {entry.kind: entry for entry in prepared.private_lock.entries}
+    entries_by_kind = {entry.kind: entry for entry in state.home.caps}
     assert set(entries_by_kind) == {"prompt", "psyche", "service"}
     assert entries_by_kind["psyche"].name == "reviewer"
     assert entries_by_kind["psyche"].ref == "inline://psyches/reviewer"
@@ -5479,26 +4926,28 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
     assert entries_by_kind["prompt"].source.form == "inline"
     assert entries_by_kind["prompt"].source.path == "agents/alice/agent.too"
     assert entries_by_kind["prompt"].source.line == 13
-    assert tuple(entry.path for entry in state.caps) == (
-        "agents/alice/.caps/inline/prompts/summarize.md",
-        "agents/alice/.caps/inline/psyches/reviewer.md",
-        "agents/alice/.caps/inline/services/github.md",
-    )
-    lock_data = json.loads(
-        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    program = cast(
-        dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"]
-    )
-    program_caps = cast(list[dict[str, object]], program["caps"])
-    assert {item["name"]: item["cap"] for item in program_caps} == {
-        "github": 2,
-        "reviewer": 1,
-        "summarize": 0,
+    assert {Path(entry.path) for entry in state.caps} == {
+        state.home.generation_dir
+        / "files"
+        / "inline"
+        / "prompts"
+        / "summarize.md",
+        state.home.generation_dir
+        / "files"
+        / "inline"
+        / "psyches"
+        / "reviewer.md",
+        state.home.generation_dir
+        / "files"
+        / "inline"
+        / "services"
+        / "github.md",
     }
-    assert all("prepared" not in item for item in program_caps)
+    assert {item.name for item in state.program.caps} == {
+        "github",
+        "reviewer",
+        "summarize",
+    }
 
     context = _build_context(
         toolang_root=toolang_root,
@@ -5568,109 +5017,10 @@ def test_prepare_rejects_duplicate_embedded_cap_names(tmp_path: Path) -> None:
         ),
     )
 
-    durable = scan_durable_state(toolang_root, "alice")
     with pytest.raises(ToolangError, match=r"Duplicate prompt name 'summarize'"):
-        state_watcher.prepare_locks(durable)
+        up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
 
-    assert not (
-        toolang_root
-        / "agents"
-        / "alice"
-        / ".caps"
-        / "inline"
-        / "prompts"
-        / "summarize.md"
-    ).exists()
-
-
-def test_prepare_builds_program_into_private_lock(tmp_path: Path) -> None:
-    toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
-
-    durable = scan_durable_state(toolang_root, "alice")
-    prepared = state_watcher.prepare_locks(durable)
-    lock_data = json.loads(
-        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(
-            encoding="utf-8"
-        )
-    )
-
-    assert prepared.program_source.agent_name == "alice"
-    assert prepared.program_source.source_path == "agents/alice/agent.too"
-    program_snapshot = cast(
-        dict[str, object], prepared.private_lock.to_snapshot()["program"]
-    )
-    assert program_snapshot["agent_name"] == "alice"
-    assert program_snapshot["agics"] == []
-    assert lock_data["schema"] == 1
-    assert "visibility" not in lock_data
-    assert "entries" not in lock_data
-    lock_program = cast(
-        dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"]
-    )
-    assert list(lock_program) == [
-        "source",
-        "source_text",
-        "uses",
-        "structs",
-        "contexts",
-        "instructs",
-        "caps",
-        "agics",
-    ]
-
-
-def test_prepare_preserves_optional_struct_fields_in_lock(tmp_path: Path) -> None:
-    toolang_root = tmp_path / "toolang"
-    _write_text(
-        toolang_root / "agents" / "alice" / "agent.too",
-        "agent alice\n\nstruct Result:\n  summary?: Text\n",
-    )
-
-    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
-    lock_data = json.loads(
-        (toolang_root / "agents" / "alice" / ".caps" / "lock.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    program = cast(
-        dict[str, object], cast(dict[str, object], lock_data["prepared"])["program"]
-    )
-    structs = cast(list[dict[str, object]], program["structs"])
-    fields = cast(list[dict[str, object]], structs[0]["fields"])
-
-    assert fields[0]["optional"] is True
-
-
-def test_prepare_skips_shared_caps_dir_without_root_inputs(tmp_path: Path) -> None:
-    toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
-
-    durable = scan_durable_state(toolang_root, "alice")
-    prepared = state_watcher.prepare_locks(durable)
-
-    assert not (toolang_root / ".caps").exists()
-    assert (toolang_root / "agents" / "alice" / ".caps" / "lock.json").is_file()
-    assert prepared.shared_lock.entries == ()
-    assert prepared.private_lock.program_source is not None
-
-
-def test_prepare_rewrites_legacy_private_lock_missing_program(tmp_path: Path) -> None:
-    toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
-
-    durable = scan_durable_state(toolang_root, "alice")
-    shared_lock, shared_files = build_visibility_lock(durable, visibility="shared")
-    write_prepared_lock(toolang_root, shared_lock, files=shared_files)
-    legacy_private_lock, legacy_private_files = build_visibility_lock(
-        durable, visibility="private"
-    )
-    write_prepared_lock(toolang_root, legacy_private_lock, files=legacy_private_files)
-
-    prepared = state_watcher.prepare_locks(durable)
-
-    assert prepared.private_lock.program_source is not None
-    assert prepared.private_lock.program_source.agent_name == "alice"
+    assert not (toolang_root / "agents" / "alice" / ".prepared" / "current").exists()
 
 
 def test_prepare_fetches_remote_caps_with_bounded_concurrency(
@@ -5707,13 +5057,13 @@ def test_prepare_fetches_remote_caps_with_bounded_concurrency(
     monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
 
     durable = scan_durable_state(toolang_root, "alice")
-    lock_record, files = build_visibility_lock(durable, visibility="shared")
+    entries, files = materialize_visibility(durable, visibility="shared")
 
     assert max_active == 2
-    assert [entry.name for entry in lock_record.entries] == ["alpha", "bravo"]
+    assert [entry.name for entry in entries] == ["alpha", "bravo"]
     assert sorted(files) == [
-        ".caps/wired/psyches/alpha.md",
-        ".caps/wired/psyches/bravo.md",
+        "wired/psyches/alpha.md",
+        "wired/psyches/bravo.md",
     ]
 
 
@@ -5736,7 +5086,7 @@ def test_caps_list_and_remove_remote_entries(tmp_path: Path, monkeypatch) -> Non
 
     assert [
         (entry.source.origin, entry.source.form, entry.path) for entry in entries
-    ] == [("remote", "wired", "agents/alice/.caps/wired/skills/reviewer/SKILL.md")]
+    ] == [("remote", "wired", "wired/skills/reviewer/SKILL.md")]
     removed = _unwire_cap(
         toolang_root, "alice", visibility="private", kind="skill", name="reviewer"
     )
@@ -8183,9 +7533,10 @@ def _build_context(
     channel_plugins: dict[str, AgentChannel] | None = None,
     tool_selectors: tuple[str, ...] | None = None,
 ) -> ApiContext:
-    durable = scan_durable_state(toolang_root, agent_name)
-    prepared = state_watcher.prepare_locks(durable)
-    state = load_agent_state(prepared)
+    state = up_module.prepare_agent(
+        toolang_root=toolang_root,
+        agent_name=agent_name,
+    )
     store = RunStore(run_store_path(toolang_root, agent_name))
     setup = AgentSetup(
         tools=load_runtime_tools(

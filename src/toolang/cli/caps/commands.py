@@ -18,7 +18,6 @@ from ...common.error import ToolangError
 from ...common.github import parse_github_ref
 from toolang.catalog import cap as cap_store
 from toolang.state import caps as cap_state
-from ...state import watcher as state_watcher
 from ..common.updates import append_agent_update
 from ..common.context import context_agent, context_root, user_call
 from ..common.output import echo_block, echo_table
@@ -30,7 +29,8 @@ from ..common.routing import (
 
 if TYPE_CHECKING:
     from ...execution.records import UpdateKind
-    from toolang.state.prepared import PreparedEntry, PreparedLocks
+    from toolang.state.agent import AgentState
+    from toolang.state.prepared import PreparedEntry
     from ..common.progress import CliProgress
 
 CapKind = Literal["skill", "psyche", "prompt", "service"]
@@ -617,10 +617,8 @@ def _all_cap_entries(
     prepare: bool,
     kinds: set[EntryKind],
 ) -> tuple[PreparedEntry, ...]:
-    from toolang.state.durable import scan_durable_state
-
-    durable = user_call(scan_durable_state, toolang_root, agent_name)
-    if prepare and durable.program_path is not None:
+    if prepare and (toolang_root / "agents" / agent_name / "agent.too").is_file():
+        from toolang.agent.runtime import prepare_agent
         from ..common.progress import as_progress_sink, make_cli_progress
 
         progress = make_cli_progress(
@@ -628,13 +626,14 @@ def _all_cap_entries(
             show_materialize_summary=True,
         )
         try:
-            prepared = user_call(
-                state_watcher.prepare_locks,
-                durable,
+            state = user_call(
+                prepare_agent,
+                toolang_root=toolang_root,
+                agent_name=agent_name,
                 progress=as_progress_sink(progress),
             )
             entries = _prepared_cap_entries(
-                prepared, visibility=visibility, kinds=kinds
+                state, visibility=visibility, kinds=kinds
             )
             progress.set_prepare_total(len(entries))
             return entries
@@ -649,20 +648,16 @@ def _all_cap_entries(
 
 
 def _prepared_cap_entries(
-    prepared: PreparedLocks,
+    state: AgentState,
     *,
     visibility: PreparedVisibility | Literal["all"],
     kinds: set[EntryKind],
 ) -> tuple[PreparedEntry, ...]:
     entries: list[PreparedEntry] = []
     if visibility in {"all", "shared"}:
-        entries.extend(
-            entry for entry in prepared.shared_lock.entries if entry.kind in kinds
-        )
+        entries.extend(entry for entry in state.root.caps if entry.kind in kinds)
     if visibility in {"all", "private"}:
-        entries.extend(
-            entry for entry in prepared.private_lock.entries if entry.kind in kinds
-        )
+        entries.extend(entry for entry in state.home.caps if entry.kind in kinds)
     return tuple(entries)
 
 
@@ -773,13 +768,13 @@ def _refresh_and_append_cap_update(
     progress_total: int,
     progress: CliProgress | None = None,
 ) -> None:
-    from toolang.state.durable import scan_durable_state
+    from toolang.agent.runtime import prepare_agent
     from ..common.progress import as_progress_sink
 
-    durable = user_call(scan_durable_state, toolang_root, agent_name)
     user_call(
-        state_watcher.prepare_locks,
-        durable,
+        prepare_agent,
+        toolang_root=toolang_root,
+        agent_name=agent_name,
         progress=as_progress_sink(progress),
     )
     if progress is not None:

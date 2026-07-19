@@ -250,6 +250,21 @@ def test_to_data_uses_node_kinds_and_span_objects() -> None:
     assert agics[0]["span"] == {"line": 1}
 
 
+def test_program_data_round_trips_without_parsing_source() -> None:
+    from toolang.lang.ast import program_from_data
+
+    program = Program.from_source(
+        "agic hello:\n"
+        "  Hello.\n"
+        "\n"
+        "flow work:\n"
+        "  repeat 2:\n"
+        "    run hello\n"
+    )
+
+    assert program_from_data(to_data(program)) == program
+
+
 def test_validation_runs_after_lowering() -> None:
     with pytest.raises(ToolangError, match="missing description"):
         Program.from_source(

@@ -13,8 +13,8 @@ Toolang uses three source-state forms:
 | State Form | Meaning |
 | --- | --- |
 | `durable` | Authored files discovered under the root and agent home |
-| `prepared` | Materialized cap locks and preserved program source |
-| `agent` | Immutable effective `RootState + HomeState` used by execution |
+| `prepared` | Immutable root and home generations derived from authored source |
+| `agent` | One exact `RootPrepared + HomePrepared` pair used by execution |
 
 A run captures immutable `AgentState` and `AgentSetup` values when accepted,
 and child runs inherit them from their parent. Later source updates therefore

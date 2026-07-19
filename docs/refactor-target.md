@@ -161,9 +161,9 @@ allocates and persists missing ids before publishing home-job state.
 Agent source state is represented by three immutable values:
 
 ```text
-HomeState  = agent config + Program + agent-home caps
-RootState  = root config + root caps
-AgentState = merge(HomeState, RootState)
+HomePrepared = home source + resolution + config + Program + home caps
+RootPrepared = root source + resolution + config + shared caps
+AgentState   = one exact RootPrepared + HomePrepared pair
 ```
 
 `AgentState` contains the effective config, the exact `Program`, and effective
@@ -429,8 +429,8 @@ target APIs.
 
 1. Consolidate language behavior in `toolang.lang` and introduce the focused
    agent, cap, and job value types and catalogs.
-2. Replace prepared/live state layers with `HomeState`, `RootState`,
-   `AgentState`, and their watcher.
+2. Replace prepared/live state layers with `SourceTree`, `HomePrepared`,
+   `RootPrepared`, `AgentState`, and their watcher.
 3. Extract `RunStore`, persistence, reply sinks, and the final executor entry
    point from the current execution stack.
 4. Introduce `HomeJobs`, `AgentJobs`, `JobWatcher`, `JobStore`, and the
