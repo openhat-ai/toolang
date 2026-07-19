@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from toolang.catalog import cap as caps
-from toolang.catalog.job import JobCatalog
+from toolang.catalog.job import AuthoredJobs
 from toolang.base.types.tool import ToolContext
 from toolang.agent.tools.agent_state import create_tool_set as create_agent_state_tool
 
@@ -47,11 +47,11 @@ def test_agent_state_tool_creates_lists_gets_and_updates_tasks(tmp_path: Path) -
 
     assert listed["tasks"][0]["id"] == task_id
     assert loaded["task"]["title"] == "Review plan"
-    assert updated["task"]["lifecycle"] == "ready"
+    assert updated["task"]["stage"] == "ready"
     assert updated["task"]["body"] == "Review the merged implementation."
-    task = JobCatalog(toolang_root, "alice").get("task", task_id)
+    task = AuthoredJobs(toolang_root / "agents" / "alice").get("task", task_id)
     assert task is not None
-    assert task.lifecycle == "ready"
+    assert task.stage == "ready"
 
 
 def test_agent_state_tool_creates_and_updates_chores(tmp_path: Path) -> None:
@@ -82,9 +82,9 @@ def test_agent_state_tool_creates_and_updates_chores(tmp_path: Path) -> None:
     assert listed["chores"][0]["id"] == chore_id
     assert updated["chore"]["schedule"] == "FREQ=DAILY;INTERVAL=1"
     assert updated["chore"]["body"] == "Report stale pull requests and blockers."
-    chore = JobCatalog(toolang_root, "alice").get("chore", chore_id)
+    chore = AuthoredJobs(toolang_root / "agents" / "alice").get("chore", chore_id)
     assert chore is not None
-    assert chore.document.schedule == "FREQ=DAILY;INTERVAL=1"
+    assert chore.schedule == "FREQ=DAILY;INTERVAL=1"
 
 
 def test_agent_state_tool_creates_updates_gets_and_deletes_skill(
@@ -172,12 +172,11 @@ def test_agent_state_tool_creates_psyche_and_prompt(tmp_path: Path) -> None:
 
     assert psyche["psyche"]["content"] == "Prefer direct answers.\n"
     assert prompt["prompt"]["content"] == "Summarize: {{input}}\n"
-    assert (
-        caps.CapCatalog(toolang_root, "alice", visibility="private").read(
-            "psyche", "direct"
-        )
-        == "Prefer direct answers.\n"
+    authored = caps.AuthoredCaps(toolang_root / "agents" / "alice").get(
+        "psyche", "direct"
     )
+    assert authored is not None
+    assert authored.content == "Prefer direct answers.\n"
 
 
 def test_agent_state_tool_rejects_non_agent_home(tmp_path: Path) -> None:

@@ -60,11 +60,19 @@ def create_router() -> APIRouter:
         if payload.content is None:
             raise HTTPException(status_code=400, detail="missing cap content")
 
-        catalog = caps.CapCatalog(context.root, context.name, visibility=visibility)
+        catalog = _authored_caps(context.root, context.name, visibility)
+        cap = _wrap_user_error(
+            caps.CapFile.parse,
+            payload.content or "",
+            kind=kind,
+            name=name,
+        )
         operation = catalog.update if catalog.get(kind, name) else catalog.create
-        _wrap_user_error(operation, kind, name, payload.content or "")
+        _wrap_user_error(operation, cap)
         _append_cap_update(context, kind=kind, name=name, visibility=visibility)
-        entry = _find_authored_entry(context, visibility=visibility, kind=kind, name=name)
+        entry = _find_authored_entry(
+            context, visibility=visibility, kind=kind, name=name
+        )
         return {"item": _cap_detail_item(context, entry)}
 
     @router.put("/psyches/{name}/wired", summary="Wire Psyche")
@@ -79,21 +87,22 @@ def create_router() -> APIRouter:
         context = request.app.state.context
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
         visibility = payload.visibility
-        if caps.remote_entry_name(kind, payload.ref) != name:
+        canonical_ref = _wrap_user_error(
+            cap_state.resolve_remote_ref, kind, payload.ref
+        )
+        if cap_state.remote_entry_name(kind, canonical_ref) != name:
             raise HTTPException(
                 status_code=400,
                 detail=f"Wired {kind} ref {payload.ref!r} does not match requested name {name!r}.",
             )
-        _wrap_user_error(
-            caps.add_remote_entry,
-            context.root,
-            context.name,
-            visibility=visibility,
-            kind=kind,
-            ref=payload.ref,
-        )
+        catalog = _wired_caps(context.root, context.name, visibility)
+        cap = caps.CapRef(kind=kind, name=name, ref=canonical_ref)
+        operation = catalog.update if catalog.get(kind, name) else catalog.create
+        _wrap_user_error(operation, cap)
         _append_cap_update(context, kind=kind, name=name, visibility=visibility)
-        entry = _find_authored_entry(context, visibility=visibility, kind=kind, name=name)
+        entry = _find_authored_entry(
+            context, visibility=visibility, kind=kind, name=name
+        )
         return {"item": _cap_detail_item(context, entry)}
 
     @router.delete("/psyches/{name}/file", summary="Delete File Psyche")
@@ -108,16 +117,14 @@ def create_router() -> APIRouter:
         context = request.app.state.context
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
         requested_visibility = visibility
-        removed = _wrap_user_error(
-            caps.CapCatalog(
-                context.root, context.name, visibility=requested_visibility
-            ).remove,
+        _wrap_user_error(
+            _authored_caps(context.root, context.name, requested_visibility).remove,
             kind,
             name,
         )
-        if not removed:
-            raise HTTPException(status_code=404, detail=f"file {kind} not found: {name}")
-        _append_cap_update(context, kind=kind, name=name, visibility=requested_visibility)
+        _append_cap_update(
+            context, kind=kind, name=name, visibility=requested_visibility
+        )
         return {"ok": True}
 
     @router.delete("/psyches/{name}/wired", summary="Unwire Psyche")
@@ -132,17 +139,14 @@ def create_router() -> APIRouter:
         context = request.app.state.context
         kind = _collection_kind(_collection_from_path(str(request.url.path)))
         requested_visibility = visibility
-        removed = _wrap_user_error(
-            caps.remove_remote_entry,
-            context.root,
-            context.name,
-            visibility=requested_visibility,
-            kind=kind,
-            name=name,
+        _wrap_user_error(
+            _wired_caps(context.root, context.name, requested_visibility).remove,
+            kind,
+            name,
         )
-        if not removed:
-            raise HTTPException(status_code=404, detail=f"wired {kind} not found: {name}")
-        _append_cap_update(context, kind=kind, name=name, visibility=requested_visibility)
+        _append_cap_update(
+            context, kind=kind, name=name, visibility=requested_visibility
+        )
         return {"ok": True}
 
     return router
@@ -151,8 +155,22 @@ def create_router() -> APIRouter:
 def _collection_kind(collection: str) -> CapKind:
     kind = COLLECTION_TO_KIND.get(collection)
     if kind is None:
-        raise HTTPException(status_code=404, detail=f"unsupported cap collection: {collection}")
+        raise HTTPException(
+            status_code=404, detail=f"unsupported cap collection: {collection}"
+        )
     return kind
+
+
+def _cap_directory(root, agent: str, visibility: ApiVisibility):
+    return root if visibility == "shared" else root / "agents" / agent
+
+
+def _authored_caps(root, agent: str, visibility: ApiVisibility) -> caps.AuthoredCaps:
+    return caps.AuthoredCaps(_cap_directory(root, agent, visibility))
+
+
+def _wired_caps(root, agent: str, visibility: ApiVisibility) -> caps.WiredCaps:
+    return caps.WiredCaps(_cap_directory(root, agent, visibility) / "config.toml")
 
 
 def _collection_from_path(path: str) -> str:
@@ -196,8 +214,13 @@ def _cap_detail_item(context, entry: PreparedEntry) -> dict[str, object]:
     return item
 
 
-def _append_cap_update(context, *, kind: CapKind, name: str, visibility: PreparedVisibility) -> None:
-    event_type = cast(Literal["psyche_changed", "skill_changed", "service_changed", "prompt_changed"], f"{kind}_changed")
+def _append_cap_update(
+    context, *, kind: CapKind, name: str, visibility: PreparedVisibility
+) -> None:
+    event_type = cast(
+        Literal["psyche_changed", "skill_changed", "service_changed", "prompt_changed"],
+        f"{kind}_changed",
+    )
     payload = {
         "name": name,
         "visibility": visibility,

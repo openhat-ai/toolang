@@ -2,7 +2,7 @@
 
 This document summarizes the local agent API surface that the web UI should use
 to render and update the job board. The UI may present the data as a Kanban
-board, but the shared API vocabulary is job, task, chore, lifecycle, runtime,
+board, but the shared API vocabulary is job, task, chore, stage, runtime,
 and phase.
 
 
@@ -10,7 +10,7 @@ and phase.
 
 A job is either a task or a chore.
 
-Task and chore Markdown files store stable authored definitions. Lifecycle is
+Task and chore Markdown files store stable authored definitions. Stage is
 folder placement:
 
 - `tasks/` and `chores/` are ready folders
@@ -21,7 +21,7 @@ Runtime status is stored separately in `.runtime/jobs.db`. Thread and run
 history is stored in `.runtime/runs.db`. Runtime fields should not be edited by
 the UI as Markdown frontmatter.
 
-Phase is a UI projection derived from lifecycle, job status, and runtime data.
+Phase is a UI projection derived from stage, job status, and runtime data.
 It is not stored by Toolang and is not returned as a persisted field.
 
 
@@ -68,7 +68,7 @@ Task list item:
 {
   "id": "3nprht9x",
   "kind": "task",
-  "lifecycle": "ready",
+  "stage": "ready",
   "status": "todo",
   "title": "Review API changes",
   "path": "tasks/3nprht9x.md",
@@ -87,7 +87,7 @@ Chore list item:
 {
   "id": "xy1234ab",
   "kind": "chore",
-  "lifecycle": "ready",
+  "stage": "ready",
   "status": "todo",
   "schedule": "FREQ=HOURLY;INTERVAL=6",
   "title": "Check stale PRs",
@@ -113,7 +113,7 @@ Detail responses return the same item plus `body`.
 
 ## Field Values
 
-`lifecycle` values:
+`stage` values:
 
 | Value | Meaning |
 | --- | --- |
@@ -157,8 +157,8 @@ Recommended derivation:
 
 ```ts
 function jobPhase(job: Job): JobPhase {
-  if (job.lifecycle === "archived") return "archived";
-  if (job.lifecycle === "draft") return "draft";
+  if (job.stage === "archived") return "archived";
+  if (job.stage === "draft") return "draft";
   if (job.runtime.last_run?.status === "running") return "in_progress";
 
   if (job.kind === "task" && job.status === "failed") return "failed";
@@ -218,7 +218,7 @@ Content-Type: application/json
 }
 ```
 
-Move a task through lifecycle folders:
+Move a task through stage folders:
 
 ```http
 POST /api/v1/tasks/{task_id}/draft
@@ -261,7 +261,7 @@ Content-Type: application/json
 }
 ```
 
-Move a chore through lifecycle folders:
+Move a chore through stage folders:
 
 ```http
 POST /api/v1/chores/{chore_id}/draft
@@ -323,7 +323,7 @@ threads.
 
 ## Refresh Strategy
 
-After create, patch, lifecycle action, execution action, or delete, the
+After create, patch, stage action, execution action, or delete, the
 simplest correct behavior is to refetch `GET /api/v1/jobs`.
 
 For background changes, poll `GET /api/v1/jobs` on an interval. `GET

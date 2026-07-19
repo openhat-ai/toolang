@@ -9,9 +9,10 @@ import json
 from pathlib import Path
 import re
 
+from toolang.catalog.cap import CAP_DIRECTORY_NAMES
+
 from ..lang.ast import Program, Span
 
-CAP_DIR_NAMES = ("psyches", "skills", "services", "prompts")
 _AGENT_HEADER_RE = re.compile(r"^agent\s+[A-Za-z_][\w-]*\s*$")
 
 
@@ -25,7 +26,11 @@ class ProgramSource:
 
     def parse(self) -> Program:
         source = _parseable_program_source(self.source_text)
-        return Program.from_source(source) if source.strip() else Program(span=Span(line=1))
+        return (
+            Program.from_source(source)
+            if source.strip()
+            else Program(span=Span(line=1))
+        )
 
     def fingerprint(self) -> str:
         payload = json.dumps(
@@ -39,29 +44,6 @@ class ProgramSource:
             separators=(",", ":"),
         )
         return sha256(payload.encode("utf-8")).hexdigest()
-
-    @classmethod
-    def load(
-        cls,
-        path: Path,
-        *,
-        agent_name: str,
-        source_path: str,
-    ) -> "ProgramSource":
-        """Load and validate one explicitly located program source."""
-
-        source_text = (
-            path.read_text(encoding="utf-8")
-            if path.is_file()
-            else f"agent {agent_name}\n"
-        )
-        source = cls(
-            agent_name=agent_name,
-            source_path=source_path,
-            source_text=source_text,
-        )
-        source.parse()
-        return source
 
 
 def _parseable_program_source(source_text: str) -> str:
@@ -80,15 +62,21 @@ def _parseable_program_source(source_text: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class DurableFile:
-    """One durable authored file."""
+    """One authored file captured in a durable source snapshot."""
 
     path: Path
     relative_path: str
     category: str
     origin: str
+    content: bytes
     digest: str
     mtime_ns: int
     size: int
+
+    def read_text(self) -> str:
+        """Decode the captured file content as UTF-8 text."""
+
+        return self.content.decode("utf-8")
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,12 +99,26 @@ class DurableState:
     def load_program(self) -> ProgramSource:
         """Load the program captured by this authored-file snapshot."""
 
-        source_path = self.program_path or f"agents/{self.agent_name}/agent.too"
-        return ProgramSource.load(
-            self.toolang_root / source_path,
+        program_file = next(
+            (item for item in self.files if item.category == "program"),
+            None,
+        )
+        source_path = (
+            program_file.relative_path
+            if program_file is not None
+            else f"agents/{self.agent_name}/agent.too"
+        )
+        source = ProgramSource(
             agent_name=self.agent_name,
             source_path=source_path,
+            source_text=(
+                program_file.read_text()
+                if program_file is not None
+                else f"agent {self.agent_name}\n"
+            ),
         )
+        source.parse()
+        return source
 
     @property
     def config_paths(self) -> tuple[str, ...]:
@@ -151,7 +153,7 @@ def is_durable_path(toolang_root: Path, agent_name: str, path: Path) -> bool:
         return False
     if relative_path == Path("config.toml"):
         return True
-    if relative_path.parts[:1] and relative_path.parts[0] in CAP_DIR_NAMES:
+    if relative_path.parts[:1] and relative_path.parts[0] in CAP_DIRECTORY_NAMES:
         return len(relative_path.parts) >= 2
     if relative_path.parts[:2] != ("agents", agent_name):
         return False
@@ -160,7 +162,10 @@ def is_durable_path(toolang_root: Path, agent_name: str, path: Path) -> bool:
         return True
     if not agent_relative.parts:
         return False
-    return agent_relative.parts[0] in CAP_DIR_NAMES and len(agent_relative.parts) >= 2
+    return (
+        agent_relative.parts[0] in CAP_DIRECTORY_NAMES
+        and len(agent_relative.parts) >= 2
+    )
 
 
 def _durable_files(toolang_root: Path, agent_name: str) -> list[DurableFile]:
@@ -171,7 +176,7 @@ def _durable_files(toolang_root: Path, agent_name: str) -> list[DurableFile]:
             toolang_root, toolang_root / "config.toml", category="config", origin="root"
         )
     )
-    for directory_name in CAP_DIR_NAMES:
+    for directory_name in CAP_DIRECTORY_NAMES:
         files.extend(
             _collect_directory(
                 toolang_root,
@@ -193,7 +198,7 @@ def _durable_files(toolang_root: Path, agent_name: str) -> list[DurableFile]:
             origin="agent",
         )
     )
-    for directory_name in CAP_DIR_NAMES:
+    for directory_name in CAP_DIRECTORY_NAMES:
         files.extend(
             _collect_directory(
                 toolang_root, agent_dir / directory_name, category="cap", origin="agent"
@@ -211,6 +216,7 @@ def _collect_file(
 ) -> list[DurableFile]:
     if not path.is_file():
         return []
+    content = path.read_bytes()
     stat = path.stat()
     return [
         DurableFile(
@@ -218,9 +224,10 @@ def _collect_file(
             relative_path=str(path.relative_to(toolang_root)),
             category=category,
             origin=origin,
-            digest=sha256(path.read_bytes()).hexdigest(),
+            content=content,
+            digest=sha256(content).hexdigest(),
             mtime_ns=stat.st_mtime_ns,
-            size=stat.st_size,
+            size=len(content),
         )
     ]
 

@@ -1,139 +1,101 @@
 from __future__ import annotations
 
-from toolang.catalog.job import JobCatalog
-from toolang.catalog import job_files as job_definitions
-from toolang.common.ids import LOCAL_ID_FAMILY, decode_id
+from pathlib import Path
+
+import frontmatter
+import pytest
+
+from toolang.catalog.job import AuthoredJobs, JobFile
+from toolang.work.state import HomeJobs
 
 
-def test_task_definition_has_id_and_no_runtime_fields(tmp_path) -> None:
-    toolang_root = tmp_path / "toolang"
-    catalog = JobCatalog(toolang_root, "alice")
-
-    path = catalog.create(
-        "task",
-        "---\n---\n\nReview the API changes.\n",
-    )
-
-    saved = path.read_text(encoding="utf-8")
-    assert "\nid: " in saved
-    assert "state: active" not in saved
-    assert "stage: todo" not in saved
-
-    task = catalog.list(kind="task")[0]
-    task_id = task.document.task_id()
-    assert path == toolang_root / "agents" / "alice" / "tasks" / f"{task_id}.md"
-    assert task.lifecycle == "ready"
+def _job(
+    kind,
+    job_id: str,
+    body: str,
+    *,
+    title: str | None = None,
+    schedule: str | None = None,
+    stage="ready",
+) -> JobFile:
+    meta: dict[str, object] = {"id": job_id}
+    if title is not None:
+        meta["title"] = title
+    if schedule is not None:
+        meta["schedule"] = schedule
+    content = frontmatter.dumps(frontmatter.Post(body, None, **meta))
+    return JobFile.parse(content, kind=kind, stage=stage)
 
 
-def test_task_remote_status_reads_status_lines() -> None:
-    assert job_definitions.TaskFile(body="Status: Todo").remote_status() == "Todo"
-    assert (
-        job_definitions.TaskFile(body="Remote Status: Done").remote_status() == "Done"
-    )
-    assert job_definitions.TaskFile(body="No remote status").remote_status() is None
+def test_job_file_parse_projects_original_source_fields() -> None:
+    content = "---\nid: review\ntitle: Review API\n---\nReview carefully.\n"
+
+    job = JobFile.parse(content, kind="task", stage="draft")
+
+    assert job.path is None
+    assert job.content == content
+    assert job.kind == "task"
+    assert job.stage == "draft"
+    assert job.meta == {"id": "review", "name": "review", "title": "Review API"}
+    assert job.body == "Review carefully."
 
 
-def test_task_remote_ref_extracts_issue_key_from_title_or_body() -> None:
-    assert job_definitions.TaskFile(title="XBY-26 - test").remote_ref() == "XBY-26"
-    assert (
-        job_definitions.TaskFile(
-            body="Link: https://linear.app/xby/issue/XBY-35/example"
-        ).remote_ref()
-        == "XBY-35"
-    )
-    assert (
-        job_definitions.TaskFile(
-            title="Review plan", body="No remote link"
-        ).remote_ref()
-        is None
-    )
+def test_authored_jobs_requires_id_for_catalog_writes(tmp_path: Path) -> None:
+    job = JobFile.parse("Review.\n", kind="task", name="manual")
+
+    with pytest.raises(ValueError, match="job id is required"):
+        AuthoredJobs(tmp_path).create(job)
 
 
-def test_chore_persists_schedule_without_state(tmp_path) -> None:
-    toolang_root = tmp_path / "toolang"
-    catalog = JobCatalog(toolang_root, "alice")
-
-    path = catalog.create(
+def test_job_file_keeps_identity_in_meta() -> None:
+    task = _job("task", "review", "Review the API.", title="XBY-26 - Review")
+    chore = _job(
         "chore",
-        "---\nschedule: FREQ=HOURLY;INTERVAL=2\nstate: inactive\n---\n\nSync state.\n",
+        "sync",
+        "Sync state.",
+        schedule="FREQ=HOURLY;INTERVAL=2",
     )
 
-    chore = catalog.list(kind="chore")[0]
-    saved = path.read_text(encoding="utf-8")
-
-    assert chore.lifecycle == "ready"
-    assert chore.document.schedule == "FREQ=HOURLY;INTERVAL=2"
-    assert "state: inactive" not in saved
-    assert "schedule: FREQ=HOURLY;INTERVAL=2" in saved
+    assert task.meta["id"] == "review"
+    assert task.id == "review"
+    assert chore.schedule == "FREQ=HOURLY;INTERVAL=2"
 
 
-def test_lifecycle_moves_between_folders(tmp_path) -> None:
-    toolang_root = tmp_path / "toolang"
-    catalog = JobCatalog(toolang_root, "alice")
-    path = catalog.create("task", "---\n---\n\nDraftable.\n")
-    task_id = catalog.list(kind="task")[0].document.task_id()
+def test_authored_jobs_crud_returns_job_files(tmp_path: Path) -> None:
+    catalog = AuthoredJobs(tmp_path)
+    created = catalog.create(_job("task", "review", "Review."))
+    updated = catalog.update(created.with_body("Review carefully."))
+    removed = catalog.remove("task", "review")
 
-    draft_path = catalog.draft("task", task_id)
-    assert (
-        draft_path
-        == toolang_root / "agents" / "alice" / "drafts" / "tasks" / f"{task_id}.md"
-    )
-    assert not path.exists()
-    assert catalog.list(kind="task") == ()
-    assert (
-        catalog.list(kind="task", lifecycle="draft")[0].document.task_id()
-        == task_id
-    )
-
-    ready_path = catalog.ready("task", task_id)
-    assert ready_path == path
-    archive_path = catalog.archive("task", task_id)
-    assert (
-        archive_path
-        == toolang_root / "agents" / "alice" / "archive" / "tasks" / f"{task_id}.md"
-    )
+    assert created.path == tmp_path / "tasks" / "review.md"
+    assert updated.body == "Review carefully."
+    assert removed == updated
+    assert removed.path is not None and not removed.path.exists()
 
 
-def test_clone_creates_ready_copy_with_new_id(tmp_path) -> None:
-    toolang_root = tmp_path / "toolang"
-    catalog = JobCatalog(toolang_root, "alice")
-    original = catalog.create(
-        "task",
-        "---\ntitle: Original\n---\n\nReview the original task.\n",
-        lifecycle="draft",
-    )
-    task_id = catalog.list(kind="task", lifecycle="draft")[0].document.task_id()
+def test_job_name_is_meta_and_does_not_rename_the_file(tmp_path: Path) -> None:
+    catalog = AuthoredJobs(tmp_path)
+    created = catalog.create(_job("task", "review", "Review."))
 
-    clone = catalog.clone("task", task_id)
-    cloned = catalog.list(kind="task")[0]
+    updated = catalog.update(created.with_meta({**created.meta, "name": "renamed"}))
 
-    assert original.exists()
-    assert clone == cloned.path
-    assert cloned.document.task_id() != task_id
-    assert cloned.document.title == "Original"
-    assert cloned.document.body == "Review the original task."
-    assert cloned.lifecycle == "ready"
+    assert updated.id == "review"
+    assert updated.name == "renamed"
+    assert updated.path == tmp_path / "tasks" / "review.md"
+    assert "name: renamed" in updated.content
 
 
-def test_manual_task_file_gets_id_on_scan(tmp_path) -> None:
-    toolang_root = tmp_path / "toolang"
-    catalog = JobCatalog(toolang_root, "alice")
-    path = toolang_root / "agents" / "alice" / "tasks" / "manual.md"
+def test_state_assigns_and_persists_missing_manual_job_id(tmp_path: Path) -> None:
+    home = tmp_path / "agents" / "alice"
+    path = home / "tasks" / "manual.md"
     path.parent.mkdir(parents=True)
-    path.write_text(
-        "---\ntitle: Manual task\n---\n\nReview manually added job_definitions.\n",
-        encoding="utf-8",
-    )
+    path.write_text("---\ntitle: Manual\n---\nReview manually.\n", encoding="utf-8")
 
-    entry = catalog.list(kind="task")[0]
-    saved = path.read_text(encoding="utf-8")
+    jobs = HomeJobs.load(tmp_path, "alice")
+    job = AuthoredJobs(home).list(kind="task")[0]
 
-    assert entry.path == path
-    assert entry.document.task_id()
-    assert "\nid: " in saved
-
-
-def _archive_bucket(value: str) -> str:
-    return decode_id(value, family=LOCAL_ID_FAMILY).bucket_started_at.strftime(
-        "%Y%m%dT%HZ"
-    )
+    assert job.path == path
+    assert isinstance(job.meta["id"], str)
+    assert job.id != "manual"
+    assert jobs.definitions[0].id == job.id
+    assert f"id: {job.id}" in path.read_text(encoding="utf-8")

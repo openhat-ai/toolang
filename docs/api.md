@@ -509,7 +509,7 @@ Task items include:
 
 - `id`
 - `kind`
-- `lifecycle`
+- `stage`
 - `status`
 - `title`
 - `path`
@@ -520,7 +520,7 @@ Chore items include:
 
 - `id`
 - `kind`
-- `lifecycle`
+- `stage`
 - `status`
 - `schedule`
 - `title`
@@ -528,7 +528,7 @@ Chore items include:
 - `updated_at`
 - `runtime`
 
-`lifecycle` values are:
+`stage` values are:
 
 - `ready`
 - `draft`
@@ -572,7 +572,7 @@ Task create requests accept:
 }
 ```
 
-Task patch requests accept any subset of `title` and `body`. Lifecycle actions
+Task patch requests accept any subset of `title` and `body`. Stage actions
 use the task `draft`, `ready`, and `archive` endpoints. `task reopen` sets a
 completed, failed, or canceled task back to scheduler status `todo`.
 Delete is destructive and is available only through archived routes.
@@ -588,7 +588,7 @@ Chore create requests accept:
 ```
 
 Chore patch requests accept any subset of `title`, `body`, and `schedule`.
-Lifecycle actions use the chore `draft`, `ready`, and `archive` endpoints.
+Stage actions use the chore `draft`, `ready`, and `archive` endpoints.
 `chore run` starts one manual occurrence without changing the schedule.
 Delete is destructive and is available only through archived routes.
 

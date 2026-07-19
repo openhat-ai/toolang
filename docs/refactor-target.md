@@ -43,7 +43,7 @@ toolang/
 ├── agent/                  # runtime materialization, processes, tools, and assembly
 ├── api/                    # FastAPI application and resource routes
 ├── base/                   # plugin-facing protocols and shared value types
-├── catalog/                # authored agent, cap, and job CRUD
+├── catalog/                # authored agent, cap, and job CRUD plus templates
 ├── cli/                    # CLI entry points and user interfaces
 ├── common/                 # small package-neutral primitives
 ├── config/                 # runtime configuration and logging
@@ -51,7 +51,6 @@ toolang/
 ├── lang/                   # .too AST, parsing, lowering, validation, formatting
 ├── plugin/                 # plugin loading, config, and built-in implementations
 ├── state/                  # durable/prepared files and immutable agent state
-├── templates/              # built-in authored-file templates
 └── work/                   # effective jobs, file requests, watchers, stores, scheduling
 ```
 
@@ -90,55 +89,71 @@ be edited directly until a concrete editing API is needed.
 Catalogs modify source files only. A catalog mutation does not directly mutate
 a watcher snapshot or a runtime store.
 
-The canonical implementations are `catalog.agent.AgentCatalog`,
-`catalog.cap.CapCatalog`, and `catalog.job.JobCatalog`.
+Bundled authored-file templates live under `catalog.templates` because they
+seed catalog-owned agent, cap, and job files. They are not a separate runtime
+domain.
 
-### AgentCatalog
+The canonical collections are `catalog.agent.LocalAgents`,
+`catalog.cap.AuthoredCaps`, `catalog.cap.WiredCaps`, and
+`catalog.job.AuthoredJobs`.
 
-`AgentCatalog` manages resident agent directories under one Toolang root:
+### LocalAgents
+
+`LocalAgents` manages resident agent homes under one explicitly supplied
+directory:
 
 - `list()`
 - `get()`
 - `create()`
-- `clone()`
+- `rename()`
 - `remove()`
 
-It returns `AgentLayout` values. Remote agent source resolution and fetching
-belong to the catalog; visiting and roaming materialization belongs to
-`toolang.agent`. Process start, stop, and status belong to `AgentProcess`.
+It works directly with agent names and home paths; there is no `LocalAgent`
+model. Remote source resolution, cloning orchestration, and visiting or roaming
+materialization belong to `toolang.agent` and the CLI. Process start, stop, and
+status belong to `AgentProcess`.
 
-### CapCatalog
+`create()` always receives explicit authored content. Callers that want a
+bundled starting point load or render it through `catalog.templates`; catalog
+CRUD does not keep a second inline default template or rewrite the supplied
+content to match the catalog key.
 
-Each `CapCatalog` instance manages one root or agent-home cap location:
+### AuthoredCaps And WiredCaps
+
+`AuthoredCaps` receives one cap directory and manages `CapFile` values.
+`WiredCaps` receives one config-file path and manages `CapRef` values. Both
+provide:
 
 - `list()`
 - `get()`
 - `create()`
 - `update()`
 - `remove()`
-- `snapshot()`
 
-Remote source resolution belongs to the catalog. Remote content fetching,
-caching, and effective-cap materialization remain in `toolang.state`.
+`remove()` returns the removed value. Remote reference resolution, content
+fetching, caching, and effective-cap materialization belong to `toolang.state`.
+`WiredCaps` edits its TOML tables with a round-trip parser so unrelated config,
+formatting, and comments remain authored source rather than being regenerated.
+All three file-backed collections expose `write_lock()` and use that same
+reentrant inter-process lock internally for mutations. Callers may hold the lock
+around a larger multi-operation transaction.
 
-### JobCatalog
+### AuthoredJobs
 
-`JobCatalog` manages authored task and chore files for one agent:
+`AuthoredJobs` receives one agent-home directory and manages `JobFile` values:
 
 - `list()`
 - `get()`
 - `create()`
 - `update()`
-- `clone()`
-- `draft()`
-- `ready()`
-- `archive()`
-- `reopen()`
+- `move()`
 - `remove()`
-- `snapshot()`
 
-Its snapshot result is `HomeJobs`. Scheduler state is not written by the
-catalog.
+`JobFile.stage` records folder placement as `draft`, `ready`, or `archived`.
+Stable identity remains in `JobFile.meta["id"]`, while the authored logical name
+is `JobFile.meta["name"]`. The catalog enforces id uniqueness across kinds and
+stages but does not allocate ids or write scheduler state. `toolang.work`
+allocates and persists missing ids before publishing home-job state.
 
 
 ## Agent State

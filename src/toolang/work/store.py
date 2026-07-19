@@ -11,7 +11,9 @@ import sqlite3
 import threading
 from typing import Literal, cast
 
-from toolang.catalog import job_files as job_definitions
+from dateutil.rrule import rrulestr
+
+from toolang.catalog.job import JobKind
 from ..execution.records import RunStatus
 from .state import AgentJobs, JobDefinition
 
@@ -26,7 +28,7 @@ class JobRecord:
     """One scheduler projection row."""
 
     job_id: str
-    kind: job_definitions.JobKind
+    kind: JobKind
     path: str
     definition_hash: str
     thread_id: str
@@ -71,13 +73,13 @@ class JobStore:
         self,
         *,
         jobs: AgentJobs,
-        kind: job_definitions.JobKind | None = None,
+        kind: JobKind | None = None,
         now: datetime | None = None,
     ) -> tuple[JobRecord, ...]:
         """Reconcile one immutable definition snapshot into durable state."""
 
         current = _utc(now)
-        seen: set[tuple[str, job_definitions.JobKind]] = set()
+        seen: set[tuple[str, JobKind]] = set()
         records: list[JobRecord] = []
         with self._write():
             for definition in jobs.definitions:
@@ -95,9 +97,7 @@ class JobStore:
             self._delete_missing_locked(kind=kind, seen=seen)
         return tuple(records)
 
-    def get(
-        self, *, job_id: str, kind: job_definitions.JobKind | None = None
-    ) -> JobRecord | None:
+    def get(self, *, job_id: str, kind: JobKind | None = None) -> JobRecord | None:
         with self._lock:
             if kind is None:
                 row = self._conn.execute(
@@ -127,9 +127,7 @@ class JobStore:
             ).fetchone()
         return _job_from_row(row) if row is not None else None
 
-    def list(
-        self, *, kind: job_definitions.JobKind | None = None
-    ) -> tuple[JobRecord, ...]:
+    def list(self, *, kind: JobKind | None = None) -> tuple[JobRecord, ...]:
         with self._lock:
             if kind is None:
                 rows = self._conn.execute(
@@ -146,7 +144,7 @@ class JobStore:
         self,
         *,
         jobs: AgentJobs,
-        kind: job_definitions.JobKind,
+        kind: JobKind,
         run_id: str,
         now: datetime | None = None,
         manual: bool = False,
@@ -327,7 +325,7 @@ class JobStore:
                 next_at = (
                     None
                     if definition is None or definition.schedule is None
-                    else job_definitions.next_scheduled_at(
+                    else _next_scheduled_at(
                         definition.schedule,
                         anchor=current,
                         not_before=current,
@@ -444,8 +442,8 @@ class JobStore:
     def _delete_missing_locked(
         self,
         *,
-        kind: job_definitions.JobKind | None,
-        seen: set[tuple[str, job_definitions.JobKind]],
+        kind: JobKind | None,
+        seen: set[tuple[str, JobKind]],
     ) -> None:
         rows = (
             self._conn.execute("SELECT job_id, kind FROM jobs").fetchall()
@@ -455,7 +453,7 @@ class JobStore:
             ).fetchall()
         )
         for row in rows:
-            key = (str(row["job_id"]), cast(job_definitions.JobKind, str(row["kind"])))
+            key = (str(row["job_id"]), cast(JobKind, str(row["kind"])))
             if key not in seen:
                 self._conn.execute(
                     "DELETE FROM jobs WHERE job_id = ? AND kind = ?",
@@ -465,7 +463,7 @@ class JobStore:
     def _select_claimable_locked(
         self,
         *,
-        kind: job_definitions.JobKind,
+        kind: JobKind,
         now: datetime,
         manual: bool,
     ) -> sqlite3.Row | None:
@@ -570,11 +568,23 @@ def open_job_store(toolang_root: Path, agent_name: str) -> JobStore:
     return JobStore(jobs_db_path(toolang_root, agent_name))
 
 
+def _next_scheduled_at(
+    schedule_text: str,
+    *,
+    anchor: datetime,
+    not_before: datetime,
+    inclusive: bool,
+) -> datetime | None:
+    schedule = rrulestr(schedule_text, dtstart=_utc(anchor))
+    candidate = schedule.after(_utc(not_before), inc=inclusive)
+    return None if candidate is None else _utc(candidate)
+
+
 def _initial_next_run(definition: JobDefinition, *, now: datetime) -> str | None:
     if definition.kind == "task" or definition.schedule is None:
         return None
     return _iso(
-        job_definitions.next_scheduled_at(
+        _next_scheduled_at(
             definition.schedule,
             anchor=now,
             not_before=now,
@@ -594,7 +604,7 @@ def _task_status_from_run(status: RunStatus) -> JobStatus:
 def _job_from_row(row: sqlite3.Row) -> JobRecord:
     return JobRecord(
         job_id=str(row["job_id"]),
-        kind=cast(job_definitions.JobKind, str(row["kind"])),
+        kind=cast(JobKind, str(row["kind"])),
         path=str(row["path"]),
         definition_hash=str(row["definition_hash"]),
         thread_id=str(row["thread_id"]),

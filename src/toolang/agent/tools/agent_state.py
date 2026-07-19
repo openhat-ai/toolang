@@ -10,15 +10,26 @@ from typing import Any, Literal, cast
 import frontmatter
 
 from toolang.catalog import cap as caps
+from toolang.catalog.error import CatalogError
 from toolang.state import caps as cap_state
 from toolang.common.immutable import mutable_data
-from toolang.catalog.job import JobCatalog
-from toolang.catalog import job_files as job_definitions
+from toolang.catalog.job import (
+    DEFAULT_CHORE_SCHEDULE,
+    AuthoredJobs,
+    JobFile,
+    JobKind,
+)
 from toolang.common.error import ToolangError
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.state.prepared import PreparedEntry, PreparedVisibility
+from toolang.work.authoring import (
+    allocate_authored_job_id,
+    assign_missing_authored_job_ids,
+    new_job_file,
+)
+from toolang.work.state import job_thread_id
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
 VisibilityFilter = Literal["all", "private", "shared"]
@@ -51,13 +62,13 @@ class AgentStatePlugin:
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             scope = _scope(context)
-            catalog = JobCatalog(scope.toolang_root, scope.agent_name)
+            catalog = _jobs(scope)
             entries = list(catalog.list(kind="task"))
             if include_archived:
-                entries.extend(catalog.list(kind="task", lifecycle="archived"))
+                entries.extend(catalog.list(kind="task", stage="archived"))
             return {
                 "tasks": [
-                    _task_payload(cast(job_definitions.TaskEntry, entry))
+                    _task_payload(entry)
                     for entry in sorted(entries, key=lambda item: str(item.path))
                 ]
             }
@@ -69,12 +80,12 @@ class AgentStatePlugin:
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             scope = _scope(context)
-            entry = JobCatalog(scope.toolang_root, scope.agent_name).get(
+            entry = _jobs(scope).get(
                 "task",
                 task_id,
-                lifecycle=None if include_archived else "ready",
+                stage=None if include_archived else "ready",
             )
-            if not isinstance(entry, job_definitions.TaskEntry):
+            if entry is None:
                 raise ToolangError(f"task not found: {task_id}")
             return {"task": _task_payload(entry)}
 
@@ -88,22 +99,13 @@ class AgentStatePlugin:
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             scope = _scope(context)
-            catalog = JobCatalog(scope.toolang_root, scope.agent_name)
-            document = job_definitions.TaskFile.model_validate(
-                {
-                    "id": catalog.allocate_id(),
-                    "title": _blank_to_none(title),
-                    "body": body,
-                }
+            document = _new_job(
+                scope,
+                kind="task",
+                title=_blank_to_none(title),
+                body=body,
             )
-            path = catalog.create_document(document)
-            return {
-                "task": _task_payload(
-                    job_definitions.TaskEntry(
-                        name=path.stem, path=path, document=document
-                    )
-                )
-            }
+            return {"task": _task_payload(_jobs(scope).create(document))}
 
         @tool(
             name="task_update", description="Update fields on one task document by id."
@@ -115,30 +117,25 @@ class AgentStatePlugin:
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             scope = _scope(context)
-            catalog = JobCatalog(scope.toolang_root, scope.agent_name)
+            catalog = _jobs(scope)
             entry = catalog.get(
                 "task",
                 task_id,
-                lifecycle=None,
+                stage=None,
             )
-            if not isinstance(entry, job_definitions.TaskEntry):
+            if entry is None:
                 raise ToolangError(f"task not found: {task_id}")
-            updates: dict[str, object] = {}
+            meta = dict(entry.meta)
             if title is not None:
-                updates["title"] = _blank_to_none(title)
+                normalized = _blank_to_none(title)
+                if normalized is None:
+                    meta.pop("title", None)
+                else:
+                    meta["title"] = normalized
+            document = entry.with_meta(meta)
             if body is not None:
-                updates["body"] = body
-            document = job_definitions.TaskFile.model_validate(
-                {**entry.document.model_dump(mode="python"), **updates}
-            )
-            path = catalog.save(entry, document)
-            return {
-                "task": _task_payload(
-                    job_definitions.TaskEntry(
-                        name=path.stem, path=path, document=document
-                    )
-                )
-            }
+                document = document.with_body(body)
+            return {"task": _task_payload(catalog.update(document))}
 
         @tool(
             name="chore_list", description="List chore documents for the current agent."
@@ -148,13 +145,13 @@ class AgentStatePlugin:
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             scope = _scope(context)
-            catalog = JobCatalog(scope.toolang_root, scope.agent_name)
+            catalog = _jobs(scope)
             entries = list(catalog.list(kind="chore"))
             if include_archived:
-                entries.extend(catalog.list(kind="chore", lifecycle="archived"))
+                entries.extend(catalog.list(kind="chore", stage="archived"))
             return {
                 "chores": [
-                    _chore_payload(cast(job_definitions.ChoreEntry, entry))
+                    _chore_payload(entry)
                     for entry in sorted(entries, key=lambda item: str(item.path))
                 ]
             }
@@ -166,12 +163,12 @@ class AgentStatePlugin:
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             scope = _scope(context)
-            entry = JobCatalog(scope.toolang_root, scope.agent_name).get(
+            entry = _jobs(scope).get(
                 "chore",
                 chore_id,
-                lifecycle=None if include_archived else "ready",
+                stage=None if include_archived else "ready",
             )
-            if not isinstance(entry, job_definitions.ChoreEntry):
+            if entry is None:
                 raise ToolangError(f"chore not found: {chore_id}")
             return {"chore": _chore_payload(entry)}
 
@@ -181,28 +178,19 @@ class AgentStatePlugin:
         )
         def chore_create(
             body: str,
-            schedule: str = job_definitions.DEFAULT_CHORE_SCHEDULE,
+            schedule: str = DEFAULT_CHORE_SCHEDULE,
             title: str | None = None,
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             scope = _scope(context)
-            catalog = JobCatalog(scope.toolang_root, scope.agent_name)
-            document = job_definitions.ChoreFile.model_validate(
-                {
-                    "id": catalog.allocate_id(),
-                    "title": _blank_to_none(title),
-                    "schedule": schedule,
-                    "body": body,
-                }
+            document = _new_job(
+                scope,
+                kind="chore",
+                title=_blank_to_none(title),
+                body=body,
+                schedule=schedule,
             )
-            path = catalog.create_document(document)
-            return {
-                "chore": _chore_payload(
-                    job_definitions.ChoreEntry(
-                        name=path.stem, path=path, document=document
-                    )
-                )
-            }
+            return {"chore": _chore_payload(_jobs(scope).create(document))}
 
         @tool(
             name="chore_update",
@@ -216,32 +204,27 @@ class AgentStatePlugin:
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             scope = _scope(context)
-            catalog = JobCatalog(scope.toolang_root, scope.agent_name)
+            catalog = _jobs(scope)
             entry = catalog.get(
                 "chore",
                 chore_id,
-                lifecycle=None,
+                stage=None,
             )
-            if not isinstance(entry, job_definitions.ChoreEntry):
+            if entry is None:
                 raise ToolangError(f"chore not found: {chore_id}")
-            updates: dict[str, object] = {}
+            meta = dict(entry.meta)
             if title is not None:
-                updates["title"] = _blank_to_none(title)
-            if body is not None:
-                updates["body"] = body
+                normalized = _blank_to_none(title)
+                if normalized is None:
+                    meta.pop("title", None)
+                else:
+                    meta["title"] = normalized
             if schedule is not None:
-                updates["schedule"] = schedule
-            document = job_definitions.ChoreFile.model_validate(
-                {**entry.document.model_dump(mode="python"), **updates}
-            )
-            path = catalog.save(entry, document)
-            return {
-                "chore": _chore_payload(
-                    job_definitions.ChoreEntry(
-                        name=path.stem, path=path, document=document
-                    )
-                )
-            }
+                meta["schedule"] = schedule
+            document = entry.with_meta(meta)
+            if body is not None:
+                document = document.with_body(body)
+            return {"chore": _chore_payload(catalog.update(document))}
 
         @tool(
             name="psyche_list",
@@ -585,29 +568,63 @@ def _scope(context: ToolContext | None) -> _AgentStateScope:
     return _AgentStateScope(toolang_root=home.parent.parent, agent_name=home.name)
 
 
-def _task_payload(entry: job_definitions.TaskEntry) -> dict[str, Any]:
-    document = entry.document
+def _task_payload(document: JobFile) -> dict[str, Any]:
     return {
-        "id": document.task_id(),
-        "thread_id": document.thread_id(),
-        "path": str(entry.path),
+        "id": document.id,
+        "thread_id": job_thread_id(document),
+        "path": str(_job_path(document)),
         "title": document.title,
-        "lifecycle": entry.lifecycle,
+        "stage": document.stage,
         "body": document.body,
     }
 
 
-def _chore_payload(entry: job_definitions.ChoreEntry) -> dict[str, Any]:
-    document = entry.document
+def _chore_payload(document: JobFile) -> dict[str, Any]:
     return {
-        "id": document.chore_id(),
-        "thread_id": document.thread_id(),
-        "path": str(entry.path),
+        "id": document.id,
+        "thread_id": job_thread_id(document),
+        "path": str(_job_path(document)),
         "title": document.title,
-        "lifecycle": entry.lifecycle,
+        "stage": document.stage,
         "schedule": document.schedule,
         "body": document.body,
     }
+
+
+def _jobs(scope: _AgentStateScope) -> AuthoredJobs:
+    catalog = AuthoredJobs(scope.toolang_root / "agents" / scope.agent_name)
+    try:
+        assign_missing_authored_job_ids(
+            scope.toolang_root,
+            scope.agent_name,
+            catalog=catalog,
+        )
+    except (CatalogError, ValueError) as exc:
+        raise ToolangError(str(exc)) from exc
+    return catalog
+
+
+def _new_job(
+    scope: _AgentStateScope,
+    *,
+    kind: JobKind,
+    title: str | None,
+    body: str,
+    schedule: str | None = None,
+) -> JobFile:
+    return new_job_file(
+        kind=kind,
+        job_id=allocate_authored_job_id(scope.toolang_root, scope.agent_name),
+        title=title,
+        body=body,
+        schedule=schedule,
+    )
+
+
+def _job_path(job: JobFile) -> Path:
+    if job.path is None:
+        raise ValueError("authored job path is required")
+    return job.path
 
 
 def _list_caps(
@@ -648,14 +665,10 @@ def _create_cap(
 ) -> dict[str, Any]:
     scope = _scope(context)
     cap_visibility = _visibility(visibility)
-    catalog = caps.CapCatalog(
-        scope.toolang_root,
-        scope.agent_name,
-        visibility=cap_visibility,
-    )
+    catalog = _authored_caps(scope, cap_visibility)
     if catalog.get(kind, name) is not None:
         raise ToolangError(f"local {kind} already exists: {name}")
-    catalog.create(kind, name, text)
+    catalog.create(caps.CapFile.parse(text, kind=kind, name=name))
     entry = _find_cap_entry(
         scope, kind, name, visibility=cap_visibility, source_form="file"
     )
@@ -673,11 +686,9 @@ def _update_cap(
     scope = _scope(context)
     cap_visibility = _visibility(visibility)
     _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="file")
-    caps.CapCatalog(
-        scope.toolang_root,
-        scope.agent_name,
-        visibility=cap_visibility,
-    ).update(kind, name, text)
+    _authored_caps(scope, cap_visibility).update(
+        caps.CapFile.parse(text, kind=kind, name=name)
+    )
     entry = _find_cap_entry(
         scope, kind, name, visibility=cap_visibility, source_form="file"
     )
@@ -699,13 +710,7 @@ def _delete_cap(
     deleted_path = scope.toolang_root / entry.path
     if entry.shape == "dir":
         deleted_path = deleted_path.parent
-    removed = caps.CapCatalog(
-        scope.toolang_root,
-        scope.agent_name,
-        visibility=cap_visibility,
-    ).remove(kind, name)
-    if not removed:
-        raise ToolangError(f"local {kind} not found: {name}")
+    _authored_caps(scope, cap_visibility).remove(kind, name)
     return {
         "kind": kind,
         "name": name,
@@ -771,11 +776,10 @@ def _cap_payload(
     if line is not None:
         item["line"] = line
     if include_content and entry.source.form == "file":
-        item["content"] = caps.CapCatalog(
-            scope.toolang_root,
-            scope.agent_name,
-            visibility=visibility,
-        ).read(entry.kind, entry.name)
+        cap = _authored_caps(scope, visibility).get(entry.kind, entry.name)
+        if cap is None:
+            raise ToolangError(f"local {entry.kind} not found: {entry.name}")
+        item["content"] = cap.content
     return item
 
 
@@ -787,12 +791,22 @@ def _load_local_cap_parts(
     visibility: str,
 ) -> frontmatter.Post:
     cap_visibility = _visibility(visibility)
-    text = caps.CapCatalog(
-        scope.toolang_root,
-        scope.agent_name,
-        visibility=cap_visibility,
-    ).read(kind, name)
-    return frontmatter.loads(text)
+    cap = _authored_caps(scope, cap_visibility).get(kind, name)
+    if cap is None:
+        raise ToolangError(f"local {kind} not found: {name}")
+    return frontmatter.loads(cap.content)
+
+
+def _authored_caps(
+    scope: _AgentStateScope,
+    visibility: PreparedVisibility,
+) -> caps.AuthoredCaps:
+    directory = (
+        scope.toolang_root
+        if visibility == "shared"
+        else scope.toolang_root / "agents" / scope.agent_name
+    )
+    return caps.AuthoredCaps(directory)
 
 
 def _visibility(value: str) -> PreparedVisibility:

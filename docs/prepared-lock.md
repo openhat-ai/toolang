@@ -11,6 +11,10 @@ the runtime. A prepared lock records three things:
   files must be repaired.
 - `prepared`: structured runtime objects built from sources and artifacts.
 
+Preparation reads program, config, and cap content from one captured durable
+source snapshot. It does not reopen authored files while projecting that
+snapshot, so one lock cannot mix content from two filesystem versions.
+
 
 ## Location
 
@@ -22,6 +26,12 @@ Prepared lock files live in prepared roots:
 | Agent | `${TOOLANG_ROOT}/agents/<agent>/.caps/lock.json` | `${TOOLANG_ROOT}/agents/<agent>` |
 
 The lock file does not store scope or agent name. Its location defines both.
+
+Writes are serialized per prepared scope. Shared preparation uses
+`${TOOLANG_ROOT}/.prepare-shared.lock`; private preparation uses
+`${TOOLANG_ROOT}/agents/<agent>/.prepare-private.lock`. A writer reloads the
+latest prepared lock after acquiring the write lock so concurrent processes
+can reuse work completed while they were waiting.
 
 All paths inside one lock are relative to that lock's path base. For example,
 an agent lock uses `agent.too`, `config.toml`, and `skills/pdf/SKILL.md`.

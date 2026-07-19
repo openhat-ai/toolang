@@ -12,6 +12,7 @@ import click
 import typer
 
 from ...common.error import ToolangError
+from ...catalog.error import CatalogError
 
 
 @dataclass(slots=True)
@@ -84,5 +85,11 @@ def runtime_environ(
 def user_call(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     try:
         return function(*args, **kwargs)
-    except (FileExistsError, FileNotFoundError, ToolangError, ValueError) as exc:
+    except (
+        CatalogError,
+        FileExistsError,
+        FileNotFoundError,
+        ToolangError,
+        ValueError,
+    ) as exc:
         raise click.ClickException(str(exc)) from exc

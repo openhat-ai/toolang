@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 import hashlib
 import io
 import json
@@ -13,7 +14,7 @@ from pathlib import Path
 import tarfile
 from typing import Literal, cast
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 import frontmatter
@@ -44,29 +45,252 @@ from toolang.common.selectors import (
     split_selector_list,
     selector_identity_matches,
 )
-from toolang.common.github import GitHubRef, github_raw_url, parse_github_ref
+from toolang.common.github import (
+    GitHubRef,
+    github_raw_url,
+    parse_github_ref,
+    parse_github_url,
+)
 
-CAP_DIR_NAMES = ("psyches", "skills", "services", "prompts")
-CAP_KINDS: tuple[EntryKind, ...] = ("psyche", "skill", "service", "prompt")
+CAP_KINDS: tuple[EntryKind, ...] = cap_catalog.CAP_KINDS
 Visibility = PreparedVisibility
 EntryOrigin = SourceOrigin
 EntryForm = SourceForm
 EntryScope = Literal["root", "home", "here"]
 EMBEDDED_CAP_KINDS = frozenset({"psyche", "service", "prompt"})
 FILE_BACKED_KINDS = frozenset({"psyche", "service", "prompt"})
-DIR_NAME_BY_KIND: dict[EntryKind, str] = {
-    "psyche": "psyches",
-    "skill": "skills",
-    "service": "services",
-    "prompt": "prompts",
-}
-KIND_BY_DIR_NAME = {
-    "psyches": "psyche",
-    "skills": "skill",
-    "services": "service",
-    "prompts": "prompt",
-}
+DIR_NAME_BY_KIND: dict[EntryKind, str] = cap_catalog.CAP_DIR_BY_KIND
+KIND_BY_DIR_NAME: dict[str, EntryKind] = cap_catalog.CAP_KIND_BY_DIR
 REMOTE_CAP_MATERIALIZE_WORKERS = 4
+
+
+def resolve_remote_ref(
+    kind: EntryKind,
+    ref: str,
+    *,
+    progress: ProgressSink | None = None,
+) -> str:
+    """Resolve one remote cap ref or shorthand to a canonical ref."""
+
+    text = ref.strip()
+    emit_progress(
+        progress,
+        id=f"cap.resolve:{kind}:{text}",
+        phase="cap.resolve",
+        label=f"Resolve {kind}",
+        status="running",
+        detail=text,
+    )
+    try:
+        if "://" in text:
+            canonical = canonicalize_remote_ref(kind, text)
+            if canonical.startswith("github://") and not _github_remote_exists(
+                kind, canonical
+            ):
+                raise ValueError(
+                    f"remote {kind} not found or missing entry file: {ref}"
+                )
+        else:
+            candidates = _remote_ref_candidates(kind, text)
+            canonical = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if _github_remote_exists(kind, candidate)
+                ),
+                "",
+            )
+            if not canonical:
+                message = (
+                    f"invalid remote ref: {ref}"
+                    if not candidates
+                    else f"could not resolve remote {kind} shorthand: {ref}"
+                )
+                raise ValueError(message)
+    except Exception as exc:
+        emit_progress(
+            progress,
+            id=f"cap.resolve:{kind}:{text}",
+            phase="cap.resolve",
+            label=f"Resolve {kind}",
+            status="failed",
+            detail=str(exc),
+        )
+        raise
+    emit_progress(
+        progress,
+        id=f"cap.resolve:{kind}:{text}",
+        phase="cap.resolve",
+        label=f"Resolve {kind}",
+        status="ok",
+        detail=canonical,
+    )
+    return canonical
+
+
+def canonicalize_remote_ref(kind: EntryKind, ref: str) -> str:
+    """Canonicalize one explicit or shorthand remote cap ref."""
+
+    text = ref.strip()
+    if "://" in text:
+        github_ref = parse_github_url(text)
+        if github_ref is None and text.startswith("github://"):
+            github_ref = parse_github_ref(text)
+        if github_ref is not None:
+            if kind == "skill" and Path(github_ref.path).name == "SKILL.md":
+                github_ref = GitHubRef(
+                    owner=github_ref.owner,
+                    repo=github_ref.repo,
+                    path=str(Path(github_ref.path).parent),
+                    rev=github_ref.rev,
+                )
+            return github_ref.render()
+        return text
+    candidates = _remote_ref_candidates(kind, text)
+    if not candidates:
+        raise ValueError(f"invalid remote ref: {ref}")
+    return candidates[0]
+
+
+def remote_entry_name(kind: EntryKind, ref: str) -> str:
+    """Return the default authored name for one remote cap ref."""
+
+    canonical_ref = canonicalize_remote_ref(kind, ref)
+    if canonical_ref.startswith("github://"):
+        path = parse_github_ref(canonical_ref).path.rstrip("/")
+        if not path:
+            raise ValueError(f"invalid remote ref: {ref}")
+        return Path(path).name if kind == "skill" else Path(path).stem
+    parsed = urlparse(canonical_ref)
+    path = parsed.path.rstrip("/")
+    if not path:
+        raise ValueError(f"invalid remote ref: {ref}")
+    name = Path(path).name.split("@", 1)[0]
+    return name if kind == "skill" else Path(name).stem
+
+
+def _remote_ref_candidates(kind: EntryKind, ref: str) -> tuple[str, ...]:
+    slash_count = ref.count("/")
+    if slash_count == 2:
+        owner, repo, name = ref.split("/", 2)
+        if not owner or not repo or not name:
+            return ()
+        return _remote_ref_candidates_for_repo(kind, owner, repo, name)
+    if slash_count != 1:
+        return ()
+    owner, name = ref.split("/", 1)
+    if not owner or not name:
+        return ()
+    repositories: dict[EntryKind, tuple[tuple[str, str], ...]] = {
+        "skill": (
+            ("agents", f"skills/{name}"),
+            ("agent-skills", name),
+            ("agent-skills", f"skills/{name}"),
+            ("skills", name),
+            ("skills", f"skills/{name}"),
+        ),
+        "service": (
+            ("agents", f"services/{name}.md"),
+            ("agent-services", f"{name}.md"),
+            ("services", f"{name}.md"),
+        ),
+        "prompt": (
+            ("agents", f"prompts/{name}.md"),
+            ("agent-prompts", f"{name}.md"),
+            ("prompts", f"{name}.md"),
+        ),
+        "psyche": (
+            ("agents", f"psyches/{name}.md"),
+            ("agent-psyches", f"{name}.md"),
+            ("psyches", f"{name}.md"),
+        ),
+    }
+    return tuple(
+        _github_remote_ref_with_default_branch(owner, repo, path)
+        for repo, path in repositories[kind]
+    )
+
+
+def _remote_ref_candidates_for_repo(
+    kind: EntryKind,
+    owner: str,
+    repo: str,
+    name: str,
+) -> tuple[str, ...]:
+    return tuple(
+        _github_remote_ref_with_default_branch(owner, repo, path)
+        for path in _remote_path_candidates_for_repo(kind, repo, name)
+    )
+
+
+def _remote_path_candidates_for_repo(
+    kind: EntryKind,
+    repo: str,
+    name: str,
+) -> tuple[str, ...]:
+    if kind == "skill":
+        if repo in {"agent-skills", "skills"}:
+            return (name, f"skills/{name}")
+        return (f"skills/{name}", name)
+    directory = DIR_NAME_BY_KIND[kind]
+    if repo in {f"agent-{directory}", directory}:
+        return (f"{name}.md",)
+    return (f"{directory}/{name}.md", f"{name}.md")
+
+
+def _github_remote_ref_with_default_branch(owner: str, repo: str, path: str) -> str:
+    try:
+        rev = _github_repo_default_branch(owner, repo)
+    except ValueError:
+        rev = "main"
+    return GitHubRef(owner=owner, repo=repo, path=path, rev=rev).render()
+
+
+def _github_remote_exists(kind: EntryKind, ref: str) -> bool:
+    github_ref = parse_github_ref(ref)
+    probe_ref = github_ref
+    if kind == "skill":
+        probe_ref = GitHubRef(
+            owner=github_ref.owner,
+            repo=github_ref.repo,
+            path=str(Path(github_ref.path) / "SKILL.md"),
+            rev=github_ref.rev,
+        )
+    request = Request(
+        github_raw_url(probe_ref),
+        method="HEAD",
+        headers={"User-Agent": "toolang/0.1"},
+    )
+    try:
+        with urlopen(request, timeout=30):
+            return True
+    except (HTTPError, URLError):
+        return False
+
+
+@lru_cache
+def _github_repo_default_branch(owner: str, repo: str) -> str:
+    api_url = (
+        f"https://api.github.com/repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
+    )
+    request = Request(
+        api_url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "toolang/0.1",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"could not resolve GitHub default branch: {owner}/{repo}"
+        ) from exc
+    if not isinstance(data, dict) or not isinstance(data.get("default_branch"), str):
+        raise ValueError(f"unexpected GitHub repository response: {owner}/{repo}")
+    return data["default_branch"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +300,8 @@ class _RemoteEntryRequest:
     ref: str
     name: str | None
     relative_config_path: Path
-    config_path: Path
+    source_fingerprint: str
+    source_mtime_ns: int
     form: Literal["wired", "ref"]
     source_line: int | None = None
 
@@ -259,7 +484,7 @@ def collect_local_entries(
 
     entries: dict[str, PreparedEntry] = {}
     for item in durable.files:
-        entry = _local_entry_from_file(durable.toolang_root, durable.agent_name, item)
+        entry = _local_entry_from_file(durable, item)
         if entry is None:
             continue
         entry_visibility_value: PreparedVisibility = (
@@ -287,8 +512,7 @@ def _collect_visibility_entries_with_files(
         effective_remote_cache = _existing_remote_cache(durable, visibility=visibility)
     local_entries = collect_local_entries(durable, visibility=visibility, kinds=kinds)
     remote_entries, files = _collect_remote_entries(
-        durable.toolang_root,
-        durable.agent_name,
+        durable,
         visibility=visibility,
         kinds=kinds,
         materialize=materialize_remote,
@@ -571,12 +795,12 @@ def _cached_remote_entry(
         return None
     if (
         "://" in request.ref
-        and cap_catalog.canonicalize_remote_ref(request.kind, request.ref) == cached.ref
+        and canonicalize_remote_ref(request.kind, request.ref) == cached.ref
     ):
         return cached
     if request.form == "ref" and request.ref in {cached.ref, cached.authored_ref}:
         return cached
-    if cached.source_fingerprint != _file_fingerprint(request.config_path):
+    if cached.source_fingerprint != request.source_fingerprint:
         return None
     return cached
 
@@ -678,8 +902,7 @@ def durable_entries_snapshot(
 
 
 def _local_entry_from_file(
-    toolang_root: Path,
-    agent_name: str,
+    durable: DurableState,
     item: DurableFile,
 ) -> PreparedEntry | None:
     if item.category != "cap":
@@ -687,87 +910,115 @@ def _local_entry_from_file(
     visibility: PreparedVisibility = "shared" if item.origin == "root" else "private"
     relative_path = Path(item.relative_path)
     local_parts = _local_parts(
-        relative_path, agent_name=agent_name, visibility=visibility
+        relative_path, agent_name=durable.agent_name, visibility=visibility
     )
     if len(local_parts) < 2:
         return None
     directory_name = local_parts[0]
-    kind = cast(EntryKind | None, KIND_BY_DIR_NAME.get(directory_name))
+    kind = KIND_BY_DIR_NAME.get(directory_name)
     if kind is None:
         return None
     if kind == "skill":
-        return _skill_entry(
-            toolang_root, agent_name, visibility=visibility, name=local_parts[1]
-        )
+        if tuple(local_parts[2:]) != ("SKILL.md",):
+            return None
+        return _skill_entry(durable, item, visibility=visibility, name=local_parts[1])
     if kind in FILE_BACKED_KINDS and len(local_parts) == 2:
-        return _file_entry(toolang_root, relative_path, kind=kind)
+        return _file_entry(item, kind=kind)
     return None
 
 
 def _skill_entry(
-    toolang_root: Path,
-    agent_name: str,
+    durable: DurableState,
+    definition: DurableFile,
     *,
     visibility: PreparedVisibility,
     name: str,
-) -> PreparedEntry | None:
-    root_relative_dir = cap_catalog.relative_definition_root(
-        agent_name, visibility=visibility, kind="skill", name=name
-    )
+) -> PreparedEntry:
+    prefix = Path() if visibility == "shared" else Path("agents") / durable.agent_name
+    root_relative_dir = prefix / DIR_NAME_BY_KIND["skill"] / name
     root_relative_file = root_relative_dir / "SKILL.md"
-    entry_file = toolang_root / root_relative_file
-    if not entry_file.is_file():
-        return None
-    source_path = toolang_root / root_relative_dir
     return PreparedEntry(
         kind="skill",
         name=name,
         shape="dir",
-        ref=cap_catalog.local_cap_ref(
-            visibility=visibility,
-            kind="skill",
-            name=name,
-        ),
+        ref=_local_cap_ref(visibility, "skill", name),
         path=str(root_relative_file),
-        source=_source_record(
+        source=_snapshot_source_record(
+            durable,
             root_relative_path=root_relative_dir,
-            absolute_path=source_path,
-            origin="local",
-            form="file",
-            shape="dir",
         ),
-        meta=_load_meta(entry_file),
+        meta=_load_meta_text(definition.read_text()),
     )
 
 
 def _file_entry(
-    toolang_root: Path,
-    relative_path: Path,
+    item: DurableFile,
     *,
     kind: EntryKind,
-) -> PreparedEntry | None:
-    absolute_path = toolang_root / relative_path
-    if not absolute_path.is_file():
-        return None
+) -> PreparedEntry:
+    relative_path = Path(item.relative_path)
     return PreparedEntry(
         kind=kind,
         name=relative_path.stem,
         shape="file",
-        ref=cap_catalog.local_cap_ref(
-            visibility=_visibility_from_relative_path(relative_path),
-            kind=kind,
-            name=relative_path.stem,
+        ref=_local_cap_ref(
+            _visibility_from_relative_path(relative_path), kind, relative_path.stem
         ),
         path=str(relative_path),
-        source=_source_record(
+        source=_snapshot_file_source_record(
+            item,
             root_relative_path=relative_path,
-            absolute_path=absolute_path,
-            origin="local",
-            form="file",
-            shape="file",
         ),
-        meta=_load_meta(absolute_path),
+        meta=_load_meta_text(item.read_text()),
     )
+
+
+def _snapshot_source_record(
+    durable: DurableState,
+    *,
+    root_relative_path: Path,
+) -> PreparedSource:
+    files = tuple(
+        item
+        for item in durable.files
+        if Path(item.relative_path).is_relative_to(root_relative_path)
+    )
+    digest = hashlib.sha256()
+    for item in sorted(files, key=lambda candidate: candidate.relative_path):
+        relative_path = Path(item.relative_path).relative_to(root_relative_path)
+        digest.update(str(relative_path).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(item.digest.encode("utf-8"))
+        digest.update(b"\n")
+    latest_mtime_ns = max(item.mtime_ns for item in files)
+    return PreparedSource(
+        origin="local",
+        form="file",
+        path=str(root_relative_path),
+        updated_at=_mtime_text(latest_mtime_ns),
+        fingerprint=digest.hexdigest(),
+    )
+
+
+def _snapshot_file_source_record(
+    item: DurableFile,
+    *,
+    root_relative_path: Path,
+) -> PreparedSource:
+    return PreparedSource(
+        origin="local",
+        form="file",
+        path=str(root_relative_path),
+        updated_at=_mtime_text(item.mtime_ns),
+        fingerprint=item.digest,
+    )
+
+
+def _mtime_text(mtime_ns: int) -> str:
+    return datetime.fromtimestamp(
+        mtime_ns / 1_000_000_000,
+        tz=timezone.utc,
+    ).isoformat()
 
 
 def _source_record(
@@ -965,11 +1216,6 @@ def _updated_at(path: Path, *, shape: Literal["file", "dir"]) -> str:
     return datetime.fromtimestamp(latest / 1_000_000_000, tz=timezone.utc).isoformat()
 
 
-def _load_meta(path: Path) -> dict[str, object]:
-    post = frontmatter.loads(path.read_text(encoding="utf-8"))
-    return cast(dict[str, object], _json_compatible(dict(post.metadata)))
-
-
 def _load_meta_text(text: str) -> dict[str, object]:
     post = frontmatter.loads(text)
     return cast(dict[str, object], _json_compatible(dict(post.metadata)))
@@ -996,6 +1242,15 @@ def _visibility_from_relative_path(relative_path: Path) -> PreparedVisibility:
     return "private" if relative_path.parts[:1] == ("agents",) else "shared"
 
 
+def _local_cap_ref(
+    visibility: PreparedVisibility,
+    kind: EntryKind,
+    name: str,
+) -> str:
+    scope = "root" if visibility == "shared" else "home"
+    return f"{scope}://{DIR_NAME_BY_KIND[kind]}/{name}"
+
+
 def _local_parts(
     relative_path: Path, *, agent_name: str, visibility: PreparedVisibility
 ) -> tuple[str, ...]:
@@ -1005,8 +1260,7 @@ def _local_parts(
 
 
 def _collect_remote_entries(
-    toolang_root: Path,
-    agent_name: str,
+    durable: DurableState,
     *,
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
@@ -1015,14 +1269,13 @@ def _collect_remote_entries(
     progress: ProgressSink | None = None,
 ) -> tuple[tuple[PreparedEntry, ...], dict[str, bytes]]:
     requests = _collect_remote_entry_requests(
-        toolang_root,
-        agent_name,
+        durable,
         visibility=visibility,
         kinds=kinds,
     )
     return _materialize_remote_entry_requests(
-        toolang_root,
-        agent_name,
+        durable.toolang_root,
+        durable.agent_name,
         requests,
         materialize=materialize,
         remote_cache=remote_cache,
@@ -1031,8 +1284,7 @@ def _collect_remote_entries(
 
 
 def _collect_remote_entry_requests(
-    toolang_root: Path,
-    agent_name: str,
+    durable: DurableState,
     *,
     visibility: PreparedVisibility | None,
     kinds: set[EntryKind] | None,
@@ -1040,21 +1292,29 @@ def _collect_remote_entry_requests(
     visibilities = ("shared", "private") if visibility is None else (visibility,)
     requests: list[_RemoteEntryRequest] = []
     for item_visibility in visibilities:
-        for entry in cap_catalog.list_wired_entries(
-            toolang_root,
-            agent_name,
-            visibility=item_visibility,
-            kinds=kinds,
+        config_origin = "root" if item_visibility == "shared" else "agent"
+        config_file = next(
+            (
+                item
+                for item in durable.files
+                if item.category == "config" and item.origin == config_origin
+            ),
+            None,
+        )
+        if config_file is None:
+            continue
+        for entry in cap_catalog.WiredCaps(config_file.path).parse(
+            config_file.read_text(), kinds=kinds
         ):
-            authored_config_path = toolang_root / entry.definition_file
             requests.append(
                 _RemoteEntryRequest(
                     visibility=item_visibility,
                     kind=entry.kind,
                     ref=entry.ref,
                     name=entry.name,
-                    relative_config_path=Path(entry.definition_file),
-                    config_path=authored_config_path,
+                    relative_config_path=Path(config_file.relative_path),
+                    source_fingerprint=config_file.digest,
+                    source_mtime_ns=config_file.mtime_ns,
                     form="wired",
                 )
             )
@@ -1075,7 +1335,7 @@ def _collect_program_use_entries(
     program_source = durable.load_program()
     program = program_source.parse()
     relative_program_path = Path(program_source.source_path)
-    program_path = durable.toolang_root / relative_program_path
+    program_file = next(item for item in durable.files if item.category == "program")
     requests: list[_RemoteEntryRequest] = []
     for use in program.withs:
         kind = use.cap_kind
@@ -1090,7 +1350,8 @@ def _collect_program_use_entries(
                 ref=use.reference,
                 name=None,
                 relative_config_path=relative_program_path,
-                config_path=program_path,
+                source_fingerprint=program_file.digest,
+                source_mtime_ns=program_file.mtime_ns,
                 form="ref",
                 source_line=use.span.line,
             )
@@ -1224,7 +1485,8 @@ def _remote_entry_from_ref(
     ref: str,
     name: str | None,
     relative_config_path: Path,
-    config_path: Path,
+    source_fingerprint: str,
+    source_mtime_ns: int,
     form: Literal["wired", "ref"],
     source_line: int | None = None,
     materialize: bool,
@@ -1237,7 +1499,8 @@ def _remote_entry_from_ref(
         ref=ref,
         name=name,
         relative_config_path=relative_config_path,
-        config_path=config_path,
+        source_fingerprint=source_fingerprint,
+        source_mtime_ns=source_mtime_ns,
         form=form,
         source_line=source_line,
     )
@@ -1246,11 +1509,11 @@ def _remote_entry_from_ref(
         canonical_ref = cached.ref
         _emit_cached_remote_progress(request, canonical_ref, progress=progress)
     elif materialize and "://" not in ref:
-        canonical_ref = cap_catalog.resolve_remote_ref(kind, ref, progress=progress)
+        canonical_ref = resolve_remote_ref(kind, ref, progress=progress)
     else:
-        canonical_ref = cap_catalog.canonicalize_remote_ref(kind, ref)
+        canonical_ref = canonicalize_remote_ref(kind, ref)
     if name is None:
-        name = cap_catalog.remote_entry_name(kind, canonical_ref)
+        name = remote_entry_name(kind, canonical_ref)
     relative_entry_path = _relative_remote_entry_path(
         agent_name,
         visibility=visibility,
@@ -1300,12 +1563,12 @@ def _remote_entry_from_ref(
             shape="dir" if kind == "skill" else "file",
             ref=canonical_ref,
             path=str(relative_entry_path),
-            source=_source_record(
-                root_relative_path=relative_config_path,
-                absolute_path=config_path,
+            source=PreparedSource(
                 origin="remote",
                 form=form,
-                shape="file",
+                path=str(relative_config_path),
+                updated_at=_mtime_text(source_mtime_ns),
+                fingerprint=source_fingerprint,
                 line=source_line,
             ),
             meta=_load_meta_text(entry_content.decode("utf-8")),
@@ -1455,7 +1718,8 @@ def _remote_entry_from_request(
         ref=request.ref,
         name=request.name,
         relative_config_path=request.relative_config_path,
-        config_path=request.config_path,
+        source_fingerprint=request.source_fingerprint,
+        source_mtime_ns=request.source_mtime_ns,
         form=request.form,
         source_line=request.source_line,
         materialize=materialize,
@@ -1472,7 +1736,7 @@ def _emit_remote_entry_pending(
     ref = request.ref.strip()
     if "://" in ref:
         try:
-            ref = cap_catalog.canonicalize_remote_ref(request.kind, ref)
+            ref = canonicalize_remote_ref(request.kind, ref)
         except ValueError:
             pass
         emit_progress(

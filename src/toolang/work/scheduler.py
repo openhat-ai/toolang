@@ -10,7 +10,7 @@ from ..execution.executor import Executor
 from ..execution.records import RunRecord
 from ..execution.request import RunRequest
 from ..state.agent import AgentState
-from toolang.catalog import job_files as job_definitions
+from toolang.catalog.job import JobKind
 from .state import AgentJobs, HomeJobs
 from .store import ClaimedJob, JobStore
 
@@ -27,7 +27,7 @@ class Scheduler:
         executor: Executor,
         get_home_jobs: Callable[[], HomeJobs],
         get_agent_state: Callable[[], AgentState],
-        kinds: tuple[job_definitions.JobKind, ...] = ("task", "chore"),
+        kinds: tuple[JobKind, ...] = ("task", "chore"),
         interval_ms: float = DEFAULT_INTERVAL_MS,
     ) -> None:
         self.job_store = job_store

@@ -60,8 +60,7 @@ class JobWatcher:
         ):
             if not any(
                 kind in {Change.added, Change.modified, Change.deleted}
-                and Path(path).suffix == ".md"
-                and Path(path).parent.name in {"tasks", "chores"}
+                and _is_authored_job_path(home, Path(path))
                 for kind, path in changes
             ):
                 continue
@@ -69,3 +68,20 @@ class JobWatcher:
             current = self.refresh()
             if current != previous:
                 yield current
+
+
+def _is_authored_job_path(home: Path, path: Path) -> bool:
+    try:
+        relative = path.relative_to(home)
+    except ValueError:
+        return False
+    if relative.suffix != ".md":
+        return False
+    return relative.parts[:-1] in {
+        ("tasks",),
+        ("chores",),
+        ("drafts", "tasks"),
+        ("drafts", "chores"),
+        ("archive", "tasks"),
+        ("archive", "chores"),
+    }

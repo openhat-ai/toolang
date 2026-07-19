@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 import threading
 
+import frontmatter
 import pytest
 
-from toolang.catalog.job import JobCatalog
+from toolang.catalog.job import AuthoredJobs, JobFile
+from toolang.catalog.error import DuplicateJobIdError
+from toolang.lang.ast import Program
 from toolang.work.state import AgentJobs, HomeJobs, JobDefinition
 from toolang.work.store import JobStore
 from toolang.work.watcher import JobWatcher
-from toolang.lang.ast import Program
-from toolang.catalog.job_files import TaskFile
+
+
+def _job(kind, job_id: str, body: str, *, stage="ready") -> JobFile:
+    content = frontmatter.dumps(frontmatter.Post(body, None, id=job_id))
+    return JobFile.parse(content, kind=kind, stage=stage)
 
 
 def test_job_watcher_current_returns_published_snapshot_without_rescanning(
@@ -31,11 +38,7 @@ def test_job_watcher_current_returns_published_snapshot_without_rescanning(
 def test_agent_jobs_merge_home_over_program(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     home = root / "agents" / "alice"
-    (home / "tasks").mkdir(parents=True)
-    (home / "tasks" / "review.md").write_text(
-        "---\nid: review\n---\nReview from file.\n",
-        encoding="utf-8",
-    )
+    AuthoredJobs(home).create(_job("task", "review", "Review from file."))
     program = Program.from_source("task review:\n  Review from program.\n")
 
     jobs = AgentJobs.merge(HomeJobs.load(root, "alice"), program)
@@ -60,29 +63,58 @@ def test_agent_jobs_reject_duplicate_home_ids() -> None:
         thread="task_review",
     )
 
-    with pytest.raises(ValueError, match="duplicate home task id: review"):
+    with pytest.raises(ValueError, match="duplicate home job id: review"):
         AgentJobs.merge(HomeJobs((job, job)), Program.from_source(""))
 
 
-def test_job_catalog_moves_authored_lifecycle(tmp_path: Path) -> None:
-    catalog = JobCatalog(tmp_path / "toolang", "alice")
+def test_authored_jobs_moves_between_stages(tmp_path: Path) -> None:
+    catalog = AuthoredJobs(tmp_path / "agents" / "alice")
+    created = catalog.create(_job("task", "review", "Review this."))
 
-    path = catalog.create("task", "---\ntitle: Review\n---\nReview this.\n")
-    entry = catalog.list(kind="task")[0]
-    assert isinstance(entry.document, TaskFile)
-    task_id = entry.document.task_id()
+    archived = catalog.move("task", "review", "archived")
+    ready = catalog.move("task", "review", "ready")
 
-    assert path.is_file()
-    assert catalog.archive("task", task_id) is not None
-    assert catalog.get("task", task_id, lifecycle="archived") is not None
-    assert catalog.reopen("task", task_id) is not None
-    assert catalog.get("task", task_id) is not None
+    assert created.path is not None and ready.path == created.path
+    assert archived.stage == "archived"
+    assert catalog.get("task", "review") == ready
+
+
+def test_authored_jobs_preserves_id_and_filename_between_stages(tmp_path: Path) -> None:
+    home = tmp_path / "agents" / "alice"
+    path = home / "tasks" / "manual-name.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("---\nid: stable-id\n---\nReview.\n", encoding="utf-8")
+    catalog = AuthoredJobs(home)
+
+    archived = catalog.move("task", "stable-id", "archived")
+
+    assert archived.id == "stable-id"
+    assert archived.path == home / "archive" / "tasks" / "manual-name.md"
+    assert "id: stable-id" in archived.content
+
+
+def test_authored_jobs_reports_last_modified_duplicate_id(tmp_path: Path) -> None:
+    home = tmp_path / "agents" / "alice"
+    older = home / "tasks" / "older.md"
+    newer = home / "drafts" / "chores" / "newer.md"
+    for path in (older, newer):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("---\nid: duplicate\n---\nRun.\n", encoding="utf-8")
+    os.utime(older, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
+
+    with pytest.raises(DuplicateJobIdError) as captured:
+        AuthoredJobs(home).list()
+
+    assert captured.value.path == newer
+    assert captured.value.existing_path == older
 
 
 def test_job_store_claims_once_across_connections(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
-    catalog = JobCatalog(root, "alice")
-    catalog.create("task", "---\ntitle: Review\n---\nReview this.\n")
+    AuthoredJobs(root / "agents" / "alice").create(
+        _job("task", "review", "Review this.")
+    )
     jobs = AgentJobs.merge(HomeJobs.load(root, "alice"), Program.from_source(""))
     path = root / "agents" / "alice" / ".runtime" / "jobs.db"
     stores = (JobStore(path), JobStore(path))

@@ -236,30 +236,26 @@ def _build_or_reuse_visibility_lock(
             detail="cached",
         )
         return current
-    if visibility == "shared":
-        with _shared_prepare_lock(durable.toolang_root):
-            latest = _latest_visibility_lock(durable, visibility=visibility)
-            if latest is not None and _visibility_lock_matches(
-                durable, visibility=visibility, lock=latest
-            ):
-                emit_progress(
-                    progress,
-                    id=f"prepare.visibility:{visibility}",
-                    phase="prepare.visibility",
-                    label=f"Prepare {visibility} caps",
-                    status="ok",
-                    detail="cached",
-                )
-                return latest
-            return _build_visibility_lock(
-                durable,
-                visibility=visibility,
-                current=latest or current,
-                progress=progress,
+    with _prepare_write_lock(durable, visibility=visibility):
+        latest = _latest_visibility_lock(durable, visibility=visibility)
+        if latest is not None and _visibility_lock_matches(
+            durable, visibility=visibility, lock=latest
+        ):
+            emit_progress(
+                progress,
+                id=f"prepare.visibility:{visibility}",
+                phase="prepare.visibility",
+                label=f"Prepare {visibility} caps",
+                status="ok",
+                detail="cached",
             )
-    return _build_visibility_lock(
-        durable, visibility=visibility, current=current, progress=progress
-    )
+            return latest
+        return _build_visibility_lock(
+            durable,
+            visibility=visibility,
+            current=latest or current,
+            progress=progress,
+        )
 
 
 def _build_visibility_lock(
@@ -290,9 +286,21 @@ def _build_visibility_lock(
 
 
 @contextmanager
-def _shared_prepare_lock(toolang_root: Path) -> Iterator[None]:
-    toolang_root.mkdir(parents=True, exist_ok=True)
-    lock_path = toolang_root / ".prepare-shared.lock"
+def _prepare_write_lock(
+    durable: DurableState,
+    *,
+    visibility: PreparedVisibility,
+) -> Iterator[None]:
+    if visibility == "shared":
+        lock_path = durable.toolang_root / ".prepare-shared.lock"
+    else:
+        lock_path = (
+            durable.toolang_root
+            / "agents"
+            / durable.agent_name
+            / ".prepare-private.lock"
+        )
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+b") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:

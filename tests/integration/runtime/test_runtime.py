@@ -22,15 +22,15 @@ import pytest
 import frontmatter
 
 from toolang.agent import local as agents
-from toolang.catalog import agent as agent_catalog
-from toolang.catalog.agent import AgentCatalog
 from toolang.catalog import cap as caps
-from toolang.catalog.job import JobCatalog
+from toolang.catalog.job import AuthoredJobs
 from toolang.work.scheduler import DEFAULT_INTERVAL_MS as DEFAULT_SCHEDULER_INTERVAL_MS
 from toolang.work.scheduler import Scheduler
-from toolang.work.state import AgentJobs
+from toolang.work.authoring import assign_missing_authored_job_ids
+from toolang.work.state import AgentJobs, job_thread_id
 from toolang.work.store import JobStore, open_job_store
 from toolang.work.watcher import JobWatcher
+from tests.support.catalog import FixtureLocalAgents
 from toolang.common.error import ToolangError
 from toolang.base.protocols.channel import AgentChannel
 from toolang.base.protocols.sandbox import AgentSandbox
@@ -84,10 +84,6 @@ from toolang.base.types.sandbox import (
     SandboxStartResult,
     SandboxState,
 )
-from toolang.catalog.cap import (
-    add_remote_entry,
-    remove_remote_entry,
-)
 from toolang.state.caps import build_visibility_lock, list_entries
 from toolang.state import caps as cap_state
 from toolang.plugin.config import ChannelBinding
@@ -114,6 +110,7 @@ from toolang.state.agent import load_agent_state
 from toolang.state import watcher as state_watcher
 from toolang.state.prepared import (
     PreparedLocks,
+    PreparedVisibility,
     load_prepared_locks,
     write_prepared_lock,
 )
@@ -143,15 +140,75 @@ def _put_cap(
     root: Path,
     agent: str,
     *,
-    visibility: caps.Visibility,
-    kind: caps.EntryKind,
+    visibility: PreparedVisibility,
+    kind: caps.CapKind,
     name: str,
     body: str = "",
     meta: dict[str, object] | None = None,
     text: str | None = None,
 ) -> Path:
     source = text or frontmatter.dumps(frontmatter.Post(body, **dict(meta or {})))
-    return caps.CapCatalog(root, agent, visibility=visibility).create(kind, name, source)
+    saved = caps.AuthoredCaps(_cap_directory(root, agent, visibility)).create(
+        caps.CapFile.parse(source, kind=kind, name=name)
+    )
+    assert saved.path is not None
+    return saved.path
+
+
+def _wire_cap(
+    root: Path,
+    agent: str,
+    *,
+    visibility: PreparedVisibility,
+    kind: caps.CapKind,
+    ref: str,
+) -> Path:
+    canonical = cap_state.resolve_remote_ref(kind, ref)
+    _wired_caps(root, agent, visibility).create(
+        caps.CapRef(
+            kind=kind,
+            name=cap_state.remote_entry_name(kind, canonical),
+            ref=canonical,
+        )
+    )
+    return _cap_directory(root, agent, visibility) / "config.toml"
+
+
+def _unwire_cap(
+    root: Path,
+    agent: str,
+    *,
+    visibility: PreparedVisibility,
+    kind: caps.CapKind,
+    name: str,
+) -> caps.CapRef:
+    return _wired_caps(root, agent, visibility).remove(kind, name)
+
+
+def _cap_directory(
+    root: Path,
+    agent: str,
+    visibility: PreparedVisibility,
+) -> Path:
+    return root if visibility == "shared" else root / "agents" / agent
+
+
+def _wired_caps(
+    root: Path,
+    agent: str,
+    visibility: PreparedVisibility,
+) -> caps.WiredCaps:
+    return caps.WiredCaps(_cap_directory(root, agent, visibility) / "config.toml")
+
+
+def _agents(root: Path) -> FixtureLocalAgents:
+    return FixtureLocalAgents(root / "agents")
+
+
+def _jobs(root: Path, agent: str = "alice") -> AuthoredJobs:
+    catalog = AuthoredJobs(root / "agents" / agent)
+    assign_missing_authored_job_ids(root, agent, catalog=catalog)
+    return catalog
 
 
 def bind_run_request(context, request, *, state=None):
@@ -174,7 +231,8 @@ def test_executor_stop_projects_command_and_canceled_run(tmp_path: Path) -> None
         agent_name="alice",
         enabled_features=("chat",),
     )
-    project_run_start(context.store,
+    project_run_start(
+        context.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -192,7 +250,8 @@ def test_executor_stop_projects_command_and_canceled_run(tmp_path: Path) -> None
 def test_store_reserves_command_indexes_across_connections(tmp_path: Path) -> None:
     path = tmp_path / "runs.db"
     stores = (RunStore(path), RunStore(path))
-    project_run_start(stores[0],
+    project_run_start(
+        stores[0],
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -497,7 +556,8 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    project_run_start(context.store,
+    project_run_start(
+        context.store,
         run_id="run-old",
         thread_id="thread-1",
         origin="chat",
@@ -505,12 +565,14 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(
         created_at="2026-01-01T00:00:00Z",
         started_at="2026-01-01T00:00:00Z",
     )
-    project_run_end(context.store,
+    project_run_end(
+        context.store,
         run_id="run-old",
         status="finished",
         finished_at="2026-01-01T00:00:01Z",
     )
-    project_run_start(context.store,
+    project_run_start(
+        context.store,
         run_id="run-new",
         thread_id="thread-1",
         origin="chat",
@@ -518,7 +580,8 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(
         created_at="2026-01-01T00:01:00Z",
         started_at="2026-01-01T00:01:00Z",
     )
-    project_run_end(context.store,
+    project_run_end(
+        context.store,
         run_id="run-new",
         status="failed",
         error="boom",
@@ -558,7 +621,8 @@ def test_threads_api_reports_active_run(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    project_run_start(context.store,
+    project_run_start(
+        context.store,
         run_id="run-active",
         thread_id="thread-1",
         origin="chat",
@@ -596,7 +660,8 @@ def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    project_run_start(context.store,
+    project_run_start(
+        context.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -750,7 +815,8 @@ def test_steer_run_appends_run_steering_event(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    project_run_start(context.store,
+    project_run_start(
+        context.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -800,7 +866,8 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    project_run_start(context.store,
+    project_run_start(
+        context.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -860,7 +927,8 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    project_run_start(context.store,
+    project_run_start(
+        context.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -868,7 +936,8 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         created_at="2026-01-01T00:00:00Z",
         started_at="2026-01-01T00:00:00Z",
     )
-    project_command(context.store,
+    project_command(
+        context.store,
         run_id="run-1",
         kind="steer",
         apply="next_step",
@@ -878,7 +947,8 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
     )
     instruct_hash = context.store.put_prompt(body="model instructions")
     context_hash = context.store.put_prompt(body="model context")
-    project_step(context.store,
+    project_step(
+        context.store,
         run_id="run-1",
         step_index=2,
         kind="model",
@@ -1238,7 +1308,8 @@ def test_chat_rewind_cancels_running_run_before_superseding(tmp_path: Path) -> N
         agent_name="alice",
         enabled_features=("chat", "inspect"),
     )
-    project_run_start(context.store,
+    project_run_start(
+        context.store,
         run_id="run_running",
         thread_id="term_running",
         origin="chat",
@@ -1647,13 +1718,15 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         ).to_data(),
     )
 
-    term_run = project_run_start(store,
+    term_run = project_run_start(
+        store,
         run_id="run-chat",
         thread_id="thread-chat",
         origin="chat",
         input=Message.user("list tools"),
     )
-    project_step(store,
+    project_step(
+        store,
         run_id=term_run.run_id,
         step_index=1,
         kind="model",
@@ -1671,7 +1744,8 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
-    project_step(store,
+    project_step(
+        store,
         run_id=term_run.run_id,
         step_index=2,
         kind="tool",
@@ -1689,7 +1763,8 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:03Z",
         finished_at="2026-01-01T00:00:04Z",
     )
-    project_step(store,
+    project_step(
+        store,
         run_id=term_run.run_id,
         step_index=3,
         kind="model",
@@ -1702,7 +1777,8 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
     )
     project_run_end(store, run_id=term_run.run_id)
 
-    task_run = project_run_start(store,
+    task_run = project_run_start(
+        store,
         run_id="run-task",
         thread_id="task_task-1",
         origin="task",
@@ -1710,7 +1786,8 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
     )
     project_run_end(store, run_id=task_run.run_id)
 
-    chore_run = project_run_start(store,
+    chore_run = project_run_start(
+        store,
         run_id="run-chore",
         thread_id="chore_daily-sync",
         origin="chore",
@@ -1813,13 +1890,15 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
         agent_name="alice",
         enabled_features=("inspect",),
     )
-    project_run_start(context.store,
+    project_run_start(
+        context.store,
         run_id="run-loop",
         thread_id="chore_sync",
         origin="chore",
         input=Message.user("sync remote tasks"),
     )
-    project_step(context.store,
+    project_step(
+        context.store,
         run_id="run-loop",
         step_index=1,
         kind="tool",
@@ -1838,7 +1917,8 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
-    project_run_end(context.store,
+    project_run_end(
+        context.store,
         run_id="run-loop",
         status="failed",
         error="Model tool loop exceeded the maximum number of rounds.",
@@ -2646,8 +2726,10 @@ def test_control_routes_update_durable_only_without_prepare_reload(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
         toolang_root=toolang_root,
@@ -2800,7 +2882,9 @@ def test_job_store_claims_due_chores_and_tasks(tmp_path: Path) -> None:
     context = _build_context(
         toolang_root=toolang_root, agent_name="alice", enabled_features=()
     )
-    definitions = AgentJobs.load(toolang_root, "alice", context.get_agent_state().program)
+    definitions = AgentJobs.load(
+        toolang_root, "alice", context.get_agent_state().program
+    )
     store = open_job_store(toolang_root, "alice")
     try:
         store.reconcile(jobs=definitions, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
@@ -2942,7 +3026,9 @@ def test_up_logs_runtime_urls_after_start_and_stop(
             on_stopped()
 
     monkeypatch.setattr("toolang.agent.runtime._run_uvicorn_app", fake_run_uvicorn_app)
-    monkeypatch.setattr("toolang.agent.runtime.configure_logging", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        "toolang.agent.runtime.configure_logging", lambda **_kwargs: None
+    )
     caplog.set_level(logging.INFO, logger="toolang.runtime")
 
     result = run_experiments_up(
@@ -2983,7 +3069,7 @@ def test_local_runtime_configures_logging_before_state_loaded(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     order: list[str] = []
     captured: dict[str, object] = {}
 
@@ -3029,7 +3115,7 @@ def test_local_runtime_configures_logging_before_state_loaded(
 
 def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     context = _build_context(
         toolang_root=toolang_root,
         agent_name="alice",
@@ -3063,7 +3149,7 @@ def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> No
 
 def test_assemble_execution_rejects_unmatched_tool_selector(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
 
     with pytest.raises(
         ValueError, match="tool selector matched no tools: missing/none"
@@ -3079,7 +3165,7 @@ def test_assemble_execution_rejects_unmatched_tool_selector(tmp_path: Path) -> N
 
 def test_assemble_execution_rejects_unmatched_cap_selector(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
 
     with pytest.raises(ValueError, match="cap selector matched no caps: skill/missing"):
         up_module.assemble_execution(
@@ -3093,7 +3179,7 @@ def test_assemble_execution_rejects_unmatched_cap_selector(tmp_path: Path) -> No
 
 def test_assemble_execution_applies_tool_and_cap_selectors(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     _put_cap(
         toolang_root,
         "alice",
@@ -3128,7 +3214,7 @@ def test_assemble_execution_applies_tool_and_cap_selectors(tmp_path: Path) -> No
 
 def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     _put_cap(
         toolang_root,
         "alice",
@@ -3288,7 +3374,9 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
             captured["log_config"] = log_config
             captured["shutdown_signal"] = shutdown_signal
 
-        monkeypatch.setattr("toolang.agent.runtime._run_uvicorn_app", fake_run_uvicorn_app)
+        monkeypatch.setattr(
+            "toolang.agent.runtime._run_uvicorn_app", fake_run_uvicorn_app
+        )
 
         result = run_experiments_up(
             toolang_root=toolang_root,
@@ -3324,7 +3412,9 @@ def test_up_falls_back_when_stopped_agent_port_is_unavailable(
         assert port == 53322
         return False
 
-    monkeypatch.setattr("toolang.agent.runtime._port_is_available", fake_port_is_available)
+    monkeypatch.setattr(
+        "toolang.agent.runtime._port_is_available", fake_port_is_available
+    )
     monkeypatch.setattr(
         "toolang.agent.runtime._wait_for_port_available",
         lambda *_args, **_kwargs: pytest.fail(
@@ -3383,7 +3473,9 @@ def test_resolve_runtime_port_does_not_wait_for_stopped_preferred_port(
     )
     agents.stop_runtime_state(toolang_root, "alice")
 
-    monkeypatch.setattr("toolang.agent.runtime._port_is_available", lambda host, port: False)
+    monkeypatch.setattr(
+        "toolang.agent.runtime._port_is_available", lambda host, port: False
+    )
     monkeypatch.setattr(
         "toolang.agent.runtime._wait_for_port_available",
         lambda *_args, **_kwargs: pytest.fail(
@@ -3417,7 +3509,9 @@ def test_resolve_runtime_port_uses_temporary_picker_for_visiting_agents(
             "visiting agents should not use the resident port range"
         ),
     )
-    monkeypatch.setattr("toolang.agent.runtime._pick_temporary_runtime_port", lambda host: 45678)
+    monkeypatch.setattr(
+        "toolang.agent.runtime._pick_temporary_runtime_port", lambda host: 45678
+    )
 
     resolved = up_module.resolve_runtime_port(
         host="127.0.0.1",
@@ -3493,7 +3587,9 @@ def test_pick_runtime_port_uses_first_available_auto_port(
         seen.append(port)
         return port == 7003
 
-    monkeypatch.setattr("toolang.agent.runtime._port_is_available", fake_port_is_available)
+    monkeypatch.setattr(
+        "toolang.agent.runtime._port_is_available", fake_port_is_available
+    )
 
     resolved = up_module._pick_runtime_port(
         "127.0.0.1",
@@ -3605,7 +3701,8 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(
         )
 
     monkeypatch.setattr(
-        "toolang.agent.runtime.create_sandbox_plugin", lambda name, config=None: FakeSandbox()
+        "toolang.agent.runtime.create_sandbox_plugin",
+        lambda name, config=None: FakeSandbox(),
     )
     monkeypatch.setattr(
         "toolang.agent.runtime._wait_for_sandbox_ready",
@@ -3722,9 +3819,12 @@ def test_up_defaults_docker_target_when_selector_omits_one(
             del state, force
 
     monkeypatch.setattr(
-        "toolang.agent.runtime.create_sandbox_plugin", lambda name, config=None: FakeSandbox()
+        "toolang.agent.runtime.create_sandbox_plugin",
+        lambda name, config=None: FakeSandbox(),
     )
-    monkeypatch.setattr("toolang.agent.runtime._wait_for_sandbox_ready", lambda **kwargs: None)
+    monkeypatch.setattr(
+        "toolang.agent.runtime._wait_for_sandbox_ready", lambda **kwargs: None
+    )
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -3784,7 +3884,8 @@ def test_up_marks_managed_sandbox_failed_when_ready_check_fails(
             del state, force
 
     monkeypatch.setattr(
-        "toolang.agent.runtime.create_sandbox_plugin", lambda name, config=None: FakeSandbox()
+        "toolang.agent.runtime.create_sandbox_plugin",
+        lambda name, config=None: FakeSandbox(),
     )
     monkeypatch.setattr(
         "toolang.agent.runtime._wait_for_sandbox_ready",
@@ -3844,7 +3945,8 @@ def test_up_marks_managed_sandbox_failed_when_prepare_fails(
             del state, force
 
     monkeypatch.setattr(
-        "toolang.agent.runtime.create_sandbox_plugin", lambda name, config=None: FakeSandbox()
+        "toolang.agent.runtime.create_sandbox_plugin",
+        lambda name, config=None: FakeSandbox(),
     )
 
     try:
@@ -3875,8 +3977,8 @@ def test_list_agent_statuses_surfaces_preparing_and_failed_states(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
-    AgentCatalog(toolang_root).create("bob")
+    _agents(toolang_root).create("alice")
+    _agents(toolang_root).create("bob")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3934,7 +4036,7 @@ def test_stop_runtime_state_requires_matching_owner_when_expected(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3976,7 +4078,7 @@ def test_agent_status_uses_matching_process_when_runtime_state_is_stale(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -4023,7 +4125,7 @@ def test_stop_agent_terminates_local_pid_and_marks_state_stopped(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     pid = 43210
     alive = {"running": True}
 
@@ -4088,7 +4190,7 @@ def test_stop_agent_terminates_matching_process_when_runtime_state_is_stale(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -4122,7 +4224,7 @@ def test_stop_agent_rejects_stubborn_process_without_marking_state_stopped(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -4159,7 +4261,7 @@ def test_stop_agent_stops_managed_sandbox_and_marks_state_stopped(
             self.force = force
 
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -4267,7 +4369,10 @@ def test_prepare_reload_refreshes_prepared_and_agent_state(tmp_path: Path) -> No
             assert prepared.shared_lock.entries == ()
             assert not prepared.shared_lock.lock_path.is_file()
             assert prepared.private_lock.lock_path.is_file()
-            assert context.get_agent_state().fingerprint == load_agent_state(prepared).fingerprint
+            assert (
+                context.get_agent_state().fingerprint
+                == load_agent_state(prepared).fingerprint
+            )
             assert context.get_agent_state().program is initial_program
             assert any(
                 entry.path == "agents/alice/prompts/rewrite.md"
@@ -4365,8 +4470,10 @@ def test_prepare_materializes_remote_entries_from_config(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_materialized_files(*, relative_entry_path, kind, name, ref):
         del kind, name, ref
@@ -4380,7 +4487,7 @@ def test_prepare_materializes_remote_entries_from_config(
         cap_state, "_remote_materialized_files", fake_materialized_files
     )
 
-    config_path = add_remote_entry(
+    config_path = _wire_cap(
         toolang_root,
         "alice",
         visibility="shared",
@@ -4415,10 +4522,12 @@ def test_remote_skill_shorthand_probes_agent_skills_and_skills_repos(
         probes.append(ref)
         return ref == "github://anthropics/skills/skills/pdf@main"
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", fake_exists)
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", fake_exists)
 
-    add_remote_entry(
+    _wire_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -4451,11 +4560,11 @@ def test_remote_cap_repo_shorthand_uses_named_repo_path_probes(
         return ref == "github://anthropics/project/pdf@trunk"
 
     monkeypatch.setattr(
-        caps, "_github_repo_default_branch", lambda owner, repo: "trunk"
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "trunk"
     )
-    monkeypatch.setattr(caps, "_github_remote_exists", fake_exists)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", fake_exists)
 
-    add_remote_entry(
+    _wire_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -4479,7 +4588,7 @@ def test_remote_skill_add_canonicalizes_github_tree_url(
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_fetch_github_directory",
@@ -4488,7 +4597,7 @@ def test_remote_skill_add_canonicalizes_github_tree_url(
         },
     )
 
-    add_remote_entry(
+    _wire_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -4527,7 +4636,7 @@ def test_remote_skill_add_canonicalizes_github_skill_file_url(
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_fetch_github_directory",
@@ -4536,7 +4645,7 @@ def test_remote_skill_add_canonicalizes_github_skill_file_url(
         },
     )
 
-    add_remote_entry(
+    _wire_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -4560,7 +4669,7 @@ def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_fetch_github_directory",
@@ -4569,7 +4678,7 @@ def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(
         },
     )
 
-    add_remote_entry(
+    _wire_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -4594,8 +4703,10 @@ def test_state_watcher_refresh_records_remote_cap_updates(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_fetch_github_directory",
@@ -4604,8 +4715,8 @@ def test_state_watcher_refresh_records_remote_cap_updates(
         },
     )
 
-    AgentCatalog(toolang_root).create("alice")
-    add_remote_entry(
+    _agents(toolang_root).create("alice")
+    _wire_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -4614,7 +4725,7 @@ def test_state_watcher_refresh_records_remote_cap_updates(
     )
     initial = state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
     state = load_agent_state(initial)
-    add_remote_entry(
+    _wire_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -4641,7 +4752,7 @@ def test_state_watcher_refresh_records_remote_cap_updates(
 
 def test_state_watcher_reparses_changed_program(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     initial = state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
     state = load_agent_state(initial)
     watcher = state_watcher.StateWatcher(toolang_root, "alice", state)
@@ -4658,7 +4769,7 @@ def test_state_watcher_reparses_changed_program(tmp_path: Path) -> None:
 
 def test_agent_state_config_is_deeply_immutable(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     _write_text(
         toolang_root / "config.toml",
         '[runtime]\nsandbox = "none"\nmodels = ["root"]\n',
@@ -4687,15 +4798,17 @@ def test_prepare_reuses_remote_caps_when_visibility_inputs_and_outputs_match(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
         return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
 
     monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_fetch)
-    add_remote_entry(
+    _wire_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -4720,7 +4833,7 @@ def test_prepare_rebuilds_stale_lock_schema_as_cache_miss(
     monkeypatch,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     config_path = toolang_root / "agents" / "alice" / "config.toml"
     config_path.write_text(
         '[skills]\npdf = { ref = "github://acme/agents/skills/pdf@main" }\n',
@@ -4780,15 +4893,17 @@ def test_prepare_reuses_private_remote_caps_when_shared_inputs_change(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
         return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
 
     monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_fetch)
-    add_remote_entry(
+    _wire_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -4817,15 +4932,17 @@ def test_prepare_reuses_private_remote_caps_when_local_cap_changes(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
         return {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"}
 
     monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_fetch)
-    add_remote_entry(
+    _wire_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -4864,14 +4981,16 @@ def test_concurrent_agent_prepare_reuses_shared_lock_after_another_agent_updates
     fetches: list[str] = []
     fetch_lock = threading.Lock()
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
-    AgentCatalog(toolang_root).create("alice")
-    AgentCatalog(toolang_root).create("bob")
+    _agents(toolang_root).create("alice")
+    _agents(toolang_root).create("bob")
     state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
     state_watcher.prepare_locks(scan_durable_state(toolang_root, "bob"))
-    add_remote_entry(
+    _wire_cap(
         toolang_root,
         "default",
         visibility="shared",
@@ -4930,6 +5049,68 @@ def test_concurrent_agent_prepare_reuses_shared_lock_after_another_agent_updates
     )
 
 
+def test_concurrent_prepare_reuses_private_lock_for_same_agent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    fetches: list[str] = []
+    fetch_lock = threading.Lock()
+
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    _agents(toolang_root).create("alice")
+    state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
+    _wire_cap(
+        toolang_root,
+        "alice",
+        visibility="private",
+        kind="prompt",
+        ref="acme/style",
+    )
+
+    def fake_fetch(ref) -> bytes:
+        with fetch_lock:
+            fetches.append(ref.render())
+        time.sleep(0.05)
+        return b"Use direct language.\n"
+
+    original_load_prepared_optional = state_watcher._load_prepared_optional
+    ready = threading.Barrier(2)
+
+    def delayed_load_prepared_optional(root: Path, agent_name: str):
+        prepared = original_load_prepared_optional(root, agent_name)
+        ready.wait(timeout=2.0)
+        return prepared
+
+    monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
+    monkeypatch.setattr(
+        state_watcher, "_load_prepared_optional", delayed_load_prepared_optional
+    )
+    durable = scan_durable_state(toolang_root, "alice")
+    results: list[object] = []
+    errors: list[BaseException] = []
+
+    def prepare() -> None:
+        try:
+            results.append(state_watcher.prepare_locks(durable))
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=prepare) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2.0)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert errors == []
+    assert fetches == ["github://acme/agents/prompts/style.md@main"]
+    assert len(results) == 2
+    assert all(
+        len(cast(PreparedLocks, result).private_lock.entries) == 1 for result in results
+    )
+
+
 def test_prepare_reuses_program_ref_caps_when_inline_program_changes(
     tmp_path: Path,
     monkeypatch,
@@ -4937,14 +5118,14 @@ def test_prepare_reuses_program_ref_caps_when_inline_program_changes(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
         return b"Remote psyche body.\n"
 
     monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     program_path = toolang_root / "agents" / "alice" / "agent.too"
     program_path.write_text(
         "agent alice\n\nwith psyche github://acme/agents/psyches/steady.md@main\n",
@@ -4970,14 +5151,14 @@ def test_prepare_fetches_only_changed_program_ref_cap(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
         return b"Remote psyche body.\n"
 
     monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     program_path = toolang_root / "agents" / "alice" / "agent.too"
     program_path.write_text(
         "agent alice\n\n"
@@ -5010,12 +5191,14 @@ def test_list_entries_reuses_prepared_program_ref_resolution(
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state, "_fetch_github_file", lambda ref: b"Remote psyche body.\n"
     )
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     program_path = toolang_root / "agents" / "alice" / "agent.too"
     program_path.write_text(
         "agent alice\n\nwith psyche acme/steady\n",
@@ -5024,7 +5207,7 @@ def test_list_entries_reuses_prepared_program_ref_resolution(
     state_watcher.prepare_locks(scan_durable_state(toolang_root, "alice"))
 
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_github_repo_default_branch",
         lambda owner, repo: pytest.fail(
             f"unexpected remote branch lookup: {owner}/{repo}"
@@ -5046,8 +5229,10 @@ def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
     toolang_root = tmp_path / "toolang"
     fetch_count = 0
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         nonlocal fetch_count
@@ -5057,7 +5242,7 @@ def test_prepare_refetches_remote_caps_when_prepared_output_does_not_match_lock(
         }
 
     monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_fetch)
-    add_remote_entry(
+    _wire_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -5089,12 +5274,12 @@ def test_remote_skill_add_rejects_missing_github_tree_url(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: False)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: False)
 
     with pytest.raises(
         ValueError, match="remote skill not found or missing entry file"
     ):
-        add_remote_entry(
+        _wire_cap(
             toolang_root,
             "alice",
             visibility="private",
@@ -5161,7 +5346,7 @@ def test_prepare_materializes_remote_skill_from_program_use(
         "agent alice\n\nwith skill https://github.com/coinbase/agentic-wallet-skills/tree/main/skills/fund\n",
     )
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_fetch_github_directory",
@@ -5534,10 +5719,12 @@ def test_prepare_fetches_remote_caps_with_bounded_concurrency(
 
 def test_caps_list_and_remove_remote_entries(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
-    add_remote_entry(
+    _wire_cap(
         toolang_root,
         "alice",
         visibility="private",
@@ -5550,12 +5737,10 @@ def test_caps_list_and_remove_remote_entries(tmp_path: Path, monkeypatch) -> Non
     assert [
         (entry.source.origin, entry.source.form, entry.path) for entry in entries
     ] == [("remote", "wired", "agents/alice/.caps/wired/skills/reviewer/SKILL.md")]
-    assert (
-        remove_remote_entry(
-            toolang_root, "alice", visibility="private", kind="skill", name="reviewer"
-        )
-        is True
+    removed = _unwire_cap(
+        toolang_root, "alice", visibility="private", kind="skill", name="reviewer"
     )
+    assert removed.name == "reviewer"
     assert (
         list_entries(toolang_root, "alice", visibility="private", kinds={"skill"}) == ()
     )
@@ -5644,7 +5829,7 @@ def test_new_task_reloads_into_agent_state_and_tasks_endpoint(tmp_path: Path) ->
     assert len(tasks) == 1
     assert tasks[0]["kind"] == "task"
     assert tasks[0]["title"] == "Review"
-    assert tasks[0]["lifecycle"] == "ready"
+    assert tasks[0]["stage"] == "ready"
     assert tasks[0]["status"] == "todo"
     assert tasks[0]["remote_ref"] is None
     assert tasks[0]["remote_status"] is None
@@ -5677,7 +5862,7 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         task_id = task["id"]
 
         assert task["kind"] == "task"
-        assert task["lifecycle"] == "ready"
+        assert task["stage"] == "ready"
         assert task["status"] == "todo"
         assert task["body"] == "Review the new API surface."
         assert task["runtime"]["thread_id"] == f"task_{task_id}"
@@ -5698,13 +5883,13 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         )
         assert updated.status_code == 200
         task = updated.json()["item"]
-        assert task["lifecycle"] == "ready"
+        assert task["stage"] == "ready"
         assert task["body"] == "Updated task body."
 
         archived = client.post(f"/api/v1/tasks/{task_id}/archive")
         assert archived.status_code == 200
         task = archived.json()["item"]
-        assert task["lifecycle"] == "archived"
+        assert task["stage"] == "archived"
         assert task["path"].startswith("archive/tasks/")
 
         assert client.get("/api/v1/tasks").json()["items"] == []
@@ -5717,7 +5902,7 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         reopened = client.post(f"/api/v1/tasks/{task_id}/ready")
         assert reopened.status_code == 200
         task = reopened.json()["item"]
-        assert task["lifecycle"] == "ready"
+        assert task["stage"] == "ready"
         assert task["path"] == f"tasks/{task_id}.md"
         assert [item["id"] for item in client.get("/api/v1/jobs").json()["items"]] == [
             task_id
@@ -5765,10 +5950,11 @@ def test_jobs_api_projects_active_run_tasks_as_running(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("inspect", "manage"),
     )
-    task = JobCatalog(toolang_root, "alice").list(kind="task")[0].document
-    project_run_start(context.store,
+    task = _jobs(toolang_root, "alice").list(kind="task")[0]
+    project_run_start(
+        context.store,
         run_id="run-active-task",
-        thread_id=task.thread_id(),
+        thread_id=job_thread_id(task),
         origin="task",
         input=Message.user(task.body),
     )
@@ -5777,7 +5963,7 @@ def test_jobs_api_projects_active_run_tasks_as_running(tmp_path: Path) -> None:
     with TestClient(app) as client:
         item = client.get("/api/v1/tasks").json()["items"][0]
 
-    assert item["id"] == task.task_id()
+    assert item["id"] == task.id
     assert item["status"] == "todo"
     assert item["remote_ref"] == "XBY-26"
     assert item["remote_status"] == "Backlog"
@@ -5809,7 +5995,7 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         chore_id = chore["id"]
 
         assert chore["kind"] == "chore"
-        assert chore["lifecycle"] == "ready"
+        assert chore["stage"] == "ready"
         assert chore["status"] == "todo"
         assert chore["schedule"] == "FREQ=HOURLY;INTERVAL=6"
         assert chore["body"] == "Check stale pull requests."
@@ -5835,14 +6021,14 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         )
         assert updated.status_code == 200
         chore = updated.json()["item"]
-        assert chore["lifecycle"] == "ready"
+        assert chore["stage"] == "ready"
         assert chore["schedule"] == "FREQ=DAILY"
         assert chore["body"] == "Updated chore body."
 
         archived = client.post(f"/api/v1/chores/{chore_id}/archive")
         assert archived.status_code == 200
         chore = archived.json()["item"]
-        assert chore["lifecycle"] == "archived"
+        assert chore["stage"] == "archived"
         assert chore["path"].startswith("archive/chores/")
 
         assert client.get("/api/v1/chores").json()["items"] == []
@@ -5853,7 +6039,7 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         reopened = client.post(f"/api/v1/chores/{chore_id}/ready")
         assert reopened.status_code == 200
         chore = reopened.json()["item"]
-        assert chore["lifecycle"] == "ready"
+        assert chore["stage"] == "ready"
         assert chore["path"] == f"chores/{chore_id}.md"
         assert [
             item["id"] for item in client.get("/api/v1/chores").json()["items"]
@@ -5952,22 +6138,23 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
         agent_name="alice",
         enabled_features=("pulse",),
     )
-    task_entry = JobCatalog(toolang_root, "alice").list(kind="task")[0]
-    task = task_entry.document
-    definition = AgentJobs.load(toolang_root, "alice", context.get_agent_state().program).get(
-        "task", task.task_id()
-    )
+    task_entry = _jobs(toolang_root, "alice").list(kind="task")[0]
+    task = task_entry
+    definition = AgentJobs.load(
+        toolang_root, "alice", context.get_agent_state().program
+    ).get("task", task.id)
     assert definition is not None
     bound = bind_run_request(
         context,
         RunRequest(
             group="pulse",
             origin="task",
-            thread_id=task.thread_id(),
+            thread_id=job_thread_id(task),
             input=task.body,
             metadata={"job": definition.run_metadata()},
         ),
     )
+    assert task_entry.path is not None
     task_entry.path.write_text("Changed after the run was bound.\n", encoding="utf-8")
 
     bundle = RunInput.from_binding(context.executor, bound)
@@ -5975,10 +6162,10 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     assert bundle.snapshot is not None
     assert bundle.snapshot.task == SnapshotTask(
         provider="local",
-        ref=task.thread_id(),
+        ref=job_thread_id(task),
         name="review",
         body=task.body,
-        thread_id=task.thread_id(),
+        thread_id=job_thread_id(task),
         path=str(toolang_root / "agents" / "alice" / "tasks" / "review.md"),
     )
     assert bundle.snapshot.task_services == SnapshotTaskServices(
@@ -6025,17 +6212,17 @@ def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(
         agent_name="alice",
         enabled_features=("pulse",),
     )
-    chore = JobCatalog(toolang_root, "alice").list(kind="chore")[0].document
-    definition = AgentJobs.load(toolang_root, "alice", context.get_agent_state().program).get(
-        "chore", chore.chore_id()
-    )
+    chore = _jobs(toolang_root, "alice").list(kind="chore")[0]
+    definition = AgentJobs.load(
+        toolang_root, "alice", context.get_agent_state().program
+    ).get("chore", chore.id)
     assert definition is not None
     bound = bind_run_request(
         context,
         RunRequest(
             group="pulse:chore",
             origin="chore",
-            thread_id=chore.thread_id(),
+            thread_id=job_thread_id(chore),
             input=chore.body,
             metadata={"job": definition.run_metadata()},
         ),
@@ -6073,7 +6260,9 @@ def test_pulse_marks_finished_task_job_done(tmp_path: Path) -> None:
         enabled_features=("pulse",),
     )
     store = open_job_store(toolang_root, "alice")
-    definitions = AgentJobs.load(toolang_root, "alice", context.get_agent_state().program)
+    definitions = AgentJobs.load(
+        toolang_root, "alice", context.get_agent_state().program
+    )
     store.reconcile(jobs=definitions, kind="task")
     claimed = store.claim_due(
         jobs=definitions,
@@ -6083,14 +6272,18 @@ def test_pulse_marks_finished_task_job_done(tmp_path: Path) -> None:
     )
     assert claimed is not None
     run_id = claimed.run_id
-    project_run_start(context.store,
+    project_run_start(
+        context.store,
         run_id=run_id,
         thread_id=claimed.job.thread_id,
         origin="task",
         input=Message.user(claimed.definition.input),
     )
-    project_run_end(context.store,
-        run_id=run_id, status="finished", finished_at="2026-01-01T00:00:07Z"
+    project_run_end(
+        context.store,
+        run_id=run_id,
+        status="finished",
+        finished_at="2026-01-01T00:00:07Z",
     )
 
     run = context.store.get_run(run_id=run_id)
@@ -6116,7 +6309,9 @@ def test_pulse_marks_failed_task_job_failed(tmp_path: Path) -> None:
         enabled_features=("pulse",),
     )
     store = open_job_store(toolang_root, "alice")
-    definitions = AgentJobs.load(toolang_root, "alice", context.get_agent_state().program)
+    definitions = AgentJobs.load(
+        toolang_root, "alice", context.get_agent_state().program
+    )
     store.reconcile(jobs=definitions, kind="task")
     claimed = store.claim_due(
         jobs=definitions,
@@ -6125,14 +6320,18 @@ def test_pulse_marks_failed_task_job_failed(tmp_path: Path) -> None:
         now=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
     assert claimed is not None
-    project_run_start(context.store,
+    project_run_start(
+        context.store,
         run_id=claimed.run_id,
         thread_id=claimed.job.thread_id,
         origin="task",
         input=Message.user(claimed.definition.input),
     )
-    project_run_end(context.store,
-        run_id=claimed.run_id, status="failed", finished_at="2026-01-01T00:00:07Z"
+    project_run_end(
+        context.store,
+        run_id=claimed.run_id,
+        status="failed",
+        finished_at="2026-01-01T00:00:07Z",
     )
 
     run = context.store.get_run(run_id=claimed.run_id)
@@ -6362,7 +6561,8 @@ def test_top_level_chat_agic_uses_its_authored_message(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("chat",),
     )
-    project_run_start(context.store,
+    project_run_start(
+        context.store,
         run_id="run-current",
         thread_id="thread-current",
         origin="chat",
@@ -6676,13 +6876,15 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
         agent_name="alice",
         enabled_features=(),
     )
-    previous = project_run_start(context.store,
+    previous = project_run_start(
+        context.store,
         run_id="run-previous",
         thread_id="thread-1",
         origin="chat",
         input=Message.user("stored history should not appear"),
     )
-    project_step(context.store,
+    project_step(
+        context.store,
         run_id=previous.run_id,
         step_index=1,
         kind="model",
@@ -6693,7 +6895,9 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
-    project_run_end(context.store, run_id=previous.run_id, finished_at="2026-01-01T00:00:03Z")
+    project_run_end(
+        context.store, run_id=previous.run_id, finished_at="2026-01-01T00:00:03Z"
+    )
     bound = bind_run_request(
         context,
         RunRequest(
@@ -6988,7 +7192,9 @@ def test_agic_instruct_can_select_named_instruct(tmp_path: Path) -> None:
     )
     bound = bind_run_request(
         context,
-        RunRequest(group="script", origin="script", executable_name="review", input="input"),
+        RunRequest(
+            group="script", origin="script", executable_name="review", input="input"
+        ),
     )
 
     bundle = RunInput.from_binding(context.executor, bound)
@@ -7011,7 +7217,9 @@ def test_agic_instruct_none_suppresses_agent_instruct_layer(tmp_path: Path) -> N
     )
     bound = bind_run_request(
         context,
-        RunRequest(group="script", origin="script", executable_name="quiet", input="input"),
+        RunRequest(
+            group="script", origin="script", executable_name="quiet", input="input"
+        ),
     )
 
     bundle = RunInput.from_binding(context.executor, bound)
@@ -7041,7 +7249,9 @@ def test_agic_instruct_block_renders_as_agent_instruction(tmp_path: Path) -> Non
     )
     bound = bind_run_request(
         context,
-        RunRequest(group="script", origin="script", executable_name="custom", input="input"),
+        RunRequest(
+            group="script", origin="script", executable_name="custom", input="input"
+        ),
     )
 
     bundle = RunInput.from_binding(context.executor, bound)
@@ -7295,13 +7505,15 @@ def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None
             kind="created",
             payload={"path": str(toolang_root / "agents" / "alice" / "agent.too")},
         )
-        run = project_run_start(store,
+        run = project_run_start(
+            store,
             run_id="run-1",
             thread_id="thread-1",
             origin="chat",
             input=Message.user("hello"),
         )
-        project_step(store,
+        project_step(
+            store,
             run_id=run.run_id,
             step_index=1,
             kind="model",
@@ -7393,13 +7605,15 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
     toolang_root = tmp_path / "toolang"
     store = RunStore(run_store_path(toolang_root, "alice"))
     try:
-        run = project_run_start(store,
+        run = project_run_start(
+            store,
             run_id="run-1",
             thread_id="thread-1",
             origin="chat",
             input=Message.user("sum 7 and 8"),
         )
-        project_step(store,
+        project_step(
+            store,
             run_id=run.run_id,
             step_index=1,
             kind="model",
@@ -7417,7 +7631,8 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
             started_at="2026-01-01T00:00:01Z",
             finished_at="2026-01-01T00:00:02Z",
         )
-        project_step(store,
+        project_step(
+            store,
             run_id=run.run_id,
             step_index=2,
             kind="tool",
@@ -7435,7 +7650,8 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
             started_at="2026-01-01T00:00:03Z",
             finished_at="2026-01-01T00:00:04Z",
         )
-        project_step(store,
+        project_step(
+            store,
             run_id=run.run_id,
             step_index=3,
             kind="model",
@@ -7494,13 +7710,15 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
     toolang_root = tmp_path / "toolang"
     store = RunStore(run_store_path(toolang_root, "alice"))
     try:
-        run = project_run_start(store,
+        run = project_run_start(
+            store,
             run_id="run-1",
             thread_id="thread-1",
             origin="chat",
             input=Message.user("sum 7 and 8"),
         )
-        project_step(store,
+        project_step(
+            store,
             run_id=run.run_id,
             step_index=1,
             kind="model",
@@ -7518,7 +7736,8 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
             started_at="2026-01-01T00:00:01Z",
             finished_at="2026-01-01T00:00:02Z",
         )
-        project_step(store,
+        project_step(
+            store,
             run_id=run.run_id,
             step_index=2,
             kind="tool",
@@ -7536,7 +7755,8 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
             started_at="2026-01-01T00:00:03Z",
             finished_at="2026-01-01T00:00:04Z",
         )
-        project_step(store,
+        project_step(
+            store,
             run_id=run.run_id,
             step_index=3,
             kind="model",
@@ -7561,13 +7781,15 @@ def test_execution_store_replays_model_reasoning_content(tmp_path: Path) -> None
     toolang_root = tmp_path / "toolang"
     store = RunStore(run_store_path(toolang_root, "alice"))
     try:
-        run = project_run_start(store,
+        run = project_run_start(
+            store,
             run_id="run-1",
             thread_id="thread-1",
             origin="chat",
             input=Message.user("list files"),
         )
-        project_step(store,
+        project_step(
+            store,
             run_id=run.run_id,
             step_index=1,
             kind="model",
@@ -7602,13 +7824,15 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         agent_name="alice",
         enabled_features=("chat",),
     )
-    previous = project_run_start(context.store,
+    previous = project_run_start(
+        context.store,
         run_id="run-previous",
         thread_id="thread-1",
         origin="chat",
         input=Message.user("create a Linear issue"),
     )
-    project_step(context.store,
+    project_step(
+        context.store,
         run_id=previous.run_id,
         step_index=1,
         kind="model",
@@ -7627,7 +7851,8 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
-    project_step(context.store,
+    project_step(
+        context.store,
         run_id=previous.run_id,
         step_index=2,
         kind="tool",
@@ -7672,7 +7897,8 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:03Z",
         finished_at="2026-01-01T00:00:04Z",
     )
-    project_step(context.store,
+    project_step(
+        context.store,
         run_id=previous.run_id,
         step_index=3,
         kind="model",
@@ -7691,7 +7917,8 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:05Z",
         finished_at="2026-01-01T00:00:06Z",
     )
-    project_step(context.store,
+    project_step(
+        context.store,
         run_id=previous.run_id,
         step_index=4,
         kind="tool",
@@ -7725,7 +7952,8 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:07Z",
         finished_at="2026-01-01T00:00:08Z",
     )
-    project_step(context.store,
+    project_step(
+        context.store,
         run_id=previous.run_id,
         step_index=5,
         kind="model",
@@ -7736,7 +7964,9 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:09Z",
         finished_at="2026-01-01T00:00:10Z",
     )
-    project_run_end(context.store, run_id=previous.run_id, finished_at="2026-01-01T00:00:11Z")
+    project_run_end(
+        context.store, run_id=previous.run_id, finished_at="2026-01-01T00:00:11Z"
+    )
 
     bound = bind_run_request(
         context,
@@ -7782,13 +8012,15 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(
         agent_name="alice",
         enabled_features=("chat",),
     )
-    previous = project_run_start(context.store,
+    previous = project_run_start(
+        context.store,
         run_id="run-previous",
         thread_id="thread-1",
         origin="chat",
         input=Message.user("previous"),
     )
-    project_step(context.store,
+    project_step(
+        context.store,
         run_id=previous.run_id,
         step_index=1,
         kind="model",
@@ -7799,7 +8031,9 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(
         started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
-    project_run_end(context.store, run_id=previous.run_id, finished_at="2026-01-01T00:00:03Z")
+    project_run_end(
+        context.store, run_id=previous.run_id, finished_at="2026-01-01T00:00:03Z"
+    )
 
     bound = bind_run_request(
         context,
@@ -7987,15 +8221,13 @@ def _build_context(
             "runtime.sandbox": "none",
         }
     )
-    model_aliases = parse_model_aliases(
-        load_config_layers(toolang_root, agent_name)
-    )
+    model_aliases = parse_model_aliases(load_config_layers(toolang_root, agent_name))
     default_models = load_default_models(toolang_root, agent_name)
     model_environ = {"OPENAI_API_KEY": "secret"}
     executor = Executor(
         root=toolang_root,
         name=agent_name,
-        home=agent_catalog.agent_home(toolang_root, agent_name),
+        home=agents.agent_home(toolang_root, agent_name),
         id_state_path=agents.agent_id_state_path(toolang_root, agent_name),
         setup=setup,
         store=store,
@@ -8008,7 +8240,7 @@ def _build_context(
     return ApiContext(
         root=toolang_root,
         name=agent_name,
-        home=agent_catalog.agent_home(toolang_root, agent_name),
+        home=agents.agent_home(toolang_root, agent_name),
         room=agents.agent_room(toolang_root, agent_name),
         get_agent_state=watcher.current,
         channel_bindings=channel_bindings or {},
@@ -8051,16 +8283,16 @@ async def _record_pulse_result(
     run: RunRecord,
 ) -> None:
     store.finish_run(
-        jobs=AgentJobs.load(context.root, context.name, context.get_agent_state().program),
+        jobs=AgentJobs.load(
+            context.root, context.name, context.get_agent_state().program
+        ),
         run_id=run.id,
         run_status=run.status,
         now=datetime.now(timezone.utc),
     )
 
 
-async def _wait_for_fingerprint_change(
-    context: ApiContext, fingerprint: str
-) -> bool:
+async def _wait_for_fingerprint_change(context: ApiContext, fingerprint: str) -> bool:
     for _ in range(200):
         if context.get_agent_state().fingerprint != fingerprint:
             return True
@@ -8230,7 +8462,8 @@ def _completed(
 def test_model_step_detail_preserves_target_metadata(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
-        project_run_start(store,
+        project_run_start(
+            store,
             run_id="run-1",
             thread_id="thread-1",
             origin="chat",
@@ -8254,7 +8487,8 @@ def test_model_step_detail_preserves_target_metadata(tmp_path: Path) -> None:
                 "state": {"thread": "state"},
             },
         }
-        project_step(store,
+        project_step(
+            store,
             run_id="run-1",
             step_index=1,
             kind="model",

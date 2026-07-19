@@ -12,7 +12,8 @@ import click
 import typer
 from typer.core import TyperGroup
 
-from ... import templates
+from ...catalog import templates
+from ...catalog.error import CatalogConflictError
 from ...common.error import ToolangError
 from ...common.github import parse_github_ref
 from toolang.catalog import cap as cap_store
@@ -326,13 +327,10 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         if text is None:
             typer.echo("No changes")
             raise typer.Exit()
-        path = user_call(
-            cap_store.CapCatalog(
-                context_root(ctx), agent_name, visibility=visibility
-            ).create,
-            kind,
-            name,
-            text,
+        cap = user_call(cap_store.CapFile.parse, text, kind=kind, name=name)
+        saved = user_call(
+            _authored_caps(context_root(ctx), agent_name, visibility).create,
+            cap,
         )
         if selected_agent:
             _refresh_and_append_cap_update(
@@ -343,7 +341,7 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 visibility=visibility,
                 progress_total=1,
             )
-        typer.echo(f"Created {kind} {name}: {path}")
+        typer.echo(f"Created {kind} {name}: {saved.path}")
 
     return new_cap
 
@@ -356,9 +354,12 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         visibility, agent_name = _target_visibility(ctx)
         selected_agent = context_agent(ctx)
         try:
-            text = cap_store.CapCatalog(
-                context_root(ctx), agent_name, visibility=visibility
-            ).read(kind, name)
+            existing = _authored_caps(context_root(ctx), agent_name, visibility).get(
+                kind, name
+            )
+            if existing is None:
+                raise FileNotFoundError(name)
+            text = existing.content
         except FileNotFoundError as exc:
             raise click.ClickException(f"{title} {name} not found") from exc
         updated_text = click.edit(
@@ -369,13 +370,10 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         if updated_text is None or updated_text == text:
             typer.echo("No changes")
             raise typer.Exit()
-        path = user_call(
-            cap_store.CapCatalog(
-                context_root(ctx), agent_name, visibility=visibility
-            ).update,
-            kind,
-            name,
-            updated_text,
+        cap = user_call(cap_store.CapFile.parse, updated_text, kind=kind, name=name)
+        saved = user_call(
+            _authored_caps(context_root(ctx), agent_name, visibility).update,
+            cap,
         )
         if selected_agent:
             _refresh_and_append_cap_update(
@@ -386,7 +384,7 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
                 visibility=visibility,
                 progress_total=1,
             )
-        typer.echo(f"Updated {kind} {name}: {path}")
+        typer.echo(f"Updated {kind} {name}: {saved.path}")
 
     return edit_cap
 
@@ -402,20 +400,24 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         selected_agent = context_agent(ctx)
         progress = _make_cap_write_progress()
         try:
-            cap_store.add_remote_entry(
-                context_root(ctx),
-                agent_name,
-                visibility=visibility,
-                kind=kind,
-                ref=ref,
-                progress=as_progress_sink(progress),
+            canonical_ref = cap_state.resolve_remote_ref(
+                kind, ref, progress=as_progress_sink(progress)
             )
+            name = cap_state.remote_entry_name(kind, canonical_ref)
+            _wired_caps(context_root(ctx), agent_name, visibility).create(
+                cap_store.CapRef(kind=kind, name=name, ref=canonical_ref)
+            )
+        except CatalogConflictError as exc:
+            progress.finish(details=False)
+            raise click.ClickException(
+                f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
+            ) from exc
         except ValueError as exc:
             progress.finish(details=False)
             message = str(exc)
             if "conflicting entries" in message:
                 raise click.ClickException(
-                    f"{title} {cap_store.remote_entry_name(kind, ref)} already exists"
+                    f"{title} {cap_state.remote_entry_name(kind, ref)} already exists"
                 ) from exc
             raise click.ClickException(f"Wired {kind} {ref} not found") from exc
         entry = _named_entry(
@@ -423,7 +425,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             agent_name,
             visibility=visibility,
             kind=kind,
-            name=cap_store.remote_entry_name(kind, ref),
+            name=name,
             source_origin="remote",
             source_form="wired",
         )
@@ -463,16 +465,11 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             source_origin="remote",
             source_form="wired",
         )
-        removed = user_call(
-            cap_store.remove_remote_entry,
-            context_root(ctx),
-            agent_name,
-            visibility=visibility,
-            kind=kind,
-            name=name,
+        user_call(
+            _wired_caps(context_root(ctx), agent_name, visibility).remove,
+            kind,
+            name,
         )
-        if not removed:
-            raise click.ClickException(f"{title} {name} not found")
         if selected_agent:
             _refresh_and_append_cap_update(
                 context_root(ctx),
@@ -505,15 +502,11 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         deleted_path = context_root(ctx) / entry.path
         if entry.shape == "dir":
             deleted_path = deleted_path.parent
-        removed = user_call(
-            cap_store.CapCatalog(
-                context_root(ctx), agent_name, visibility=visibility
-            ).remove,
+        user_call(
+            _authored_caps(context_root(ctx), agent_name, visibility).remove,
             kind,
             name,
         )
-        if not removed:
-            raise click.ClickException(f"{title} {name} not found")
         if selected_agent:
             _refresh_and_append_cap_update(
                 context_root(ctx),
@@ -709,12 +702,35 @@ def _local_entry_exists(
     name: str,
 ) -> bool:
     return (
-        cap_store.CapCatalog(
-            toolang_root,
-            agent_name,
-            visibility=visibility,
-        ).get(kind, name)
-        is not None
+        _authored_caps(toolang_root, agent_name, visibility).get(kind, name) is not None
+    )
+
+
+def _cap_directory(
+    toolang_root: Path,
+    agent_name: str,
+    visibility: PreparedVisibility,
+) -> Path:
+    return (
+        toolang_root if visibility == "shared" else toolang_root / "agents" / agent_name
+    )
+
+
+def _authored_caps(
+    toolang_root: Path,
+    agent_name: str,
+    visibility: PreparedVisibility,
+) -> cap_store.AuthoredCaps:
+    return cap_store.AuthoredCaps(_cap_directory(toolang_root, agent_name, visibility))
+
+
+def _wired_caps(
+    toolang_root: Path,
+    agent_name: str,
+    visibility: PreparedVisibility,
+) -> cap_store.WiredCaps:
+    return cap_store.WiredCaps(
+        _cap_directory(toolang_root, agent_name, visibility) / "config.toml"
     )
 
 
