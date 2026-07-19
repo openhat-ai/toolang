@@ -14,7 +14,6 @@ import click
 import typer
 
 from toolang.agent import local as agents
-from toolang.catalog.agent import agent_home
 from toolang.state.caps import split_cap_selectors
 from ....config.env import load_runtime_environ
 from toolang.plugin.models.resolution import split_model_selectors
@@ -431,7 +430,7 @@ def _chat_home_label(ctx: typer.Context) -> str:
         agent_name = context_agent(ctx)
         if agent_name is None:
             return "agent home"
-        return str(agent_home(context_root(ctx), agent_name))
+        return str(agents.agent_home(context_root(ctx), agent_name))
     except Exception:
         return "agent home"
 
@@ -848,9 +847,7 @@ def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
     if target is None:
         return None
     if target.startswith("run_"):
-        detail = execution_get(
-            ctx, f"/api/v1/runs/{target}", remote_get=runtime_get
-        )
+        detail = execution_get(ctx, f"/api/v1/runs/{target}", remote_get=runtime_get)
         info = detail.get("info")
         if isinstance(info, dict) and isinstance(info.get("thread_id"), str):
             return str(info["thread_id"])
@@ -864,9 +861,7 @@ def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
 def _target_run_id(ctx: typer.Context, target: str) -> str:
     if target.startswith("run_"):
         return target
-    detail = execution_get(
-        ctx, f"/api/v1/threads/{target}", remote_get=runtime_get
-    )
+    detail = execution_get(ctx, f"/api/v1/threads/{target}", remote_get=runtime_get)
     info = detail.get("info")
     if not isinstance(info, dict):
         raise click.ClickException(f"thread not found: {target}")
@@ -879,9 +874,7 @@ def _target_run_id(ctx: typer.Context, target: str) -> str:
 def _target_latest_run_id(ctx: typer.Context, target: str) -> str:
     if target.startswith("run_"):
         return target
-    detail = execution_get(
-        ctx, f"/api/v1/threads/{target}", remote_get=runtime_get
-    )
+    detail = execution_get(ctx, f"/api/v1/threads/{target}", remote_get=runtime_get)
     info = detail.get("info")
     if not isinstance(info, dict):
         raise click.ClickException(f"thread not found: {target}")

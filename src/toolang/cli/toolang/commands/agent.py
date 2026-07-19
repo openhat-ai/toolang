@@ -6,15 +6,16 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 import os
 from pathlib import Path
+import shutil
 from typing import Annotated
 
 import click
 import typer
 
-from toolang.catalog.job import JobCatalog
-from toolang.catalog.agent import AgentCatalog, agent_home
+from toolang.catalog.job import AuthoredJobs
+from toolang.catalog.agent import LocalAgents
 from toolang.agent import local as agents
-from toolang import templates
+from toolang.catalog import templates
 from toolang.state.caps import effective_cap_entries
 from toolang.state.prepared import PreparedEntry
 from ...common.updates import append_agent_update
@@ -53,16 +54,16 @@ def new_agent(
             agent_name=agent,
             name=agent,
         )
-        layout = AgentCatalog(root).create(agent, source_text=source_text)
+        home = LocalAgents(root / "agents").create(agent, content=source_text)
     except FileExistsError as exc:
         raise click.ClickException(f"Agent {agent} already exists") from exc
     append_agent_update(
         root,
         agent,
         "created",
-        {"path": str(layout.program)},
+        {"path": str(home / "agent.too")},
     )
-    typer.echo(f"Created agent {agent}: {layout.program}")
+    typer.echo(f"Created agent {agent}: {home / 'agent.too'}")
 
 
 def clone_agent(
@@ -72,7 +73,26 @@ def clone_agent(
 ) -> None:
     root = context_root(ctx)
     try:
-        layout = AgentCatalog(root).clone(source, target)
+        homes = LocalAgents(root / "agents")
+        selector = agents.parse_agent_selector(source)
+        if selector.form == "name":
+            if target is None:
+                raise ValueError("target name is required when cloning one local agent")
+            source_home = homes.get(selector.name or "")
+            if source_home is None:
+                raise FileNotFoundError(source)
+            home = homes.path(target)
+            if home.exists():
+                raise FileExistsError(home)
+            shutil.copytree(
+                source_home,
+                home,
+                ignore=shutil.ignore_patterns(".caps", ".runtime"),
+            )
+        else:
+            ref = agents.resolve_agent_selector_ref(selector)
+            name = target or selector.default_name()
+            home = homes.create(name, content=agents.fetch_agent_ref(ref))
     except FileExistsError as exc:
         target_name = target or Path(source).stem
         raise click.ClickException(f"Agent {target_name} already exists") from exc
@@ -82,11 +102,11 @@ def clone_agent(
         raise click.ClickException(str(exc)) from exc
     append_agent_update(
         root,
-        layout.name,
+        home.name,
         "created",
-        {"path": str(layout.program), "source": source},
+        {"path": str(home / "agent.too"), "source": source},
     )
-    typer.echo(f"Cloned agent {layout.name}: {layout.program}")
+    typer.echo(f"Cloned agent {home.name}: {home / 'agent.too'}")
 
 
 def remove_agent(
@@ -101,7 +121,7 @@ def remove_agent(
     if process.pids():
         raise click.ClickException(f"Agent {agent} already running")
     try:
-        AgentCatalog(root).remove(agent)
+        LocalAgents(root / "agents").remove(agent)
     except FileNotFoundError as exc:
         raise click.ClickException(f"Agent {agent} not found") from exc
     agents.remove_sandbox_stage(root, agent)
@@ -140,7 +160,7 @@ def info_agent(
     if status is None:
         raise click.ClickException(f"Agent {agent_name} not found")
     runtime_state = process.state() or {}
-    created_at = created_time(agent_home(root, agent_name))
+    created_at = created_time(agents.agent_home(root, agent_name))
     started_at = runtime_value(runtime_state.get("started_at"))
     updated_at = runtime_value(runtime_state.get("updated_at"))
     status_value = status.status
@@ -149,7 +169,7 @@ def info_agent(
         if online is not None:
             status_value = f"{status.status} ({online})"
     rows = [
-        ("Home", str(agent_home(root, agent_name))),
+        ("Home", str(agents.agent_home(root, agent_name))),
         ("Caps", _caps_summary(root, agent_name)),
         ("Jobs", _jobs_summary(root, agent_name)),
         ("Tools", _tools_summary(root, agent_name)),
@@ -241,7 +261,7 @@ def _prepare_cap_counts(root: Path, agent: str) -> dict[str, int]:
 
 
 def _jobs_summary(root: Path, agent: str) -> str:
-    catalog = JobCatalog(root, agent)
+    catalog = AuthoredJobs(agents.agent_home(root, agent))
     chore_count = len(catalog.list(kind="chore"))
     task_count = len(catalog.list(kind="task"))
     return (

@@ -14,8 +14,7 @@ import pytest
 from typer.testing import CliRunner
 
 from toolang.agent import local as agents
-from toolang.catalog import agent as agent_catalog
-from toolang.catalog.agent import AgentCatalog
+from toolang.catalog import templates
 from toolang.catalog import cap as caps
 from toolang.state import caps as cap_state
 from toolang.base.types.message import Message, TextPart
@@ -44,30 +43,49 @@ from toolang.execution.events import RunEnd, RunStarting, StepEnd, StepBegin
 from toolang.execution.records import InputRef, OutputRef, RunRecord
 from toolang.common.progress import ProgressEvent
 from toolang.plugin.loading import PluginInfo
-from toolang.catalog.job import JobCatalog
+from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.execution.store import RunStore, run_store_path
 from toolang.agent import runtime as agent_up
 from tests.support.execution import project_run_end, project_run_start, project_step
+from tests.support.catalog import FixtureLocalAgents
 from wcwidth import wcswidth
 
 runner = CliRunner()
-DEFAULT_AGENT_SOURCE = "# Customize this agent here.\n# Docs: https://toolang.ai/docs\n"
+DEFAULT_AGENT_SOURCE = templates.render_template("agent")
 
 
 def _create_cap(
     root: Path,
     agent: str,
     *,
-    visibility: caps.Visibility,
-    kind: caps.EntryKind,
+    visibility: cap_state.PreparedVisibility,
+    kind: caps.CapKind,
     name: str,
     text: str,
 ) -> Path:
-    return caps.CapCatalog(root, agent, visibility=visibility).create(kind, name, text)
+    directory = root if visibility == "shared" else root / "agents" / agent
+    saved = caps.AuthoredCaps(directory).create(
+        caps.CapFile.parse(text, kind=kind, name=name)
+    )
+    assert saved.path is not None
+    return saved.path
 
 
-def _jobs(root: Path, agent: str = "alice") -> JobCatalog:
-    return JobCatalog(root, agent)
+def _jobs(root: Path, agent: str = "alice") -> AuthoredJobs:
+    return AuthoredJobs(root / "agents" / agent)
+
+
+def _agents(root: Path) -> FixtureLocalAgents:
+    return FixtureLocalAgents(root / "agents")
+
+
+def _wired_caps(
+    root: Path,
+    agent: str,
+    visibility: cap_state.PreparedVisibility,
+) -> caps.WiredCaps:
+    directory = root if visibility == "shared" else root / "agents" / agent
+    return caps.WiredCaps(directory / "config.toml")
 
 
 def _fake_invoke_record(
@@ -76,13 +94,15 @@ def _fake_invoke_record(
 ) -> RunRecord:
     store = RunStore(run_store_path(toolang_root, agent_name))
     try:
-        run = project_run_start(store,
+        run = project_run_start(
+            store,
             run_id="run_test",
             thread_id="script_test",
             origin="script",
             input=Message.user("test"),
         )
-        project_step(store,
+        project_step(
+            store,
             run_id=run.id,
             step_index=0,
             kind="model",
@@ -92,7 +112,8 @@ def _fake_invoke_record(
             started_at=run.started_at,
             finished_at=run.started_at,
         )
-        return project_run_end(store,
+        return project_run_end(
+            store,
             run_id=run.id,
             output=OutputRef(step=f"{run.id}/0"),
         )
@@ -358,7 +379,8 @@ def test_cli_main_roaming_threads_can_read_offline_materialized_store(
     toolang_root, agent_name = agents.materialize_roaming_program(program_path)
     store = RunStore(run_store_path(toolang_root, agent_name))
     try:
-        run = project_run_start(store,
+        run = project_run_start(
+            store,
             run_id="run_first",
             thread_id="script_main",
             origin="script",
@@ -633,7 +655,7 @@ def test_cli_clone_copies_agent_without_caps(tmp_path: Path) -> None:
     assert result.exit_code in {0, 2}
     target_program = toolang_root / "agents" / "bob" / "agent.too"
     assert result.stdout.strip() == f"Cloned agent bob: {target_program}"
-    assert target_program.read_text(encoding="utf-8") == "agent bob\n"
+    assert target_program.read_text(encoding="utf-8") == "agent alice\n"
     assert (
         toolang_root / "agents" / "bob" / "skills" / "reviewer" / "SKILL.md"
     ).is_file()
@@ -646,7 +668,7 @@ def test_cli_clone_remote_shorthand_defaults_target_name(
     toolang_root = tmp_path / "toolang"
     probes: list[str] = []
 
-    def fake_fetch(ref: agent_catalog.AgentRef) -> str:
+    def fake_fetch(ref: agents.AgentRef) -> str:
         assert ref.render() == "github://brice/agents/agents/alice.too@main"
         return "agent source-name\n"
 
@@ -655,10 +677,10 @@ def test_cli_clone_remote_shorthand_defaults_target_name(
         return ref.path == "agents/alice.too"
 
     monkeypatch.setattr(
-        agent_catalog, "_github_repo_default_branch", lambda owner, repo: "main"
+        agents, "_github_repo_default_branch", lambda owner, repo: "main"
     )
-    monkeypatch.setattr(agent_catalog, "_github_agent_ref_exists", fake_exists)
-    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
     result = runner.invoke(
         cli.app,
@@ -669,7 +691,7 @@ def test_cli_clone_remote_shorthand_defaults_target_name(
     assert result.exit_code in {0, 2}
     program_path = toolang_root / "agents" / "alice" / "agent.too"
     assert result.stdout.strip() == f"Cloned agent alice: {program_path}"
-    assert program_path.read_text(encoding="utf-8") == "agent alice\n"
+    assert program_path.read_text(encoding="utf-8") == "agent source-name\n"
     assert probes == [
         "github://brice/agents/agents/alice.too@main",
     ]
@@ -681,7 +703,7 @@ def test_cli_clone_remote_repo_shorthand_uses_named_repo(
     toolang_root = tmp_path / "toolang"
     probes: list[str] = []
 
-    def fake_fetch(ref: agent_catalog.AgentRef) -> str:
+    def fake_fetch(ref: agents.AgentRef) -> str:
         assert ref.render() == "github://brice/project/alice.too@trunk"
         return "agent source-name\n"
 
@@ -690,10 +712,10 @@ def test_cli_clone_remote_repo_shorthand_uses_named_repo(
         return ref.path == "alice.too"
 
     monkeypatch.setattr(
-        agent_catalog, "_github_repo_default_branch", lambda owner, repo: "trunk"
+        agents, "_github_repo_default_branch", lambda owner, repo: "trunk"
     )
-    monkeypatch.setattr(agent_catalog, "_github_agent_ref_exists", fake_exists)
-    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
     result = runner.invoke(
         cli.app,
@@ -704,7 +726,7 @@ def test_cli_clone_remote_repo_shorthand_uses_named_repo(
     assert result.exit_code in {0, 2}
     assert (toolang_root / "agents" / "alice" / "agent.too").read_text(
         encoding="utf-8"
-    ) == "agent alice\n"
+    ) == "agent source-name\n"
     assert probes == [
         "github://brice/project/agents/alice.too@trunk",
         "github://brice/project/alice.too@trunk",
@@ -716,11 +738,11 @@ def test_cli_clone_remote_url_supports_explicit_target(
 ) -> None:
     toolang_root = tmp_path / "toolang"
 
-    def fake_fetch(ref: agent_catalog.AgentRef) -> str:
+    def fake_fetch(ref: agents.AgentRef) -> str:
         assert ref.render() == "https://toolang.ai/demo/researcher.too"
         return "agent demo\n"
 
-    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
     result = runner.invoke(
         cli.app,
@@ -731,12 +753,12 @@ def test_cli_clone_remote_url_supports_explicit_target(
     assert result.exit_code in {0, 2}
     program_path = toolang_root / "agents" / "researcher" / "agent.too"
     assert result.stdout.strip() == f"Cloned agent researcher: {program_path}"
-    assert program_path.read_text(encoding="utf-8") == "agent researcher\n"
+    assert program_path.read_text(encoding="utf-8") == "agent demo\n"
 
 
 def test_cli_clone_local_source_requires_target_name(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
 
     result = runner.invoke(
         cli.app,
@@ -1399,7 +1421,7 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     captured: dict[str, object] = {}
 
-    def fake_fetch(ref: agent_catalog.AgentRef, *, progress=None) -> str:
+    def fake_fetch(ref: agents.AgentRef, *, progress=None) -> str:
         del progress
         assert ref.render() == "github://brice/agents/agents/alice.too@main"
         return "agent remote-source\n"
@@ -1424,14 +1446,14 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         return 0
 
     monkeypatch.setattr(
-        agent_catalog, "_github_repo_default_branch", lambda owner, repo: "main"
+        agents, "_github_repo_default_branch", lambda owner, repo: "main"
     )
     monkeypatch.setattr(
-        agent_catalog,
+        agents,
         "_github_agent_ref_exists",
         lambda ref: ref.path == "agents/alice.too",
     )
-    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
     monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
     monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 45123)
@@ -1458,7 +1480,7 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
     toolang_root = tmp_path / "toolang"
     captured: dict[str, object] = {}
 
-    def fake_fetch(ref: agent_catalog.AgentRef, *, progress=None) -> str:
+    def fake_fetch(ref: agents.AgentRef, *, progress=None) -> str:
         del progress
         assert ref.render() == "https://toolang.ai/demo/researcher.too"
         return "agent researcher\n"
@@ -1477,7 +1499,7 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         captured["port"] = startup.port
         return 0
 
-    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
     monkeypatch.setattr(agent_up, "start_runtime", fake_start_runtime)
     monkeypatch.setattr(agent_up, "prepare_agent", lambda **_kwargs: None)
     monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 45124)
@@ -1492,14 +1514,14 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
     assert captured["agent_name"] == "researcher"
     assert captured["toolang_root"] == agents.visiting_root(
         toolang_root,
-        agent_catalog.HttpAgentRef(url="https://toolang.ai/demo/researcher.too"),
+        agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too"),
     )
     assert captured["port"] == 45124
 
 
 def test_cli_run_rejects_active_resident_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -1545,12 +1567,12 @@ def test_cli_run_rejects_missing_resident_agent(tmp_path: Path, monkeypatch) -> 
 
     assert result.exit_code == 1
     assert "Agent missing not found" in result.stderr
-    assert not agent_catalog.agent_home(toolang_root, "missing").exists()
+    assert not agents.agent_home(toolang_root, "missing").exists()
 
 
 def test_cli_run_interrupts_prepare_once(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
 
     def interrupt_prepare(*, progress, **_kwargs) -> None:
         progress(
@@ -1578,7 +1600,7 @@ def test_cli_run_interrupts_prepare_once(tmp_path: Path, monkeypatch) -> None:
 
 def test_cli_run_rejects_active_visiting_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    ref = agent_catalog.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
+    ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
     visiting_root = agents.visiting_root(toolang_root, ref)
     (visiting_root / "agents" / "researcher").mkdir(parents=True, exist_ok=True)
     agents.write_runtime_state(
@@ -1589,7 +1611,7 @@ def test_cli_run_rejects_active_visiting_agent(tmp_path: Path, monkeypatch) -> N
         pid=os.getpid(),
     )
     monkeypatch.setattr(
-        agent_catalog,
+        agents,
         "fetch_agent_ref",
         lambda *_args, **_kwargs: "agent researcher\n",
     )
@@ -1639,16 +1661,16 @@ def test_visiting_run_target_reuses_stable_root_and_program(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    ref = agent_catalog.HttpAgentRef(
+    ref = agents.HttpAgentRef(
         url=f"https://toolang.ai/demo/{uuid4().hex}/researcher.too"
     )
-    fetches: list[agent_catalog.AgentRef] = []
+    fetches: list[agents.AgentRef] = []
 
-    def fake_fetch(fetch_ref: agent_catalog.AgentRef, **_kwargs) -> str:
+    def fake_fetch(fetch_ref: agents.AgentRef, **_kwargs) -> str:
         fetches.append(fetch_ref)
         return "agent old-name\n"
 
-    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
     with agents.resolved_run_target(toolang_root, ref.render()) as first:
         agents.write_runtime_state(
@@ -1675,7 +1697,7 @@ def test_visiting_run_target_reuses_stable_root_and_program(
     assert second.kind == "visiting"
     assert second.agent_name == "researcher"
     assert second_program == first_program
-    assert second_program.read_text(encoding="utf-8") == "agent researcher\n"
+    assert second_program.read_text(encoding="utf-8") == "agent old-name\n"
     assert fetches == [ref]
     assert (
         agents.preferred_runtime_port(second.toolang_root, second.agent_name) == 45678
@@ -1683,7 +1705,7 @@ def test_visiting_run_target_reuses_stable_root_and_program(
 
 
 def test_visiting_root_ignores_local_toolang_root(tmp_path: Path) -> None:
-    ref = agent_catalog.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
+    ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
 
     assert agents.visiting_root(tmp_path / "one", ref) == agents.visiting_root(
         tmp_path / "two", ref
@@ -1703,7 +1725,7 @@ def test_visiting_run_target_reuses_shorthand_cache_without_resolving(
     program_path.parent.mkdir(parents=True, exist_ok=True)
     program_path.write_text(f"agent {agent_name}\n", encoding="utf-8")
     monkeypatch.setattr(
-        agent_catalog,
+        agents,
         "resolve_agent_selector_ref",
         lambda *_args, **_kwargs: pytest.fail(
             "fresh visiting cache should not resolve"
@@ -1720,18 +1742,18 @@ def test_visiting_run_target_refetches_stale_program_cache(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    ref = agent_catalog.HttpAgentRef(
+    ref = agents.HttpAgentRef(
         url=f"https://toolang.ai/demo/{uuid4().hex}/researcher.too"
     )
     fetched_sources = iter(("agent old-name\n", "agent newer-name\n"))
-    fetches: list[agent_catalog.AgentRef] = []
+    fetches: list[agents.AgentRef] = []
 
-    def fake_fetch(fetch_ref: agent_catalog.AgentRef, **_kwargs) -> str:
+    def fake_fetch(fetch_ref: agents.AgentRef, **_kwargs) -> str:
         fetches.append(fetch_ref)
         return next(fetched_sources)
 
     monkeypatch.setattr(agents, "VISITING_PROGRAM_CACHE_TTL_SEC", 60)
-    monkeypatch.setattr(agent_catalog, "fetch_agent_ref", fake_fetch)
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
     with agents.resolved_run_target(toolang_root, ref.render()) as first:
         program_path = first.toolang_root / "agents" / first.agent_name / "agent.too"
@@ -1745,7 +1767,7 @@ def test_visiting_run_target_refetches_stale_program_cache(
         )
 
     assert refreshed_program == program_path
-    assert refreshed_program.read_text(encoding="utf-8") == "agent researcher\n"
+    assert refreshed_program.read_text(encoding="utf-8") == "agent newer-name\n"
     assert fetches == [ref, ref]
 
 
@@ -2899,12 +2921,12 @@ def test_cli_start_rejects_missing_agent(tmp_path: Path, monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "Agent missing not found" in result.stderr
-    assert not agent_catalog.agent_home(toolang_root, "missing").exists()
+    assert not agents.agent_home(toolang_root, "missing").exists()
 
 
 def test_cli_remove_deletes_stopped_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
 
     result = runner.invoke(
         cli.app,
@@ -2919,7 +2941,7 @@ def test_cli_remove_deletes_stopped_agent(tmp_path: Path) -> None:
 
 def test_cli_remove_rejects_active_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -2940,7 +2962,7 @@ def test_cli_remove_rejects_active_agent(tmp_path: Path) -> None:
 
 def test_cli_remove_rejects_orphan_runtime_process(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     monkeypatch.setattr(agents, "_agent_runtime_process_pids", lambda *_args: (12345,))
 
     result = runner.invoke(
@@ -2958,7 +2980,7 @@ def test_cli_stop_stops_orphan_runtime_process_without_state(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     stopped: list[tuple[int, bool]] = []
     monkeypatch.setattr(agents, "_agent_runtime_process_pids", lambda *_args: (12345,))
     monkeypatch.setattr(
@@ -2980,8 +3002,8 @@ def test_cli_stop_stops_orphan_runtime_process_without_state(
 
 def test_cli_list_shows_agent_status_and_webui_url(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
-    AgentCatalog(toolang_root).create("bob")
+    _agents(toolang_root).create("alice")
+    _agents(toolang_root).create("bob")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3019,7 +3041,7 @@ def test_cli_list_shows_agent_status_and_webui_url(tmp_path: Path) -> None:
 
 def test_cli_list_shows_managed_sandbox_selector(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3051,7 +3073,7 @@ def test_cli_list_shows_managed_sandbox_selector(tmp_path: Path) -> None:
 
 def test_cli_list_uses_ui_base_url_from_root_config(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3078,7 +3100,7 @@ def test_cli_list_reads_web_config_without_validating_experiments_caps(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3107,7 +3129,7 @@ def test_cli_list_reads_web_config_without_validating_experiments_caps(
 
 def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     (toolang_root / "agents" / "alice" / "config.toml").write_text(
         '[models]\ndefault = ["o3", "gpt-5"]\n',
         encoding="utf-8",
@@ -3191,12 +3213,16 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
         ),
     )
     _jobs(toolang_root).create(
-        "task",
-        "---\ntitle: Review\n---\n\nReview this change.\n",
+        JobFile.parse(
+            "---\nid: review\ntitle: Review\n---\n\nReview this change.\n",
+            kind="task",
+        )
     )
     _jobs(toolang_root).create(
-        "chore",
-        "---\ntitle: Sync\nschedule: FREQ=HOURLY;INTERVAL=1\n---\n\nSync the service.\n",
+        JobFile.parse(
+            "---\nid: sync\ntitle: Sync\nschedule: FREQ=HOURLY;INTERVAL=1\n---\n\nSync the service.\n",
+            kind="chore",
+        )
     )
     agents.write_runtime_state(
         toolang_root,
@@ -3329,7 +3355,7 @@ def test_cli_info_reads_cap_counts_from_prepared_locks(
     from toolang.state.prepared import write_prepared_lock
 
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     _create_cap(
         toolang_root,
         "alice",
@@ -3353,7 +3379,9 @@ def test_cli_info_reads_cap_counts_from_prepared_locks(
         ),
     )
     durable = cap_state.scan_durable_state(toolang_root, "alice")
-    shared_lock, shared_files = cap_state.build_visibility_lock(durable, visibility="shared")
+    shared_lock, shared_files = cap_state.build_visibility_lock(
+        durable, visibility="shared"
+    )
     private_lock, private_files = cap_state.build_visibility_lock(
         durable, visibility="private"
     )
@@ -3383,7 +3411,7 @@ def test_cli_info_rebuilds_missing_prepared_lock(tmp_path: Path, monkeypatch) ->
     from toolang.state.prepared import private_lock_path
 
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     _create_cap(
         toolang_root,
         "alice",
@@ -3418,7 +3446,7 @@ def test_cli_info_rebuilds_missing_prepared_lock(tmp_path: Path, monkeypatch) ->
 
 def test_cli_info_for_stopped_agent_shows_created_only(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -3456,7 +3484,7 @@ def test_cli_info_for_running_docker_sandbox_shows_container_pid(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     monkeypatch.setattr(agents, "docker_container_running", lambda _name: True)
     monkeypatch.setattr(
         agents,
@@ -3498,7 +3526,7 @@ def test_cli_info_prefers_runtime_models_for_active_agent(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     (toolang_root / "agents" / "alice" / "config.toml").write_text(
         '[models]\ndefault = ["o3", "gpt-5"]\n',
         encoding="utf-8",
@@ -4144,7 +4172,7 @@ def test_cli_model_list_supports_filter_short_option(monkeypatch) -> None:
 
 def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
@@ -4221,7 +4249,7 @@ def test_cli_run_reuses_agent_state_for_foreground_runtime(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agent_state = object()
     captured: dict[str, object] = {}
     prepare_calls = 0
@@ -4259,7 +4287,7 @@ def test_cli_run_reuses_agent_state_for_foreground_runtime(
 
 def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
     monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
 
@@ -4314,7 +4342,7 @@ def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> 
 
 def test_cli_run_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
@@ -4351,7 +4379,7 @@ def test_cli_run_passes_model_selectors_to_agent_up(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
@@ -4383,7 +4411,7 @@ def test_cli_run_accepts_glob_model_selector_as_available_model_filter(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
@@ -4413,7 +4441,7 @@ def test_cli_run_accepts_glob_model_selector_as_available_model_filter(
 
 def test_cli_run_passes_tool_selectors_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
@@ -4443,7 +4471,7 @@ def test_cli_run_passes_tool_selectors_to_agent_up(tmp_path: Path, monkeypatch) 
 
 def test_cli_run_passes_cap_selectors_to_agent_up(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
@@ -4480,7 +4508,7 @@ def test_cli_run_passes_cap_selectors_to_agent_up(tmp_path: Path, monkeypatch) -
 
 def test_cli_run_rejects_missing_default_model_env(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     monkeypatch.setattr(
         agent_up,
         "start_runtime",
@@ -4506,7 +4534,7 @@ def test_cli_run_rejects_missing_default_model_env(tmp_path: Path, monkeypatch) 
 
 def test_cli_run_uses_py_log_spec(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     def fake_start_runtime(
@@ -4613,7 +4641,7 @@ def test_cli_start_spawns_background_run_and_reports_status(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
     monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
 
@@ -4704,7 +4732,7 @@ def test_cli_start_propagates_py_log_to_agent_process(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     class FakeProcess:
@@ -4771,7 +4799,7 @@ def test_cli_start_propagates_py_log_to_agent_process(
 
 def test_cli_start_rejects_active_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -4796,7 +4824,7 @@ def test_cli_start_allows_restart_after_stale_preparing_state(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -4855,7 +4883,7 @@ def test_cli_start_allows_restart_after_stale_preparing_state(
 
 def test_cli_start_supports_csv_loop_option(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
     monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
 
@@ -4911,7 +4939,7 @@ def test_cli_start_includes_model_selectors_in_background_command(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
     monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
 
@@ -4970,7 +4998,7 @@ def test_cli_start_includes_tool_selectors_in_background_command(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
     monkeypatch.setattr(agent_up, "resolve_runtime_port", lambda **_kwargs: 8765)
 
@@ -5031,7 +5059,7 @@ def test_cli_start_rejects_unconfigured_model_selector(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     (toolang_root / "config.toml").write_text(
         "[models.aliases.gateway]\n"
         'ref = "openai/gpt-5"\n'
@@ -5060,7 +5088,7 @@ def test_cli_start_rejects_missing_default_model_env(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     monkeypatch.setattr(
         agents.subprocess,
         "Popen",
@@ -5090,7 +5118,7 @@ def test_cli_start_preserves_host_endpoint_host_and_sandbox_in_background_comman
     monkeypatch,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     captured: dict[str, object] = {}
 
     class FakeProcess:
@@ -5154,7 +5182,7 @@ def test_cli_start_preserves_host_endpoint_host_and_sandbox_in_background_comman
 
 def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -5229,7 +5257,7 @@ def test_cli_start_reports_failed_when_process_exits_before_state(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
 
     class FakeProcess:
         def poll(self) -> int:
@@ -5281,7 +5309,7 @@ def test_cli_start_requires_agent(tmp_path: Path) -> None:
 
 def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -5327,8 +5355,8 @@ def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
 
 def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_remote_materialized_files",
@@ -5437,7 +5465,7 @@ def test_cli_cap_remote_list_shows_accessible_source_url(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_remote_materialized_files",
@@ -5476,7 +5504,7 @@ def test_cli_cap_remote_file_list_uses_github_blob_url(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_remote_materialized_files",
@@ -5612,8 +5640,8 @@ def test_cli_cap_local_new_reuses_existing_remote_cap_outputs(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
@@ -5652,8 +5680,8 @@ def test_cli_cap_local_new_reuses_existing_remote_cap_outputs(
 
 def test_cli_cap_remote_add_reports_not_found(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: False)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: False)
 
     result = _invoke_caps_app(
         ["skill", "add", "acme/missing"],
@@ -5669,8 +5697,8 @@ def test_cli_cap_add_preserves_unrelated_config_sections(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     config_path = toolang_root / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
@@ -5702,22 +5730,22 @@ def test_cli_remote_cap_add_remove_reuses_existing_wired_outputs(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     fetches: list[str] = []
 
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
         fetches.append(ref.render())
         return b"Remote psyche body.\n"
 
     monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
-    caps.add_remote_entry(
-        toolang_root,
-        "alice",
-        visibility="private",
-        kind="psyche",
-        ref="github://bench/agents/psyches/old.md@main",
+    _wired_caps(toolang_root, "alice", "private").create(
+        caps.CapRef(
+            kind="psyche",
+            name="old",
+            ref="github://bench/agents/psyches/old.md@main",
+        )
     )
     prepared_result = _invoke_caps_app(
         ["psyche", "list"],
@@ -5801,7 +5829,7 @@ def test_cli_cap_new_cancel_does_not_resolve_program_remote_uses(
     )
     monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_github_repo_default_branch",
         lambda owner, repo: pytest.fail(
             f"unexpected remote branch lookup: {owner}/{repo}"
@@ -5828,8 +5856,10 @@ def test_cli_cap_new_save_does_not_resolve_program_remote_uses(
         "agent alice\n\nwith skill briceyan/pdf-processing\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
         "_fetch_github_directory",
@@ -5839,7 +5869,7 @@ def test_cli_cap_new_save_does_not_resolve_program_remote_uses(
 
     monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: "Saved psyche.\n")
     monkeypatch.setattr(
-        caps,
+        cap_state,
         "_github_repo_default_branch",
         lambda owner, repo: pytest.fail(
             f"unexpected remote branch lookup: {owner}/{repo}"
@@ -5895,10 +5925,11 @@ def test_cli_task_new_persists_id(tmp_path: Path, monkeypatch) -> None:
 
     assert result.exit_code == 0
     task = _jobs(toolang_root).list(kind="task")[0]
+    assert task.path is not None
     saved = task.path.read_text(encoding="utf-8")
     assert (
         task.path
-        == toolang_root / "agents" / "alice" / "tasks" / f"{task.document.task_id()}.md"
+        == toolang_root / "agents" / "alice" / "tasks" / f"{task.id}.md"
     )
     assert "\nid: " in saved
     assert "title: Task title" in saved
@@ -5975,7 +6006,7 @@ def test_cli_task_list_shows_task_rows(tmp_path: Path, monkeypatch) -> None:
     assert result.exit_code == 0
     assert "ID" in result.stdout
     assert "TASK" in result.stdout
-    assert "LIFECYCLE" in result.stdout
+    assert "STAGE" in result.stdout
     assert "Review the current plan." in result.stdout
     assert "ready" in result.stdout
 
@@ -5988,9 +6019,9 @@ def test_cli_task_clone_creates_ready_copy(tmp_path: Path, monkeypatch) -> None:
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    task_id = _jobs(toolang_root).list(kind="task", lifecycle="draft")[
-        0
-    ].document.task_id()
+    task_id = (
+        _jobs(toolang_root).list(kind="task", stage="draft")[0].id
+    )
 
     result = _invoke_app(
         ["task", "clone", task_id],
@@ -6000,9 +6031,9 @@ def test_cli_task_clone_creates_ready_copy(tmp_path: Path, monkeypatch) -> None:
     cloned = _jobs(toolang_root).list(kind="task")[0]
 
     assert result.exit_code == 0
-    assert f"task {cloned.document.task_id()} cloned" in result.stdout
-    assert cloned.document.task_id() != task_id
-    assert cloned.document.title == "Task title"
+    assert f"task {cloned.id} cloned" in result.stdout
+    assert cloned.id != task_id
+    assert cloned.title == "Task title"
 
 
 def test_cli_task_delete_requires_archived_task(tmp_path: Path, monkeypatch) -> None:
@@ -6013,7 +6044,7 @@ def test_cli_task_delete_requires_archived_task(tmp_path: Path, monkeypatch) -> 
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    task_id = _jobs(toolang_root).list(kind="task")[0].document.task_id()
+    task_id = _jobs(toolang_root).list(kind="task")[0].id
 
     active_delete = _invoke_app(
         ["task", "delete", task_id],
@@ -6042,7 +6073,7 @@ def test_cli_task_delete_requires_archived_task(tmp_path: Path, monkeypatch) -> 
     assert archive_result.exit_code == 0
     assert delete_result.exit_code == 0
     assert delete_result.stdout.strip() == f"task {task_id} deleted"
-    assert _jobs(toolang_root).get("task", task_id, lifecycle="archived") is None
+    assert _jobs(toolang_root).get("task", task_id, stage="archived") is None
 
 
 def test_cli_task_draft_and_ready_move_lifecycle(tmp_path: Path, monkeypatch) -> None:
@@ -6053,14 +6084,14 @@ def test_cli_task_draft_and_ready_move_lifecycle(tmp_path: Path, monkeypatch) ->
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    task_id = _jobs(toolang_root).list(kind="task")[0].document.task_id()
+    task_id = _jobs(toolang_root).list(kind="task")[0].id
 
     draft_result = _invoke_app(
         ["task", "draft", task_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    drafted = _jobs(toolang_root).get("task", task_id, lifecycle="draft")
+    drafted = _jobs(toolang_root).get("task", task_id, stage="draft")
     ready_result = _invoke_app(
         ["task", "ready", task_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
@@ -6084,7 +6115,7 @@ def test_cli_task_ready_moves_archived_task_back(tmp_path: Path, monkeypatch) ->
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    task_id = _jobs(toolang_root).list(kind="task")[0].document.task_id()
+    task_id = _jobs(toolang_root).list(kind="task")[0].id
     _invoke_app(
         ["task", "archive", task_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
@@ -6100,7 +6131,7 @@ def test_cli_task_ready_moves_archived_task_back(tmp_path: Path, monkeypatch) ->
     assert result.exit_code == 0
     assert f"task {task_id} ready" in result.stdout
     assert _jobs(toolang_root).get("task", task_id) is not None
-    assert _jobs(toolang_root).get("task", task_id, lifecycle="archived") is None
+    assert _jobs(toolang_root).get("task", task_id, stage="archived") is None
 
 
 def test_cli_chore_new_and_list_show_schedule(tmp_path: Path, monkeypatch) -> None:
@@ -6134,9 +6165,9 @@ def test_cli_chore_clone_creates_ready_copy(tmp_path: Path, monkeypatch) -> None
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    chore_id = _jobs(toolang_root).list(kind="chore", lifecycle="draft")[
-        0
-    ].document.chore_id()
+    chore_id = (
+        _jobs(toolang_root).list(kind="chore", stage="draft")[0].id
+    )
 
     result = _invoke_app(
         ["chore", "clone", chore_id],
@@ -6146,10 +6177,10 @@ def test_cli_chore_clone_creates_ready_copy(tmp_path: Path, monkeypatch) -> None
     cloned = _jobs(toolang_root).list(kind="chore")[0]
 
     assert result.exit_code == 0
-    assert f"chore {cloned.document.chore_id()} cloned" in result.stdout
-    assert cloned.document.chore_id() != chore_id
-    assert cloned.document.title == "Chore title"
-    assert cloned.document.schedule == "FREQ=HOURLY;INTERVAL=1"
+    assert f"chore {cloned.id} cloned" in result.stdout
+    assert cloned.id != chore_id
+    assert cloned.title == "Chore title"
+    assert cloned.schedule == "FREQ=HOURLY;INTERVAL=1"
 
 
 def test_cli_chore_draft_and_ready_move_lifecycle(tmp_path: Path, monkeypatch) -> None:
@@ -6160,14 +6191,14 @@ def test_cli_chore_draft_and_ready_move_lifecycle(tmp_path: Path, monkeypatch) -
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    chore_id = _jobs(toolang_root).list(kind="chore")[0].document.chore_id()
+    chore_id = _jobs(toolang_root).list(kind="chore")[0].id
 
     draft_result = _invoke_app(
         ["chore", "draft", chore_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    drafted = _jobs(toolang_root).get("chore", chore_id, lifecycle="draft")
+    drafted = _jobs(toolang_root).get("chore", chore_id, stage="draft")
     ready_result = _invoke_app(
         ["chore", "ready", chore_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
@@ -6191,7 +6222,7 @@ def test_cli_chore_ready_moves_archived_chore_back(tmp_path: Path, monkeypatch) 
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    chore_id = _jobs(toolang_root).list(kind="chore")[0].document.chore_id()
+    chore_id = _jobs(toolang_root).list(kind="chore")[0].id
     _invoke_app(
         ["chore", "archive", chore_id],
         env={"TOOLANG_ROOT": str(toolang_root)},
@@ -6207,7 +6238,7 @@ def test_cli_chore_ready_moves_archived_chore_back(tmp_path: Path, monkeypatch) 
     assert result.exit_code == 0
     chore = _jobs(toolang_root).get("chore", chore_id)
     assert chore is not None
-    assert _jobs(toolang_root).get("chore", chore_id, lifecycle="archived") is None
+    assert _jobs(toolang_root).get("chore", chore_id, stage="archived") is None
 
 
 def test_cli_task_new_records_task_changed_update(tmp_path: Path, monkeypatch) -> None:
@@ -6939,8 +6970,8 @@ def test_cli_cap_list_global_filters_results(tmp_path: Path, monkeypatch) -> Non
 
 def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(caps, "_github_repo_default_branch", lambda owner, repo: "main")
-    monkeypatch.setattr(caps, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     _create_cap(
         toolang_root,
@@ -6950,12 +6981,13 @@ def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> No
         name="local-reviewer",
         text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
     )
-    caps.add_remote_entry(
-        toolang_root,
-        "alice",
-        visibility="private",
-        kind="skill",
-        ref="acme/remote-reviewer",
+    remote_ref = cap_state.resolve_remote_ref("skill", "acme/remote-reviewer")
+    _wired_caps(toolang_root, "alice", "private").create(
+        caps.CapRef(
+            kind="skill",
+            name=cap_state.remote_entry_name("skill", remote_ref),
+            ref=remote_ref,
+        )
     )
 
     result = _invoke_caps_app(
@@ -7136,7 +7168,7 @@ def test_standalone_caps_all_kind_list_prepares_agent_once_with_progress(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     _create_cap(
         toolang_root,
         "alice",
@@ -7194,7 +7226,7 @@ def test_standalone_caps_command_supports_concept_filters(tmp_path: Path) -> Non
 
 def test_standalone_caps_command_treats_here_caps_as_not_root(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     (toolang_root / "agents" / "alice" / "agent.too").write_text(
         ("agent alice\n\npsyche reviewer:\n  Prefer concrete findings.\n"),
         encoding="utf-8",
@@ -7306,7 +7338,8 @@ def test_cli_threads_lists_offline_runs_when_agent_is_not_running(
     toolang_root = tmp_path / "toolang"
     store = RunStore(run_store_path(toolang_root, "alice"))
     try:
-        run = project_run_start(store,
+        run = project_run_start(
+            store,
             run_id="run_first",
             thread_id="script_main",
             origin="script",
@@ -7369,7 +7402,8 @@ def test_cli_runs_falls_back_to_offline_store_when_api_is_unavailable(
     toolang_root = tmp_path / "toolang"
     store = RunStore(run_store_path(toolang_root, "alice"))
     try:
-        run = project_run_start(store,
+        run = project_run_start(
+            store,
             run_id="run_first",
             thread_id="script_abc123",
             origin="file",
@@ -7797,7 +7831,9 @@ def test_cli_chat_tui_uses_local_executor_when_runtime_is_stopped(
     captured: dict[str, object] = {}
 
     class FakeLocalClient:
-        def __init__(self, root: Path, name: str, *, environ: Mapping[str, str]) -> None:
+        def __init__(
+            self, root: Path, name: str, *, environ: Mapping[str, str]
+        ) -> None:
             captured.update(root=root, name=name, environ=dict(environ), client=self)
 
         def close(self) -> None:
@@ -9321,7 +9357,7 @@ def test_standalone_caps_list_prepares_agent_once_with_progress(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     _create_cap(
         toolang_root,
         "alice",
@@ -9361,7 +9397,7 @@ def test_standalone_cap_kind_list_prepares_agent_once_with_progress(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     _create_cap(
         toolang_root,
         "alice",
@@ -9401,7 +9437,7 @@ def test_standalone_cap_kind_list_summarizes_updated_remote_caps(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     config_path = toolang_root / "agents" / "alice" / "config.toml"
     config_path.write_text(
         '[skills]\nreview = { ref = "github://acme/agents/skills/review@main" }\n',
@@ -9447,7 +9483,7 @@ def test_standalone_cap_kind_list_summarizes_updated_remote_caps(
 
 def test_standalone_cap_kind_list_hides_cached_prepare_progress(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    AgentCatalog(toolang_root).create("alice")
+    _agents(toolang_root).create("alice")
     _create_cap(
         toolang_root,
         "alice",

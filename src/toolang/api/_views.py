@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastapi import HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 from toolang.base.types.message import Message
 from toolang.execution.detail import ExecutionProjector, ThreadInfo, run_message_data
@@ -19,11 +19,27 @@ from toolang.execution.records import (
     CommandRecord,
     RunRecord,
 )
-from toolang import templates
+from toolang.catalog import templates
 from toolang.state import caps
-from toolang.catalog.job import JobCatalog
-from toolang.catalog import job_files as job_definitions
-from toolang.work.state import AgentJobs
+from toolang.catalog.job import (
+    DEFAULT_CHORE_SCHEDULE,
+    AuthoredJobs,
+    JobFile,
+    JobKind,
+    JobStage,
+)
+from toolang.work.authoring import (
+    allocate_authored_job_id,
+    assign_missing_authored_job_ids,
+    new_job_file,
+)
+from toolang.work.state import (
+    AgentJobs,
+    job_display_title,
+    job_remote_ref,
+    job_remote_status,
+    job_thread_id,
+)
 from toolang.work.store import JobRecord, open_job_store
 from toolang.state.durable import scan_durable_state
 from toolang.state.prepared import PreparedEntry, load_prepared_locks
@@ -41,7 +57,6 @@ if TYPE_CHECKING:
     from toolang.api.context import ApiContext
 
 CapKind = Literal["psyche", "skill", "service", "prompt"]
-JobKind = Literal["task", "chore"]
 ROUTER_COMPONENT_LEAVES = frozenset(component_group(ROUTER_COMPONENTS, "router"))
 RUNNER_COMPONENT_LEAVES = frozenset(component_group(RUNNER_COMPONENTS, "runner"))
 TRIGGER_COMPONENT_LEAVES = frozenset(component_group(TRIGGER_COMPONENTS, "trigger"))
@@ -108,7 +123,7 @@ class JobPatchRequest(_ApiModel):
 class ChoreCreateRequest(_ApiModel):
     title: str | None = None
     body: str = ""
-    schedule: str = job_definitions.DEFAULT_CHORE_SCHEDULE
+    schedule: str = DEFAULT_CHORE_SCHEDULE
 
 
 class ChorePatchRequest(_ApiModel):
@@ -206,9 +221,7 @@ def snapshot_context(
     }
 
 
-def _cap_collection(
-    context: ApiContext, *, kind: CapKind
-) -> list[dict[str, object]]:
+def _cap_collection(context: ApiContext, *, kind: CapKind) -> list[dict[str, object]]:
     return [
         _cap_summary_item(context, entry)
         for entry in context.get_agent_state().caps
@@ -216,20 +229,16 @@ def _cap_collection(
     ]
 
 
-def _job_collection(
-    context: ApiContext, *, archived: bool
-) -> list[dict[str, object]]:
+def _job_collection(context: ApiContext, *, archived: bool) -> list[dict[str, object]]:
     return [
         *_task_collection(context, archived=archived),
         *_chore_collection(context, archived=archived),
     ]
 
 
-def _task_collection(
-    context: ApiContext, *, archived: bool
-) -> list[dict[str, object]]:
-    entries = JobCatalog(context.root, context.name).list(
-        kind="task", lifecycle="archived" if archived else "ready"
+def _task_collection(context: ApiContext, *, archived: bool) -> list[dict[str, object]]:
+    entries = _jobs(context).list(
+        kind="task", stage="archived" if archived else "ready"
     )
     return [_task_item(context, entry) for entry in entries]
 
@@ -237,68 +246,58 @@ def _task_collection(
 def _chore_collection(
     context: ApiContext, *, archived: bool
 ) -> list[dict[str, object]]:
-    entries = JobCatalog(context.root, context.name).list(
-        kind="chore", lifecycle="archived" if archived else "ready"
+    entries = _jobs(context).list(
+        kind="chore", stage="archived" if archived else "ready"
     )
     return [_chore_item(context, entry) for entry in entries]
 
 
-def _task_item(
-    context: ApiContext, entry: job_definitions.TaskEntry
-) -> dict[str, object]:
-    document = entry.document
-    job = _job_record(
-        context, kind="task", job_id=document.task_id(), lifecycle=entry.lifecycle
-    )
+def _task_item(context: ApiContext, document: JobFile) -> dict[str, object]:
+    if document.path is None:
+        raise ValueError("authored task path is required")
+    job = _job_record(context, kind="task", job_id=document.id, stage=document.stage)
     return {
-        "id": document.task_id(),
+        "id": document.id,
         "kind": "task",
-        "lifecycle": entry.lifecycle,
+        "stage": document.stage,
         "status": job.status if job is not None else None,
-        "remote_ref": document.remote_ref(),
-        "remote_status": document.remote_status(),
-        "title": document.display_title(fallback_name=entry.name.rsplit("/", 1)[-1]),
-        "path": _agent_relative_path(context, entry.path),
-        "updated_at": _path_updated_at(entry.path),
-        "runtime": _job_runtime(context, thread_id=document.thread_id(), job=job),
+        "remote_ref": job_remote_ref(document),
+        "remote_status": job_remote_status(document),
+        "title": job_display_title(document, fallback=document.path.stem),
+        "path": _agent_relative_path(context, document.path),
+        "updated_at": _path_updated_at(document.path),
+        "runtime": _job_runtime(context, thread_id=job_thread_id(document), job=job),
     }
 
 
-def _task_detail_item(
-    context: ApiContext, entry: job_definitions.TaskEntry
-) -> dict[str, object]:
+def _task_detail_item(context: ApiContext, entry: JobFile) -> dict[str, object]:
     return {
         **_task_item(context, entry),
-        "body": entry.document.body,
+        "body": entry.body,
     }
 
 
-def _chore_item(
-    context: ApiContext, entry: job_definitions.ChoreEntry
-) -> dict[str, object]:
-    document = entry.document
-    job = _job_record(
-        context, kind="chore", job_id=document.chore_id(), lifecycle=entry.lifecycle
-    )
+def _chore_item(context: ApiContext, document: JobFile) -> dict[str, object]:
+    if document.path is None:
+        raise ValueError("authored chore path is required")
+    job = _job_record(context, kind="chore", job_id=document.id, stage=document.stage)
     return {
-        "id": document.chore_id(),
+        "id": document.id,
         "kind": "chore",
-        "lifecycle": entry.lifecycle,
+        "stage": document.stage,
         "status": job.status if job is not None else None,
         "schedule": document.schedule,
-        "title": document.display_title(fallback_name=entry.name.rsplit("/", 1)[-1]),
-        "path": _agent_relative_path(context, entry.path),
-        "updated_at": _path_updated_at(entry.path),
-        "runtime": _job_runtime(context, thread_id=document.thread_id(), job=job),
+        "title": job_display_title(document, fallback=document.path.stem),
+        "path": _agent_relative_path(context, document.path),
+        "updated_at": _path_updated_at(document.path),
+        "runtime": _job_runtime(context, thread_id=job_thread_id(document), job=job),
     }
 
 
-def _chore_detail_item(
-    context: ApiContext, entry: job_definitions.ChoreEntry
-) -> dict[str, object]:
+def _chore_detail_item(context: ApiContext, entry: JobFile) -> dict[str, object]:
     return {
         **_chore_item(context, entry),
-        "body": entry.document.body,
+        "body": entry.body,
     }
 
 
@@ -306,17 +305,15 @@ def _job_detail_item(
     context: ApiContext,
     *,
     kind: JobKind,
-    entry: job_definitions.TaskEntry | job_definitions.ChoreEntry,
+    entry: JobFile,
 ) -> dict[str, object]:
     if kind == "task":
-        return _task_detail_item(context, cast(job_definitions.TaskEntry, entry))
-    return _chore_detail_item(context, cast(job_definitions.ChoreEntry, entry))
+        return _task_detail_item(context, entry)
+    return _chore_detail_item(context, entry)
 
 
-def _find_job_or_404(
-    context: ApiContext, job_id: str
-) -> tuple[JobKind, job_definitions.TaskEntry | job_definitions.ChoreEntry]:
-    catalog = JobCatalog(context.root, context.name)
+def _find_job_or_404(context: ApiContext, job_id: str) -> tuple[JobKind, JobFile]:
+    catalog = _jobs(context)
     task = catalog.get("task", job_id)
     if task is not None:
         return "task", task
@@ -328,12 +325,12 @@ def _find_job_or_404(
 
 def _find_archived_job_or_404(
     context: ApiContext, job_id: str
-) -> tuple[JobKind, job_definitions.TaskEntry | job_definitions.ChoreEntry]:
-    catalog = JobCatalog(context.root, context.name)
-    task = catalog.get("task", job_id, lifecycle="archived")
+) -> tuple[JobKind, JobFile]:
+    catalog = _jobs(context)
+    task = catalog.get("task", job_id, stage="archived")
     if task is not None:
         return "task", task
-    chore = catalog.get("chore", job_id, lifecycle="archived")
+    chore = catalog.get("chore", job_id, stage="archived")
     if chore is not None:
         return "chore", chore
     raise HTTPException(status_code=404, detail=f"archived job not found: {job_id}")
@@ -342,19 +339,15 @@ def _find_archived_job_or_404(
 def _find_task_or_404(
     context: ApiContext,
     task_id: str,
-) -> job_definitions.TaskEntry:
-    entry = JobCatalog(context.root, context.name).get("task", task_id)
+) -> JobFile:
+    entry = _jobs(context).get("task", task_id)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
     return entry
 
 
-def _find_archived_task_or_404(
-    context: ApiContext, task_id: str
-) -> job_definitions.TaskEntry:
-    entry = JobCatalog(context.root, context.name).get(
-        "task", task_id, lifecycle="archived"
-    )
+def _find_archived_task_or_404(context: ApiContext, task_id: str) -> JobFile:
+    entry = _jobs(context).get("task", task_id, stage="archived")
     if entry is None:
         raise HTTPException(
             status_code=404, detail=f"archived task not found: {task_id}"
@@ -365,19 +358,15 @@ def _find_archived_task_or_404(
 def _find_chore_or_404(
     context: ApiContext,
     chore_id: str,
-) -> job_definitions.ChoreEntry:
-    entry = JobCatalog(context.root, context.name).get("chore", chore_id)
+) -> JobFile:
+    entry = _jobs(context).get("chore", chore_id)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
     return entry
 
 
-def _find_archived_chore_or_404(
-    context: ApiContext, chore_id: str
-) -> job_definitions.ChoreEntry:
-    entry = JobCatalog(context.root, context.name).get(
-        "chore", chore_id, lifecycle="archived"
-    )
+def _find_archived_chore_or_404(context: ApiContext, chore_id: str) -> JobFile:
+    entry = _jobs(context).get("chore", chore_id, stage="archived")
     if entry is None:
         raise HTTPException(
             status_code=404, detail=f"archived chore not found: {chore_id}"
@@ -387,28 +376,30 @@ def _find_archived_chore_or_404(
 
 def _task_document_from_create(
     context: ApiContext, payload: TaskCreateRequest
-) -> job_definitions.TaskFile:
+) -> JobFile:
     try:
-        return job_definitions.TaskFile(
-            id=JobCatalog(context.root, context.name).allocate_id(),
+        return new_job_file(
+            kind="task",
+            job_id=allocate_authored_job_id(context.root, context.name),
             title=payload.title,
             body=payload.body,
         )
-    except ValidationError as error:
+    except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 def _chore_document_from_create(
     context: ApiContext, payload: ChoreCreateRequest
-) -> job_definitions.ChoreFile:
+) -> JobFile:
     try:
-        return job_definitions.ChoreFile(
-            id=JobCatalog(context.root, context.name).allocate_id(),
+        return new_job_file(
+            kind="chore",
+            job_id=allocate_authored_job_id(context.root, context.name),
             title=payload.title,
             body=payload.body,
             schedule=payload.schedule,
         )
-    except ValidationError as error:
+    except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
@@ -416,95 +407,108 @@ def _update_job(
     context: ApiContext,
     *,
     kind: JobKind,
-    entry: job_definitions.TaskEntry | job_definitions.ChoreEntry,
+    entry: JobFile,
     payload: JobPatchRequest,
 ) -> dict[str, object]:
     if kind == "task":
-        return _update_task(
-            context, entry=cast(job_definitions.TaskEntry, entry), payload=payload
-        )
-    return _update_chore(
-        context, entry=cast(job_definitions.ChoreEntry, entry), payload=payload
-    )
+        return _update_task(context, entry=entry, payload=payload)
+    return _update_chore(context, entry=entry, payload=payload)
 
 
 def _update_task(
     context: ApiContext,
     *,
-    entry: job_definitions.TaskEntry,
+    entry: JobFile,
     payload: TaskPatchRequest | JobPatchRequest,
 ) -> dict[str, object]:
-    document = _patch_task_document(entry.document, payload)
-    catalog = JobCatalog(context.root, context.name)
-    path = catalog.save(entry, document)
+    document = _patch_task_document(entry, payload)
+    catalog = _jobs(context)
+    saved = catalog.update(document)
+    if saved.path is None:
+        raise ValueError("authored task path is required")
     _append_job_update(
-        context, kind="task", item_id=document.task_id(), action="updated", path=path
+        context, kind="task", item_id=saved.id, action="updated", path=saved.path
     )
-    updated = catalog.get("task", document.task_id(), lifecycle=entry.lifecycle)
+    updated = catalog.get("task", saved.id, stage=entry.stage)
     if updated is None:
         raise HTTPException(
-            status_code=404, detail=f"task not found after update: {document.task_id()}"
+            status_code=404, detail=f"task not found after update: {saved.id}"
         )
-    return {
-        "item": _task_detail_item(context, updated)
-    }
+    return {"item": _task_detail_item(context, updated)}
 
 
 def _update_chore(
     context: ApiContext,
     *,
-    entry: job_definitions.ChoreEntry,
+    entry: JobFile,
     payload: ChorePatchRequest | JobPatchRequest,
 ) -> dict[str, object]:
-    document = _patch_chore_document(entry.document, payload)
-    catalog = JobCatalog(context.root, context.name)
-    path = catalog.save(entry, document)
+    document = _patch_chore_document(entry, payload)
+    catalog = _jobs(context)
+    saved = catalog.update(document)
+    if saved.path is None:
+        raise ValueError("authored chore path is required")
     _append_job_update(
-        context, kind="chore", item_id=document.chore_id(), action="updated", path=path
+        context, kind="chore", item_id=saved.id, action="updated", path=saved.path
     )
-    updated = catalog.get("chore", document.chore_id(), lifecycle=entry.lifecycle)
+    updated = catalog.get("chore", saved.id, stage=entry.stage)
     if updated is None:
         raise HTTPException(
             status_code=404,
-            detail=f"chore not found after update: {document.chore_id()}",
+            detail=f"chore not found after update: {saved.id}",
         )
-    return {
-        "item": _chore_detail_item(context, updated)
-    }
+    return {"item": _chore_detail_item(context, updated)}
 
 
 def _patch_task_document(
-    document: job_definitions.TaskFile, payload: TaskPatchRequest | JobPatchRequest
-) -> job_definitions.TaskFile:
+    document: JobFile, payload: TaskPatchRequest | JobPatchRequest
+) -> JobFile:
     if "schedule" in payload.model_fields_set:
         raise HTTPException(status_code=400, detail="tasks do not support schedule")
-    updates = {
-        field: getattr(payload, field)
-        for field in ("title", "body")
-        if field in payload.model_fields_set
-    }
     try:
-        return job_definitions.TaskFile.model_validate(
-            document.model_copy(update=updates).model_dump(mode="python")
-        )
-    except ValidationError as error:
+        return _patch_job_file(document, payload, fields=("title", "body"))
+    except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 def _patch_chore_document(
-    document: job_definitions.ChoreFile, payload: ChorePatchRequest | JobPatchRequest
-) -> job_definitions.ChoreFile:
-    updates = {
-        field: getattr(payload, field)
-        for field in ("title", "body", "schedule")
-        if field in payload.model_fields_set
-    }
+    document: JobFile, payload: ChorePatchRequest | JobPatchRequest
+) -> JobFile:
     try:
-        return job_definitions.ChoreFile.model_validate(
-            document.model_copy(update=updates).model_dump(mode="python")
+        return _patch_job_file(
+            document,
+            payload,
+            fields=("title", "body", "schedule"),
         )
-    except ValidationError as error:
+    except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _patch_job_file(
+    document: JobFile,
+    payload: TaskPatchRequest | ChorePatchRequest | JobPatchRequest,
+    *,
+    fields: tuple[str, ...],
+) -> JobFile:
+    meta = dict(document.meta)
+    body = document.body
+    for field in fields:
+        if field not in payload.model_fields_set:
+            continue
+        value = getattr(payload, field)
+        if field == "body":
+            body = value
+        elif value is None:
+            meta.pop(field, None)
+        else:
+            meta[field] = value
+    return document.with_meta(meta).with_body(body)
+
+
+def _jobs(context: ApiContext) -> AuthoredJobs:
+    catalog = AuthoredJobs(context.root / "agents" / context.name)
+    assign_missing_authored_job_ids(context.root, context.name, catalog=catalog)
+    return catalog
 
 
 def _append_job_update(
@@ -569,16 +573,18 @@ def _last_run_item(run: RunRecord) -> dict[str, object]:
 def _job_record(
     context: ApiContext,
     *,
-    kind: job_definitions.JobKind,
+    kind: JobKind,
     job_id: str,
-    lifecycle: job_definitions.JobLifecycle,
+    stage: JobStage,
 ) -> JobRecord | None:
-    if lifecycle != "ready":
+    if stage != "ready":
         return None
     store = open_job_store(context.root, context.name)
     try:
         store.reconcile(
-            jobs=AgentJobs.load(context.root, context.name, context.get_agent_state().program),
+            jobs=AgentJobs.load(
+                context.root, context.name, context.get_agent_state().program
+            ),
             kind=kind,
         )
         return store.get(job_id=job_id, kind=kind)
@@ -599,9 +605,7 @@ def _path_updated_at(path: Path) -> str:
     ).isoformat()
 
 
-def _cap_summary_item(
-    context: ApiContext, entry: PreparedEntry
-) -> dict[str, object]:
+def _cap_summary_item(context: ApiContext, entry: PreparedEntry) -> dict[str, object]:
     item: dict[str, object] = {
         "name": entry.name,
         "description": str(entry.meta["description"])
@@ -620,9 +624,7 @@ def _cap_summary_item(
     return item
 
 
-def _cap_detail_item(
-    context: ApiContext, entry: PreparedEntry
-) -> dict[str, object]:
+def _cap_detail_item(context: ApiContext, entry: PreparedEntry) -> dict[str, object]:
     item = _cap_summary_item(context, entry)
     content_path = context.root / entry.path
     content = (
@@ -834,9 +836,7 @@ def _copy_fork_history(
     source_runs = context.store.list_thread_runs_before(run_id=source_run.run_id)
     if include_anchor:
         source_runs = (*source_runs, source_run)
-    target_run_ids = tuple(
-        context.executor.allocate_run_id() for _ in source_runs
-    )
+    target_run_ids = tuple(context.executor.allocate_run_id() for _ in source_runs)
     return context.store.copy_runs_to_thread(
         source_run_ids=tuple(run.run_id for run in source_runs),
         target_thread_id=target_thread_id,

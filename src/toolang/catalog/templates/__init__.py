@@ -1,4 +1,4 @@
-"""Bundled Toolang templates."""
+"""Bundled templates for authored catalog entries."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def list_templates(kind: TemplateKind) -> tuple[TemplateSpec, ...]:
     """Return bundled templates for one kind."""
 
     items: list[TemplateSpec] = []
-    for resource in files("toolang.templates").iterdir():
+    for resource in files("toolang.catalog.templates").iterdir():
         if not resource.is_file():
             continue
         matched = _TEMPLATE_FILE_RE.fullmatch(resource.name)
@@ -63,7 +63,9 @@ def load_template(kind: TemplateKind, template_name: str = "default") -> Templat
     raise FileNotFoundError(f"template not found: {kind}.{template_name}")
 
 
-def render_template(kind: TemplateKind, template_name: str = "default", **bindings: str) -> str:
+def render_template(
+    kind: TemplateKind, template_name: str = "default", **bindings: str
+) -> str:
     """Render one named template with simple variable substitution."""
 
     text = load_template(kind, template_name).raw_text
@@ -79,7 +81,3 @@ def _template_description(kind: TemplateKind, raw_text: str) -> str | None:
     value = post.metadata.get("title" if kind in {"task", "chore"} else "description")
     text = str(value).strip() if value is not None else ""
     return text or None
-
-
-def _read_resource_text(name: str) -> str:
-    return files("toolang.templates").joinpath(name).read_text(encoding="utf-8")

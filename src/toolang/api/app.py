@@ -7,11 +7,13 @@ from contextlib import AbstractAsyncContextManager
 import threading
 from typing import Any, cast
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from toolang.api.context import ApiContext
 from toolang.api import agent, cap_commands, caps, chat, job_commands, jobs, runs
+from toolang.catalog.error import CatalogConflictError, CatalogNotFoundError
 
 DEFAULT_CORS_ORIGINS = [
     "http://localhost:3000",
@@ -50,6 +52,19 @@ def create_app(
     )
     context.shutdown_signal = shutdown_signal
     app.state.context = context
+
+    @app.exception_handler(CatalogNotFoundError)
+    async def catalog_not_found(
+        _request: Request, exc: CatalogNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(CatalogConflictError)
+    async def catalog_conflict(
+        _request: Request, exc: CatalogConflictError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
     if origins:
         app.add_middleware(
             cast(Any, CORSMiddleware),

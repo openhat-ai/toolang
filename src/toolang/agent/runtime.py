@@ -23,7 +23,6 @@ from uvicorn.main import STARTUP_FAILURE
 
 from toolang.agent import local as agents
 from toolang.agent.sandbox import prepare_root_mounts
-from toolang.catalog import agent as agent_catalog
 from toolang.state import caps as cap_store
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.sandbox import AgentSandbox
@@ -88,7 +87,11 @@ from toolang.plugin.models.loading import load_model_adapters, load_model_provid
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.channels.loading import create_channel_plugin
 from toolang.plugin.sandboxes.loading import create_sandbox_plugin
-from toolang.plugin.tools.loading import load_runtime_tools, select_tools, validate_tool_selectors
+from toolang.plugin.tools.loading import (
+    load_runtime_tools,
+    select_tools,
+    validate_tool_selectors,
+)
 
 DEFAULT_TRIGGER_INTERVAL_MS: dict[str, float] = {
     "file": files.DEFAULT_INTERVAL_MS,
@@ -705,9 +708,7 @@ def _up_local(
             bg_tasks: list[asyncio.Task[None]] = []
             job_store = None
             if "trigger.pulse" in enabled_components:
-                interval_value = config.require(
-                    "components.trigger.pulse.interval_ms"
-                )
+                interval_value = config.require("components.trigger.pulse.interval_ms")
                 if not isinstance(interval_value, int | float):
                     raise TypeError(
                         "invalid config: components.trigger.pulse.interval_ms"
@@ -866,11 +867,7 @@ def _model_count(executor: Executor, config: RuntimeConfig) -> int:
     try:
         selectors = _model_allowed_selectors(config)
         if selectors:
-            return len(
-                select_model_selectors(
-                    executor, activation_selectors=selectors
-                )
-            )
+            return len(select_model_selectors(executor, activation_selectors=selectors))
         return len(select_model_selectors(executor))
     except Exception:
         selectors = config.get("models.allowed_selectors")
@@ -1098,7 +1095,7 @@ def assemble_execution(
     executor = Executor(
         root=toolang_root,
         name=agent_name,
-        home=agent_catalog.agent_home(toolang_root, agent_name),
+        home=agents.agent_home(toolang_root, agent_name),
         id_state_path=agents.agent_id_state_path(toolang_root, agent_name),
         setup=setup,
         store=store,
@@ -1227,7 +1224,7 @@ def _up_managed_sandbox(
     request = SandboxStartRequest(
         selector=selector,
         local_root=toolang_root,
-        local_home=agent_catalog.agent_home(toolang_root, agent_name),
+        local_home=agents.agent_home(toolang_root, agent_name),
         sandbox_root=sandbox_root,
         sandbox_home=sandbox_home,
         agent_name=agent_name,

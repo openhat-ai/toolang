@@ -23,7 +23,6 @@ PACKAGES = (
     "lang",
     "plugin",
     "state",
-    "templates",
     "work",
 )
 
@@ -41,7 +40,6 @@ PACKAGE_IMPORT_RULES: dict[str, frozenset[str] | None] = {
     # common is currently needed only for shared selector parsing and matching.
     "plugin": frozenset({"base", "common"}),
     "state": None,  # TODO: Review the state package boundary.
-    "templates": frozenset(),
     "work": None,  # TODO: Review the work package boundary.
 }
 

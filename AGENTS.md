@@ -92,21 +92,24 @@
 - `toolang.base` owns the shared plugin-facing protocols, value types, and
   helper utilities used across tool, loop, channel, sandbox, model provider,
   and model adapter plugins, including the shared Toolang error type.
-- `toolang.common` owns package-neutral immutable-container helpers, progress
-  events, selectors, Toolang-owned id allocation, and shared GitHub
+- `toolang.common` owns package-neutral filesystem and immutable-container
+  helpers, progress events, selectors, Toolang-owned id allocation, and shared GitHub
   source-reference parsing and rendering. `toolang.common.error` is a
   compatibility export of the error type owned by `toolang.base`.
 - `toolang.lang` owns `.too` parsing, authored source semantics, and source
   editing.
-- `toolang.agent` owns runtime-state files, managed processes, visiting and
-  roaming agent materialization, sandbox filesystem assembly, process
-  assembly, agent-specific built-in tools, and channel execution orchestration.
-- `toolang.catalog` owns authored resident-agent layout and source CRUD,
-  authored cap and job CRUD, and remote agent and cap source resolution.
+- `toolang.agent` owns remote agent source resolution, runtime-state files,
+  managed processes, visiting and roaming agent materialization, sandbox
+  filesystem assembly, process assembly, agent-specific built-in tools, and
+  channel execution orchestration.
+- `toolang.catalog` owns local agent-home CRUD, authored cap and job CRUD,
+  wired cap references, and bundled authored-file templates. Its collections
+  receive explicit directories or config-file paths and do not resolve remote
+  sources or infer the Toolang layout.
 - `toolang.work` owns effective job scheduling state, file inbox requests,
   runtime stores, watchers, and scheduling loops.
-- `toolang.state` owns durable/prepared source snapshots, effective cap
-  projection and materialization, immutable
+- `toolang.state` owns remote cap source resolution, durable/prepared source
+  snapshots, effective cap projection and materialization, immutable
   root/home/agent state, and source-state watching.
 - `toolang.execution` owns run binding, execution trace, durable run truth,
   response projection, and execution storage.
@@ -173,3 +176,12 @@
 - Keep generated state diff-friendly and deterministic.
 - Make directory layout explicit with small helper functions instead of
   reconstructing paths ad hoc at many call sites.
+
+## Authored Catalog Writes
+
+- `WiredCaps` must preserve unrelated TOML source, including comments.
+- `WiredCaps`, `AuthoredCaps`, and `AuthoredJobs` serialize mutations with their
+  public reentrant inter-process `write_lock()` mechanism.
+- Authored job ids are globally unique across task and chore kinds and all
+  stages. `toolang.work` allocates and persists ids missing from manually added
+  files before publishing job state.

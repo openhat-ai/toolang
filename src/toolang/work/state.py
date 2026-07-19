@@ -1,4 +1,4 @@
-"""Immutable authored and effective job job_definitions."""
+"""Immutable authored and effective job definitions."""
 
 from __future__ import annotations
 
@@ -7,9 +7,18 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 from pathlib import Path
+import re
 
 from ..lang.ast import JobDecl, Program
-from toolang.catalog import job_files as job_definitions
+from toolang.catalog.job import (
+    DEFAULT_CHORE_SCHEDULE,
+    AuthoredJobs,
+    JobFile,
+    JobKind,
+)
+from .authoring import assign_missing_authored_job_ids
+
+_REMOTE_REF_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,7 +26,7 @@ class JobDefinition:
     """One executable task or chore definition."""
 
     id: str
-    kind: job_definitions.JobKind
+    kind: JobKind
     name: str
     title: str | None
     body: str
@@ -56,16 +65,9 @@ class HomeJobs:
 
     @classmethod
     def load(cls, root: Path, name: str) -> HomeJobs:
-        jobs = [
-            *(
-                _file_definition(root, entry)
-                for entry in job_definitions._list_tasks(root, name)
-            ),
-            *(
-                _file_definition(root, entry)
-                for entry in job_definitions._list_chores(root, name)
-            ),
-        ]
+        catalog = AuthoredJobs(root / "agents" / name)
+        assign_missing_authored_job_ids(root, name, catalog=catalog)
+        jobs = [_file_definition(root, job) for job in catalog.list()]
         return cls(tuple(sorted(jobs, key=lambda item: (item.kind, item.id))))
 
 
@@ -90,7 +92,7 @@ class AgentJobs:
             tuple(sorted(program_jobs.values(), key=lambda item: (item.kind, item.id)))
         )
 
-    def get(self, kind: job_definitions.JobKind, job_id: str) -> JobDefinition | None:
+    def get(self, kind: JobKind, job_id: str) -> JobDefinition | None:
         return next(
             (job for job in self.definitions if job.kind == kind and job.id == job_id),
             None,
@@ -99,37 +101,22 @@ class AgentJobs:
 
 def _file_definition(
     root: Path,
-    entry: job_definitions.TaskEntry | job_definitions.ChoreEntry,
+    job: JobFile,
 ) -> JobDefinition:
-    if isinstance(entry, job_definitions.TaskEntry):
-        job_id = entry.document.task_id()
-        kind: job_definitions.JobKind = "task"
-        title = entry.document.title
-        body = entry.document.body
-        input_text = entry.document.render_input(
-            fallback_name=entry.name.rsplit("/", 1)[-1]
-        )
-        schedule = None
-    else:
-        job_id = entry.document.chore_id()
-        kind = "chore"
-        title = entry.document.title
-        body = entry.document.body
-        input_text = entry.document.render_input(
-            fallback_title=entry.name.rsplit("/", 1)[-1]
-        )
-        schedule = entry.document.schedule
-    source = str(entry.path.relative_to(root))
+    if job.path is None:
+        raise ValueError("authored job path is required")
+    name = job.name
+    source = str(job.path.relative_to(root))
     return _definition(
-        job_id=job_id,
-        kind=kind,
-        name=entry.name.rsplit("/", 1)[-1],
-        title=title,
-        body=body,
+        job_id=job.id,
+        kind=job.kind,
+        name=name,
+        title=job.title,
+        body=job.body,
         source=source,
-        path=str(entry.path),
-        input_text=input_text,
-        schedule=schedule,
+        path=str(job.path),
+        input_text=job_input(job, fallback=name),
+        schedule=job.schedule if job.kind == "chore" else None,
     )
 
 
@@ -140,7 +127,7 @@ def _program_definition(decl: JobDecl) -> JobDefinition:
         f"# {title}\n\n{body}" if title and body else body or title or decl.name
     )
     schedule = (
-        str(decl.meta.get("schedule") or job_definitions.DEFAULT_CHORE_SCHEDULE).strip()
+        str(decl.meta.get("schedule") or DEFAULT_CHORE_SCHEDULE).strip()
         if decl.kind == "chore"
         else None
     )
@@ -160,7 +147,7 @@ def _program_definition(decl: JobDecl) -> JobDefinition:
 def _definition(
     *,
     job_id: str,
-    kind: job_definitions.JobKind,
+    kind: JobKind,
     name: str,
     title: str | None,
     body: str,
@@ -185,21 +172,73 @@ def _definition(
         input=input_text,
         schedule=schedule,
         fingerprint=sha256(payload.encode()).hexdigest(),
-        thread=job_definitions.job_thread_id(kind, job_id),
+        thread=f"{kind}_{job_id.strip()}",
     )
 
 
-def _key(job: JobDefinition) -> tuple[job_definitions.JobKind, str]:
-    return job.kind, job.id
+def _key(job: JobDefinition) -> str:
+    return job.id
 
 
 def _index_jobs(
     jobs: Iterable[JobDefinition], *, source: str
-) -> dict[tuple[job_definitions.JobKind, str], JobDefinition]:
-    indexed: dict[tuple[job_definitions.JobKind, str], JobDefinition] = {}
+) -> dict[str, JobDefinition]:
+    indexed: dict[str, JobDefinition] = {}
     for job in jobs:
         key = _key(job)
         if key in indexed:
-            raise ValueError(f"duplicate {source} {job.kind} id: {job.id}")
+            raise ValueError(f"duplicate {source} job id: {job.id}")
         indexed[key] = job
     return indexed
+
+
+def job_thread_id(job: JobFile) -> str:
+    """Return the runtime thread projection for one authored job."""
+
+    return f"{job.kind}_{job.id}"
+
+
+def job_input(job: JobFile, *, fallback: str) -> str:
+    """Render authored job content as runtime input."""
+
+    if job.kind == "task":
+        return job.body.strip() or fallback.strip()
+    title = (job.title or "").strip() or fallback.strip()
+    body = job.body.strip()
+    if title and body:
+        return f"# {title}\n\n{body}"
+    return body or title
+
+
+def job_display_title(job: JobFile, *, fallback: str) -> str:
+    """Return a short title for a caller-facing job projection."""
+
+    if job.title:
+        return job.title
+    for line in job.body.splitlines():
+        candidate = line.strip().lstrip("#").strip()
+        if candidate:
+            return candidate[:80]
+    return fallback
+
+
+def job_remote_status(job: JobFile) -> str | None:
+    """Return the first explicit remote status in a task body."""
+
+    if job.kind != "task":
+        return None
+    for line in job.body.splitlines():
+        key, separator, value = line.partition(":")
+        if separator == ":" and key.strip().lower() in {"status", "remote status"}:
+            return value.strip() or None
+    return None
+
+
+def job_remote_ref(job: JobFile) -> str | None:
+    """Return a remote work-item key projected from authored task content."""
+
+    if job.kind != "task":
+        return None
+    text = "\n".join(part for part in (job.title or "", job.body) if part)
+    match = _REMOTE_REF_PATTERN.search(text)
+    return None if match is None else match.group(0)

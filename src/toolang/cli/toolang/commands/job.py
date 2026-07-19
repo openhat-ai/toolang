@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Annotated, Literal, cast
 
@@ -11,13 +11,17 @@ import click
 import typer
 from typer.core import TyperCommand
 
-from .... import templates
-from toolang.catalog.agent import agent_home
+from ....catalog import templates
+from toolang.agent.local import agent_home
 from ....execution.records import UpdateKind
 from toolang.state.durable import scan_durable_state
-from toolang.catalog.job import JobCatalog
-from toolang.catalog import job_files as job_definitions
-from toolang.work.state import AgentJobs
+from toolang.catalog.job import AuthoredJobs, JobFile, JobStage
+from toolang.catalog.error import CatalogError
+from toolang.work.authoring import (
+    allocate_authored_job_id,
+    assign_missing_authored_job_ids,
+)
+from toolang.work.state import AgentJobs, job_display_title
 from toolang.work.store import open_job_store
 from ...common.client import runtime_post
 from ...common.updates import append_agent_update
@@ -146,8 +150,8 @@ def _list(kind: JobKind, title: str) -> Callable[..., None]:
     ) -> None:
         agent = require_prefix_agent(ctx)
         root = context_root(ctx)
-        catalog = JobCatalog(root, agent)
-        lifecycles: tuple[job_definitions.JobLifecycle, ...] = (
+        catalog = _jobs(root, agent)
+        stages: tuple[JobStage, ...] = (
             ("ready", "draft", "archived")
             if all_items
             else ("draft",)
@@ -159,22 +163,20 @@ def _list(kind: JobKind, title: str) -> Callable[..., None]:
         if kind == "task":
             entries = tuple(
                 entry
-                for lifecycle in lifecycles
-                for entry in catalog.list(kind="task", lifecycle=lifecycle)
+                for stage in stages
+                for entry in catalog.list(kind="task", stage=stage)
             )
             if not entries:
                 typer.echo("No tasks found.")
                 return
             echo_table(
-                ("ID", title.upper(), "LIFECYCLE", "LOCATION"),
+                ("ID", title.upper(), "STAGE", "LOCATION"),
                 [
                     (
-                        entry.document.task_id(),
-                        entry.document.display_title(
-                            fallback_name=entry.document.task_id()
-                        ),
-                        entry.lifecycle,
-                        _location(root, agent, entry.path),
+                        entry.id,
+                        job_display_title(entry, fallback=entry.id),
+                        entry.stage,
+                        _location(root, agent, _job_path(entry)),
                     )
                     for entry in entries
                 ],
@@ -182,23 +184,21 @@ def _list(kind: JobKind, title: str) -> Callable[..., None]:
             return
         entries = tuple(
             entry
-            for lifecycle in lifecycles
-            for entry in catalog.list(kind="chore", lifecycle=lifecycle)
+            for stage in stages
+            for entry in catalog.list(kind="chore", stage=stage)
         )
         if not entries:
             typer.echo("No chores found.")
             return
         echo_table(
-            ("ID", title.upper(), "LIFECYCLE", "SCHEDULE", "LOCATION"),
+            ("ID", title.upper(), "STAGE", "SCHEDULE", "LOCATION"),
             [
                 (
-                    entry.document.chore_id(),
-                    entry.document.display_title(
-                        fallback_name=entry.document.chore_id()
-                    ),
-                    entry.lifecycle,
-                    entry.document.schedule,
-                    _location(root, agent, entry.path),
+                    entry.id,
+                    job_display_title(entry, fallback=entry.id),
+                    entry.stage,
+                    entry.schedule,
+                    _location(root, agent, _job_path(entry)),
                 )
                 for entry in entries
             ],
@@ -223,12 +223,15 @@ def _new(kind: JobKind, _title: str) -> Callable[..., None]:
         if text is None:
             raise typer.Exit()
         root = context_root(ctx)
-        path = user_call(
-            JobCatalog(root, agent).create,
-            kind,
+        job = user_call(
+            JobFile.parse,
             text,
-            lifecycle="draft" if draft else "ready",
+            kind=kind,
+            stage="draft" if draft else "ready",
+            job_id=allocate_authored_job_id(root, agent),
         )
+        saved = user_call(_jobs(root, agent).create, job.with_meta(job.meta))
+        path = _job_path(saved)
         if not draft:
             _reconcile(root, agent, kind)
         _notify(root, agent, kind, path.stem, path)
@@ -243,11 +246,16 @@ def _clone(kind: JobKind, title: str) -> Callable[..., None]:
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
         root, agent = context_root(ctx), require_prefix_agent(ctx)
-        path = user_call(
-            JobCatalog(root, agent).clone,
-            kind,
-            id,
+        source = _jobs(root, agent).get(kind, id, stage=None)
+        if source is None:
+            raise click.ClickException(f"{kind} not found: {id}")
+        clone_id = allocate_authored_job_id(root, agent)
+        clone = source.with_meta({**source.meta, "id": clone_id, "name": clone_id})
+        saved = user_call(
+            _jobs(root, agent).create,
+            replace(clone, path=None, stage="ready"),
         )
+        path = _job_path(saved)
         _reconcile(root, agent, kind)
         _notify(root, agent, kind, path.stem, path)
         typer.echo(f"{kind} {path.stem} cloned\t{path}")
@@ -261,12 +269,23 @@ def _edit(kind: JobKind, title: str) -> Callable[..., None]:
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
         root, agent = context_root(ctx), require_prefix_agent(ctx)
-        catalog = JobCatalog(root, agent)
-        text = user_call(catalog.read, kind, id)
+        catalog = _jobs(root, agent)
+        existing = catalog.get(kind, id, stage=None)
+        if existing is None:
+            raise click.ClickException(f"{kind} not found: {id}")
+        text = existing.content
         updated = click.edit(text, extension=".md", require_save=True)
         if updated is None:
             raise typer.Exit()
-        path = user_call(catalog.update, kind, id, updated)
+        document = user_call(
+            JobFile.parse,
+            updated,
+            kind=kind,
+            stage=existing.stage,
+            job_id=id,
+        )
+        saved = user_call(catalog.update, document.with_meta(document.meta))
+        path = _job_path(saved)
         _reconcile(root, agent, kind)
         _notify(root, agent, kind, id, path)
         typer.echo(str(path))
@@ -274,24 +293,17 @@ def _edit(kind: JobKind, title: str) -> Callable[..., None]:
     return command
 
 
-def _move(kind: JobKind, title: str, lifecycle: str) -> Callable[..., None]:
+def _move(kind: JobKind, title: str, stage: JobStage) -> Callable[..., None]:
     def command(
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
         root, agent = context_root(ctx), require_prefix_agent(ctx)
-        catalog = JobCatalog(root, agent)
-        operation = {
-            "draft": catalog.draft,
-            "ready": catalog.ready,
-            "archived": catalog.archive,
-        }[lifecycle]
-        path = user_call(operation, kind, id)
-        if path is None:
-            raise click.ClickException(f"{kind} not found: {id}")
+        moved = user_call(_jobs(root, agent).move, kind, id, stage)
+        path = _job_path(moved)
         _reconcile(root, agent, kind)
         _notify(root, agent, kind, id, path)
-        verb = {"draft": "drafted", "ready": "ready", "archived": "archived"}[lifecycle]
+        verb = {"draft": "drafted", "ready": "ready", "archived": "archived"}[stage]
         typer.echo(f"{kind} {id} {verb}\t{path}")
 
     return command
@@ -381,20 +393,18 @@ def _delete(kind: JobKind, title: str) -> Callable[..., None]:
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
         root, agent = context_root(ctx), require_prefix_agent(ctx)
-        catalog = JobCatalog(root, agent)
-        active = catalog.get(kind, id, lifecycle=None)
-        if active is not None and active.lifecycle != "archived":
+        catalog = _jobs(root, agent)
+        active = catalog.get(kind, id, stage=None)
+        if active is not None and active.stage != "archived":
             raise click.ClickException(
                 f"{kind} is not archived: {id}; archive it before deleting"
             )
-        entry = catalog.get(kind, id, lifecycle="archived")
+        entry = catalog.get(kind, id, stage="archived")
         if entry is None:
             raise click.ClickException(f"archived {kind} not found: {id}")
         removed = user_call(catalog.remove, kind, id)
-        if not removed:
-            raise click.ClickException(f"archived {kind} not found: {id}")
         _reconcile(root, agent, kind)
-        _notify(root, agent, kind, id, entry.path)
+        _notify(root, agent, kind, id, _job_path(removed))
         typer.echo(f"{kind} {id} deleted")
 
     return command
@@ -420,6 +430,21 @@ def _reconcile(root: Path, agent: str, kind: JobKind) -> None:
 def _agent_jobs(root: Path, agent: str) -> AgentJobs:
     program = scan_durable_state(root, agent).load_program().parse()
     return AgentJobs.load(root, agent, program)
+
+
+def _jobs(root: Path, agent: str) -> AuthoredJobs:
+    catalog = AuthoredJobs(agent_home(root, agent))
+    try:
+        assign_missing_authored_job_ids(root, agent, catalog=catalog)
+    except (CatalogError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    return catalog
+
+
+def _job_path(job: JobFile) -> Path:
+    if job.path is None:
+        raise ValueError("authored job path is required")
+    return job.path
 
 
 def _location(root: Path, agent: str, path: Path) -> str:
