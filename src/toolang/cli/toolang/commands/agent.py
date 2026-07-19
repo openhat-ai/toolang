@@ -16,7 +16,6 @@ from toolang.catalog.job import AuthoredJobs
 from toolang.catalog.agent import LocalAgents
 from toolang.agent import local as agents
 from toolang.catalog import templates
-from toolang.state.caps import effective_cap_entries
 from toolang.state.prepared import PreparedEntry
 from ...common.updates import append_agent_update
 from ...common.context import (
@@ -87,7 +86,7 @@ def clone_agent(
             shutil.copytree(
                 source_home,
                 home,
-                ignore=shutil.ignore_patterns(".caps", ".runtime"),
+                ignore=shutil.ignore_patterns(".caps", ".prepared", ".runtime"),
             )
         else:
             ref = agents.resolve_agent_selector_ref(selector)
@@ -224,14 +223,17 @@ def _caps_summary(root: Path, agent: str) -> str:
 
 
 def _prepared_cap_counts(root: Path, agent: str) -> dict[str, int] | None:
-    from toolang.state.prepared import load_private_lock, load_shared_lock
+    from toolang.state.agent import compose_agent_state
+    from toolang.state.generation import load_home_prepared, load_root_prepared
 
     try:
-        shared_lock = load_shared_lock(root)
-        private_lock = load_private_lock(root, agent)
+        state = compose_agent_state(
+            load_root_prepared(root),
+            load_home_prepared(root, agent),
+        )
     except (FileNotFoundError, OSError, TypeError, ValueError, KeyError):
         return None
-    return _cap_counts(effective_cap_entries(shared_lock, private_lock))
+    return _cap_counts(state.caps)
 
 
 def _cap_counts(entries: Sequence[PreparedEntry]) -> dict[str, int]:

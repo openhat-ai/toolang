@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
+from importlib.metadata import version as package_version
 import logging
 import os
 from pathlib import Path
@@ -76,7 +77,8 @@ from toolang.agent import channel_runtime as poll
 from toolang.agent import state_updates as watch
 from toolang.common.progress import ProgressSink
 from toolang.state.durable import scan_durable_state
-from toolang.state.agent import AgentState, load_agent_state
+from toolang.state.agent import AgentState
+from toolang.state.prepare import prepare_agent_state
 from toolang.state import watcher as state_watcher
 from toolang.plugin.models.config import (
     parse_default_models,
@@ -326,23 +328,35 @@ def prepare_agent(
     *,
     toolang_root: Path,
     agent_name: str,
+    force: bool = False,
     progress: ProgressSink | None = None,
 ) -> AgentState:
     """Prepare one agent for either long-lived startup or one-shot execution."""
 
-    durable = scan_durable_state(toolang_root, agent_name)
-    return load_agent_state(state_watcher.prepare_locks(durable, progress=progress))
+    return prepare_agent_state(
+        toolang_root,
+        agent_name,
+        toolang_version=package_version("toolang"),
+        force=force,
+        progress=progress,
+    )
 
 
 def prepare_runtime(
     *,
     toolang_root: Path,
     agent_name: str,
+    force: bool = False,
     progress: ProgressSink | None = None,
 ) -> None:
     """Prepare one agent runtime without starting it."""
 
-    prepare_agent(toolang_root=toolang_root, agent_name=agent_name, progress=progress)
+    prepare_agent(
+        toolang_root=toolang_root,
+        agent_name=agent_name,
+        force=force,
+        progress=progress,
+    )
 
 
 def resolve_startup(

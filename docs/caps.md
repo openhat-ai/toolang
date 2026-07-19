@@ -155,15 +155,18 @@ Private local caps:
 
 ## Prepared Cap Paths
 
-Prepared materialized caps live under `.caps` roots:
+Prepared materialized caps live inside immutable `.prepared` generations:
 
-- `inline` caps are materialized under `.caps/inline`
-- `ref` caps are materialized under `.caps/ref`
-- `wired` caps are materialized under `.caps/wired`
+- `inline` caps are materialized under `files/inline`
+- `ref` caps are materialized under `files/referenced`
+- `wired` caps are materialized under `files/wired`
+- authored caps are copied under `files/authored`
 
-For agent-specific prepared caps, the `.caps` root is
-`${TOOLANG_ROOT}/agents/<agent>/.caps`. For root prepared caps, the `.caps` root is
-`${TOOLANG_ROOT}/.caps`.
+Root generations live under `${TOOLANG_ROOT}/.prepared/versions/<version>`.
+Agent-specific generations live under
+`${TOOLANG_ROOT}/agents/<agent>/.prepared/versions/<version>`. See
+[prepared-state.md](./prepared-state.md) for the complete layout and versioning
+rules.
 
 
 ## Local Cap Frontmatter

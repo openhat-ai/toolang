@@ -24,7 +24,7 @@ ${TOOLANG_ROOT}/
   skills/
   services/
   prompts/
-  .caps/
+  .prepared/
   .sandbox/
   agents/
     <agent>/
@@ -37,7 +37,7 @@ ${TOOLANG_ROOT}/
       tasks/
       chores/
       archive/
-      .caps/
+      .prepared/
       .runtime/
 ```
 
@@ -72,7 +72,7 @@ Key paths:
 | `chores/` | Ready chore documents |
 | `drafts/` | Draft task and chore documents |
 | `archive/` | Retired task and chore documents |
-| `.caps/` | Prepared runtime artifacts |
+| `.prepared/` | Immutable prepared generations |
 | `.runtime/` | Live runtime state |
 
 
@@ -105,12 +105,13 @@ Prepared directories:
 
 | Scope | Directory |
 | --- | --- |
-| Global | `${TOOLANG_ROOT}/.caps/` |
-| Per-agent | `${TOOLANG_ROOT}/agents/<agent>/.caps/` |
+| Global | `${TOOLANG_ROOT}/.prepared/` |
+| Per-agent | `${TOOLANG_ROOT}/agents/<agent>/.prepared/` |
 
-Each prepared directory stores a `lock.json` and materialized files. See
-[prepared-lock.md](./prepared-lock.md) for the lock format and comparison
-rules.
+Each prepared directory stores a current-version pointer, a per-scope writer
+lock, and immutable generation directories. See
+[prepared-state.md](./prepared-state.md) for the generation format and
+publication rules.
 
 
 ## Durable State

@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any, ClassVar, Literal
 
+from pydantic import TypeAdapter
 from tree_sitter import Language, Node as TreeSitterNode, Parser, Tree
 import tree_sitter_toolang
 
@@ -376,3 +377,14 @@ def to_data(value: object) -> object:
     if isinstance(value, Mapping):
         return {str(key): to_data(item) for key, item in value.items()}
     return value
+
+
+def program_from_data(value: object) -> Program:
+    """Load a previously validated program from its JSON representation."""
+
+    return _program_adapter().validate_python(value)
+
+
+@lru_cache(maxsize=1)
+def _program_adapter() -> TypeAdapter[Program]:
+    return TypeAdapter(Program)

@@ -388,7 +388,7 @@ def _prepared_entry_to_context(
     context: SupportsRunAssembly,
     entry: PreparedEntry,
 ) -> dict[str, object]:
-    content = entry.content.strip() if entry.kind == "psyche" else ""
+    content = entry.read_content() if entry.kind == "psyche" else ""
     description = entry.meta.get("description")
     return {
         "name": entry.name,
