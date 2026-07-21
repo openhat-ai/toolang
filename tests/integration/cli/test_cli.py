@@ -2110,12 +2110,8 @@ def test_roaming_hosted_invoke_starts_session_api_with_execution_selectors(
         yield FakeClient()
 
     monkeypatch.setattr(cli_invoke.agent_up, "resolve_startup", fake_resolve_startup)
-    monkeypatch.setattr(
-        cli_invoke, "owned_runtime_client", fake_owned_runtime_client
-    )
-    reply = invoke_rendering.ScriptProgressSink(
-        executable_name="default", render=False
-    )
+    monkeypatch.setattr(cli_invoke, "owned_runtime_client", fake_owned_runtime_client)
+    reply = invoke_rendering.ScriptProgressSink(executable_name="default", render=False)
 
     result = cli_invoke._invoke_hosted(
         toolang_root=tmp_path,
@@ -5402,7 +5398,9 @@ def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
 
 def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
     monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     monkeypatch.setattr(
         cap_state,
@@ -5437,12 +5435,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
 
     prepared = load_home_prepared(toolang_root, "alice")
     assert (
-        prepared.version_dir
-        / "files"
-        / "wired"
-        / "skills"
-        / "reviewer"
-        / "SKILL.md"
+        prepared.version_dir / "files" / "wired" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: Review code\n---\n# Reviewer\n"
 
     list_remote_result = _invoke_caps_app(
@@ -5688,7 +5681,9 @@ def test_cli_cap_local_new_reuses_existing_remote_cap_outputs(
     toolang_root = tmp_path / "toolang"
     fetches: list[str] = []
 
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
     monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     def fake_fetch(ref):
@@ -5728,7 +5723,9 @@ def test_cli_cap_local_new_reuses_existing_remote_cap_outputs(
 
 def test_cli_cap_remote_add_reports_not_found(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
     monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: False)
 
     result = _invoke_caps_app(
@@ -5745,7 +5742,9 @@ def test_cli_cap_add_preserves_unrelated_config_sections(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
     monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
     config_path = toolang_root / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -5975,10 +5974,7 @@ def test_cli_task_new_persists_id(tmp_path: Path, monkeypatch) -> None:
     task = _jobs(toolang_root).list(kind="task")[0]
     assert task.path is not None
     saved = task.path.read_text(encoding="utf-8")
-    assert (
-        task.path
-        == toolang_root / "agents" / "alice" / "tasks" / f"{task.id}.md"
-    )
+    assert task.path == toolang_root / "agents" / "alice" / "tasks" / f"{task.id}.md"
     assert "\nid: " in saved
     assert "title: Task title" in saved
     assert "stage: todo" not in saved
@@ -6067,9 +6063,7 @@ def test_cli_task_clone_creates_ready_copy(tmp_path: Path, monkeypatch) -> None:
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    task_id = (
-        _jobs(toolang_root).list(kind="task", stage="draft")[0].id
-    )
+    task_id = _jobs(toolang_root).list(kind="task", stage="draft")[0].id
 
     result = _invoke_app(
         ["task", "clone", task_id],
@@ -6213,9 +6207,7 @@ def test_cli_chore_clone_creates_ready_copy(tmp_path: Path, monkeypatch) -> None
         env={"TOOLANG_ROOT": str(toolang_root)},
         prefix_agent="alice",
     )
-    chore_id = (
-        _jobs(toolang_root).list(kind="chore", stage="draft")[0].id
-    )
+    chore_id = _jobs(toolang_root).list(kind="chore", stage="draft")[0].id
 
     result = _invoke_app(
         ["chore", "clone", chore_id],
@@ -7018,7 +7010,9 @@ def test_cli_cap_list_global_filters_results(tmp_path: Path, monkeypatch) -> Non
 
 def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cap_state, "_github_repo_default_branch", lambda owner, repo: "main")
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
+    )
     monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
 
     _create_cap(
@@ -7781,9 +7775,7 @@ def test_cli_process_local_chat_script_uses_chat_client_contract(
             calls.append(("create_thread", None))
             return "term_local"
 
-        def start_run(
-            self, thread_id, message, selects, on_event, on_error
-        ) -> None:
+        def start_run(self, thread_id, message, selects, on_event, on_error) -> None:
             del on_event, on_error
             calls.append(
                 (
@@ -7971,7 +7963,9 @@ def test_cli_chat_owns_temporary_hosted_api(tmp_path: Path, monkeypatch) -> None
 
     monkeypatch.setattr(chat_commands, "context_root", lambda _ctx: tmp_path)
     monkeypatch.setattr(chat_commands, "require_prefix_agent", lambda _ctx: "alice")
-    monkeypatch.setattr(chat_commands.agent_up, "prepare_agent", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        chat_commands.agent_up, "prepare_agent", lambda **_kwargs: object()
+    )
     monkeypatch.setattr(
         chat_commands.agent_up,
         "resolve_agent_hosting",
@@ -8013,10 +8007,11 @@ def test_cli_chat_owns_temporary_hosted_api(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setattr(agents.AgentProcess, "start", fake_start)
     monkeypatch.setattr(agents.AgentProcess, "stop", fake_stop)
 
-    with chat_commands._chat_runtime(
-        cast(Any, object()), sandbox="docker"
-    ) as client:
-        assert cast(chat_commands.RuntimeClient, client).endpoint == "http://localhost:8765"
+    with chat_commands._chat_runtime(cast(Any, object()), sandbox="docker") as client:
+        assert (
+            cast(chat_commands.RuntimeClient, client).endpoint
+            == "http://localhost:8765"
+        )
 
     assert cast(dict[str, object], captured["resolve"])["sandbox"] == "docker"
     assert captured["background_hosting"] is True
@@ -8043,7 +8038,9 @@ def test_cli_chat_without_runtime_uses_process_local_executor_for_none_hosting(
     monkeypatch.setattr(chat_commands, "require_prefix_agent", lambda _ctx: "alice")
     monkeypatch.setattr(agents.AgentProcess, "status", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        chat_commands, "load_runtime_environ", lambda *_args, **_kwargs: {"KEY": "value"}
+        chat_commands,
+        "load_runtime_environ",
+        lambda *_args, **_kwargs: {"KEY": "value"},
     )
     monkeypatch.setattr(
         chat_commands.agent_up, "prepare_agent", lambda **_kwargs: state
@@ -8112,9 +8109,7 @@ def test_cli_chat_reuses_one_compatible_runtime_status(
     monkeypatch.setattr(chat_commands, "require_prefix_agent", lambda _ctx: "alice")
     monkeypatch.setattr(agents.AgentProcess, "status", fake_status)
 
-    with chat_commands._chat_runtime(
-        cast(Any, object()), sandbox="docker"
-    ) as client:
+    with chat_commands._chat_runtime(cast(Any, object()), sandbox="docker") as client:
         assert cast(chat_commands.RuntimeClient, client).endpoint == (
             "http://localhost:7001"
         )
@@ -9381,8 +9376,8 @@ def test_cli_rewind_accepts_thread_target(monkeypatch) -> None:
         (
             "post",
             (
-                "/api/v1/runs/run_latest/rewind",
-                {},
+                "/api/v1/threads/term_thread/rewind",
+                {"run_id": "run_latest"},
             ),
         ),
     ]
@@ -9409,7 +9404,13 @@ def test_cli_rewind_without_message_does_not_send_empty_message(monkeypatch) -> 
     assert result.exit_code == 0
     assert calls == [
         ("json", "/api/v1/threads/term_thread"),
-        ("post", ("/api/v1/runs/run_latest/rewind", {})),
+        (
+            "post",
+            (
+                "/api/v1/threads/term_thread/rewind",
+                {"run_id": "run_latest"},
+            ),
+        ),
     ]
 
 
@@ -9444,7 +9445,13 @@ def test_cli_rewind_chat_opens_rewound_thread(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == [
         ("json", "/api/v1/threads/term_thread"),
-        ("post", ("/api/v1/runs/run_latest/rewind", {})),
+        (
+            "post",
+            (
+                "/api/v1/threads/term_thread/rewind",
+                {"run_id": "run_latest"},
+            ),
+        ),
         ("chat", "term_thread"),
     ]
 
@@ -9473,8 +9480,8 @@ def test_cli_fork_thread_target_copies_through_latest_run(monkeypatch) -> None:
         (
             "post",
             (
-                "/api/v1/runs/run_latest/fork",
-                {"include_anchor": True},
+                "/api/v1/threads/term_thread/fork",
+                {"run_id": "run_latest", "include_anchor": True},
             ),
         ),
     ]
@@ -9512,7 +9519,13 @@ def test_cli_fork_chat_opens_forked_thread(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == [
         ("json", "/api/v1/threads/term_thread"),
-        ("post", ("/api/v1/runs/run_latest/fork", {"include_anchor": True})),
+        (
+            "post",
+            (
+                "/api/v1/threads/term_thread/fork",
+                {"run_id": "run_latest", "include_anchor": True},
+            ),
+        ),
         ("chat", "term_fork"),
     ]
 

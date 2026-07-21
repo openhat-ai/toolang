@@ -303,14 +303,21 @@ include richer discovery details such as:
 
 Each running agent exposes one local FastAPI server.
 
+The process assembles one `Executor`, one `StateWatcher`, and five authored
+catalog instances for the application lifetime: one `AuthoredJobs`, private and
+shared `AuthoredCaps`, and private and shared `WiredCaps`. FastAPI dependencies
+return these concrete instances directly. The API runtime retains background
+run tasks; `Executor.run()` only executes the supplied request and does not
+spawn or retain tasks.
+
 Core endpoints are grouped as:
 
 - `agent`
 - `chat`
 - `caps`
 - `jobs`
-- `activity`
-- `hook`
+- `runs`
+- `threads`
 
 Non-interactive execution uses `POST /api/v1/runs/stream`. It accepts an agic
 or flow selector, input, model/tool/cap selectors, and metadata, and returns the
@@ -322,6 +329,10 @@ executor must be hosted outside the current process.
 
 - `GET /healthz`
 - `GET /api/v1/profile`
+- `GET /api/v1/updates`
+- `GET /api/v1/models`
+- `GET /api/v1/agics`
+- `GET /api/v1/flows`
 
 `/api/v1/profile` returns:
 
@@ -334,6 +345,28 @@ executor must be hosted outside the current process.
 | `threads` | Thread totals grouped by chat, chore, and task |
 | `steps` | Step totals grouped by `model_call`, `tool_call`, and `runtime` |
 | `tokens` | Aggregated input, output, and total token usage |
+
+`/api/v1/updates` returns recent agent-local operational changes, including
+cap and job mutations. Run and thread progress remains available from the
+resource-scoped event endpoints below.
+
+`GET /api/v1/models` returns the effective selectable model selectors for chat
+runs after applying the current activation config and the `chat` agic's
+`models` directive. The response includes:
+
+- `default`
+- `items`
+  - `selector`
+  - `name`
+  - `ref`
+  - `provider`
+  - `model`
+  - `adapter`
+  - `tools`
+  - `streaming`
+
+`GET /api/v1/agics` and `GET /api/v1/flows` list the agent's executable
+definitions.
 
 
 ## Cap Endpoints
@@ -418,26 +451,8 @@ agent's authored caps. Read payloads expose runtime `form`, `scope`, and
 
 ## Chat Endpoints
 
-- `GET /api/v1/chat/models`
-- `GET /api/v1/chat/agics`
-- `GET /api/v1/chat/flows`
 - `POST /api/v1/chat`
 - `POST /api/v1/chat/stream`
-
-`GET /api/v1/chat/models` returns the effective selectable model selectors for
-chat runs after applying the current activation config and the `chat` agic's
-`models` directive. The response includes:
-
-- `default`
-- `items`
-  - `selector`
-  - `name`
-  - `ref`
-  - `provider`
-  - `model`
-  - `adapter`
-  - `tools`
-  - `streaming`
 
 Chat request body uses:
 
@@ -474,7 +489,8 @@ For multipart payload details:
 - `file.file_data` should carry the provider-facing file payload and may be a full `data:...;base64,...` URL
 - `file.data_url` is also accepted as an alias and is normalized to `file_data`
 
-`POST /api/v1/chat` returns one completed user/assistant pair.
+`POST /api/v1/chat` returns one completed `ChatResult` containing `thread`,
+`run`, `message`, and `assistant` projections.
 
 `POST /api/v1/chat/stream` returns one SSE stream that follows an AI SDK UI
 message stream subset. This endpoint is an adapter for chat UI clients. The
@@ -497,10 +513,8 @@ create manual chore runs.
 
 - `GET /api/v1/jobs`
 - `GET /api/v1/jobs/{job_id}`
-- `PATCH /api/v1/jobs/{job_id}`
 - `GET /api/v1/jobs/archived`
 - `GET /api/v1/jobs/archived/{job_id}`
-- `DELETE /api/v1/jobs/archived/{job_id}`
 - `GET /api/v1/tasks`
 - `POST /api/v1/tasks`
 - `GET /api/v1/tasks/{task_id}`
@@ -512,6 +526,7 @@ create manual chore runs.
 - `POST /api/v1/tasks/{task_id}/cancel`
 - `GET /api/v1/tasks/archived`
 - `GET /api/v1/tasks/archived/{task_id}`
+- `PATCH /api/v1/tasks/archived/{task_id}`
 - `DELETE /api/v1/tasks/archived/{task_id}`
 - `GET /api/v1/chores`
 - `POST /api/v1/chores`
@@ -524,12 +539,14 @@ create manual chore runs.
 - `POST /api/v1/chores/{chore_id}/cancel`
 - `GET /api/v1/chores/archived`
 - `GET /api/v1/chores/archived/{chore_id}`
+- `PATCH /api/v1/chores/archived/{chore_id}`
 - `DELETE /api/v1/chores/archived/{chore_id}`
-- `GET /api/v1/will`
 
 `GET /api/v1/jobs` returns tasks and chores in one response. Use `kind=task` or
 `kind=chore` to filter the unified list. `GET /api/v1/tasks` and
 `GET /api/v1/chores` return the same projections split by kind.
+The unified `/jobs` collection is read-only; mutations use the concrete
+`/tasks` or `/chores` collection selected by the job kind.
 
 List endpoints return authored job fields at the top level and runtime-derived
 status under `runtime`.
@@ -581,16 +598,20 @@ Chore status values are:
 
 - `thread_id`
 - `last_run`
-- `next_run`
+- `next_run_at`
 
 `last_run` is the latest run object or `null`. If `last_run.status` is
-`running`, that run is the active run. `next_run` is the next scheduled chore
-run or `null`.
+`running`, that run is the active run. `next_run_at` is the next scheduled
+chore timestamp or `null`.
 
 Default job list endpoints return ready jobs. Draft and archived jobs are
 available only through explicit `/archived` routes.
 
 Detail endpoints return the same item shape plus `body`.
+
+Collection endpoints return JSON arrays directly, and detail or mutation
+endpoints return the projected resource directly. Destructive cap and archived
+job deletion endpoints return `204 No Content`.
 
 Task create requests accept:
 
@@ -622,7 +643,7 @@ Stage actions use the chore `draft`, `ready`, and `archive` endpoints.
 Delete is destructive and is available only through archived routes.
 
 
-## Activity Endpoints
+## Run And Thread Endpoints
 
 - `GET /api/v1/runs`
 - `GET /api/v1/runs/{run_id}`
@@ -630,26 +651,32 @@ Delete is destructive and is available only through archived routes.
 - `GET /api/v1/runs/{run_id}/stream`
 - `POST /api/v1/runs/{run_id}/steer`
 - `POST /api/v1/runs/{run_id}/cancel`
-- `POST /api/v1/runs/{run_id}/rewind`
-- `POST /api/v1/runs/{run_id}/fork`
-- `GET /api/v1/instruct/{hash}`
-- `GET /api/v1/context/{hash}`
+- `POST /api/v1/threads`
 - `GET /api/v1/threads`
 - `GET /api/v1/threads/{thread_id}`
+- `POST /api/v1/threads/{thread_id}/rewind`
+- `POST /api/v1/threads/{thread_id}/fork`
 - `GET /api/v1/threads/{thread_id}/events`
 - `GET /api/v1/threads/{thread_id}/stream`
-- `GET /api/v1/events`
-- `GET /api/v1/events/stream`
-- `GET /api/v1/agent/events`
-- `GET /api/v1/agent/stream`
 
 `/api/v1/runs/{run_id}` is the main trace-detail endpoint.
 
-`steer` and `cancel` operate on running runs. `rewind` and `fork` operate on
-branchable chat threads by taking a run id as the anchor; task and chore threads
-cannot be rewound or forked because their thread ids are derived from job ids.
+Run collections return `RunInfo` arrays directly. `RunInfo` combines run
+identity, status, input text, output summary, failure, and timestamps; there is
+no separate `RunSummary` response type.
 
-Run, thread, and agent event streams return SSE records with this envelope:
+`steer` and `cancel` operate on running runs. Thread `rewind` and `fork` request
+bodies take `run_id` as the anchor, plus optional `request_id` and `message`;
+`fork` also accepts `include_anchor`. Task and chore threads cannot be rewound
+or forked because their thread ids are derived from job ids.
+
+`steer`, `cancel`, and accepted manual chore starts return `RunCommandResult`
+with `run` and `command`. Thread create, rewind, and fork return `ThreadResult`
+with the current `thread` and an optional accepted follow-up `run` command.
+Operation-specific rewind/fork copy metadata is emitted through thread events
+instead of being duplicated in the command response.
+
+Run and thread event streams return SSE records with this envelope:
 
 - `type`
 - `event_type`

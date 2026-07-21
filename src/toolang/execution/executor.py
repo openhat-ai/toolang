@@ -40,7 +40,12 @@ from ..lang.ast import (
 from toolang.plugin.loading import load_loop as _default_load_loop
 from ..state.state import AgentState
 from .assembly import RunInput, SupportsRunAssembly
-from .binding import _Run, _bind_run_request, allocate_run_id, invoke_params
+from .binding import (
+    _Run,
+    _bind_run_request,
+    allocate_run_id,
+    invoke_params,
+)
 from .context import RunContext
 from .events import (
     RunBegin,
@@ -132,31 +137,16 @@ class Executor:
         self.default_model_selector = default_model_selector
         self.allowed_model_selectors = tuple(allowed_model_selectors)
         self._trace = combine_trace_handlers(
-            PersistSink(store, agent_id=name).on_event,
+            PersistSink(store).on_event,
             *(() if trace is None else (trace,)),
         )
         self._load_loop = load_loop
         self._active: dict[str, _ActiveRun] = {}
         self._active_lock = threading.Lock()
-        self._background: set[asyncio.Task[RunRecord]] = set()
 
     @property
     def model_providers(self) -> Mapping[str, ModelProvider]:
         return self.setup.model_providers
-
-    def start(
-        self,
-        request: RunRequest,
-        state: AgentState,
-        *,
-        reply: ReplySink | None = None,
-    ) -> asyncio.Task[RunRecord]:
-        """Start one run in a retained background task."""
-
-        task = asyncio.create_task(self.run(request, state, reply=reply))
-        self._background.add(task)
-        task.add_done_callback(self._background.discard)
-        return task
 
     def allocate_run_id(self) -> str:
         """Allocate one process-safe run id for a request submitted later."""
@@ -168,7 +158,6 @@ class Executor:
 
         with self._active_lock:
             tasks = {active.task for active in self._active.values()}
-        tasks.update(self._background)
         for task in tasks:
             if not task.done():
                 task.cancel()

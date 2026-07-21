@@ -943,9 +943,7 @@ class RunStore:
         for run in runs:
             inputs = self.list_commands(run_id=run.run_id)
             if inputs:
-                results.extend(
-                    item.input for item in inputs if item.input is not None
-                )
+                results.extend(item.input for item in inputs if item.input is not None)
             for step in steps_by_run.get(run.run_id, ()):
                 results.extend(_replay_messages_from_step(step))
         return _recent_valid_model_history(results, limit=limit)
@@ -965,9 +963,7 @@ class RunStore:
         results: list[Message] = []
         for run in runs:
             inputs = self.list_commands(run_id=run.run_id)
-            input_messages = [
-                item.input for item in inputs if item.input is not None
-            ]
+            input_messages = [item.input for item in inputs if item.input is not None]
             for input_message in input_messages:
                 actor_message = _actor_text_message(input_message)
                 if actor_message is not None:
@@ -1654,9 +1650,8 @@ def _message_tool_result_ids(message: Message) -> set[str]:
 class PersistSink:
     """Persist trace events into the execution store."""
 
-    def __init__(self, store: RunStore, *, agent_id: str | None = None) -> None:
+    def __init__(self, store: RunStore) -> None:
         self._store = store
-        self._agent_id = agent_id
         self._lock = threading.Lock()
         self._last_step_index: dict[str, int] = {}
         self._failed_runs: set[str] = set()
@@ -1744,7 +1739,11 @@ class PersistSink:
                 locals["_"] = steer_inputs[-1]
             reads = step_begin.context.get("reads")
             inferred = (
-                tuple(locals[name] for name in reads if isinstance(name, str) and name in locals)
+                tuple(
+                    locals[name]
+                    for name in reads
+                    if isinstance(name, str) and name in locals
+                )
                 if isinstance(reads, Sequence) and not isinstance(reads, (str, bytes))
                 else ()
             )
@@ -1844,16 +1843,6 @@ class PersistSink:
                 domain_id=run_id,
                 type=event.type,
                 payload=payload,
-            )
-        if self._agent_id and isinstance(event, (RunBegin, RunEnd)):
-            agent_payload = dict(payload)
-            if isinstance(event, RunBegin):
-                agent_payload["status"] = "running"
-            self._store.append_event(
-                domain="agent",
-                domain_id=self._agent_id,
-                type="thread_update",
-                payload=agent_payload,
             )
         if isinstance(thread_id, str) and thread_id:
             self._store.append_event(

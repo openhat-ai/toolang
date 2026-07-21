@@ -10,7 +10,7 @@ from ..execution.executor import Executor
 from ..execution.records import RunRecord
 from ..execution.request import RunRequest
 from ..state.state import AgentState
-from toolang.catalog.job import JobKind
+from toolang.catalog.types import JobKind
 from .state import AgentJobs, HomeJobs
 from .store import ClaimedJob, JobStore
 
@@ -79,19 +79,21 @@ class Scheduler:
                         now=current,
                     )
                     continue
-                task = self.executor.start(
-                    RunRequest(
-                        group=f"scheduler:{kind}",
-                        origin=kind,
-                        run_id=claimed.run_id,
-                        thread_id=claimed.job.thread_id,
-                        input=claimed.definition.input,
-                        metadata={
-                            "job": claimed.definition.run_metadata(),
-                            "job_trigger": claimed.trigger,
-                        },
-                    ),
-                    state,
+                task = asyncio.create_task(
+                    self.executor.run(
+                        RunRequest(
+                            group=f"scheduler:{kind}",
+                            origin=kind,
+                            run_id=claimed.run_id,
+                            thread_id=claimed.job.thread_id,
+                            input=claimed.definition.input,
+                            metadata={
+                                "job": claimed.definition.run_metadata(),
+                                "job_trigger": claimed.trigger,
+                            },
+                        ),
+                        state,
+                    )
                 )
                 self._active[claimed.run_id] = (task, jobs)
                 claimed_jobs.append(claimed)

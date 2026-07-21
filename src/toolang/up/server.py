@@ -61,8 +61,9 @@ from toolang.work.scheduler import DEFAULT_INTERVAL_MS as DEFAULT_SCHEDULER_INTE
 from toolang.work.scheduler import Scheduler
 from toolang.work.store import open_job_store
 from toolang.work.watcher import JobWatcher
-from toolang.api.app import create_app
-from toolang.api.context import ApiContext
+from toolang.catalog.cap import AuthoredCaps, WiredCaps
+from toolang.catalog.job import AuthoredJobs
+from toolang.api.app import ApiContext, create_app
 from toolang.work import inbox as files
 from toolang.up import channels as poll
 from toolang.common.progress import ProgressSink
@@ -125,6 +126,7 @@ class StartupSpec:
     cap_selectors: tuple[str, ...]
     file_inboxes: tuple[Path, ...] = ()
     log_spec: str | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class _StartupModelSelection:
@@ -655,16 +657,6 @@ def _up_local(
         },
         created_at=started_at,
     )
-    executor.store.append_event(
-        domain="agent",
-        domain_id=agent_name,
-        type="agent_start",
-        payload={
-            "agent": agent_name,
-            "state_fingerprint": state.fingerprint,
-            "started_at": started_at,
-        },
-    )
     endpoint = f"http://{endpoint_host}:{port}"
     shutdown_signal = threading.Event()
     channel_bindings = parse_channel_bindings(
@@ -674,19 +666,21 @@ def _up_local(
             environ=environ,
         )
     )
+    channel_plugins = {
+        name: create_channel_plugin(binding.plugin, config=binding.config)
+        for name, binding in channel_bindings.items()
+    }
     context = ApiContext(
         root=toolang_root,
         name=agent_name,
         home=executor.home,
-        room=agents.agent_room(toolang_root, agent_name),
-        get_agent_state=watcher.current,
-        channel_bindings=channel_bindings,
-        channel_plugins={
-            name: create_channel_plugin(binding.plugin, config=binding.config)
-            for name, binding in channel_bindings.items()
-        },
         executor=executor,
-        store=executor.store,
+        state_watcher=watcher,
+        authored_jobs=AuthoredJobs(executor.home),
+        private_authored_caps=AuthoredCaps(executor.home),
+        shared_authored_caps=AuthoredCaps(toolang_root),
+        private_wired_caps=WiredCaps(executor.home / "config.toml"),
+        shared_wired_caps=WiredCaps(toolang_root / "config.toml"),
         host=host,
         port=port,
         cors_allowed_origins=cors_allowed_origins,
@@ -725,7 +719,7 @@ def _up_local(
                         name=agent_name,
                         home=executor.home,
                         bindings=channel_bindings,
-                        plugins=context.channel_plugins,
+                        plugins=channel_plugins,
                         executor=executor,
                         get_agent_state=watcher.current,
                         interval_ms=DEFAULT_TRIGGER_INTERVAL_MS["poll"],
@@ -766,8 +760,13 @@ def _up_local(
                     expected_started_at=started_at,
                 )
             stop_signal.set()
+            for task in tuple(context.run_tasks):
+                task.cancel()
             await executor.close()
-            shutdown_tasks: list[asyncio.Task[Any]] = [*bg_tasks]
+            shutdown_tasks: list[asyncio.Task[Any]] = [
+                *bg_tasks,
+                *context.run_tasks,
+            ]
             await _finish_runtime_tasks(shutdown_tasks)
             if job_store is not None:
                 job_store.close()
@@ -776,12 +775,6 @@ def _up_local(
                 payload={
                     "outcome": "stopped",
                 },
-            )
-            executor.store.append_event(
-                domain="agent",
-                domain_id=agent_name,
-                type="agent_stop",
-                payload={"agent": agent_name, "outcome": "stopped"},
             )
             executor.store.close()
 
@@ -970,15 +963,9 @@ def assemble_execution(
     normalized_model_selectors = _normalize_model_selectors(model_selectors)
     normalized_tool_selectors = _normalize_tool_selectors(tool_selectors)
     normalized_cap_selectors = _normalize_cap_selectors(cap_selectors)
-    model_providers = _load_model_providers(
-        toolang_root, agent_name, agent_state=state
-    )
-    model_aliases = load_model_aliases(
-        toolang_root, agent_name, agent_state=state
-    )
-    default_models = load_default_models(
-        toolang_root, agent_name, agent_state=state
-    )
+    model_providers = _load_model_providers(toolang_root, agent_name, agent_state=state)
+    model_aliases = load_model_aliases(toolang_root, agent_name, agent_state=state)
+    default_models = load_default_models(toolang_root, agent_name, agent_state=state)
     _validate_model_selectors(
         _StartupModelSelection(
             model_providers=model_providers,

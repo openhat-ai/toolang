@@ -9,16 +9,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 import threading
-from typing import Literal, cast
+from typing import cast
 
 from dateutil.rrule import rrulestr
 
-from toolang.catalog.job import JobKind
-from ..execution.records import RunStatus
+from toolang.catalog.types import JobKind
+from ..execution.types import RunStatus
+from .types import JobStatus, JobTrigger
 from .state import AgentJobs, JobDefinition
-
-JobStatus = Literal["todo", "running", "done", "failed", "canceled"]
-JobTrigger = Literal["scheduler", "manual", "reopen"]
 
 _SCHEMA_VERSION = 1
 

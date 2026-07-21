@@ -7,45 +7,19 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from toolang.base.types.message import Message, Part
-
-
-StepPath = str
-RunId = str
-RunLoop = str
-
-RunStatus = Literal["pending", "running", "finished", "failed", "canceled"]
-StepStatus = Literal["running", "finished", "failed", "canceled"]
-CommandStatus = Literal["pending", "finished", "canceled"]
-
-StepKind = Literal[
-    "run",
-    "agent",
-    "human",
-    "model",
-    "tool",
-    "par",
-    "loop",
-    "system",
-]
-ThreadPeerType = Literal["user", "agent"]
-CommandKind = Literal["start", "steer", "stop"]
-CommandApply = Literal["now", "next_step", "next_call"]
-
-UpdateKind = Literal[
-    "created",
-    "started",
-    "stopped",
-    "removed",
-    "program_changed",
-    "config_changed",
-    "psyche_changed",
-    "prompt_changed",
-    "service_changed",
-    "skill_changed",
-    "task_changed",
-    "chore_changed",
-]
-EventDomain = Literal["agent", "thread", "run"]
+from .types import (
+    CommandApply,
+    CommandKind,
+    CommandStatus,
+    EventDomain,
+    RunId,
+    RunStatus,
+    StepKind,
+    StepPath,
+    StepStatus,
+    ThreadPeerType,
+    UpdateKind,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,6 +219,14 @@ class UpdateRecord:
     payload: dict[str, Any]
     created_at: str
 
+    def to_data(self) -> dict[str, Any]:
+        return {
+            "id": self.update_id,
+            "kind": self.kind,
+            "payload": dict(self.payload),
+            "created_at": self.created_at,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class EventRecord:
@@ -277,6 +259,7 @@ class CommandRecord:
     @property
     def run_id(self) -> str:
         return self.run
+
 
 def trace_run(path: StepPath) -> RunId:
     """Return the run id component of one trace path."""
@@ -349,7 +332,9 @@ def step_input_item_from_data(payload: Mapping[str, Any]) -> StepInputItem:
     raise ValueError("unknown step input item shape")
 
 
-def step_input_items_from_data(payloads: Sequence[Mapping[str, Any]]) -> tuple[StepInputItem, ...]:
+def step_input_items_from_data(
+    payloads: Sequence[Mapping[str, Any]],
+) -> tuple[StepInputItem, ...]:
     """Return step input items from one serialized sequence."""
 
     return tuple(step_input_item_from_data(item) for item in payloads)

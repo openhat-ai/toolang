@@ -6,13 +6,8 @@ from pathlib import Path
 
 import frontmatter
 
-from toolang.catalog.job import (
-    DEFAULT_CHORE_SCHEDULE,
-    AuthoredJobs,
-    JobFile,
-    JobKind,
-    JobStage,
-)
+from toolang.catalog.job import AuthoredJobs, JobFile
+from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE, JobKind, JobStage
 from toolang.common.ids import LOCAL_ID_FAMILY, allocate_id
 
 

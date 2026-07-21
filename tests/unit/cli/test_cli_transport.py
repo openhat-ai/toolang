@@ -23,7 +23,7 @@ from toolang.cli.common.client import (
 from toolang.up import process as agents
 
 
-def test_runtime_client_get_requires_json_object(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_client_get_accepts_json_values(monkeypatch: pytest.MonkeyPatch) -> None:
     responses = iter((b"not json", b"[]"))
     monkeypatch.setattr(
         client_module,
@@ -34,8 +34,7 @@ def test_runtime_client_get_requires_json_object(monkeypatch: pytest.MonkeyPatch
 
     with pytest.raises(RuntimeClientError, match="invalid JSON"):
         client.get("/invalid")
-    with pytest.raises(RuntimeClientError, match="non-object"):
-        client.get("/list")
+    assert client.get("/list") == []
 
 
 def test_runtime_client_post_sends_json_request(monkeypatch: pytest.MonkeyPatch) -> None:

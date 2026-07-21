@@ -173,14 +173,6 @@ class Executor:
         reply: ReplySink | None = None,
     ) -> RunRecord: ...
 
-    def start(
-        self,
-        request: RunRequest,
-        state: AgentState,
-        *,
-        reply: ReplySink | None = None,
-    ) -> asyncio.Task[RunRecord]: ...
-
     def allocate_run_id(self) -> str: ...
     def steer(...) -> CommandRecord: ...
     async def stop(...) -> tuple[CommandRecord, RunRecord]: ...
@@ -192,12 +184,13 @@ optional per-run `ReplySink` before accepting the request. The returned
 `RunRecord` is the terminal durable projection. Per-run mutable execution state
 is private and is never shared by concurrent top-level runs.
 
-`start()` only retains an asyncio task for callers that need background
-execution; it does not queue or limit runs. `steer()` and `stop()` reserve a
-command index atomically through `RunStore`, emit the corresponding trace
-event, and forward it to the active reply when the run is local. An immediate
-stop cancels a local task and marks a non-local durable run canceled. `close()`
-cancels and awaits tasks owned by the current process.
+Runtime owners create and retain asyncio tasks when they need background
+execution; the executor does not queue, spawn, or retain those tasks. `steer()`
+and `stop()` reserve a command index atomically through `RunStore`, emit the
+corresponding trace event, and forward it to the active reply when the run is
+local. An immediate stop cancels a local task and marks a non-local durable run
+canceled. `close()` cancels and awaits active tasks owned by the current
+process.
 
 Command-index reservation is coordination state, not an execution record.
 Commands themselves are still created only when `PersistSink` consumes the

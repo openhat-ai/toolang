@@ -34,17 +34,13 @@ from toolang.execution.records import (
 from toolang.execution.store import PersistSink, RunStore, utc_now
 
 
-def emit_event(
-    store: RunStore, event: TraceEvent, *, agent_id: str | None = None
-) -> None:
+def emit_event(store: RunStore, event: TraceEvent) -> None:
     """Persist one trace event through the store's canonical sink."""
 
     sink = getattr(store, "_test_persist_sink", None)
     if sink is None:
-        sink = PersistSink(store, agent_id=agent_id)
+        sink = PersistSink(store)
         setattr(store, "_test_persist_sink", sink)
-    elif agent_id is not None:
-        sink._agent_id = agent_id
     cast(PersistSink, sink).on_event(event)
 
 
@@ -65,7 +61,6 @@ def project_run_start(
     started_at: str | None = None,
     parent: str | None = None,
     context: Mapping[str, Any] | None = None,
-    agent_id: str | None = None,
 ) -> RunRecord:
     """Project accepted and begun run events, returning durable run truth."""
 
@@ -91,7 +86,6 @@ def project_run_start(
             context=run_context,
             created_at=created,
         ),
-        agent_id=agent_id,
     )
     emit_event(
         store,
@@ -101,7 +95,6 @@ def project_run_start(
             context=run_context,
             started_at=started,
         ),
-        agent_id=agent_id,
     )
     run = store.get_run(run_id=run_id)
     if run is None:

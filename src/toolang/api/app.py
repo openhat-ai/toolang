@@ -2,32 +2,139 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass, field
+from pathlib import Path
 import threading
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from toolang.api.context import ApiContext
-from toolang.api import agent, cap_commands, caps, chat, job_commands, jobs, runs
+from toolang.catalog.cap import AuthoredCaps, WiredCaps
 from toolang.catalog.error import CatalogConflictError, CatalogNotFoundError
+from toolang.catalog.job import AuthoredJobs
+from toolang.execution.events import RunStarting, TraceEvent
+from toolang.execution.executor import Executor
+from toolang.execution.records import CommandRecord, RunRecord
+from toolang.execution.reply import ReplySink
+from toolang.execution.request import RunRequest
+from toolang.state.watcher import StateWatcher
 
 DEFAULT_CORS_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "https://too.run",
 ]
-
 OPENAPI_TAGS = [
-    {"name": "agent", "description": "Agent profile and health endpoints."},
+    {
+        "name": "agent",
+        "description": "Agent profile, health, and operational update endpoints.",
+    },
     {"name": "chat", "description": "Chat submission and streaming endpoints."},
     {"name": "caps", "description": "Capability inspection and mutation endpoints."},
-    {"name": "jobs", "description": "Task and chore inspection endpoints."},
-    {"name": "activity", "description": "Thread, run, and event history endpoints."},
+    {"name": "jobs", "description": "Task and chore management endpoints."},
+    {"name": "runs", "description": "Run execution and inspection endpoints."},
+    {"name": "threads", "description": "Thread lifecycle and inspection endpoints."},
 ]
+
+
+@dataclass(slots=True)
+class ApiContext:
+    """Process-local dependencies owned by one FastAPI application."""
+
+    root: Path
+    name: str
+    home: Path
+    executor: Executor
+    state_watcher: StateWatcher
+    authored_jobs: AuthoredJobs
+    private_authored_caps: AuthoredCaps
+    shared_authored_caps: AuthoredCaps
+    private_wired_caps: WiredCaps
+    shared_wired_caps: WiredCaps
+    host: str
+    port: int
+    cors_allowed_origins: tuple[str, ...]
+    shutdown_signal: threading.Event | None = None
+    run_tasks: set[asyncio.Task[RunRecord]] = field(default_factory=set, init=False)
+
+    def spawn_run(
+        self,
+        request: RunRequest,
+        *,
+        reply: ReplySink | None = None,
+    ) -> asyncio.Task[RunRecord]:
+        """Create and retain one run task owned by the API runtime."""
+
+        task = asyncio.create_task(
+            self.executor.run(request, self.state_watcher.current(), reply=reply)
+        )
+        self.run_tasks.add(task)
+        task.add_done_callback(self.run_tasks.discard)
+        return task
+
+    async def submit_run(
+        self,
+        request: RunRequest,
+        *,
+        reply: ReplySink | None = None,
+    ) -> tuple[RunRecord, CommandRecord]:
+        """Spawn one run and wait until its start command is durably accepted."""
+
+        if request.run_id is None:
+            raise ValueError("API run submission requires an allocated run id")
+        acceptance = _RunAcceptance(request.run_id, reply=reply)
+        task = self.spawn_run(request, reply=acceptance)
+        await acceptance.wait(task)
+        run = self.executor.store.get_run(run_id=request.run_id)
+        command = self.executor.store.get_command(run_id=request.run_id, index=0)
+        if run is None or command is None:
+            raise RuntimeError(f"accepted run projection missing: {request.run_id}")
+        return run, command
+
+
+def get_api_context(request: Request) -> ApiContext:
+    """Return the process-local context owned by the current application."""
+
+    return cast(ApiContext, request.app.state.context)
+
+
+ApiContextDep = Annotated[ApiContext, Depends(get_api_context)]
+
+
+class _RunAcceptance:
+    """Observe durable start acceptance while preserving a caller reply sink."""
+
+    def __init__(self, run_id: str, *, reply: ReplySink | None) -> None:
+        self.run_id = run_id
+        self.reply = reply
+        self.wants_stream = reply.wants_stream if reply is not None else False
+        self._accepted: asyncio.Future[None] = (
+            asyncio.get_running_loop().create_future()
+        )
+
+    def on_event(self, event: TraceEvent) -> None:
+        if (
+            isinstance(event, RunStarting)
+            and event.run == self.run_id
+            and not self._accepted.done()
+        ):
+            self._accepted.set_result(None)
+        if self.reply is not None:
+            self.reply.on_event(event)
+
+    async def wait(self, task: asyncio.Task[RunRecord]) -> None:
+        done, _pending = await asyncio.wait(
+            (self._accepted, task), return_when=asyncio.FIRST_COMPLETED
+        )
+        if self._accepted in done:
+            return
+        await task
+        raise RuntimeError(f"run completed without start acceptance: {self.run_id}")
 
 
 def create_app(
@@ -72,11 +179,7 @@ def create_app(
     def healthz() -> dict[str, bool]:
         return {"ok": True}
 
-    app.include_router(chat.create_router())
-    app.include_router(cap_commands.create_router())
-    app.include_router(job_commands.create_router())
-    app.include_router(agent.create_router())
-    app.include_router(caps.create_router())
-    app.include_router(jobs.create_router())
-    app.include_router(runs.create_router())
+    from toolang.api.router import router
+
+    app.include_router(router)
     return app

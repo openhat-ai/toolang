@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 import threading
+from typing import Any, cast
 
+from fastapi import Request
 from fastapi.responses import StreamingResponse
 from starlette.types import Receive, Scope, Send
 
@@ -41,8 +44,41 @@ class ShutdownAwareStreamingResponse(StreamingResponse):
             if self._shutdown_signal.is_set():
                 return
             try:
-                message = await asyncio.wait_for(receive(), timeout=self._disconnect_poll_sec)
+                message = await asyncio.wait_for(
+                    receive(), timeout=self._disconnect_poll_sec
+                )
             except asyncio.TimeoutError:
                 continue
             if message["type"] == "http.disconnect":
                 return
+
+
+async def guarded_stream(stream: AsyncIterator[str]) -> AsyncIterator[str]:
+    """Close one asynchronous stream cleanly after cancellation."""
+
+    try:
+        async for chunk in stream:
+            yield chunk
+    except asyncio.CancelledError:
+        return
+    finally:
+        aclose = getattr(stream, "aclose", None)
+        if callable(aclose):
+            await cast(Any, aclose)()
+
+
+def event_stream_response(
+    request: Request, stream: AsyncIterator[str]
+) -> ShutdownAwareStreamingResponse:
+    """Return one shutdown-aware SSE response."""
+
+    return ShutdownAwareStreamingResponse(
+        guarded_stream(stream),
+        shutdown_signal=getattr(request.app.state.context, "shutdown_signal", None),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

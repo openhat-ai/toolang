@@ -13,9 +13,10 @@ from typer.core import TyperCommand
 
 from ....catalog import templates
 from toolang.up.process import agent_home
-from ....execution.records import UpdateKind
+from ....execution.types import UpdateKind
 from toolang.state.source import read_authored_source
-from toolang.catalog.job import AuthoredJobs, JobFile, JobStage
+from toolang.catalog.job import AuthoredJobs, JobFile
+from toolang.catalog.types import JobStage
 from toolang.catalog.error import CatalogError
 from toolang.work.authoring import (
     allocate_authored_job_id,

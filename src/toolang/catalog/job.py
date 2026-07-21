@@ -7,7 +7,6 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
 
 from dateutil.rrule import rrulestr
 import frontmatter
@@ -15,14 +14,14 @@ import frontmatter
 from toolang.common.files import atomic_write_text, file_write_lock
 
 from ._frontmatter import normalize_meta
+from .types import (
+    DEFAULT_CHORE_SCHEDULE,
+    JOB_KINDS,
+    JOB_STAGES,
+    JobKind,
+    JobStage,
+)
 from .error import CatalogConflictError, CatalogNotFoundError, DuplicateJobIdError
-
-JobKind = Literal["task", "chore"]
-JobStage = Literal["draft", "ready", "archived"]
-
-JOB_KINDS: tuple[JobKind, ...] = ("task", "chore")
-JOB_STAGES: tuple[JobStage, ...] = ("draft", "ready", "archived")
-DEFAULT_CHORE_SCHEDULE = "FREQ=HOURLY;INTERVAL=1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +110,27 @@ class JobFile:
     def with_body(self, body: str) -> JobFile:
         content = frontmatter.dumps(frontmatter.Post(body, None, **dict(self.meta)))
         return replace(self, content=content, body=body)
+
+    def patch(self, changes: Mapping[str, str | None]) -> JobFile:
+        """Apply caller-selected editable fields to this authored job."""
+
+        allowed = {"title", "body"}
+        if self.kind == "chore":
+            allowed.add("schedule")
+        unsupported = set(changes).difference(allowed)
+        if unsupported:
+            fields = ", ".join(sorted(unsupported))
+            raise ValueError(f"unsupported {self.kind} fields: {fields}")
+        meta = dict(self.meta)
+        body = self.body
+        for field, value in changes.items():
+            if field == "body":
+                body = value or ""
+            elif value is None:
+                meta.pop(field, None)
+            else:
+                meta[field] = value
+        return self.with_meta(meta).with_body(body)
 
 
 class AuthoredJobs:

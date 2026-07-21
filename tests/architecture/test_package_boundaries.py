@@ -33,10 +33,19 @@ PACKAGE_IMPORT_RULES: dict[str, frozenset[str] | None] = {
     "common": frozenset({"base"}),
     "execution": None,  # TODO: Review the execution package boundary.
     # Up is the top-level process composition boundary. It may assemble
-    # the API and runtime owners, but it must never depend on CLI orchestration,
-    # authored catalog commands, or language implementation details.
+    # the API, concrete catalogs, and runtime owners, but it must never depend
+    # on CLI orchestration or language implementation details.
     "up": frozenset(
-        {"api", "base", "common", "execution", "plugin", "state", "work"}
+        {
+            "api",
+            "base",
+            "catalog",
+            "common",
+            "execution",
+            "plugin",
+            "state",
+            "work",
+        }
     ),
     # lang uses the shared error type and immutable metadata containers.
     "lang": frozenset({"base", "common"}),
@@ -140,4 +149,34 @@ def test_package_boundary_coverage() -> None:
     assert not self_import_rules, (
         "Import rules only declare dependencies on other packages; "
         f"self_imports={self_import_rules}"
+    )
+
+
+def test_schema_modules_only_depend_on_protocol_types() -> None:
+    allowed_message_types = frozenset({"AudioFormat", "ImageDetail", "MessageRole"})
+    violations: list[str] = []
+    for path in sorted(SOURCE_ROOT.rglob("schemas.py")):
+        context = _module_context(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            for target in _import_targets(node, context):
+                if not target.startswith("toolang."):
+                    continue
+                if target.endswith((".schemas", ".types")):
+                    continue
+                if target == "toolang.base.types.message" and isinstance(
+                    node, ast.ImportFrom
+                ):
+                    imported = frozenset(item.name for item in node.names)
+                    if imported <= allowed_message_types:
+                        continue
+                violations.append(
+                    f"{path.relative_to(SOURCE_ROOT)}:{node.lineno} -> {target}"
+                )
+
+    assert not violations, (
+        "Schema modules may only import internal schemas and scalar types:\n"
+        + "\n".join(violations)
     )

@@ -10,12 +10,8 @@ from pathlib import Path
 import re
 
 from ..lang.ast import JobDecl, Program
-from toolang.catalog.job import (
-    DEFAULT_CHORE_SCHEDULE,
-    AuthoredJobs,
-    JobFile,
-    JobKind,
-)
+from toolang.catalog.job import AuthoredJobs, JobFile
+from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE, JobKind
 from .authoring import assign_missing_authored_job_ids
 
 _REMOTE_REF_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
