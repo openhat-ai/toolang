@@ -14,7 +14,8 @@ from toolang.plugin.loading import normalize_run_loop_name
 from ..state.state import AgentState
 from ..common.ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
 from .store import utc_now
-from .records import RunLoop, ThreadPeer
+from .records import ThreadPeer
+from .types import RunLoop
 from .setup import AgentSetup
 from .request import ExecutableKind, RunRequest
 from .store import RunStore

@@ -13,12 +13,8 @@ from toolang.catalog import cap as caps
 from toolang.catalog.error import CatalogError
 from toolang.state import state as cap_state
 from toolang.common.immutable import mutable_data
-from toolang.catalog.job import (
-    DEFAULT_CHORE_SCHEDULE,
-    AuthoredJobs,
-    JobFile,
-    JobKind,
-)
+from toolang.catalog.job import AuthoredJobs, JobFile
+from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE, JobKind
 from toolang.common.error import ToolangError
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext
@@ -125,17 +121,12 @@ class AgentStatePlugin:
             )
             if entry is None:
                 raise ToolangError(f"task not found: {task_id}")
-            meta = dict(entry.meta)
+            changes: dict[str, str | None] = {}
             if title is not None:
-                normalized = _blank_to_none(title)
-                if normalized is None:
-                    meta.pop("title", None)
-                else:
-                    meta["title"] = normalized
-            document = entry.with_meta(meta)
+                changes["title"] = _blank_to_none(title)
             if body is not None:
-                document = document.with_body(body)
-            return {"task": _task_payload(catalog.update(document))}
+                changes["body"] = body
+            return {"task": _task_payload(catalog.update(entry.patch(changes)))}
 
         @tool(
             name="chore_list", description="List chore documents for the current agent."
@@ -212,19 +203,14 @@ class AgentStatePlugin:
             )
             if entry is None:
                 raise ToolangError(f"chore not found: {chore_id}")
-            meta = dict(entry.meta)
+            changes: dict[str, str | None] = {}
             if title is not None:
-                normalized = _blank_to_none(title)
-                if normalized is None:
-                    meta.pop("title", None)
-                else:
-                    meta["title"] = normalized
+                changes["title"] = _blank_to_none(title)
             if schedule is not None:
-                meta["schedule"] = schedule
-            document = entry.with_meta(meta)
+                changes["schedule"] = schedule
             if body is not None:
-                document = document.with_body(body)
-            return {"chore": _chore_payload(catalog.update(document))}
+                changes["body"] = body
+            return {"chore": _chore_payload(catalog.update(entry.patch(changes)))}
 
         @tool(
             name="psyche_list",

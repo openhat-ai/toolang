@@ -12,7 +12,7 @@ from typing import Any, Protocol
 from toolang.base.protocols.channel import AgentChannel
 from toolang.base.types.channel import ChannelContext, OutboundMessage, ReplyTarget
 from toolang.base.types.message import TextDelta, TextPart, ToolCallDelta, ToolCallPart, ToolResultPart, message_text
-from .detail import message_data_for_step
+from .projection import message_data_for_step, replay_message
 from .events import RunEnd, RunBegin, RunStarting, StepEnd, StepBegin, PartBegin, PartDelta, PartEnd, TraceEvent
 from .records import trace_index, trace_run
 from .stream import trace_event_data
@@ -377,7 +377,7 @@ class ChannelReplySink:
             )
             if message is not None:
                 with self._lock:
-                    text = message_text(message.parts).strip()
+                    text = message_text(replay_message(message).parts).strip()
                     if text:
                         self._text = text
                 self._wake.set()

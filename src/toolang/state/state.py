@@ -39,17 +39,19 @@ from toolang.common.github import (
     parse_github_url,
 )
 
-PreparedVisibility = Literal["shared", "private"]
-EntryKind = Literal["psyche", "skill", "service", "prompt"]
-EntryShape = Literal["file", "dir"]
-SourceOrigin = Literal["local", "remote"]
-SourceForm = Literal["inline", "ref", "wired", "file"]
+from .types import (
+    EntryForm,
+    EntryKind,
+    EntryOrigin,
+    EntryScope,
+    EntryShape,
+    PreparedVisibility,
+    SourceForm,
+    SourceOrigin,
+    Visibility,
+)
 
 CAP_KINDS: tuple[EntryKind, ...] = cap_catalog.CAP_KINDS
-Visibility = PreparedVisibility
-EntryOrigin = SourceOrigin
-EntryForm = SourceForm
-EntryScope = Literal["root", "home", "here"]
 EMBEDDED_CAP_KINDS = frozenset({"psyche", "service", "prompt"})
 FILE_BACKED_KINDS = frozenset({"psyche", "service", "prompt"})
 DIR_NAME_BY_KIND: dict[EntryKind, str] = cap_catalog.CAP_DIR_BY_KIND

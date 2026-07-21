@@ -37,16 +37,16 @@
 - Use mature libraries when they clearly reduce code size or validation
   complexity.
 - Keep package facades narrow. Export only stable entry points from
-  `__init__.py`; import internal view models or helpers from concrete modules
+  `__init__.py`; import internal projections or helpers from concrete modules
   at the call site.
-- Put behavior on the concept or persisted model when it is part of that
+- Put behavior on the concept or persisted entity when it is part of that
   concept's meaning. Do not duplicate the same mapping, overlay, sorting, or
   serialization logic across multiple modules.
 - Scheduled work definitions should use RRULE-based scheduling in persisted
-  models and APIs. Do not introduce new `interval_sec`-style schedule fields
+  entities and APIs. Do not introduce new `interval_sec`-style schedule fields
   for chores or will.
-- Persisted Pydantic models should own their `load()` / `save()` methods.
-  Do not add serializer wrapper modules unless they add real meaning.
+- Persisted Pydantic entities or records should own their `load()` / `save()`
+  methods. Do not add serializer wrapper modules unless they add real meaning.
 - Let the package that owns a source format own its parsing and source-editing
   semantics. For example, `.too` parsing and authored source edits belong to
   `toolang.lang`, not to adjacent packages that merely consume programs.
@@ -56,6 +56,23 @@
   passing separate strings, ids, and paths.
 - When a split package no longer clarifies ownership, merge it back into the
   owning package instead of preserving an empty abstraction boundary.
+
+
+## Module Naming
+
+- Use `types.py` for shared business vocabulary, scalar aliases, and enums.
+- Use `records.py` for storage-entry representations.
+- Use `events.py` for event types.
+- Use `schemas.py` for protocol-boundary types, including HTTP request and
+  response schemas. Schema modules may depend on scalar types and other
+  schemas, but must not embed records, events, stores, projections, or runtime
+  state implementations.
+- Reserve `model.py`, `models.py`, and `models/` for LLM model concepts so
+  business data types cannot be confused with language-model integrations.
+- When configuration-file types or parsing belong to a package, place them in
+  that package's `config.py`. Keep environment resolution and process-level
+  defaults at the call site unless the owning package explicitly owns those
+  semantics.
 
 
 ## Current Design Boundaries
@@ -105,24 +122,40 @@
 - `toolang.catalog` owns local agent-home CRUD, authored cap and job CRUD,
   wired cap references, and bundled authored-file templates. Its collections
   receive explicit directories or config-file paths and do not resolve remote
-  sources or infer the Toolang layout.
+  sources or infer the Toolang layout. `toolang.catalog.types` owns shared
+  authored-job vocabulary and defaults.
 - `toolang.work` owns effective job scheduling state, file inbox requests,
   runtime stores, watchers, and scheduling loops.
+- `toolang.work.schemas` owns caller-facing job protocol types;
+  `toolang.work.types` owns scheduler status vocabulary;
+  `toolang.work.projection` combines authored jobs with scheduler and execution
+  state.
 - `toolang.state` owns remote cap source resolution, durable/prepared source
   snapshots, effective cap projection and materialization, immutable
   root/home/agent state, and source-state watching.
+- `toolang.state.schemas` owns caller-facing capability protocol types;
+  `toolang.state.types` owns capability-state vocabulary;
+  `toolang.state.projection` projects effective capability state into them.
 - `toolang.execution` owns run binding, execution trace, durable run truth,
   response projection, execution storage, and agent-specific built-in tools.
-- `toolang.execution.detail` is the canonical typed projection boundary for
-  runs, threads, steps, failures, and caller-facing messages. API code only
-  serializes these projections; CLI code reads them through the shared
-  remote-or-local execution adapter and only renders them.
+- `toolang.execution.thread` owns thread creation, rewind, and fork semantics;
+  `Executor` remains focused on accepting, controlling, and executing runs.
+- `toolang.execution.schemas` owns caller-facing run, thread, step, failure,
+  and message protocol types; `toolang.execution.projection` projects durable
+  execution truth into them. API code only serializes these schemas; CLI code
+  reads them through the shared remote-or-local execution adapter and only
+  renders them. `toolang.execution.types` owns shared execution lifecycle and
+  command vocabulary.
 - `toolang.plugin` owns generic entry point discovery, pure plugin configuration
   parsing, and independently reusable built-in tool, loop, channel, sandbox,
   model-provider, and model-adapter implementations. It does not locate or read
   runtime config files and may depend only on `toolang.base` and
   `toolang.common` among internal packages.
 - `toolang.api` owns FastAPI application assembly and HTTP route mapping.
+  Route modules are grouped by public resource (`agent`, `chat`, `caps`,
+  `jobs`, `runs`, and `threads`), not by read/write mode or OpenAPI tag. API
+  routes call owning catalog, execution, and inspection objects instead of
+  implementing persistence or projection algorithms.
 - `toolang.cli` owns CLI orchestration, process environment resolution, dotenv
   loading, and process-level Web and logging call sites. Immutable root and home
   config layers are carried by `AgentState`; plugin packages own pure parsing of

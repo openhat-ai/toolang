@@ -91,28 +91,30 @@ async def run(
             for submission in collect_file_submissions(
                 executor, store, inboxes=inboxes, stable_ms=stable_ms, now=now
             ):
-                active[submission.run_id] = executor.start(
-                    RunRequest(
-                        group="file",
-                        origin="file",
-                        run_id=submission.run_id,
-                        thread_id=submission.record.thread_id,
-                        input=submission.text,
-                        executable_name="file",
-                        metadata={
-                            "invoke_parts": submission.parts,
-                            "file_request": {
-                                "id": submission.record.request_id,
-                                "watch_root": submission.record.watch_root,
-                                "relative_path": submission.record.relative_path,
-                                "path": submission.record.absolute_path,
-                                "size": submission.record.size,
-                                "mtime_ns": submission.record.mtime_ns,
-                                "fingerprint": submission.record.fingerprint,
+                active[submission.run_id] = asyncio.create_task(
+                    executor.run(
+                        RunRequest(
+                            group="file",
+                            origin="file",
+                            run_id=submission.run_id,
+                            thread_id=submission.record.thread_id,
+                            input=submission.text,
+                            executable_name="file",
+                            metadata={
+                                "invoke_parts": submission.parts,
+                                "file_request": {
+                                    "id": submission.record.request_id,
+                                    "watch_root": submission.record.watch_root,
+                                    "relative_path": submission.record.relative_path,
+                                    "path": submission.record.absolute_path,
+                                    "size": submission.record.size,
+                                    "mtime_ns": submission.record.mtime_ns,
+                                    "fingerprint": submission.record.fingerprint,
+                                },
                             },
-                        },
-                    ),
-                    get_agent_state(),
+                        ),
+                        get_agent_state(),
+                    )
                 )
             try:
                 await asyncio.wait_for(stop_signal.wait(), timeout=interval_timeout)
@@ -144,11 +146,15 @@ def collect_file_submissions(
             try:
                 text, parts = files.render_file_input(Path(snapshot.absolute_path))
             except (OSError, UnicodeDecodeError) as exc:
-                logger.debug("files.input_skipped path=%s error=%s", snapshot.absolute_path, exc)
+                logger.debug(
+                    "files.input_skipped path=%s error=%s", snapshot.absolute_path, exc
+                )
                 continue
             run_id = executor.allocate_run_id()
             thread_id = files.file_thread_id(snapshot.absolute_path)
-            record = store.claim(snapshot, run_id=run_id, thread_id=thread_id, now=current)
+            record = store.claim(
+                snapshot, run_id=run_id, thread_id=thread_id, now=current
+            )
             if record is None:
                 continue
             submissions.append(

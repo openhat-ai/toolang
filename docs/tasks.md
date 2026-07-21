@@ -236,7 +236,7 @@ Task projection:
   "runtime": {
     "thread_id": "tsk_3nprht9x",
     "last_run": null,
-    "next_run": null
+    "next_run_at": null
   }
 }
 ```
@@ -261,16 +261,14 @@ Chore projection:
       "started_at": "2026-04-23T06:00:00Z",
       "finished_at": "2026-04-23T06:02:00Z"
     },
-    "next_run": {
-      "at": "2026-04-23T12:00:00Z"
-    }
+    "next_run_at": "2026-04-23T12:00:00Z"
   }
 }
 ```
 
 `runtime.last_run` is the latest known run for the job thread. If its status is
-`running`, it is also the active run. `runtime.next_run` is either `null` or the
-next scheduled chore occurrence.
+`running`, it is also the active run. `runtime.next_run_at` is either `null` or
+the next scheduled chore timestamp.
 
 Runtime run statuses are:
 
@@ -347,7 +345,6 @@ Current read endpoints:
 - `GET /api/v1/chores/{chore_id}`
 - `GET /api/v1/chores/archived`
 - `GET /api/v1/chores/archived/{chore_id}`
-- `GET /api/v1/will`
 
 Default list endpoints return ready jobs. Archived jobs are returned only by
 explicit `/archived` routes.
@@ -355,14 +352,13 @@ explicit `/archived` routes.
 Current write endpoints:
 
 - `POST /api/v1/tasks`
-- `PATCH /api/v1/jobs/{job_id}`
-- `DELETE /api/v1/jobs/archived/{job_id}`
 - `PATCH /api/v1/tasks/{task_id}`
 - `POST /api/v1/tasks/{task_id}/draft`
 - `POST /api/v1/tasks/{task_id}/ready`
 - `POST /api/v1/tasks/{task_id}/archive`
 - `POST /api/v1/tasks/{task_id}/reopen`
 - `POST /api/v1/tasks/{task_id}/cancel`
+- `PATCH /api/v1/tasks/archived/{task_id}`
 - `DELETE /api/v1/tasks/archived/{task_id}`
 - `POST /api/v1/chores`
 - `PATCH /api/v1/chores/{chore_id}`
@@ -371,11 +367,15 @@ Current write endpoints:
 - `POST /api/v1/chores/{chore_id}/archive`
 - `POST /api/v1/chores/{chore_id}/run`
 - `POST /api/v1/chores/{chore_id}/cancel`
+- `PATCH /api/v1/chores/archived/{chore_id}`
 - `DELETE /api/v1/chores/archived/{chore_id}`
 
 Create and patch requests use structured JSON fields instead of raw
 frontmatter. Task writes accept `title` and `body`. Chore writes accept
 `title`, `body`, and `schedule`.
+
+The unified `/jobs` endpoints are read-only. Writes use the concrete `/tasks`
+or `/chores` collection so job-kind semantics remain explicit.
 
 Stage endpoints move definition files between folders. Execution endpoints
 operate on scheduler status and runs; they do not rewrite Markdown definitions.

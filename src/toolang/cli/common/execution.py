@@ -7,15 +7,22 @@ from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
 import click
+from pydantic import TypeAdapter
 import typer
 
-from toolang.execution.detail import ExecutionProjector
-from toolang.execution.records import RunStatus
+from toolang.execution.projection import ExecutionProjector
+from toolang.execution.schemas import RunDetail, RunInfo, ThreadDetail, ThreadInfo
 from toolang.execution.store import RunStore, run_store_path
+from toolang.execution.types import RunStatus
 from .context import context_root, require_prefix_agent
 
 
-RemoteGet = Callable[[typer.Context, str], dict[str, Any]]
+RemoteGet = Callable[[typer.Context, str], object]
+
+_RUN_INFOS = TypeAdapter(list[RunInfo])
+_THREAD_INFOS = TypeAdapter(list[ThreadInfo])
+_RUN_DETAIL = TypeAdapter(RunDetail)
+_THREAD_DETAIL = TypeAdapter(ThreadDetail)
 
 
 class LocalExecutionClient:
@@ -49,26 +56,30 @@ class LocalExecutionClient:
                 channel=_query_text(query, "channel"),
                 status=_query_text(query, "status"),
             )
-            return {"items": [item.to_data() for item in items]}
+            return {
+                "items": _THREAD_INFOS.dump_python(items, mode="json")
+            }
         if resource == ("runs",):
             items = self.projector.list_runs(
                 limit=_query_int(query, "limit", default=50),
                 thread_id=_query_text(query, "thread_id"),
                 status=_run_status(_query_text(query, "status")),
             )
-            return {"items": [item.to_data() for item in items]}
+            return {"items": _RUN_INFOS.dump_python(items, mode="json")}
         if len(resource) == 2 and resource[0] == "runs":
             detail = self.projector.run_detail(resource[1])
             if detail is None:
                 raise click.ClickException(f"run not found: {resource[1]}")
-            return cast(dict[str, Any], detail.to_data())
+            return cast(dict[str, Any], _RUN_DETAIL.dump_python(detail, mode="json"))
         if len(resource) == 2 and resource[0] == "threads":
             detail = self.projector.thread_detail(
                 resource[1], limit=_query_int(query, "limit", default=50)
             )
             if detail is None:
                 raise click.ClickException(f"thread not found: {resource[1]}")
-            return cast(dict[str, Any], detail.to_data())
+            return cast(
+                dict[str, Any], _THREAD_DETAIL.dump_python(detail, mode="json")
+            )
         return None
 
 
@@ -81,7 +92,12 @@ def execution_get(
     """Read an execution projection remotely, falling back to the local store."""
 
     try:
-        return remote_get(ctx, path)
+        remote = remote_get(ctx, path)
+        if isinstance(remote, list):
+            return {"items": remote}
+        if isinstance(remote, dict):
+            return cast(dict[str, Any], remote)
+        raise click.ClickException("runtime returned an unsupported JSON response")
     except click.ClickException as remote_error:
         client = LocalExecutionClient.open(ctx)
         if client is None:

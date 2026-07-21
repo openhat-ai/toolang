@@ -1,22 +1,27 @@
-"""Canonical caller-facing execution projections."""
+"""Project durable execution state into caller-facing schemas."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, fields
-from typing import Any, cast
+from dataclasses import fields
+from typing import Any
 
 from toolang.base.types.message import (
+    AudioPart,
+    FilePart,
+    ImagePart,
     Message,
     MessageRole,
     Part,
     TextPart,
+    ToolCallPart,
+    ToolResultPart,
     message_summary,
-    parts_from_data,
-    parts_to_data,
 )
 from .records import (
     CommandRecord,
+    InputRef,
+    OutputRef,
     RunRecord,
     RunStatus,
     StepKind,
@@ -24,217 +29,37 @@ from .records import (
     StepRecord,
     ThreadPeer,
     ThreadRecord,
-    step_input_items_to_data,
     trace_index,
     trace_run,
 )
+from .schemas import (
+    AudioPartData,
+    CommandData,
+    CommandInfo,
+    FailureDetail,
+    FilePartData,
+    ImagePartData,
+    InputDetail,
+    InputRefData,
+    MessageData,
+    MessagePartData,
+    MessagePayload,
+    OutputRefData,
+    RunDetail,
+    RunInfo,
+    RunOutput,
+    StepData,
+    StepDetail,
+    StepInputData,
+    TextPartData,
+    ThreadDetail,
+    ThreadInfo,
+    ThreadPeerInfo,
+    ThreadRunInfo,
+    ToolCallPartData,
+    ToolResultPartData,
+)
 from .store import RunStore
-
-
-class _Projection:
-    def to_data(self) -> dict[str, object]:
-        return {
-            item.name: _projection_value(getattr(self, item.name))
-            for item in fields(self)  # type: ignore[arg-type]
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class MessageData:
-    """One full caller-facing message projection."""
-
-    id: str
-    thread_id: str
-    run_id: str
-    step_index: int
-    role: MessageRole
-    parts: list[Part] = field(default_factory=list)
-    created_at: str = ""
-    meta: dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> MessageData:
-        parts_payload = payload.get("parts")
-        serialized_parts = (
-            [item for item in parts_payload if isinstance(item, Mapping)]
-            if isinstance(parts_payload, Sequence)
-            else []
-        )
-        meta = payload.get("meta")
-        return cls(
-            id=str(payload.get("id", "")),
-            thread_id=str(payload.get("thread_id", "")),
-            run_id=str(payload.get("run_id", "")),
-            step_index=int(payload.get("step_index", 0)),
-            role=_message_role(payload.get("role")),
-            parts=list(parts_from_data(serialized_parts)),
-            created_at=str(payload.get("created_at", "")),
-            meta=dict(meta) if isinstance(meta, Mapping) else {},
-        )
-
-    def to_data(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "thread_id": self.thread_id,
-            "run_id": self.run_id,
-            "step_index": self.step_index,
-            "role": self.role,
-            "parts": parts_to_data(self.parts),
-            "created_at": self.created_at,
-            "meta": dict(self.meta),
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class FailureDetail(_Projection):
-    """One normalized run failure projection."""
-
-    reason: str
-    step_index: int | None = None
-    step_kind: StepKind | None = None
-    step_error: str | None = None
-
-    def to_data(self) -> dict[str, object]:
-        return {
-            key: value
-            for key, value in _Projection.to_data(self).items()
-            if value is not None
-        }
-
-@dataclass(frozen=True, slots=True)
-class ThreadRunInfo(_Projection):
-    """One compact run summary embedded in a thread summary."""
-
-    id: str
-    origin: str
-    status: RunStatus
-    created_at: str
-    started_at: str
-    finished_at: str | None
-    updated_at: str
-
-@dataclass(frozen=True, slots=True)
-class ThreadInfo(_Projection):
-    """One thread summary projection."""
-
-    id: str
-    title: str
-    created_at: str
-    updated_at: str
-    origin: str
-    channel: str
-    status: str
-    peer: ThreadPeer
-    parent: str | None
-    run_count: int
-    latest_run: ThreadRunInfo | None
-    active_run: ThreadRunInfo | None
-
-@dataclass(frozen=True, slots=True)
-class RunInfo(_Projection):
-    """One run identity projection."""
-
-    id: str
-    parent: str | None
-    origin: str
-    thread_id: str
-    root_run_id: str
-    executable_kind: str
-    executable_name: str | None
-    call_kind: str
-    metadata: dict[str, object]
-    superseded: dict[str, object] | None
-    created_at: str
-    started_at: str
-    finished_at: str | None
-    updated_at: str
-
-@dataclass(frozen=True, slots=True)
-class RunSummary(_Projection):
-    """One compact run list projection."""
-
-    id: str
-    origin: str
-    thread_id: str
-    input_text: str
-    summary: str
-    status: RunStatus
-    error: str | None
-    superseded: dict[str, object] | None
-    failure: FailureDetail | None
-    created_at: str
-    started_at: str
-    finished_at: str | None
-    updated_at: str
-
-    def to_data(self) -> dict[str, object]:
-        return {**_Projection.to_data(self), "type": "run"}
-
-
-@dataclass(frozen=True, slots=True)
-class StepDetail(_Projection):
-    """One step detail projection."""
-
-    record: StepRecord
-    message: MessageData | None
-    virtual: bool = False
-
-    def to_data(self) -> dict[str, object]:
-        data = _Projection.to_data(self)
-        if not self.virtual:
-            data.pop("virtual")
-        return data
-
-
-@dataclass(frozen=True, slots=True)
-class InputDetail(_Projection):
-    """One run input detail projection."""
-
-    record: CommandRecord
-    message: MessageData | None
-
-@dataclass(frozen=True, slots=True)
-class RunOutput(_Projection):
-    """One run output projection."""
-
-    status: RunStatus
-    error: str | None
-    failure: FailureDetail | None
-    steps: list[StepDetail] = field(default_factory=list)
-
-@dataclass(frozen=True, slots=True)
-class RunDetail(_Projection):
-    """One complete run detail projection."""
-
-    info: RunInfo
-    input: MessageData | None
-    inputs: list[InputDetail]
-    output: RunOutput
-    prompts: dict[str, str] = field(default_factory=dict)
-    event_cursor: int | None = None
-
-    def to_data(self) -> dict[str, object]:
-        data = _Projection.to_data(self)
-        if not self.prompts:
-            data.pop("prompts")
-        if self.event_cursor is None:
-            data.pop("event_cursor")
-        return data
-
-
-@dataclass(frozen=True, slots=True)
-class ThreadDetail(_Projection):
-    """One complete thread detail projection."""
-
-    info: ThreadInfo
-    runs: list[RunDetail] = field(default_factory=list)
-    event_cursor: int | None = None
-
-    def to_data(self) -> dict[str, object]:
-        data = _Projection.to_data(self)
-        if self.event_cursor is None:
-            data.pop("event_cursor")
-        return data
 
 
 class ExecutionProjector:
@@ -322,7 +147,7 @@ class ExecutionProjector:
         )
         visible_runs = runs if limit is None else runs[-limit:]
         return ThreadDetail(
-            info=info,
+            **{item.name: getattr(info, item.name) for item in fields(ThreadInfo)},
             runs=[self._run_detail(run, event_cursor=None) for run in visible_runs],
             event_cursor=self.store.latest_event_cursor(
                 domain="thread", domain_id=thread_id
@@ -335,15 +160,15 @@ class ExecutionProjector:
         limit: int | None = 50,
         thread_id: str | None = None,
         status: RunStatus | None = None,
-    ) -> list[RunSummary]:
-        """Return compact run summaries from durable truth."""
+    ) -> list[RunInfo]:
+        """Return run information from durable truth."""
 
         runs = self.store.list_runs(limit=limit, thread_id=thread_id, status=status)
         steps_by_run = self.store.list_steps_for_runs(
             run_ids=tuple(item.run_id for item in runs)
         )
         return [
-            run_summary_from_record(
+            run_info_from_record(
                 run,
                 inputs=self.store.list_commands(run_id=run.run_id),
                 steps=steps_by_run.get(run.run_id, ()),
@@ -351,10 +176,10 @@ class ExecutionProjector:
             for run in runs
         ]
 
-    def run_summary(self, run: RunRecord) -> RunSummary:
-        """Return one compact run summary."""
+    def run_info(self, run: RunRecord) -> RunInfo:
+        """Return one caller-facing run projection."""
 
-        return run_summary_from_record(
+        return run_info_from_record(
             run,
             inputs=self.store.list_commands(run_id=run.run_id),
             steps=self.store.list_steps(run_id=run.run_id),
@@ -383,9 +208,7 @@ class ExecutionProjector:
             steps=self.store.list_steps(run_id=run_id),
         )
 
-    def _run_detail(
-        self, run: RunRecord, *, event_cursor: int | None
-    ) -> RunDetail:
+    def _run_detail(self, run: RunRecord, *, event_cursor: int | None) -> RunDetail:
         steps = self.store.list_steps(run_id=run.run_id)
         return run_detail_from_record(
             run,
@@ -411,7 +234,7 @@ def run_input_message_data(run: RunRecord, input: CommandRecord) -> MessageData:
         run_id=run.id,
         step_index=input.index,
         role=message.role,
-        parts=list(message.parts),
+        parts=[message_part_data(part) for part in message.parts],
         created_at=input.created_at,
         meta=meta,
     )
@@ -476,9 +299,163 @@ def replay_message(message: MessageData) -> Message:
 
     return Message(
         role=message.role,
-        parts=tuple(message.parts),
+        parts=tuple(message_part_value(part) for part in message.parts),
         meta=dict(message.meta),
     )
+
+
+def message_payload_data(message: Message) -> MessagePayload:
+    """Project one canonical message without runtime identity."""
+
+    return MessagePayload(
+        role=message.role,
+        parts=[message_part_data(part) for part in message.parts],
+        meta=dict(message.meta),
+    )
+
+
+def message_part_data(part: Part) -> MessagePartData:
+    """Project one canonical message part into its protocol schema."""
+
+    if isinstance(part, TextPart):
+        return TextPartData(text=part.text)
+    if isinstance(part, ImagePart):
+        return ImagePartData(
+            image_url=part.image_url,
+            file_id=part.file_id,
+            detail=part.detail,
+            filename=part.filename,
+            media_type=part.media_type,
+        )
+    if isinstance(part, AudioPart):
+        return AudioPartData(
+            data=part.data,
+            format=part.format,
+            filename=part.filename,
+            media_type=part.media_type,
+        )
+    if isinstance(part, FilePart):
+        return FilePartData(
+            file_data=part.file_data,
+            file_url=part.file_url,
+            file_id=part.file_id,
+            filename=part.filename,
+            media_type=part.media_type,
+        )
+    if isinstance(part, ToolCallPart):
+        return ToolCallPartData(
+            tool_call_id=part.tool_call_id,
+            tool_name=part.tool_name,
+            tool_family=part.tool_family,
+            input=dict(part.input),
+            call_id=part.call_id,
+        )
+    return ToolResultPartData(
+        tool_call_id=part.tool_call_id,
+        tool_name=part.tool_name,
+        tool_family=part.tool_family,
+        output=dict(part.output),
+        call_id=part.call_id,
+    )
+
+
+def message_part_value(part: MessagePartData) -> Part:
+    """Reconstruct one canonical message part from its protocol schema."""
+
+    if isinstance(part, TextPartData):
+        return TextPart(text=part.text)
+    if isinstance(part, ImagePartData):
+        return ImagePart(
+            image_url=part.image_url,
+            file_id=part.file_id,
+            detail=part.detail,
+            filename=part.filename,
+            media_type=part.media_type,
+        )
+    if isinstance(part, AudioPartData):
+        return AudioPart(
+            data=part.data,
+            format=part.format,
+            filename=part.filename,
+            media_type=part.media_type,
+        )
+    if isinstance(part, FilePartData):
+        return FilePart(
+            file_data=part.file_data,
+            file_url=part.file_url,
+            file_id=part.file_id,
+            filename=part.filename,
+            media_type=part.media_type,
+        )
+    if isinstance(part, ToolCallPartData):
+        return ToolCallPart(
+            tool_call_id=part.tool_call_id,
+            tool_name=part.tool_name,
+            tool_family=part.tool_family,
+            input=dict(part.input),
+            call_id=part.call_id,
+        )
+    return ToolResultPart(
+        tool_call_id=part.tool_call_id,
+        tool_name=part.tool_name,
+        tool_family=part.tool_family,
+        output=dict(part.output),
+        call_id=part.call_id,
+    )
+
+
+def thread_peer_info(peer: ThreadPeer) -> ThreadPeerInfo:
+    """Project one durable thread peer into its protocol schema."""
+
+    return ThreadPeerInfo(type=peer.type, name=peer.name, thread=peer.thread)
+
+
+def step_data_from_record(step: StepRecord) -> StepData:
+    """Project one durable step record into its protocol schema."""
+
+    return StepData(
+        parent=step.parent,
+        index=step.index,
+        kind=step.kind,
+        input=[step_input_data(item) for item in step.input],
+        output=[message_part_data(part) for part in step.output],
+        context=dict(step.context),
+        detail=dict(step.detail),
+        status=step.status,
+        error=step.error,
+        created_at=step.created_at,
+        started_at=step.started_at,
+        finished_at=step.finished_at,
+    )
+
+
+def command_data_from_record(command: CommandRecord) -> CommandData:
+    """Project one durable command record into its protocol schema."""
+
+    return CommandData(
+        run=command.run,
+        index=command.index,
+        kind=command.kind,
+        apply=command.apply,
+        input=(
+            message_payload_data(command.input) if command.input is not None else None
+        ),
+        context=dict(command.context),
+        status=command.status,
+        error=command.error,
+        created_at=command.created_at,
+        finished_at=command.finished_at,
+    )
+
+
+def step_input_data(item: InputRef | OutputRef | Message) -> StepInputData:
+    """Project one durable step input into its protocol schema."""
+
+    if isinstance(item, InputRef):
+        return InputRefData(cmd=item.cmd, part=item.part)
+    if isinstance(item, OutputRef):
+        return OutputRefData(step=item.step, part=item.part)
+    return message_payload_data(item)
 
 
 def message_data_for_step(
@@ -506,7 +483,7 @@ def message_data_for_step(
         run_id=trace_run(step),
         step_index=trace_index(step) or 0,
         role=role,
-        parts=list(output),
+        parts=[message_part_data(part) for part in output],
         created_at=created_at,
         meta=meta,
     )
@@ -527,7 +504,7 @@ def thread_info_from_runs(
     first_input = run_input_message_data(
         first, _start_input(commands_by_run.get(first.run_id, ()))
     )
-    title = message_summary(first_input.parts) or first.origin
+    title = _message_parts_summary(first_input.parts) or first.origin
     updated_at = last.finished_at or last.started_at
     if thread is not None:
         updated_at = max(updated_at, thread.updated_at)
@@ -539,7 +516,7 @@ def thread_info_from_runs(
         channel=_thread_channel(thread_id, last.origin),
         status=_thread_status(active),
         updated_at=updated_at,
-        peer=thread.peer if thread is not None else ThreadPeer(),
+        peer=thread_peer_info(thread.peer if thread is not None else ThreadPeer()),
         parent=thread.parent if thread is not None else None,
         run_count=len(runs),
         latest_run=thread_run_info_from_record(last),
@@ -559,7 +536,7 @@ def thread_info_from_record(thread: ThreadRecord) -> ThreadInfo:
         channel=_thread_channel(thread.thread_id, thread.origin),
         status="idle",
         updated_at=thread.updated_at,
-        peer=thread.peer,
+        peer=thread_peer_info(thread.peer),
         parent=thread.parent,
         run_count=0,
         latest_run=None,
@@ -581,9 +558,33 @@ def thread_run_info_from_record(run: RunRecord) -> ThreadRunInfo:
     )
 
 
-def run_info_from_record(run: RunRecord) -> RunInfo:
-    """Build one run info projection from one durable run record."""
+def run_info_from_record(
+    run: RunRecord,
+    *,
+    inputs: Sequence[CommandRecord],
+    steps: Sequence[StepRecord],
+) -> RunInfo:
+    """Build one run information projection from durable truth."""
 
+    input_message = run_input_from_records(run, inputs=inputs)
+    input_text = (
+        _message_parts_summary(input_message.parts) if input_message is not None else ""
+    )
+    last_step_message = next(
+        (
+            message
+            for step in reversed(steps)
+            if (message := step_message_data(run, step)) is not None
+        ),
+        None,
+    )
+    summary = (
+        _message_parts_summary(last_step_message.parts)
+        if last_step_message is not None
+        else input_text
+    )
+    if run.status == "failed" and run.error and (not summary or summary == input_text):
+        summary = run.error
     return RunInfo(
         id=run.run_id,
         parent=run.parent,
@@ -594,43 +595,6 @@ def run_info_from_record(run: RunRecord) -> RunInfo:
         executable_name=run.executable_name,
         call_kind=run.call_kind,
         metadata=dict(run.metadata),
-        superseded=run.superseded,
-        created_at=run.created_at,
-        started_at=run.started_at,
-        finished_at=run.finished_at,
-        updated_at=run.finished_at or run.started_at,
-    )
-
-
-def run_summary_from_record(
-    run: RunRecord,
-    *,
-    inputs: Sequence[CommandRecord],
-    steps: Sequence[StepRecord],
-) -> RunSummary:
-    """Build one compact run list projection."""
-
-    detail = run_detail_from_record(run, inputs=inputs, steps=steps)
-    input_text = message_summary(detail.input.parts) if detail.input is not None else ""
-    last_step_message = next(
-        (
-            item.message
-            for item in reversed(detail.output.steps)
-            if item.message is not None
-        ),
-        None,
-    )
-    summary = (
-        message_summary(last_step_message.parts)
-        if last_step_message is not None
-        else input_text
-    )
-    if run.status == "failed" and run.error and (not summary or summary == input_text):
-        summary = run.error
-    return RunSummary(
-        id=run.run_id,
-        origin=run.origin,
-        thread_id=run.thread_id,
         input_text=input_text,
         summary=summary,
         status=run.status,
@@ -641,6 +605,22 @@ def run_summary_from_record(
         started_at=run.started_at,
         finished_at=run.finished_at,
         updated_at=run.finished_at or run.started_at,
+    )
+
+
+def command_info_from_record(run: RunRecord, command: CommandRecord) -> CommandInfo:
+    """Build one accepted command projection from durable truth."""
+
+    return CommandInfo(
+        run_id=run.run_id,
+        index=command.index,
+        kind=command.kind,
+        apply=command.apply,
+        status=command.status,
+        message=run_input_record_message_data(run, command),
+        error=command.error,
+        created_at=command.created_at,
+        finished_at=command.finished_at,
     )
 
 
@@ -659,7 +639,10 @@ def run_inputs_from_records(
     """Build run input details from durable input records."""
 
     return [
-        InputDetail(record=input, message=run_input_record_message_data(run, input))
+        InputDetail(
+            record=command_data_from_record(input),
+            message=run_input_record_message_data(run, input),
+        )
         for input in inputs
     ]
 
@@ -671,22 +654,27 @@ def run_output_from_steps(
 ) -> RunOutput:
     """Build one run output projection from durable truth."""
 
-    step_details = [
-        StepDetail(record=step, message=step_message_data(run, step))
-        for step in steps
-    ]
+    projected_steps = list(steps)
     virtual_failure = _virtual_runtime_failure_step(run, steps=steps)
     if virtual_failure is not None:
-        step_details.append(
-            StepDetail(record=virtual_failure, message=None, virtual=True)
+        projected_steps.append(virtual_failure)
+    step_details = [
+        StepDetail(
+            record=step_data_from_record(step),
+            message=(
+                None if step is virtual_failure else step_message_data(run, step)
+            ),
+            virtual=step is virtual_failure,
         )
+        for step in projected_steps
+    ]
     return RunOutput(
         status=run.status,
         error=run.error,
         failure=failure_from_steps(
             status=run.status,
             error=run.error,
-            steps=[item.record for item in step_details],
+            steps=projected_steps,
         ),
         steps=step_details,
     )
@@ -702,8 +690,9 @@ def run_detail_from_record(
 ) -> RunDetail:
     """Build one complete run detail projection from durable truth."""
 
+    info = run_info_from_record(run, inputs=inputs, steps=steps)
     return RunDetail(
-        info=run_info_from_record(run),
+        **{item.name: getattr(info, item.name) for item in fields(RunInfo)},
         input=run_input_from_records(run, inputs=inputs),
         inputs=run_inputs_from_records(run, inputs=inputs),
         output=run_output_from_steps(run, steps=steps),
@@ -719,7 +708,9 @@ def failure_from_steps(
 
     if status != "failed" and error is None:
         return None
-    failed_step = next((item for item in reversed(steps) if item.status == "failed"), None)
+    failed_step = next(
+        (item for item in reversed(steps) if item.status == "failed"), None
+    )
     step_error = failed_step.error if failed_step is not None else None
     return FailureDetail(
         reason=error or step_error or "Run failed.",
@@ -727,62 +718,6 @@ def failure_from_steps(
         step_kind=failed_step.kind if failed_step is not None else None,
         step_error=step_error,
     )
-
-
-def step_record_to_data(step: StepRecord) -> dict[str, object]:
-    """Serialize one durable step as part of a public projection."""
-
-    return {
-        "parent": step.parent,
-        "index": step.index,
-        "path": step.path,
-        "kind": step.kind,
-        "status": step.status,
-        "input": step_input_items_to_data(step.input),
-        "output": parts_to_data(step.output),
-        "context": dict(step.context),
-        "detail": dict(step.detail),
-        "error": step.error,
-        "started_at": step.started_at,
-        "finished_at": step.finished_at,
-    }
-
-
-def command_record_to_data(command: CommandRecord) -> dict[str, object]:
-    """Serialize one durable run command as part of a public projection."""
-
-    return {
-        "run": command.run,
-        "index": command.index,
-        "kind": command.kind,
-        "apply": command.apply,
-        "input": command.input.to_data() if command.input is not None else None,
-        "context": dict(command.context),
-        "status": command.status,
-        "error": command.error,
-        "created_at": command.created_at,
-        "finished_at": command.finished_at,
-    }
-
-
-def _projection_value(value: object) -> object:
-    if isinstance(value, _Projection):
-        return value.to_data()
-    if isinstance(value, MessageData):
-        return value.to_data()
-    if isinstance(value, StepRecord):
-        return step_record_to_data(value)
-    if isinstance(value, CommandRecord):
-        return command_record_to_data(value)
-    if isinstance(value, ThreadPeer):
-        return value.to_data()
-    if isinstance(value, Mapping):
-        return {str(key): _projection_value(item) for key, item in value.items()}
-    if isinstance(value, Sequence) and not isinstance(
-        value, (str, bytes, bytearray)
-    ):
-        return [_projection_value(item) for item in value]
-    return value
 
 
 def _thread_channel(thread_id: str, origin: str) -> str:
@@ -793,6 +728,10 @@ def _thread_channel(thread_id: str, origin: str) -> str:
     if thread_id.startswith("script_tg_"):
         return "tg"
     return "terminal"
+
+
+def _message_parts_summary(parts: Sequence[MessagePartData]) -> str:
+    return message_summary(tuple(message_part_value(part) for part in parts))
 
 
 def _thread_status(active: RunRecord | None) -> str:
@@ -862,10 +801,3 @@ def _role_for_step(kind: StepKind) -> MessageRole | None:
     if kind == "tool":
         return "tool"
     return None
-
-
-def _message_role(value: object) -> MessageRole:
-    text = str(value or "user").strip()
-    if text not in {"user", "assistant", "tool"}:
-        raise ValueError(f"unsupported message role: {text or '<empty>'}")
-    return cast(MessageRole, text)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, contextmanager, suppress
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -95,9 +95,10 @@ from toolang.execution.request import RunRequest
 from toolang.execution.store import PersistSink, RunStore, run_store_path
 from toolang.execution.reply import SseReplySink
 from toolang.execution.setup import AgentSetup
-from toolang.api import _views as inspect
-from toolang.api import chat as chat_loop
-from toolang.api._streaming import ShutdownAwareStreamingResponse
+from tests.support import runtime as inspect
+from toolang.api._streaming import ShutdownAwareStreamingResponse, guarded_stream
+from toolang.api.schemas import ChatRequest, InputMessagePayload, TextInputPart
+from toolang.api.routers import chat as chat_loop
 from toolang.work import inbox as files
 from toolang.up import channels as poll
 from toolang.plugin.tools.loading import load_runtime_tools
@@ -112,7 +113,7 @@ from toolang.state.state import (
 from toolang.plugin.loops.basic import BasicLoop
 from toolang.plugin.models.loading import load_model_adapters, load_model_providers
 from toolang.up import server as up_module
-from toolang.api.context import ApiContext
+from toolang.api.app import ApiContext
 from toolang.up.channels import start_delivery
 from toolang.up.server import up as run_experiments_up
 from toolang.api.app import create_app
@@ -124,6 +125,12 @@ from tests.support.execution import (
     project_run_start,
     project_step,
 )
+
+
+@dataclass(slots=True)
+class _TestApiContext(ApiContext):
+    channel_bindings: dict[str, ChannelBinding] = field(default_factory=dict)
+    channel_plugins: dict[str, AgentChannel] = field(default_factory=dict)
 
 
 def _put_cap(
@@ -205,14 +212,14 @@ def bind_run_request(context, request, *, state=None):
     return _bind_run_request(
         request,
         id_state_path=context.executor.id_state_path,
-        state=state or context.get_agent_state(),
+        state=state or context.state_watcher.current(),
         setup=context.executor.setup,
-        store=context.store,
+        store=context.executor.store,
     )
 
 
 def _emit_trace(context: ApiContext, event) -> None:
-    emit_event(context.store, event, agent_id=context.name)
+    emit_event(context.executor.store, event)
 
 
 def test_executor_stop_projects_command_and_canceled_run(tmp_path: Path) -> None:
@@ -222,7 +229,7 @@ def test_executor_stop_projects_command_and_canceled_run(tmp_path: Path) -> None
         agent_name="alice",
     )
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -234,7 +241,7 @@ def test_executor_stop_projects_command_and_canceled_run(tmp_path: Path) -> None
     assert command.kind == "stop"
     assert command.index == 1
     assert run.status == "canceled"
-    context.store.close()
+    context.executor.store.close()
 
 
 def test_store_reserves_command_indexes_across_connections(tmp_path: Path) -> None:
@@ -278,8 +285,8 @@ def test_store_appends_event_cursors_across_connections(tmp_path: Path) -> None:
         barrier.wait()
         for index in range(20):
             store.append_event(
-                domain="agent",
-                domain_id="alice",
+                domain="thread",
+                domain_id="thread-1",
                 type="test",
                 payload={"index": index},
             )
@@ -291,7 +298,7 @@ def test_store_appends_event_cursors_across_connections(tmp_path: Path) -> None:
     for thread in threads:
         thread.join()
 
-    events = stores[0].list_events(domain="agent", domain_id="alice", limit=100)
+    events = stores[0].list_events(domain="thread", domain_id="thread-1", limit=100)
     for store in stores:
         store.close()
 
@@ -405,7 +412,7 @@ def test_collect_file_submissions_scans_existing_inbox_files_once(
         rows = store.list()
     finally:
         store.close()
-        context.store.close()
+        context.executor.store.close()
 
     note_path = str((inbox / "note.txt").resolve())
     assert len(first) == 1
@@ -435,7 +442,7 @@ def test_create_app_mounts_complete_api(tmp_path: Path) -> None:
             )
             assert response.status_code == 200
             body = response.json()
-            thread_id = body["thread_id"]
+            thread_id = body["thread"]["id"]
             assert thread_id.startswith("web_")
             assert body["message"]["parts"][0]["text"] == "say hello"
             assert body["assistant"]["parts"][0]["text"] == "assistant:say hello"
@@ -445,10 +452,10 @@ def test_create_app_mounts_complete_api(tmp_path: Path) -> None:
             )
             assert manage_response.status_code == 400
 
-            runs = client.get("/api/v1/runs").json()["items"]
+            runs = client.get("/api/v1/runs").json()
             profile = client.get("/api/v1/profile").json()
             caps_response = client.get("/api/v1/caps").json()
-            threads = client.get("/api/v1/threads").json()["items"]
+            threads = client.get("/api/v1/threads").json()
             snapshot = inspect.snapshot_context(context)
             durable = cast(dict[str, object], snapshot["durable"])
             prepared = cast(dict[str, object], snapshot["prepared"])
@@ -493,12 +500,16 @@ def test_create_app_mounts_complete_api(tmp_path: Path) -> None:
                 "active_run": None,
             }
             thread_detail = client.get(f"/api/v1/threads/{thread_id}").json()
-            run_detail = client.get(f"/api/v1/runs/{body['run_id']}").json()
-            assert thread_detail["info"] == threads[0]
-            assert [item["info"]["id"] for item in thread_detail["runs"]] == [
-                body["run_id"]
+            run_detail = client.get(f"/api/v1/runs/{body['run']['id']}").json()
+            assert {
+                key: value
+                for key, value in thread_detail.items()
+                if key not in {"runs", "event_cursor"}
+            } == threads[0]
+            assert [item["id"] for item in thread_detail["runs"]] == [
+                body["run"]["id"]
             ]
-            assert run_detail["info"] == thread_detail["runs"][0]["info"]
+            assert run_detail["id"] == thread_detail["runs"][0]["id"]
             assert run_detail["input"]["role"] == "user"
             assert run_detail["input"]["parts"][0]["text"] == "say hello"
             assert run_detail["output"]["status"] == "finished"
@@ -522,7 +533,7 @@ def test_create_app_mounts_complete_api(tmp_path: Path) -> None:
             )
             assert definitions["program_source"] == "agents/alice/agent.too"
             assert definitions["private_entries"] == []
-            assert state["fingerprint"] == context.get_agent_state().fingerprint
+            assert state["fingerprint"] == context.state_watcher.current().fingerprint
             assert operational_facts["completed_runs"] == 1
             assert operational_facts["prepared_fingerprint"] == prepared_fingerprint
             assert state["completed_runs"] == 1
@@ -538,7 +549,7 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(
         agent_name="alice",
     )
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-old",
         thread_id="thread-1",
         origin="chat",
@@ -547,13 +558,13 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(
         started_at="2026-01-01T00:00:00Z",
     )
     project_run_end(
-        context.store,
+        context.executor.store,
         run_id="run-old",
         status="finished",
         finished_at="2026-01-01T00:00:01Z",
     )
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-new",
         thread_id="thread-1",
         origin="chat",
@@ -562,7 +573,7 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(
         started_at="2026-01-01T00:01:00Z",
     )
     project_run_end(
-        context.store,
+        context.executor.store,
         run_id="run-new",
         status="failed",
         error="boom",
@@ -571,8 +582,8 @@ def test_threads_api_reports_full_run_count_independent_of_recent_run_limit(
     app = _create_test_app(context)
 
     with TestClient(app) as client:
-        recent_runs = client.get("/api/v1/runs?limit=1").json()["items"]
-        thread = client.get("/api/v1/threads").json()["items"][0]
+        recent_runs = client.get("/api/v1/runs?limit=1").json()
+        thread = client.get("/api/v1/threads").json()[0]
 
     assert [item["id"] for item in recent_runs] == ["run-new"]
     assert thread["id"] == "thread-1"
@@ -602,7 +613,7 @@ def test_threads_api_reports_active_run(tmp_path: Path) -> None:
         agent_name="alice",
     )
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-active",
         thread_id="thread-1",
         origin="chat",
@@ -613,7 +624,7 @@ def test_threads_api_reports_active_run(tmp_path: Path) -> None:
     app = _create_test_app(context)
 
     with TestClient(app) as client:
-        thread = client.get("/api/v1/threads").json()["items"][0]
+        thread = client.get("/api/v1/threads").json()[0]
         detail = client.get("/api/v1/threads/thread-1").json()
 
     assert thread["active_run"] == {
@@ -628,7 +639,7 @@ def test_threads_api_reports_active_run(tmp_path: Path) -> None:
     assert thread["created_at"] == "2026-01-01T00:00:00Z"
     assert thread["channel"] == "terminal"
     assert thread["status"] == "running"
-    assert detail["info"]["active_run"] == thread["active_run"]
+    assert detail["active_run"] == thread["active_run"]
     assert detail["event_cursor"] == 2
 
 
@@ -640,7 +651,7 @@ def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
         agent_name="alice",
     )
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -648,7 +659,7 @@ def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
         created_at="2026-01-01T00:00:00Z",
         started_at="2026-01-01T00:00:00Z",
     )
-    context.store.append_event(
+    context.executor.store.append_event(
         domain="run",
         domain_id="run-1",
         type="part_end",
@@ -666,7 +677,7 @@ def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
 
 def test_persist_sink_projects_run_truth_and_events(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
-    sink = PersistSink(store, agent_id="alice")
+    sink = PersistSink(store)
 
     sink.on_event(
         RunStarting(
@@ -685,58 +696,6 @@ def test_persist_sink_projects_run_truth_and_events(tmp_path: Path) -> None:
         event.type for event in store.list_events(domain="run", domain_id="run-1")
     ] == ["run_starting"]
     store.close()
-
-
-def test_agent_events_include_thread_updates_for_run_lifecycle(tmp_path: Path) -> None:
-    toolang_root = tmp_path / "toolang"
-    _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
-    context = _build_context(
-        toolang_root=toolang_root,
-        agent_name="alice",
-    )
-
-    _emit_trace(
-        context,
-        RunStarting(
-            run="run-1",
-            cmd=0,
-            parent=None,
-            thread="thread-1",
-            input=Message.user("hello"),
-            context={"origin": "chat"},
-            created_at="2026-01-01T00:00:00Z",
-        ),
-    )
-    _emit_trace(
-        context,
-        RunBegin(
-            run="run-1",
-            input=InputRef(cmd=0),
-            context={"origin": "chat"},
-            started_at="2026-01-01T00:00:00Z",
-        ),
-    )
-    _emit_trace(
-        context,
-        RunEnd(
-            run="run-1",
-            status="finished",
-            finished_at="2026-01-01T00:00:01Z",
-        ),
-    )
-    app = _create_test_app(context)
-
-    with TestClient(app) as client:
-        response = client.get("/api/v1/agent/events").json()
-
-    assert response["cursor"] == 2
-    assert [item["type"] for item in response["items"]] == [
-        "thread_update",
-        "thread_update",
-    ]
-    assert response["items"][0]["payload"]["run"] == "run-1"
-    assert response["items"][0]["payload"]["status"] == "running"
-    assert response["items"][1]["payload"]["status"] == "finished"
 
 
 def test_run_starting_trace_precedes_run_begin(tmp_path: Path) -> None:
@@ -769,7 +728,7 @@ def test_run_starting_trace_precedes_run_begin(tmp_path: Path) -> None:
         ),
     )
 
-    events = context.store.list_events(domain="run", domain_id="run-1")
+    events = context.executor.store.list_events(domain="run", domain_id="run-1")
 
     assert [item.type for item in events] == ["run_starting", "run_begin"]
     assert [item.seq for item in events] == [1, 2]
@@ -792,7 +751,7 @@ def test_steer_run_appends_run_steering_event(tmp_path: Path) -> None:
         agent_name="alice",
     )
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -803,7 +762,7 @@ def test_steer_run_appends_run_steering_event(tmp_path: Path) -> None:
     app = _create_test_app(context)
 
     with TestClient(app) as client:
-        response = client.post(
+        steer = client.post(
             "/api/v1/runs/run-1/steer",
             json={
                 "request_id": "req-steer",
@@ -813,15 +772,19 @@ def test_steer_run_appends_run_steering_event(tmp_path: Path) -> None:
                     "parts": [{"type": "text", "text": "focus on events"}],
                 },
             },
-        ).json()
+        )
+        response = steer.json()
         events = client.get("/api/v1/runs/run-1/events").json()["items"]
 
-    assert response["input"]["run"] == "run-1"
-    assert response["input"]["type"] == "run_steering"
-    assert response["input"]["cmd"] == 1
-    assert response["input"]["kind"] == "steer"
-    assert response["input"]["apply"] == "next_step"
-    assert response["input"]["context"]["request_id"] == "req-steer"
+    assert steer.status_code == 202
+    assert response["run"]["id"] == "run-1"
+    assert response["command"]["run_id"] == "run-1"
+    assert response["command"]["index"] == 1
+    assert response["command"]["kind"] == "steer"
+    assert response["command"]["apply"] == "next_step"
+    assert response["command"]["message"]["parts"] == [
+        {"type": "text", "text": "focus on events"}
+    ]
     assert [item["type"] for item in events] == [
         "run_starting",
         "run_begin",
@@ -842,7 +805,7 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
         agent_name="alice",
     )
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -902,7 +865,7 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         agent_name="alice",
     )
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-1",
         thread_id="thread-1",
         origin="chat",
@@ -911,7 +874,7 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         started_at="2026-01-01T00:00:00Z",
     )
     project_command(
-        context.store,
+        context.executor.store,
         run_id="run-1",
         kind="steer",
         apply="next_step",
@@ -919,10 +882,10 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         input=Message.user("focus on events"),
         created_at="2026-01-01T00:00:01Z",
     )
-    instruct_hash = context.store.put_prompt(body="model instructions")
-    context_hash = context.store.put_prompt(body="model context")
+    instruct_hash = context.executor.store.put_prompt(body="model instructions")
+    context_hash = context.executor.store.put_prompt(body="model context")
     project_step(
-        context.store,
+        context.executor.store,
         run_id="run-1",
         step_index=2,
         kind="model",
@@ -940,8 +903,8 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         detail = client.get("/api/v1/runs/run-1").json()
 
     assert detail["output"]["steps"][0]["record"]["input"] == [
-        {"step": "run-1/1"},
-        {"cmd": 1},
+        {"step": "run-1/1", "part": None},
+        {"cmd": 1, "part": None},
     ]
     assert detail["output"]["steps"][0]["record"]["context"] == {
         "instruct": instruct_hash,
@@ -1020,7 +983,7 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
         ),
     )
     project_run_end(
-        context.store,
+        context.executor.store,
         run_id="run-1",
         status="canceled",
         error="User stopped the run.",
@@ -1031,7 +994,7 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
         home=context.home,
         id_state_path=context.executor.id_state_path,
         setup=context.executor.setup,
-        store=context.store,
+        store=context.executor.store,
         model_aliases=context.executor.model_aliases,
         default_models=context.executor.default_models,
         model_environ=context.executor.model_environ,
@@ -1060,10 +1023,12 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
         ),
     )
 
-    assert context.store.list_steps(run_id="run-1") == []
+    assert context.executor.store.list_steps(run_id="run-1") == []
     assert [
         item.type
-        for item in context.store.list_events(domain="thread", domain_id="thread-1")
+        for item in context.executor.store.list_events(
+            domain="thread", domain_id="thread-1"
+        )
     ] == ["run_starting", "run_begin", "run_end"]
 
 
@@ -1110,7 +1075,7 @@ def test_runtime_shutdown_cancels_stuck_tasks() -> None:
     asyncio.run(run_test())
 
 
-def test_agent_events_include_cap_updates(tmp_path: Path) -> None:
+def test_agent_updates_include_cap_changes(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -1124,11 +1089,10 @@ def test_agent_events_include_cap_updates(tmp_path: Path) -> None:
             "/api/v1/psyches/reviewer/file",
             json={"visibility": "private", "content": "Prefer direct answers."},
         )
-        response = client.get("/api/v1/agent/events").json()
+        response = client.get("/api/v1/updates").json()
 
     assert put_response.status_code == 200
-    assert response["cursor"] == 1
-    assert [item["type"] for item in response["items"]] == ["psyche_changed"]
+    assert [item["kind"] for item in response["items"]] == ["psyche_changed"]
     assert response["items"][0]["payload"] == {
         "name": "reviewer",
         "visibility": "private",
@@ -1159,12 +1123,12 @@ def test_chat_api_allocates_web_threads_by_default_and_rejects_unknown_thread_id
                 "/api/v1/chat",
                 json={"message": _chat_message("hello")},
             )
-            thread_id = first.json()["thread_id"]
+            thread_id = first.json()["thread"]["id"]
             second = client.post(
                 "/api/v1/chat",
                 json={"thread": thread_id, "message": _chat_message("again")},
             )
-            thread = client.get(f"/api/v1/threads/{thread_id}").json()["info"]
+            thread = client.get(f"/api/v1/threads/{thread_id}").json()
 
     assert rejected.status_code == 404
     assert rejected.json()["detail"] == "chat thread not found: web-client-created"
@@ -1172,7 +1136,7 @@ def test_chat_api_allocates_web_threads_by_default_and_rejects_unknown_thread_id
     assert thread_id.startswith("web_")
     assert len(thread_id) == len("web_") + 8
     assert second.status_code == 200
-    assert second.json()["thread_id"] == thread_id
+    assert second.json()["thread"]["id"] == thread_id
     assert thread["run_count"] == 2
 
 
@@ -1191,7 +1155,7 @@ def test_chat_api_allocates_term_threads_for_term_client(tmp_path: Path) -> None
                 "/api/v1/chat",
                 json={"client": "tui", "message": _chat_message("hello")},
             )
-            thread_id = response.json()["thread_id"]
+            thread_id = response.json()["thread"]["id"]
 
     assert response.status_code == 200
     assert thread_id.startswith("term_")
@@ -1210,15 +1174,20 @@ def test_chat_api_creates_empty_terminal_threads(tmp_path: Path) -> None:
     with TestClient(app) as client:
         response = client.post("/api/v1/threads", json={"client": "tui"})
         body = response.json()
-        thread = client.get(f"/api/v1/threads/{body['thread_id']}").json()["info"]
+        thread = client.get(f"/api/v1/threads/{body['thread']['id']}").json()
 
-    assert response.status_code == 200
-    assert body["thread_id"].startswith("term_")
+    assert response.status_code == 201
+    assert body["thread"]["id"].startswith("term_")
     assert body["thread"]["origin"] == "chat"
     assert body["thread"]["channel"] == "terminal"
     assert body["thread"]["status"] == "idle"
     assert body["thread"]["run_count"] == 0
-    assert thread == body["thread"]
+    assert body["run"] is None
+    assert {
+        key: value
+        for key, value in thread.items()
+        if key not in {"runs", "event_cursor"}
+    } == body["thread"]
 
 
 def test_chat_rewind_supersedes_previous_run_in_thread_projection(
@@ -1238,34 +1207,37 @@ def test_chat_rewind_supersedes_previous_run_in_thread_projection(
                 "/api/v1/chat",
                 json={"message": _chat_message("first input")},
             )
-            old_run_id = first.json()["run_id"]
-            thread_id = first.json()["thread_id"]
+            old_run_id = first.json()["run"]["id"]
+            thread_id = first.json()["thread"]["id"]
             rewind = client.post(
-                f"/api/v1/runs/{old_run_id}/rewind",
-                json={"message": _chat_message("replacement input")},
+                f"/api/v1/threads/{thread_id}/rewind",
+                json={
+                    "run_id": old_run_id,
+                    "message": _chat_message("replacement input"),
+                },
             )
-            new_run_id = rewind.json()["run_id"]
+            new_run_id = rewind.json()["run"]["run"]["id"]
 
             for _ in range(100):
                 thread_detail = client.get(f"/api/v1/threads/{thread_id}").json()
-                if [item["info"]["id"] for item in thread_detail["runs"]] == [
+                if [item["id"] for item in thread_detail["runs"]] == [
                     new_run_id
                 ]:
                     break
                 time.sleep(0.01)
             old_detail = client.get(f"/api/v1/runs/{old_run_id}").json()
-            runs = client.get(f"/api/v1/runs?thread_id={thread_id}").json()["items"]
+            runs = client.get(f"/api/v1/runs?thread_id={thread_id}").json()
 
     assert first.status_code == 200
     assert rewind.status_code == 200
-    assert old_detail["info"]["superseded"] == {
+    assert old_detail["superseded"] == {
         "type": "rewound",
         "by": new_run_id,
         "from_run_id": old_run_id,
     }
-    assert [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]
+    assert [item["id"] for item in thread_detail["runs"]] == [new_run_id]
     assert thread_detail["runs"][0]["input"]["parts"][0]["text"] == "replacement input"
-    assert thread_detail["info"]["run_count"] == 1
+    assert thread_detail["run_count"] == 1
     assert [item["id"] for item in runs] == [new_run_id]
 
 
@@ -1277,7 +1249,7 @@ def test_chat_rewind_cancels_running_run_before_superseding(tmp_path: Path) -> N
         agent_name="alice",
     )
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run_running",
         thread_id="term_running",
         origin="chat",
@@ -1288,14 +1260,17 @@ def test_chat_rewind_cancels_running_run_before_superseding(tmp_path: Path) -> N
     with _patched_executor_execution():
         with TestClient(app) as client:
             rewind = client.post(
-                "/api/v1/runs/run_running/rewind",
-                json={"message": _chat_message("replacement input")},
+                "/api/v1/threads/term_running/rewind",
+                json={
+                    "run_id": "run_running",
+                    "message": _chat_message("replacement input"),
+                },
             )
-            new_run_id = rewind.json()["run_id"]
+            new_run_id = rewind.json()["run"]["run"]["id"]
 
             for _ in range(100):
                 thread_detail = client.get("/api/v1/threads/term_running").json()
-                if [item["info"]["id"] for item in thread_detail["runs"]] == [
+                if [item["id"] for item in thread_detail["runs"]] == [
                     new_run_id
                 ]:
                     break
@@ -1305,12 +1280,12 @@ def test_chat_rewind_cancels_running_run_before_superseding(tmp_path: Path) -> N
     assert rewind.status_code == 200
     assert old_detail["output"]["status"] == "canceled"
     assert old_detail["output"]["error"] == "Run was rewound."
-    assert old_detail["info"]["superseded"] == {
+    assert old_detail["superseded"] == {
         "type": "rewound",
         "by": new_run_id,
         "from_run_id": "run_running",
     }
-    assert [item["info"]["id"] for item in thread_detail["runs"]] == [new_run_id]
+    assert [item["id"] for item in thread_detail["runs"]] == [new_run_id]
 
 
 def test_chat_fork_copies_prior_runs_into_new_thread(tmp_path: Path) -> None:
@@ -1328,8 +1303,8 @@ def test_chat_fork_copies_prior_runs_into_new_thread(tmp_path: Path) -> None:
                 "/api/v1/chat",
                 json={"message": _chat_message("first input")},
             )
-            source_thread_id = first.json()["thread_id"]
-            first_run_id = first.json()["run_id"]
+            source_thread_id = first.json()["thread"]["id"]
+            first_run_id = first.json()["run"]["id"]
             second = client.post(
                 "/api/v1/chat",
                 json={
@@ -1338,36 +1313,36 @@ def test_chat_fork_copies_prior_runs_into_new_thread(tmp_path: Path) -> None:
                 },
             )
             fork = client.post(
-                f"/api/v1/runs/{second.json()['run_id']}/fork",
-                json={"message": _chat_message("fork input")},
+                f"/api/v1/threads/{source_thread_id}/fork",
+                json={
+                    "run_id": second.json()["run"]["id"],
+                    "message": _chat_message("fork input"),
+                },
             )
-            fork_thread_id = fork.json()["thread_id"]
-            fork_run_id = fork.json()["run_id"]
+            fork_thread_id = fork.json()["thread"]["id"]
+            fork_run_id = fork.json()["run"]["run"]["id"]
 
             for _ in range(100):
                 thread_detail = client.get(f"/api/v1/threads/{fork_thread_id}").json()
-                run_ids = [item["info"]["id"] for item in thread_detail["runs"]]
+                run_ids = [item["id"] for item in thread_detail["runs"]]
                 if run_ids[-1:] == [fork_run_id] and len(run_ids) == 2:
                     break
                 time.sleep(0.01)
-            copied_run_id = fork.json()["copied_run_ids"][0]
+            copied_run_id = thread_detail["runs"][0]["id"]
             copied_detail = client.get(f"/api/v1/runs/{copied_run_id}").json()
 
     assert first.status_code == 200
     assert second.status_code == 200
     assert fork.status_code == 200
-    assert fork.json()["source_thread_id"] == source_thread_id
-    assert fork.json()["from_run_id"] == second.json()["run_id"]
-    assert fork.json()["include_anchor"] is False
-    assert fork.json()["copied_run_ids"] == [copied_run_id]
+    assert fork.json()["thread"]["parent"] is not None
     assert copied_run_id != first_run_id
-    assert copied_detail["info"]["thread_id"] == fork_thread_id
+    assert copied_detail["thread_id"] == fork_thread_id
     assert copied_detail["input"]["parts"][0]["text"] == "first input"
     assert [item["input"]["parts"][0]["text"] for item in thread_detail["runs"]] == [
         "first input",
         "fork input",
     ]
-    assert thread_detail["info"]["run_count"] == 2
+    assert thread_detail["run_count"] == 2
 
 
 def test_chat_fork_can_include_anchor_run_in_new_thread(tmp_path: Path) -> None:
@@ -1385,7 +1360,7 @@ def test_chat_fork_can_include_anchor_run_in_new_thread(tmp_path: Path) -> None:
                 "/api/v1/chat",
                 json={"message": _chat_message("first input")},
             )
-            source_thread_id = first.json()["thread_id"]
+            source_thread_id = first.json()["thread"]["id"]
             second = client.post(
                 "/api/v1/chat",
                 json={
@@ -1394,18 +1369,19 @@ def test_chat_fork_can_include_anchor_run_in_new_thread(tmp_path: Path) -> None:
                 },
             )
             fork = client.post(
-                f"/api/v1/runs/{second.json()['run_id']}/fork",
+                f"/api/v1/threads/{source_thread_id}/fork",
                 json={
+                    "run_id": second.json()["run"]["id"],
                     "include_anchor": True,
                     "message": _chat_message("fork input"),
                 },
             )
-            fork_thread_id = fork.json()["thread_id"]
-            fork_run_id = fork.json()["run_id"]
+            fork_thread_id = fork.json()["thread"]["id"]
+            fork_run_id = fork.json()["run"]["run"]["id"]
 
             for _ in range(100):
                 thread_detail = client.get(f"/api/v1/threads/{fork_thread_id}").json()
-                run_ids = [item["info"]["id"] for item in thread_detail["runs"]]
+                run_ids = [item["id"] for item in thread_detail["runs"]]
                 if run_ids[-1:] == [fork_run_id] and len(run_ids) == 3:
                     break
                 time.sleep(0.01)
@@ -1413,16 +1389,13 @@ def test_chat_fork_can_include_anchor_run_in_new_thread(tmp_path: Path) -> None:
     assert first.status_code == 200
     assert second.status_code == 200
     assert fork.status_code == 200
-    assert fork.json()["source_thread_id"] == source_thread_id
-    assert fork.json()["from_run_id"] == second.json()["run_id"]
-    assert fork.json()["include_anchor"] is True
-    assert len(fork.json()["copied_run_ids"]) == 2
+    assert fork.json()["thread"]["parent"] is not None
     assert [item["input"]["parts"][0]["text"] for item in thread_detail["runs"]] == [
         "first input",
         "second input",
         "fork input",
     ]
-    assert thread_detail["info"]["run_count"] == 3
+    assert thread_detail["run_count"] == 3
 
 
 def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(
@@ -1445,7 +1418,7 @@ def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(
                     "message": _chat_message("Alice asks Bob"),
                 },
             )
-            thread_id = first.json()["thread_id"]
+            thread_id = first.json()["thread"]["id"]
             accepted = client.post(
                 "/api/v1/chat",
                 json={
@@ -1462,7 +1435,7 @@ def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(
                     "message": _chat_message("wrong peer"),
                 },
             )
-            thread = client.get(f"/api/v1/threads/{thread_id}").json()["info"]
+            thread = client.get(f"/api/v1/threads/{thread_id}").json()
 
     assert first.status_code == 200
     assert first.json()["thread"]["peer"] == {
@@ -1476,7 +1449,7 @@ def test_chat_api_records_peer_for_new_thread_and_rejects_mismatch(
     assert thread["parent"] is None
 
 
-def test_chat_models_lists_effective_selectors_for_term_agic(tmp_path: Path) -> None:
+def test_agent_models_lists_effective_selectors_for_chat_agic(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -1494,7 +1467,7 @@ def test_chat_models_lists_effective_selectors_for_term_agic(tmp_path: Path) -> 
     app = _create_test_app(context)
 
     with TestClient(app) as client:
-        response = client.get("/api/v1/chat/models")
+        response = client.get("/api/v1/models")
 
     assert response.status_code == 200
     body = response.json()
@@ -1525,7 +1498,9 @@ def test_chat_models_lists_effective_selectors_for_term_agic(tmp_path: Path) -> 
     }
 
 
-def test_chat_models_returns_all_discoverable_when_unrestricted(tmp_path: Path) -> None:
+def test_agent_models_returns_all_discoverable_when_unrestricted(
+    tmp_path: Path,
+) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     context = _build_context(
@@ -1536,7 +1511,7 @@ def test_chat_models_returns_all_discoverable_when_unrestricted(tmp_path: Path) 
     app = _create_test_app(context)
 
     with TestClient(app) as client:
-        response = client.get("/api/v1/chat/models")
+        response = client.get("/api/v1/models")
 
     assert response.status_code == 200
     body = response.json()
@@ -1556,7 +1531,7 @@ def test_chat_models_returns_all_discoverable_when_unrestricted(tmp_path: Path) 
     assert items_by_ref["openai/o3"]["model"] == "o3"
 
 
-def test_chat_executable_endpoints_list_agics_and_flows(tmp_path: Path) -> None:
+def test_agent_executable_endpoints_list_agics_and_flows(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -1577,8 +1552,8 @@ def test_chat_executable_endpoints_list_agics_and_flows(tmp_path: Path) -> None:
     app = _create_test_app(context)
 
     with TestClient(app) as client:
-        agics = client.get("/api/v1/chat/agics")
-        flows = client.get("/api/v1/chat/flows")
+        agics = client.get("/api/v1/agics")
+        flows = client.get("/api/v1/flows")
 
     assert agics.status_code == 200
     assert agics.json() == {
@@ -1633,20 +1608,20 @@ def test_chat_request_passes_selected_agic_and_flow_to_executor(
             )
 
         monkeypatch.setattr(context.executor, "run", fake_run)
-        message = chat_loop.ChatMessagePayload(
+        message = InputMessagePayload(
             role="user",
-            parts=[{"type": "text", "text": "hello"}],
+            parts=[TextInputPart(type="text", text="hello")],
             meta={},
         )
 
         await chat_loop._submit_chat_run(
             context,
-            chat_loop.ChatRequest(message=message, agic="summarize"),
+            ChatRequest(message=message, agic="summarize"),
             thread_id=None,
         )
         await chat_loop._submit_chat_run(
             context,
-            chat_loop.ChatRequest(message=message, flow="review"),
+            ChatRequest(message=message, flow="review"),
             thread_id=None,
         )
 
@@ -1666,7 +1641,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         agent_name="alice",
     )
     app = _create_test_app(context)
-    store = context.store
+    store = context.executor.store
     agents.write_runtime_state(
         toolang_root,
         "alice",
@@ -1805,7 +1780,7 @@ def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
                 "/api/v1/chat",
                 json={"message": _chat_message("say hello")},
             )
-            runs = client.get("/api/v1/runs").json()["items"]
+            runs = client.get("/api/v1/runs").json()
             run_detail = client.get(f"/api/v1/runs/{runs[0]['id']}").json()
 
     assert response.status_code == 200
@@ -1820,25 +1795,16 @@ def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
         "step_kind": "system",
         "step_error": "model boom",
     }
-    assert run_detail["output"]["steps"] == [
-        {
-            "record": {
-                "parent": runs[0]["id"],
-                "index": 0,
-                "path": f"{runs[0]['id']}/0",
-                "kind": "system",
-                "status": "failed",
-                "input": [],
-                "output": [{"type": "text", "text": "model boom"}],
-                "context": {},
-                "detail": {},
-                "started_at": run_detail["info"]["finished_at"],
-                "finished_at": run_detail["info"]["finished_at"],
-                "error": "model boom",
-            },
-            "message": None,
-        }
+    failure_step = run_detail["output"]["steps"][0]
+    assert failure_step["record"]["parent"] == runs[0]["id"]
+    assert failure_step["record"]["index"] == 0
+    assert failure_step["record"]["kind"] == "system"
+    assert failure_step["record"]["status"] == "failed"
+    assert failure_step["record"]["output"] == [
+        {"type": "text", "text": "model boom"}
     ]
+    assert failure_step["record"]["error"] == "model boom"
+    assert failure_step["message"] is None
 
 
 def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) -> None:
@@ -1849,14 +1815,14 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
         agent_name="alice",
     )
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-loop",
         thread_id="chore_sync",
         origin="chore",
         input=Message.user("sync remote tasks"),
     )
     project_step(
-        context.store,
+        context.executor.store,
         run_id="run-loop",
         step_index=1,
         kind="tool",
@@ -1876,7 +1842,7 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
         finished_at="2026-01-01T00:00:02Z",
     )
     project_run_end(
-        context.store,
+        context.executor.store,
         run_id="run-loop",
         status="failed",
         error="Model tool loop exceeded the maximum number of rounds.",
@@ -1885,7 +1851,7 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
     app = _create_test_app(context)
 
     with TestClient(app) as client:
-        run_item = client.get("/api/v1/runs").json()["items"][0]
+        run_item = client.get("/api/v1/runs").json()[0]
         detail = client.get("/api/v1/runs/run-loop").json()
 
     assert run_item["status"] == "failed"
@@ -1908,28 +1874,21 @@ def test_runs_api_surfaces_failure_reason_when_summary_is_empty(tmp_path: Path) 
         "step_kind": "system",
         "step_error": "Model tool loop exceeded the maximum number of rounds.",
     }
-    assert detail["output"]["steps"][-1] == {
-        "record": {
-            "parent": "run-loop",
-            "index": 2,
-            "path": "run-loop/2",
-            "kind": "system",
-            "status": "failed",
-            "input": [],
-            "output": [
-                {
-                    "type": "text",
-                    "text": "Model tool loop exceeded the maximum number of rounds.",
-                }
-            ],
-            "context": {},
-            "detail": {},
-            "started_at": "2026-01-01T00:00:03Z",
-            "finished_at": "2026-01-01T00:00:03Z",
-            "error": "Model tool loop exceeded the maximum number of rounds.",
-        },
-        "message": None,
-    }
+    failure_step = detail["output"]["steps"][-1]
+    assert failure_step["record"]["parent"] == "run-loop"
+    assert failure_step["record"]["index"] == 2
+    assert failure_step["record"]["kind"] == "system"
+    assert failure_step["record"]["status"] == "failed"
+    assert failure_step["record"]["output"] == [
+        {
+            "type": "text",
+            "text": "Model tool loop exceeded the maximum number of rounds.",
+        }
+    ]
+    assert failure_step["record"]["error"] == (
+        "Model tool loop exceeded the maximum number of rounds."
+    )
+    assert failure_step["message"] is None
 
 
 def test_chat_projects_tool_parts_from_tool_call_steps(tmp_path: Path) -> None:
@@ -2055,7 +2014,7 @@ def test_run_stream_executes_script_with_latest_agent_state(tmp_path: Path) -> N
                     chunk.decode("utf-8") for chunk in response.iter_raw()
                 )
 
-            runs = client.get("/api/v1/runs").json()["items"]
+            runs = client.get("/api/v1/runs").json()
 
     assert '"type":"run_starting"' in stream_text
     assert '"type":"run_end"' in stream_text
@@ -2080,10 +2039,12 @@ def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
                 async with _running_context(context):
                     stream = chat_loop._stream_chat_run(
                         context,
-                        chat_loop.ChatRequest(
-                            message=chat_loop.ChatMessagePayload(
+                        ChatRequest(
+                            message=InputMessagePayload(
                                 role="user",
-                                parts=[{"type": "text", "text": "stream me"}],
+                                parts=[
+                                    TextInputPart(type="text", text="stream me")
+                                ],
                                 meta={},
                             ),
                         ),
@@ -2134,7 +2095,7 @@ flow research(_: Text):
     bound = bind_run_request(
         context,
         RunRequest(group="chat", origin="chat", message=Message.user("hello")),
-        state=context.get_agent_state(),
+        state=context.state_watcher.current(),
     )
 
     executable = run_executor_module._resolve_executable(bound)
@@ -2203,11 +2164,13 @@ agic search(_: Part[]):
         async with _running_context(context):
             stream = chat_loop._stream_chat_run(
                 context,
-                chat_loop.ChatRequest(
+                ChatRequest(
                     agic="missing",
-                    message=chat_loop.ChatMessagePayload(
+                    message=InputMessagePayload(
                         role="user",
-                        parts=[{"type": "text", "text": "stream me"}],
+                        parts=[
+                            TextInputPart(type="text", text="stream me")
+                        ],
                         meta={},
                     ),
                 ),
@@ -2223,24 +2186,13 @@ agic search(_: Part[]):
     asyncio.run(run_test())
 
 
-def test_chat_guarded_stream_swallows_cancelled_error() -> None:
+def test_guarded_stream_swallows_cancelled_error() -> None:
     async def _run() -> list[str]:
         async def broken():
             raise asyncio.CancelledError()
             yield ""
 
-        return [chunk async for chunk in chat_loop._guarded_stream(broken())]
-
-    assert asyncio.run(_run()) == []
-
-
-def test_inspect_guarded_stream_swallows_cancelled_error() -> None:
-    async def _run() -> list[str]:
-        async def broken():
-            raise asyncio.CancelledError()
-            yield ""
-
-        return [chunk async for chunk in inspect._guarded_stream(broken())]
+        return [chunk async for chunk in guarded_stream(broken())]
 
     assert asyncio.run(_run()) == []
 
@@ -2295,7 +2247,7 @@ def test_chat_stream_allows_tool_only_turns(tmp_path: Path) -> None:
     assert "data: [DONE]" in stream_text
 
 
-def test_create_app_is_pure_route_assembly(tmp_path: Path) -> None:
+def test_create_app_assembles_versioned_resource_routers(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     context = _build_context(
@@ -2304,10 +2256,24 @@ def test_create_app_is_pure_route_assembly(tmp_path: Path) -> None:
     )
 
     app = create_app(context)
+    routes = {
+        (method, str(getattr(route, "path", "")))
+        for route in app.routes
+        for method in getattr(route, "methods", ())
+    }
 
     assert app.router.lifespan_context is not None
     assert app.state.context is context
-    context.store.close()
+    assert ("GET", "/api/v1/models") in routes
+    assert ("GET", "/api/v1/agics") in routes
+    assert ("GET", "/api/v1/flows") in routes
+    assert ("POST", "/api/v1/threads/{thread_id}/rewind") in routes
+    assert ("POST", "/api/v1/threads/{thread_id}/fork") in routes
+    assert ("GET", "/api/v1/chat/models") not in routes
+    assert ("POST", "/api/v1/runs/{run_id}/rewind") not in routes
+    assert ("PATCH", "/api/v1/jobs/{job_id}") not in routes
+    assert ("GET", "/api/v1/will") not in routes
+    context.executor.store.close()
 
 
 def test_hook_routes_are_not_mounted_without_channel_hooks(tmp_path: Path) -> None:
@@ -2389,7 +2355,7 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
                 poll_channels=True,
             ):
                 await _wait_for_completed_count(context, 1)
-                run = context.store.list_runs(limit=1)[0]
+                run = context.executor.store.list_runs(limit=1)[0]
                 assert run.thread_id == "script_tg_123"
                 assert run.origin == "chat"
 
@@ -2714,7 +2680,7 @@ def test_control_routes_update_durable_only_without_prepare_reload(
         toolang_root=toolang_root,
         agent_name="alice",
     )
-    initial_state_fingerprint = context.get_agent_state().fingerprint
+    initial_state_fingerprint = context.state_watcher.current().fingerprint
     initial_prepared_fingerprint = initial_state_fingerprint
     app = _create_test_app(context)
 
@@ -2724,10 +2690,10 @@ def test_control_routes_update_durable_only_without_prepare_reload(
             json={"visibility": "private", "ref": "acme/reviewer"},
         )
         assert add_response.status_code == 200
-        assert add_response.json()["item"]["name"] == "reviewer"
-        assert add_response.json()["item"]["origin"] == "remote"
-        assert add_response.json()["item"]["form"] == "wired"
-        assert add_response.json()["item"]["scope"] == "home"
+        assert add_response.json()["name"] == "reviewer"
+        assert add_response.json()["origin"] == "remote"
+        assert add_response.json()["form"] == "wired"
+        assert add_response.json()["scope"] == "home"
 
         snapshot = inspect.snapshot_context(context)
         durable = cast(dict[str, object], snapshot["durable"])
@@ -2739,13 +2705,13 @@ def test_control_routes_update_durable_only_without_prepare_reload(
         assert prepared["fingerprint"] == initial_prepared_fingerprint
         assert state["fingerprint"] == initial_state_fingerprint
         assert state["caps"] == []
-        assert client.get("/api/v1/skills").json()["items"] == []
+        assert client.get("/api/v1/skills").json() == []
 
         remove_response = client.delete(
             "/api/v1/skills/reviewer/wired?visibility=private"
         )
-        assert remove_response.status_code == 200
-        assert remove_response.json() == {"ok": True}
+        assert remove_response.status_code == 204
+        assert remove_response.content == b""
 
         snapshot = inspect.snapshot_context(context)
         durable = cast(dict[str, object], snapshot["durable"])
@@ -2757,16 +2723,16 @@ def test_control_routes_update_durable_only_without_prepare_reload(
             json={"visibility": "private", "content": "Rewrite the request.\n"},
         )
         assert local_response.status_code == 200
-        assert local_response.json()["item"]["name"] == "rewrite"
-        assert local_response.json()["item"]["origin"] == "local"
-        assert local_response.json()["item"]["form"] == "file"
-        assert local_response.json()["item"]["scope"] == "home"
+        assert local_response.json()["name"] == "rewrite"
+        assert local_response.json()["origin"] == "local"
+        assert local_response.json()["form"] == "file"
+        assert local_response.json()["scope"] == "home"
 
         delete_local_response = client.delete(
             "/api/v1/prompts/rewrite/file?visibility=private"
         )
-        assert delete_local_response.status_code == 200
-        assert delete_local_response.json() == {"ok": True}
+        assert delete_local_response.status_code == 204
+        assert delete_local_response.content == b""
 
 
 def test_cap_template_api_lists_and_reads_templates(tmp_path: Path) -> None:
@@ -2781,7 +2747,7 @@ def test_cap_template_api_lists_and_reads_templates(tmp_path: Path) -> None:
     with TestClient(app) as client:
         list_response = client.get("/api/v1/services/templates")
         assert list_response.status_code == 200
-        items = list_response.json()["items"]
+        items = list_response.json()
         assert [item["name"] for item in items] == ["default", "stdio"]
         assert items[0]["kind"] == "service"
         assert items[0]["description"] == (
@@ -2790,7 +2756,7 @@ def test_cap_template_api_lists_and_reads_templates(tmp_path: Path) -> None:
 
         detail_response = client.get("/api/v1/services/templates/stdio")
         assert detail_response.status_code == 200
-        item = detail_response.json()["item"]
+        item = detail_response.json()
         assert item["name"] == "stdio"
         assert item["kind"] == "service"
         assert "transport: stdio" in item["content"]
@@ -2820,7 +2786,7 @@ def test_agent_startup_background_loops_start_runs(tmp_path: Path) -> None:
                 for _ in range(50):
                     completed = [
                         run
-                        for run in context.store.list_runs(limit=None)
+                        for run in context.executor.store.list_runs(limit=None)
                         if run.origin == "task"
                         and run.status in {"finished", "failed", "canceled"}
                     ]
@@ -2829,7 +2795,7 @@ def test_agent_startup_background_loops_start_runs(tmp_path: Path) -> None:
                     await asyncio.sleep(0.01)
                 assert completed
                 run = completed[0]
-                command = context.store.get_command(run_id=run.id, index=0)
+                command = context.executor.store.get_command(run_id=run.id, index=0)
                 assert run.context["group"] == "scheduler:task"
                 assert run.origin == "task"
                 assert command is not None and command.input == Message.user(
@@ -2853,7 +2819,7 @@ def test_job_store_claims_due_chores_and_tasks(tmp_path: Path) -> None:
     )
     context = _build_context(toolang_root=toolang_root, agent_name="alice")
     definitions = AgentJobs.load(
-        toolang_root, "alice", context.get_agent_state().program
+        toolang_root, "alice", context.state_watcher.current().program
     )
     store = open_job_store(toolang_root, "alice")
     try:
@@ -2993,9 +2959,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(
             on_stopped()
 
     monkeypatch.setattr("toolang.up.server._run_uvicorn_app", fake_run_uvicorn_app)
-    monkeypatch.setattr(
-        "toolang.up.server.configure_logging", lambda **_kwargs: None
-    )
+    monkeypatch.setattr("toolang.up.server.configure_logging", lambda **_kwargs: None)
     caplog.set_level(logging.INFO, logger="toolang.runtime")
 
     result = run_experiments_up(
@@ -3013,10 +2977,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(
         if record.name == "toolang.runtime"
     ]
     assert len(messages) == 4
-    assert (
-        messages[0]
-        == f"Agent starting root={toolang_root}"
-    )
+    assert messages[0] == f"Agent starting root={toolang_root}"
     assert messages[1] == "Agent started webui=https://agents.example.test/8765"
     assert messages[2] == "Agent stopping"
     assert messages[3] == "Agent stopped"
@@ -3025,9 +2986,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(
         for record in caplog.records
         if record.name == "toolang.runtime"
     ]
-    assert color_messages[0] == (
-        "Agent starting root=\x1b[1m%s\x1b[0m"
-    )
+    assert color_messages[0] == ("Agent starting root=\x1b[1m%s\x1b[0m")
     assert color_messages[1] == "Agent started webui=\x1b[1m%s\x1b[0m"
 
 
@@ -3090,7 +3049,7 @@ def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> No
     )
 
     caplog.set_level(logging.INFO, logger="toolang.state")
-    up_module._log_state_loaded(context.executor, context.get_agent_state())
+    up_module._log_state_loaded(context.executor, context.state_watcher.current())
 
     messages = [
         record.getMessage()
@@ -3099,7 +3058,7 @@ def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> No
     ]
     assert messages == [
         (
-            f"Agent loaded state={context.get_agent_state().fingerprint[:12]} "
+            f"Agent loaded state={context.state_watcher.current().fingerprint[:12]} "
             f"models={up_module._model_count(context.executor)} "
             f"tools={len(context.executor.setup.tools)} "
             "psyches=0 skills=0 services=0"
@@ -3324,9 +3283,7 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
             captured["log_config"] = log_config
             captured["shutdown_signal"] = shutdown_signal
 
-        monkeypatch.setattr(
-            "toolang.up.server._run_uvicorn_app", fake_run_uvicorn_app
-        )
+        monkeypatch.setattr("toolang.up.server._run_uvicorn_app", fake_run_uvicorn_app)
 
         result = run_experiments_up(
             toolang_root=toolang_root,
@@ -3361,9 +3318,7 @@ def test_up_falls_back_when_stopped_agent_port_is_unavailable(
         assert port == 53322
         return False
 
-    monkeypatch.setattr(
-        "toolang.up.server._port_is_available", fake_port_is_available
-    )
+    monkeypatch.setattr("toolang.up.server._port_is_available", fake_port_is_available)
     monkeypatch.setattr(
         "toolang.up.server._wait_for_port_available",
         lambda *_args, **_kwargs: pytest.fail(
@@ -3535,9 +3490,7 @@ def test_pick_runtime_port_uses_first_available_auto_port(
         seen.append(port)
         return port == 7003
 
-    monkeypatch.setattr(
-        "toolang.up.server._port_is_available", fake_port_is_available
-    )
+    monkeypatch.setattr("toolang.up.server._port_is_available", fake_port_is_available)
 
     resolved = up_module._pick_runtime_port(
         "127.0.0.1",
@@ -4348,15 +4301,15 @@ def test_up_always_watches_agent_state(tmp_path: Path, monkeypatch) -> None:
     assert result == 0
     app = cast(FastAPI, captured["app"])
     context = cast(ApiContext, app.state.context)
-    initial_fingerprint = context.get_agent_state().fingerprint
+    initial_fingerprint = context.state_watcher.current().fingerprint
     with TestClient(app):
         _write_text(prompt_path, "---\ndescription: v2\n---\nPrompt v2\n")
         for _ in range(200):
-            if context.get_agent_state().fingerprint != initial_fingerprint:
+            if context.state_watcher.current().fingerprint != initial_fingerprint:
                 break
             time.sleep(0.01)
 
-    assert context.get_agent_state().fingerprint != initial_fingerprint
+    assert context.state_watcher.current().fingerprint != initial_fingerprint
 
 
 def test_prepare_reload_refreshes_prepared_and_agent_state(tmp_path: Path) -> None:
@@ -4369,8 +4322,8 @@ def test_prepare_reload_refreshes_prepared_and_agent_state(tmp_path: Path) -> No
             agent_name="alice",
         )
 
-        initial_fingerprint = context.get_agent_state().fingerprint
-        initial_program = context.get_agent_state().program
+        initial_fingerprint = context.state_watcher.current().fingerprint
+        initial_program = context.state_watcher.current().program
         async with _running_context(
             context,
             loop_intervals_ms={"watch": 10.0},
@@ -4378,11 +4331,9 @@ def test_prepare_reload_refreshes_prepared_and_agent_state(tmp_path: Path) -> No
             _write_text(prompt_path, "---\ndescription: v2\n---\nPrompt v2\n")
             refreshed = await _wait_for_fingerprint_change(context, initial_fingerprint)
             assert refreshed
-            current = context.get_agent_state()
+            current = context.state_watcher.current()
             root = load_root_prepared(toolang_root, current.root_version)
-            home = load_home_prepared(
-                toolang_root, "alice", current.home_version
-            )
+            home = load_home_prepared(toolang_root, "alice", current.home_version)
             assert root.caps == ()
             assert current.program == initial_program
             assert any(
@@ -4404,7 +4355,7 @@ def test_prepare_reload_refreshes_service_state_without_mutating_setup(
             agent_name="alice",
         )
 
-        initial_fingerprint = context.get_agent_state().fingerprint
+        initial_fingerprint = context.state_watcher.current().fingerprint
         service_schema = (
             context.executor.setup.tools["service_use__bridge_start"]
             .definition()
@@ -4429,7 +4380,7 @@ def test_prepare_reload_refreshes_service_state_without_mutating_setup(
 
             assert any(
                 cap.kind == "service" and cap.name == "linear"
-                for cap in context.get_agent_state().caps
+                for cap in context.state_watcher.current().caps
             )
             service_schema = (
                 context.executor.setup.tools["service_use__bridge_start"]
@@ -4596,17 +4547,9 @@ def test_remote_skill_add_canonicalizes_github_tree_url(
         'answers = { ref = "github://brave/brave-search-skills/skills/answers@main" }'
         in config_text
     )
+    assert home.caps[0].ref == "github://brave/brave-search-skills/skills/answers@main"
     assert (
-        home.caps[0].ref
-        == "github://brave/brave-search-skills/skills/answers@main"
-    )
-    assert (
-        home.version_dir
-        / "files"
-        / "wired"
-        / "skills"
-        / "answers"
-        / "SKILL.md"
+        home.version_dir / "files" / "wired" / "skills" / "answers" / "SKILL.md"
     ).is_file()
 
 
@@ -4678,9 +4621,7 @@ def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(
     assert home.caps[0].ref == expected_ref
 
 
-def test_state_watcher_refreshes_remote_cap_state(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_state_watcher_refreshes_remote_cap_state(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     monkeypatch.setattr(
         cap_state, "_github_repo_default_branch", lambda owner, repo: "main"
@@ -4805,9 +4746,9 @@ def test_prepare_materializes_remote_skill_directory(
     home = load_home_prepared(toolang_root, "alice", state.home_version)
     skill_dir = home.version_dir / "files" / "wired" / "skills" / "pdf"
 
-    assert (
-        skill_dir / "SKILL.md"
-    ).read_text(encoding="utf-8") == "---\ndescription: PDF work\n---\n# PDF\n"
+    assert (skill_dir / "SKILL.md").read_text(
+        encoding="utf-8"
+    ) == "---\ndescription: PDF work\n---\n# PDF\n"
     assert (skill_dir / "REFERENCE.md").read_text(encoding="utf-8") == "# Reference\n"
     assert home.caps[0].meta["description"] == "PDF work"
     assert home.caps[0].source.form == "wired"
@@ -4846,12 +4787,7 @@ def test_prepare_materializes_remote_skill_from_program_use(
     assert entry.source.path == "agents/alice/agent.too"
     assert entry.source.line == 3
     assert [Path(entry.path) for entry in state.caps] == [
-        home.version_dir
-        / "files"
-        / "cited"
-        / "skills"
-        / "fund"
-        / "SKILL.md"
+        home.version_dir / "files" / "cited" / "skills" / "fund" / "SKILL.md"
     ]
     with pytest.raises(TypeError):
         cast(Any, state.caps[0].meta)["description"] = "Changed"
@@ -4917,21 +4853,9 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
     assert entries_by_kind["prompt"].source.path == "agents/alice/agent.too"
     assert entries_by_kind["prompt"].source.line == 13
     assert {Path(entry.path) for entry in state.caps} == {
-        home.version_dir
-        / "files"
-        / "inline"
-        / "prompts"
-        / "summarize.md",
-        home.version_dir
-        / "files"
-        / "inline"
-        / "psyches"
-        / "reviewer.md",
-        home.version_dir
-        / "files"
-        / "inline"
-        / "services"
-        / "github.md",
+        home.version_dir / "files" / "inline" / "prompts" / "summarize.md",
+        home.version_dir / "files" / "inline" / "psyches" / "reviewer.md",
+        home.version_dir / "files" / "inline" / "services" / "github.md",
     }
     assert {item.name for item in state.program.caps} == {
         "github",
@@ -4947,7 +4871,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
     with TestClient(app) as client:
         psyche_response = client.get("/api/v1/psyches/reviewer")
         assert psyche_response.status_code == 200
-        psyche_detail = psyche_response.json()["item"]
+        psyche_detail = psyche_response.json()
         assert psyche_detail["origin"] == "local"
         assert psyche_detail["form"] == "inline"
         assert psyche_detail["scope"] == "here"
@@ -4957,7 +4881,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
 
         service_response = client.get("/api/v1/services/github")
         assert service_response.status_code == 200
-        service_detail = service_response.json()["item"]
+        service_detail = service_response.json()
         assert (
             service_detail["description"]
             == "Use when the agent needs GitHub MCP access."
@@ -4971,8 +4895,9 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
 
         list_response = client.get("/api/v1/prompts")
         assert list_response.status_code == 200
-        assert list_response.json()["items"] == [
+        assert list_response.json() == [
             {
+                "kind": "prompt",
                 "name": "summarize",
                 "description": None,
                 "scope": "here",
@@ -4987,7 +4912,7 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
 
         detail_response = client.get("/api/v1/prompts/summarize")
         assert detail_response.status_code == 200
-        detail = detail_response.json()["item"]
+        detail = detail_response.json()
         assert detail["kind"] == "prompt"
         assert detail["content"] == prompt_content
         assert detail["files"] is None
@@ -5100,32 +5025,34 @@ def test_runs_bind_latest_agent_state(tmp_path: Path) -> None:
                 context,
                 loop_intervals_ms={"watch": 10.0},
             ):
-                first_fingerprint = context.get_agent_state().fingerprint
-                await context.executor.start(
+                first_fingerprint = context.state_watcher.current().fingerprint
+                await context.executor.run(
                     RunRequest(
                         group="chat",
                         origin="chat",
                         thread_id="thread-1",
                         input="first",
                     ),
-                    context.get_agent_state(),
+                    context.state_watcher.current(),
                 )
                 _write_text(prompt_path, "---\ndescription: v2\n---\nPrompt v2\n")
                 changed = await _wait_for_fingerprint_change(context, first_fingerprint)
                 assert changed
-                second_fingerprint = context.get_agent_state().fingerprint
-                await context.executor.start(
+                second_fingerprint = context.state_watcher.current().fingerprint
+                await context.executor.run(
                     RunRequest(
                         group="chat",
                         origin="chat",
                         thread_id="thread-1",
                         input="second",
                     ),
-                    context.get_agent_state(),
+                    context.state_watcher.current(),
                 )
                 fingerprints = {}
-                for run in context.store.list_runs(thread_id="thread-1", limit=None):
-                    command = context.store.get_command(run_id=run.id, index=0)
+                for run in context.executor.store.list_runs(
+                    thread_id="thread-1", limit=None
+                ):
+                    command = context.executor.store.get_command(run_id=run.id, index=0)
                     assert command is not None and command.input is not None
                     fingerprints[message_text(command.input.parts)] = run.context[
                         "state_fingerprint"
@@ -5148,20 +5075,20 @@ def test_new_task_reloads_into_agent_state_and_tasks_endpoint(tmp_path: Path) ->
     app = _create_test_app(context)
 
     with TestClient(app) as client:
-        first_fingerprint = context.get_agent_state().fingerprint
+        first_fingerprint = context.state_watcher.current().fingerprint
         _write_text(
             toolang_root / "agents" / "alice" / "tasks" / "review.md",
             "---\ntitle: Review\n---\nReview the current plan.\n",
         )
         for _ in range(200):
-            tasks = client.get("/api/v1/tasks").json()["items"]
+            tasks = client.get("/api/v1/tasks").json()
             if tasks:
                 break
             time.sleep(0.01)
 
-        tasks = client.get("/api/v1/tasks").json()["items"]
+        tasks = client.get("/api/v1/tasks").json()
 
-    assert context.get_agent_state().fingerprint == first_fingerprint
+    assert context.state_watcher.current().fingerprint == first_fingerprint
     assert len(tasks) == 1
     assert tasks[0]["kind"] == "task"
     assert tasks[0]["title"] == "Review"
@@ -5171,7 +5098,7 @@ def test_new_task_reloads_into_agent_state_and_tasks_endpoint(tmp_path: Path) ->
     assert tasks[0]["remote_status"] is None
     assert tasks[0]["runtime"]["thread_id"] == f"task_{tasks[0]['id']}"
     assert tasks[0]["runtime"]["last_run"] is None
-    assert tasks[0]["runtime"]["next_run"] is None
+    assert tasks[0]["runtime"]["next_run_at"] is None
     assert tasks[0]["path"] == "tasks/review.md"
 
 
@@ -5193,7 +5120,7 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
             },
         )
         assert created.status_code == 201
-        task = created.json()["item"]
+        task = created.json()
         task_id = task["id"]
 
         assert task["kind"] == "task"
@@ -5202,12 +5129,12 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         assert task["body"] == "Review the new API surface."
         assert task["runtime"]["thread_id"] == f"task_{task_id}"
 
-        jobs = client.get("/api/v1/jobs").json()["items"]
+        jobs = client.get("/api/v1/jobs").json()
         assert [(item["kind"], item["id"]) for item in jobs] == [("task", task_id)]
         assert "body" not in jobs[0]
         assert client.delete(f"/api/v1/tasks/{task_id}").status_code == 405
 
-        detail = client.get(f"/api/v1/tasks/{task_id}").json()["item"]
+        detail = client.get(f"/api/v1/tasks/{task_id}").json()
         assert detail["body"] == "Review the new API surface."
 
         updated = client.patch(
@@ -5217,29 +5144,29 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
             },
         )
         assert updated.status_code == 200
-        task = updated.json()["item"]
+        task = updated.json()
         assert task["stage"] == "ready"
         assert task["body"] == "Updated task body."
 
         archived = client.post(f"/api/v1/tasks/{task_id}/archive")
         assert archived.status_code == 200
-        task = archived.json()["item"]
+        task = archived.json()
         assert task["stage"] == "archived"
         assert task["path"].startswith("archive/tasks/")
 
-        assert client.get("/api/v1/tasks").json()["items"] == []
+        assert client.get("/api/v1/tasks").json() == []
         assert client.get(f"/api/v1/tasks/{task_id}").status_code == 404
-        archived_tasks = client.get("/api/v1/tasks/archived").json()["items"]
+        archived_tasks = client.get("/api/v1/tasks/archived").json()
         assert [item["id"] for item in archived_tasks] == [task_id]
-        archived_detail = client.get(f"/api/v1/tasks/archived/{task_id}").json()["item"]
+        archived_detail = client.get(f"/api/v1/tasks/archived/{task_id}").json()
         assert archived_detail["body"] == "Updated task body."
 
         reopened = client.post(f"/api/v1/tasks/{task_id}/ready")
         assert reopened.status_code == 200
-        task = reopened.json()["item"]
+        task = reopened.json()
         assert task["stage"] == "ready"
         assert task["path"] == f"tasks/{task_id}.md"
-        assert [item["id"] for item in client.get("/api/v1/jobs").json()["items"]] == [
+        assert [item["id"] for item in client.get("/api/v1/jobs").json()] == [
             task_id
         ]
 
@@ -5247,11 +5174,11 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         assert rearchived.status_code == 200
 
         deleted = client.delete(f"/api/v1/tasks/archived/{task_id}")
-        assert deleted.status_code == 200
-        assert deleted.json() == {"deleted": True, "id": task_id, "kind": "task"}
-        assert client.get("/api/v1/tasks/archived").json()["items"] == []
+        assert deleted.status_code == 204
+        assert deleted.content == b""
+        assert client.get("/api/v1/tasks/archived").json() == []
 
-        updates = client.get("/api/v1/events").json()["items"]
+        updates = client.get("/api/v1/updates").json()["items"]
 
     assert [item["kind"] for item in updates] == [
         "task_changed",
@@ -5286,7 +5213,7 @@ def test_jobs_api_projects_active_run_tasks_as_running(tmp_path: Path) -> None:
     )
     task = _jobs(toolang_root, "alice").list(kind="task")[0]
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-active-task",
         thread_id=job_thread_id(task),
         origin="task",
@@ -5295,7 +5222,7 @@ def test_jobs_api_projects_active_run_tasks_as_running(tmp_path: Path) -> None:
     app = _create_test_app(context)
 
     with TestClient(app) as client:
-        item = client.get("/api/v1/tasks").json()["items"][0]
+        item = client.get("/api/v1/tasks").json()[0]
 
     assert item["id"] == task.id
     assert item["status"] == "todo"
@@ -5324,7 +5251,7 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
             },
         )
         assert created.status_code == 201
-        chore = created.json()["item"]
+        chore = created.json()
         chore_id = chore["id"]
 
         assert chore["kind"] == "chore"
@@ -5334,7 +5261,7 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         assert chore["body"] == "Check stale pull requests."
         assert chore["runtime"]["thread_id"] == f"chore_{chore_id}"
 
-        jobs = client.get("/api/v1/jobs?kind=chore").json()["items"]
+        jobs = client.get("/api/v1/jobs?kind=chore").json()
         assert [(item["kind"], item["id"]) for item in jobs] == [("chore", chore_id)]
         assert "body" not in jobs[0]
         assert client.delete(f"/api/v1/jobs/{chore_id}").status_code == 405
@@ -5353,40 +5280,40 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
             },
         )
         assert updated.status_code == 200
-        chore = updated.json()["item"]
+        chore = updated.json()
         assert chore["stage"] == "ready"
         assert chore["schedule"] == "FREQ=DAILY"
         assert chore["body"] == "Updated chore body."
 
         archived = client.post(f"/api/v1/chores/{chore_id}/archive")
         assert archived.status_code == 200
-        chore = archived.json()["item"]
+        chore = archived.json()
         assert chore["stage"] == "archived"
         assert chore["path"].startswith("archive/chores/")
 
-        assert client.get("/api/v1/chores").json()["items"] == []
+        assert client.get("/api/v1/chores").json() == []
         assert client.get(f"/api/v1/chores/{chore_id}").status_code == 404
-        archived_chores = client.get("/api/v1/jobs/archived?kind=chore").json()["items"]
+        archived_chores = client.get("/api/v1/jobs/archived?kind=chore").json()
         assert [item["id"] for item in archived_chores] == [chore_id]
 
         reopened = client.post(f"/api/v1/chores/{chore_id}/ready")
         assert reopened.status_code == 200
-        chore = reopened.json()["item"]
+        chore = reopened.json()
         assert chore["stage"] == "ready"
         assert chore["path"] == f"chores/{chore_id}.md"
         assert [
-            item["id"] for item in client.get("/api/v1/chores").json()["items"]
+            item["id"] for item in client.get("/api/v1/chores").json()
         ] == [chore_id]
 
         rearchived = client.post(f"/api/v1/chores/{chore_id}/archive")
         assert rearchived.status_code == 200
 
         deleted = client.delete(f"/api/v1/chores/archived/{chore_id}")
-        assert deleted.status_code == 200
-        assert deleted.json() == {"deleted": True, "id": chore_id, "kind": "chore"}
-        assert client.get("/api/v1/chores/archived").json()["items"] == []
+        assert deleted.status_code == 204
+        assert deleted.content == b""
+        assert client.get("/api/v1/chores/archived").json() == []
 
-        updates = client.get("/api/v1/events").json()["items"]
+        updates = client.get("/api/v1/updates").json()["items"]
 
     assert [item["kind"] for item in updates] == [
         "chore_changed",
@@ -5425,7 +5352,7 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
             for _ in range(200):
                 completed = [
                     run
-                    for run in context.store.list_runs(limit=None)
+                    for run in context.executor.store.list_runs(limit=None)
                     if run.origin == "task"
                     and run.status in {"finished", "failed", "canceled"}
                 ]
@@ -5469,7 +5396,7 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     task_entry = _jobs(toolang_root, "alice").list(kind="task")[0]
     task = task_entry
     definition = AgentJobs.load(
-        toolang_root, "alice", context.get_agent_state().program
+        toolang_root, "alice", context.state_watcher.current().program
     ).get("task", task.id)
     assert definition is not None
     bound = bind_run_request(
@@ -5542,7 +5469,7 @@ def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(
     )
     chore = _jobs(toolang_root, "alice").list(kind="chore")[0]
     definition = AgentJobs.load(
-        toolang_root, "alice", context.get_agent_state().program
+        toolang_root, "alice", context.state_watcher.current().program
     ).get("chore", chore.id)
     assert definition is not None
     bound = bind_run_request(
@@ -5588,7 +5515,7 @@ def test_pulse_marks_finished_task_job_done(tmp_path: Path) -> None:
     )
     store = open_job_store(toolang_root, "alice")
     definitions = AgentJobs.load(
-        toolang_root, "alice", context.get_agent_state().program
+        toolang_root, "alice", context.state_watcher.current().program
     )
     store.reconcile(jobs=definitions, kind="task")
     claimed = store.claim_due(
@@ -5600,20 +5527,20 @@ def test_pulse_marks_finished_task_job_done(tmp_path: Path) -> None:
     assert claimed is not None
     run_id = claimed.run_id
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id=run_id,
         thread_id=claimed.job.thread_id,
         origin="task",
         input=Message.user(claimed.definition.input),
     )
     project_run_end(
-        context.store,
+        context.executor.store,
         run_id=run_id,
         status="finished",
         finished_at="2026-01-01T00:00:07Z",
     )
 
-    run = context.store.get_run(run_id=run_id)
+    run = context.executor.store.get_run(run_id=run_id)
     assert run is not None
     asyncio.run(_record_pulse_result(context, store, run))
 
@@ -5636,7 +5563,7 @@ def test_pulse_marks_failed_task_job_failed(tmp_path: Path) -> None:
     )
     store = open_job_store(toolang_root, "alice")
     definitions = AgentJobs.load(
-        toolang_root, "alice", context.get_agent_state().program
+        toolang_root, "alice", context.state_watcher.current().program
     )
     store.reconcile(jobs=definitions, kind="task")
     claimed = store.claim_due(
@@ -5647,20 +5574,20 @@ def test_pulse_marks_failed_task_job_failed(tmp_path: Path) -> None:
     )
     assert claimed is not None
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id=claimed.run_id,
         thread_id=claimed.job.thread_id,
         origin="task",
         input=Message.user(claimed.definition.input),
     )
     project_run_end(
-        context.store,
+        context.executor.store,
         run_id=claimed.run_id,
         status="failed",
         finished_at="2026-01-01T00:00:07Z",
     )
 
-    run = context.store.get_run(run_id=claimed.run_id)
+    run = context.executor.store.get_run(run_id=claimed.run_id)
     assert run is not None
     asyncio.run(_record_pulse_result(context, store, run))
 
@@ -5862,7 +5789,7 @@ def test_child_run_input_uses_authored_agic_message_and_current_input(
         },
     )
 
-    draft = context.get_agent_state().program.find_agic("draft")
+    draft = context.state_watcher.current().program.find_agic("draft")
     assert draft is not None
     bundle = RunInput.from_agic(context.executor, child, draft)
     text = message_text(bundle.messages()[0].parts)
@@ -5882,7 +5809,7 @@ def test_top_level_chat_agic_uses_its_authored_message(tmp_path: Path) -> None:
         agent_name="alice",
     )
     project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-current",
         thread_id="thread-current",
         origin="chat",
@@ -6193,14 +6120,14 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
         agent_name="alice",
     )
     previous = project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-previous",
         thread_id="thread-1",
         origin="chat",
         input=Message.user("stored history should not appear"),
     )
     project_step(
-        context.store,
+        context.executor.store,
         run_id=previous.run_id,
         step_index=1,
         kind="model",
@@ -6212,7 +6139,9 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
         finished_at="2026-01-01T00:00:02Z",
     )
     project_run_end(
-        context.store, run_id=previous.run_id, finished_at="2026-01-01T00:00:03Z"
+        context.executor.store,
+        run_id=previous.run_id,
+        finished_at="2026-01-01T00:00:03Z",
     )
     bound = bind_run_request(
         context,
@@ -6681,7 +6610,7 @@ def test_execute_run_rejects_agic_model_outside_activation_allowlist(
     outcome = asyncio.run(
         context.executor.run(
             RunRequest(group="chat", origin="chat", input="hello"),
-            context.get_agent_state(),
+            context.state_watcher.current(),
         )
     )
 
@@ -6711,7 +6640,7 @@ def test_execute_run_pre_start_failure_persists_failed_accepted_run(
         outcome = asyncio.run(
             context.executor.run(
                 RunRequest(group="chat", origin="chat", input="hello"),
-                context.get_agent_state(),
+                context.state_watcher.current(),
             )
         )
 
@@ -6719,13 +6648,13 @@ def test_execute_run_pre_start_failure_persists_failed_accepted_run(
     assert outcome.error is not None
     assert "No available models." in outcome.error
     assert "toolang model providers" in outcome.error
-    runs = context.store.list_runs()
+    runs = context.executor.store.list_runs()
     assert len(runs) == 1
     assert runs[0].status == "failed"
     assert runs[0].error == outcome.error
     assert [
         (step.index, step.kind, step.status)
-        for step in context.store.list_steps(run_id=runs[0].id)
+        for step in context.executor.store.list_steps(run_id=runs[0].id)
     ] == [(0, "system", "failed")]
     assert "persist sink event handling failed" not in caplog.text
 
@@ -6748,7 +6677,7 @@ def test_script_executor_logs_lifecycle(tmp_path: Path, caplog) -> None:
         outcome = asyncio.run(
             context.executor.run(
                 RunRequest(group="script", origin="script", input="hello"),
-                context.get_agent_state(),
+                context.state_watcher.current(),
             )
         )
 
@@ -6880,23 +6809,28 @@ def test_chat_accepts_structured_message_parts_and_model_selector(
                     },
                 },
             )
-            run_detail = client.get(f"/api/v1/runs/{response.json()['run_id']}").json()
+            run_detail = client.get(
+                f"/api/v1/runs/{response.json()['run']['id']}"
+            ).json()
 
     assert response.status_code == 200
     body = response.json()
-    assert body["message"]["parts"] == [
-        {"type": "text", "text": "summarize this"},
-        {
-            "type": "image",
-            "detail": "auto",
-            "image_url": "https://example.com/image.png",
-        },
-        {
-            "type": "file",
-            "file_url": "https://example.com/report.pdf",
-            "filename": "report.pdf",
-        },
-    ]
+    assert body["message"]["parts"][0] == {
+        "type": "text",
+        "text": "summarize this",
+    }
+    assert body["message"]["parts"][1]["type"] == "image"
+    assert body["message"]["parts"][1]["detail"] == "auto"
+    assert (
+        body["message"]["parts"][1]["image_url"]
+        == "https://example.com/image.png"
+    )
+    assert body["message"]["parts"][2]["type"] == "file"
+    assert (
+        body["message"]["parts"][2]["file_url"]
+        == "https://example.com/report.pdf"
+    )
+    assert body["message"]["parts"][2]["filename"] == "report.pdf"
     assert run_detail["input"]["parts"] == body["message"]["parts"]
 
 
@@ -7123,14 +7057,14 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         agent_name="alice",
     )
     previous = project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-previous",
         thread_id="thread-1",
         origin="chat",
         input=Message.user("create a Linear issue"),
     )
     project_step(
-        context.store,
+        context.executor.store,
         run_id=previous.run_id,
         step_index=1,
         kind="model",
@@ -7150,7 +7084,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         finished_at="2026-01-01T00:00:02Z",
     )
     project_step(
-        context.store,
+        context.executor.store,
         run_id=previous.run_id,
         step_index=2,
         kind="tool",
@@ -7196,7 +7130,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         finished_at="2026-01-01T00:00:04Z",
     )
     project_step(
-        context.store,
+        context.executor.store,
         run_id=previous.run_id,
         step_index=3,
         kind="model",
@@ -7216,7 +7150,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         finished_at="2026-01-01T00:00:06Z",
     )
     project_step(
-        context.store,
+        context.executor.store,
         run_id=previous.run_id,
         step_index=4,
         kind="tool",
@@ -7251,7 +7185,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         finished_at="2026-01-01T00:00:08Z",
     )
     project_step(
-        context.store,
+        context.executor.store,
         run_id=previous.run_id,
         step_index=5,
         kind="model",
@@ -7263,7 +7197,9 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         finished_at="2026-01-01T00:00:10Z",
     )
     project_run_end(
-        context.store, run_id=previous.run_id, finished_at="2026-01-01T00:00:11Z"
+        context.executor.store,
+        run_id=previous.run_id,
+        finished_at="2026-01-01T00:00:11Z",
     )
 
     bound = bind_run_request(
@@ -7310,14 +7246,14 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(
         agent_name="alice",
     )
     previous = project_run_start(
-        context.store,
+        context.executor.store,
         run_id="run-previous",
         thread_id="thread-1",
         origin="chat",
         input=Message.user("previous"),
     )
     project_step(
-        context.store,
+        context.executor.store,
         run_id=previous.run_id,
         step_index=1,
         kind="model",
@@ -7329,7 +7265,9 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(
         finished_at="2026-01-01T00:00:02Z",
     )
     project_run_end(
-        context.store, run_id=previous.run_id, finished_at="2026-01-01T00:00:03Z"
+        context.executor.store,
+        run_id=previous.run_id,
+        finished_at="2026-01-01T00:00:03Z",
     )
 
     bound = bind_run_request(
@@ -7350,7 +7288,7 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(
 
 @asynccontextmanager
 async def _running_context(
-    context: ApiContext,
+    context: _TestApiContext,
     *,
     loop_intervals_ms: dict[str, float] | None = None,
     poll_channels: bool = False,
@@ -7376,7 +7314,7 @@ async def _running_context(
                 job_store=scheduler_store,
                 executor=context.executor,
                 get_home_jobs=job_watcher.current,
-                get_agent_state=context.get_agent_state,
+                get_agent_state=context.state_watcher.current,
                 interval_ms=intervals["pulse"],
             )
             background_tasks.extend(
@@ -7393,15 +7331,15 @@ async def _running_context(
                     bindings=context.channel_bindings,
                     plugins=context.channel_plugins,
                     executor=context.executor,
-                    get_agent_state=context.get_agent_state,
+                    get_agent_state=context.state_watcher.current,
                     interval_ms=intervals["poll"],
                     stop_signal=stop_signal,
                 )
             )
         watcher = state_watcher.StateWatcher(
-            context.root, context.name, context.get_agent_state()
+            context.root, context.name, context.state_watcher.current()
         )
-        context.get_agent_state = watcher.current
+        context.state_watcher = watcher
         background_tasks.append(
             asyncio.create_task(
                 watcher.run(
@@ -7422,14 +7360,14 @@ async def _running_context(
             if scheduler_store is not None:
                 scheduler_store.close()
             await context.executor.close()
-            context.store.close()
+            context.executor.store.close()
 
     async with lifespan(FastAPI()):
         yield context
 
 
 def _create_test_app(
-    context: ApiContext,
+    context: _TestApiContext,
     *,
     poll_channels: bool = False,
     schedule_jobs: bool = False,
@@ -7453,7 +7391,7 @@ def _build_context(
     channel_bindings: dict[str, ChannelBinding] | None = None,
     channel_plugins: dict[str, AgentChannel] | None = None,
     tool_selectors: tuple[str, ...] | None = None,
-) -> ApiContext:
+) -> _TestApiContext:
     state = up_module.prepare_agent(
         toolang_root=toolang_root,
         agent_name=agent_name,
@@ -7491,39 +7429,37 @@ def _build_context(
         model_environ=model_environ,
     )
     watcher = state_watcher.StateWatcher(toolang_root, agent_name, state)
-    return ApiContext(
+    return _TestApiContext(
         root=toolang_root,
         name=agent_name,
         home=agents.agent_home(toolang_root, agent_name),
-        room=agents.agent_room(toolang_root, agent_name),
-        get_agent_state=watcher.current,
+        state_watcher=watcher,
+        authored_jobs=AuthoredJobs(agents.agent_home(toolang_root, agent_name)),
+        private_authored_caps=caps.AuthoredCaps(
+            agents.agent_home(toolang_root, agent_name)
+        ),
+        shared_authored_caps=caps.AuthoredCaps(toolang_root),
+        private_wired_caps=caps.WiredCaps(
+            agents.agent_home(toolang_root, agent_name) / "config.toml"
+        ),
+        shared_wired_caps=caps.WiredCaps(toolang_root / "config.toml"),
         channel_bindings=channel_bindings or {},
         channel_plugins=channel_plugins or {},
         executor=executor,
-        store=store,
         host="127.0.0.1",
         port=8765,
         cors_allowed_origins=(),
     )
 
 
-def _wait_for_completed_runs(client: TestClient) -> dict[str, object]:
-    for _ in range(50):
-        snapshot = client.get("/api/v1/runs").json()
-        if snapshot["items"]:
-            return snapshot
-        time.sleep(0.01)
-    raise AssertionError("expected completed runs")
-
-
 async def _run_delivery(
-    context: ApiContext,
+    context: _TestApiContext,
     binding_name: str,
     delivery: InboundDelivery,
 ) -> RunRecord:
     return await start_delivery(
         executor=context.executor,
-        get_agent_state=context.get_agent_state,
+        get_agent_state=context.state_watcher.current,
         plugins=context.channel_plugins,
         home=context.home,
         group="poll",
@@ -7539,7 +7475,7 @@ async def _record_pulse_result(
 ) -> None:
     store.finish_run(
         jobs=AgentJobs.load(
-            context.root, context.name, context.get_agent_state().program
+            context.root, context.name, context.state_watcher.current().program
         ),
         run_id=run.id,
         run_status=run.status,
@@ -7549,7 +7485,7 @@ async def _record_pulse_result(
 
 async def _wait_for_fingerprint_change(context: ApiContext, fingerprint: str) -> bool:
     for _ in range(200):
-        if context.get_agent_state().fingerprint != fingerprint:
+        if context.state_watcher.current().fingerprint != fingerprint:
             return True
         await asyncio.sleep(0.01)
     return False
@@ -7569,7 +7505,7 @@ async def _wait_for_active_run(context: ApiContext) -> None:
 
 async def _wait_for_completed_count(context: ApiContext, count: int) -> None:
     for _ in range(200):
-        runs = context.store.list_runs(limit=None)
+        runs = context.executor.store.list_runs(limit=None)
         if (
             sum(run.status in {"finished", "failed", "canceled"} for run in runs)
             >= count

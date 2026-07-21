@@ -62,6 +62,7 @@ async def run(
 ) -> None:
     """Start poll runs until the runtime stops."""
     interval_timeout = interval_ms / 1000
+    active: set[asyncio.Task[RunRecord]] = set()
     logger.debug(
         "poll.started root=%s agent=%s interval_ms=%s bindings=%s",
         home.parent.parent,
@@ -69,22 +70,33 @@ async def run(
         int(interval_ms),
         ",".join(sorted(bindings)) or "-",
     )
-    while True:
-        for binding_name in sorted(bindings):
-            await _poll_binding(
-                name=name,
-                home=home,
-                binding_name=binding_name,
-                plugins=plugins,
-                executor=executor,
-                get_agent_state=get_agent_state,
-            )
-        try:
-            await asyncio.wait_for(stop_signal.wait(), timeout=interval_timeout)
-        except TimeoutError:
-            continue
-        else:
-            return
+    try:
+        while True:
+            for binding_name in sorted(bindings):
+                tasks = await _poll_binding(
+                    name=name,
+                    home=home,
+                    binding_name=binding_name,
+                    plugins=plugins,
+                    executor=executor,
+                    get_agent_state=get_agent_state,
+                )
+                for task in tasks:
+                    active.add(task)
+                    task.add_done_callback(
+                        lambda completed, tasks=active: _finish_delivery(
+                            tasks, completed
+                        )
+                    )
+            try:
+                await asyncio.wait_for(stop_signal.wait(), timeout=interval_timeout)
+            except TimeoutError:
+                continue
+            else:
+                return
+    finally:
+        if active:
+            await asyncio.gather(*active, return_exceptions=True)
 
 
 async def _poll_binding(
@@ -95,10 +107,10 @@ async def _poll_binding(
     plugins: Mapping[str, AgentChannel],
     executor: Executor,
     get_agent_state: Callable[[], AgentState],
-) -> None:
+) -> tuple[asyncio.Task[RunRecord], ...]:
     plugin = plugins.get(binding_name)
     if plugin is None:
-        return
+        return ()
     bound_context = channel_context(home, binding_name)
     state_path = bound_context.room / "state.json"
     state = _load_state(state_path)
@@ -111,10 +123,10 @@ async def _poll_binding(
             binding_name,
             exc,
         )
-        return
+        return ()
     _write_state(state_path, result.next_state)
     if not result.deliveries:
-        return
+        return ()
     logger.debug(
         "poll.received agent=%s binding=%s deliveries=%s cursor=%s",
         name,
@@ -122,7 +134,7 @@ async def _poll_binding(
         len(result.deliveries),
         result.next_state.cursor or "-",
     )
-    for delivery in result.deliveries:
+    return tuple(
         start_delivery(
             executor=executor,
             get_agent_state=get_agent_state,
@@ -132,6 +144,8 @@ async def _poll_binding(
             binding_name=binding_name,
             delivery=delivery,
         )
+        for delivery in result.deliveries
+    )
 
 
 def _load_state(path: Path) -> ChannelState:
@@ -162,27 +176,42 @@ def start_delivery(
 ) -> asyncio.Task[RunRecord]:
     bound = bind_delivery(binding_name, delivery)
     metadata = {**bound.meta, "channel": binding_name, "sender": bound.sender}
-    return executor.start(
-        RunRequest(
-            group=group,
-            origin=bound.origin,
-            thread_id=bound.thread_id,
-            input=bound.text,
-            metadata=metadata,
-        ),
-        get_agent_state(),
-        reply=build_channel_reply_sink(
-            plugin=plugins.get(binding_name),
-            channel_context=channel_context(home, binding_name),
-            binding_name=binding_name,
-            target=bound.reply_target,
-        ),
+    return asyncio.create_task(
+        executor.run(
+            RunRequest(
+                group=group,
+                origin=bound.origin,
+                thread_id=bound.thread_id,
+                input=bound.text,
+                metadata=metadata,
+            ),
+            get_agent_state(),
+            reply=build_channel_reply_sink(
+                plugin=plugins.get(binding_name),
+                channel_context=channel_context(home, binding_name),
+                binding_name=binding_name,
+                target=bound.reply_target,
+            ),
+        )
     )
+
+
+def _finish_delivery(
+    active: set[asyncio.Task[RunRecord]], task: asyncio.Task[RunRecord]
+) -> None:
+    active.discard(task)
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.warning("channel delivery failed", exc_info=True)
 
 
 def _write_state(path: Path, state: ChannelState) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(state.to_data(), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        json.dumps(state.to_data(), ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n",
         encoding="utf-8",
     )

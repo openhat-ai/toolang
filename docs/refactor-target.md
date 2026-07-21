@@ -246,6 +246,7 @@ The public execution concepts are:
 
 - `RunRequest`: an external request to execute an agic or flow
 - `Executor`: agic, flow, and step execution
+- `ThreadOperations`: thread creation, rewind, and fork orchestration
 - `TraceEvent`: the complete ordered execution event stream
 - `RunStore`: threads, commands, runs, steps, parts, and transcript messages
 - `PersistSink`: trace events projected into `RunStore`
@@ -255,6 +256,12 @@ The public execution concepts are:
 `AgentState` for each top-level run. It does not know `StateWatcher`, jobs, CLI,
 or HTTP.
 
+`ThreadOperations` owns chat-thread creation and branching rules. Rewind may
+call the executor's public run-control method to stop replaced runs, but thread
+operations do not spawn follow-up runs. The runtime caller owns any background
+task created from the returned thread operation result. `Executor` does not
+import or expose thread operations.
+
 At run entry, the caller captures the current `AgentState`. All child runs use
 that same state version. File changes produce a newer state only for later
 top-level runs.
@@ -263,7 +270,9 @@ top-level runs.
 sink with an optional per-run reply handler before execution begins. Internal
 child runs reuse private executor logic and never call the public entry point.
 Records are derived from trace events; execution locals do not hold references
-to durable command records.
+to durable command records. Runtime owners decide whether to await `run()` or
+create and retain a background task; `Executor` does not provide `start()` or
+`spawn()` helpers.
 
 The target execution package is:
 
@@ -275,6 +284,7 @@ execution/
 ├── events.py               # trace event dataclasses and TraceEvent
 ├── store.py                # RunStore and PersistSink
 ├── reply.py                # ReplySink implementations
+├── thread.py               # ThreadOperations
 ├── agic.py                 # internal model/tool loop support
 └── executor.py             # Executor
 ```
@@ -384,9 +394,15 @@ decides whether the API process runs on the host, in Docker, or in a future
 remote or hybrid environment. The server core and `Executor` do not inspect
 that hosting decision.
 
-`toolang.api.app` owns FastAPI application and route assembly. Resource modules
-such as `chat`, `runs`, `jobs`, and `caps` own HTTP request mapping;
-`_streaming` and `_views` are internal API implementation modules.
+`toolang.api.app` owns `ApiContext`, API-owned run tasks, durable run-submission
+acknowledgment, and FastAPI application assembly. `toolang.api.router` mounts
+versioned resource routers under the shared `/api/v1` prefix. Resource modules
+under `toolang.api.routers`, such as `agent`, `chat`, `caps`, `jobs`, `runs`,
+and `threads`, own HTTP request mapping and export a router factory bound to the
+application context. `_streaming` owns shared transport helpers. Typed inspection
+projections belong to the core package that owns the inspected state rather
+than to an API-wide view module. Process-level routes such as `/healthz` remain
+on the application itself.
 
 Scripts with `sandbox=none` may assemble an executor for one-shot invocation.
 Managed-sandbox script runs use a session-owned API and stream canonical trace

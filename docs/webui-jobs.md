@@ -76,7 +76,7 @@ Task list item:
   "runtime": {
     "thread_id": "tsk_3nprht9x",
     "last_run": null,
-    "next_run": null
+    "next_run_at": null
   }
 }
 ```
@@ -101,9 +101,7 @@ Chore list item:
       "started_at": "2026-04-23T06:00:00Z",
       "finished_at": "2026-04-23T06:02:00Z"
     },
-    "next_run": {
-      "at": "2026-04-23T12:00:00Z"
-    }
+    "next_run_at": "2026-04-23T12:00:00Z"
   }
 }
 ```
@@ -166,7 +164,7 @@ function jobPhase(job: Job): JobPhase {
   if (job.kind === "task" && job.status === "todo") return "todo";
   if (job.kind === "task" && job.status === "done") return "finished";
 
-  if (job.kind === "chore" && job.status === "todo" && job.runtime.next_run) return "scheduled";
+  if (job.kind === "chore" && job.status === "todo" && job.runtime.next_run_at) return "scheduled";
   if (job.kind === "chore" && job.status === "done") return "finished";
 
   return "ready";
@@ -178,7 +176,7 @@ Suggested columns:
 | Phase | Typical contents |
 | --- | --- |
 | `todo` | Ready tasks |
-| `scheduled` | Ready chores with a future `next_run` |
+| `scheduled` | Ready chores with a future `next_run_at` |
 | `ready` | Ready jobs without a more specific phase |
 | `in_progress` | Jobs whose latest run is running |
 | `failed` | Failed tasks |
@@ -290,7 +288,6 @@ Delete is destructive and is available only for archived items:
 ```http
 DELETE /api/v1/tasks/archived/{task_id}
 DELETE /api/v1/chores/archived/{chore_id}
-DELETE /api/v1/jobs/archived/{job_id}
 ```
 
 
@@ -327,10 +324,8 @@ After create, patch, stage action, execution action, or delete, the
 simplest correct behavior is to refetch `GET /api/v1/jobs`.
 
 For background changes, poll `GET /api/v1/jobs` on an interval. `GET
-/api/v1/events` exposes recent update records such as `task_changed` and
-`chore_changed`, but it currently has no cursor parameter. `GET
-/api/v1/events/stream` is currently a heartbeat endpoint, not a full job-update
-stream.
+/api/v1/updates` exposes recent update records such as `task_changed` and
+`chore_changed`, but it currently has no cursor parameter or streaming form.
 
 The UI may optimistically update local state after successful write responses,
 because write responses return the updated item.

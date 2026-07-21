@@ -34,10 +34,10 @@ class RuntimeClient:
     def __init__(self, endpoint: str) -> None:
         self.endpoint = endpoint.rstrip("/")
 
-    def get(self, path: str, *, timeout: float | None = 30) -> dict[str, Any]:
+    def get(self, path: str, *, timeout: float | None = 30) -> Any:
         try:
             with urlopen(f"{self.endpoint}{path}", timeout=timeout) as response:
-                return _json_object(response.read())
+                return _json_value(response.read())
         except HTTPError as exc:
             raise _http_error(exc) from exc
         except URLError as exc:
@@ -114,14 +114,15 @@ class RuntimeClient:
                 on_event(event)
 
     def list_models(self) -> Mapping[str, Any]:
-        return self.get("/api/v1/chat/models")
+        return self.get("/api/v1/models")
 
     def list_executables(self, kind: str) -> Mapping[str, Any]:
-        return self.get(f"/api/v1/chat/{kind}s")
+        return self.get(f"/api/v1/{kind}s")
 
     def create_thread(self) -> str:
         result = self.post("/api/v1/threads", payload={"client": "tui"})
-        thread_id = result.get("thread_id")
+        thread = result.get("thread")
+        thread_id = thread.get("id") if isinstance(thread, Mapping) else None
         if not isinstance(thread_id, str):
             raise RuntimeClientError("runtime did not return a thread id")
         return thread_id
@@ -278,13 +279,15 @@ def running_runtime_client(ctx: typer.Context) -> RuntimeClient | None:
     """Return a client only when the selected agent has a running HTTP runtime."""
 
     agent = require_prefix_agent(ctx)
-    status = agents.AgentProcess(context_root(ctx), agent).status(ui_base_url=ui_base_url())
+    status = agents.AgentProcess(context_root(ctx), agent).status(
+        ui_base_url=ui_base_url()
+    )
     if status is None or status.status != "running" or status.endpoint is None:
         return None
     return RuntimeClient(status.endpoint)
 
 
-def runtime_get(ctx: typer.Context, path: str) -> dict[str, Any]:
+def runtime_get(ctx: typer.Context, path: str) -> Any:
     try:
         return runtime_client(ctx).get(path)
     except RuntimeClientError as exc:
@@ -334,13 +337,18 @@ def _decode_sse_data(data_lines: list[str]) -> dict[str, Any] | None:
 
 
 def _json_object(payload: bytes) -> dict[str, Any]:
+    value = _json_value(payload)
+    if not isinstance(value, dict):
+        raise RuntimeClientError("runtime returned a non-object JSON response")
+    return cast(dict[str, Any], value)
+
+
+def _json_value(payload: bytes) -> Any:
     try:
         value = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeClientError("runtime returned invalid JSON") from exc
-    if not isinstance(value, dict):
-        raise RuntimeClientError("runtime returned a non-object JSON response")
-    return cast(dict[str, Any], value)
+    return value
 
 
 def _command_trace_event(payload: object) -> TraceEvent | None:

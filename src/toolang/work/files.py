@@ -12,7 +12,7 @@ import threading
 from typing import Literal, cast
 
 from toolang.up import process as agents
-from toolang.execution.records import RunStatus
+from toolang.execution.types import RunStatus
 
 FileRequestStatus = Literal["running", "finished", "failed", "canceled"]
 

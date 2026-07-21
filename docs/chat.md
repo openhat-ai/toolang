@@ -133,8 +133,11 @@ Run control endpoints are:
 
 - `POST /api/v1/runs/{run_id}/steer`
 - `POST /api/v1/runs/{run_id}/cancel`
-- `POST /api/v1/runs/{run_id}/rewind`
-- `POST /api/v1/runs/{run_id}/fork`
+
+Thread lifecycle endpoints are:
+
+- `POST /api/v1/threads/{thread_id}/rewind`
+- `POST /api/v1/threads/{thread_id}/fork`
 
 `steer` and `cancel` require a running run. They can target chat, task, and
 chore runs.
@@ -146,6 +149,9 @@ runs remain inspectable by id but are hidden from normal thread projections.
 `fork` creates a new chat thread from the context before the anchor run and
 starts one run in the new thread.
 
+Both lifecycle request bodies identify the anchor with `run_id`. Fork requests
+may additionally set `include_anchor`.
+
 Task and chore thread ids are derived from job ids, so job threads cannot be
 rewound or forked. Job execution commands expose explicit job semantics such as
 `task reopen <id>` and `chore run <id>` instead.
@@ -155,7 +161,7 @@ rewound or forked. Job execution commands expose explicit job semantics such as
 
 Buffered chat:
 
-- `GET /api/v1/chat/models`
+- `GET /api/v1/models`
 - `POST /api/v1/chat`
 
 request body:
@@ -171,10 +177,12 @@ request body:
 
 returns:
 
-- `thread_id`
-- `run_id`
+- `thread`
+- `run`
 - `message`
 - `assistant`
+
+`thread` is `ThreadInfo`; `run` is `RunInfo`.
 
 Streaming chat:
 
@@ -182,7 +190,7 @@ Streaming chat:
 
 returns an SSE stream for the same run.
 
-`GET /api/v1/chat/models` returns the current chat-selectable model selectors
+`GET /api/v1/models` returns the current chat-selectable model selectors
 and the default selector after applying activation config and the `chat` agic.
 
 

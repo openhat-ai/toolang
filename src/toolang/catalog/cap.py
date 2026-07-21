@@ -163,6 +163,12 @@ class AuthoredCaps:
                 raise CatalogNotFoundError(f"authored {cap.kind} not found: {cap.name}")
             return self._write(cap)
 
+    def upsert(self, cap: CapFile) -> CapFile:
+        """Create or replace one authored capability atomically."""
+
+        with self.write_lock():
+            return self._write(cap)
+
     def remove(self, kind: CapKind, name: str) -> CapFile:
         with self.write_lock():
             cap = self.get(kind, name)
@@ -256,6 +262,13 @@ class WiredCaps:
         with self.write_lock():
             if self.get(cap.kind, cap.name) is None:
                 raise CatalogNotFoundError(f"wired {cap.kind} not found: {cap.name}")
+            self._write(cap)
+            return cap
+
+    def upsert(self, cap: CapRef) -> CapRef:
+        """Create or replace one wired capability atomically."""
+
+        with self.write_lock():
             self._write(cap)
             return cap
 

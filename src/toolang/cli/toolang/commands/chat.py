@@ -259,13 +259,20 @@ def rewind_command(
     ] = False,
 ) -> None:
     run_id = _target_latest_run_id(ctx, point)
-    result = runtime_post(ctx, f"/api/v1/runs/{run_id}/rewind", payload={})
-    typer.echo(f"rewound {result.get('thread_id')} before {run_id}")
+    thread_id = _target_thread_id(ctx, point)
+    if thread_id is None:
+        raise click.ClickException(f"thread not found for run: {run_id}")
+    result = runtime_post(
+        ctx,
+        f"/api/v1/threads/{thread_id}/rewind",
+        payload={"run_id": run_id},
+    )
+    result_thread_id = _result_thread_id(result)
+    typer.echo(f"rewound {result_thread_id or thread_id} before {run_id}")
     if chat:
-        thread = result.get("thread_id")
         _open_thread_ui(
             ctx,
-            str(thread) if isinstance(thread, str) else _target_thread_id(ctx, point),
+            result_thread_id or _target_thread_id(ctx, point),
         )
 
 
@@ -280,16 +287,23 @@ def fork_command(
     ] = False,
 ) -> None:
     run_id, include_anchor = _fork_anchor_run(ctx, point)
-    payload: dict[str, object] = {}
+    thread_id = _target_thread_id(ctx, point)
+    if thread_id is None:
+        raise click.ClickException(f"thread not found for run: {run_id}")
+    payload: dict[str, object] = {"run_id": run_id}
     if include_anchor:
         payload["include_anchor"] = True
-    result = runtime_post(ctx, f"/api/v1/runs/{run_id}/fork", payload=payload)
+    result = runtime_post(
+        ctx,
+        f"/api/v1/threads/{thread_id}/fork",
+        payload=payload,
+    )
     boundary = "through" if include_anchor else "before"
-    typer.echo(f"forked {result.get('thread_id')} {boundary} {run_id}")
+    result_thread_id = _result_thread_id(result)
+    typer.echo(f"forked {result_thread_id or '-'} {boundary} {run_id}")
     if chat:
-        thread = result.get("thread_id")
-        if isinstance(thread, str):
-            _open_thread_ui(ctx, thread)
+        if result_thread_id is not None:
+            _open_thread_ui(ctx, result_thread_id)
 
 
 def _truncate_table_text(value: object, *, width: int) -> str:
@@ -356,12 +370,6 @@ def _runtime_consume_stream(
         runtime_client(ctx).consume(path, payload=payload, on_event=event_handler)
     except RuntimeClientError as exc:
         raise click.ClickException(str(exc)) from exc
-
-
-def _stream_result_run(ctx: typer.Context, result: dict[str, Any]) -> None:
-    run_id = result.get("run_id")
-    if isinstance(run_id, str) and run_id:
-        _runtime_get_stream(ctx, f"/api/v1/runs/{run_id}/stream")
 
 
 def _chat_selector_payload(
@@ -445,9 +453,7 @@ def _chat_interactive(
 
 
 @contextmanager
-def _chat_runtime(
-    ctx: typer.Context, *, sandbox: str | None
-) -> Iterator[ChatClient]:
+def _chat_runtime(ctx: typer.Context, *, sandbox: str | None) -> Iterator[ChatClient]:
     """Reuse an API or own the selected execution host for this chat session."""
 
     root = context_root(ctx)
@@ -578,7 +584,7 @@ def _chat_resolve_model_command_labels(
         payload = (
             client.list_models()
             if client is not None
-            else runtime_get(ctx, "/api/v1/chat/models")
+            else runtime_get(ctx, "/api/v1/models")
         )
     except (click.ClickException, RuntimeClientError, ToolangError, ValueError):
         return None
@@ -600,8 +606,8 @@ def _chat_interactive_scripted(
         nonlocal listener, thread_id
         if thread_id is None:
             result = runtime_post(ctx, "/api/v1/threads", payload={"client": "tui"})
-            created = result.get("thread_id")
-            if not isinstance(created, str):
+            created = _result_thread_id(result)
+            if created is None:
                 raise click.ClickException("runtime did not return a thread id")
             thread_id = created
             typer.echo(f"thread {thread_id}")
@@ -651,6 +657,16 @@ def _chat_interactive_scripted(
     finally:
         if listener is not None:
             listener.stop()
+
+
+def _result_thread_id(result: Mapping[str, object]) -> str | None:
+    thread = result.get("thread")
+    if isinstance(thread, Mapping):
+        thread_id = cast(Mapping[str, object], thread).get("id")
+        if isinstance(thread_id, str) and thread_id:
+            return thread_id
+    legacy = result.get("thread_id")
+    return legacy if isinstance(legacy, str) and legacy else None
 
 
 def _chat_interactive_scripted_local(
@@ -738,7 +754,7 @@ def _chat_handle_scripted_command(
         payload = (
             client.list_models()
             if client is not None
-            else runtime_get(ctx, "/api/v1/chat/models")
+            else runtime_get(ctx, "/api/v1/models")
         )
     except (click.ClickException, RuntimeClientError, ToolangError, ValueError) as exc:
         message = exc.message if isinstance(exc, click.ClickException) else str(exc)
