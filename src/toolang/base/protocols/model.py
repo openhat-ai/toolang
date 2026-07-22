@@ -5,8 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
+from ..events import ModelEventHandler
 from ..types.model import ModelInfo, ModelTarget
-from ..types.run import ModelCall, ModelCallResult, ModelEventHandler
+from ..types.run import ModelCall, ModelCallResult
 
 
 @runtime_checkable

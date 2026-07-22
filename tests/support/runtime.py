@@ -5,16 +5,9 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import cast
 
-from pydantic import TypeAdapter
-
 from toolang.api.app import ApiContext
-from toolang.execution.projection import run_message_data
-from toolang.execution.schemas import MessageData
 from toolang.state.source import read_authored_source
 from toolang.state.state import PreparedCap, PreparedVisibility, list_entries
-
-
-_MESSAGES = TypeAdapter(list[MessageData])
 
 
 def snapshot_context(context: ApiContext) -> dict[str, object]:
@@ -30,13 +23,11 @@ def snapshot_context(context: ApiContext) -> dict[str, object]:
         ),
     }
     recent_runs = context.executor.store.list_runs(limit=20)
-    recent_steps = context.executor.store.list_steps_for_runs(
-        run_ids=tuple(item.run_id for item in recent_runs)
+    recent_threads = tuple(
+        dict.fromkeys(
+            run.thread for run in sorted(recent_runs, key=lambda item: item.created_at)
+        )
     )
-    recent_commands = {
-        run.run_id: context.executor.store.list_commands(run_id=run.run_id)
-        for run in recent_runs
-    }
     return {
         "durable": {
             "toolang_root": str(durable.toolang_root),
@@ -75,18 +66,13 @@ def snapshot_context(context: ApiContext) -> dict[str, object]:
                 asdict(item) for item in context.executor.store.list_updates(limit=20)
             ],
             "recent_runs": [asdict(item) for item in recent_runs],
-            "recent_messages": _MESSAGES.dump_python(
-                [
-                    item
-                    for run in sorted(recent_runs, key=lambda item: item.created_at)
-                    for item in run_message_data(
-                        run,
-                        inputs=recent_commands.get(run.run_id, ()),
-                        steps=recent_steps.get(run.run_id, ()),
-                    )
-                ],
-                mode="json",
-            ),
+            "recent_messages": [
+                message.to_data()
+                for thread_id in recent_threads
+                for message in context.executor.store.recent_conversation_messages(
+                    thread_id=thread_id
+                )
+            ],
         },
     }
 

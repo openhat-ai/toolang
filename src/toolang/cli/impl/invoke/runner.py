@@ -12,17 +12,17 @@ import typer
 from toolang.up import process as agents
 from toolang.up import server as agent_up
 from toolang.base.types.sandbox import SandboxSelector
-from toolang.common.error import ToolangError
+from toolang.common.errors import ToolangError
 from toolang.up.logging import resolve_agent_logging
 from toolang.cli.common.client import (
     RuntimeClient,
-    RuntimeClientError,
     owned_runtime_client,
 )
+from toolang.cli.common.errors import RuntimeClientError
 from toolang.cli.common.context import load_runtime_environ
-from toolang.execution.effective import effective_agics
+from toolang.execution.executor.prepare import effective_agics
 from toolang.execution.records import RunRecord
-from toolang.execution.request import ExecutableKind
+from toolang.execution.executor.request import ExecutableKind
 from toolang.lang.ast import AgicDecl, FlowDecl, Program
 from toolang.state.state import AgentState
 from toolang.cli.common.progress import CliProgress, as_progress_sink, make_cli_progress
@@ -277,8 +277,10 @@ def _invoke_client(
 def _sandbox_matches(actual: str | None, requested: SandboxSelector) -> bool:
     if actual == requested.render():
         return True
-    return requested.target is None and isinstance(actual, str) and (
-        actual.partition(":")[0] == requested.driver
+    return (
+        requested.target is None
+        and isinstance(actual, str)
+        and (actual.partition(":")[0] == requested.driver)
     )
 
 

@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from . import ast
-from .diagnostics import ToolangValidationError
+from .errors import ToolangValidationError
 
 _SERVICE_FIELDS = frozenset(
     {"description", "transport", "protocol", "target", "headers", "env"}

@@ -19,13 +19,15 @@ from typer.testing import CliRunner
 from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.catalog import cap as caps
+from toolang.catalog import config as caps_config
+from toolang.catalog.types import CapKind
 from toolang.state import state as cap_state
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.model import ModelInfo
 from toolang.base.types.sandbox import SandboxSelector
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.github import GitHubRef
-import toolang.cli.toolang.cli as cli
+import toolang.cli.toolang.main as cli
 import toolang.cli.toolang.routing as app_routing
 import toolang.cli.toolang.commands.agent as agent_commands
 import toolang.cli.toolang.commands.chat as chat_commands
@@ -35,7 +37,7 @@ import toolang.cli.toolang.commands.thread as inspect_cli
 import toolang.cli.impl.invoke.runner as cli_invoke
 import toolang.cli.impl.invoke.rendering as invoke_rendering
 import toolang.cli.common.version as cli_version
-import toolang.cli.caps.cli as caps_cli
+import toolang.cli.caps.main as caps_cli
 from toolang.cli.common.context import CliContext
 import toolang.cli.common.output as cli_output
 from toolang.cli.common.progress import CliProgress
@@ -43,7 +45,7 @@ from toolang.up.logging import DEFAULT_AGENT_LOG_SPEC
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.execution.events import RunEnd, RunStarting, StepEnd, StepBegin
 from toolang.execution.records import InputRef, OutputRef, RunRecord
-from toolang.common.progress import ProgressEvent
+from toolang.common.events import ProgressEvent
 from toolang.plugin.loading import PluginInfo
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.execution.store import RunStore, run_store_path
@@ -66,7 +68,7 @@ def _create_cap(
     agent: str,
     *,
     visibility: cap_state.PreparedVisibility,
-    kind: caps.CapKind,
+    kind: CapKind,
     name: str,
     text: str,
 ) -> Path:
@@ -90,9 +92,9 @@ def _wired_caps(
     root: Path,
     agent: str,
     visibility: cap_state.PreparedVisibility,
-) -> caps.WiredCaps:
+) -> caps_config.WiredCaps:
     directory = root if visibility == "shared" else root / "agents" / agent
-    return caps.WiredCaps(directory / "config.toml")
+    return caps_config.WiredCaps(directory / "config.toml")
 
 
 def _fake_invoke_record(
@@ -5788,7 +5790,7 @@ def test_cli_remote_cap_add_remove_reuses_existing_wired_outputs(
 
     monkeypatch.setattr(cap_state, "_fetch_github_file", fake_fetch)
     _wired_caps(toolang_root, "alice", "private").create(
-        caps.CapRef(
+        caps_config.CapRef(
             kind="psyche",
             name="old",
             ref="github://bench/agents/psyches/old.md@main",
@@ -7025,7 +7027,7 @@ def test_cli_cap_list_concept_filters_results(tmp_path: Path, monkeypatch) -> No
     )
     remote_ref = cap_state.resolve_remote_ref("skill", "acme/remote-reviewer")
     _wired_caps(toolang_root, "alice", "private").create(
-        caps.CapRef(
+        caps_config.CapRef(
             kind="skill",
             name=cap_state.remote_entry_name("skill", remote_ref),
             ref=remote_ref,

@@ -38,7 +38,7 @@ from toolang.execution.events import (
     StepEnd,
     TraceEvent,
 )
-from toolang.execution.records import StepPath
+from toolang.execution.types import StepPath
 
 from .base import as_text, friendly_error
 from .rendering import (

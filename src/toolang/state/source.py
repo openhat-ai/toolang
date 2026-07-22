@@ -12,7 +12,7 @@ import re
 from typing import Literal, cast
 from uuid import uuid4
 
-from toolang.catalog.cap import CAP_DIRECTORY_NAMES
+from toolang.catalog.types import CAP_DIRECTORY_NAMES
 
 from ..lang.ast import Program, Span
 

@@ -1,7 +1,6 @@
 """Job inspection and management routes."""
 
 from pathlib import Path
-from typing import Literal, cast
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
@@ -15,25 +14,24 @@ from toolang.api.schemas import (
 )
 from toolang.catalog.job import JobFile
 from toolang.catalog.types import JobKind, JobStage
+from toolang.base.types.message import Message
 from toolang.work.state import AgentJobs
 from toolang.work.authoring import (
     allocate_authored_job_id,
     new_job_file,
 )
-from toolang.work.projection import JobProjector
+from toolang.work.inspection import JobInspection
 from toolang.work.schemas import JobDetail, JobInfo
 from toolang.work.store import open_job_store
-from toolang.execution.projection import ExecutionProjector, command_info_from_record
-from toolang.execution.request import RunRequest
-from toolang.execution.schemas import RunCommandResult
+from toolang.execution.inspection import ExecutionInspection
+from toolang.execution.executor.request import RunRequest
+from toolang.execution.schemas import RunCommandResult, RunControlInfo
 
 
 router = APIRouter(tags=["jobs"])
 
 
-@router.post(
-    "/tasks", summary="Create Task", status_code=201, response_model=JobDetail
-)
+@router.post("/tasks", summary="Create Task", status_code=201, response_model=JobDetail)
 def create_task(
     context: ApiContextDep,
     payload: TaskCreateRequest,
@@ -95,9 +93,7 @@ def update_task(
     return _update_task(context, entry=entry, payload=payload)
 
 
-@router.post(
-    "/tasks/{task_id}/draft", summary="Draft Task", response_model=JobDetail
-)
+@router.post("/tasks/{task_id}/draft", summary="Draft Task", response_model=JobDetail)
 def draft_task(context: ApiContextDep, task_id: str) -> JobDetail:
     catalog = context.authored_jobs
     moved = catalog.move("task", task_id, "draft")
@@ -117,9 +113,7 @@ def draft_task(context: ApiContextDep, task_id: str) -> JobDetail:
     return _task_detail_item(context, entry)
 
 
-@router.post(
-    "/tasks/{task_id}/ready", summary="Ready Task", response_model=JobDetail
-)
+@router.post("/tasks/{task_id}/ready", summary="Ready Task", response_model=JobDetail)
 def ready_task(context: ApiContextDep, task_id: str) -> JobDetail:
     moved = context.authored_jobs.move("task", task_id, "ready")
     _reconcile_jobs(context, kind="task")
@@ -151,9 +145,7 @@ def archive_task(context: ApiContextDep, task_id: str) -> JobDetail:
     return _task_detail_item(context, entry)
 
 
-@router.post(
-    "/tasks/{task_id}/reopen", summary="Reopen Task", response_model=JobDetail
-)
+@router.post("/tasks/{task_id}/reopen", summary="Reopen Task", response_model=JobDetail)
 def reopen_task(context: ApiContextDep, task_id: str) -> JobDetail:
     store = open_job_store(context.root, context.name)
     try:
@@ -172,9 +164,7 @@ def reopen_task(context: ApiContextDep, task_id: str) -> JobDetail:
     return _task_detail_item(context, _find_task_or_404(context, task_id))
 
 
-@router.post(
-    "/tasks/{task_id}/cancel", summary="Cancel Task", response_model=JobDetail
-)
+@router.post("/tasks/{task_id}/cancel", summary="Cancel Task", response_model=JobDetail)
 async def cancel_task(context: ApiContextDep, task_id: str) -> JobDetail:
     store = open_job_store(context.root, context.name)
     try:
@@ -246,21 +236,20 @@ async def run_chore(context: ApiContextDep, chore_id: str) -> RunCommandResult:
         store.close()
     run, command = await context.submit_run(
         RunRequest(
-            group="pulse:chore",
             origin="chore",
+            input=Message.user(claimed.definition.input),
             run_id=claimed.run_id,
             thread_id=claimed.job.thread_id,
-            input=claimed.definition.input,
-            metadata={
+            context={
                 "job": claimed.definition.run_metadata(),
                 "job_trigger": "manual",
             },
         ),
     )
-    projector = ExecutionProjector(context.executor.store)
+    inspection = ExecutionInspection(context.executor.store)
     return RunCommandResult(
-        run=projector.run_info(run),
-        command=command_info_from_record(run, command),
+        run=inspection.run_info(run),
+        command=RunControlInfo.from_record(run, command),
     )
 
 
@@ -401,9 +390,7 @@ def jobs(context: ApiContextDep, kind: JobKind | None = None) -> list[JobInfo]:
 @router.get(
     "/jobs/archived", summary="List Archived Jobs", response_model=list[JobInfo]
 )
-def archived_jobs(
-    context: ApiContextDep, kind: JobKind | None = None
-) -> list[JobInfo]:
+def archived_jobs(context: ApiContextDep, kind: JobKind | None = None) -> list[JobInfo]:
     items = _job_collection(context, archived=True)
     if kind is not None:
         items = [item for item in items if item.kind == kind]
@@ -501,8 +488,8 @@ def _job_path(job: JobFile) -> Path:
     return job.path
 
 
-def _job_projector(context) -> JobProjector:
-    return JobProjector.load(
+def _job_inspection(context) -> JobInspection:
+    return JobInspection.load(
         root=context.root,
         agent_name=context.name,
         home=context.home,
@@ -513,30 +500,30 @@ def _job_projector(context) -> JobProjector:
 
 def _job_collection(context, *, archived: bool) -> list[JobInfo]:
     stage: JobStage = "archived" if archived else "ready"
-    return list(_job_projector(context).list(stage=stage))
+    return list(_job_inspection(context).list(stage=stage))
 
 
 def _task_collection(context, *, archived: bool) -> list[JobInfo]:
     stage: JobStage = "archived" if archived else "ready"
-    return [item for item in _job_projector(context).list(kind="task", stage=stage)]
+    return [item for item in _job_inspection(context).list(kind="task", stage=stage)]
 
 
 def _chore_collection(context, *, archived: bool) -> list[JobInfo]:
     stage: JobStage = "archived" if archived else "ready"
-    return [item for item in _job_projector(context).list(kind="chore", stage=stage)]
+    return [item for item in _job_inspection(context).list(kind="chore", stage=stage)]
 
 
 def _task_detail_item(context, entry: JobFile) -> JobDetail:
-    return _job_projector(context).detail(entry)
+    return _job_inspection(context).detail(entry)
 
 
 def _chore_detail_item(context, entry: JobFile) -> JobDetail:
-    return _job_projector(context).detail(entry)
+    return _job_inspection(context).detail(entry)
 
 
 def _job_detail_item(context, *, kind: JobKind, entry: JobFile) -> JobDetail:
     del kind
-    return _job_projector(context).detail(entry)
+    return _job_inspection(context).detail(entry)
 
 
 def _find_job_or_404(context, job_id: str) -> tuple[JobKind, JobFile]:
@@ -633,7 +620,7 @@ def _update_task(
         action="updated",
         path=_job_path(saved),
     )
-    return _job_projector(context).detail(saved)
+    return _job_inspection(context).detail(saved)
 
 
 def _update_chore(
@@ -651,7 +638,7 @@ def _update_chore(
         action="updated",
         path=_job_path(saved),
     )
-    return _job_projector(context).detail(saved)
+    return _job_inspection(context).detail(saved)
 
 
 def _patch_task_document(document: JobFile, payload: TaskPatchRequest) -> JobFile:
@@ -692,7 +679,7 @@ def _append_job_update(
     except ValueError:
         relative_path = str(path)
     context.executor.store.append_update(
-        kind=cast(Literal["task_changed", "chore_changed"], f"{kind}_changed"),
+        kind=f"{kind}_changed",
         payload={
             "id": item_id,
             "kind": kind,

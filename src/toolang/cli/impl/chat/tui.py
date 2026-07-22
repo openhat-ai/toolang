@@ -16,9 +16,9 @@ from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 from toolang.execution.events import TraceEvent
-from toolang.common.error import ToolangError
+from toolang.common.errors import ToolangError
 
-from toolang.cli.common.client import RuntimeClientError
+from toolang.cli.common.errors import RuntimeClientError
 from toolang.cli.common.version import toolang_version
 from . import blocks
 from . import events
@@ -28,10 +28,10 @@ from . import widgets
 from .base import (
     AppContext,
     ChatClient,
-    ChatUIEvent,
     chat_status_label,
     friendly_error,
 )
+from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 
 

@@ -5,13 +5,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 import os
 from pathlib import Path
-import tomllib
 from typing import Annotated
 
 import typer
 
 from ...common.context import resolve_root
 from ...common.output import echo_table
+from toolang.cli.config import load_config_layers
 from toolang.plugin.models.loading import load_model_providers
 from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.tools.loading import load_tool_plugins
@@ -65,7 +65,7 @@ def list_models(
         typer.Option("--refresh", help="Refresh cached provider model lists."),
     ] = False,
 ) -> None:
-    from toolang.plugin.models.errors import NO_AVAILABLE_MODELS_MESSAGE
+    from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE
     from toolang.plugin.models.resolution import split_model_selectors
 
     environ = dict(os.environ)
@@ -173,7 +173,7 @@ def model_rows(
     )
     from toolang.plugin.models.views import model_list_rows
 
-    config_layers = _load_config_layers(root, agent_name)
+    config_layers = load_config_layers(root, agent_name)
     provider_configs = parse_model_provider_configs(config_layers)
     return model_list_rows(
         providers=load_model_providers(provider_configs),
@@ -195,7 +195,7 @@ def model_provider_rows(
     )
     from toolang.plugin.models.views import model_provider_rows as build_rows
 
-    config_layers = _load_config_layers(root, "")
+    config_layers = load_config_layers(root)
     provider_configs = parse_model_provider_configs(config_layers)
     return build_rows(
         providers=load_model_providers(provider_configs),
@@ -217,7 +217,7 @@ def tool_rows(
     from toolang.plugin.tools.views import tool_list_rows
 
     config = merge_named_configs(
-        _load_config_layers(root, agent_name),
+        load_config_layers(root, agent_name),
         section="tools",
         environ=environ,
     )
@@ -230,23 +230,6 @@ def tool_rows(
 
 def plugin_info_rows(group: str) -> list[tuple[str, str]]:
     return [(info.name, info.source) for info in list_plugin_infos(group=group)]
-
-
-def _load_config_layers(
-    root: Path, agent_name: str
-) -> tuple[dict[str, object], dict[str, object]]:
-    return (
-        _load_toml(root / "config.toml"),
-        _load_toml(root / "agents" / agent_name / "config.toml")
-        if agent_name
-        else {},
-    )
-
-
-def _load_toml(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        return {}
-    return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
 def plugin_sources(group: str) -> dict[str, str]:

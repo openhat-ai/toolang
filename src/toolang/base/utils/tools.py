@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from ..error import ToolangError
+from ..errors import ToolangError
 
 _TOOL_NAME_PART = re.compile(r"^[A-Za-z0-9_]+$")
 

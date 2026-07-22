@@ -8,7 +8,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Protocol
 
-from toolang.base.error import ToolangError
+from toolang.base.errors import ToolangError
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
 from toolang.plugin.models.discovery import (
@@ -18,7 +18,7 @@ from toolang.plugin.models.discovery import (
     model_infos,
     required_provider_env_vars,
 )
-from toolang.plugin.models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
+from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
 from toolang.common.selectors import (
     Selector as ModelSelector,
     filter_value_matches,

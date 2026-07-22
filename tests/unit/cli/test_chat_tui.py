@@ -18,7 +18,7 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.cli.impl.chat import blocks, events, local, rendering, slashes, tui, widgets
-from toolang.cli.impl.chat.base import ChatUIEvent
+from toolang.cli.impl.chat.events import ChatUIEvent
 from toolang.execution.events import (
     PartDelta,
     RunBegin,

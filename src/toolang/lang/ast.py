@@ -329,7 +329,7 @@ class Program(Node):
 
 
 def _parse_source(source: str) -> _ParsedSource:
-    from .diagnostics import ToolangSyntaxError
+    from .errors import ToolangSyntaxError
 
     syntax = source if not source or source.endswith("\n") else f"{source}\n"
     encoded = syntax.encode("utf-8")

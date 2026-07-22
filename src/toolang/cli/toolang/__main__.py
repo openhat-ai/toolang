@@ -1,6 +1,6 @@
 """Module entry point for ``python -m toolang.cli.toolang``."""
 
-from .cli import main
+from .main import main
 
 
 raise SystemExit(main())

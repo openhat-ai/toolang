@@ -86,7 +86,7 @@ Current hosting drivers are:
 
 Future drivers may use a cloud host or combine a host API process with
 restricted tool execution. The CLI resolves `--sandbox` into hosting inputs;
-`Executor` receives an `AgentSetup` and an immutable `AgentState` and does not
+`RunExecutor` receives an `AgentSetup` and an immutable `AgentState` and does not
 know where its process is hosted.
 
 The materialized root and home remain the authoritative data in every hosting

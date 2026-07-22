@@ -16,10 +16,10 @@ import click
 import toolang.cli.common.client as client_module
 from toolang.cli.common.client import (
     RuntimeClient,
-    RuntimeClientError,
     message_payload,
     owned_runtime_client,
 )
+from toolang.cli.common.errors import RuntimeClientError
 from toolang.up import process as agents
 
 

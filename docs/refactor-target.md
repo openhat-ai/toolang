@@ -45,8 +45,8 @@ toolang/
 ├── catalog/                # authored agent, cap, and job CRUD plus templates
 ├── cli/                    # CLI entry points and user interfaces
 ├── common/                 # small package-neutral primitives
-├── execution/              # requests, records, events, stores, replies, executor
-├── up/                     # agent targets, processes, sandbox hosting, API assembly
+├── execution/              # requests, records, events, stores, and executor
+├── up/                     # runtime setup, agent targets, processes, hosting, API assembly
 ├── lang/                   # .too AST, parsing, lowering, validation, formatting
 ├── plugin/                 # plugin loading, config, and built-in implementations
 ├── state/                  # durable/prepared files and immutable agent state
@@ -93,7 +93,7 @@ seed catalog-owned agent, cap, and job files. They are not a separate runtime
 domain.
 
 The canonical collections are `catalog.agent.LocalAgents`,
-`catalog.cap.AuthoredCaps`, `catalog.cap.WiredCaps`, and
+`catalog.cap.AuthoredCaps`, `catalog.config.WiredCaps`, and
 `catalog.job.AuthoredJobs`.
 
 ### LocalAgents
@@ -171,17 +171,17 @@ program-declared jobs remain available as `AgentState.program.jobs`.
 
 `StateWatcher` monitors the relevant files and publishes new immutable
 `AgentState` versions. It owns invalidation and reuse of unchanged parsed
-sources. It does not know about `Executor` or `Scheduler`. Every API process
+sources. It does not know about `RunExecutor` or `Scheduler`. Every API process
 that can accept runs starts its watcher as process infrastructure; watching is
 not an optional runtime component.
 
-`AgentSetup` is separate from source state and contains installed runtime
-implementations:
+`toolang.up.setup.AgentSetup` is separate from source state and contains
+installed runtime implementations:
 
 ```python
 @dataclass(frozen=True, slots=True)
 class AgentSetup:
-    tools: Mapping[str, ToolPlugin]
+    tools: Mapping[str, AgentTool]
     model_providers: Mapping[str, ModelProvider]
     model_adapters: Mapping[str, ModelAdapter]
 ```
@@ -228,8 +228,8 @@ Scheduler(
 
 For one scheduling pass it captures one `AgentState`, merges `AgentJobs` from
 that state and the current `HomeJobs`, atomically claims due work, and submits
-`RunRequest` values to `Executor`. `Scheduler` persists job state through
-`JobStore`; `Executor` persists run state through `RunStore`.
+`RunRequest` values to `RunExecutor`. `Scheduler` persists job state through
+`JobStore`; `RunExecutor` persists run state through `RunStore`.
 
 Runs link to their originating job through run origin metadata. `RunStore`
 does not duplicate job records.
@@ -245,53 +245,62 @@ design and migration.
 The public execution concepts are:
 
 - `RunRequest`: an external request to execute an agic or flow
-- `Executor`: agic, flow, and step execution
-- `ThreadOperations`: thread creation, rewind, and fork orchestration
-- `TraceEvent`: the complete ordered execution event stream
-- `RunStore`: threads, commands, runs, steps, parts, and transcript messages
-- `PersistSink`: trace events projected into `RunStore`
-- `ReplySink`: trace events projected into a caller-facing reply
+- `RunExecutor`: run acceptance, control, and agic/flow execution
+- `ThreadManager`: synchronous thread creation, rewind, and fork orchestration
+- `RunEvent`: the complete ordered execution event stream
+- `RunStore`: thread controls, run controls, runs, steps, and transcript messages
+- `PersistSink`: mandatory internal run/step projection into `RunStore`
+- `RunTracer`: optional per-start observation of live run events
 
-`Executor` receives `AgentSetup` when constructed and an explicit immutable
-`AgentState` for each top-level run. It does not know `StateWatcher`, jobs, CLI,
-or HTTP.
+`RunExecutor.start()` receives explicit immutable `AgentSetup` and `AgentState`
+values for each top-level run. It does not know `StateWatcher`, jobs, CLI, or
+HTTP.
 
-`ThreadOperations` owns chat-thread creation and branching rules. Rewind may
+`ThreadManager` owns chat-thread creation and branching rules. Rewind may
 call the executor's public run-control method to stop replaced runs, but thread
 operations do not spawn follow-up runs. The runtime caller owns any background
-task created from the returned thread operation result. `Executor` does not
+task created from the returned thread operation result. `RunExecutor` does not
 import or expose thread operations.
 
 At run entry, the caller captures the current `AgentState`. All child runs use
 that same state version. File changes produce a newer state only for later
 top-level runs.
 
-`Executor.run()` is the external entry point. It combines the persistent event
-sink with an optional per-run reply handler before execution begins. Internal
-child runs reuse private executor logic and never call the public entry point.
-Records are derived from trace events; execution locals do not hold references
-to durable command records. Runtime owners decide whether to await `run()` or
-create and retain a background task; `Executor` does not provide `start()` or
-`spawn()` helpers.
+`RunExecutor.start()` is the external execution entry point. It uses mandatory
+internal persistence and an optional per-start tracer. Internal child runs
+reuse private runtime logic and never call the public entry point. Runtime
+owners decide whether to await `start()` or create and retain a background
+task; `RunExecutor` does not provide `spawn()`.
 
 The target execution package is:
 
 ```text
 execution/
-├── setup.py                # AgentSetup
-├── request.py              # RunRequest
-├── records.py              # StepPath and durable record types
-├── events.py               # trace event dataclasses and TraceEvent
-├── store.py                # RunStore and PersistSink
-├── reply.py                # ReplySink implementations
-├── thread.py               # ThreadOperations
-├── agic.py                 # internal model/tool loop support
-└── executor.py             # Executor
+├── types.py                # execution lifecycle vocabulary
+├── records.py              # durable thread, run, control, and step truth
+├── schemas.py              # protocol types and pure record conversion
+├── inspection.py           # store-backed aggregate inspection
+├── events.py               # RunEvent, RunTracer, and thread events
+├── store.py                # RunStore
+├── threads.py              # ThreadManager
+├── tools/                  # agent-specific built-in tools
+└── executor/               # RunExecutor and execution implementation helpers
+    ├── __init__.py         # stable RunExecutor entry point
+    ├── request.py          # RunRequest and executable kind
+    ├── executor.py         # RunExecutor and private per-start _Execution
+    ├── common.py           # bound runs, locals, and shared execution helpers
+    ├── prepare.py          # agic resolution and complete model-input preparation
+    ├── diagnostics.py      # bounded model and tool diagnostics
+    ├── persist.py          # mandatory internal PersistSink
+    ├── runs/               # agic and flow run bodies
+    ├── steps/              # event-owning run, model, tool, and system steps
+    ├── stmts/              # lowered flow-statement semantics
+    └── prompts/            # default execution prompt resources
 ```
 
-A process may own one `Executor` and one `AgentSetup`, but multiple processes
-may execute against the same agent. Toolang-owned ID allocation and SQLite
-transactions must therefore be process-safe.
+A process may own one `RunExecutor`, but multiple processes may execute against
+the same agent. Toolang-owned ID allocation and SQLite transactions must
+therefore be process-safe.
 
 A general queue limiting the number of top-level runs is not part of the
 target. Future resource control belongs near model providers and should limit
@@ -353,15 +362,15 @@ Responsibilities are:
 helpers must not remain scattered through command modules.
 
 CLI command functions should resolve inputs, call `Catalog`, `Store`,
-`Executor`, `AgentProcess`, or `RuntimeClient`, and format the returned values.
+`RunExecutor`, `AgentProcess`, or `RuntimeClient`, and format the returned values.
 They must not own source-file formats, SQL, state merging, or execution rules.
 
 The entry points become:
 
 ```toml
-toolang = "toolang.cli.toolang.cli:main"
-too = "toolang.cli.toolang.cli:main"
-caps = "toolang.cli.caps.cli:main"
+toolang = "toolang.cli.toolang.main:main"
+too = "toolang.cli.toolang.main:main"
+caps = "toolang.cli.caps.main:main"
 ```
 
 The CLI dependency direction is:
@@ -391,7 +400,7 @@ state, but it must not wrap them in an `AgentRuntime` aggregate.
 The CLI is the only public process origin. It first resolves one materialized
 agent target, then selects hosting from `--sandbox` or explicit config. Hosting
 decides whether the API process runs on the host, in Docker, or in a future
-remote or hybrid environment. The server core and `Executor` do not inspect
+remote or hybrid environment. The server core and `RunExecutor` do not inspect
 that hosting decision.
 
 `toolang.api.app` owns `ApiContext`, API-owned run tasks, durable run-submission
@@ -399,7 +408,7 @@ acknowledgment, and FastAPI application assembly. `toolang.api.router` mounts
 versioned resource routers under the shared `/api/v1` prefix. Resource modules
 under `toolang.api.routers`, such as `agent`, `chat`, `caps`, `jobs`, `runs`,
 and `threads`, own HTTP request mapping and export a router factory bound to the
-application context. `_streaming` owns shared transport helpers. Typed inspection
+application context. `common` owns shared transport helpers. Typed inspection
 projections belong to the core package that owns the inspected state rather
 than to an API-wide view module. Process-level routes such as `/healthz` remain
 on the application itself.
@@ -421,7 +430,7 @@ base/common
     -> lang/catalog/plugin
     -> state and work.state
     -> execution foundations
-    -> Executor
+    -> RunExecutor
     -> Scheduler
     -> api, up, and CLI
 ```
@@ -432,7 +441,7 @@ Additional constraints:
 - `work.scheduler` may import `execution`
 - watchers do not import their consumers
 - stores do not import CLI, HTTP, or UI modules
-- `Executor` does not import `StateWatcher`
+- `RunExecutor` does not import `StateWatcher`
 - concrete internal modules are imported directly; package facades stay narrow
 
 
@@ -485,7 +494,7 @@ as soon as all callers have moved.
 The refactor is complete when:
 
 - each core concept has one owner and one canonical type
-- `Executor` runs against an explicit immutable `AgentState`
+- `RunExecutor` runs against an explicit immutable `AgentState`
 - child runs cannot observe later source changes
 - `Scheduler` depends only on stores, executor, and state accessors
 - authored CRUD is implemented through catalogs rather than CLI file editing

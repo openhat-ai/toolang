@@ -17,7 +17,7 @@ import typer
 from toolang.up import process as agents
 from toolang.up import server as agent_up
 from toolang.base.types.sandbox import SandboxSelector
-from toolang.common.error import ToolangError
+from toolang.common.errors import ToolangError
 from toolang.execution.stream import trace_event_data
 from toolang.state.state import split_cap_selectors
 from toolang.plugin.models.resolution import split_model_selectors
@@ -29,13 +29,13 @@ from ...impl.chat.local import LocalChatSession
 from ...impl.chat.tui import ChatTuiApp
 from ...common.client import (
     RuntimeClient,
-    RuntimeClientError,
     message_payload,
     owned_runtime_client,
     runtime_client,
     runtime_get,
     runtime_post,
 )
+from ...common.errors import RuntimeClientError
 from ...common.context import (
     context_agent,
     context_root,

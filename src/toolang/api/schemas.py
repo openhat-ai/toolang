@@ -128,11 +128,8 @@ class ChatRequest(ApiRequest):
     request_id: str | None = Field(default=None, min_length=1)
     message: InputMessagePayload
     model: str | None = None
-    models: list[str] = Field(default_factory=list)
     agic: str | None = None
     flow: str | None = None
-    tools: list[str] | None = None
-    caps: list[str] = Field(default_factory=list)
 
 
 class PutCapRequest(ApiRequest):
@@ -185,9 +182,7 @@ class RunCreateRequest(ApiRequest):
     executable_kind: Literal["agic", "flow"] = "agic"
     executable_name: str | None = None
     input: str = ""
-    models: list[str] = Field(default_factory=list)
-    tools: list[str] | None = None
-    caps: list[str] = Field(default_factory=list)
+    model: str | None = None
     metadata: dict[str, object] = Field(default_factory=dict)
 
 

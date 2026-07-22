@@ -12,15 +12,15 @@ from typing import Any
 from uuid import uuid4
 
 from toolang.base.types.message import Message
-from toolang.common.error import ToolangError
-from toolang.execution.binding import allocate_thread_id
-from toolang.execution.effective import (
+from toolang.common.errors import ToolangError
+from toolang.common.ids import allocate_thread_id
+from toolang.execution.executor.prepare import (
     effective_agics,
     effective_origin_model_selectors,
     select_origin_agic,
 )
 from toolang.execution.events import TraceEvent
-from toolang.execution.request import ExecutableKind, RunRequest
+from toolang.execution.executor.request import ExecutableKind, RunRequest
 from toolang.up import server as agent_up
 from toolang.plugin.models.resolution import selectable_model_targets
 from toolang.state.state import AgentState
@@ -181,20 +181,17 @@ class LocalChatSession:
         on_event: Callable[[TraceEvent], None],
     ) -> None:
         executable_kind, executable_name = _executable(selects)
+        model_selector = next(iter(_strings(selects.get("models"))), None)
         await self.executor.run(
             RunRequest(
-                group="chat",
                 origin="chat",
+                input=Message.user(message),
                 run_id=self.executor.allocate_run_id(),
                 thread_id=thread_id,
-                thread_kind="tui",
                 executable_kind=executable_kind,
                 executable_name=executable_name,
-                message=Message.user(message),
-                model_selectors=_strings(selects.get("models")),
-                tool_selectors=_optional_strings(selects.get("tools")),
-                cap_selectors=_strings(selects.get("caps")),
-                metadata={"request_id": f"term_{uuid4().hex}"},
+                model_selector=model_selector,
+                request_id=f"term_{uuid4().hex}",
             ),
             self.state_watcher.current(),
             reply=_TraceReply(on_event),
@@ -239,10 +236,6 @@ def _executable(
     if agic is not None and flow is not None:
         raise ValueError("chat request cannot specify both agic and flow")
     return ("flow", flow) if flow is not None else ("agic", agic)
-
-
-def _optional_strings(value: object) -> tuple[str, ...] | None:
-    return None if value is None else _strings(value)
 
 
 def _strings(value: object) -> tuple[str, ...]:

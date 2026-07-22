@@ -7,8 +7,10 @@ from typing import cast
 
 import pytest
 
-from toolang.catalog.cap import AuthoredCaps, CapFile, CapKind, CapRef, WiredCaps
-from toolang.catalog.error import CatalogConflictError, CatalogNotFoundError
+from toolang.catalog.cap import AuthoredCaps, CapFile
+from toolang.catalog.config import CapRef, WiredCaps
+from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
+from toolang.catalog.types import CapKind
 
 
 def _cap(kind, name: str, content: str) -> CapFile:

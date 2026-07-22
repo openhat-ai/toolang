@@ -10,12 +10,12 @@ from typing import Any, Literal, cast
 import frontmatter
 
 from toolang.catalog import cap as caps
-from toolang.catalog.error import CatalogError
+from toolang.catalog.errors import CatalogError
 from toolang.state import state as cap_state
 from toolang.common.immutable import mutable_data
 from toolang.catalog.job import AuthoredJobs, JobFile
-from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE, JobKind
-from toolang.common.error import ToolangError
+from toolang.catalog.types import CapKind, DEFAULT_CHORE_SCHEDULE, JobKind
+from toolang.common.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
@@ -27,7 +27,6 @@ from toolang.work.authoring import (
 )
 from toolang.work.state import job_thread_id
 
-CapKind = Literal["psyche", "skill", "service", "prompt"]
 VisibilityFilter = Literal["all", "private", "shared"]
 
 

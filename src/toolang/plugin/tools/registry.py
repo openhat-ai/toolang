@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from toolang.base.error import ToolangError
+from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.utils.tools import encode_tool_name
 from toolang.common.selectors import (

@@ -6,13 +6,13 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Query
 
 from toolang.api.app import ApiContextDep
-from toolang.common.error import ToolangError
-from toolang.execution.effective import (
+from toolang.common.errors import ToolangError
+from toolang.execution.executor.prepare import (
     effective_agics,
     effective_origin_model_selectors,
     select_origin_agic,
 )
-from toolang.execution.projection import ExecutionProjector
+from toolang.execution.inspection import ExecutionInspection
 from toolang.execution.schemas import ThreadInfo
 from toolang.plugin.models.resolution import selectable_model_targets
 from toolang.up import process as agents
@@ -93,10 +93,10 @@ def flows(context: ApiContextDep) -> dict[str, object]:
 
 
 def _profile_metrics(context) -> dict[str, object]:
-    threads = ExecutionProjector(context.executor.store).list_threads(limit=None)
+    threads = ExecutionInspection(context.executor.store).list_threads(limit=None)
     runs = context.executor.store.list_runs(limit=None)
     steps_by_run = context.executor.store.list_steps_for_runs(
-        run_ids=tuple(item.run_id for item in runs)
+        run_ids=tuple(item.id for item in runs)
     )
     thread_counts = {"chat": 0, "chore": 0, "task": 0}
     step_total = 0

@@ -8,9 +8,9 @@ from typing import Any, cast
 
 import click
 
-from toolang.common.error import ToolangError
+from toolang.common.errors import ToolangError
 from toolang.plugin.models.resolution import split_model_selectors
-from toolang.cli.common.client import RuntimeClientError
+from toolang.cli.common.errors import RuntimeClientError
 from .base import AppContext, as_text, friendly_error
 
 SlashOutput = str | Sequence[str] | None

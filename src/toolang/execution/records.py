@@ -4,40 +4,40 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Any, cast
 
-from toolang.base.types.message import Message, Part
+from toolang.base.types.message import Message, MessageRole, Part
 from .types import (
-    CommandApply,
-    CommandKind,
-    CommandStatus,
-    EventDomain,
+    RunControlTiming,
+    RunControlKind,
+    RunControlStatus,
     RunId,
     RunStatus,
     StepKind,
     StepPath,
     StepStatus,
     ThreadPeerType,
-    UpdateKind,
+    ThreadControlKind,
+    ThreadControlStatus,
 )
 
 
 @dataclass(frozen=True, slots=True)
-class InputRef:
-    """Reference one run command input or one command input part."""
+class RunControlRef:
+    """Reference one control input within the current run."""
 
-    cmd: int = 0
+    index: int = 0
     part: int | None = None
 
     @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> "InputRef":
+    def from_data(cls, payload: Mapping[str, Any]) -> "RunControlRef":
         return cls(
-            cmd=int(payload.get("cmd", 0) or 0),
+            index=int(payload.get("control", 0) or 0),
             part=_optional_int(payload.get("part")),
         )
 
     def to_data(self) -> dict[str, Any]:
-        data: dict[str, Any] = {"cmd": self.cmd}
+        data: dict[str, Any] = {"control": self.index}
         if self.part is not None:
             data["part"] = self.part
         return data
@@ -64,7 +64,7 @@ class OutputRef:
         return data
 
 
-StepInputItem = InputRef | OutputRef | Message
+StepInputItem = RunControlRef | OutputRef | Message
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,22 +74,15 @@ class RunRecord:
     id: RunId
     parent: StepPath | None
     thread: str
-    input: InputRef
+    input: RunControlRef
     output: OutputRef | None
     context: dict[str, Any] = field(default_factory=dict)
     status: RunStatus = "pending"
     error: str | None = None
+    superseded_by: ThreadControlRef | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
-
-    @property
-    def run_id(self) -> str:
-        return self.id
-
-    @property
-    def thread_id(self) -> str:
-        return self.thread
 
     @property
     def root_run_id(self) -> str:
@@ -119,15 +112,6 @@ class RunRecord:
     def call_kind(self) -> str:
         value = self.context.get("call")
         return str(value) if value is not None else ""
-
-    @property
-    def superseded(self) -> dict[str, Any] | None:
-        value = self.context.get("superseded")
-        return dict(value) if isinstance(value, Mapping) else None
-
-    @property
-    def metadata(self) -> dict[str, Any]:
-        return dict(self.context)
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +155,8 @@ class ThreadRecord:
     thread_id: str
     origin: str
     peer: ThreadPeer
-    parent: str | None
+    created_by: ThreadControlRef
+    head: ThreadControlRef
     created_at: str
     updated_at: str
 
@@ -201,21 +186,13 @@ class StepRecord:
     def run_id(self) -> str:
         return trace_run(self.parent)
 
-    @property
-    def step_index(self) -> int:
-        return self.index
-
-    @property
-    def payload(self) -> dict[str, Any]:
-        return dict(self.detail)
-
 
 @dataclass(frozen=True, slots=True)
 class UpdateRecord:
     """One agent-local operational update."""
 
     update_id: int
-    kind: UpdateKind
+    kind: str
     payload: dict[str, Any]
     created_at: str
 
@@ -229,36 +206,48 @@ class UpdateRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class EventRecord:
-    """One durable resource-scoped event."""
-
-    event_id: int
-    domain: EventDomain
-    domain_id: str
-    seq: int
-    type: str
-    payload: dict[str, Any]
-    created_at: str
-
-
-@dataclass(frozen=True, slots=True)
-class CommandRecord:
-    """One durable command sent to a run."""
+class RunControlRecord:
+    """One durable control sent to a run."""
 
     run: RunId
     index: int
-    kind: CommandKind
-    apply: CommandApply
+    kind: RunControlKind
+    timing: RunControlTiming
     input: Message | None
+    request_id: str | None = None
     context: dict[str, Any] = field(default_factory=dict)
-    status: CommandStatus = "pending"
+    status: RunControlStatus = "pending"
     error: str | None = None
     created_at: str = ""
     finished_at: str | None = None
 
-    @property
-    def run_id(self) -> str:
-        return self.run
+
+@dataclass(frozen=True, slots=True)
+class ThreadControlRef:
+    """Reference one durable thread control."""
+
+    thread: str
+    index: int
+
+
+@dataclass(frozen=True, slots=True)
+class ThreadControlRecord:
+    """One durable mutation applied to a thread."""
+
+    thread: str
+    index: int
+    kind: ThreadControlKind
+    source_thread: str | None = None
+    anchor_run: str | None = None
+    result_run: str | None = None
+    message: Message | None = None
+    request_id: str | None = None
+    expected_head: ThreadControlRef | None = None
+    context: dict[str, Any] = field(default_factory=dict)
+    status: ThreadControlStatus = "pending"
+    error: str | None = None
+    created_at: str = ""
+    finished_at: str | None = None
 
 
 def trace_run(path: StepPath) -> RunId:
@@ -292,37 +281,11 @@ def trace_child_path(parent: StepPath, index: int) -> StepPath:
     return f"{parent}/{index}"
 
 
-def input_ref_from_data(payload: Mapping[str, Any] | None) -> InputRef:
-    """Return one input ref from serialized data."""
-
-    return InputRef.from_data(payload or {})
-
-
-def input_ref_to_data(ref: InputRef) -> dict[str, Any]:
-    """Return serialized input ref data."""
-
-    return ref.to_data()
-
-
-def output_ref_from_data(payload: Mapping[str, Any] | None) -> OutputRef | None:
-    """Return one output ref from serialized data."""
-
-    if not payload:
-        return None
-    return OutputRef.from_data(payload)
-
-
-def output_ref_to_data(ref: OutputRef | None) -> dict[str, Any] | None:
-    """Return serialized output ref data."""
-
-    return ref.to_data() if ref is not None else None
-
-
 def step_input_item_from_data(payload: Mapping[str, Any]) -> StepInputItem:
     """Return one step input item from one serialized payload."""
 
-    if "cmd" in payload:
-        return InputRef.from_data(payload)
+    if "control" in payload:
+        return RunControlRef.from_data(payload)
     if "step" in payload:
         return OutputRef.from_data(payload)
     if "message" in payload:
@@ -343,7 +306,7 @@ def step_input_items_from_data(
 def step_input_item_to_data(item: StepInputItem) -> dict[str, Any]:
     """Return one serialized step input item."""
 
-    if isinstance(item, InputRef):
+    if isinstance(item, RunControlRef):
         return item.to_data()
     if isinstance(item, OutputRef):
         return item.to_data()
@@ -356,18 +319,14 @@ def step_input_items_to_data(items: tuple[StepInputItem, ...]) -> list[dict[str,
     return [step_input_item_to_data(item) for item in items]
 
 
-def step_input_messages(items: tuple[StepInputItem, ...]) -> tuple[Message, ...]:
-    """Return inline input messages from one step input tuple."""
+def step_message_role(kind: StepKind) -> MessageRole | None:
+    """Return the transcript role produced by one step kind."""
 
-    return tuple(item for item in items if isinstance(item, Message))
-
-
-def cast_message_role(role: str) -> Literal["user", "assistant", "tool"]:
-    """Return one normalized message role literal."""
-
-    if role not in {"user", "assistant", "tool"}:
-        raise ValueError(f"unsupported message role: {role}")
-    return cast(Literal["user", "assistant", "tool"], role)
+    if kind == "model":
+        return "assistant"
+    if kind == "tool":
+        return "tool"
+    return None
 
 
 def _mapping(value: object) -> Mapping[str, Any]:

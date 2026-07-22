@@ -9,11 +9,14 @@ import logging
 from pathlib import Path
 from collections.abc import Callable
 
+from toolang.base.types.message import Message
 from toolang.execution.executor import Executor
 from toolang.execution.records import RunRecord
-from toolang.execution.request import RunRequest
+from toolang.execution.executor.request import RunRequest
 from toolang.state.state import AgentState
 from toolang.work import files
+from toolang.work.records import FileRequestRecord
+from toolang.work.types import FileSnapshot
 
 DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_STABLE_MS = 500.0
@@ -24,7 +27,7 @@ logger = logging.getLogger("toolang.files")
 class FileSubmission:
     """One claimed file request ready for execution."""
 
-    record: files.FileRequestRecord
+    record: FileRequestRecord
     run_id: str
     text: str
     parts: list[dict[str, str]]
@@ -94,13 +97,12 @@ async def run(
                 active[submission.run_id] = asyncio.create_task(
                     executor.run(
                         RunRequest(
-                            group="file",
                             origin="file",
+                            input=Message.user(submission.text),
                             run_id=submission.run_id,
                             thread_id=submission.record.thread_id,
-                            input=submission.text,
                             executable_name="file",
-                            metadata={
+                            context={
                                 "invoke_parts": submission.parts,
                                 "file_request": {
                                     "id": submission.record.request_id,
@@ -173,7 +175,7 @@ def _scan_inbox(
     *,
     now: datetime,
     stable_ms: float,
-) -> tuple[files.FileSnapshot, ...]:
+) -> tuple[FileSnapshot, ...]:
     try:
         root = inbox.expanduser().resolve()
     except OSError as exc:
@@ -182,7 +184,7 @@ def _scan_inbox(
     if not root.is_dir():
         logger.warning("files.inbox_missing inbox=%s", root)
         return ()
-    snapshots: list[files.FileSnapshot] = []
+    snapshots: list[FileSnapshot] = []
     for path in sorted(root.rglob("*")):
         try:
             if not path.is_file():
@@ -200,7 +202,7 @@ def _scan_inbox(
             logger.debug("files.hash_skipped path=%s error=%s", path, exc)
             continue
         snapshots.append(
-            files.FileSnapshot(
+            FileSnapshot(
                 watch_root=str(root),
                 relative_path=relative_path,
                 absolute_path=str(path),

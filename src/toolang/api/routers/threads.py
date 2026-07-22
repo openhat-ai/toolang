@@ -11,18 +11,19 @@ from toolang.api.schemas import (
     ThreadRewindRequest,
 )
 from toolang.base.types.message import Message
-from toolang.execution.projection import ExecutionProjector, command_info_from_record
+from toolang.execution.inspection import ExecutionInspection
 from toolang.execution.records import ThreadPeer
-from toolang.execution.request import RunRequest
+from toolang.execution.executor.request import RunRequest
 from toolang.execution.schemas import (
     RunCommandResult,
+    RunControlInfo,
     ThreadDetail,
     ThreadInfo,
     ThreadResult,
 )
 from toolang.execution.stream import event_data, stream_events
 from toolang.execution.thread import ThreadChange, ThreadOperations
-from .._streaming import ShutdownAwareStreamingResponse, event_stream_response
+from ..common import ShutdownAwareStreamingResponse, event_stream_response
 
 
 router = APIRouter(prefix="/threads", tags=["threads"])
@@ -47,7 +48,7 @@ def threads(
     channel: str | None = None,
     status: str | None = None,
 ) -> list[ThreadInfo]:
-    items = ExecutionProjector(context.executor.store).list_threads(
+    items = ExecutionInspection(context.executor.store).list_threads(
         limit=limit,
         origin=origin,
         channel=channel,
@@ -62,7 +63,7 @@ def thread_detail(
     thread_id: str,
     limit: int = Query(default=50),
 ) -> ThreadDetail:
-    detail = ExecutionProjector(context.executor.store).thread_detail(
+    detail = ExecutionInspection(context.executor.store).thread_detail(
         thread_id, limit=limit
     )
     if detail is None:
@@ -97,9 +98,7 @@ async def rewind_thread(
     )
 
 
-@router.post(
-    "/{thread_id}/fork", summary="Fork Thread", response_model=ThreadResult
-)
+@router.post("/{thread_id}/fork", summary="Fork Thread", response_model=ThreadResult)
 async def fork_thread(
     context: ApiContextDep, thread_id: str, payload: ThreadForkRequest
 ) -> ThreadResult:
@@ -185,20 +184,19 @@ async def _thread_result(
         return ThreadResult(thread=thread_info(context, change.thread_id))
     run, command = await context.submit_run(
         RunRequest(
-            group="chat",
             origin="chat",
+            input=message,
             run_id=change.run_id,
             thread_id=change.thread_id,
-            message=message,
-            metadata={"request_id": request_id} if request_id is not None else {},
+            request_id=request_id,
         )
     )
-    projector = ExecutionProjector(context.executor.store)
+    inspection = ExecutionInspection(context.executor.store)
     return ThreadResult(
         thread=thread_info(context, change.thread_id),
         run=RunCommandResult(
-            run=projector.run_info(run),
-            command=command_info_from_record(run, command),
+            run=inspection.run_info(run),
+            command=RunControlInfo.from_record(run, command),
         ),
     )
 
@@ -206,7 +204,7 @@ async def _thread_result(
 def thread_info(context: ApiContext, thread_id: str) -> ThreadInfo:
     """Return one persisted thread after a write operation."""
 
-    info = ExecutionProjector(context.executor.store).thread_info(thread_id)
+    info = ExecutionInspection(context.executor.store).thread_info(thread_id)
     if info is None:
         raise HTTPException(
             status_code=500,
@@ -218,8 +216,6 @@ def thread_info(context: ApiContext, thread_id: str) -> ThreadInfo:
 def _thread_or_404(context: ApiContext, thread_id: str) -> None:
     if context.executor.store.get_thread(thread_id=thread_id) is not None:
         return
-    if context.executor.store.list_runs(thread_id=thread_id, limit=1):
-        return
     raise HTTPException(status_code=404, detail=f"thread not found: {thread_id}")
 
 
@@ -228,7 +224,7 @@ def _thread_anchor_or_404(context: ApiContext, *, thread_id: str, run_id: str) -
     run = context.executor.store.get_run(run_id=run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
-    if run.thread_id != thread_id:
+    if run.thread != thread_id:
         raise HTTPException(
             status_code=409,
             detail=f"run {run_id} does not belong to thread {thread_id}",

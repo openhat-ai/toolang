@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from toolang.base.error import ToolangError
+from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelAlias
 
 

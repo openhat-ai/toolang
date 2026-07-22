@@ -27,6 +27,7 @@ from toolang.up.mounts import prepare_root_mounts
 from toolang.state import state as cap_store
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.sandbox import AgentSandbox
+from toolang.base.types.message import Message
 from toolang.base.types.model import ModelAlias
 from toolang.base.types.sandbox import (
     SandboxSelector,
@@ -48,20 +49,21 @@ from toolang.plugin.config import (
     parse_sandbox_binding,
 )
 from toolang.common.env_logger import PY_LOG_ENV_VAR
-from toolang.common.web import resolve_ui_base_url
-from toolang.up.web import resolve_cors_allowed_origins
+from toolang.common.config import resolve_ui_base_url
+from toolang.up.config import resolve_cors_allowed_origins
 from toolang.execution.executor import Executor
 from toolang.execution.reply import ReplySink
 from toolang.execution.records import RunRecord
-from toolang.execution.request import ExecutableKind, RunRequest
+from toolang.execution.executor.request import ExecutableKind, RunRequest
 from toolang.plugin.models.resolution import select_model_selectors
 from toolang.execution.store import RunStore, run_store_path
-from toolang.execution.setup import AgentSetup
+from toolang.up.setup import AgentSetup
 from toolang.work.scheduler import DEFAULT_INTERVAL_MS as DEFAULT_SCHEDULER_INTERVAL_MS
 from toolang.work.scheduler import Scheduler
 from toolang.work.store import open_job_store
 from toolang.work.watcher import JobWatcher
-from toolang.catalog.cap import AuthoredCaps, WiredCaps
+from toolang.catalog.cap import AuthoredCaps
+from toolang.catalog.config import WiredCaps
 from toolang.catalog.job import AuthoredJobs
 from toolang.api.app import ApiContext, create_app
 from toolang.work import inbox as files
@@ -297,13 +299,12 @@ def invoke(
         return asyncio.run(
             executor.run(
                 RunRequest(
-                    group="script",
                     origin="script",
+                    input=Message.user(input_text or ""),
                     run_id=run_id,
                     executable_kind=executable_kind,
                     executable_name=executable_name,
-                    input=input_text or "",
-                    metadata=dict(metadata or {}),
+                    context=dict(metadata or {}),
                 ),
                 watcher.current(),
                 reply=reply,

@@ -23,6 +23,8 @@ import frontmatter
 
 from toolang.up import process as agents
 from toolang.catalog import cap as caps
+from toolang.catalog import config as caps_config
+from toolang.catalog.types import CapKind
 from toolang.catalog.job import AuthoredJobs
 from toolang.work.scheduler import Scheduler
 from toolang.work.authoring import assign_missing_authored_job_ids
@@ -30,7 +32,7 @@ from toolang.work.state import AgentJobs, job_thread_id
 from toolang.work.store import JobStore, open_job_store
 from toolang.work.watcher import JobWatcher
 from tests.support.catalog import FixtureLocalAgents
-from toolang.common.error import ToolangError
+from toolang.common.errors import ToolangError
 from toolang.base.protocols.channel import AgentChannel
 from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.channel import (
@@ -61,7 +63,7 @@ from toolang.execution.events import (
     StepEnd,
     StepBegin,
 )
-from toolang.execution.context import (
+from toolang.execution.executor.snapshot import (
     RunSnapshot,
     SnapshotAgent,
     SnapshotProgram,
@@ -88,21 +90,23 @@ from toolang.state import state as cap_state
 from toolang.plugin.config import ChannelBinding, merge_named_configs
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.execution import executor as run_executor_module
-from toolang.execution.assembly import RunInput
-from toolang.execution.binding import _bind_run_request
+from toolang.execution.executor.invocation import AgicInvocation
+from toolang.execution.executor.binding import bind_run_request as bind_request
 from toolang.execution.executor import Executor
-from toolang.execution.request import RunRequest
+from toolang.execution.executor.request import RunRequest
 from toolang.execution.store import PersistSink, RunStore, run_store_path
 from toolang.execution.reply import SseReplySink
-from toolang.execution.setup import AgentSetup
+from toolang.up.setup import AgentSetup
 from tests.support import runtime as inspect
-from toolang.api._streaming import ShutdownAwareStreamingResponse, guarded_stream
+from toolang.api.common import ShutdownAwareStreamingResponse, guarded_stream
 from toolang.api.schemas import ChatRequest, InputMessagePayload, TextInputPart
 from toolang.api.routers import chat as chat_loop
 from toolang.work import inbox as files
 from toolang.up import channels as poll
 from toolang.plugin.tools.loading import load_runtime_tools
+from toolang.plugin.loading import load_loop
 from toolang.work import files as file_requests
+from toolang.work.types import FileSnapshot
 from toolang.state.source import read_authored_source
 from toolang.state.cache import load_home_prepared, load_root_prepared
 from toolang.state import prepare as state_prepare
@@ -138,7 +142,7 @@ def _put_cap(
     agent: str,
     *,
     visibility: PreparedVisibility,
-    kind: caps.CapKind,
+    kind: CapKind,
     name: str,
     body: str = "",
     meta: dict[str, object] | None = None,
@@ -157,12 +161,12 @@ def _wire_cap(
     agent: str,
     *,
     visibility: PreparedVisibility,
-    kind: caps.CapKind,
+    kind: CapKind,
     ref: str,
 ) -> Path:
     canonical = cap_state.resolve_remote_ref(kind, ref)
     _wired_caps(root, agent, visibility).create(
-        caps.CapRef(
+        caps_config.CapRef(
             kind=kind,
             name=cap_state.remote_entry_name(kind, canonical),
             ref=canonical,
@@ -176,9 +180,9 @@ def _unwire_cap(
     agent: str,
     *,
     visibility: PreparedVisibility,
-    kind: caps.CapKind,
+    kind: CapKind,
     name: str,
-) -> caps.CapRef:
+) -> caps_config.CapRef:
     return _wired_caps(root, agent, visibility).remove(kind, name)
 
 
@@ -194,8 +198,10 @@ def _wired_caps(
     root: Path,
     agent: str,
     visibility: PreparedVisibility,
-) -> caps.WiredCaps:
-    return caps.WiredCaps(_cap_directory(root, agent, visibility) / "config.toml")
+) -> caps_config.WiredCaps:
+    return caps_config.WiredCaps(
+        _cap_directory(root, agent, visibility) / "config.toml"
+    )
 
 
 def _agents(root: Path) -> FixtureLocalAgents:
@@ -209,7 +215,7 @@ def _jobs(root: Path, agent: str = "alice") -> AuthoredJobs:
 
 
 def bind_run_request(context, request, *, state=None):
-    return _bind_run_request(
+    return bind_request(
         request,
         id_state_path=context.executor.id_state_path,
         state=state or context.state_watcher.current(),
@@ -344,7 +350,7 @@ def test_sse_response_sink_streams_canceled_run_end() -> None:
 def test_file_request_store_deduplicates_same_fingerprint(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     store = file_requests.open_file_request_store(toolang_root, "alice")
-    snapshot = file_requests.FileSnapshot(
+    snapshot = FileSnapshot(
         watch_root=str(tmp_path / "inbox"),
         relative_path="note.txt",
         absolute_path=str(tmp_path / "inbox" / "note.txt"),
@@ -506,9 +512,7 @@ def test_create_app_mounts_complete_api(tmp_path: Path) -> None:
                 for key, value in thread_detail.items()
                 if key not in {"runs", "event_cursor"}
             } == threads[0]
-            assert [item["id"] for item in thread_detail["runs"]] == [
-                body["run"]["id"]
-            ]
+            assert [item["id"] for item in thread_detail["runs"]] == [body["run"]["id"]]
             assert run_detail["id"] == thread_detail["runs"][0]["id"]
             assert run_detail["input"]["role"] == "user"
             assert run_detail["input"]["parts"][0]["text"] == "say hello"
@@ -1220,9 +1224,7 @@ def test_chat_rewind_supersedes_previous_run_in_thread_projection(
 
             for _ in range(100):
                 thread_detail = client.get(f"/api/v1/threads/{thread_id}").json()
-                if [item["id"] for item in thread_detail["runs"]] == [
-                    new_run_id
-                ]:
+                if [item["id"] for item in thread_detail["runs"]] == [new_run_id]:
                     break
                 time.sleep(0.01)
             old_detail = client.get(f"/api/v1/runs/{old_run_id}").json()
@@ -1270,9 +1272,7 @@ def test_chat_rewind_cancels_running_run_before_superseding(tmp_path: Path) -> N
 
             for _ in range(100):
                 thread_detail = client.get("/api/v1/threads/term_running").json()
-                if [item["id"] for item in thread_detail["runs"]] == [
-                    new_run_id
-                ]:
+                if [item["id"] for item in thread_detail["runs"]] == [new_run_id]:
                     break
                 time.sleep(0.01)
             old_detail = client.get("/api/v1/runs/run_running").json()
@@ -1800,9 +1800,7 @@ def test_chat_returns_failed_run_as_assistant_message(tmp_path: Path) -> None:
     assert failure_step["record"]["index"] == 0
     assert failure_step["record"]["kind"] == "system"
     assert failure_step["record"]["status"] == "failed"
-    assert failure_step["record"]["output"] == [
-        {"type": "text", "text": "model boom"}
-    ]
+    assert failure_step["record"]["output"] == [{"type": "text", "text": "model boom"}]
     assert failure_step["record"]["error"] == "model boom"
     assert failure_step["message"] is None
 
@@ -2042,9 +2040,7 @@ def test_chat_stream_emits_before_run_completion(tmp_path: Path) -> None:
                         ChatRequest(
                             message=InputMessagePayload(
                                 role="user",
-                                parts=[
-                                    TextInputPart(type="text", text="stream me")
-                                ],
+                                parts=[TextInputPart(type="text", text="stream me")],
                                 meta={},
                             ),
                         ),
@@ -2168,9 +2164,7 @@ agic search(_: Part[]):
                     agic="missing",
                     message=InputMessagePayload(
                         role="user",
-                        parts=[
-                            TextInputPart(type="text", text="stream me")
-                        ],
+                        parts=[TextInputPart(type="text", text="stream me")],
                         meta={},
                     ),
                 ),
@@ -2430,7 +2424,7 @@ def test_channel_reply_uses_streaming_delivery_for_telegram(tmp_path: Path) -> N
     )
 
     def fake_assemble(_context: ApiContext, bound):
-        return _fake_run_input(bound)
+        return _fake_agic_invocation(bound)
 
     def fake_execute_stream(_bound, _model, *, on_event) -> RunResult:
         on_event(
@@ -2592,7 +2586,7 @@ def test_channel_reply_sends_typing_before_plain_text_stream(tmp_path: Path) -> 
     )
 
     def fake_assemble(_context: ApiContext, bound):
-        return _fake_run_input(bound)
+        return _fake_agic_invocation(bound)
 
     def fake_execute_stream(_bound, _model, *, on_event) -> RunResult:
         on_event(
@@ -3151,7 +3145,7 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
         tool_selectors=("shell/*",),
         cap_selectors=("skill/local-reviewer",),
     )
-    binding = _bind_run_request(
+    binding = bind_run_request(
         RunRequest(group="chat", origin="chat", input="hello"),
         id_state_path=executor.id_state_path,
         state=watcher.current(),
@@ -4392,7 +4386,7 @@ def test_prepare_reload_refreshes_service_state_without_mutating_setup(
                 context,
                 RunRequest(group="chat", origin="chat", input="hello"),
             )
-            bundle = RunInput.from_binding(context.executor, bound)
+            bundle = AgicInvocation.from_bound_run(context.executor, bound)
             assert [service.name for service in bundle.tool_services] == ["linear"]
             assert bundle.tool_services[0].meta["target"] == (
                 "https://mcp.linear.app/mcp"
@@ -5166,9 +5160,7 @@ def test_jobs_api_supports_task_crud(tmp_path: Path) -> None:
         task = reopened.json()
         assert task["stage"] == "ready"
         assert task["path"] == f"tasks/{task_id}.md"
-        assert [item["id"] for item in client.get("/api/v1/jobs").json()] == [
-            task_id
-        ]
+        assert [item["id"] for item in client.get("/api/v1/jobs").json()] == [task_id]
 
         rearchived = client.post(f"/api/v1/tasks/{task_id}/archive")
         assert rearchived.status_code == 200
@@ -5301,9 +5293,9 @@ def test_jobs_api_supports_chore_crud(tmp_path: Path) -> None:
         chore = reopened.json()
         assert chore["stage"] == "ready"
         assert chore["path"] == f"chores/{chore_id}.md"
-        assert [
-            item["id"] for item in client.get("/api/v1/chores").json()
-        ] == [chore_id]
+        assert [item["id"] for item in client.get("/api/v1/chores").json()] == [
+            chore_id
+        ]
 
         rearchived = client.post(f"/api/v1/chores/{chore_id}/archive")
         assert rearchived.status_code == 200
@@ -5412,7 +5404,7 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     assert task_entry.path is not None
     task_entry.path.write_text("Changed after the run was bound.\n", encoding="utf-8")
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     assert bundle.snapshot is not None
     assert bundle.snapshot.task == SnapshotTask(
@@ -5483,7 +5475,7 @@ def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(
         ),
     )
 
-    instructions = RunInput.from_binding(context.executor, bound).instructions()
+    instructions = AgicInvocation.from_bound_run(context.executor, bound).instructions()
 
     assert "Treat the user's message as the current chore input." in instructions
     assert (
@@ -5616,7 +5608,7 @@ def test_assemble_run_input_prefers_agic_model_over_activation_default(
         RunRequest(group="chat", origin="chat", input="hello"),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     assert bundle.model_selector(context.executor) == "openai/gpt-5[openai]"
     assert bundle.debug["activation_default_model"] == "openai/gpt-5[openai]"
@@ -5649,7 +5641,7 @@ def test_assemble_run_input_accepts_explicit_run_model_within_allowed_set(
         ),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
     runtime_context = cast(dict[str, object], bundle.system_template_context["runtime"])
     model_context = cast(dict[str, object], runtime_context["model"])
 
@@ -5680,7 +5672,7 @@ def test_assemble_run_input_uses_activation_default_when_agic_omits_one(
         RunRequest(group="chat", origin="chat", input="hello"),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     assert bundle.model_selector(context.executor) == "openai/gpt-5[openai]"
     assert bundle.debug["activation_default_model"] == "openai/gpt-5[openai]"
@@ -5740,7 +5732,7 @@ def test_assemble_file_run_input_includes_authored_file_agic_message(
         ),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     text = message_text(bundle.message.parts)
     assert "Write one short text summary to outbox/index.md." in text
@@ -5791,7 +5783,7 @@ def test_child_run_input_uses_authored_agic_message_and_current_input(
 
     draft = context.state_watcher.current().program.find_agic("draft")
     assert draft is not None
-    bundle = RunInput.from_agic(context.executor, child, draft)
+    bundle = AgicInvocation.for_agic(context.executor, child, draft)
     text = message_text(bundle.messages()[0].parts)
 
     assert text.endswith("Draft current input.")
@@ -5828,7 +5820,7 @@ def test_top_level_chat_agic_uses_its_authored_message(tmp_path: Path) -> None:
         ),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     messages = bundle.messages()
     assert len(messages) == 1
@@ -5868,8 +5860,8 @@ def test_assemble_run_input_hides_tools_when_activation_has_no_tools(
         ),
     )
 
-    invoke_bundle = RunInput.from_binding(context.executor, invoke_bound)
-    term_bundle = RunInput.from_binding(context.executor, term_bound)
+    invoke_bundle = AgicInvocation.from_bound_run(context.executor, invoke_bound)
+    term_bundle = AgicInvocation.from_bound_run(context.executor, term_bound)
 
     assert invoke_bundle.tools() == {}
     assert invoke_bundle.snapshot is not None
@@ -5905,7 +5897,7 @@ def test_assemble_run_input_uses_explicit_activation_tools_for_script_runs(
         ),
     )
 
-    invoke_bundle = RunInput.from_binding(context.executor, invoke_bound)
+    invoke_bundle = AgicInvocation.from_bound_run(context.executor, invoke_bound)
 
     assert tuple(invoke_bundle.tools()) == ("shell__execute",)
     assert invoke_bundle.snapshot is not None
@@ -5955,7 +5947,7 @@ def test_assemble_run_input_applies_run_resource_selectors(tmp_path: Path) -> No
         ),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     assert bundle.effective_model_selectors(context.executor) == ("openai/o3[openai]",)
     assert tuple(bundle.tools()) == ("shell__execute",)
@@ -6004,7 +5996,7 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
     )
 
     with caplog.at_level(logging.DEBUG, logger="toolang.run"):
-        bundle = RunInput.from_binding(context.executor, bound)
+        bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     set_math = cast(dict[str, object], bundle.debug["set_math"])
     model_math = cast(dict[str, object], set_math["models"])
@@ -6080,7 +6072,7 @@ def test_assemble_run_input_uses_agic_user_message_for_script_runs(
         ),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     messages = bundle.messages()
     assert [item.role for item in messages] == ["user"]
@@ -6154,7 +6146,7 @@ def test_script_run_can_simulate_history_with_explicit_message_blocks(
         ),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     assert bundle.history == ()
     assert bundle.debug["recall"] == [recall]
@@ -6193,7 +6185,7 @@ def test_script_run_keeps_implicit_user_block_as_single_invoke_message(
         ),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     assert [(item.role, message_text(item.parts)) for item in bundle.messages()] == [
         ("user", "Use one invoke message.\n\ncurrent input"),
@@ -6217,7 +6209,7 @@ def test_assemble_run_input_keeps_thread_messages_out_of_system_instructions(
         RunRequest(group="chat", origin="chat", input="hello"),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     messages = bundle.messages()
     assert [item.role for item in messages] == ["user"]
@@ -6261,7 +6253,7 @@ def test_assemble_run_input_expands_embedded_prompt_for_chat_message(
         ),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     messages = bundle.messages()
     assert [item.role for item in messages] == ["user"]
@@ -6295,7 +6287,7 @@ def test_run_input_prepends_selected_context_to_user_message(tmp_path: Path) -> 
         RunRequest(group="chat", origin="chat", input="hello"),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     assert [item.to_data() for item in bundle.messages()] == [
         {
@@ -6327,7 +6319,7 @@ def test_run_input_debug_logs_computed_prompt_bundle(tmp_path: Path, caplog) -> 
     )
 
     with caplog.at_level(logging.DEBUG, logger="toolang.run"):
-        RunInput.from_binding(context.executor, bound)
+        AgicInvocation.from_bound_run(context.executor, bound)
 
     messages = [
         record.getMessage() for record in caplog.records if record.name == "toolang.run"
@@ -6374,7 +6366,7 @@ def test_chat_run_prefers_named_chat_agic_over_default(tmp_path: Path) -> None:
         RunRequest(group="chat", origin="chat", input="hello"),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     assert bundle.agic.name == "chat"
     instructions = bundle.instructions()
@@ -6403,7 +6395,7 @@ def test_program_default_instruct_overrides_runtime_default(tmp_path: Path) -> N
         RunRequest(group="chat", origin="chat", input="hello"),
     )
 
-    instructions = RunInput.from_binding(context.executor, bound).instructions()
+    instructions = AgicInvocation.from_bound_run(context.executor, bound).instructions()
 
     assert "Agent alice is ready." in instructions
     assert "Reply directly." in instructions
@@ -6434,7 +6426,7 @@ def test_agic_instruct_can_select_named_instruct(tmp_path: Path) -> None:
         ),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     instructions = bundle.instructions()
     assert "Review with review." in instructions
@@ -6458,7 +6450,7 @@ def test_agic_instruct_none_suppresses_agent_instruct_layer(tmp_path: Path) -> N
         ),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     instructions = bundle.instructions()
     assert "<agent-instructions>" not in instructions
@@ -6489,7 +6481,7 @@ def test_agic_instruct_block_renders_as_agent_instruction(tmp_path: Path) -> Non
         ),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     instructions = bundle.instructions()
     assert "Use alice and custom." in instructions
@@ -6514,7 +6506,7 @@ def test_agent_markdown_psyche_files_change_default_behavior(tmp_path: Path) -> 
         RunRequest(group="chat", origin="chat", input="hello"),
     )
 
-    instructions = RunInput.from_binding(context.executor, bound).instructions()
+    instructions = AgicInvocation.from_bound_run(context.executor, bound).instructions()
 
     assert "<agent-instructions>" in instructions
     assert "Use concise root defaults." in instructions
@@ -6560,7 +6552,7 @@ def test_chat_run_uses_program_default_when_chat_agic_is_missing(
         RunRequest(group="chat", origin="chat", input="hello"),
     )
 
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
     instructions = bundle.instructions()
 
     assert bundle.agic.name == "default"
@@ -6821,15 +6813,9 @@ def test_chat_accepts_structured_message_parts_and_model_selector(
     }
     assert body["message"]["parts"][1]["type"] == "image"
     assert body["message"]["parts"][1]["detail"] == "auto"
-    assert (
-        body["message"]["parts"][1]["image_url"]
-        == "https://example.com/image.png"
-    )
+    assert body["message"]["parts"][1]["image_url"] == "https://example.com/image.png"
     assert body["message"]["parts"][2]["type"] == "file"
-    assert (
-        body["message"]["parts"][2]["file_url"]
-        == "https://example.com/report.pdf"
-    )
+    assert body["message"]["parts"][2]["file_url"] == "https://example.com/report.pdf"
     assert body["message"]["parts"][2]["filename"] == "report.pdf"
     assert run_detail["input"]["parts"] == body["message"]["parts"]
 
@@ -7206,7 +7192,7 @@ def test_run_input_uses_structured_thread_history(tmp_path: Path) -> None:
         context,
         RunRequest(group="chat", origin="chat", thread_id="thread-1", input="again"),
     )
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
     messages = bundle.messages()
     instructions = bundle.instructions()
 
@@ -7274,7 +7260,7 @@ def test_run_input_recall_none_disables_thread_history_and_tool_context(
         context,
         RunRequest(group="chat", origin="chat", thread_id="thread-1", input="again"),
     )
-    bundle = RunInput.from_binding(context.executor, bound)
+    bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     messages = bundle.messages()
     assert [item.role for item in messages] == ["user"]
@@ -7412,6 +7398,7 @@ def _build_context(
             if name == "openai"
         },
         model_adapters=load_model_adapters(),
+        loop=load_loop("basic"),
     )
     config_layers = (state.root_config, state.home_config)
     model_aliases = parse_model_aliases(config_layers)
@@ -7439,10 +7426,10 @@ def _build_context(
             agents.agent_home(toolang_root, agent_name)
         ),
         shared_authored_caps=caps.AuthoredCaps(toolang_root),
-        private_wired_caps=caps.WiredCaps(
+        private_wired_caps=caps_config.WiredCaps(
             agents.agent_home(toolang_root, agent_name) / "config.toml"
         ),
-        shared_wired_caps=caps.WiredCaps(toolang_root / "config.toml"),
+        shared_wired_caps=caps_config.WiredCaps(toolang_root / "config.toml"),
         channel_bindings=channel_bindings or {},
         channel_plugins=channel_plugins or {},
         executor=executor,
@@ -7462,7 +7449,6 @@ async def _run_delivery(
         get_agent_state=context.state_watcher.current,
         plugins=context.channel_plugins,
         home=context.home,
-        group="poll",
         binding_name=binding_name,
         delivery=delivery,
     )
@@ -7532,7 +7518,7 @@ def _chat_message(text: str) -> dict[str, object]:
     }
 
 
-def _fake_run_input(bound):
+def _fake_agic_invocation(bound):
     input_message = bound.message or Message.user(bound.input_text or "hello")
 
     class RunInputStub:
@@ -7745,15 +7731,17 @@ def _model_detail(
 
 @contextmanager
 def _patched_run_input_assembly(fake_assemble):
-    def fake_from_agic(context: ApiContext, bound, _agic):
+    def fake_for_agic(context: ApiContext, bound, _agic):
         return fake_assemble(context, bound)
 
     with (
         patch.object(
-            run_executor_module.RunInput, "from_binding", side_effect=fake_assemble
+            run_executor_module.AgicInvocation,
+            "from_bound_run",
+            side_effect=fake_assemble,
         ),
         patch.object(
-            run_executor_module.RunInput, "from_agic", side_effect=fake_from_agic
+            run_executor_module.AgicInvocation, "for_agic", side_effect=fake_for_agic
         ),
     ):
         yield
@@ -7767,7 +7755,7 @@ def _patched_executor_execution():
         current["run_id"] = bound.run_id
         current["thread_id"] = bound.thread_id
         current["input_text"] = bound.input_text
-        return _fake_run_input(bound)
+        return _fake_agic_invocation(bound)
 
     def fake_run(context) -> RunResult:
         output_text = f"assistant:{current['input_text']}"
@@ -7814,7 +7802,7 @@ def _patched_executor_execution_with_tools(*, output_text: str):
     def fake_assemble(_context: ApiContext, bound):
         current["run_id"] = bound.run_id
         current["thread_id"] = bound.thread_id
-        return _fake_run_input(bound)
+        return _fake_agic_invocation(bound)
 
     def fake_run(context) -> RunResult:
         if context.on_event is not None:
@@ -8018,7 +8006,7 @@ def _patched_executor_execution_with_tools(*, output_text: str):
 @contextmanager
 def _patched_executor_failure(message: str):
     def fake_assemble(_context: ApiContext, bound):
-        return _fake_run_input(bound)
+        return _fake_agic_invocation(bound)
 
     def fake_run(_context):
         raise RuntimeError(message)
@@ -8043,7 +8031,7 @@ def _patched_executor_streaming_text(release: threading.Event):
     def fake_assemble(_context: ApiContext, bound):
         current["run_id"] = bound.run_id
         current["thread_id"] = bound.thread_id
-        return _fake_run_input(bound)
+        return _fake_agic_invocation(bound)
 
     def fake_run(context) -> RunResult:
         return RunResult(output_text="streaming hello")

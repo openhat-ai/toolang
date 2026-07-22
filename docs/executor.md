@@ -1,487 +1,190 @@
-# Executor Design
+# RunExecutor Design
 
-This document defines the target executor for the semantic AST in
-`toolang.lang.ast`.
-
-
-## Boundaries
-
-The executor consumes the existing AST directly:
-
-```text
-Program.agics  -> AgicDecl[]
-Program.flows  -> FlowDecl[]
-FlowDecl.stmts -> FlowStmt[]
-```
-
-It must not introduce parallel `Plan`, `Runnable`, `Agic`, or `Flow` models.
-Named and generated inline agics already live in `Program.agics`; generated
-names such as `<agic:12>` are resolved exactly like authored names.
-
-The runtime uses these boundaries:
-
-```text
-AgentSetup     installed tool, model-provider, and model-adapter implementations
-AgentState     immutable effective program, config, and cap snapshot
-RunRequest     external executable input and selection
-Executor       request acceptance plus agic, flow, and step execution
-RunStore       durable trace projection
-```
-
-`AgentSetup` is fixed when the executor is constructed. `Executor.run()`
-receives one explicit `AgentState`, and all child runs retain that same object.
-Effective service definitions are projected from that captured state into tool
-call context instead of being copied into `AgentSetup` at process startup.
-Process assembly, watchers, channels, CLI, and HTTP are outside the executor.
+`RunExecutor` executes one immutable `AgentSetup`, `AgentState`, and
+`RunRequest` combination while keeping durable truth ahead of external
+observation.
 
 
-## Runtime Values
-
-Toolang values are runtime data, not model messages. `Message` and `Part`
-belong to model calls, command input, and response projection.
+## Public Shape
 
 ```python
-Shape = Literal["none", "item", "list"]
-
-
-@dataclass(frozen=True, slots=True)
-class Local:
-    value: object = None
-    shape: Shape = "none"
-
-
-locals: dict[str, Local]
-```
-
-Shapes describe flow cardinality, not Toolang value types:
-
-```text
-none  no value
-item  one value, including one value whose type is T[] or Part[]
-list  an ordered flow collection, including an empty collection
-```
-
-`_` is the primary local:
-
-- accepted run input initializes `_`
-- an unqualified statement writes `_`
-- a completed run returns `_`
-
-Named parameters and `let` bindings use other local names. There is no
-`Locals`, `Cell`, or `Frame` class.
-
-`Local` contains no durable references. `InputRef` and `OutputRef` belong to
-the persistence projection maintained by `PersistSink`, not to executor data.
-
-
-## Atomic Local Updates
-
-A step receives a read-only snapshot of the current locals and returns one
-`Local`. It must not mutate the supplied dictionary.
-
-```text
-snapshot = dict(locals)
-result = execute step against snapshot
-if the step succeeds:
-  update locals according to stmt.binding
-```
-
-Bindings are:
-
-```text
-"_"    replace the primary local
-name   replace one named local
-None   discard the result
-```
-
-Failed or canceled steps leave locals unchanged. A nested control step uses a
-private working copy; only the control step's final result can be committed to
-its parent. Parallel branches each receive the same initial snapshot and can
-never observe sibling updates.
-
-
-## Snapshot Rule
-
-Each call to `Executor.run()` captures its explicit `AgentState` and the
-executor's `AgentSetup` before emitting `run_starting`.
-
-Child runs are accepted immediately with their parent's snapshot:
-
-```python
-child = accept_child(parent, run_id=new_run_id())
-```
-
-A state or effective-tool update therefore affects only requests accepted
-later. It cannot change a running run or any descendant of that run.
-
-
-## Ownership
-
-The executor accepts start requests and command requests. It allocates ids and
-emits command events without writing execution records directly.
-
-```text
-Executor  run_starting, run_steering, run_stopping,
-          run_begin, child run_starting, step/part events, run_end
-```
-
-`run_waiting` is reserved for a resource-specific scheduler that delays an
-accepted request. A general top-level run queue is not part of execution.
-
-The executor emits each trace fact once. Sinks consume that stream:
-
-```text
-Executor -> TraceEventHandler -> PersistSink
-                             -> ReplySink(s)
-                             -> resource event bus
-```
-
-- `PersistSink` is the only component that creates or updates execution
-  records.
-- `ReplySink` implementations produce buffered, streaming, channel, and UI
-  replies.
-- The executor never writes SQL, record objects, SSE payloads, or terminal
-  output directly.
-
-
-## Executor Shape
-
-```python
-class Executor:
-    def __init__(
+class RunExecutor:
+    async def start(
         self,
-        *,
-        root: Path,
-        name: str,
-        home: Path,
-        id_state_path: Path,
         setup: AgentSetup,
-        store: RunStore,
-        model_aliases: Mapping[str, ModelAlias],
-        default_models: Sequence[str],
-        model_environ: Mapping[str, str],
-        default_model_selector: str | None = None,
-        allowed_model_selectors: Sequence[str] = (),
-        trace: TraceEventHandler | None = None,
-    ) -> None: ...
-
-    async def run(
-        self,
-        request: RunRequest,
         state: AgentState,
+        request: RunRequest,
         *,
-        reply: ReplySink | None = None,
+        tracer: RunTracer | None = None,
     ) -> RunRecord: ...
 
-    def allocate_run_id(self) -> str: ...
-    def steer(...) -> CommandRecord: ...
-    async def stop(...) -> tuple[CommandRecord, RunRecord]: ...
-    async def close() -> None: ...
+    def steer(
+        self,
+        *,
+        run_id: str,
+        message: Message,
+        timing: RunControlTiming,
+        request_id: str | None = None,
+    ) -> RunControlRecord: ...
+
+    def stop(
+        self,
+        *,
+        run_id: str,
+        timing: RunControlTiming = "immediate",
+        request_id: str | None = None,
+        reason: str | None = None,
+    ) -> RunControlRecord: ...
 ```
 
-`run()` combines `PersistSink`, the optional process trace projection, and the
-optional per-run `ReplySink` before accepting the request. The returned
-`RunRecord` is the terminal durable projection. Per-run mutable execution state
-is private and is never shared by concurrent top-level runs.
-
-Runtime owners create and retain asyncio tasks when they need background
-execution; the executor does not queue, spawn, or retain those tasks. `steer()`
-and `stop()` reserve a command index atomically through `RunStore`, emit the
-corresponding trace event, and forward it to the active reply when the run is
-local. An immediate stop cancels a local task and marks a non-local durable run
-canceled. `close()` cancels and awaits active tasks owned by the current
-process.
-
-Command-index reservation is coordination state, not an execution record.
-Commands themselves are still created only when `PersistSink` consumes the
-accepted command event.
-
-
-## Run Execution
-
-```text
-Executor.run(request, state)
-  accept request and capture state + setup
-  emit run_starting
-  resolve executable from state.program
-  locals = {"_": Local()}
-  initialize `_` and named locals from the accepted command
-  emit run_begin input=InputRef(cmd=0)
-
-  try
-    if executable is AgicDecl
-      result = _execute_agic(binding, executable, locals)
-      locals["_"] = result
-    else
-      result = _execute_flow(binding, executable, locals)
-  on cancellation
-    emit run_end[canceled] with the consumed stop InputRef when present
-    re-raise
-  on error
-    emit run_end[failed] from the current primary local
-    re-raise
-  otherwise
-    emit run_end[finished] from the current primary local
-
-  return locals["_"]
-```
-
-The top-level executable is not wrapped in a synthetic step. A child
-executable runs recursively inside the statement step that called it, and the
-child run's `parent` is that `StepPath`.
-
-
-## Agic Execution
-
-`_execute_agic()` reuses the model/tool loop. It builds model input from the
-run's immutable snapshot and locals, then lets the loop emit dynamic `model`
-and `tool` steps.
-
-The final assistant parts are decoded at the agic boundary:
-
-```text
-assistant Message.parts
-  -> decode according to AgicDecl.output
-  -> Local(value, shape=item)
-```
-
-Without a declared output type, the agic returns its normal assistant content.
-Structured output types select and validate the model's structured response
-mode. Flow statements never parse model text independently.
-
-
-## Flow Execution
-
-```text
-_execute_flow(binding, flow, locals)
-  for index, stmt in enumerate(flow.stmts)  # index starts at 0
-    result = _execute_stmt(
-      binding,
-      dict(locals),
-      parent=binding.run_id,
-      index=index,
-      stmt=stmt,
-    )
-    update locals in place according to stmt.binding
-
-  return locals["_"]
-```
-
-The update after `_execute_stmt()` is intentionally visible. It is the only
-point where one flow statement changes the locals observed by the next
-statement.
-
-
-## Statement Execution
-
-`_execute_stmt()` owns common tracing and dispatch:
-
-```text
-path  = child path(parent, index)
-basis = locals.get("_", Local())
-
-emit step_begin(
-  path,
-  kind,
-  input=explicit inputs and consumed command refs,
-  context={binding, reads, placement, source},
-)
-
-try
-  mid = execute the concrete statement kind
-  result = reshape(stmt, basis, mid)
-except cancellation
-  emit step_end[canceled]
-  re-raise
-except error
-  emit step_end[failed]
-  re-raise
-else
-  emit step_end[finished] with result and detail
-  return result
-```
-
-The three values have distinct roles:
-
-- `basis` is the primary local before the statement.
-- `mid` is the direct operation result.
-- `result` is the value after the statement-specific reshape.
-
-The wrapper does not update locals. Its caller applies the returned result only
-after the terminal step event has been emitted successfully.
-
-
-## Statement Mapping
-
-```text
-AST node       step kind  operation                            reshape
-RunStmt        run        one child agic or flow               none
-SeekStmt       agent      one child run on another agent       none
-AskStmt        human      wait for human input                 none
-ScatterStmt    run        one child run                        unfold
-StormStmt      par        N independent child runs             list
-GatherStmt     run        one child run                        fold
-SettleStmt     loop       sequential reducer child runs        item
-MapStmt        par        one child run per item                list
-KeepStmt       par/system predicates or positional selection   filter keep
-DropStmt       par/system predicates or positional selection   filter drop
-RankStmt       par        one score per item                    stable rank
-RepeatStmt     loop       repeated nested statements           last result
-LetStmt        system     authored value                       none
-```
-
-The step kinds are:
-
-```text
-run | agent | human | model | tool | par | loop | system
-```
-
-`unfold`, `fold`, filtering, and ranking are executor reshapes, not step kinds.
-A flow body is already sequential and does not require a synthetic `seq` step.
-
-
-## Reshapes
-
-```text
-none
-  result = mid
-
-unfold
-  require one produced array-like value
-  scatter additionally requires exactly its declared item count
-  result = Local(items, shape=list)
-
-fold
-  require one produced value
-  result = Local(value, shape=item)
-
-filter keep/drop
-  require basis.shape=list
-  select basis items using positional rules or mid predicates
-  result = Local(selected, shape=list)
-
-rank
-  require basis.shape=list
-  stable-sort basis items by mid scores, highest first
-  optionally retain top N or bottom N
-  result = Local(selected, shape=list)
-```
-
-Keep, drop, and rank use both `basis` and `mid`: the basis holds the items,
-while the mid value holds predicates or scores.
-
-
-## Child Runs
-
-Runnable statements share one helper:
+`RunRequest` contains only values selected for one invocation:
 
 ```python
-async def _run_runnable(
-    self,
-    parent,
-    locals: Mapping[str, Local],
-    step: StepPath,
-    runnable: str,
-    placement: Mapping[str, object] | None,
-) -> Local: ...
+@dataclass(frozen=True, slots=True)
+class RunRequest:
+    origin: str
+    input: Message = field(default_factory=lambda: Message.user(""))
+    run_id: str | None = None
+    thread_id: str | None = None
+    executable_kind: Literal["agic", "flow"] = "agic"
+    executable_name: str | None = None
+    model_selector: str | None = None
+    request_id: str | None = None
+    context: dict[str, object] = field(default_factory=dict)
 ```
 
-It resolves the runnable from the captured `AgentState.program`, allocates a
-child run id, emits `run_starting` with `parent=step`, and enters the private
-child-run execution path with the same state and setup. Child runs never call
-the public `Executor.run()` entry point. The event stream, not this helper,
-causes child records to be persisted.
+The request does not duplicate installed tools, model providers, or model
+adapters from `AgentSetup`, nor the program and effective caps from
+`AgentState`. Agic directives select from those captured resources. The
+optional singular model selector is the caller's per-run model choice;
+available and default model selectors remain process-level executor inputs.
 
-The child owns a new locals dictionary. Its `_` is initialized from the call
-input, and matching named parameters are copied as values. Child updates never
-write into parent locals.
+There is no `run()`, `execute()`, `spawn()`, or `start()` background-task
+variant. The caller decides whether to await `start()` directly or place it in
+an application-owned task.
 
 
-## Parallel Statements
+## Acceptance
 
-`StormStmt`, `MapStmt`, predicate `KeepStmt`/`DropStmt`, and `RankStmt` use one
-bounded ordered execution mechanism.
+Binding resolves explicit runtime inputs and allocates a process-safe run ID
+and thread ID when absent. A missing thread is synchronously created before run
+acceptance.
 
-The outer `par` step has one deterministic path. Every spawned child run points
-back to that path:
+`RunStore.accept_start()` uses `BEGIN IMMEDIATE` to:
+
+1. validate the thread;
+2. reject a conflicting run ID;
+3. insert the pending `RunRecord`;
+4. insert start `RunControlRecord(index=0)`;
+5. commit ownership to exactly one process.
+
+A retry with the same run and request ID returns existing truth. The retrying
+process never executes the run.
+
+
+## Active Ownership
+
+The local active registry maps every active run ID in one run tree to the
+top-level owner task and tracer. It is a task-ownership index, not the durable
+source of admission truth.
+
+Child runs receive their own process-safe IDs, run records, and index-zero
+start controls before `RunBegin`. They execute in the top-level owner task and
+inherit its setup, state, and tracer.
+
+
+## Execution Structure
+
+`RunExecutor` is the process-level singleton. Each owned root run creates one
+private `_Execution` that carries the state shared by its recursive run tree.
+The implementation is divided by semantic level:
+
+- `common.py` binds `RunRequest` to immutable state, setup, and durable IDs;
+- `prepare.py` resolves an agic's model, tools, caps, prompt, history, and
+  adapter in one pass;
+- `runs/agic.py` owns the fixed model-tool cycle for one agic;
+- `runs/flow.py` advances through lowered flow statements and updates locals;
+- `stmts/` implements lowered statement semantics and chooses a step type;
+- `steps/` owns executable step boundaries and their `StepBegin`, part, and
+  `StepEnd` events.
+
+Preparation produces one `PreparedAgic` consumed directly by the agic run.
+There is no loop plugin or public run-context protocol, and there are no
+separate effective-resource, invocation, model-call assembly, or tool-snapshot
+layers.
+
+The `_Execution` object emits `RunBegin` and `RunEnd` and dispatches each
+accepted executable to the appropriate run body. A top-level agic or flow has
+no containing step. When a flow statement invokes another agic or flow,
+`steps/run.py` emits the containing run-step events around the child run:
 
 ```text
-outer step:         run_abc123/2
-child run parent:   run_abc123/2
-child run steps:    run_child1/0, run_child2/0, ...
+StepBegin(run)
+  RunBegin(child)
+    child steps
+  RunEnd(child)
+StepEnd(run)
 ```
 
-Each worker receives a copy of the same parent snapshot with `_` replaced by
-its item. Completion order does not affect paths or result order. Placement is
-trace context rather than executor state:
-
-```text
-item: {index, count}
-lane: {index, count}
-```
-
-If one branch fails, the executor cancels and awaits every unfinished sibling
-before emitting the outer `step_end`. A parent step or run therefore never
-ends while one of its visible descendants is still live.
+This distinction is made at the event source. The sink and tracer observe the
+same canonical event sequence and never filter a synthetic top-level step.
 
 
-## Repeat And Settle
+## Control Observation
 
-`RepeatStmt` and `SettleStmt` each emit one `loop` step. Their child statements
-run against a private working copy of parent locals. Successful children update
-that copy in order; the parent sees only the loop's final returned `Local`.
+Any process may call `steer()` or `stop()` because both only write to shared
+SQLite truth. The owner process polls pending controls for locally active run
+IDs at a short fixed interval.
 
-Repeat child context records the iteration and body position. It returns the
-last completed child result, or `Local()` if no child ran. An `until` agic runs
-after each completed body iteration.
+An `immediate` stop cancels the owner task. `next_step` and `next_call` controls
+are consumed at runtime checkpoints. Flows check before statements and calls;
+agics check before model and tool calls.
 
-Settle requires `shape=list`. It invokes its reducer once per item in order.
-Each child receives the item as `_` and the previous result as `accumulator`;
-the final accumulator is the loop result.
-
-
-## Commands And Cancellation
-
-The executor consumes accepted commands at agic-loop and flow-statement
-checkpoints. Command acceptance and application are separate trace facts, as
-defined in [run-step-records.md](./run-step-records.md).
-
-Command application is expressed through existing event inputs: `run_begin`
-references start, `step_begin` references steer, and `run_end` references the
-stop command that caused cancellation. A terminal `run_end` causes any
-unapplied commands to be projected as canceled.
-
-Stopping cancels the active task. During unwinding, the executor emits terminal
-child-step and child-run events before the parent `run_end[canceled]`. The
-executor is the sole owner of terminal `run_end` events.
-
-`now` and `next_step` commands are consumed at the next statement or dynamic
-model/tool step. `next_call` waits until the next statement that can call a
-runnable, agent, human, model, or tool. The consuming `step_begin` includes a
-steer command's `InputRef`; a consumed stop command is referenced by
-`run_end.input`. Without that edge the command remains pending and cannot
-affect locals or model input.
+Local submissions deliberately use the same SQLite polling path as remote
+submissions. There is no `asyncio.Event`, wake channel, or process-local fast
+path whose behavior can diverge.
 
 
-## Persistence Projection
+## Event Ordering
 
-`PersistSink` owns record and lineage state derived from trace events. In
-particular, it maps run locals to their latest `InputRef` or `OutputRef` using
-step context such as `binding` and `reads`.
+Runtime emits only canonical `RunEvent` values. `RunExecutor` handles each one
+in this order:
 
-```text
-start command input -> `_` provenance is InputRef(cmd=0)
-successful step     -> selected binding provenance is OutputRef(step=path)
-discarded result    -> no binding provenance changes
-run end             -> RunRecord.output uses `_` provenance when it is an OutputRef
-```
+1. `PersistSink.on_event(event)`;
+2. update control statuses referenced by the persisted event;
+3. maintain the local active-run index;
+4. call the optional `RunTracer`.
 
-This projection is deliberately separate from executor locals. A new reply or
-persistence sink can consume the same semantic trace without changing step
-execution.
+Tracer exceptions are logged and ignored. Persistence or control-transition
+errors remain execution failures because they compromise durable truth.
 
 
-## Deferred Statements
+## Terminal Behavior
 
-Target-agent resolution for `SeekStmt` and the suspension protocol for
-`AskStmt` remain outside this executor version.
+Successful execution emits one `RunEnd(finished)`. Runtime exceptions emit one
+`RunEnd(failed)`. Cancellation unwinds steps and child runs before the root
+`RunEnd(canceled)`.
+
+If cancellation came from a stop control, `RunEnd.input` references it. The
+runtime marks that control `finished` and marks all other pending controls
+`failed` because they can no longer reach an applicable checkpoint.
+
+
+## Persistence
+
+`RunExecutor` always constructs `PersistSink(store)`. History is required for
+later model calls, so persistence is not a pluggable executor capability.
+
+`PersistSink` projects only run and step facts. It does not accept controls,
+change control statuses, store live events, or translate events into API/CLI
+protocols.
+
+
+## Streaming
+
+Model providers stream deltas whenever supported. The executor never disables
+provider streaming based on caller type. A tracer can ignore `PartDelta` and
+observe only step or run boundaries.
+
+API SSE, TUI rendering, channel replies, and buffered responses are tracer or
+transport implementations outside `toolang.execution`.

@@ -5,19 +5,18 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 
 import click
 import typer
 from typer.core import TyperCommand
 
 from ....catalog import templates
+from ....catalog.types import JobStage
 from toolang.up.process import agent_home
-from ....execution.types import UpdateKind
 from toolang.state.source import read_authored_source
 from toolang.catalog.job import AuthoredJobs, JobFile
-from toolang.catalog.types import JobStage
-from toolang.catalog.error import CatalogError
+from toolang.catalog.errors import CatalogError
 from toolang.work.authoring import (
     allocate_authored_job_id,
     assign_missing_authored_job_ids,
@@ -415,7 +414,7 @@ def _notify(root: Path, agent: str, kind: JobKind, id: str, path: Path) -> None:
     append_agent_update(
         root,
         agent,
-        cast(UpdateKind, f"{kind}_changed"),
+        f"{kind}_changed",
         {"id": id, "path": str(path)},
     )
 

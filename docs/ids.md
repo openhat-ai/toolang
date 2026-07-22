@@ -196,6 +196,8 @@ keeping the directory compact.
 - `decode_id(...)`
 - `reserve_next_id(...)`
 - `allocate_id(...)`
+- `allocate_run_id(...)`
+- `allocate_thread_id(...)`
 - `archive_prefix(...)`
 
 These helpers are used by local task, chore, thread, and run creation.

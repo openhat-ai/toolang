@@ -38,6 +38,14 @@ from .blocks import (
 
 
 @dataclass(frozen=True, slots=True)
+class ChatUIEvent:
+    """One input or runtime event consumed by the chat UI."""
+
+    type: str
+    value: str | TraceEvent | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class MutableBlockKey:
     run_id: str
     family: Literal["command", "step", "run"]

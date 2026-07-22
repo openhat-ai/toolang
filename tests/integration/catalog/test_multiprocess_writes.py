@@ -6,8 +6,9 @@ from pathlib import Path
 
 import frontmatter
 
-from toolang.catalog.cap import AuthoredCaps, CapFile, CapRef, WiredCaps
-from toolang.catalog.error import CatalogConflictError
+from toolang.catalog.cap import AuthoredCaps, CapFile
+from toolang.catalog.config import CapRef, WiredCaps
+from toolang.catalog.errors import CatalogConflictError
 from toolang.catalog.job import AuthoredJobs, JobFile, JobKind
 from toolang.work.authoring import (
     allocate_authored_job_id,

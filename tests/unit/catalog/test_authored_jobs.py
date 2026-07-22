@@ -9,7 +9,7 @@ from typing import cast
 
 import pytest
 
-from toolang.catalog.error import (
+from toolang.catalog.errors import (
     CatalogConflictError,
     CatalogNotFoundError,
     DuplicateJobIdError,

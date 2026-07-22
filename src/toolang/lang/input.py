@@ -6,7 +6,7 @@ import re
 from re import Match
 import shlex
 
-from toolang.base.error import ToolangError
+from toolang.base.errors import ToolangError
 
 from .ast import Parameter, Program
 

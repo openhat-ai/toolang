@@ -9,14 +9,16 @@ from typing import Any
 
 import httpx
 
-from toolang.common.error import ToolangError
+from toolang.common.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.execution.store import RunStore, PersistSink, utc_now
-from toolang.execution.events import RunBegin, RunEnd, RunStarting, StepBegin, StepEnd
-from toolang.execution.records import InputRef, OutputRef, ThreadPeer, ThreadRecord
+from toolang.common.time import utc_now
+from toolang.execution.store import RunStore
+from toolang.execution.executor.persist import PersistSink
+from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
+from toolang.execution.records import RunControlRef, OutputRef, ThreadPeer, ThreadRecord
 from toolang.common.ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
 
 DEFAULT_TIMEOUT_SEC = 60
@@ -37,7 +39,9 @@ class AgentChatPlugin:
 
     config: dict[str, Any]
     name: str = "agent_chat"
-    description: str | None = "Ask configured peer Toolang agents through their chat API."
+    description: str | None = (
+        "Ask configured peer Toolang agents through their chat API."
+    )
     _peers: dict[str, AgentPeer] = field(init=False, repr=False)
     _timeout_sec: float = field(init=False, repr=False)
     _max_response_chars: int = field(init=False, repr=False)
@@ -45,7 +49,9 @@ class AgentChatPlugin:
 
     def __post_init__(self) -> None:
         self._peers = _parse_peers(self.config.get("peers"))
-        self._timeout_sec = float(_positive_int(self.config.get("timeout_sec"), default=DEFAULT_TIMEOUT_SEC))
+        self._timeout_sec = float(
+            _positive_int(self.config.get("timeout_sec"), default=DEFAULT_TIMEOUT_SEC)
+        )
         self._max_response_chars = _positive_int(
             self.config.get("max_response_chars"),
             default=DEFAULT_MAX_RESPONSE_CHARS,
@@ -56,7 +62,10 @@ class AgentChatPlugin:
         return dict(self._tools)
 
     def _build_tools(self) -> dict[str, AgentTool]:
-        @tool(name="peers", description="List configured peer agents available for agent_chat.")
+        @tool(
+            name="peers",
+            description="List configured peer agents available for agent_chat.",
+        )
         def peers() -> dict[str, Any]:
             return {
                 "peers": [
@@ -82,7 +91,7 @@ class AgentChatPlugin:
                     "peer": {
                         "description": (
                             "Either a configured peer name string or an object like "
-                            "{\"name\":\"bob\",\"endpoint\":\"http://127.0.0.1:7002\"}."
+                            '{"name":"bob","endpoint":"http://127.0.0.1:7002"}.'
                         ),
                         "oneOf": [
                             {"type": "string"},
@@ -130,7 +139,9 @@ class AgentChatPlugin:
                 local_thread = (
                     _load_local_thread(store, thread)
                     if thread is not None
-                    else _find_or_create_local_thread(store, context, parent=current_run.thread_id, peer=target.name)
+                    else _find_or_create_local_thread(
+                        store, context, parent=current_run.thread, peer=target.name
+                    )
                 )
                 if local_thread.peer.name != target.name:
                     raise ToolangError(
@@ -152,9 +163,13 @@ class AgentChatPlugin:
                 if peer_thread is not None:
                     payload["thread"] = peer_thread
                 response = (
-                    _stream_chat(target.endpoint, payload, timeout_sec=self._timeout_sec)
+                    _stream_chat(
+                        target.endpoint, payload, timeout_sec=self._timeout_sec
+                    )
                     if stream
-                    else _post_chat(target.endpoint, payload, timeout_sec=self._timeout_sec)
+                    else _post_chat(
+                        target.endpoint, payload, timeout_sec=self._timeout_sec
+                    )
                 )
                 remote_thread = str(response.get("thread_id", "")).strip()
                 if not remote_thread:
@@ -162,7 +177,9 @@ class AgentChatPlugin:
                 if local_thread.peer.thread != remote_thread:
                     local_thread = store.update_thread_peer(
                         thread_id=local_thread.thread_id,
-                        peer=ThreadPeer(type="agent", name=target.name, thread=remote_thread),
+                        peer=ThreadPeer(
+                            type="agent", name=target.name, thread=remote_thread
+                        ),
                     )
                 full_assistant_text = _assistant_text(response)
                 assistant_text = full_assistant_text[: self._max_response_chars]
@@ -208,7 +225,9 @@ class AgentChatPlugin:
             raise ToolangError("agent_chat peer cannot be empty")
         peer = self._peers.get(peer_name)
         if peer is None:
-            raise ToolangError(f"unknown agent_chat peer: {peer_name}; pass an object with name and endpoint")
+            raise ToolangError(
+                f"unknown agent_chat peer: {peer_name}; pass an object with name and endpoint"
+            )
         return peer
 
 
@@ -240,7 +259,11 @@ def _positive_int(value: object, *, default: int) -> int:
     if value is None:
         return default
     try:
-        parsed = value if isinstance(value, int) and not isinstance(value, bool) else int(str(value))
+        parsed = (
+            value
+            if isinstance(value, int) and not isinstance(value, bool)
+            else int(str(value))
+        )
     except (TypeError, ValueError) as exc:
         raise ToolangError("agent_chat integer config is invalid") from exc
     if parsed <= 0:
@@ -256,7 +279,9 @@ def _load_local_thread(store: RunStore, thread_id: str | None) -> ThreadRecord:
     if record is None:
         raise ToolangError(f"agent_chat local thread not found: {thread}")
     if record.peer.type != "agent":
-        raise ToolangError(f"agent_chat local thread is not an agent peer thread: {thread}")
+        raise ToolangError(
+            f"agent_chat local thread is not an agent peer thread: {thread}"
+        )
     return record
 
 
@@ -268,15 +293,26 @@ def _find_or_create_local_thread(
     peer: str,
 ) -> ThreadRecord:
     for thread in store.list_threads():
-        if thread.parent == parent and thread.peer.type == "agent" and thread.peer.name == peer:
+        control = store.get_thread_control(
+            thread_id=thread.thread_id, index=thread.created_by.index
+        )
+        if (
+            control is not None
+            and control.context.get("parent") == parent
+            and thread.peer.type == "agent"
+            and thread.peer.name == peer
+        ):
             return thread
-    value = allocate_id(context.home / ".runtime" / "ids.json", family=LOCAL_ID_FAMILY).value
-    return store.ensure_thread(
+    value = allocate_id(
+        context.home / ".runtime" / "ids.json", family=LOCAL_ID_FAMILY
+    ).value
+    thread, _control, _created = store.create_thread(
         thread_id=f"script_{value}",
         origin="chat",
         peer=ThreadPeer(type="agent", name=peer, thread=None),
-        parent=parent,
+        context={"parent": parent},
     )
+    return thread
 
 
 def _record_local_a2a_exchange(
@@ -291,6 +327,9 @@ def _record_local_a2a_exchange(
 ) -> str:
     run_id = f"run_{allocate_id(context.home / '.runtime' / 'ids.json', family=RUN_ID_FAMILY).value}"
     started_at = utc_now()
+    thread_control = store.get_thread_control(
+        thread_id=thread.thread_id, index=thread.created_by.index
+    )
     input_message = Message(
         role="user",
         parts=(TextPart(text=message),),
@@ -299,7 +338,11 @@ def _record_local_a2a_exchange(
                 "peer": peer,
                 "remote_thread": thread.peer.thread,
                 "remote_run_id": remote_run_id,
-                "parent_thread": thread.parent,
+                "parent_thread": (
+                    thread_control.context.get("parent")
+                    if thread_control is not None
+                    else None
+                ),
             }
         },
     )
@@ -310,30 +353,29 @@ def _record_local_a2a_exchange(
         "call": "agent_chat",
     }
     sink = PersistSink(store)
-    sink.on_event(
-        RunStarting(
-            run=run_id,
-            cmd=0,
-            parent=None,
-            thread=thread.thread_id,
-            input=input_message,
-            context=run_context,
-            created_at=started_at,
-        )
+    store.accept_start(
+        run_id=run_id,
+        parent=None,
+        thread=thread.thread_id,
+        input=input_message,
+        context=run_context,
+        request_id=None,
+        created_at=started_at,
     )
     sink.on_event(
         RunBegin(
             run=run_id,
-            input=InputRef(cmd=0),
+            input=RunControlRef(index=0),
             context=run_context,
             started_at=started_at,
         )
     )
+    store.finish_run_controls(run_id=run_id, indexes=(0,), finished_at=started_at)
     sink.on_event(
         StepBegin(
             step=f"{run_id}/0",
             kind="model",
-            input=(InputRef(cmd=0),),
+            input=(RunControlRef(index=0),),
             context={"model_ref": f"agent_chat/{peer}"},
             started_at=started_at,
         )
@@ -367,7 +409,9 @@ def _record_local_a2a_exchange(
     return run_id
 
 
-def _post_chat(endpoint: str, payload: dict[str, Any], *, timeout_sec: float) -> dict[str, Any]:
+def _post_chat(
+    endpoint: str, payload: dict[str, Any], *, timeout_sec: float
+) -> dict[str, Any]:
     try:
         response = httpx.post(
             f"{endpoint}/api/v1/chat",
@@ -385,7 +429,9 @@ def _post_chat(endpoint: str, payload: dict[str, Any], *, timeout_sec: float) ->
     return dict(data)
 
 
-def _stream_chat(endpoint: str, payload: dict[str, Any], *, timeout_sec: float) -> dict[str, Any]:
+def _stream_chat(
+    endpoint: str, payload: dict[str, Any], *, timeout_sec: float
+) -> dict[str, Any]:
     thread_id = ""
     run_id = ""
     text_parts: list[str] = []
@@ -413,7 +459,9 @@ def _stream_chat(endpoint: str, payload: dict[str, Any], *, timeout_sec: float) 
                 if event.get("type") == "text-delta":
                     text_parts.append(str(event.get("delta", "")))
                 if event.get("type") == "error":
-                    raise ToolangError(str(event.get("errorText", "agent_chat stream failed")))
+                    raise ToolangError(
+                        str(event.get("errorText", "agent_chat stream failed"))
+                    )
     except httpx.HTTPError as exc:
         raise ToolangError(f"agent_chat stream request failed: {exc}") from exc
     except ValueError as exc:
@@ -424,7 +472,9 @@ def _stream_chat(endpoint: str, payload: dict[str, Any], *, timeout_sec: float) 
         "run_id": run_id,
         "assistant": {
             "role": "assistant",
-            "parts": [{"type": "text", "text": assistant_text}] if assistant_text else [],
+            "parts": [{"type": "text", "text": assistant_text}]
+            if assistant_text
+            else [],
         },
     }
 

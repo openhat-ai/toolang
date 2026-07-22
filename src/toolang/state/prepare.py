@@ -7,12 +7,12 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import logging
 from pathlib import Path
-import tomllib
 from typing import cast
 
 from ..common.progress import ProgressSink
 from ..lang.ast import Program, to_data
 from .state import AgentState, compose_agent_state
+from .config import parse_config
 from .state import prepared_remote_cache, materialize_visibility
 from .source import (
     AuthoredFile,
@@ -337,9 +337,7 @@ def _previous_prepared_caps(
     try:
         if scope == "root":
             return load_root_prepared(toolang_root).caps
-        return load_home_prepared(
-            toolang_root, _required_agent_name(agent_name)
-        ).caps
+        return load_home_prepared(toolang_root, _required_agent_name(agent_name)).caps
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return ()
 
@@ -617,4 +615,4 @@ def _snapshot_config(files: dict[str, bytes]) -> dict[str, object]:
     content = files.get("config.toml")
     if content is None:
         return {}
-    return cast(dict[str, object], tomllib.loads(content.decode("utf-8")))
+    return parse_config(content)

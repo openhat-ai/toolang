@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import pytest
 
-import toolang.cli.toolang.cli as cli
+import toolang.cli.toolang.main as cli
 from toolang.cli.toolang.routing import normalize
 from toolang.cli.common.routing import extract_root_args
 

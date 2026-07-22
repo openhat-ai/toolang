@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import mimetypes
 from pathlib import Path
 import sqlite3
 import threading
-from typing import Literal, cast
+from typing import cast
 
 from toolang.up import process as agents
 from toolang.execution.types import RunStatus
-
-FileRequestStatus = Literal["running", "finished", "failed", "canceled"]
+from .records import FileRequestRecord
+from .types import FileRequestStatus, FileSnapshot
 
 _SCHEMA_VERSION = 2
 _TEXT_PART_EXTENSIONS = {
@@ -87,38 +86,6 @@ _TEXT_MEDIA_TYPES = {
     "application/x-yaml",
 }
 _FILE_THREAD_HASH_CHARS = 12
-
-
-@dataclass(frozen=True, slots=True)
-class FileSnapshot:
-    """One stable regular file observed under an inbox."""
-
-    watch_root: str
-    relative_path: str
-    absolute_path: str
-    size: int
-    mtime_ns: int
-    fingerprint: str
-
-
-@dataclass(frozen=True, slots=True)
-class FileRequestRecord:
-    """One persisted file request row."""
-
-    request_id: int
-    watch_root: str
-    relative_path: str
-    absolute_path: str
-    size: int
-    mtime_ns: int
-    fingerprint: str
-    thread_id: str
-    status: FileRequestStatus
-    run_id: str
-    error: str | None
-    first_seen_at: str
-    processed_at: str | None
-    updated_at: str
 
 
 class FileRequestStore:
@@ -311,7 +278,9 @@ def render_file_input(path: Path) -> tuple[str, list[dict[str, str]]]:
     if part_type == "text":
         text = resolved.read_text(encoding="utf-8")
         return text, [{"type": "text", "text": text, "path": str(resolved)}]
-    return f"Attached {part_type}: {resolved}", [{"type": part_type, "path": str(resolved)}]
+    return f"Attached {part_type}: {resolved}", [
+        {"type": part_type, "path": str(resolved)}
+    ]
 
 
 def path_part_type(path: Path) -> str:
@@ -350,7 +319,9 @@ def _record_from_row(row: sqlite3.Row) -> FileRequestRecord:
         run_id=str(row["run_id"]),
         error=str(row["error"]) if row["error"] is not None else None,
         first_seen_at=str(row["first_seen_at"]),
-        processed_at=str(row["processed_at"]) if row["processed_at"] is not None else None,
+        processed_at=str(row["processed_at"])
+        if row["processed_at"] is not None
+        else None,
         updated_at=str(row["updated_at"]),
     )
 

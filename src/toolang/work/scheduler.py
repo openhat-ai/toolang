@@ -6,9 +6,11 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
 
+from toolang.base.types.message import Message
+
 from ..execution.executor import Executor
+from ..execution.executor.request import RunRequest
 from ..execution.records import RunRecord
-from ..execution.request import RunRequest
 from ..state.state import AgentState
 from toolang.catalog.types import JobKind
 from .state import AgentJobs, HomeJobs
@@ -82,12 +84,11 @@ class Scheduler:
                 task = asyncio.create_task(
                     self.executor.run(
                         RunRequest(
-                            group=f"scheduler:{kind}",
                             origin=kind,
+                            input=Message.user(claimed.definition.input),
                             run_id=claimed.run_id,
                             thread_id=claimed.job.thread_id,
-                            input=claimed.definition.input,
-                            metadata={
+                            context={
                                 "job": claimed.definition.run_metadata(),
                                 "job_trigger": claimed.trigger,
                             },

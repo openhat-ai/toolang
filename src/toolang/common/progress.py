@@ -3,23 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Literal
 
+from .events import ProgressEvent, ProgressStatus
 
-ProgressStatus = Literal["pending", "running", "ok", "failed", "skipped"]
-ProgressSink = Callable[["ProgressEvent"], None]
-
-
-@dataclass(frozen=True, slots=True)
-class ProgressEvent:
-    """One progress update for a stable CLI item."""
-
-    id: str
-    phase: str
-    label: str
-    status: ProgressStatus
-    detail: str | None = None
+ProgressSink = Callable[[ProgressEvent], None]
 
 
 def emit_progress(

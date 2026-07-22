@@ -14,14 +14,15 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from toolang.catalog.cap import AuthoredCaps, WiredCaps
-from toolang.catalog.error import CatalogConflictError, CatalogNotFoundError
+from toolang.catalog.cap import AuthoredCaps
+from toolang.catalog.config import WiredCaps
+from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.catalog.job import AuthoredJobs
 from toolang.execution.events import RunStarting, TraceEvent
 from toolang.execution.executor import Executor
 from toolang.execution.records import CommandRecord, RunRecord
 from toolang.execution.reply import ReplySink
-from toolang.execution.request import RunRequest
+from toolang.execution.executor.request import RunRequest
 from toolang.state.watcher import StateWatcher
 
 DEFAULT_CORS_ORIGINS = [

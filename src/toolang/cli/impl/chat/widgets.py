@@ -15,7 +15,7 @@ from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.utils import get_cwidth
 
-from .base import ChatUIEvent
+from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 
 MAX_INPUT_ROWS = 6

@@ -19,7 +19,7 @@ from toolang.execution.events import RunEnd, RunStarting, StepBegin, StepEnd, Tr
 from toolang.execution.records import trace_index, trace_run
 from toolang.execution.records import RunRecord
 from toolang.execution.store import RunStore, run_store_path
-from toolang.plugin.models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
+from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
 from toolang.cli.common.output import executable_label
 
 

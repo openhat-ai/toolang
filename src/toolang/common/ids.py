@@ -140,7 +140,9 @@ class AllocatorState:
         """Parse one serialized allocator state."""
 
         return cls(
-            last_tick=_int_value(payload["last_tick"]) if "last_tick" in payload else -1,
+            last_tick=_int_value(payload["last_tick"])
+            if "last_tick" in payload
+            else -1,
             last_seq=_int_value(payload["last_seq"]) if "last_seq" in payload else -1,
         )
 
@@ -178,7 +180,9 @@ class AllocatorSnapshot:
             name = raw_name.strip()
             if not isinstance(raw_state, Mapping):
                 raise ValueError(f"allocator state for {name!r} must be a mapping")
-            items[name] = AllocatorState.from_data(cast(Mapping[str, object], raw_state))
+            items[name] = AllocatorState.from_data(
+                cast(Mapping[str, object], raw_state)
+            )
         return cls(families=items)
 
     @classmethod
@@ -305,6 +309,7 @@ RUN_ID_FAMILY = IdFamily(
     mask_seed=0x6D35,
 )
 
+
 def encode_id(*, family: IdFamily, tick: int, seq: int) -> str:
     """Encode one raw tick/seq pair into one fixed-width id."""
 
@@ -407,7 +412,9 @@ def reserve_next_id(
             )
             return allocation, AllocatorState(last_tick=tick, last_seq=next_seq)
         next_seq += 1
-    raise RuntimeError(f"unable to reserve {family.name} id after {max_attempts} attempts")
+    raise RuntimeError(
+        f"unable to reserve {family.name} id after {max_attempts} attempts"
+    )
 
 
 def allocate_id(
@@ -433,10 +440,37 @@ def allocate_id(
         return allocation
 
 
+def allocate_run_id(state_path: Path) -> str:
+    """Allocate one process-safe run id."""
+
+    value = allocate_id(state_path, family=RUN_ID_FAMILY).value
+    return f"run_{value}"
+
+
+def allocate_thread_id(state_path: Path, kind: str) -> str:
+    """Allocate one process-safe thread id for a caller-facing surface."""
+
+    value = allocate_id(state_path, family=LOCAL_ID_FAMILY).value
+    return f"{_thread_id_kind(kind)}_{value}"
+
+
 def archive_prefix(value: str, *, family: IdFamily) -> str:
     """Return the stable archive prefix for one id."""
 
     return decode_id(value, family=family).archive_prefix
+
+
+def _thread_id_kind(kind: str) -> str:
+    text = "".join(char for char in kind.strip().lower() if char.isalnum())
+    if text == "web":
+        return "web"
+    if text in {"term", "terminal", "tui", "chat"}:
+        return "term"
+    if text == "task":
+        return "task"
+    if text == "chore":
+        return "chore"
+    return "script"
 
 
 def _permute_wire_code(value: int, *, family: IdFamily) -> int:
@@ -450,11 +484,15 @@ def _permute_wire_code(value: int, *, family: IdFamily) -> int:
     left = (value >> half_bits) & half_mask
     right = value & half_mask
     for round_index in range(_ID_FEISTEL_ROUNDS):
-        left, right = right, left ^ _wire_round_function(
+        left, right = (
             right,
-            family=family,
-            round_index=round_index,
-            mask=half_mask,
+            left
+            ^ _wire_round_function(
+                right,
+                family=family,
+                round_index=round_index,
+                mask=half_mask,
+            ),
         )
     return ((left & half_mask) << half_bits) | (right & half_mask)
 
@@ -470,12 +508,16 @@ def _unpermute_wire_code(value: int, *, family: IdFamily) -> int:
     left = (value >> half_bits) & half_mask
     right = value & half_mask
     for round_index in range(_ID_FEISTEL_ROUNDS - 1, -1, -1):
-        left, right = right ^ _wire_round_function(
+        left, right = (
+            right
+            ^ _wire_round_function(
+                left,
+                family=family,
+                round_index=round_index,
+                mask=half_mask,
+            ),
             left,
-            family=family,
-            round_index=round_index,
-            mask=half_mask,
-        ), left
+        )
     return ((left & half_mask) << half_bits) | (right & half_mask)
 
 
@@ -595,8 +637,7 @@ def _snapshot_from_handle(handle: TextIO) -> AllocatorSnapshot:
 def _write_snapshot(handle: TextIO, snapshot: AllocatorSnapshot) -> None:
     payload = {
         "families": {
-            name: state.to_data()
-            for name, state in sorted(snapshot.families.items())
+            name: state.to_data() for name, state in sorted(snapshot.families.items())
         }
     }
     text = json.dumps(payload, indent=2, sort_keys=True) + "\n"

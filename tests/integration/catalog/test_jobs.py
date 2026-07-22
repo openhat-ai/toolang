@@ -9,7 +9,7 @@ import frontmatter
 import pytest
 
 from toolang.catalog.job import AuthoredJobs, JobFile
-from toolang.catalog.error import DuplicateJobIdError
+from toolang.catalog.errors import DuplicateJobIdError
 from toolang.lang.ast import Program
 from toolang.work.state import AgentJobs, HomeJobs, JobDefinition
 from toolang.work.store import JobStore

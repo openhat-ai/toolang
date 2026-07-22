@@ -1,4 +1,4 @@
-"""SQLite-backed execution truth and persistence sink."""
+"""SQLite-backed durable execution truth."""
 
 from __future__ import annotations
 
@@ -8,64 +8,45 @@ import json
 from pathlib import Path
 import sqlite3
 import threading
-import time
 from typing import Any, cast
 
 from toolang.base.types.message import (
     Message,
-    MessageRole,
     Part,
-    TextPart,
     ToolCallPart,
     ToolResultPart,
     message_text,
     parts_from_data,
     parts_to_data,
 )
-from .events import (
-    RunBegin,
-    RunEnd,
-    RunStarting,
-    RunSteering,
-    RunStopping,
-    RunWaiting,
-    StepBegin,
-    StepEnd,
-    TraceEvent,
-)
+from toolang.common.time import utc_now
 from .records import (
-    EventDomain,
-    EventRecord,
-    CommandKind,
-    CommandApply,
-    CommandRecord,
-    InputRef,
+    RunControlRecord,
+    RunControlRef,
     OutputRef,
     RunRecord,
-    RunStatus,
     StepInputItem,
-    StepKind,
-    StepPath,
     StepRecord,
-    StepStatus,
     ThreadPeer,
+    ThreadControlRecord,
+    ThreadControlRef,
     ThreadRecord,
-    UpdateKind,
     UpdateRecord,
-    input_ref_from_data,
-    input_ref_to_data,
-    output_ref_from_data,
-    output_ref_to_data,
+    step_message_role,
     step_input_items_from_data,
     step_input_items_to_data,
     trace_index,
     trace_parent,
-    trace_run,
 )
-from .stream import trace_event_payload
+from .types import (
+    RunControlKind,
+    RunControlTiming,
+    RunStatus,
+    StepKind,
+    StepStatus,
+)
 
-_SCHEMA_VERSION = 11
-_DEFAULT_BINDING = object()
+_SCHEMA_VERSION = 12
 
 
 class RunStore:
@@ -74,7 +55,11 @@ class RunStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path.as_posix(), check_same_thread=False)
+        self._conn = sqlite3.connect(
+            db_path.as_posix(),
+            check_same_thread=False,
+            timeout=30,
+        )
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
         self._init_schema()
@@ -83,153 +68,185 @@ class RunStore:
         with self._lock:
             self._conn.close()
 
-    def accept_run(
+    def accept_start(
         self,
         *,
         run_id: str,
-        command_index: int,
         parent: str | None,
         thread: str,
         input: Message,
         context: Mapping[str, Any],
+        request_id: str | None,
         created_at: str,
-    ) -> RunRecord:
-        """Project one accepted start command into a pending run."""
+    ) -> tuple[RunRecord, RunControlRecord, bool]:
+        """Atomically accept one run and return whether this caller owns it."""
 
-        origin = str(context.get("origin") or "chat")
+        if not run_id or "/" in run_id:
+            raise ValueError(f"invalid run id: {run_id!r}")
+
         with self._lock:
-            self._ensure_thread_locked(
-                thread_id=thread,
-                origin=origin,
-                peer=None,
-                parent=None,
-                created_at=created_at,
-                updated_at=created_at,
-            )
-            self._conn.execute(
-                """
-                INSERT INTO runs(
-                    id, parent, thread, input, output, context, status, error,
-                    created_at, started_at, finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL, NULL)
-                ON CONFLICT(id) DO NOTHING
-                """,
-                (
-                    run_id,
-                    parent,
-                    thread,
-                    _dump_json(input_ref_to_data(InputRef(cmd=command_index))),
-                    None,
-                    _dump_json(dict(context)),
-                    created_at,
-                ),
-            )
-            self._conn.execute(
-                """
-                INSERT INTO commands(
-                    run, "index", kind, apply, input, context, status, error,
-                    created_at, finished_at
-                ) VALUES (?, ?, 'start', 'now', ?, ?, 'pending', NULL, ?, NULL)
-                ON CONFLICT(run, "index") DO NOTHING
-                """,
-                (
-                    run_id,
-                    command_index,
-                    _dump_json(input.to_data()),
-                    _dump_json(dict(context)),
-                    created_at,
-                ),
-            )
-            self._conn.execute(
-                """
-                INSERT INTO command_counters(run, next_index)
-                VALUES (?, ?)
-                ON CONFLICT(run) DO UPDATE SET
-                    next_index = MAX(command_counters.next_index, excluded.next_index)
-                """,
-                (run_id, command_index + 1),
-            )
-            run_row = self._conn.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ).fetchone()
-            command_row = self._conn.execute(
-                'SELECT * FROM commands WHERE run = ? AND "index" = ?',
-                (run_id, command_index),
-            ).fetchone()
-            self._conn.commit()
-        if run_row is None or command_row is None:
-            raise RuntimeError(f"accepted run projection failed: {run_id}")
-        run = _run_from_row(run_row)
-        command = _command_from_row(command_row)
-        if (
-            run.parent != parent
-            or run.thread != thread
-            or run.input != InputRef(cmd=command_index)
-            or any(run.context.get(key) != value for key, value in context.items())
-            or command.kind != "start"
-            or command.input != input
-            or command.context != dict(context)
-            or command.created_at != created_at
-        ):
-            raise ValueError(f"conflicting accepted run event: {run_id}")
-        return run
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                existing_run = self._conn.execute(
+                    "SELECT * FROM runs WHERE id = ?", (run_id,)
+                ).fetchone()
+                if existing_run is not None:
+                    existing_control = self._conn.execute(
+                        'SELECT * FROM run_controls WHERE run = ? AND "index" = 0',
+                        (run_id,),
+                    ).fetchone()
+                    if existing_control is None:
+                        raise ValueError(f"run start control is missing: {run_id}")
+                    control = _run_control_from_row(existing_control)
+                    if request_id is None or control.request_id != request_id:
+                        raise ValueError(f"run already exists: {run_id}")
+                    existing = _run_from_row(existing_run)
+                    if (
+                        existing.parent != parent
+                        or existing.thread != thread
+                        or control.input != input
+                        or control.context != dict(context)
+                    ):
+                        raise ValueError(f"conflicting run start request: {run_id}")
+                    self._conn.commit()
+                    return existing, control, False
+                if (
+                    self._conn.execute(
+                        "SELECT 1 FROM threads WHERE thread_id = ?", (thread,)
+                    ).fetchone()
+                    is None
+                ):
+                    raise ValueError(f"thread not found: {thread}")
+                self._conn.execute(
+                    """
+                    INSERT INTO runs(
+                        id, parent, thread, input, output, context, status, error,
+                        superseded_by_thread, superseded_by_index,
+                        created_at, started_at, finished_at
+                    ) VALUES (?, ?, ?, ?, NULL, ?, 'pending', NULL, NULL, NULL, ?, NULL, NULL)
+                    """,
+                    (
+                        run_id,
+                        parent,
+                        thread,
+                        _dump_json(RunControlRef(index=0).to_data()),
+                        _dump_json(dict(context)),
+                        created_at,
+                    ),
+                )
+                self._conn.execute(
+                    """
+                    INSERT INTO run_controls(
+                        run, "index", kind, timing, input, request_id, context,
+                        status, error, created_at, finished_at
+                    ) VALUES (?, 0, 'start', 'immediate', ?, ?, ?, 'pending', NULL, ?, NULL)
+                    """,
+                    (
+                        run_id,
+                        _dump_json(input.to_data()),
+                        request_id,
+                        _dump_json(dict(context)),
+                        created_at,
+                    ),
+                )
+                run_row = self._conn.execute(
+                    "SELECT * FROM runs WHERE id = ?", (run_id,)
+                ).fetchone()
+                control_row = self._conn.execute(
+                    'SELECT * FROM run_controls WHERE run = ? AND "index" = 0',
+                    (run_id,),
+                ).fetchone()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        if run_row is None or control_row is None:
+            raise RuntimeError(f"run acceptance failed: {run_id}")
+        return _run_from_row(run_row), _run_control_from_row(control_row), True
 
-    def accept_command(
+    def accept_run_control(
         self,
         *,
         run_id: str,
-        index: int,
-        kind: CommandKind,
-        apply: CommandApply,
+        kind: RunControlKind,
+        timing: RunControlTiming,
         input: Message | None,
         context: Mapping[str, Any],
+        request_id: str | None,
         created_at: str,
-    ) -> CommandRecord:
-        """Project one accepted steer or stop command."""
+    ) -> tuple[RunControlRecord, bool]:
+        """Atomically allocate and accept one steer or stop control."""
+
+        if kind not in {"steer", "stop"}:
+            raise ValueError(f"unsupported run control kind: {kind}")
+        if timing not in {"immediate", "next_step", "next_call"}:
+            raise ValueError(f"unsupported run control timing: {timing}")
+        if kind == "steer" and input is None:
+            raise ValueError("steer control requires input")
 
         with self._lock:
-            if (
-                self._conn.execute(
-                    "SELECT 1 FROM runs WHERE id = ?", (run_id,)
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                run = self._conn.execute(
+                    "SELECT status FROM runs WHERE id = ?", (run_id,)
                 ).fetchone()
-                is None
-            ):
-                raise ValueError(f"run not found: {run_id}")
-            self._conn.execute(
-                """
-                INSERT INTO commands(
-                    run, "index", kind, apply, input, context, status, error,
-                    created_at, finished_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL)
-                ON CONFLICT(run, "index") DO NOTHING
-                """,
-                (
-                    run_id,
-                    index,
-                    kind,
-                    apply,
-                    _dump_json(input.to_data()) if input is not None else None,
-                    _dump_json(dict(context)),
-                    created_at,
-                ),
-            )
-            row = self._conn.execute(
-                'SELECT * FROM commands WHERE run = ? AND "index" = ?',
-                (run_id, index),
-            ).fetchone()
-            self._conn.commit()
-        if row is None:
-            raise RuntimeError(f"accepted command projection failed: {run_id}:{index}")
-        command = _command_from_row(row)
-        if (
-            command.kind != kind
-            or command.apply != apply
-            or command.input != input
-            or command.context != dict(context)
-            or command.created_at != created_at
-        ):
-            raise ValueError(f"conflicting accepted command event: {run_id}:{index}")
-        return command
+                if run is None:
+                    raise ValueError(f"run not found: {run_id}")
+                if request_id is not None:
+                    existing = self._conn.execute(
+                        "SELECT * FROM run_controls WHERE run = ? AND request_id = ?",
+                        (run_id, request_id),
+                    ).fetchone()
+                    if existing is not None:
+                        control = _run_control_from_row(existing)
+                        if (
+                            control.kind != kind
+                            or control.timing != timing
+                            or control.input != input
+                            or control.context != dict(context)
+                        ):
+                            raise ValueError(
+                                f"conflicting run control request: {run_id}:{request_id}"
+                            )
+                        self._conn.commit()
+                        return control, False
+                if str(run["status"]) not in {"pending", "running"}:
+                    raise ValueError(f"run is not active: {run_id}")
+                row = self._conn.execute(
+                    'SELECT COALESCE(MAX("index"), -1) + 1 AS next_index '
+                    "FROM run_controls WHERE run = ?",
+                    (run_id,),
+                ).fetchone()
+                index = int(row["next_index"]) if row is not None else 0
+                self._conn.execute(
+                    """
+                    INSERT INTO run_controls(
+                        run, "index", kind, timing, input, request_id, context,
+                        status, error, created_at, finished_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL)
+                    """,
+                    (
+                        run_id,
+                        index,
+                        kind,
+                        timing,
+                        _dump_json(input.to_data()) if input is not None else None,
+                        request_id,
+                        _dump_json(dict(context)),
+                        created_at,
+                    ),
+                )
+                inserted = self._conn.execute(
+                    'SELECT * FROM run_controls WHERE run = ? AND "index" = ?',
+                    (run_id, index),
+                ).fetchone()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        if inserted is None:
+            raise RuntimeError(f"run control acceptance failed: {run_id}")
+        return _run_control_from_row(inserted), True
 
     def begin_run(
         self,
@@ -274,68 +291,425 @@ class RunStore:
             raise ValueError(f"conflicting run_begin event: {run_id}")
         return run
 
-    def finish_commands(
+    def finish_run_controls(
         self,
         *,
         run_id: str,
         indexes: Sequence[int],
         finished_at: str,
     ) -> None:
-        """Mark pending commands consumed by one execution event as finished."""
+        """Mark pending run_controls consumed by one execution event as finished."""
 
-        command_indexes = tuple(dict.fromkeys(int(index) for index in indexes))
-        if not command_indexes:
+        control_indexes = tuple(dict.fromkeys(int(index) for index in indexes))
+        if not control_indexes:
             return
-        placeholders = ", ".join("?" for _ in command_indexes)
+        placeholders = ", ".join("?" for _ in control_indexes)
         with self._lock:
             self._conn.execute(
                 f"""
-                UPDATE commands
+                UPDATE run_controls
                 SET status = 'finished', finished_at = ?
                 WHERE run = ? AND "index" IN ({placeholders}) AND status = 'pending'
                 """,
-                (finished_at, run_id, *command_indexes),
+                (finished_at, run_id, *control_indexes),
             )
             self._conn.commit()
 
-    def cancel_pending_commands(self, *, run_id: str, finished_at: str) -> None:
-        """Cancel commands that were accepted but never consumed."""
+    def cancel_run_control(
+        self, *, run_id: str, index: int, finished_at: str
+    ) -> RunControlRecord:
+        """Cancel one pending control explicitly withdrawn by its caller."""
 
         with self._lock:
             self._conn.execute(
                 """
-                UPDATE commands
+                UPDATE run_controls
                 SET status = 'canceled', finished_at = ?
+                WHERE run = ? AND "index" = ? AND status = 'pending'
+                """,
+                (finished_at, run_id, index),
+            )
+            row = self._conn.execute(
+                'SELECT * FROM run_controls WHERE run = ? AND "index" = ?',
+                (run_id, index),
+            ).fetchone()
+            self._conn.commit()
+        if row is None:
+            raise ValueError(f"run control not found: {run_id}:{index}")
+        return _run_control_from_row(row)
+
+    def fail_pending_run_controls(
+        self, *, run_id: str, finished_at: str, error: str
+    ) -> None:
+        """Fail controls that can no longer be applied to a terminal run."""
+
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE run_controls
+                SET status = 'failed', error = ?, finished_at = ?
                 WHERE run = ? AND status = 'pending'
                 """,
-                (finished_at, run_id),
+                (error, finished_at, run_id),
             )
             self._conn.commit()
 
-    def ensure_thread(
+    def create_thread(
         self,
         *,
         thread_id: str,
         origin: str = "chat",
         peer: ThreadPeer | None = None,
-        parent: str | None = None,
+        request_id: str | None = None,
+        context: Mapping[str, Any] | None = None,
         created_at: str | None = None,
-        updated_at: str | None = None,
-    ) -> ThreadRecord:
-        """Create one thread metadata row if needed and validate supplied metadata."""
+    ) -> tuple[ThreadRecord, ThreadControlRecord, bool]:
+        """Atomically create one thread and its create control."""
 
-        now = updated_at or created_at or utc_now()
+        now = created_at or utc_now()
+        effective_peer = peer or ThreadPeer()
         with self._lock:
-            record = self._ensure_thread_locked(
-                thread_id=thread_id,
-                origin=origin,
-                peer=peer,
-                parent=parent,
-                created_at=created_at or now,
-                updated_at=now,
-            )
-            self._conn.commit()
-            return record
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                if request_id is not None:
+                    replay = self._conn.execute(
+                        "SELECT * FROM thread_controls WHERE request_id = ?",
+                        (request_id,),
+                    ).fetchone()
+                    if replay is not None:
+                        control = _thread_control_from_row(replay)
+                        if control.kind != "create":
+                            raise ValueError(
+                                f"conflicting thread control request: {request_id}"
+                            )
+                        existing = self._conn.execute(
+                            "SELECT * FROM threads WHERE thread_id = ?",
+                            (control.thread,),
+                        ).fetchone()
+                        if existing is None:
+                            raise RuntimeError(
+                                f"thread control result is missing: {control.thread}"
+                            )
+                        thread = _thread_from_row(existing)
+                        if (
+                            thread.origin != origin
+                            or thread.peer != effective_peer
+                            or control.context != dict(context or {})
+                        ):
+                            raise ValueError(
+                                f"conflicting thread control request: {request_id}"
+                            )
+                        self._conn.commit()
+                        return thread, control, False
+                existing_thread = self._conn.execute(
+                    "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+                ).fetchone()
+                if existing_thread is not None:
+                    existing_control = self._conn.execute(
+                        'SELECT * FROM thread_controls WHERE thread = ? AND "index" = 0',
+                        (thread_id,),
+                    ).fetchone()
+                    if existing_control is None:
+                        raise ValueError(
+                            f"thread create control is missing: {thread_id}"
+                        )
+                    control = _thread_control_from_row(existing_control)
+                    thread = _thread_from_row(existing_thread)
+                    if (
+                        control.kind != "create"
+                        or control.context != dict(context or {})
+                        or thread.origin != origin
+                        or thread.peer != effective_peer
+                    ):
+                        raise ValueError(f"conflicting thread create: {thread_id}")
+                    self._conn.commit()
+                    return thread, control, False
+                self._conn.execute(
+                    """
+                    INSERT INTO thread_controls(
+                        thread, "index", kind, source_thread, anchor_run, result_run,
+                        message, request_id, expected_head_thread, expected_head_index,
+                        context, status, error, created_at, finished_at
+                    ) VALUES (?, 0, 'create', NULL, NULL, NULL, NULL, ?, NULL, NULL,
+                              ?, 'finished', NULL, ?, ?)
+                    """,
+                    (thread_id, request_id, _dump_json(dict(context or {})), now, now),
+                )
+                self._conn.execute(
+                    """
+                    INSERT INTO threads(
+                        thread_id, origin, peer, created_by_index, head_index,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, 0, 0, ?, ?)
+                    """,
+                    (thread_id, origin, _dump_json(effective_peer.to_data()), now, now),
+                )
+                thread_row = self._conn.execute(
+                    "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+                ).fetchone()
+                control_row = self._conn.execute(
+                    'SELECT * FROM thread_controls WHERE thread = ? AND "index" = 0',
+                    (thread_id,),
+                ).fetchone()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        if thread_row is None or control_row is None:
+            raise RuntimeError(f"thread creation failed: {thread_id}")
+        return _thread_from_row(thread_row), _thread_control_from_row(control_row), True
+
+    def fork_thread(
+        self,
+        *,
+        thread_id: str,
+        source_thread: str,
+        anchor_run: str,
+        origin: str,
+        peer: ThreadPeer,
+        result_run: str | None,
+        message: Message | None,
+        request_id: str | None,
+        context: Mapping[str, Any],
+        created_at: str,
+    ) -> tuple[ThreadRecord, ThreadControlRecord, bool]:
+        """Atomically fork one thread without copying execution records."""
+
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                if request_id is not None:
+                    replay = self._conn.execute(
+                        "SELECT * FROM thread_controls WHERE request_id = ?",
+                        (request_id,),
+                    ).fetchone()
+                    if replay is not None:
+                        control = _thread_control_from_row(replay)
+                        if (
+                            control.kind != "fork"
+                            or control.source_thread != source_thread
+                            or control.anchor_run != anchor_run
+                            or control.message != message
+                            or control.context != dict(context)
+                        ):
+                            raise ValueError(
+                                f"conflicting thread control request: {request_id}"
+                            )
+                        existing = self._conn.execute(
+                            "SELECT * FROM threads WHERE thread_id = ?",
+                            (control.thread,),
+                        ).fetchone()
+                        if existing is None:
+                            raise RuntimeError(
+                                f"thread control result is missing: {control.thread}"
+                            )
+                        self._conn.commit()
+                        return _thread_from_row(existing), control, False
+                anchor = self._conn.execute(
+                    "SELECT thread FROM runs WHERE id = ?", (anchor_run,)
+                ).fetchone()
+                if anchor is None or str(anchor["thread"]) != source_thread:
+                    raise ValueError(f"invalid fork anchor: {anchor_run}")
+                if (
+                    self._conn.execute(
+                        "SELECT 1 FROM threads WHERE thread_id = ?", (thread_id,)
+                    ).fetchone()
+                    is not None
+                ):
+                    existing = self._conn.execute(
+                        'SELECT * FROM thread_controls WHERE thread = ? AND "index" = 0',
+                        (thread_id,),
+                    ).fetchone()
+                    if existing is None:
+                        raise ValueError(f"thread already exists: {thread_id}")
+                    control = _thread_control_from_row(existing)
+                    if request_id is None or control.request_id != request_id:
+                        raise ValueError(f"thread already exists: {thread_id}")
+                    row = self._conn.execute(
+                        "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+                    ).fetchone()
+                    self._conn.commit()
+                    if row is None:
+                        raise RuntimeError(f"thread not found: {thread_id}")
+                    return _thread_from_row(row), control, False
+                self._conn.execute(
+                    """
+                    INSERT INTO thread_controls(
+                        thread, "index", kind, source_thread, anchor_run, result_run,
+                        message, request_id, expected_head_thread, expected_head_index,
+                        context, status, error, created_at, finished_at
+                    ) VALUES (?, 0, 'fork', ?, ?, ?, ?, ?, NULL, NULL, ?,
+                              'finished', NULL, ?, ?)
+                    """,
+                    (
+                        thread_id,
+                        source_thread,
+                        anchor_run,
+                        result_run,
+                        _dump_json(message.to_data()) if message is not None else None,
+                        request_id,
+                        _dump_json(dict(context)),
+                        created_at,
+                        created_at,
+                    ),
+                )
+                self._conn.execute(
+                    """
+                    INSERT INTO threads(
+                        thread_id, origin, peer, created_by_index, head_index,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, 0, 0, ?, ?)
+                    """,
+                    (
+                        thread_id,
+                        origin,
+                        _dump_json(peer.to_data()),
+                        created_at,
+                        created_at,
+                    ),
+                )
+                thread_row = self._conn.execute(
+                    "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+                ).fetchone()
+                control_row = self._conn.execute(
+                    'SELECT * FROM thread_controls WHERE thread = ? AND "index" = 0',
+                    (thread_id,),
+                ).fetchone()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        if thread_row is None or control_row is None:
+            raise RuntimeError(f"thread fork failed: {thread_id}")
+        return _thread_from_row(thread_row), _thread_control_from_row(control_row), True
+
+    def rewind_thread(
+        self,
+        *,
+        thread_id: str,
+        anchor_run: str,
+        result_run: str | None,
+        message: Message | None,
+        request_id: str | None,
+        expected_head: ThreadControlRef,
+        context: Mapping[str, Any],
+        created_at: str,
+    ) -> tuple[ThreadRecord, ThreadControlRecord, tuple[str, ...], bool]:
+        """Atomically rewind one thread using optimistic head comparison."""
+
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                if request_id is not None:
+                    existing = self._conn.execute(
+                        "SELECT * FROM thread_controls WHERE request_id = ?",
+                        (request_id,),
+                    ).fetchone()
+                    if existing is not None:
+                        control = _thread_control_from_row(existing)
+                        if (
+                            control.kind != "rewind"
+                            or control.thread != thread_id
+                            or control.anchor_run != anchor_run
+                            or control.message != message
+                            or control.context != dict(context)
+                        ):
+                            raise ValueError(
+                                f"conflicting thread control request: {request_id}"
+                            )
+                        thread_row = self._conn.execute(
+                            "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+                        ).fetchone()
+                        self._conn.commit()
+                        if thread_row is None:
+                            raise RuntimeError(f"thread not found: {thread_id}")
+                        return _thread_from_row(thread_row), control, (), False
+                thread_row = self._conn.execute(
+                    "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+                ).fetchone()
+                if thread_row is None:
+                    raise ValueError(f"thread not found: {thread_id}")
+                thread = _thread_from_row(thread_row)
+                if thread.head != expected_head:
+                    raise ValueError(f"thread head changed: {thread_id}")
+                anchor = self._conn.execute(
+                    "SELECT rowid FROM runs WHERE id = ? AND thread = ?",
+                    (anchor_run, thread_id),
+                ).fetchone()
+                if anchor is None:
+                    raise ValueError(f"invalid rewind anchor: {anchor_run}")
+                index_row = self._conn.execute(
+                    'SELECT COALESCE(MAX("index"), -1) + 1 AS next_index '
+                    "FROM thread_controls WHERE thread = ?",
+                    (thread_id,),
+                ).fetchone()
+                index = int(index_row["next_index"]) if index_row is not None else 0
+                self._conn.execute(
+                    """
+                    INSERT INTO thread_controls(
+                        thread, "index", kind, source_thread, anchor_run, result_run,
+                        message, request_id, expected_head_thread, expected_head_index,
+                        context, status, error, created_at, finished_at
+                    ) VALUES (?, ?, 'rewind', NULL, ?, ?, ?, ?, ?, ?, ?,
+                              'finished', NULL, ?, ?)
+                    """,
+                    (
+                        thread_id,
+                        index,
+                        anchor_run,
+                        result_run,
+                        _dump_json(message.to_data()) if message is not None else None,
+                        request_id,
+                        expected_head.thread,
+                        expected_head.index,
+                        _dump_json(dict(context)),
+                        created_at,
+                        created_at,
+                    ),
+                )
+                rows = self._conn.execute(
+                    """
+                    SELECT id FROM runs
+                    WHERE thread = ? AND rowid >= ? AND superseded_by_thread IS NULL
+                    ORDER BY rowid ASC
+                    """,
+                    (thread_id, int(anchor["rowid"])),
+                ).fetchall()
+                superseded = tuple(str(row["id"]) for row in rows)
+                self._conn.executemany(
+                    """
+                    UPDATE runs
+                    SET superseded_by_thread = ?, superseded_by_index = ?
+                    WHERE id = ?
+                    """,
+                    ((thread_id, index, run_id) for run_id in superseded),
+                )
+                self._conn.execute(
+                    """
+                    UPDATE threads SET head_index = ?, updated_at = ?
+                    WHERE thread_id = ? AND head_index = ?
+                    """,
+                    (index, created_at, thread_id, expected_head.index),
+                )
+                updated_thread = self._conn.execute(
+                    "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+                ).fetchone()
+                control_row = self._conn.execute(
+                    'SELECT * FROM thread_controls WHERE thread = ? AND "index" = ?',
+                    (thread_id, index),
+                ).fetchone()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        if updated_thread is None or control_row is None:
+            raise RuntimeError(f"thread rewind failed: {thread_id}")
+        return (
+            _thread_from_row(updated_thread),
+            _thread_control_from_row(control_row),
+            superseded,
+            True,
+        )
 
     def get_thread(self, *, thread_id: str) -> ThreadRecord | None:
         with self._lock:
@@ -351,6 +725,38 @@ class RunStore:
                 "SELECT * FROM threads ORDER BY updated_at DESC, created_at DESC",
             ).fetchall()
         return [_thread_from_row(row) for row in rows]
+
+    def get_thread_control(
+        self, *, thread_id: str, index: int
+    ) -> ThreadControlRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                'SELECT * FROM thread_controls WHERE thread = ? AND "index" = ?',
+                (thread_id, index),
+            ).fetchone()
+        return _thread_control_from_row(row) if row is not None else None
+
+    def get_thread_control_by_request_id(
+        self, *, request_id: str
+    ) -> ThreadControlRecord | None:
+        """Return the globally idempotent thread control for one request."""
+
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM thread_controls WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+        return _thread_control_from_row(row) if row is not None else None
+
+    def list_thread_controls(
+        self, *, thread_id: str
+    ) -> tuple[ThreadControlRecord, ...]:
+        with self._lock:
+            rows = self._conn.execute(
+                'SELECT * FROM thread_controls WHERE thread = ? ORDER BY "index" ASC',
+                (thread_id,),
+            ).fetchall()
+        return tuple(_thread_control_from_row(row) for row in rows)
 
     def update_thread_peer(
         self,
@@ -404,9 +810,7 @@ class RunStore:
                 (
                     status,
                     error,
-                    _dump_json(output_ref_to_data(output))
-                    if output is not None
-                    else None,
+                    _dump_json(output.to_data()) if output is not None else None,
                     now,
                     run_id,
                 ),
@@ -484,7 +888,7 @@ class RunStore:
             clauses.append("status = ?")
             params.append(status)
         if not include_superseded:
-            clauses.append("json_extract(context, '$.superseded') IS NULL")
+            clauses.append("superseded_by_thread IS NULL")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         query = f"SELECT * FROM runs {where} ORDER BY created_at DESC"
         if limit is not None:
@@ -500,6 +904,26 @@ class RunStore:
         runs = self.list_runs(thread_id=thread_id, status="running", limit=1)
         return runs[0] if runs else None
 
+    def list_runs_from_anchor(self, *, run_id: str) -> tuple[RunRecord, ...]:
+        """Return visible runs accepted at or after one anchor in its thread."""
+
+        with self._lock:
+            anchor = self._conn.execute(
+                "SELECT thread, rowid FROM runs WHERE id = ?",
+                (run_id,),
+            ).fetchone()
+            if anchor is None:
+                raise ValueError(f"run not found: {run_id}")
+            rows = self._conn.execute(
+                """
+                SELECT * FROM runs
+                WHERE thread = ? AND rowid >= ? AND superseded_by_thread IS NULL
+                ORDER BY rowid ASC
+                """,
+                (str(anchor["thread"]), int(anchor["rowid"])),
+            ).fetchall()
+        return tuple(_run_from_row(row) for row in rows)
+
     def list_thread_runs_chronological(
         self,
         *,
@@ -512,11 +936,11 @@ class RunStore:
         clauses = ["thread = ?"]
         params: list[object] = [thread_id]
         if not include_superseded:
-            clauses.append("json_extract(context, '$.superseded') IS NULL")
+            clauses.append("superseded_by_thread IS NULL")
         query = f"""
             SELECT * FROM runs
             WHERE {" AND ".join(clauses)}
-            ORDER BY created_at ASC, rowid ASC
+            ORDER BY rowid ASC
         """
         if limit is not None:
             query = f"{query} LIMIT ?"
@@ -525,236 +949,66 @@ class RunStore:
             rows = self._conn.execute(query, tuple(params)).fetchall()
         return tuple(_run_from_row(row) for row in rows)
 
-    def list_thread_runs_before(self, *, run_id: str) -> tuple[RunRecord, ...]:
-        """Return runs in the same thread before one anchor run."""
-
-        with self._lock:
-            anchor = self._conn.execute(
-                "SELECT rowid, * FROM runs WHERE id = ?",
-                (run_id,),
-            ).fetchone()
-            if anchor is None:
-                raise ValueError(f"run not found: {run_id}")
-            rows = self._conn.execute(
-                """
-                SELECT * FROM runs
-                WHERE thread = ?
-                  AND json_extract(context, '$.superseded') IS NULL
-                  AND (
-                    created_at < ?
-                    OR (created_at = ? AND rowid < ?)
-                  )
-                ORDER BY created_at ASC, rowid ASC
-                """,
-                (
-                    anchor["thread"],
-                    anchor["created_at"],
-                    anchor["created_at"],
-                    anchor["rowid"],
-                ),
-            ).fetchall()
-        return tuple(_run_from_row(row) for row in rows)
-
-    def copy_runs_to_thread(
+    def list_thread_history_chronological(
         self,
         *,
-        source_run_ids: Sequence[str],
-        target_thread_id: str,
-        target_run_ids: Sequence[str],
+        thread_id: str,
+        limit: int | None = None,
+        include_superseded: bool = False,
     ) -> tuple[RunRecord, ...]:
-        """Copy durable run records, commands, and steps into another thread."""
+        """Return projected history, following a fork's source prefix."""
 
-        if len(source_run_ids) != len(target_run_ids):
-            raise ValueError("source and target run id counts must match")
-        if not source_run_ids:
-            return ()
-        run_id_map = dict(zip(source_run_ids, target_run_ids, strict=True))
+        runs = self._thread_history(
+            thread_id=thread_id,
+            include_superseded=include_superseded,
+            visited=set(),
+        )
+        return tuple(runs if limit is None else runs[-limit:])
 
-        def remap_path(value: str | None) -> str | None:
-            if value is None:
-                return None
-            for source_id, target_id in run_id_map.items():
-                if value == source_id:
-                    return target_id
-                prefix = f"{source_id}/"
-                if value.startswith(prefix):
-                    return f"{target_id}/{value[len(prefix) :]}"
-            return value
-
-        with self._lock:
-            copied: list[sqlite3.Row] = []
-            for source_run_id, target_run_id in zip(
-                source_run_ids, target_run_ids, strict=True
-            ):
-                source_run = self._conn.execute(
-                    "SELECT * FROM runs WHERE id = ?",
-                    (source_run_id,),
-                ).fetchone()
-                if source_run is None:
-                    raise ValueError(f"run not found: {source_run_id}")
-                self._conn.execute(
-                    """
-                    INSERT INTO runs(
-                        id,
-                        parent,
-                        thread,
-                        input,
-                        output,
-                        context,
-                        status,
-                        error,
-                        created_at,
-                        started_at,
-                        finished_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        target_run_id,
-                        remap_path(source_run["parent"]),
-                        target_thread_id,
-                        source_run["input"],
-                        source_run["output"],
-                        source_run["context"],
-                        source_run["status"],
-                        source_run["error"],
-                        source_run["created_at"],
-                        source_run["started_at"],
-                        source_run["finished_at"],
-                    ),
-                )
-                command_rows = self._conn.execute(
-                    """
-                    SELECT * FROM commands
-                    WHERE run = ?
-                    ORDER BY "index" ASC
-                    """,
-                    (source_run_id,),
-                ).fetchall()
-                self._conn.executemany(
-                    """
-                    INSERT INTO commands(
-                        run,
-                        "index",
-                        kind,
-                        apply,
-                        input,
-                        context,
-                        status,
-                        error,
-                        created_at,
-                        finished_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (
-                            target_run_id,
-                            row["index"],
-                            row["kind"],
-                            row["apply"],
-                            row["input"],
-                            row["context"],
-                            row["status"],
-                            row["error"],
-                            row["created_at"],
-                            row["finished_at"],
-                        )
-                        for row in command_rows
-                    ],
-                )
-                step_rows = self._conn.execute(
-                    """
-                    SELECT * FROM steps
-                    WHERE parent = ? OR parent LIKE ?
-                    ORDER BY parent ASC, "index" ASC
-                    """,
-                    (source_run_id, f"{source_run_id}/%"),
-                ).fetchall()
-                self._conn.executemany(
-                    """
-                    INSERT INTO steps(
-                        parent,
-                        "index",
-                        kind,
-                        input,
-                        output,
-                        context,
-                        detail,
-                        status,
-                        error,
-                        created_at,
-                        started_at,
-                        finished_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (
-                            remap_path(row["parent"]),
-                            row["index"],
-                            row["kind"],
-                            row["input"],
-                            row["output"],
-                            row["context"],
-                            row["detail"],
-                            row["status"],
-                            row["error"],
-                            row["created_at"],
-                            row["started_at"],
-                            row["finished_at"],
-                        )
-                        for row in step_rows
-                    ],
-                )
-                inserted = self._conn.execute(
-                    "SELECT * FROM runs WHERE id = ?",
-                    (target_run_id,),
-                ).fetchone()
-                if inserted is None:
-                    raise RuntimeError("copied run insert returned no row")
-                copied.append(inserted)
-            self._conn.commit()
-        return tuple(_run_from_row(row) for row in copied)
-
-    def supersede_thread_from_run(
+    def _thread_history(
         self,
         *,
-        run_id: str,
-        superseded: Mapping[str, object],
-    ) -> tuple[RunRecord, ...]:
-        """Mark one run and later runs in the same thread as superseded."""
-
-        anchor = self.get_run(run_id=run_id)
-        if anchor is None:
-            raise ValueError(f"run not found: {run_id}")
-        with self._lock:
-            rows = self._conn.execute(
-                """
-                SELECT * FROM runs
-                WHERE thread = ?
-                  AND json_extract(context, '$.superseded') IS NULL
-                  AND created_at >= ?
-                ORDER BY created_at
-                """,
-                (anchor.thread, anchor.created_at),
-            ).fetchall()
-            self._conn.executemany(
-                "UPDATE runs SET context = json_patch(context, ?) WHERE id = ?",
-                [
-                    (_dump_json({"superseded": dict(superseded)}), str(row["id"]))
-                    for row in rows
-                ],
+        thread_id: str,
+        include_superseded: bool,
+        visited: set[str],
+    ) -> list[RunRecord]:
+        if thread_id in visited:
+            raise ValueError(f"thread fork cycle: {thread_id}")
+        visited.add(thread_id)
+        try:
+            thread = self.get_thread(thread_id=thread_id)
+            prefix: list[RunRecord] = []
+            if thread is not None:
+                control = self.get_thread_control(
+                    thread_id=thread_id, index=thread.created_by.index
+                )
+                if (
+                    control is not None
+                    and control.kind == "fork"
+                    and control.source_thread is not None
+                    and control.anchor_run is not None
+                ):
+                    source = self._thread_history(
+                        thread_id=control.source_thread,
+                        include_superseded=True,
+                        visited=visited,
+                    )
+                    for run in source:
+                        prefix.append(run)
+                        if run.id == control.anchor_run:
+                            break
+                    else:
+                        raise ValueError(
+                            f"fork anchor is missing from source history: {control.anchor_run}"
+                        )
+            own = self.list_thread_runs_chronological(
+                thread_id=thread_id,
+                limit=None,
+                include_superseded=include_superseded,
             )
-            updated = self._conn.execute(
-                """
-                SELECT * FROM runs
-                WHERE thread = ?
-                  AND json_extract(context, '$.superseded') IS NOT NULL
-                  AND created_at >= ?
-                ORDER BY created_at
-                """,
-                (anchor.thread, anchor.created_at),
-            ).fetchall()
-            self._conn.commit()
-        return tuple(_run_from_row(row) for row in updated)
+            return [*prefix, *own]
+        finally:
+            visited.remove(thread_id)
 
     def begin_step(
         self,
@@ -864,10 +1118,15 @@ class RunStore:
         return step
 
     def list_steps(self, *, run_id: str) -> list[StepRecord]:
+        prefix = _like_prefix(run_id)
         with self._lock:
             rows = self._conn.execute(
-                'SELECT * FROM steps WHERE parent = ? OR parent LIKE ? ORDER BY parent ASC, "index" ASC',
-                (run_id, f"{run_id}/%"),
+                """
+                SELECT * FROM steps
+                WHERE parent = ? OR parent LIKE ? ESCAPE '\\'
+                ORDER BY parent ASC, "index" ASC
+                """,
+                (run_id, f"{prefix}/%"),
             ).fetchall()
         return [_step_from_row(row) for row in rows]
 
@@ -877,15 +1136,20 @@ class RunStore:
         run_id_list = [item for item in run_ids if item]
         if not run_id_list:
             return {}
+        clauses = " OR ".join(
+            "(parent = ? OR parent LIKE ? ESCAPE '\\')" for _ in run_id_list
+        )
         with self._lock:
             rows = self._conn.execute(
                 f"""
                 SELECT * FROM steps
-                WHERE {" OR ".join("(parent = ? OR parent LIKE ?)" for _ in run_id_list)}
+                WHERE {clauses}
                 ORDER BY parent ASC, "index" ASC
                 """,
                 tuple(
-                    item for run_id in run_id_list for item in (run_id, f"{run_id}/%")
+                    item
+                    for run_id in run_id_list
+                    for item in (run_id, f"{_like_prefix(run_id)}/%")
                 ),
             ).fetchall()
         grouped: dict[str, list[StepRecord]] = {run_id: [] for run_id in run_id_list}
@@ -934,17 +1198,17 @@ class RunStore:
             limit=max(limit + (1 if exclude_run_id else 0), 20),
         )
         if exclude_run_id is not None:
-            runs = [run for run in runs if run.run_id != exclude_run_id]
+            runs = [run for run in runs if run.id != exclude_run_id]
             runs = runs[-limit:]
         steps_by_run = self.list_steps_for_runs(
-            run_ids=tuple(run.run_id for run in runs)
+            run_ids=tuple(run.id for run in runs)
         )
         results: list[Message] = []
         for run in runs:
-            inputs = self.list_commands(run_id=run.run_id)
+            inputs = self.list_run_controls(run_id=run.id)
             if inputs:
                 results.extend(item.input for item in inputs if item.input is not None)
-            for step in steps_by_run.get(run.run_id, ()):
+            for step in steps_by_run.get(run.id, ()):
                 results.extend(_replay_messages_from_step(step))
         return _recent_valid_model_history(results, limit=limit)
 
@@ -958,17 +1222,17 @@ class RunStore:
 
         runs = self._conversation_runs(thread_id=thread_id, limit=max(limit * 4, 100))
         steps_by_run = self.list_steps_for_runs(
-            run_ids=tuple(run.run_id for run in runs)
+            run_ids=tuple(run.id for run in runs)
         )
         results: list[Message] = []
         for run in runs:
-            inputs = self.list_commands(run_id=run.run_id)
+            inputs = self.list_run_controls(run_id=run.id)
             input_messages = [item.input for item in inputs if item.input is not None]
             for input_message in input_messages:
                 actor_message = _actor_text_message(input_message)
                 if actor_message is not None:
                     results.append(actor_message)
-            for step in steps_by_run.get(run.run_id, ()):
+            for step in steps_by_run.get(run.id, ()):
                 for message in _replay_messages_from_step(step):
                     actor_message = _actor_text_message(message)
                     if actor_message is not None:
@@ -977,14 +1241,14 @@ class RunStore:
 
     def _conversation_runs(self, *, thread_id: str, limit: int) -> list[RunRecord]:
         current = list(
-            self.list_thread_runs_chronological(thread_id=thread_id, limit=None)
+            self.list_thread_history_chronological(thread_id=thread_id, limit=None)
         )
         return current[-limit:]
 
     def append_update(
         self,
         *,
-        kind: UpdateKind,
+        kind: str,
         payload: dict[str, Any] | None = None,
         created_at: str | None = None,
     ) -> UpdateRecord:
@@ -1021,154 +1285,20 @@ class RunStore:
             ).fetchall()
         return [_update_from_row(row) for row in reversed(rows)]
 
-    def append_event(
-        self,
-        *,
-        domain: EventDomain,
-        domain_id: str,
-        type: str,
-        payload: dict[str, Any] | None = None,
-        created_at: str | None = None,
-    ) -> EventRecord:
-        """Append one resource-scoped event and return it with its domain cursor."""
-
-        now = created_at or utc_now()
-        with self._lock:
-            try:
-                self._conn.execute("BEGIN IMMEDIATE")
-                seq_row = self._conn.execute(
-                    """
-                    SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq
-                    FROM events
-                    WHERE domain = ? AND domain_id = ?
-                    """,
-                    (domain, domain_id),
-                ).fetchone()
-                seq = int(seq_row["next_seq"]) if seq_row is not None else 1
-                inserted = self._conn.execute(
-                    """
-                    INSERT INTO events(
-                        domain,
-                        domain_id,
-                        seq,
-                        type,
-                        payload,
-                        created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        domain,
-                        domain_id,
-                        seq,
-                        type,
-                        _dump_json(payload or {}),
-                        now,
-                    ),
-                )
-                row = self._conn.execute(
-                    "SELECT * FROM events WHERE event_id = ?",
-                    (inserted.lastrowid,),
-                ).fetchone()
-                self._conn.commit()
-            except Exception:
-                self._conn.rollback()
-                raise
-        if row is None:
-            raise RuntimeError("event insert returned no row")
-        return _event_from_row(row)
-
-    def list_events(
-        self,
-        *,
-        domain: EventDomain,
-        domain_id: str,
-        after: int | None = None,
-        limit: int = 100,
-    ) -> list[EventRecord]:
-        clauses = ["domain = ?", "domain_id = ?"]
-        params: list[object] = [domain, domain_id]
-        if after is not None:
-            clauses.append("seq > ?")
-            params.append(after)
-        params.append(limit)
-        with self._lock:
-            rows = self._conn.execute(
-                f"""
-                SELECT * FROM events
-                WHERE {" AND ".join(clauses)}
-                ORDER BY seq ASC
-                LIMIT ?
-                """,
-                tuple(params),
-            ).fetchall()
-        return [_event_from_row(row) for row in rows]
-
-    def latest_event_cursor(self, *, domain: EventDomain, domain_id: str) -> int:
+    def get_run_control(self, *, run_id: str, index: int) -> RunControlRecord | None:
         with self._lock:
             row = self._conn.execute(
-                """
-                SELECT COALESCE(MAX(seq), 0) AS seq
-                FROM events
-                WHERE domain = ? AND domain_id = ?
-                """,
-                (domain, domain_id),
-            ).fetchone()
-        return int(row["seq"]) if row is not None else 0
-
-    def reserve_command_index(self, *, run_id: str) -> int:
-        """Atomically reserve the next command index for one run."""
-
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                if (
-                    self._conn.execute(
-                        "SELECT 1 FROM runs WHERE id = ?", (run_id,)
-                    ).fetchone()
-                    is None
-                ):
-                    raise ValueError(f"run not found: {run_id}")
-                self._conn.execute(
-                    """
-                    INSERT INTO command_counters(run, next_index)
-                    SELECT ?, COALESCE(MAX("index"), -1) + 1
-                    FROM commands
-                    WHERE run = ?
-                    ON CONFLICT(run) DO NOTHING
-                    """,
-                    (run_id, run_id),
-                )
-                row = self._conn.execute(
-                    """
-                    UPDATE command_counters
-                    SET next_index = next_index + 1
-                    WHERE run = ?
-                    RETURNING next_index - 1 AS reserved_index
-                    """,
-                    (run_id,),
-                ).fetchone()
-                self._conn.commit()
-            except Exception:
-                self._conn.rollback()
-                raise
-        if row is None:
-            raise RuntimeError(f"command index reservation failed: {run_id}")
-        return int(row["reserved_index"])
-
-    def get_command(self, *, run_id: str, index: int) -> CommandRecord | None:
-        with self._lock:
-            row = self._conn.execute(
-                'SELECT * FROM commands WHERE run = ? AND "index" = ?',
+                'SELECT * FROM run_controls WHERE run = ? AND "index" = ?',
                 (run_id, index),
             ).fetchone()
-        return _command_from_row(row) if row is not None else None
+        return _run_control_from_row(row) if row is not None else None
 
-    def list_commands(
+    def list_run_controls(
         self,
         *,
         run_id: str,
-        kind: CommandKind | None = None,
-    ) -> tuple[CommandRecord, ...]:
+        kind: RunControlKind | None = None,
+    ) -> tuple[RunControlRecord, ...]:
         clauses = ["run = ?"]
         params: list[object] = [run_id]
         if kind is not None:
@@ -1178,44 +1308,50 @@ class RunStore:
         with self._lock:
             rows = self._conn.execute(
                 f"""
-                SELECT * FROM commands
+                SELECT * FROM run_controls
                 WHERE {where}
                 ORDER BY "index" ASC
                 """,
                 tuple(params),
             ).fetchall()
-        return tuple(_command_from_row(row) for row in rows)
+        return tuple(_run_control_from_row(row) for row in rows)
 
-    def pending_commands(
+    def pending_run_controls(
         self,
         *,
         run_id: str,
-        kind: CommandKind,
-    ) -> tuple[CommandRecord, ...]:
-        """Return accepted commands not yet consumed by an execution event."""
+        kind: RunControlKind,
+    ) -> tuple[RunControlRecord, ...]:
+        """Return accepted run_controls not yet consumed by an execution event."""
 
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT * FROM commands
+                SELECT * FROM run_controls
                 WHERE run = ? AND kind = ? AND status = 'pending'
                 ORDER BY "index" ASC
                 """,
                 (run_id, kind),
             ).fetchall()
-        return tuple(_command_from_row(row) for row in rows)
+        return tuple(_run_control_from_row(row) for row in rows)
 
     def _init_schema(self) -> None:
         with self._lock:
+            self._conn.execute("PRAGMA busy_timeout=30000;")
             self._conn.execute("PRAGMA journal_mode=WAL;")
             self._conn.execute("PRAGMA synchronous=NORMAL;")
+            self._conn.execute("PRAGMA foreign_keys=ON;")
+            self._conn.execute("BEGIN IMMEDIATE")
             version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
             if version != _SCHEMA_VERSION:
                 self._conn.execute("DROP TABLE IF EXISTS steps")
+                self._conn.execute("DROP TABLE IF EXISTS run_control_counters")
                 self._conn.execute("DROP TABLE IF EXISTS command_counters")
-                self._conn.execute("DROP TABLE IF EXISTS runs")
-                self._conn.execute("DROP TABLE IF EXISTS inputs")
+                self._conn.execute("DROP TABLE IF EXISTS thread_controls")
+                self._conn.execute("DROP TABLE IF EXISTS run_controls")
                 self._conn.execute("DROP TABLE IF EXISTS commands")
+                self._conn.execute("DROP TABLE IF EXISTS inputs")
+                self._conn.execute("DROP TABLE IF EXISTS runs")
                 self._conn.execute("DROP TABLE IF EXISTS threads")
                 self._conn.execute("DROP TABLE IF EXISTS updates")
                 self._conn.execute("DROP TABLE IF EXISTS events")
@@ -1227,7 +1363,8 @@ class RunStore:
                     thread_id TEXT PRIMARY KEY,
                     origin TEXT NOT NULL,
                     peer TEXT NOT NULL,
-                    parent TEXT,
+                    created_by_index INTEGER NOT NULL,
+                    head_index INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -1244,6 +1381,8 @@ class RunStore:
                     context TEXT NOT NULL,
                     status TEXT NOT NULL,
                     error TEXT,
+                    superseded_by_thread TEXT,
+                    superseded_by_index INTEGER,
                     created_at TEXT NOT NULL,
                     started_at TEXT,
                     finished_at TEXT
@@ -1252,12 +1391,13 @@ class RunStore:
             )
             self._conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS commands (
+                CREATE TABLE IF NOT EXISTS run_controls (
                     run TEXT NOT NULL,
                     "index" INTEGER NOT NULL,
                     kind TEXT NOT NULL,
-                    apply TEXT NOT NULL,
+                    timing TEXT NOT NULL,
                     input TEXT,
+                    request_id TEXT,
                     context TEXT NOT NULL,
                     status TEXT NOT NULL,
                     error TEXT,
@@ -1270,11 +1410,38 @@ class RunStore:
             )
             self._conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS command_counters (
-                    run TEXT PRIMARY KEY,
-                    next_index INTEGER NOT NULL,
-                    FOREIGN KEY(run) REFERENCES runs(id) ON DELETE CASCADE
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_run_controls_request
+                ON run_controls(run, request_id)
+                WHERE request_id IS NOT NULL
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS thread_controls (
+                    thread TEXT NOT NULL,
+                    "index" INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    source_thread TEXT,
+                    anchor_run TEXT,
+                    result_run TEXT,
+                    message TEXT,
+                    request_id TEXT,
+                    expected_head_thread TEXT,
+                    expected_head_index INTEGER,
+                    context TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    PRIMARY KEY(thread, "index")
                 )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_thread_controls_request
+                ON thread_controls(request_id)
+                WHERE request_id IS NOT NULL
                 """
             )
             self._conn.execute(
@@ -1308,20 +1475,6 @@ class RunStore:
             )
             self._conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS events (
-                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    domain TEXT NOT NULL,
-                    domain_id TEXT NOT NULL,
-                    seq INTEGER NOT NULL,
-                    type TEXT NOT NULL,
-                    payload TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    UNIQUE(domain, domain_id, seq)
-                )
-                """
-            )
-            self._conn.execute(
-                """
                 CREATE TABLE IF NOT EXISTS prompts (
                     hash TEXT PRIMARY KEY,
                     body TEXT NOT NULL
@@ -1340,91 +1493,24 @@ class RunStore:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_updates_created ON updates(created_at)"
             )
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_events_domain_seq ON events(domain, domain_id, seq)"
-            )
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
-
-    def _ensure_thread_locked(
-        self,
-        *,
-        thread_id: str,
-        origin: str,
-        peer: ThreadPeer | None,
-        parent: str | None,
-        created_at: str,
-        updated_at: str,
-    ) -> ThreadRecord:
-        row = self._conn.execute(
-            "SELECT * FROM threads WHERE thread_id = ?",
-            (thread_id,),
-        ).fetchone()
-        if row is not None:
-            record = _thread_from_row(row)
-            if peer is not None and record.peer != peer:
-                raise ValueError(f"thread peer mismatch: {thread_id}")
-            if parent is not None and record.parent not in {None, parent}:
-                raise ValueError(f"thread parent mismatch: {thread_id}")
-            if parent is not None and record.parent is None:
-                self._conn.execute(
-                    "UPDATE threads SET parent = ?, updated_at = ? WHERE thread_id = ?",
-                    (parent, updated_at, thread_id),
-                )
-                updated = self._conn.execute(
-                    "SELECT * FROM threads WHERE thread_id = ?",
-                    (thread_id,),
-                ).fetchone()
-                if updated is None:
-                    raise RuntimeError(
-                        f"thread not found after parent update: {thread_id}"
-                    )
-                return _thread_from_row(updated)
-            return record
-        effective_peer = peer or ThreadPeer()
-        self._conn.execute(
-            """
-            INSERT INTO threads(
-                thread_id,
-                origin,
-                peer,
-                parent,
-                created_at,
-                updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                thread_id,
-                origin,
-                _dump_json(effective_peer.to_data()),
-                parent,
-                created_at,
-                updated_at,
-            ),
-        )
-        inserted = self._conn.execute(
-            "SELECT * FROM threads WHERE thread_id = ?",
-            (thread_id,),
-        ).fetchone()
-        if inserted is None:
-            raise RuntimeError("thread insert returned no row")
-        return _thread_from_row(inserted)
 
 
 def run_store_path(toolang_root: Path, agent_name: str) -> Path:
     return toolang_root / "agents" / agent_name / ".runtime" / "runs.db"
-
-
-def utc_now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
 def _dump_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def _load_json(value: str) -> Any:
     return json.loads(value)
+
+
+def _like_prefix(value: str) -> str:
+    """Escape one literal prefix for a SQLite LIKE expression."""
+
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _run_from_row(row: sqlite3.Row) -> RunRecord:
@@ -1434,17 +1520,26 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
         id=str(row["id"]),
         parent=str(row["parent"]) if row["parent"] is not None else None,
         thread=str(row["thread"]),
-        input=input_ref_from_data(
+        input=RunControlRef.from_data(
             cast(Mapping[str, Any], _load_json(str(row["input"])))
         ),
-        output=output_ref_from_data(
-            cast(Mapping[str, Any], output_raw)
+        output=(
+            OutputRef.from_data(cast(Mapping[str, Any], output_raw))
             if isinstance(output_raw, Mapping)
             else None
         ),
         context=dict(context_raw) if isinstance(context_raw, Mapping) else {},
         status=cast(RunStatus, row["status"]),
         error=str(row["error"]) if row["error"] is not None else None,
+        superseded_by=(
+            ThreadControlRef(
+                thread=str(row["superseded_by_thread"]),
+                index=int(row["superseded_by_index"]),
+            )
+            if row["superseded_by_thread"] is not None
+            and row["superseded_by_index"] is not None
+            else None
+        ),
         created_at=str(row["created_at"]),
         started_at=str(row["started_at"] or ""),
         finished_at=str(row["finished_at"]) if row["finished_at"] is not None else None,
@@ -1458,7 +1553,14 @@ def _thread_from_row(row: sqlite3.Row) -> ThreadRecord:
         thread_id=str(raw["thread_id"]),
         origin=str(raw["origin"]),
         peer=ThreadPeer.from_data(peer_raw if isinstance(peer_raw, Mapping) else None),
-        parent=str(raw["parent"]) if raw["parent"] is not None else None,
+        created_by=ThreadControlRef(
+            thread=str(raw["thread_id"]),
+            index=int(cast(int | str, raw["created_by_index"])),
+        ),
+        head=ThreadControlRef(
+            thread=str(raw["thread_id"]),
+            index=int(cast(int | str, raw["head_index"])),
+        ),
         created_at=str(raw["created_at"]),
         updated_at=str(raw["updated_at"]),
     )
@@ -1506,34 +1608,58 @@ def _update_from_row(row: sqlite3.Row) -> UpdateRecord:
     payload_raw = _load_json(str(row["payload"]))
     return UpdateRecord(
         update_id=int(row["update_id"]),
-        kind=cast(UpdateKind, row["kind"]),
+        kind=str(row["kind"]),
         payload=dict(payload_raw) if isinstance(payload_raw, Mapping) else {},
         created_at=str(row["created_at"]),
     )
 
 
-def _event_from_row(row: sqlite3.Row) -> EventRecord:
-    payload_raw = _load_json(str(row["payload"]))
-    return EventRecord(
-        event_id=int(row["event_id"]),
-        domain=cast(EventDomain, row["domain"]),
-        domain_id=str(row["domain_id"]),
-        seq=int(row["seq"]),
-        type=str(row["type"]),
-        payload=dict(payload_raw) if isinstance(payload_raw, Mapping) else {},
-        created_at=str(row["created_at"]),
-    )
-
-
-def _command_from_row(row: sqlite3.Row) -> CommandRecord:
+def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
     input_raw = _load_json(str(row["input"])) if row["input"] is not None else None
     context_raw = _load_json(str(row["context"])) if row["context"] is not None else {}
-    return CommandRecord(
+    return RunControlRecord(
         run=str(row["run"]),
         index=int(row["index"]),
-        kind=cast(CommandKind, row["kind"]),
-        apply=cast(CommandApply, row["apply"]),
+        kind=cast(RunControlKind, row["kind"]),
+        timing=cast(RunControlTiming, row["timing"]),
         input=Message.from_data(input_raw) if isinstance(input_raw, Mapping) else None,
+        request_id=str(row["request_id"]) if row["request_id"] is not None else None,
+        context=dict(context_raw) if isinstance(context_raw, Mapping) else {},
+        status=row["status"],
+        error=str(row["error"]) if row["error"] is not None else None,
+        created_at=str(row["created_at"]),
+        finished_at=str(row["finished_at"]) if row["finished_at"] is not None else None,
+    )
+
+
+def _thread_control_from_row(row: sqlite3.Row) -> ThreadControlRecord:
+    message_raw = (
+        _load_json(str(row["message"])) if row["message"] is not None else None
+    )
+    context_raw = _load_json(str(row["context"])) if row["context"] is not None else {}
+    expected_head = (
+        ThreadControlRef(
+            thread=str(row["expected_head_thread"]),
+            index=int(row["expected_head_index"]),
+        )
+        if row["expected_head_thread"] is not None
+        and row["expected_head_index"] is not None
+        else None
+    )
+    return ThreadControlRecord(
+        thread=str(row["thread"]),
+        index=int(row["index"]),
+        kind=row["kind"],
+        source_thread=(
+            str(row["source_thread"]) if row["source_thread"] is not None else None
+        ),
+        anchor_run=str(row["anchor_run"]) if row["anchor_run"] is not None else None,
+        result_run=str(row["result_run"]) if row["result_run"] is not None else None,
+        message=Message.from_data(message_raw)
+        if isinstance(message_raw, Mapping)
+        else None,
+        request_id=str(row["request_id"]) if row["request_id"] is not None else None,
+        expected_head=expected_head,
         context=dict(context_raw) if isinstance(context_raw, Mapping) else {},
         status=row["status"],
         error=str(row["error"]) if row["error"] is not None else None,
@@ -1543,7 +1669,7 @@ def _command_from_row(row: sqlite3.Row) -> CommandRecord:
 
 
 def _replay_messages_from_step(step: StepRecord) -> list[Message]:
-    role = _role_for_step(step.kind)
+    role = step_message_role(step.kind)
     if role is None or not step.output:
         return []
     meta: dict[str, Any] = {}
@@ -1553,16 +1679,6 @@ def _replay_messages_from_step(step: StepRecord) -> list[Message]:
     if isinstance(reasoning_content, str) and reasoning_content:
         meta["reasoning_content"] = reasoning_content
     return [Message(role=role, parts=tuple(step.output), meta=meta)]
-
-
-def _role_for_step(kind: StepKind) -> MessageRole | None:
-    if kind == "model":
-        return "assistant"
-    if kind == "tool":
-        return "tool"
-    return None
-
-
 def _actor_text_message(message: Message) -> Message | None:
     if message.role not in {"user", "assistant"}:
         return None
@@ -1645,239 +1761,3 @@ def _message_tool_result_ids(message: Message) -> set[str]:
         for part in message.parts
         if isinstance(part, ToolResultPart) and part.tool_call_id
     }
-
-
-class PersistSink:
-    """Persist trace events into the execution store."""
-
-    def __init__(self, store: RunStore) -> None:
-        self._store = store
-        self._lock = threading.Lock()
-        self._last_step_index: dict[str, int] = {}
-        self._failed_runs: set[str] = set()
-        self._locals: dict[StepPath, dict[str, InputRef | OutputRef]] = {}
-        self._bindings: dict[StepPath, str | None] = {}
-
-    def on_event(self, event: TraceEvent) -> None:
-        """Project one trace event atomically."""
-
-        with self._lock:
-            self._on_event(event)
-            self._append_event(event)
-
-    def _on_event(self, event: TraceEvent) -> None:
-        if event.type in {"run_waiting", "run_starting"}:
-            accepted = cast(RunWaiting | RunStarting, event)
-            self._store.accept_run(
-                run_id=accepted.run,
-                command_index=accepted.cmd,
-                parent=accepted.parent,
-                thread=accepted.thread,
-                input=accepted.input,
-                context=accepted.context,
-                created_at=accepted.created_at,
-            )
-            return
-        if event.type == "run_steering":
-            steering = cast(RunSteering, event)
-            self._store.accept_command(
-                run_id=steering.run,
-                index=steering.cmd,
-                kind="steer",
-                apply=steering.apply,
-                input=steering.input,
-                context=steering.context,
-                created_at=steering.created_at,
-            )
-            return
-        if event.type == "run_stopping":
-            stopping = cast(RunStopping, event)
-            self._store.accept_command(
-                run_id=stopping.run,
-                index=stopping.cmd,
-                kind="stop",
-                apply=stopping.apply,
-                input=stopping.input,
-                context=stopping.context,
-                created_at=stopping.created_at,
-            )
-            return
-        if event.type == "run_begin":
-            run_begin = cast(RunBegin, event)
-            self._store.finish_commands(
-                run_id=run_begin.run,
-                indexes=(run_begin.input.cmd,),
-                finished_at=run_begin.started_at,
-            )
-            self._store.begin_run(
-                run_id=run_begin.run,
-                context=run_begin.context,
-                started_at=run_begin.started_at,
-            )
-            self._locals[run_begin.run] = {"_": run_begin.input}
-            return
-        if event.type == "step_begin":
-            step_begin = cast(StepBegin, event)
-            run_id = trace_run(step_begin.step)
-            self._store.finish_commands(
-                run_id=run_id,
-                indexes=tuple(
-                    item.cmd for item in step_begin.input if isinstance(item, InputRef)
-                ),
-                finished_at=step_begin.started_at,
-            )
-            parent = trace_parent(step_begin.step)
-            index = trace_index(step_begin.step)
-            if parent is None or index is None:
-                raise ValueError(f"step_begin requires a step path: {step_begin.step}")
-            locals = self._locals.setdefault(parent, {})
-            explicit = tuple(step_begin.input)
-            steer_inputs = [
-                item for item in explicit if isinstance(item, InputRef) and item.cmd > 0
-            ]
-            if steer_inputs:
-                locals["_"] = steer_inputs[-1]
-            reads = step_begin.context.get("reads")
-            inferred = (
-                tuple(
-                    locals[name]
-                    for name in reads
-                    if isinstance(name, str) and name in locals
-                )
-                if isinstance(reads, Sequence) and not isinstance(reads, (str, bytes))
-                else ()
-            )
-            inputs = _unique_step_inputs((*explicit, *inferred))
-            self._store.begin_step(
-                parent=parent,
-                index=index,
-                kind=step_begin.kind,
-                input=inputs,
-                context=step_begin.context,
-                started_at=step_begin.started_at,
-            )
-            self._locals[step_begin.step] = dict(locals)
-            raw_binding = step_begin.context.get("binding", _DEFAULT_BINDING)
-            self._bindings[step_begin.step] = (
-                "_"
-                if raw_binding is _DEFAULT_BINDING and step_begin.kind == "model"
-                else raw_binding
-                if isinstance(raw_binding, str)
-                else None
-            )
-            if parent == run_id:
-                self._last_step_index[run_id] = max(
-                    self._last_step_index.get(run_id, -1), index
-                )
-            return
-        if event.type == "step_end":
-            step_end = cast(StepEnd, event)
-            if step_end.status == "failed":
-                self._failed_runs.add(trace_run(step_end.step))
-            parent = trace_parent(step_end.step)
-            index = trace_index(step_end.step)
-            if parent is None or index is None:
-                raise ValueError(f"step_end requires a step path: {step_end.step}")
-            self._store.finish_step(
-                parent=parent,
-                index=index,
-                kind=step_end.kind,
-                status=step_end.status,
-                output=step_end.output,
-                detail=step_end.detail,
-                error=step_end.error,
-                finished_at=step_end.finished_at,
-            )
-            binding = self._bindings.pop(step_end.step, None)
-            if step_end.status == "finished" and binding is not None:
-                self._locals.setdefault(parent, {})[binding] = OutputRef(
-                    step=step_end.step
-                )
-            self._locals.pop(step_end.step, None)
-            return
-        if event.type == "run_end":
-            run_end = cast(RunEnd, event)
-            if run_end.input is not None:
-                self._store.finish_commands(
-                    run_id=run_end.run,
-                    indexes=(run_end.input.cmd,),
-                    finished_at=run_end.finished_at,
-                )
-            if run_end.status == "failed" and run_end.run not in self._failed_runs:
-                self._append_runtime_failure_step(run_end)
-            projected_output = self._locals.get(run_end.run, {}).get("_")
-            self._store.finish_run(
-                run_id=run_end.run,
-                status=run_end.status,
-                error=run_end.error,
-                output=(
-                    projected_output
-                    if isinstance(projected_output, OutputRef)
-                    else run_end.output
-                ),
-                finished_at=run_end.finished_at,
-            )
-            self._store.cancel_pending_commands(
-                run_id=run_end.run, finished_at=run_end.finished_at
-            )
-            self._locals.pop(run_end.run, None)
-
-    def _append_event(self, event: TraceEvent) -> None:
-        payload = trace_event_payload(event)
-        run_id = payload.get("run")
-        if not isinstance(run_id, str):
-            step = payload.get("step")
-            if isinstance(step, str) and step:
-                run_id = trace_run(step)
-        thread_id = payload.get("thread")
-        context = payload.get("context")
-        if not isinstance(thread_id, str) and isinstance(context, dict):
-            thread_id = context.get("thread")
-        if not isinstance(thread_id, str) and isinstance(run_id, str) and run_id:
-            run = self._store.get_run(run_id=run_id)
-            if run is not None:
-                thread_id = run.thread
-        if isinstance(run_id, str) and run_id:
-            self._store.append_event(
-                domain="run",
-                domain_id=run_id,
-                type=event.type,
-                payload=payload,
-            )
-        if isinstance(thread_id, str) and thread_id:
-            self._store.append_event(
-                domain="thread",
-                domain_id=thread_id,
-                type=event.type,
-                payload=payload,
-            )
-
-    def _append_runtime_failure_step(self, event: RunEnd) -> None:
-        step_index = self._last_step_index.get(event.run, -1) + 1
-        self._store.begin_step(
-            parent=event.run,
-            index=step_index,
-            kind="system",
-            input=(),
-            context={},
-            started_at=event.finished_at,
-        )
-        self._store.finish_step(
-            parent=event.run,
-            index=step_index,
-            kind="system",
-            status="failed",
-            output=(TextPart(text=event.error or "Run failed."),),
-            detail={},
-            error=event.error,
-            finished_at=event.finished_at,
-        )
-        self._last_step_index[event.run] = step_index
-
-
-def _unique_step_inputs(items: Sequence[StepInputItem]) -> tuple[StepInputItem, ...]:
-    result: list[StepInputItem] = []
-    for item in items:
-        if item not in result:
-            result.append(item)
-    return tuple(result)

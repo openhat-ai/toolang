@@ -37,7 +37,7 @@
 - Use mature libraries when they clearly reduce code size or validation
   complexity.
 - Keep package facades narrow. Export only stable entry points from
-  `__init__.py`; import internal projections or helpers from concrete modules
+  `__init__.py`; import internal inspection or helpers from concrete modules
   at the call site.
 - Put behavior on the concept or persisted entity when it is part of that
   concept's meaning. Do not duplicate the same mapping, overlay, sorting, or
@@ -63,16 +63,22 @@
 - Use `types.py` for shared business vocabulary, scalar aliases, and enums.
 - Use `records.py` for storage-entry representations.
 - Use `events.py` for event types.
+- Use `errors.py` for package-owned exception types. Do not use the singular
+  `error.py`, and do not place non-exception message constants in `errors.py`.
 - Use `schemas.py` for protocol-boundary types, including HTTP request and
-  response schemas. Schema modules may depend on scalar types and other
-  schemas, but must not embed records, events, stores, projections, or runtime
-  state implementations.
+  response schemas. Pure construction from package-owned types or records
+  should be class methods on the resulting schema. Schema modules must not
+  depend on stores, watchers, runtime services, or event emitters.
+- Do not create `projection.py`. Put pure record-to-schema and type-to-schema
+  conversion on the schema type itself. Put aggregate loading or store-backed
+  inspection in a focused `inspection.py` owned by the same package.
 - Reserve `model.py`, `models.py`, and `models/` for LLM model concepts so
   business data types cannot be confused with language-model integrations.
-- When configuration-file types or parsing belong to a package, place them in
-  that package's `config.py`. Keep environment resolution and process-level
-  defaults at the call site unless the owning package explicitly owns those
-  semantics.
+- Use `config.py` for the configuration-file types and parsing owned by one
+  package, especially sections read from root or home `config.toml` files.
+  Keeping this name consistent makes supported configuration discoverable
+  across packages. Keep environment resolution and process-level defaults at
+  the call site unless the owning package explicitly owns those semantics.
 
 
 ## Current Design Boundaries
@@ -107,47 +113,71 @@
   package exposed by that repository rather than compiling grammar sources at
   runtime.
 - `toolang.base` owns the shared plugin-facing protocols, value types, and
-  helper utilities used across tool, loop, channel, sandbox, model provider,
+  helper utilities used across tool, channel, sandbox, model provider,
   and model adapter plugins, including the shared Toolang error type.
-- `toolang.common` owns package-neutral filesystem and immutable-container
-  helpers, progress events, selectors, Toolang-owned id allocation, and shared GitHub
-  source-reference parsing and rendering. `toolang.common.error` is a
-  compatibility export of the error type owned by `toolang.base`.
+- `toolang.common` owns package-neutral filesystem, immutable-container, and
+  text-template helpers, progress events, selectors, Toolang-owned id allocation,
+  and shared GitHub source-reference parsing and rendering.
+  `toolang.common.errors` is a compatibility export of the error type owned by
+  `toolang.base`.
 - `toolang.lang` owns `.too` parsing, authored source semantics, and source
   editing.
 - `toolang.up` owns remote agent target resolution, runtime-state files,
   managed processes, visiting and roaming materialization, sandbox filesystem
-  assembly, resolved `AgentHosting`, API process assembly, and channel execution
-  orchestration.
+  assembly, resolved `AgentHosting`, installed `AgentSetup`, API process
+  assembly, and channel execution orchestration.
 - `toolang.catalog` owns local agent-home CRUD, authored cap and job CRUD,
   wired cap references, and bundled authored-file templates. Its collections
   receive explicit directories or config-file paths and do not resolve remote
-  sources or infer the Toolang layout. `toolang.catalog.types` owns shared
-  authored-job vocabulary and defaults.
+  sources or infer the Toolang layout. `toolang.catalog.config` owns wired cap
+  references and their round-trip TOML mutation; `toolang.catalog.types` owns
+  shared authored-job vocabulary and defaults.
 - `toolang.work` owns effective job scheduling state, file inbox requests,
   runtime stores, watchers, and scheduling loops.
 - `toolang.work.schemas` owns caller-facing job protocol types;
   `toolang.work.types` owns scheduler status vocabulary;
-  `toolang.work.projection` combines authored jobs with scheduler and execution
-  state.
+  `toolang.work.records` owns durable scheduler entries; and
+  `toolang.work.inspection` combines authored jobs with scheduler and execution
+  state before constructing schemas.
 - `toolang.state` owns remote cap source resolution, durable/prepared source
   snapshots, effective cap projection and materialization, immutable
   root/home/agent state, and source-state watching.
 - `toolang.state.schemas` owns caller-facing capability protocol types;
-  `toolang.state.types` owns capability-state vocabulary;
-  `toolang.state.projection` projects effective capability state into them.
+  its schema types construct themselves from prepared capability state;
+  `toolang.state.types` owns capability-state vocabulary.
 - `toolang.execution` owns run binding, execution trace, durable run truth,
   response projection, execution storage, and agent-specific built-in tools.
-- `toolang.execution.thread` owns thread creation, rewind, and fork semantics;
-  `Executor` remains focused on accepting, controlling, and executing runs.
-- `toolang.execution.schemas` owns caller-facing run, thread, step, failure,
-  and message protocol types; `toolang.execution.projection` projects durable
-  execution truth into them. API code only serializes these schemas; CLI code
-  reads them through the shared remote-or-local execution adapter and only
-  renders them. `toolang.execution.types` owns shared execution lifecycle and
-  command vocabulary.
+- `RunExecutor` owns run acceptance, control, and execution. It constructs a
+  mandatory internal `PersistSink`; each `start()` may receive one optional
+  `RunTracer`. Persistence and control-status updates complete before the
+  tracer observes an event.
+- `toolang.execution.executor` contains the run executor, external run request,
+  its mandatory `PersistSink`, shared run values, model-input preparation, and
+  bounded diagnostics. Durable records, events, storage, inspection, schemas,
+  and thread management remain at the `toolang.execution` package level.
+- `RunRequest` carries canonical message input, run and thread identity,
+  executable selection, an optional single model choice, idempotency identity,
+  and caller context. It must not duplicate tools, providers, adapters,
+  programs, caps, or selector sets already captured by `AgentSetup`,
+  `AgentState`, or process-level executor configuration.
+- Within `toolang.execution.executor`, `runs` owns complete agic and flow run
+  bodies, `stmts` owns lowered flow-statement semantics, and `steps` owns step
+  execution and event emission. Top-level runs have no synthetic containing
+  step; recursive calls are wrapped by the invoking run step.
+- Agic model-tool sequencing is fixed executor behavior. Do not add a loop
+  plugin family or a plugin-facing run-context protocol.
+- `toolang.execution.threads` owns synchronous thread creation, rewind, and
+  fork semantics through `ThreadManager`.
+- `toolang.execution.schemas` owns caller-facing run, thread, step, and failure
+  protocol types and reuses canonical message values from `toolang.base`;
+  its schema types construct themselves from durable records, while
+  `toolang.execution.inspection` performs store-backed aggregate reads. API
+  code only serializes these schemas; CLI code reads them through the shared
+  remote-or-local execution adapter and only renders them.
+  `toolang.execution.types` owns shared execution lifecycle and run-control
+  vocabulary.
 - `toolang.plugin` owns generic entry point discovery, pure plugin configuration
-  parsing, and independently reusable built-in tool, loop, channel, sandbox,
+  parsing, and independently reusable built-in tool, channel, sandbox,
   model-provider, and model-adapter implementations. It does not locate or read
   runtime config files and may depend only on `toolang.base` and
   `toolang.common` among internal packages.
@@ -192,10 +222,12 @@
 - Keep runtime execution logic separate from file parsing and path resolution.
 - `runs.db` owns runtime transcript messages as well as activation,
   thread, run, and step truth. Do not add a separate durable chat-store layer.
-- Persist run, command, and step truth by sending trace events through
-  `PersistSink`. Keep `RunStore` mutation methods limited to the event
-  projection primitives used by that sink; tests should construct trace events
-  instead of adding direct-write convenience APIs.
+- Persist run controls directly through `RunExecutor` and `RunStore`; runtime
+  owns their application status. Persist run and step facts by sending
+  `RunEvent` values through the executor's mandatory internal `PersistSink`.
+- Run and thread IDs use the shared file-backed allocator. Run-control and
+  thread-control indexes are allocated and inserted in one SQLite transaction
+  so all durable identities remain safe across local processes.
 - Synced state should be reusable without reparsing unchanged source files.
 
 

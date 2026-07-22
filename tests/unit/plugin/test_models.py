@@ -21,11 +21,10 @@ from toolang.base.types.message import (
 from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
-from toolang.common.error import ToolangError
-from toolang.execution.context import RunContext, RunSnapshot, SnapshotAgent, SnapshotProgram, SnapshotRun
-from toolang.execution.assembly import RunInput
-from toolang.execution.binding import _Run
-from toolang.execution.setup import AgentSetup
+from toolang.common.errors import ToolangError
+from toolang.execution.executor.common import BoundRun
+from toolang.execution.executor.prepare import PreparedAgic
+from toolang.execution.executor.runs.agic import _AgicState, _execute
 from toolang.plugin.models.discovery import model_infos
 from toolang.plugin.models.resolution import resolve_model, select_model_selectors
 from toolang.plugin.models.views import model_target_profile
@@ -34,12 +33,12 @@ from toolang.plugin.models.providers import google as google_models
 from toolang.plugin.models.providers import ollama as ollama_models
 from toolang.plugin.models.providers import openai as openai_models
 from toolang.plugin.models.providers import openrouter as openrouter_models
+from toolang.up.setup import AgentSetup
 from toolang.plugin.models.loading import load_model_adapters, load_model_providers
 from toolang.plugin.models.adapters import chat_completions as chat_completions_models
 from toolang.plugin.models.adapters import responses as responses_models
 from toolang.plugin.models.adapters.responses import encode_message, response_payload
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
-from toolang.plugin.loading import load_loop, load_loops
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 
 
@@ -108,7 +107,9 @@ class _FakeModelProvider(ModelProvider):
         self.requests.append(request)
         return self._responses.pop(0)
 
-    def stream(self, target: ModelTarget, request: ModelCall, *, on_event) -> ModelCallResult:
+    def stream(
+        self, target: ModelTarget, request: ModelCall, *, on_event
+    ) -> ModelCallResult:
         del on_event
         return self.invoke(target, request)
 
@@ -117,10 +118,10 @@ def test_model_resolution_resolves_named_route(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
     (toolang_root / "config.toml").write_text(
-        '[models]\n'
+        "[models]\n"
         'default = ["fast"]\n'
-        '\n'
-        '[models.aliases.fast]\n'
+        "\n"
+        "[models.aliases.fast]\n"
         'ref = "openai/gpt-5"\n'
         'provider = "openai"\n',
         encoding="utf-8",
@@ -246,7 +247,9 @@ def test_model_resolution_rejects_missing_provider_env_before_target_use() -> No
         resolve_model(context, selector="openai/gpt-5[openai]")
 
 
-def test_model_resolution_skips_unconfigured_provider_when_configured_match_exists() -> None:
+def test_model_resolution_skips_unconfigured_provider_when_configured_match_exists() -> (
+    None
+):
     openai = _FakeModelProvider(
         name="openai",
         models=(
@@ -331,8 +334,22 @@ def test_model_resolution_allows_selector_within_allowed_set() -> None:
     provider = _FakeModelProvider(
         name="openrouter",
         models=(
-            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="gpt-5", selectors=("gpt-5",), adapter="responses"),
-            ModelInfo(ref="openai/o3", provider="openrouter", name="o3", model="o3", selectors=("o3",), adapter="responses"),
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openrouter",
+                name="gpt-5",
+                model="gpt-5",
+                selectors=("gpt-5",),
+                adapter="responses",
+            ),
+            ModelInfo(
+                ref="openai/o3",
+                provider="openrouter",
+                name="o3",
+                model="o3",
+                selectors=("o3",),
+                adapter="responses",
+            ),
         ),
     )
     context = SimpleNamespace(
@@ -357,8 +374,22 @@ def test_model_resolution_rejects_selector_outside_allowed_set() -> None:
     provider = _FakeModelProvider(
         name="openrouter",
         models=(
-            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="gpt-5", selectors=("gpt-5",), adapter="responses"),
-            ModelInfo(ref="openai/o3", provider="openrouter", name="o3", model="o3", selectors=("o3",), adapter="responses"),
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openrouter",
+                name="gpt-5",
+                model="gpt-5",
+                selectors=("gpt-5",),
+                adapter="responses",
+            ),
+            ModelInfo(
+                ref="openai/o3",
+                provider="openrouter",
+                name="o3",
+                model="o3",
+                selectors=("o3",),
+                adapter="responses",
+            ),
         ),
     )
     context = SimpleNamespace(
@@ -407,8 +438,22 @@ def test_select_model_selectors_preserves_activation_order_for_intersection() ->
     provider = _FakeModelProvider(
         name="openrouter",
         models=(
-            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
-            ModelInfo(ref="openai/o3", provider="openrouter", name="o3", model="o3", selectors=("o3", "openai/o3"), adapter="responses"),
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openrouter",
+                name="gpt-5",
+                model="gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+            ModelInfo(
+                ref="openai/o3",
+                provider="openrouter",
+                name="o3",
+                model="o3",
+                selectors=("o3", "openai/o3"),
+                adapter="responses",
+            ),
         ),
     )
     context = SimpleNamespace(
@@ -431,8 +476,22 @@ def test_select_model_selectors_supports_name_glob_without_matching_family() -> 
     provider = _FakeModelProvider(
         name="openrouter",
         models=(
-            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
-            ModelInfo(ref="anthropic/claude-sonnet", provider="openrouter", name="claude-sonnet", model="claude-sonnet", selectors=("claude-sonnet", "anthropic/claude-sonnet"), adapter="responses"),
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openrouter",
+                name="gpt-5",
+                model="gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+            ModelInfo(
+                ref="anthropic/claude-sonnet",
+                provider="openrouter",
+                name="claude-sonnet",
+                model="claude-sonnet",
+                selectors=("claude-sonnet", "anthropic/claude-sonnet"),
+                adapter="responses",
+            ),
         ),
     )
     context = SimpleNamespace(
@@ -452,20 +511,50 @@ def test_select_model_selectors_supports_name_glob_without_matching_family() -> 
         select_model_selectors(context, activation_selectors=("openai",))
 
 
-def test_select_model_selectors_expands_route_neutral_agic_refs_from_discovery() -> None:
+def test_select_model_selectors_expands_route_neutral_agic_refs_from_discovery() -> (
+    None
+):
     openai = _FakeModelProvider(
         name="openai",
         models=(
-            ModelInfo(ref="openai/gpt-5", provider="openai", name="gpt-5", model="gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
-            ModelInfo(ref="openai/o3", provider="openai", name="o3", model="o3", selectors=("o3", "openai/o3"), adapter="responses"),
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="gpt-5",
+                model="gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+            ModelInfo(
+                ref="openai/o3",
+                provider="openai",
+                name="o3",
+                model="o3",
+                selectors=("o3", "openai/o3"),
+                adapter="responses",
+            ),
         ),
         required_env_vars=("OPENAI_API_KEY",),
     )
     openrouter = _FakeModelProvider(
         name="openrouter",
         models=(
-            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="openai/gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
-            ModelInfo(ref="openai/o3", provider="openrouter", name="o3", model="openai/o3", selectors=("o3", "openai/o3"), adapter="responses"),
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openrouter",
+                name="gpt-5",
+                model="openai/gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+            ModelInfo(
+                ref="openai/o3",
+                provider="openrouter",
+                name="o3",
+                model="openai/o3",
+                selectors=("o3", "openai/o3"),
+                adapter="responses",
+            ),
         ),
         required_env_vars=("OPENROUTER_API_KEY",),
     )
@@ -493,14 +582,28 @@ def test_select_model_selectors_skips_providers_missing_required_env() -> None:
     openai = _FakeModelProvider(
         name="openai",
         models=(
-            ModelInfo(ref="openai/gpt-5", provider="openai", name="gpt-5", model="gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="gpt-5",
+                model="gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
         ),
         required_env_vars=("OPENAI_API_KEY",),
     )
     openrouter = _FakeModelProvider(
         name="openrouter",
         models=(
-            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="openai/gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openrouter",
+                name="gpt-5",
+                model="openai/gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
         ),
         required_env_vars=("OPENROUTER_API_KEY",),
     )
@@ -536,7 +639,11 @@ def test_select_model_selectors_prefers_exact_ref_over_version_aliases() -> None
                 provider="openrouter",
                 name="gpt-5-2025-08-07",
                 model="openai/gpt-5",
-                selectors=("gpt-5-2025-08-07", "openai/gpt-5-2025-08-07", "openai/gpt-5"),
+                selectors=(
+                    "gpt-5-2025-08-07",
+                    "openai/gpt-5-2025-08-07",
+                    "openai/gpt-5",
+                ),
                 adapter="responses",
             ),
         ),
@@ -561,16 +668,44 @@ def test_select_model_selectors_returns_all_discoverable_when_unrestricted() -> 
     openai = _FakeModelProvider(
         name="openai",
         models=(
-            ModelInfo(ref="openai/gpt-5", provider="openai", name="gpt-5", model="gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
-            ModelInfo(ref="openai/o3", provider="openai", name="o3", model="o3", selectors=("o3", "openai/o3"), adapter="responses"),
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="gpt-5",
+                model="gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+            ModelInfo(
+                ref="openai/o3",
+                provider="openai",
+                name="o3",
+                model="o3",
+                selectors=("o3", "openai/o3"),
+                adapter="responses",
+            ),
         ),
         required_env_vars=("OPENAI_API_KEY",),
     )
     openrouter = _FakeModelProvider(
         name="openrouter",
         models=(
-            ModelInfo(ref="openai/gpt-5", provider="openrouter", name="gpt-5", model="openai/gpt-5", selectors=("gpt-5", "openai/gpt-5"), adapter="responses"),
-            ModelInfo(ref="openai/o3", provider="openrouter", name="o3", model="openai/o3", selectors=("o3", "openai/o3"), adapter="responses"),
+            ModelInfo(
+                ref="openai/gpt-5",
+                provider="openrouter",
+                name="gpt-5",
+                model="openai/gpt-5",
+                selectors=("gpt-5", "openai/gpt-5"),
+                adapter="responses",
+            ),
+            ModelInfo(
+                ref="openai/o3",
+                provider="openrouter",
+                name="o3",
+                model="openai/o3",
+                selectors=("o3", "openai/o3"),
+                adapter="responses",
+            ),
         ),
         required_env_vars=("OPENROUTER_API_KEY",),
     )
@@ -600,7 +735,10 @@ def test_model_info_discovery_is_cached_within_one_process() -> None:
                 provider="openrouter",
                 name="claude-4.5-sonnet-20250929",
                 model="anthropic/claude-sonnet-4.5",
-                selectors=("anthropic/claude-sonnet-4.5", "anthropic/claude-4.5-sonnet-20250929"),
+                selectors=(
+                    "anthropic/claude-sonnet-4.5",
+                    "anthropic/claude-4.5-sonnet-20250929",
+                ),
                 adapter="responses",
             ),
         ),
@@ -642,9 +780,9 @@ def test_model_info_discovery_uses_persistent_cache(tmp_path: Path) -> None:
     cache_dir = tmp_path / "model-cache"
     environ = {"OPENROUTER_API_KEY": "secret"}
 
-    assert model_infos(cached_provider, environ=environ, cache_dir=cache_dir)[0].ref == (
-        "anthropic/claude-4.5-sonnet-20250929"
-    )
+    assert model_infos(cached_provider, environ=environ, cache_dir=cache_dir)[
+        0
+    ].ref == ("anthropic/claude-4.5-sonnet-20250929")
     assert cached_provider.list_models_calls == 1
 
     same_provider = _FakeModelProvider(
@@ -681,14 +819,18 @@ def test_model_info_discovery_uses_persistent_cache(tmp_path: Path) -> None:
     assert same_provider.list_models_calls == 0
 
     changed = model_infos(changed_provider, environ=environ, cache_dir=cache_dir)
-    refreshed = model_infos(changed_provider, environ=environ, cache_dir=cache_dir, refresh=True)
+    refreshed = model_infos(
+        changed_provider, environ=environ, cache_dir=cache_dir, refresh=True
+    )
 
     assert changed[0].ref == "openai/gpt-5"
     assert refreshed[0].ref == "openai/gpt-5"
     assert changed_provider.list_models_calls == 2
 
 
-def test_model_info_persistent_cache_ignores_projection_only_provider_state(tmp_path: Path) -> None:
+def test_model_info_persistent_cache_ignores_projection_only_provider_state(
+    tmp_path: Path,
+) -> None:
     models = (
         ModelInfo(
             ref="openai/gpt-5",
@@ -710,7 +852,12 @@ def test_model_info_persistent_cache_ignores_projection_only_provider_state(tmp_
     provider.scope = "remote"  # type: ignore[attr-defined]
     cache_dir = tmp_path / "model-cache"
 
-    assert model_infos(provider, environ={"OPENAI_API_KEY": "secret"}, cache_dir=cache_dir)[0].ref == "openai/gpt-5"
+    assert (
+        model_infos(
+            provider, environ={"OPENAI_API_KEY": "secret"}, cache_dir=cache_dir
+        )[0].ref
+        == "openai/gpt-5"
+    )
     assert provider.list_models_calls == 1
 
     same_source_provider = _FakeModelProvider(
@@ -723,13 +870,15 @@ def test_model_info_persistent_cache_ignores_projection_only_provider_state(tmp_
     same_source_provider.options = {"temperature": 1}  # type: ignore[attr-defined]
     same_source_provider.scope = "local"  # type: ignore[attr-defined]
 
-    assert model_infos(same_source_provider, environ={"OPENAI_API_KEY": "secret"}, cache_dir=cache_dir)[0].ref == (
-        "openai/gpt-5"
-    )
+    assert model_infos(
+        same_source_provider, environ={"OPENAI_API_KEY": "secret"}, cache_dir=cache_dir
+    )[0].ref == ("openai/gpt-5")
     assert same_source_provider.list_models_calls == 0
 
 
-def test_model_selection_discovers_all_providers_before_filtering(tmp_path: Path) -> None:
+def test_model_selection_discovers_all_providers_before_filtering(
+    tmp_path: Path,
+) -> None:
     openai = _FakeModelProvider(
         name="openai",
         models=(
@@ -767,7 +916,9 @@ def test_model_selection_discovers_all_providers_before_filtering(tmp_path: Path
         model_cache_dir=cache_dir,
     )
 
-    selectors = select_model_selectors(context, activation_selectors=("openai/gpt-5[openai]",))
+    selectors = select_model_selectors(
+        context, activation_selectors=("openai/gpt-5[openai]",)
+    )
 
     assert selectors == ("openai/gpt-5[openai]",)
     assert openai.list_models_calls == 1
@@ -779,11 +930,14 @@ def test_model_selection_discovers_all_providers_before_filtering(tmp_path: Path
         required_env_vars=("OPENROUTER_API_KEY",),
     )
 
-    assert model_infos(
-        same_openrouter,
-        environ={"OPENROUTER_API_KEY": "secret"},
-        cache_dir=cache_dir,
-    )[0].ref == "anthropic/claude-sonnet-4.5"
+    assert (
+        model_infos(
+            same_openrouter,
+            environ={"OPENROUTER_API_KEY": "secret"},
+            cache_dir=cache_dir,
+        )[0].ref
+        == "anthropic/claude-sonnet-4.5"
+    )
     assert same_openrouter.list_models_calls == 0
 
 
@@ -791,7 +945,7 @@ def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
     (toolang_root / "config.toml").write_text(
-        '[models.aliases.gateway]\n'
+        "[models.aliases.gateway]\n"
         'ref = "openai/gpt-5"\n'
         'provider = "openai"\n'
         'adapter = "responses"\n'
@@ -828,9 +982,7 @@ def test_model_alias_uses_provider_default_key_env(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
     (toolang_root / "config.toml").write_text(
-        '[models.aliases.qwen]\n'
-        'ref = "qwen/qwen3-coder"\n'
-        'provider = "openrouter"\n',
+        '[models.aliases.qwen]\nref = "qwen/qwen3-coder"\nprovider = "openrouter"\n',
         encoding="utf-8",
     )
     provider = _FakeModelProvider(
@@ -860,7 +1012,7 @@ def test_model_alias_reports_missing_key_env(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     (toolang_root / "agents" / "alice").mkdir(parents=True, exist_ok=True)
     (toolang_root / "config.toml").write_text(
-        '[models.aliases.gateway]\n'
+        "[models.aliases.gateway]\n"
         'ref = "openai/gpt-5"\n'
         'provider = "openai"\n'
         'adapter = "responses"\n'
@@ -929,10 +1081,14 @@ def test_ollama_provider_discovers_local_models(monkeypatch) -> None:
     )
 
 
-def test_builtin_model_provider_loader_includes_deepseek_google_and_openrouter() -> None:
+def test_builtin_model_provider_loader_includes_deepseek_google_and_openrouter() -> (
+    None
+):
     providers = load_model_providers()
 
-    assert {"custom", "deepseek", "google", "ollama", "openai", "openrouter"} <= set(providers)
+    assert {"custom", "deepseek", "google", "ollama", "openai", "openrouter"} <= set(
+        providers
+    )
     assert providers["deepseek"].default_api_key_env() == "DEEPSEEK_API_KEY"
     assert providers["google"].default_api_key_env() == "GEMINI_API_KEY"
     assert providers["openrouter"].default_api_key_env() == "OPENROUTER_API_KEY"
@@ -945,13 +1101,6 @@ def test_builtin_model_adapter_loader_includes_chat_completions_and_responses() 
     assert adapters["chat_completions"].name == "chat_completions"
     assert "responses" in adapters
     assert adapters["responses"].name == "responses"
-
-
-def test_builtin_loop_loader_includes_basic() -> None:
-    loops = load_loops()
-
-    assert "basic" in loops
-    assert load_loop("basic").name == "basic"
 
 
 def test_openai_provider_lists_curated_common_model_profiles() -> None:
@@ -1097,17 +1246,20 @@ def test_model_target_profile_formats_token_counts_as_decimal_units() -> None:
     assert model_target_profile(target, provider=provider, environ={}) == (
         "streaming=y, tools=y, ctx=1M, max_out=384k, price=$0.14/$0.28"
     )
-    assert model_target_profile(
-        ModelTarget(
-            ref="openai/gpt-5.3-chat-latest",
-            provider="openai",
-            name="gpt-5.3-chat-latest",
-            model="gpt-5.3-chat-latest",
-            adapter="responses",
-        ),
-        provider=openai_models.create_model_provider({}),
-        environ={},
-    ) == "streaming=y, tools=y, ctx=128k, max_out=16.4k, price=$1.75/$14"
+    assert (
+        model_target_profile(
+            ModelTarget(
+                ref="openai/gpt-5.3-chat-latest",
+                provider="openai",
+                name="gpt-5.3-chat-latest",
+                model="gpt-5.3-chat-latest",
+                adapter="responses",
+            ),
+            provider=openai_models.create_model_provider({}),
+            environ={},
+        )
+        == "streaming=y, tools=y, ctx=128k, max_out=16.4k, price=$1.75/$14"
+    )
 
 
 def test_openrouter_provider_discovers_remote_models(monkeypatch) -> None:
@@ -1195,7 +1347,9 @@ def test_openrouter_provider_prepares_chat_completions_target(monkeypatch) -> No
         captured["request"] = request
         return ModelCallResult(message=Message.assistant("done"))
 
-    monkeypatch.setattr(chat_completions_models, "invoke_chat_completion", fake_invoke_chat_completion)
+    monkeypatch.setattr(
+        chat_completions_models, "invoke_chat_completion", fake_invoke_chat_completion
+    )
     provider = openrouter_models.create_model_provider({})
     adapter = chat_completions_models.create_model_adapter({})
     target = ModelTarget(
@@ -1254,7 +1408,9 @@ def test_chat_completions_adapter_invokes_openai_compatible_client(monkeypatch) 
     class _Client:
         chat = SimpleNamespace(completions=_Completions())
 
-    monkeypatch.setattr(chat_completions_models, "create_client", lambda target: _Client())
+    monkeypatch.setattr(
+        chat_completions_models, "create_client", lambda target: _Client()
+    )
     adapter = chat_completions_models.create_model_adapter({})
     target = ModelTarget(
         ref="deepseek/deepseek-v4-pro",
@@ -1382,7 +1538,10 @@ def test_chat_completions_adapter_replays_deepseek_reasoning_content() -> None:
     assert payload["messages"][0]["reasoning_content"] == (
         "The user asked for the directory, so list the current folder."
     )
-    assert payload["messages"][0]["tool_calls"][0]["function"]["name"] == "filesystem__list"
+    assert (
+        payload["messages"][0]["tool_calls"][0]["function"]["name"]
+        == "filesystem__list"
+    )
 
 
 def test_chat_completions_adapter_rejects_tool_calls_without_names() -> None:
@@ -1408,7 +1567,9 @@ def test_chat_completions_stream_rejects_tool_deltas_without_names(monkeypatch) 
                                 SimpleNamespace(
                                     index=0,
                                     id=None,
-                                    function=SimpleNamespace(name=None, arguments='{"path":"."}'),
+                                    function=SimpleNamespace(
+                                        name=None, arguments='{"path":"."}'
+                                    ),
                                 ),
                             )
                         )
@@ -1427,7 +1588,9 @@ def test_chat_completions_stream_rejects_tool_deltas_without_names(monkeypatch) 
     class _Client:
         chat = SimpleNamespace(completions=_Completions())
 
-    monkeypatch.setattr(chat_completions_models, "create_client", lambda target: _Client())
+    monkeypatch.setattr(
+        chat_completions_models, "create_client", lambda target: _Client()
+    )
     adapter = chat_completions_models.create_model_adapter({})
 
     with pytest.raises(ToolangError, match="tool call without a function name"):
@@ -1489,7 +1652,9 @@ def test_chat_completions_stream_collects_deepseek_usage(monkeypatch) -> None:
     class _Client:
         chat = SimpleNamespace(completions=_Completions())
 
-    monkeypatch.setattr(chat_completions_models, "create_client", lambda target: _Client())
+    monkeypatch.setattr(
+        chat_completions_models, "create_client", lambda target: _Client()
+    )
     adapter = chat_completions_models.create_model_adapter({})
 
     result = adapter.stream(
@@ -1511,7 +1676,9 @@ def test_chat_completions_stream_collects_deepseek_usage(monkeypatch) -> None:
     assert result.usage == ModelUsage(input_tokens=13, output_tokens=8)
 
 
-def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models(monkeypatch) -> None:
+def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models(
+    monkeypatch,
+) -> None:
     def fail_invoke_response(*args, **kwargs):
         raise AssertionError("responses.invoke_response should not be called")
 
@@ -1537,11 +1704,15 @@ def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models(monk
         ],
     )
 
-    with pytest.raises(ToolangError, match="audio input is not supported for OpenAI model 'gpt-5'"):
+    with pytest.raises(
+        ToolangError, match="audio input is not supported for OpenAI model 'gpt-5'"
+    ):
         adapter.invoke(target, request)
 
 
-def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models_in_streaming(monkeypatch) -> None:
+def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models_in_streaming(
+    monkeypatch,
+) -> None:
     def fail_stream_response(*args, **kwargs):
         raise AssertionError("responses.stream_response should not be called")
 
@@ -1567,7 +1738,9 @@ def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models_in_s
         ],
     )
 
-    with pytest.raises(ToolangError, match="audio input is not supported for OpenAI model 'gpt-5'"):
+    with pytest.raises(
+        ToolangError, match="audio input is not supported for OpenAI model 'gpt-5'"
+    ):
         adapter.stream(target, request, on_event=lambda _event: None)
 
 
@@ -1579,7 +1752,9 @@ def test_openrouter_provider_preserves_route_header_overrides(monkeypatch) -> No
         captured["request"] = request
         return ModelCallResult(message=Message.assistant("done"))
 
-    monkeypatch.setattr(chat_completions_models, "invoke_chat_completion", fake_invoke_chat_completion)
+    monkeypatch.setattr(
+        chat_completions_models, "invoke_chat_completion", fake_invoke_chat_completion
+    )
     provider = openrouter_models.create_model_provider({})
     adapter = chat_completions_models.create_model_adapter({})
     target = ModelTarget(
@@ -1714,25 +1889,22 @@ def test_execute_run_input_reuses_provider_state_for_followups() -> None:
             ModelCallResult(message=Message.assistant("done")),
         ],
     )
-    run_input = _run_input()
-
-    result = load_loop("basic").run(
-        RunContext(
-            run_input,
-            ModelTarget(
-                ref="openai/gpt-5",
-                provider=provider.name,
-                name="gpt-5",
-                model="gpt-5",
-                adapter="responses",
-            ),
-            provider,
-        )
+    model = ModelTarget(
+        ref="openai/gpt-5",
+        provider=provider.name,
+        name="gpt-5",
+        model="gpt-5",
+        adapter="responses",
     )
 
-    assert result.output_text == "done"
+    result = _run_agic(_prepared_agic(provider, model))
+
+    assert result == Message.assistant("done")
     assert provider.requests[0].state is None
-    assert provider.requests[1].state == {"previous_response_id": "resp-1", "baseline_count": 2}
+    assert provider.requests[1].state == {
+        "previous_response_id": "resp-1",
+        "baseline_count": 2,
+    }
     assert [item.to_data() for item in provider.requests[1].messages] == [
         {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
         {
@@ -1793,23 +1965,17 @@ def test_execute_run_input_appends_provider_messages_for_stateless_providers() -
             ModelCallResult(message=Message.assistant("done")),
         ],
     )
-    run_input = _run_input()
-
-    result = load_loop("basic").run(
-        RunContext(
-            run_input,
-            ModelTarget(
-                ref="qwen/qwen3",
-                provider=provider.name,
-                name="qwen3",
-                model="qwen3",
-                adapter="responses",
-            ),
-            provider,
-        )
+    model = ModelTarget(
+        ref="qwen/qwen3",
+        provider=provider.name,
+        name="qwen3",
+        model="qwen3",
+        adapter="responses",
     )
 
-    assert result.output_text == "done"
+    result = _run_agic(_prepared_agic(provider, model))
+
+    assert result == Message.assistant("done")
     assert provider.requests[0].state is None
     assert provider.requests[1].state is None
     assert [item.to_data() for item in provider.requests[1].messages] == [
@@ -1843,38 +2009,36 @@ def test_execute_run_input_appends_provider_messages_for_stateless_providers() -
     ]
 
 
-def test_run_context_omits_tools_for_model_without_tool_support() -> None:
+def test_agic_omits_tools_for_model_without_tool_support() -> None:
     provider = _FakeModelProvider(
         name="ollama",
         responses=[ModelCallResult(message=Message.assistant("done"))],
     )
-    run_input = _run_input()
-
-    result = load_loop("basic").run(
-        RunContext(
-            run_input,
-            ModelTarget(
-                ref="google/gemma4:latest",
-                provider=provider.name,
-                name="gemma4:latest",
-                model="gemma4:latest",
-                adapter="responses",
-                tools=False,
-                streaming=True,
-            ),
-            provider,
-        )
+    model = ModelTarget(
+        ref="google/gemma4:latest",
+        provider=provider.name,
+        name="gemma4:latest",
+        model="gemma4:latest",
+        adapter="responses",
+        tools=False,
+        streaming=True,
     )
 
-    assert result.output_text == "done"
+    result = _run_agic(_prepared_agic(provider, model))
+
+    assert result == Message.assistant("done")
     assert provider.requests[0].tools == ()
 
-def test_responses_adapter_logs_api_request_and_response_at_debug(caplog, monkeypatch) -> None:
+
+def test_responses_adapter_logs_api_request_and_response_at_debug(
+    caplog, monkeypatch
+) -> None:
     class _FakeResponse:
         id = "resp_123"
         output_text = "done"
         output = ()
         usage = SimpleNamespace(input_tokens=11, output_tokens=7)
+
         def model_dump(self, *, mode="json", exclude_none=True) -> dict[str, object]:
             del mode, exclude_none
             return {
@@ -1928,7 +2092,7 @@ def test_responses_adapter_logs_api_request_and_response_at_debug(caplog, monkey
     assert "secret" not in caplog.text
 
 
-def test_run_context_logs_model_and_tool_io_at_debug(caplog) -> None:
+def test_agic_logs_model_and_tool_io_at_debug(caplog) -> None:
     provider = _FakeModelProvider(
         name="openai",
         responses=[
@@ -1967,9 +2131,9 @@ def test_run_context_logs_model_and_tool_io_at_debug(caplog) -> None:
         caplog.at_level(logging.DEBUG, logger="toolang.model"),
         caplog.at_level(logging.DEBUG, logger="toolang.tool"),
     ):
-        result = load_loop("basic").run(
-            RunContext(
-                _run_input(),
+        result = _run_agic(
+            _prepared_agic(
+                provider,
                 ModelTarget(
                     ref="openai/gpt-5",
                     provider=provider.name,
@@ -1977,11 +2141,10 @@ def test_run_context_logs_model_and_tool_io_at_debug(caplog) -> None:
                     model="gpt-5",
                     adapter="responses",
                 ),
-                provider,
             )
         )
 
-    assert result.output_text == "done"
+    assert result == Message.assistant("done")
     assert "model.request thread=thread-1 run=run-1 step=0 instructions=" in caplog.text
     assert '"command": "pwd"' in caplog.text
     assert "model.result thread=thread-1 run=run-1 step=0 message=" in caplog.text
@@ -1993,7 +2156,9 @@ def test_run_context_logs_model_and_tool_io_at_debug(caplog) -> None:
 
 
 def test_responses_encode_message_preserves_structured_content() -> None:
-    encoded = encode_message(Message(role="user", parts=(Message.user("hello").parts[0],)))
+    encoded = encode_message(
+        Message(role="user", parts=(Message.user("hello").parts[0],))
+    )
 
     assert encoded == {
         "type": "message",
@@ -2015,7 +2180,9 @@ def test_responses_encode_message_supports_multimodal_user_parts() -> None:
                 Message.user("describe this").parts[0],
                 ImagePart(image_url="https://example.com/image.png", detail="high"),
                 AudioPart(data="ZGF0YQ==", format="mp3"),
-                FilePart(file_url="https://example.com/report.pdf", filename="report.pdf"),
+                FilePart(
+                    file_url="https://example.com/report.pdf", filename="report.pdf"
+                ),
             ),
         )
     )
@@ -2025,9 +2192,20 @@ def test_responses_encode_message_supports_multimodal_user_parts() -> None:
         "role": "user",
         "content": [
             {"type": "input_text", "text": "describe this"},
-            {"type": "input_image", "image_url": "https://example.com/image.png", "detail": "high"},
-            {"type": "input_audio", "input_audio": {"data": "ZGF0YQ==", "format": "mp3"}},
-            {"type": "input_file", "file_url": "https://example.com/report.pdf", "filename": "report.pdf"},
+            {
+                "type": "input_image",
+                "image_url": "https://example.com/image.png",
+                "detail": "high",
+            },
+            {
+                "type": "input_audio",
+                "input_audio": {"data": "ZGF0YQ==", "format": "mp3"},
+            },
+            {
+                "type": "input_file",
+                "file_url": "https://example.com/report.pdf",
+                "filename": "report.pdf",
+            },
         ],
     }
 
@@ -2072,7 +2250,9 @@ def test_file_part_preserves_data_url_as_file_data() -> None:
 
 
 def test_responses_reject_non_text_assistant_multimodal_parts() -> None:
-    with pytest.raises(ToolangError, match="assistant messages cannot contain image parts"):
+    with pytest.raises(
+        ToolangError, match="assistant messages cannot contain image parts"
+    ):
         encode_message(
             Message(
                 role="assistant",
@@ -2199,30 +2379,32 @@ def test_responses_previous_response_id_replays_tool_output_without_item_id() ->
     ]
 
 
-def _run_input() -> RunInput:
+def _prepared_agic(
+    provider: _FakeModelProvider,
+    model: ModelTarget,
+) -> PreparedAgic:
     tool = _FakeTool()
     state = SimpleNamespace(
         program=Program(span=Span(1)),
         fingerprint="live-1",
     )
-    return RunInput(
-        run=_Run(
+    return PreparedAgic(
+        run=BoundRun(
             run_id="run-1",
-            group="chat",
             origin="chat",
             thread_id="thread-1",
             executable_kind="agic",
             executable_name=None,
+            input=Message.user("hello"),
             input_text="hello",
-            message=Message.user("hello"),
             model_selector=None,
-            model_selectors=(),
-            tool_selectors=None,
-            cap_selectors=(),
-            run_loop="basic",
-            metadata={},
+            context={},
             state=cast(Any, state),
-            setup=AgentSetup(tools={}, model_providers={}, model_adapters={}),
+            setup=AgentSetup(
+                tools={},
+                model_providers={},
+                model_adapters={},
+            ),
             created_at="2026-04-10T00:00:00Z",
         ),
         agic=AgicDecl(
@@ -2238,26 +2420,24 @@ def _run_input() -> RunInput:
             ),
             span=Span(1),
         ),
-        input_text="hello",
-        message=Message.user("hello"),
-        context_text="",
-        params={},
-        user_template_context={},
-        system_template_context={},
-        history=(),
-        models_base=("openai/gpt-5",),
-        tools_base={tool.name: tool},
-        snapshot=RunSnapshot(
-            agent=SnapshotAgent(name="alice", root="/tmp/root", home="/tmp/home"),
-            run=SnapshotRun(
-                run_id="run-1",
-                group="chat",
-                origin="chat",
-                thread_id="thread-1",
-                run_loop="basic",
-                state_fingerprint="",
-            ),
-            program=SnapshotProgram(source_path="", agic={}),
-        ),
-        debug={},
+        model=model,
+        adapter=provider,
+        instructions="",
+        prompt_context="",
+        messages=(Message.user("hello"),),
+        tools={tool.name: tool},
+        services=(),
+    )
+
+
+def _run_agic(prepared: PreparedAgic) -> Message | None:
+    return _execute(
+        _AgicState(
+            prepared=prepared,
+            home=Path("/tmp/home"),
+            emit=lambda _event: None,
+            pending_inputs=tuple,
+            before_call=lambda: None,
+            messages=list(prepared.messages),
+        )
     )

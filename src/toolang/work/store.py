@@ -15,29 +15,11 @@ from dateutil.rrule import rrulestr
 
 from toolang.catalog.types import JobKind
 from ..execution.types import RunStatus
+from .records import JobRecord
 from .types import JobStatus, JobTrigger
 from .state import AgentJobs, JobDefinition
 
 _SCHEMA_VERSION = 1
-
-
-@dataclass(frozen=True, slots=True)
-class JobRecord:
-    """One scheduler projection row."""
-
-    job_id: str
-    kind: JobKind
-    path: str
-    definition_hash: str
-    thread_id: str
-    status: JobStatus
-    last_run_id: str | None
-    next_run_at: str | None
-    run_count: int
-    failed_count: int
-    canceled_count: int
-    created_at: str
-    updated_at: str
 
 
 @dataclass(frozen=True, slots=True)

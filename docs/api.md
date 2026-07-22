@@ -303,11 +303,11 @@ include richer discovery details such as:
 
 Each running agent exposes one local FastAPI server.
 
-The process assembles one `Executor`, one `StateWatcher`, and five authored
+The process assembles one `RunExecutor`, one `StateWatcher`, and five authored
 catalog instances for the application lifetime: one `AuthoredJobs`, private and
 shared `AuthoredCaps`, and private and shared `WiredCaps`. FastAPI dependencies
 return these concrete instances directly. The API runtime retains background
-run tasks; `Executor.run()` only executes the supplied request and does not
+run tasks; `RunExecutor.start()` only executes the supplied request and does not
 spawn or retain tasks.
 
 Core endpoints are grouped as:
@@ -501,7 +501,7 @@ The CLI command for interactive chat is
 Without a thread id, the TUI creates a terminal chat thread on first input. With
 a thread id, it continues that thread. When the agent API is already running,
 the TUI uses it. Without a running API, effective `sandbox=none` creates a
-process-local chat session and calls `Executor` in the current foreground CLI.
+process-local chat session and calls `RunExecutor` in the current foreground CLI.
 A managed sandbox such as Docker instead uses a session-owned API and stops it
 when the session closes. Both paths use the same root, home, state watcher, run
 store, and chat-client contract. Job thread ids are inspectable and controllable

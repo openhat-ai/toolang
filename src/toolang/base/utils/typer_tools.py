@@ -11,7 +11,7 @@ import io
 import json
 from typing import TYPE_CHECKING, Any, cast
 
-from ..error import ToolangError
+from ..errors import ToolangError
 from ..protocols.tool import AgentTool
 from ..types.tool import ToolContext, ToolDefinition
 

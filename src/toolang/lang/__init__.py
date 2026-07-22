@@ -1,7 +1,7 @@
 """Toolang language services."""
 
 from .ast import Program, program_from_data, to_data
-from .diagnostics import ToolangFormatError
+from .errors import ToolangFormatError
 from .format import format_source
 
 __all__ = [

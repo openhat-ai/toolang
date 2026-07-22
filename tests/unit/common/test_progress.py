@@ -4,7 +4,8 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from toolang.common.progress import ProgressEvent, emit_progress
+from toolang.common.events import ProgressEvent
+from toolang.common.progress import emit_progress
 
 
 def test_emit_progress_is_optional() -> None:

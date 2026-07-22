@@ -10,16 +10,14 @@ from toolang.api.schemas import (
     ChatRequest,
 )
 from toolang.base.types.message import Message
-from toolang.execution.projection import ExecutionProjector
+from toolang.execution.inspection import ExecutionInspection
 from toolang.execution.schemas import ChatResult
-from toolang.plugin.models.resolution import split_model_selectors
-from toolang.plugin.tools.registry import split_tool_selectors
-from toolang.state.state import split_cap_selectors
 from toolang.execution.records import ThreadPeer
 from toolang.execution.records import RunRecord
+from toolang.execution.threads import ThreadManager
 from toolang.execution.reply import BufferedReplySink, SseReplySink, TraceReplySink
-from toolang.execution.request import RunRequest
-from .._streaming import ShutdownAwareStreamingResponse, guarded_stream
+from toolang.execution.executor.request import RunRequest
+from ..common import ShutdownAwareStreamingResponse, guarded_stream
 from .threads import parse_thread_peer, thread_info
 
 
@@ -30,27 +28,23 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 async def submit_chat(context: ApiContextDep, payload: ChatRequest) -> ChatResult:
     thread_id = _chat_thread_id_or_404(context, payload)
     result, reply = await _submit_chat_run(context, payload, thread_id=thread_id)
-    projector = ExecutionProjector(context.executor.store)
-    detail = projector.run_detail(result.run_id)
+    inspection = ExecutionInspection(context.executor.store)
+    detail = inspection.run_detail(result.id)
     if detail is None:
         if result.status == "failed" and result.error:
             raise HTTPException(status_code=500, detail=result.error)
         raise HTTPException(
             status_code=500,
-            detail=f"run not found after completion: {result.run_id}",
+            detail=f"run not found after completion: {result.id}",
         )
     if detail.input is None:
         raise HTTPException(
-            status_code=500, detail=f"missing chat input for run {result.run_id}"
+            status_code=500, detail=f"missing chat input for run {result.id}"
         )
     user_message = detail.input
-    fallback_assistant = next(
-        (
-            item.message
-            for item in reversed(detail.output.steps)
-            if item.message is not None and item.message.role == "assistant"
-        ),
-        None,
+    fallback_output = context.executor.store.run_output(run_id=result.id)
+    fallback_assistant = (
+        Message(role="assistant", parts=fallback_output) if fallback_output else None
     )
     assistant_message = (
         reply.assistant
@@ -59,18 +53,14 @@ async def submit_chat(context: ApiContextDep, payload: ChatRequest) -> ChatResul
         if fallback_assistant is not None
         else None
     )
-    if user_message is None or assistant_message is None:
+    if assistant_message is None:
         raise HTTPException(
             status_code=500,
-            detail=f"incomplete chat transcript for run {result.run_id}",
-        )
-    if result.thread_id is None:
-        raise HTTPException(
-            status_code=500, detail=f"missing chat thread for run {result.run_id}"
+            detail=f"incomplete chat transcript for run {result.id}",
         )
     return ChatResult(
-        thread=thread_info(context, result.thread_id),
-        run=projector.run_info(result),
+        thread=thread_info(context, result.thread),
+        run=inspection.run_info(result),
         message=user_message,
         assistant=assistant_message,
     )
@@ -99,7 +89,7 @@ async def _submit_chat_run(
     context: ApiContext,
     payload: ChatRequest,
     *,
-    thread_id: str | None,
+    thread_id: str,
 ) -> tuple[RunRecord, BufferedReplySink]:
     reply = BufferedReplySink()
     run_id = context.executor.allocate_run_id()
@@ -116,7 +106,7 @@ async def _stream_chat_run(
     context: ApiContext,
     payload: ChatRequest,
     *,
-    thread_id: str | None,
+    thread_id: str,
 ):
     reply = (
         TraceReplySink()
@@ -135,44 +125,40 @@ async def _stream_chat_run(
 def _chat_run_request(
     payload: ChatRequest,
     *,
-    thread_id: str | None,
+    thread_id: str,
     run_id: str,
 ) -> RunRequest:
     return RunRequest(
-        group="chat",
         origin="chat",
+        input=_chat_user_message(payload),
         run_id=run_id,
         thread_id=thread_id,
-        thread_kind=payload.client,
-        message=_chat_user_message(payload),
         model_selector=payload.model,
-        model_selectors=_model_selectors(payload),
         executable_kind=_executable_kind(payload),
         executable_name=_executable_name(payload),
-        tool_selectors=_tool_selectors(payload),
-        cap_selectors=_cap_selectors(payload),
-        metadata=_thread_metadata(payload),
+        request_id=payload.request_id,
     )
 
 
-def _chat_thread_id_or_404(context: ApiContext, payload: ChatRequest) -> str | None:
+def _chat_thread_id_or_404(context: ApiContext, payload: ChatRequest) -> str:
     if payload.thread is None:
-        return None
-    runs = context.executor.store.list_runs(thread_id=payload.thread, limit=1)
+        result = ThreadManager(context.executor).create(
+            kind=payload.client,
+            peer=_request_peer(payload),
+        )
+        return result.thread.thread_id
     thread = context.executor.store.get_thread(thread_id=payload.thread)
-    if not runs and thread is None:
+    if thread is None:
         raise HTTPException(
             status_code=404, detail=f"chat thread not found: {payload.thread}"
         )
-    origin = runs[0].origin if runs else thread.origin if thread is not None else ""
-    if origin != "chat":
+    if thread.origin != "chat":
         raise HTTPException(
             status_code=404, detail=f"chat thread not found: {payload.thread}"
         )
     peer = _request_peer(payload)
     if peer is not None:
-        existing_peer = thread.peer if thread is not None else ThreadPeer()
-        if existing_peer != peer:
+        if thread.peer != peer:
             raise HTTPException(
                 status_code=409, detail=f"chat thread peer mismatch: {payload.thread}"
             )
@@ -185,16 +171,6 @@ def _chat_user_message(payload: ChatRequest) -> Message:
 
 def _request_peer(payload: ChatRequest) -> ThreadPeer | None:
     return parse_thread_peer(payload.peer)
-
-
-def _thread_metadata(payload: ChatRequest) -> dict[str, object]:
-    metadata: dict[str, object] = {}
-    if payload.request_id is not None:
-        metadata["request_id"] = payload.request_id
-    peer = _request_peer(payload)
-    if peer is not None:
-        metadata["thread_peer"] = peer.to_data()
-    return metadata
 
 
 def _executable_kind(payload: ChatRequest) -> Literal["agic", "flow"]:
@@ -221,17 +197,3 @@ def _text_or_none(value: object) -> str | None:
         return None
     text = value.strip()
     return text or None
-
-
-def _model_selectors(payload: ChatRequest) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(split_model_selectors(tuple(payload.models))))
-
-
-def _tool_selectors(payload: ChatRequest) -> tuple[str, ...] | None:
-    if payload.tools is None:
-        return None
-    return tuple(dict.fromkeys(split_tool_selectors(tuple(payload.tools))))
-
-
-def _cap_selectors(payload: ChatRequest) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(split_cap_selectors(tuple(payload.caps))))

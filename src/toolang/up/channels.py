@@ -10,11 +10,12 @@ from pathlib import Path
 
 from toolang.base.protocols.channel import AgentChannel
 from toolang.base.types.channel import ChannelContext, ChannelState, InboundDelivery
+from toolang.base.types.message import Message
 from toolang.base.utils.channels import bind_delivery
 from toolang.execution.executor import Executor
 from toolang.execution.records import RunRecord
 from toolang.execution.reply import build_channel_reply_sink
-from toolang.execution.request import RunRequest
+from toolang.execution.executor.request import RunRequest
 from toolang.plugin.config import ChannelBinding
 from toolang.state.state import AgentState
 
@@ -140,7 +141,6 @@ async def _poll_binding(
             get_agent_state=get_agent_state,
             plugins=plugins,
             home=home,
-            group="chat",
             binding_name=binding_name,
             delivery=delivery,
         )
@@ -170,7 +170,6 @@ def start_delivery(
     get_agent_state: Callable[[], AgentState],
     plugins: Mapping[str, AgentChannel],
     home: Path,
-    group: str,
     binding_name: str,
     delivery: InboundDelivery,
 ) -> asyncio.Task[RunRecord]:
@@ -179,11 +178,10 @@ def start_delivery(
     return asyncio.create_task(
         executor.run(
             RunRequest(
-                group=group,
                 origin=bound.origin,
                 thread_id=bound.thread_id,
-                input=bound.text,
-                metadata=metadata,
+                input=Message.user(bound.text),
+                context=metadata,
             ),
             get_agent_state(),
             reply=build_channel_reply_sink(

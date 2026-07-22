@@ -6,7 +6,7 @@ Shared contracts and canonical value types live in:
 
 - `toolang.base`
 
-Plugins should raise `toolang.common.error.ToolangError` for invalid Toolang
+Plugins should raise `toolang.common.errors.ToolangError` for invalid Toolang
 configuration, input, or runtime behavior that should be presented to users.
 
 
@@ -15,7 +15,6 @@ configuration, input, or runtime behavior that should be presented to users.
 Current plugin families are:
 
 - `tool`
-- `loop`
 - `channel`
 - `sandbox`
 - `model_provider`
@@ -45,14 +44,6 @@ Plugins do not mutate durable runtime truth directly.
 Tool plugins expose one `AgentToolSet`, which may return one or more
 model-facing `AgentTool` values.
 
-### Loop
-
-Loop plugins decide how to sequence:
-
-- model calls
-- tool calls
-- run completion
-
 ### Channel
 
 Channel plugins ingest or deliver external messages.
@@ -77,7 +68,6 @@ Model adapter plugins execute one model turn for a resolved target and return
 Toolang loads plugins from Python entry points:
 
 - `toolang.tool`
-- `toolang.loop`
 - `toolang.channel`
 - `toolang.sandbox`
 - `toolang.model_provider`
@@ -90,14 +80,13 @@ entry points and are not imported directly by family-specific loaders.
 The built-in plugin packages are:
 
 - `toolang.plugin.tools.*`
-- `toolang.plugin.loops.*`
 - `toolang.plugin.channels.*`
 - `toolang.plugin.sandboxes.*`
 - `toolang.plugin.models.providers.*`
 - `toolang.plugin.models.adapters.*`
 
-Each entry point names one factory such as `create_tool_set`, `create_loop`,
-`create_channel`, `create_sandbox`, `create_model_provider`, or
+Each entry point names one factory such as `create_tool_set`, `create_channel`,
+`create_sandbox`, `create_model_provider`, or
 `create_model_adapter`. A single Python distribution or package may define
 multiple Toolang plugin entry points, including multiple entry points in the
 same family.

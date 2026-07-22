@@ -222,7 +222,7 @@ The Ollama provider uses the local Ollama HTTP API and defaults to:
 
 ## Resolution Rule
 
-One run resolves exactly one model target before loop execution starts.
+One agic run resolves exactly one model target before execution starts.
 
 Resolution proceeds in this order:
 

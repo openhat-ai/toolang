@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import inspect
 from typing import Any, get_args, get_origin
 
-from ..error import ToolangError
+from ..errors import ToolangError
 from ..protocols.tool import AgentTool
 from ..types.tool import ToolContext, ToolDefinition
 

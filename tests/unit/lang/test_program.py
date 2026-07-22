@@ -6,7 +6,7 @@ from typing import Any, cast
 import pytest
 
 from tests import FIXTURES_ROOT, PROJECT_ROOT
-from toolang.common.error import ToolangError
+from toolang.common.errors import ToolangError
 from toolang.lang import Program, to_data
 from toolang.lang.ast import LetStmt, RepeatStmt
 from toolang.lang.input import expand_program_input

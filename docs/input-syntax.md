@@ -18,14 +18,15 @@ ContentItem = Text | Prompt | Include
 - `Content` is an ordered tree that renders to `Part[]`.
 - `ContentBody` is source text owned by a declaration or document and parsed as
   `Content` under that source's profile.
-- `RunInput` is typed runtime data: one optional primary value plus named
-  parameters. It contains no source syntax.
+- Executable arguments are typed runtime data: one optional primary value plus
+  named parameters. They contain no source syntax and are not a standalone
+  execution object.
 
 The source terms describe different stages:
 
 - Chat input is a `Submission`.
 - Task and chore inputs are document `ContentBody` values that later become
-  `RunInput`.
+  executable arguments.
 - An agic body is model-call content evaluated inside a run.
 - A flow body is `FlowStmt[]`, not content text.
 - A flow statement body is either a `ContentBody` or nested `FlowStmt[]`, as
@@ -40,9 +41,9 @@ spelling but is a content item, not a command.
 
 | Source | Entry | Built-in slash | Shell | Template scope | Produces |
 | --- | --- | --- | --- | --- | --- |
-| CLI chat | Submission | yes | execute | none | command or RunInput |
-| WebUI chat | Submission | yes | reject | none | command or RunInput |
-| task/chore body | ContentBody | no | text | none | RunInput |
+| CLI chat | Submission | yes | execute | none | command or executable arguments |
+| WebUI chat | Submission | yes | reject | none | command or executable arguments |
+| task/chore body | ContentBody | no | text | none | executable arguments |
 | agic body/message | ContentBody | no | text | locals and runtime | ModelCall content |
 | flow inline agic | ContentBody | no | text | locals and runtime | generated AgicDecl |
 | flow `let` | ContentBody | no | text | locals and runtime | Local |
@@ -193,7 +194,7 @@ coalesce adjacent text into Part[]
 The consumer determines what happens next:
 
 ```text
-chat/task/chore Content -> Part[] -> signature coercion -> RunInput -> run
+chat/task/chore Content -> Part[] -> signature coercion -> executable arguments
 agic ContentBody        -> Part[] -> Message -> ModelCall
 flow inline agic        -> generated AgicDecl -> child run
 flow let ContentBody    -> Part[] -> Local
@@ -205,7 +206,7 @@ Prompt expansion does not enable local interpolation in chat, task, or chore
 content and never redispatches built-in or shell commands.
 
 
-## Run Input
+## Executable Arguments
 
 Agics and flows use `_` as their primary input parameter:
 
@@ -238,7 +239,8 @@ No coercion may discard a non-text part. Invalid input is rejected before
 `run_begin`.
 
 The executor initializes `_` from the primary value and named locals from the
-parameters. `Message` belongs to model calls and is not part of `RunInput`.
+parameters. `Message` belongs to model calls and is not part of executable
+arguments.
 
 Value type and flow shape are independent. A `Part[]` or `T[]` value starts as
 one `shape=item` local and becomes `shape=list` only through an explicit flow

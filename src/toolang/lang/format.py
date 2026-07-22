@@ -7,7 +7,7 @@ import re
 from tree_sitter import Node, Tree
 
 from .ast import _first_syntax_error, _parse_tree
-from .diagnostics import ToolangFormatError
+from .errors import ToolangFormatError
 
 
 _EXECUTABLE_HEADER_RE = re.compile(

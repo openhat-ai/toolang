@@ -21,13 +21,10 @@ from toolang.base.types.message import Message
 from ...execution.events import RunEnd, RunStarting, TraceEvent, trace_event_from_data
 from ...execution.records import InputRef, RunRecord
 from .context import context_root, require_prefix_agent, ui_base_url
+from .errors import RuntimeClientError
 
 if TYPE_CHECKING:
     from toolang.up.server import StartupSpec
-
-
-class RuntimeClientError(RuntimeError):
-    pass
 
 
 class RuntimeClient:

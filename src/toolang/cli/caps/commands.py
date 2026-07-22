@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Literal
 from urllib.parse import quote
 
 import click
@@ -13,10 +13,12 @@ import typer
 from typer.core import TyperGroup
 
 from ...catalog import templates
-from ...catalog.error import CatalogConflictError
-from ...common.error import ToolangError
+from ...catalog.errors import CatalogConflictError
+from ...common.errors import ToolangError
 from ...common.github import parse_github_ref
 from toolang.catalog import cap as cap_store
+from toolang.catalog import config as cap_config
+from toolang.catalog.types import CAP_KINDS, CapKind
 from toolang.state import state as cap_state
 from ..common.updates import append_agent_update
 from ..common.context import context_agent, context_root, user_call
@@ -28,17 +30,14 @@ from ..common.routing import (
 )
 
 if TYPE_CHECKING:
-    from ...execution.records import UpdateKind
     from toolang.state.state import AgentState
     from toolang.state.state import PreparedCap
     from ..common.progress import CliProgress
 
-CapKind = Literal["skill", "psyche", "prompt", "service"]
 EntryKind = CapKind
 PreparedVisibility = Literal["shared", "private"]
 CapForm = Literal["inline", "ref", "wired", "file"]
 CapScope = Literal["root", "home", "here"]
-CAP_KINDS: tuple[CapKind, ...] = ("psyche", "skill", "service", "prompt")
 CAP_FORMS: tuple[CapForm, ...] = ("inline", "ref", "wired", "file")
 CAP_SCOPES: tuple[CapScope, ...] = ("root", "home", "here")
 
@@ -405,7 +404,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             )
             name = cap_state.remote_entry_name(kind, canonical_ref)
             _wired_caps(context_root(ctx), agent_name, visibility).create(
-                cap_store.CapRef(kind=kind, name=name, ref=canonical_ref)
+                cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
             )
         except CatalogConflictError as exc:
             progress.finish(details=False)
@@ -632,9 +631,7 @@ def _all_cap_entries(
                 agent_name=agent_name,
                 progress=as_progress_sink(progress),
             )
-            entries = _prepared_cap_entries(
-                state, visibility=visibility, kinds=kinds
-            )
+            entries = _prepared_cap_entries(state, visibility=visibility, kinds=kinds)
             progress.set_prepare_total(len(entries))
             return entries
         finally:
@@ -656,8 +653,7 @@ def _prepared_cap_entries(
     return tuple(
         cap
         for cap in state.caps
-        if cap.kind in kinds
-        and (visibility == "all" or cap.visibility == visibility)
+        if cap.kind in kinds and (visibility == "all" or cap.visibility == visibility)
     )
 
 
@@ -723,8 +719,8 @@ def _wired_caps(
     toolang_root: Path,
     agent_name: str,
     visibility: PreparedVisibility,
-) -> cap_store.WiredCaps:
-    return cap_store.WiredCaps(
+) -> cap_config.WiredCaps:
+    return cap_config.WiredCaps(
         _cap_directory(toolang_root, agent_name, visibility) / "config.toml"
     )
 
@@ -737,11 +733,10 @@ def _append_cap_update(
     name: str,
     visibility: PreparedVisibility,
 ) -> None:
-    update_kind = cast("UpdateKind", f"{kind}_changed")
     append_agent_update(
         toolang_root,
         agent_name,
-        update_kind,
+        f"{kind}_changed",
         {
             "name": name,
             "visibility": visibility,

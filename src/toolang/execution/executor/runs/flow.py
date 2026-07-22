@@ -1,0 +1,88 @@
+"""Flow run execution."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING
+
+from toolang.common.errors import ToolangError
+from toolang.lang.ast import FlowDecl, FlowStmt
+
+from ...records import StepPath, trace_child_path
+from ..common import BoundRun
+from ..common import (
+    Local,
+    apply_steer,
+    program_structs,
+    statement_has_call,
+    update_locals,
+    validate_output,
+)
+from .. import stmts
+
+if TYPE_CHECKING:
+    from ..executor import _Execution
+
+
+async def execute(
+    execution: _Execution,
+    binding: BoundRun,
+    flow: FlowDecl,
+    locals: dict[str, Local],
+) -> Local:
+    """Execute one complete flow body."""
+
+    await execute_statements(
+        execution,
+        binding,
+        flow.stmts,
+        locals,
+        parent=binding.run_id,
+    )
+    result = locals.get("_", Local())
+    if flow.output is not None:
+        if result.shape == "none":
+            raise ToolangError(f"flow output is missing; expected {flow.output}")
+        validate_output(
+            result.value,
+            flow.output,
+            structs=program_structs(binding),
+        )
+    return result
+
+
+async def execute_statements(
+    execution: _Execution,
+    binding: BoundRun,
+    statements: Sequence[FlowStmt],
+    locals: dict[str, Local],
+    *,
+    parent: StepPath,
+    start: int = 0,
+    placement: Mapping[str, object] | None = None,
+) -> int:
+    """Execute statements sequentially and update their shared locals."""
+
+    index = start
+    for statement in statements:
+        execution.raise_if_stopping(
+            binding.run_id,
+            call=statement_has_call(statement),
+        )
+        controls = execution.steer_controls(binding.run_id, statement)
+        apply_steer(locals, controls)
+        path = trace_child_path(parent, index)
+        result = await stmts.execute(
+            execution,
+            binding,
+            dict(locals),
+            path=path,
+            statement=statement,
+            controls=controls,
+            placement=placement,
+        )
+        update_locals(locals, statement.binding, result)
+        if parent == binding.run_id and statement.binding == "_":
+            execution.record_output(binding.run_id, path)
+        index += 1
+    return index

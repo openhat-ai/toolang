@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from toolang.cli.impl.chat import slashes
-from toolang.cli.common.client import RuntimeClientError
+from toolang.cli.common.errors import RuntimeClientError
 
 
 class _Client:

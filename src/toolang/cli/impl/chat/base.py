@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -44,12 +43,6 @@ class ChatClient(Protocol):
         on_event: Callable[[TraceEvent], None],
         on_error: Callable[[str], None],
     ) -> None: ...
-
-
-@dataclass(frozen=True, slots=True)
-class ChatUIEvent:
-    type: str
-    value: str | TraceEvent | None = None
 
 
 class AppContext(Protocol):

@@ -1,21 +1,12 @@
-"""Shared run and loop value types."""
+"""Shared model-call and tool-call value types."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .message import Delta, Message, Part, PartType
+from .message import Message
 from .tool import ToolDefinition
-
-
-@dataclass(frozen=True, slots=True)
-class RunResult:
-    """Final run-loop result."""
-
-    message: Message | None = None
-    output_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,28 +57,3 @@ class ModelCallResult:
     tool_calls: tuple[ToolCall, ...] = field(default_factory=tuple)
     usage: ModelUsage | None = None
     state: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ModelPartStartEvent:
-    """One streamed model-part start event."""
-
-    kind: PartType
-
-
-@dataclass(frozen=True, slots=True)
-class ModelPartDeltaEvent:
-    """One streamed model-part delta event."""
-
-    delta: Delta
-
-
-@dataclass(frozen=True, slots=True)
-class ModelPartEndEvent:
-    """One streamed model-part end event."""
-
-    data: Part
-
-
-ModelPartEvent = ModelPartStartEvent | ModelPartDeltaEvent | ModelPartEndEvent
-ModelEventHandler = Callable[[ModelPartEvent], None]

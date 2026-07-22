@@ -11,7 +11,7 @@ import shlex
 import threading
 from typing import Any, Literal, cast
 
-from toolang.base.error import ToolangError
+from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext, ToolDefinition
 

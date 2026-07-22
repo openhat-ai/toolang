@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from toolang.base.error import ToolangError
+from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.tool import ToolContext, ToolService
 from toolang.execution.store import RunStore, run_store_path

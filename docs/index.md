@@ -34,9 +34,9 @@ Use this directory for:
 | [selectors.md](./selectors.md) | Shared selector-list syntax for filters, activation flags, and agic directives |
 | [tasks.md](./tasks.md) | Job model, including task, chore, will, and thread mapping |
 | [webui-jobs.md](./webui-jobs.md) | Web UI job board integration guide |
-| [execution.md](./execution.md) | Execution boundaries, lifecycle, locals, traces, persistence, and replies |
-| [executor.md](./executor.md) | Executor design for agic, flow, step execution, locals, reshapes, and sinks |
-| [run-step-records.md](./run-step-records.md) | Durable run, step, and command records plus their source trace events |
+| [execution.md](./execution.md) | Execution boundaries, controls, threads, traces, and mandatory persistence |
+| [executor.md](./executor.md) | RunExecutor acceptance, execution, control polling, and tracing |
+| [run-step-records.md](./run-step-records.md) | Durable run, step, thread, and control records plus source events |
 | [chat.md](./chat.md) | Chat and transcript model, including thread, run, message, and stream behavior |
 | [models.md](./models.md) | Model integrations, including selectors, providers, routes, and built-in model providers |
 | [tools.md](./tools.md) | Tool runtime, including built-in tools and service-cap integration |

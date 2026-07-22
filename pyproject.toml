@@ -56,9 +56,9 @@ Repository = "https://github.com/openhat-ai/toolang"
 Issues = "https://github.com/openhat-ai/toolang/issues"
 
 [project.scripts]
-toolang = "toolang.cli.toolang.cli:main"
-too = "toolang.cli.toolang.cli:main"
-caps = "toolang.cli.caps.cli:main"
+toolang = "toolang.cli.toolang.main:main"
+too = "toolang.cli.toolang.main:main"
+caps = "toolang.cli.caps.main:main"
 
 [project.entry-points."toolang.tool"]
 agent_chat = "toolang.execution.tools.agent_chat:create_tool_set"
@@ -79,9 +79,6 @@ ollama = "toolang.plugin.models.providers.ollama:create_model_provider"
 [project.entry-points."toolang.model_adapter"]
 chat_completions = "toolang.plugin.models.adapters.chat_completions:create_model_adapter"
 responses = "toolang.plugin.models.adapters.responses:create_model_adapter"
-
-[project.entry-points."toolang.loop"]
-basic = "toolang.plugin.loops.basic:create_loop"
 
 [project.entry-points."toolang.channel"]
 telegram = "toolang.plugin.channels.telegram:create_channel"

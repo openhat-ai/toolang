@@ -1,305 +1,182 @@
 # Execution Model
 
-This document defines Toolang's runtime execution boundaries. Exact durable
-record and event fields are specified in
-[run-step-records.md](./run-step-records.md); executor control flow is specified
-in [executor.md](./executor.md).
+This document defines the ownership and lifecycle boundaries of
+`toolang.execution`. Detailed record shapes live in
+[run-step-records.md](./run-step-records.md), and runtime behavior lives in
+[executor.md](./executor.md).
 
 
-## State Forms
+## Responsibilities
 
-Toolang uses three source-state forms:
+`toolang.execution` owns:
 
-| State Form | Meaning |
-| --- | --- |
-| `durable` | Authored files discovered under the root and agent home |
-| `prepared` | Immutable root and home generations derived from authored source |
-| `agent` | One exact `RootPrepared + HomePrepared` pair used by execution |
+- accepting, controlling, and executing agic and flow runs;
+- mandatory durable run and step history in `runs.db`;
+- durable run controls that can be submitted by another process;
+- thread creation, fork, and rewind semantics;
+- caller-facing projections of durable execution truth.
 
-A run captures immutable `AgentState` and `AgentSetup` values when accepted,
-and child runs inherit them from their parent. Later source updates therefore
-affect only requests accepted later.
-
-Scheduled and manually triggered jobs also capture their `JobDefinition` as
-run metadata when claimed. Execution consumes that metadata and never reads
-task or chore files, so a job edit cannot change an accepted run.
+It does not own API streaming protocols, CLI rendering, agent events, event
+hubs, or exact historical event replay.
 
 
-## Durable Store
+## Durable Truth
 
-`runs.db` owns durable thread and execution truth:
+`runs.db` contains:
 
-- threads
-- runs
-- commands
-- steps and output parts
-- agent-local updates
-- deduplicated prompt bodies
+- `ThreadRecord` and `ThreadControlRecord`;
+- `RunRecord` and `RunControlRecord`;
+- `StepRecord` and complete step outputs;
+- deduplicated prompt bodies and existing agent-local updates.
 
-`.runtime/jobs.db` is a scheduler projection for ready task and chore
-documents. `.runtime/files.db` is a file-request claim projection. Neither is a
-transcript or run-history store.
+Run events are transient facts emitted during execution. They are never stored
+as `EventRecord` rows. A reconnecting caller reconstructs current state from
+records and observes only new live events.
+
+Persistence makes completed history available after process restart and for
+later model calls. Toolang does not resume an unfinished run after its owner
+process exits.
 
 
-## Durable Execution Records
+## IDs And Indexes
 
-The three execution records are:
+Run and thread IDs are allocated through the shared file-backed allocator in
+`toolang.common.ids`. Every process for one agent must use the same
+`id_state_path`. Allocation is serialized with an inter-process file lock.
+Unused IDs are allowed; duplicates are not.
 
-```text
-RunRecord
-  id, parent, thread, input, output, context, status, error,
-  created_at, started_at, finished_at
+Run-control indexes are local to a run. Thread-control indexes are local to a
+thread. Both are allocated and inserted under `BEGIN IMMEDIATE` in `runs.db`.
+Index reservation is never a separate operation.
 
-CommandRecord
-  run, index, kind, apply, input, context, status, error,
-  created_at, finished_at
+Runs within one thread use their durable SQLite acceptance order for history,
+fork, and rewind boundaries. Wall-clock timestamps remain display metadata and
+are not used to decide which runs follow an anchor.
 
-StepRecord
-  parent, index, kind, input, output, context, detail, status, error,
-  created_at, started_at, finished_at
-```
+Step indexes are local to their parent step path and are protected by the
+`(parent, index)` primary key. One process owns execution of a run tree.
 
-`RunRecord` is the aggregate root. Every run has command index `0` with kind
-`start`; later `steer` and `stop` commands belong to the same run. Child runs
-use `RunRecord.parent` to point at the calling `StepPath`.
 
-Step indexes are zero-based and local to their parent. A full step path is:
+## Run Execution
+
+`RunExecutor` is the public run entry point:
 
 ```text
-StepPath = run[/step_index/...]
+start(AgentSetup, AgentState, RunRequest, tracer?) -> RunRecord
+steer(run_id, message, timing, request_id?)        -> RunControlRecord
+stop(run_id, timing, request_id?, reason?)         -> RunControlRecord
 ```
 
-Durable data edges use `InputRef` and `OutputRef`. Runtime `Local` values do not
-contain these refs.
+`start()` runs to completion. It does not create a background task for its
+caller. `steer()` and `stop()` only accept durable controls; they do not need
+the target run to be owned by the submitting process.
+
+The start request atomically inserts the pending run and its index-zero start
+control. Only the process that performs the first insertion obtains execution
+ownership. A retry with the same `(run_id, request_id)` returns existing truth
+without executing the run twice.
 
 
-## Record Projection
+## Mandatory Persistence And Tracing
 
-Trace events are the only source of durable execution records:
+`RunExecutor` constructs one internal `PersistSink` from its `RunStore`.
+Persistence cannot be replaced or disabled by callers.
+
+For every `RunEvent`, ordering is:
 
 ```text
-request handling / executor -> TraceEventHandler -> PersistSink -> runs.db
-                                                -> ReplySink(s)
-                                                -> resource event bus
+runtime produces event
+  -> PersistSink projects RunRecord or StepRecord
+  -> runtime updates referenced RunControlRecord statuses
+  -> optional RunTracer observes the event
 ```
 
-Request handling may allocate run and command ids. Neither request handling nor
-the executor may create or update execution records directly.
-
-`PersistSink` consumes the ordered trace, creates records, applies lifecycle
-updates, accumulates parts, and maintains projection-only input/output
-provenance. Replaying the same trace must produce the same record state.
-Resource event streaming is a separate trace projection and never persists
-run, command, or step truth.
+`PersistSink` never creates or updates run controls. Tracer failures are logged
+and isolated from execution. One tracer observes the complete run tree started
+by its `start()` call, including child runs, steps, parts, and terminal events.
 
 
-## Run Lifecycle
+## Run Events
 
-An external start may wait:
+The canonical run trace is intentionally small:
 
 ```text
-run_waiting
-run_starting
-run_begin input={cmd: 0}
-step and part events
-run_end
+RunBegin
+StepBegin
+PartBegin
+PartDelta
+PartEnd
+StepEnd
+RunEnd
 ```
 
-Waiting is optional. Child runs normally start directly:
+There are no waiting, starting, steering, or stopping events. Control
+acceptance is durable record truth. Control application is represented by data
+edges:
+
+- `RunBegin.input` references the start control;
+- `StepBegin.input` references applied steer controls;
+- `RunEnd.input` references the stop control that canceled the run.
+
+Providers stream deltas when supported. A tracer may ignore `PartDelta` and
+observe only higher-level events.
+
+
+## Run Controls
+
+Control kinds are `start`, `steer`, and `stop`. Control timing is:
 
 ```text
-parent step_begin[run]
-child run_starting
-child run_begin input={cmd: 0}
-...
-child run_end
-parent step_end[run]
+immediate | next_step | next_call
 ```
 
-`run_waiting`, `run_starting`, `run_steering`, and `run_stopping` are runtime
-acceptance facts, not client requests. Existing execution events record command
-application through their input edges.
-
-`run_begin` means execution started. `run_end` is emitted exactly once by the
-executor and carries the terminal status:
+Statuses are:
 
 ```text
-finished | failed | canceled
+pending  newly accepted and not applied
+finished applied by the runtime
+canceled explicitly withdrawn before application
+failed   no longer applicable because the run ended or the checkpoint vanished
 ```
 
-The accepted run context records the immutable agent-state fingerprint used by
-that run. Child runs inherit the same fingerprint.
+`finished` means the control was applied; it does not mean the run succeeded.
+A stop control that cancels a run is therefore `finished`. An unapplied steer
+left behind by a terminal run is `failed`.
+
+The run owner polls pending controls from SQLite. Local and remote submissions
+use the same path; there is no process-local wake optimization. An immediate
+stop cancels the owning task after the owner observes the durable control.
 
 
-## Step Lifecycle
+## Threads
 
-Every real operation emits:
+`ThreadManager` synchronously performs `create()`, `fork()`, and `rewind()`.
+Every successful mutation has a durable `ThreadControlRecord` and produces one
+success event:
 
 ```text
-step_begin
-[part_begin, part_delta..., part_end]...
-step_end
+ThreadCreated
+ThreadForked
+ThreadRewound
 ```
 
-Step kinds are intentionally small:
+Failures are returned or raised by the synchronous operation and do not
+produce failure events.
 
-```text
-run | agent | human | model | tool | par | loop | system
-```
-
-- `run` and `agent` create child runs.
-- `human`, `model`, and `tool` call actors or capabilities.
-- `par` and `loop` organize child steps.
-- `system` records executor-owned work.
-
-Flow transformations such as unfold, fold, filtering, and ranking are result
-reshapes, not additional step kinds.
+A fork stores its source thread and anchor run but does not copy run, step, or
+run-control rows. Its history projection combines the source prefix with runs
+created in the new thread. A rewind keeps the same thread, stops affected active
+runs through durable stop controls, marks affected runs with `superseded_by`,
+and advances the thread `head` with an expected-head compare-and-swap. Rewinds
+are serialized across processes with an agent-local file lock so a losing
+concurrent request cannot stop runs before failing its head check.
 
 
-## Executor Locals
+## State Capture
 
-Each run owns:
+Each accepted run captures one explicit immutable `AgentState` and
+`toolang.up.setup.AgentSetup`. Child runs inherit both. Source changes affect
+only runs accepted after the new state is observed.
 
-```python
-locals: dict[str, Local]
-```
-
-One `Local` contains only runtime data:
-
-```text
-value
-shape = none | item | list
-```
-
-`_` is the primary local. Run input initializes it, ordinary statements replace
-it, and run output reads it. Named parameters and `let` bindings use other
-local names.
-
-A step reads an immutable snapshot and returns a `Local`. The surrounding flow
-updates its locals only after the step succeeds. Nested and parallel work uses
-private copies, so a failed child or sibling branch cannot partially update
-parent state.
-
-
-## Agic And Flow
-
-An `AgicDecl` executes the dynamic model/tool loop. Model responses may create
-additional model and tool steps at runtime. Its terminal assistant parts are
-decoded according to the declared output type and become the primary local.
-
-A `FlowDecl` executes its authored statements in source order. Each statement
-may read current locals, produces one result, and then applies its independent
-binding:
-
-```text
-statement       write `_`
-let name = ...  write `name`
-let ...         discard the result
-```
-
-Runnable flow statements recursively start agic or flow child runs. The
-top-level executable itself is never wrapped in a synthetic step.
-
-
-## Commands And Cancellation
-
-Command application modes are:
-
-```text
-now | next_step | next_call
-```
-
-Agic loops and flows consume accepted commands at explicit checkpoints.
-`run_begin.input` references the applied start command, `step_begin.input`
-references applied steer commands, and `run_end.input` references the stop
-command that caused cancellation. When a run ends, `PersistSink` marks any
-accepted but unapplied commands as canceled.
-
-Command status is therefore derived rather than announced by another event.
-The consuming event supplies `CommandRecord.finished_at`; repeated references
-do not change an already terminal command.
-
-Stopping cancels the active task. Cancellation unwinds from child steps and
-child runs toward the root, emitting terminal events in that order. The parent
-run ends only after visible descendants have ended.
-
-
-## Canonical Content
-
-Toolang uses the shared content model from `toolang.base`:
-
-- `Message`: one role plus ordered parts
-- `Part`: one complete content part
-- `Delta`: one streaming part update
-
-`Part[]` is a Toolang value type. It normally occupies one `Local` with
-`shape=item`; it is not a flow collection merely because its value is an
-array. Content parsing and executable signatures are defined in
-[input-syntax.md](./input-syntax.md) and [program.md](./program.md).
-
-
-## Replies
-
-Reply sinks project the trace for callers without changing durable truth.
-
-Examples include:
-
-- buffered script results
-- SSE/public trace streams
-- AI SDK UI message streams
-- channel messages
-- terminal UI updates
-
-The AI SDK stream is a transport projection containing events such as text
-deltas, tool input/output, step boundaries, finish, and error. It is not the
-durable execution model.
-
-
-## Live UI Projection
-
-The TUI maps trace events to mutable blocks. A block owns only the state needed
-to render itself and exposes:
-
-```text
-create(event)
-update(event)
-render()
-```
-
-The event handler creates or finds a matching live block, updates it, and asks
-the application to finalize it when the terminal event arrives. Finalization
-is framework behavior: the block's current render is written to scrollback and
-the live window is removed.
-
-Typical mappings are:
-
-```text
-run_starting   create RunStartBlock
-run_begin      update and finalize RunStartBlock
-run_steering   create RunSteerBlock
-step_begin     finalize referenced RunSteerBlock; create a step-kind block
-part events    update the matching step block
-step_end       update and finalize the matching step block
-run_stopping   update RunStopBlock to canceling
-run_end        update and finalize RunStopBlock
-```
-
-Multiple live blocks may exist for nested or parallel activity. Block keys use
-run and step identity so interleaved events update the correct block. The TUI
-does not infer execution state that was not emitted by the runtime.
-
-
-## Inspection Views
-
-Run detail is exposed as:
-
-- `info`
-- `input`
-- `output`
-
-Thread detail is exposed as:
-
-- `info`
-- `runs`
-
-These views project from `runs.db`; there is no separate durable chat store.
+Scheduled work also captures its effective job definition in run context.
+Execution never rereads authored task or chore files after acceptance.
