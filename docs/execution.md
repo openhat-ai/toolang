@@ -63,13 +63,16 @@ Step indexes are local to their parent step path and are protected by the
 
 ```text
 start(AgentSetup, AgentState, RunRequest, tracer?) -> RunRecord
-steer(run_id, message, timing, request_id?)        -> RunControlRecord
 stop(run_id, timing, request_id?, reason?)         -> RunControlRecord
+steer(run_id, message, timing, request_id?)        -> RunControlRecord
+shutdown()                                         -> None
 ```
 
 `start()` runs to completion. It does not create a background task for its
 caller. `steer()` and `stop()` only accept durable controls; they do not need
-the target run to be owned by the submitting process.
+the target run to be owned by the submitting process. The executor is ready
+after construction and therefore has no separate `open()` method. `shutdown()`
+is terminal and cancels the run tasks owned by that executor instance.
 
 The start request atomically inserts the pending run and its index-zero start
 control. Only the process that performs the first insertion obtains execution

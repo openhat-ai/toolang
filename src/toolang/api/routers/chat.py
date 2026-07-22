@@ -10,6 +10,7 @@ from toolang.api.schemas import (
     ChatRequest,
 )
 from toolang.base.types.message import Message
+from toolang.common.ids import allocate_run_id
 from toolang.execution.inspection import ExecutionInspection
 from toolang.execution.schemas import ChatResult
 from toolang.execution.records import ThreadPeer
@@ -92,7 +93,7 @@ async def _submit_chat_run(
     thread_id: str,
 ) -> tuple[RunRecord, BufferedReplySink]:
     reply = BufferedReplySink()
-    run_id = context.executor.allocate_run_id()
+    run_id = allocate_run_id(context.executor.id_state_path)
 
     record = await context.executor.run(
         _chat_run_request(payload, thread_id=thread_id, run_id=run_id),
@@ -113,7 +114,7 @@ async def _stream_chat_run(
         if payload.client == "tui"
         else SseReplySink(thread_id=thread_id)
     )
-    run_id = context.executor.allocate_run_id()
+    run_id = allocate_run_id(context.executor.id_state_path)
     context.spawn_run(
         _chat_run_request(payload, thread_id=thread_id, run_id=run_id),
         reply=reply,

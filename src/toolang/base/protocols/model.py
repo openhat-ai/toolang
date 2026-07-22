@@ -5,9 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
-from ..events import ModelEventHandler
 from ..types.model import ModelInfo, ModelTarget
-from ..types.run import ModelCall, ModelCallResult
+from ..types.run import ModelCall, ModelCallResult, ModelStreamHandler
 
 
 @runtime_checkable
@@ -54,6 +53,6 @@ class ModelAdapter(Protocol):
         target: ModelTarget,
         request: ModelCall,
         *,
-        on_event: ModelEventHandler,
+        on_event: ModelStreamHandler,
     ) -> ModelCallResult:
         """Execute one streaming model turn."""

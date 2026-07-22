@@ -63,12 +63,18 @@ def prepare_agent_state(
         force=force,
         progress=progress,
     )
-    return compose_prepared_state(root, home)
+    return compose_prepared_state(
+        root,
+        home,
+        program_source=str(Path("agents") / agent_name / "agent.too"),
+    )
 
 
 def compose_prepared_state(
     root: RootPrepared,
     home: HomePrepared,
+    *,
+    program_source: str,
 ) -> AgentState:
     """Compose runtime state from one exact pair of prepared cache layers."""
 
@@ -78,6 +84,7 @@ def compose_prepared_state(
         toolang_version=root.toolang_version,
         root_config=root.config,
         home_config=home.config,
+        program_source=program_source,
         program=home.program,
         root_caps=root.caps,
         home_caps=home.caps,

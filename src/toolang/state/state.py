@@ -256,6 +256,7 @@ class AgentState:
     root_config: Mapping[str, object]
     home_config: Mapping[str, object]
     config: Mapping[str, object]
+    program_source: str
     program: Program
     caps: tuple[PreparedCap, ...]
     loaded_at: str
@@ -282,6 +283,7 @@ class AgentState:
             "toolang_version": self.toolang_version,
             "updated_at": self.loaded_at,
             "loaded_at": self.loaded_at,
+            "program_source": self.program_source,
             "program": to_data(self.program),
             "caps": [cap.path for cap in self.caps],
         }
@@ -294,6 +296,7 @@ def compose_agent_state(
     toolang_version: str,
     root_config: Mapping[str, object],
     home_config: Mapping[str, object],
+    program_source: str,
     program: Program,
     root_caps: tuple[PreparedCap, ...],
     home_caps: tuple[PreparedCap, ...],
@@ -309,6 +312,7 @@ def compose_agent_state(
         root_config=root_config,
         home_config=home_config,
         config=_merge_config(root_config, home_config),
+        program_source=program_source,
         program=program,
         caps=effective_caps(root_caps, home_caps),
         loaded_at=loaded_at,

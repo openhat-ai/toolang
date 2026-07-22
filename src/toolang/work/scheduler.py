@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 
 from toolang.base.types.message import Message
+from toolang.common.ids import allocate_run_id
 
 from ..execution.executor import Executor
 from ..execution.executor.request import RunRequest
@@ -70,7 +71,7 @@ class Scheduler:
             while claimed := self.job_store.claim_due(
                 jobs=jobs,
                 kind=kind,
-                run_id=self.executor.allocate_run_id(),
+                run_id=allocate_run_id(self.executor.id_state_path),
                 now=current,
             ):
                 if not claimed.definition.input.strip():

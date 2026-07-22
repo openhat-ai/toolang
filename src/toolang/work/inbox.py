@@ -10,6 +10,7 @@ from pathlib import Path
 from collections.abc import Callable
 
 from toolang.base.types.message import Message
+from toolang.common.ids import allocate_run_id
 from toolang.execution.executor import Executor
 from toolang.execution.records import RunRecord
 from toolang.execution.executor.request import RunRequest
@@ -152,7 +153,7 @@ def collect_file_submissions(
                     "files.input_skipped path=%s error=%s", snapshot.absolute_path, exc
                 )
                 continue
-            run_id = executor.allocate_run_id()
+            run_id = allocate_run_id(executor.id_state_path)
             thread_id = files.file_thread_id(snapshot.absolute_path)
             record = store.claim(
                 snapshot, run_id=run_id, thread_id=thread_id, now=current

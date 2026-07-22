@@ -8,7 +8,7 @@ import time
 
 from toolang.base.types.message import Message
 from toolang.common.files import file_write_lock
-from toolang.common.ids import allocate_thread_id
+from toolang.common.ids import allocate_run_id, allocate_thread_id
 from toolang.common.time import utc_now
 
 from .events import (
@@ -101,7 +101,11 @@ class ThreadManager:
             raise RuntimeError(f"thread not found: {anchor.thread}")
         prefix = source.thread_id.split("_", 1)[0].strip() or "thread"
         thread_id = allocate_thread_id(self.executor.id_state_path, prefix)
-        result_run = self.executor.allocate_run_id() if message is not None else None
+        result_run = (
+            allocate_run_id(self.executor.id_state_path)
+            if message is not None
+            else None
+        )
         created_at = utc_now()
         thread, control, created = self.store.fork_thread(
             thread_id=thread_id,
@@ -179,7 +183,11 @@ class ThreadManager:
         expected = expected_head or thread.head
         if thread.head != expected:
             raise ValueError(f"thread head changed: {thread.thread_id}")
-        result_run = self.executor.allocate_run_id() if message is not None else None
+        result_run = (
+            allocate_run_id(self.executor.id_state_path)
+            if message is not None
+            else None
+        )
         self._stop_affected_runs(anchor)
         created_at = utc_now()
         updated, control, superseded, created = self.store.rewind_thread(

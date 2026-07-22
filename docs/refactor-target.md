@@ -165,9 +165,10 @@ RootPrepared = root source + resolution + config + shared caps
 AgentState   = one exact RootPrepared + HomePrepared pair
 ```
 
-`AgentState` contains the effective config, the exact `Program`, and effective
-caps used by execution. It does not contain a separate jobs collection;
-program-declared jobs remain available as `AgentState.program.jobs`.
+`AgentState` contains the effective config, authored program source path, exact
+`Program`, and effective caps used by execution. It does not contain a separate
+jobs collection; program-declared jobs remain available as
+`AgentState.program.jobs`.
 
 `StateWatcher` monitors the relevant files and publishes new immutable
 `AgentState` versions. It owns invalidation and reuse of unchanged parsed
@@ -176,20 +177,25 @@ that can accept runs starts its watcher as process infrastructure; watching is
 not an optional runtime component.
 
 `toolang.up.setup.AgentSetup` is separate from source state and contains
-installed runtime implementations:
+process-local identity, placement, installed implementations, resolved
+environment values, and model activation limits:
 
 ```python
 @dataclass(frozen=True, slots=True)
 class AgentSetup:
+    name: str
+    home: Path
     tools: Mapping[str, AgentTool]
     model_providers: Mapping[str, ModelProvider]
     model_adapters: Mapping[str, ModelAdapter]
+    model_environ: Mapping[str, str]
+    model_selectors: tuple[str, ...] = ()
+    model_cache_dir: Path | None = None
 ```
 
 Effective service definitions remain in the `AgentState` captured for each
 run. Run assembly passes those definitions and their explicitly resolved
-environment values through `ToolContext`; they are not frozen into
-`AgentSetup` when the process starts.
+environment values from `AgentSetup` through `ToolContext`.
 
 There is no general `toolang.config` package. Prepared root and home config are
 part of `AgentState`. The CLI resolves environment variables and process

@@ -129,11 +129,11 @@ Toolang uses these shared run-side types:
 | `ModelCall` | `instructions`, `messages`, `tools`, optional `state` |
 | `ModelCallResult` | `message`, `tool_calls`, optional `usage`, optional `state` |
 
-Streaming providers emit:
+Streaming providers report these model-part updates through `ModelStreamHandler`:
 
-- `ModelPartStartEvent`
-- `ModelPartDeltaEvent`
-- `ModelPartEndEvent`
+- `ModelPartStart`
+- `ModelPartDelta`
+- `ModelPartEnd`
 
 
 ## Built-In Model Providers

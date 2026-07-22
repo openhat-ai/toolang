@@ -9,12 +9,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from toolang.base.errors import ToolangError
-from toolang.base.events import (
-    ModelEventHandler,
-    ModelPartDeltaEvent,
-    ModelPartEndEvent,
-    ModelPartStartEvent,
-)
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.message import (
     AudioPart,
@@ -31,6 +25,10 @@ from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
+    ModelPartDelta,
+    ModelPartEnd,
+    ModelPartStart,
+    ModelStreamHandler,
     ModelUsage,
     ToolCall,
 )
@@ -72,7 +70,7 @@ class ResponsesModelAdapter(ModelAdapter):
         target: ModelTarget,
         request: ModelCall,
         *,
-        on_event: ModelEventHandler,
+        on_event: ModelStreamHandler,
     ) -> ModelCallResult:
         """Execute one streaming Responses API call."""
 
@@ -193,7 +191,7 @@ def stream_response(
     request: ModelCall,
     *,
     stateful: bool,
-    on_event: ModelEventHandler,
+    on_event: ModelStreamHandler,
 ) -> ModelCallResult:
     """Execute one streaming Responses API call."""
 
@@ -221,8 +219,8 @@ def stream_response(
                 if delta:
                     if not text_started:
                         text_started = True
-                        on_event(ModelPartStartEvent(kind="text"))
-                    on_event(ModelPartDeltaEvent(delta=TextDelta(text=delta)))
+                        on_event(ModelPartStart(kind="text"))
+                    on_event(ModelPartDelta(delta=TextDelta(text=delta)))
                 continue
             if event_type != "response.function_call_arguments.delta":
                 continue
@@ -234,14 +232,14 @@ def stream_response(
             if current_tool_call_id not in seen_tool_inputs:
                 seen_tool_inputs.add(current_tool_call_id)
                 on_event(
-                    ModelPartStartEvent(
+                    ModelPartStart(
                         kind="tool_call",
                     )
                 )
             delta = str(getattr(event, "delta", ""))
             if delta:
                 on_event(
-                    ModelPartDeltaEvent(
+                    ModelPartDelta(
                         delta=ToolCallDelta(
                             text=delta,
                             tool_call_id=current_tool_call_id,
@@ -263,7 +261,7 @@ def stream_response(
     if result.message is not None:
         for part in result.message.parts:
             if isinstance(part, (TextPart, ToolCallPart)):
-                on_event(ModelPartEndEvent(data=part))
+                on_event(ModelPartEnd(data=part))
     return result
 
 

@@ -62,7 +62,7 @@ async def execute(
     prepared = prepare_agic(execution, bound, agic)
     state = _AgicState(
         prepared,
-        home=execution.home,
+        home=execution.setup.home,
         emit=execution.emit,
         pending_inputs=lambda: execution.pending_controls(binding.run_id, "steer"),
         before_call=lambda: execution.raise_if_stopping(binding.run_id, call=True),

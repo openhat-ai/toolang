@@ -9,12 +9,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from toolang.base.errors import ToolangError
-from toolang.base.events import (
-    ModelEventHandler,
-    ModelPartDeltaEvent,
-    ModelPartEndEvent,
-    ModelPartStartEvent,
-)
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.message import (
     AudioPart,
@@ -31,6 +25,10 @@ from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
+    ModelPartDelta,
+    ModelPartEnd,
+    ModelPartStart,
+    ModelStreamHandler,
     ModelUsage,
     ToolCall,
 )
@@ -61,7 +59,7 @@ class ChatCompletionsModelAdapter(ModelAdapter):
         target: ModelTarget,
         request: ModelCall,
         *,
-        on_event: ModelEventHandler,
+        on_event: ModelStreamHandler,
     ) -> ModelCallResult:
         """Execute one streaming Chat Completions API call."""
 
@@ -112,7 +110,7 @@ def stream_chat_completion(
     target: ModelTarget,
     request: ModelCall,
     *,
-    on_event: ModelEventHandler,
+    on_event: ModelStreamHandler,
 ) -> ModelCallResult:
     """Execute one streaming Chat Completions API call."""
 
@@ -143,9 +141,9 @@ def stream_chat_completion(
             if isinstance(content, str) and content:
                 if not text_started:
                     text_started = True
-                    on_event(ModelPartStartEvent(kind="text"))
+                    on_event(ModelPartStart(kind="text"))
                 text_parts.append(content)
-                on_event(ModelPartDeltaEvent(delta=TextDelta(text=content)))
+                on_event(ModelPartDelta(delta=TextDelta(text=content)))
             for call_delta in getattr(delta, "tool_calls", None) or ():
                 index = getattr(call_delta, "index", None)
                 if not isinstance(index, int):
@@ -153,12 +151,12 @@ def stream_chat_completion(
                 buffer = tool_buffers.setdefault(index, _ToolCallBuffer())
                 if not buffer.started:
                     buffer.started = True
-                    on_event(ModelPartStartEvent(kind="tool_call"))
+                    on_event(ModelPartStart(kind="tool_call"))
                 buffer.append(call_delta)
                 arguments_delta = _tool_call_delta_arguments(call_delta)
                 if arguments_delta:
                     on_event(
-                        ModelPartDeltaEvent(
+                        ModelPartDelta(
                             delta=ToolCallDelta(
                                 text=arguments_delta,
                                 tool_call_id=buffer.tool_call_id or f"tool-call-{index}",
@@ -177,10 +175,10 @@ def stream_chat_completion(
         reasoning_content="".join(reasoning_parts),
     )
     if text:
-        on_event(ModelPartEndEvent(data=TextPart(text=text)))
+        on_event(ModelPartEnd(data=TextPart(text=text)))
     for call in tool_calls:
         on_event(
-            ModelPartEndEvent(
+            ModelPartEnd(
                 data=ToolCallPart(
                     tool_call_id=call.tool_call_id,
                     call_id=call.call_id,

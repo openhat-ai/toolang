@@ -2401,9 +2401,12 @@ def _prepared_agic(
             context={},
             state=cast(Any, state),
             setup=AgentSetup(
+                name="test",
+                home=Path("/agents/test"),
                 tools={},
                 model_providers={},
                 model_adapters={},
+                model_environ={},
             ),
             created_at="2026-04-10T00:00:00Z",
         ),

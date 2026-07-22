@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from toolang.base.types.message import Message
 from toolang.common.errors import ToolangError
-from toolang.common.ids import allocate_thread_id
+from toolang.common.ids import allocate_run_id, allocate_thread_id
 from toolang.execution.executor.prepare import (
     effective_agics,
     effective_origin_model_selectors,
@@ -186,7 +186,7 @@ class LocalChatSession:
             RunRequest(
                 origin="chat",
                 input=Message.user(message),
-                run_id=self.executor.allocate_run_id(),
+                run_id=allocate_run_id(self.executor.id_state_path),
                 thread_id=thread_id,
                 executable_kind=executable_kind,
                 executable_name=executable_name,
@@ -208,7 +208,7 @@ class LocalChatSession:
     async def _close(self) -> None:
         if self._stop_signal is not None:
             self._stop_signal.set()
-        await self.executor.close()
+        await self.executor.shutdown()
         if self._watch_task is not None:
             await self._watch_task
 

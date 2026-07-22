@@ -158,8 +158,8 @@
 - `RunRequest` carries canonical message input, run and thread identity,
   executable selection, an optional single model choice, idempotency identity,
   and caller context. It must not duplicate tools, providers, adapters,
-  programs, caps, or selector sets already captured by `AgentSetup`,
-  `AgentState`, or process-level executor configuration.
+  programs, caps, or selector sets already captured by `AgentSetup` or
+  `AgentState`.
 - Within `toolang.execution.executor`, `runs` owns complete agic and flow run
   bodies, `stmts` owns lowered flow-statement semantics, and `steps` owns step
   execution and event emission. Top-level runs have no synthetic containing

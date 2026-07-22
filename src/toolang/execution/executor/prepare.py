@@ -157,7 +157,7 @@ def prepare_agic(context: _Execution, run: BoundRun, agic: AgicDecl) -> Prepared
         prompt_context=prompt_context,
         messages=messages,
         tools=tools,
-        services=_tool_services(services, context.model_environ),
+        services=_tool_services(services, context.setup.model_environ),
     )
     _log_prepared(prepared)
     return prepared
@@ -207,12 +207,7 @@ def effective_origin_model_selectors(
 
 
 def _activation_model_selectors(context: Any) -> tuple[str, ...]:
-    return tuple(item for item in context.allowed_model_selectors if item.strip())
-
-
-def _default_model_selector(context: Any) -> str | None:
-    selector = (context.default_model_selector or "").strip()
-    return selector or None
+    return tuple(item for item in context.setup.model_selectors if item.strip())
 
 
 def _effective_model_selectors(
@@ -226,7 +221,6 @@ def _effective_model_selectors(
         context,
         agic_selectors=selected,
         activation_selectors=base,
-        default_selector=_default_model_selector(context),
     )
 
 
@@ -466,11 +460,9 @@ def _runtime_context(
         "is_chore": run.origin == "chore",
         "run": {
             "thread_id": run.thread_id,
-            "program_source": str(
-                context.home.joinpath("agent.too").relative_to(context.root)
-            ),
+            "program_source": run.state.program_source,
         },
-        "agent": {"name": context.name, "home": str(context.home)},
+        "agent": {"name": run.setup.name, "home": str(run.setup.home)},
         "agic": {"name": agic.name, "output": agic.output},
         "job": run.job_context,
     }
@@ -497,12 +489,12 @@ def _cap_context(context: _Execution, entry: PreparedCap) -> dict[str, object]:
         "name": entry.name,
         "kind": entry.kind,
         "path": entry.path,
-        "ref": cap_store.entry_ref(entry, agent_name=context.name),
+        "ref": cap_store.entry_ref(entry, agent_name=context.setup.name),
         "description": str(description) if description is not None else None,
         "content": entry.read_content() or None if entry.kind == "psyche" else None,
         "metadata": mutable_data(entry.meta),
         "metadata_items": _metadata_items(entry.meta),
-        "scope": cap_store.entry_scope(entry, agent_name=context.name),
+        "scope": cap_store.entry_scope(entry, agent_name=context.setup.name),
         "origin": cap_store.entry_origin(entry),
         "form": cap_store.entry_form(entry),
     }

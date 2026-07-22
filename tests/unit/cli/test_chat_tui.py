@@ -49,9 +49,6 @@ def test_local_chat_session_runs_stop_and_steer_on_one_event_loop(
             )
             self.id_state_path = tmp_path / "ids.json"
 
-        def allocate_run_id(self) -> str:
-            return "run_local"
-
         async def run(self, request, state, *, reply) -> None:
             del state
             operations.append(("run", id(asyncio.get_running_loop())))
@@ -73,8 +70,8 @@ def test_local_chat_session_runs_stop_and_steer_on_one_event_loop(
             operations.append(("steer", id(asyncio.get_running_loop())))
             self.reply.on_event(SimpleNamespace(type="run_steering"))
 
-        async def close(self) -> None:
-            operations.append(("close", id(asyncio.get_running_loop())))
+        async def shutdown(self) -> None:
+            operations.append(("shutdown", id(asyncio.get_running_loop())))
 
     class FakeWatcher:
         def current(self) -> object:

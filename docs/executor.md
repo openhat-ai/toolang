@@ -9,6 +9,14 @@ observation.
 
 ```python
 class RunExecutor:
+    def __init__(
+        self,
+        *,
+        store: RunStore,
+        id_state_path: Path,
+        control_poll_interval: float = 0.05,
+    ) -> None: ...
+
     async def start(
         self,
         setup: AgentSetup,
@@ -17,6 +25,15 @@ class RunExecutor:
         *,
         tracer: RunTracer | None = None,
     ) -> RunRecord: ...
+
+    def stop(
+        self,
+        *,
+        run_id: str,
+        timing: RunControlTiming = "immediate",
+        request_id: str | None = None,
+        reason: str | None = None,
+    ) -> RunControlRecord: ...
 
     def steer(
         self,
@@ -27,15 +44,13 @@ class RunExecutor:
         request_id: str | None = None,
     ) -> RunControlRecord: ...
 
-    def stop(
-        self,
-        *,
-        run_id: str,
-        timing: RunControlTiming = "immediate",
-        request_id: str | None = None,
-        reason: str | None = None,
-    ) -> RunControlRecord: ...
+    async def shutdown(self) -> None: ...
 ```
+
+Construction makes the executor immediately available; there is no separate
+`open()` phase. `shutdown()` is terminal, cancels all run tasks owned by the
+executor, and stops its control monitor. It does not close the injected
+`RunStore`, whose lifecycle remains with its owner.
 
 `RunRequest` contains only values selected for one invocation:
 
@@ -57,7 +72,8 @@ The request does not duplicate installed tools, model providers, or model
 adapters from `AgentSetup`, nor the program and effective caps from
 `AgentState`. Agic directives select from those captured resources. The
 optional singular model selector is the caller's per-run model choice;
-available and default model selectors remain process-level executor inputs.
+the process-level allowed selectors come from `AgentSetup`, while aliases and
+default selectors are parsed from the captured `AgentState` config.
 
 There is no `run()`, `execute()`, `spawn()`, or `start()` background-task
 variant. The caller decides whether to await `start()` directly or place it in

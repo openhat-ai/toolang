@@ -50,6 +50,7 @@ from toolang.plugin.config import (
 )
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.config import resolve_ui_base_url
+from toolang.common.ids import allocate_run_id
 from toolang.up.config import resolve_cors_allowed_origins
 from toolang.execution.executor import Executor
 from toolang.execution.reply import ReplySink
@@ -280,7 +281,7 @@ def invoke(
         cap_selectors=_normalize_cap_selectors(caps),
         agent_state=state,
     )
-    run_id = executor.allocate_run_id()
+    run_id = allocate_run_id(executor.id_state_path)
     log_plan = resolve_agent_logging(
         mode="invoke",
         environ=invoke_environ,
@@ -763,7 +764,7 @@ def _up_local(
             stop_signal.set()
             for task in tuple(context.run_tasks):
                 task.cancel()
-            await executor.close()
+            await executor.shutdown()
             shutdown_tasks: list[asyncio.Task[Any]] = [
                 *bg_tasks,
                 *context.run_tasks,
@@ -993,9 +994,14 @@ def assemble_execution(
     selected_tools = select_tools(tools, normalized_tool_selectors)
     validate_tool_selectors(tools, normalized_tool_selectors)
     setup = AgentSetup(
+        name=agent_name,
+        home=agents.agent_home(toolang_root, agent_name),
         tools=selected_tools,
         model_providers=model_providers,
         model_adapters=load_model_adapters(),
+        model_environ=environ,
+        model_selectors=normalized_model_selectors,
+        model_cache_dir=toolang_root / ".runtime" / "model-cache",
     )
     executor = Executor(
         root=toolang_root,

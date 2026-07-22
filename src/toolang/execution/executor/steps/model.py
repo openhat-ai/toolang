@@ -18,14 +18,12 @@ from toolang.base.types.message import (
     ToolCallPart,
     message_text,
 )
-from toolang.base.events import (
-    ModelPartDeltaEvent,
-    ModelPartEndEvent,
-    ModelPartStartEvent,
-)
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
+    ModelPartDelta,
+    ModelPartEnd,
+    ModelPartStart,
     ToolCall,
 )
 from toolang.common.time import elapsed_ms, utc_now
@@ -241,7 +239,7 @@ def _apply_response(
 
 
 def _handle_event(state: _AgicState, stream: _ModelStream, event: object) -> None:
-    if isinstance(event, ModelPartStartEvent):
+    if isinstance(event, ModelPartStart):
         if event.kind == "text":
             _emit_part_begin(
                 state,
@@ -250,7 +248,7 @@ def _handle_event(state: _AgicState, stream: _ModelStream, event: object) -> Non
                 kind="text",
             )
         return
-    if isinstance(event, ModelPartDeltaEvent):
+    if isinstance(event, ModelPartDelta):
         if isinstance(event.delta, TextDelta):
             part_index = _ensure_text_part_index(stream)
             _emit_part_begin(
@@ -285,7 +283,7 @@ def _handle_event(state: _AgicState, stream: _ModelStream, event: object) -> Non
                     )
                 )
             return
-    if isinstance(event, ModelPartEndEvent):
+    if isinstance(event, ModelPartEnd):
         return
 
 

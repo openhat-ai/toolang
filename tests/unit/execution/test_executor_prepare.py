@@ -77,9 +77,14 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     adapter = _Adapter()
     tool = _Tool()
     setup = AgentSetup(
+        name="alice",
+        home=home,
         tools={tool.name: tool},
         model_providers={provider.name: provider},
         model_adapters={adapter.name: adapter},
+        model_environ={},
+        model_selectors=("default",),
+        model_cache_dir=root / ".runtime" / "model-cache",
     )
     agic = AgicDecl(
         name="chat",
@@ -97,7 +102,12 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     program = Program(agics=(agic,), span=Span(1))
     state = cast(
         Any,
-        SimpleNamespace(program=program, caps=(), fingerprint="state-1"),
+        SimpleNamespace(
+            program=program,
+            program_source="agents/alice/agent.too",
+            caps=(),
+            fingerprint="state-1",
+        ),
     )
     run = bind_run_request(
         RunRequest(
@@ -112,9 +122,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     context = cast(
         Any,
         SimpleNamespace(
-            root=root,
-            home=home,
-            name="alice",
+            setup=setup,
             store=_History(),
             model_providers=setup.model_providers,
             model_aliases={
@@ -127,11 +135,8 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
                 )
             },
             default_models=("default",),
-            model_environ={},
+            model_environ=setup.model_environ,
             model_cache_dir=root / ".runtime" / "model-cache",
-            model_cache_refresh=False,
-            default_model_selector="default",
-            allowed_model_selectors=("default",),
         ),
     )
 
@@ -157,9 +162,14 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     provider = _Provider()
     adapter = _Adapter()
     setup = AgentSetup(
+        name="alice",
+        home=home,
         tools={},
         model_providers={provider.name: provider},
         model_adapters={adapter.name: adapter},
+        model_environ={},
+        model_selectors=("default",),
+        model_cache_dir=root / ".runtime" / "model-cache",
     )
     agic = AgicDecl(
         name="chat",
@@ -178,30 +188,29 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         Any,
         SimpleNamespace(
             program=Program(agics=(agic,), span=Span(1)),
+            program_source="agents/alice/agent.too",
             caps=(),
+            root_config={},
+            home_config={
+                "models": {
+                    "default": "default",
+                    "aliases": {
+                        "default": {
+                            "ref": "test/model",
+                            "provider": "test",
+                            "model": "model",
+                            "adapter": "test",
+                        }
+                    },
+                }
+            },
             fingerprint="state-1",
         ),
     )
     store = RunStore(home / ".runtime" / "runs.db")
     executor = RunExecutor(
-        root=root,
-        name="alice",
-        home=home,
-        id_state_path=home / ".runtime" / "ids.json",
         store=store,
-        model_aliases={
-            "default": ModelAlias(
-                name="default",
-                ref="test/model",
-                provider="test",
-                model="model",
-                adapter="test",
-            )
-        },
-        default_models=("default",),
-        model_environ={},
-        default_model_selector="default",
-        allowed_model_selectors=("default",),
+        id_state_path=home / ".runtime" / "ids.json",
     )
     try:
         record = asyncio.run(
@@ -215,7 +224,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                 ),
             )
         )
-        asyncio.run(executor.close())
+        asyncio.run(executor.shutdown())
 
         assert record.status == "finished"
         assert [step.kind for step in store.list_steps(run_id=record.id)] == ["model"]

@@ -101,7 +101,11 @@ def test_prepare_root_home_snapshot_root_and_home(tmp_path: Path) -> None:
     assert root.config == {"models": {"default": "root"}}
     assert prepared_home.config == {"models": {"default": "home"}}
     assert prepared_version_dir(toolang_root, root.version) == root.version_dir
-    state = compose_prepared_state(root, prepared_home)
+    state = compose_prepared_state(
+        root,
+        prepared_home,
+        program_source="agents/alice/agent.too",
+    )
     assert state.root_version == root.version
     assert state.home_version == prepared_home.version
     assert state.toolang_version == "0.2.7"

@@ -15,6 +15,7 @@ from toolang.api.schemas import (
 from toolang.catalog.job import JobFile
 from toolang.catalog.types import JobKind, JobStage
 from toolang.base.types.message import Message
+from toolang.common.ids import allocate_run_id
 from toolang.work.state import AgentJobs
 from toolang.work.authoring import (
     allocate_authored_job_id,
@@ -226,7 +227,7 @@ async def run_chore(context: ApiContextDep, chore_id: str) -> RunCommandResult:
                 context.root, context.name, context.state_watcher.current().program
             ),
             chore_id=chore_id,
-            run_id=context.executor.allocate_run_id(),
+            run_id=allocate_run_id(context.executor.id_state_path),
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -12,6 +12,7 @@ from toolang.api.schemas import (
     RunSteerRequest,
 )
 from toolang.base.types.message import Message
+from toolang.common.ids import allocate_run_id
 from toolang.execution.inspection import ExecutionInspection
 from toolang.execution.records import RunRecord
 from toolang.execution.reply import TraceReplySink
@@ -57,7 +58,7 @@ async def execute_run_stream(
         RunRequest(
             origin="script",
             input=Message.user(payload.input),
-            run_id=context.executor.allocate_run_id(),
+            run_id=allocate_run_id(context.executor.id_state_path),
             executable_kind=payload.executable_kind,
             executable_name=payload.executable_name,
             model_selector=payload.model,

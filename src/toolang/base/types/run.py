@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .message import Message
+from .message import Delta, Message, Part, PartType
 from .tool import ToolDefinition
 
 
@@ -57,3 +58,28 @@ class ModelCallResult:
     tool_calls: tuple[ToolCall, ...] = field(default_factory=tuple)
     usage: ModelUsage | None = None
     state: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ModelPartStart:
+    """One streamed model-part start update."""
+
+    kind: PartType
+
+
+@dataclass(frozen=True, slots=True)
+class ModelPartDelta:
+    """One streamed model-part delta update."""
+
+    delta: Delta
+
+
+@dataclass(frozen=True, slots=True)
+class ModelPartEnd:
+    """One streamed model-part end update."""
+
+    data: Part
+
+
+ModelPartUpdate = ModelPartStart | ModelPartDelta | ModelPartEnd
+ModelStreamHandler = Callable[[ModelPartUpdate], None]

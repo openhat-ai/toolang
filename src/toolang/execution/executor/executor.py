@@ -13,11 +13,11 @@ from typing import Any, Literal, cast
 
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.message import Message
-from toolang.base.types.model import ModelAlias
 from toolang.common.errors import ToolangError
 from toolang.common.ids import allocate_run_id
 from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt
+from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 from toolang.state.state import AgentState
 from toolang.up.setup import AgentSetup
 
@@ -65,56 +65,18 @@ class RunExecutor:
     def __init__(
         self,
         *,
-        root: Path,
-        name: str,
-        home: Path,
-        id_state_path: Path,
         store: RunStore,
-        model_aliases: Mapping[str, ModelAlias],
-        default_models: Sequence[str],
-        model_environ: Mapping[str, str],
-        default_model_selector: str | None = None,
-        allowed_model_selectors: Sequence[str] = (),
+        id_state_path: Path,
         control_poll_interval: float = 0.05,
     ) -> None:
-        self.root = root
-        self.name = name
-        self.home = home
         self.id_state_path = id_state_path
         self.store = store
-        self.model_aliases = dict(model_aliases)
-        self.default_models = tuple(default_models)
-        self.model_environ = dict(model_environ)
-        self.model_cache_dir = root / ".runtime" / "model-cache"
-        self.model_cache_refresh = False
-        self.default_model_selector = default_model_selector
-        self.allowed_model_selectors = tuple(allowed_model_selectors)
         self._persist = PersistSink(store)
         self._control_poll_interval = control_poll_interval
         self._active: dict[str, _ActiveRun] = {}
         self._active_lock = threading.Lock()
         self._monitor_task: asyncio.Task[None] | None = None
-
-    def allocate_run_id(self) -> str:
-        """Allocate one process-safe run id."""
-
-        return allocate_run_id(self.id_state_path)
-
-    async def close(self) -> None:
-        """Cancel and await all runs owned by this process."""
-
-        with self._active_lock:
-            tasks = {active.task for active in self._active.values()}
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        monitor = self._monitor_task
-        self._monitor_task = None
-        if monitor is not None and not monitor.done():
-            monitor.cancel()
-            await asyncio.gather(monitor, return_exceptions=True)
+        self._shutdown = False
 
     async def start(
         self,
@@ -126,6 +88,7 @@ class RunExecutor:
     ) -> RunRecord:
         """Accept and execute one top-level run to completion."""
 
+        self._require_available()
         bound = bind_run_request(
             request,
             id_state_path=self.id_state_path,
@@ -159,11 +122,11 @@ class RunExecutor:
             if bound.run_id in self._active:
                 raise ValueError(f"run is already active: {bound.run_id}")
             self._active[bound.run_id] = active
-        self._ensure_monitor()
+        self._ensure_monitor(setup.name)
         started_at = time.perf_counter()
         emit = self._handler(active)
         try:
-            await _Execution(self, setup=setup, emit=emit).execute(
+            await _Execution(self, setup=setup, state=state, emit=emit).execute(
                 bound,
                 _resolve_executable(bound),
             )
@@ -193,6 +156,28 @@ class RunExecutor:
         )
         return result
 
+    def stop(
+        self,
+        *,
+        run_id: str,
+        timing: RunControlTiming = "immediate",
+        request_id: str | None = None,
+        reason: str | None = None,
+    ) -> RunControlRecord:
+        """Persist one stop control for the process that owns the run."""
+
+        self._require_available()
+        control, _created = self.store.accept_run_control(
+            run_id=run_id,
+            kind="stop",
+            timing=timing,
+            input=Message.user(reason) if reason else None,
+            context={},
+            request_id=request_id,
+            created_at=utc_now(),
+        )
+        return control
+
     def steer(
         self,
         *,
@@ -203,6 +188,7 @@ class RunExecutor:
     ) -> RunControlRecord:
         """Persist one steer control for the process that owns the run."""
 
+        self._require_available()
         control, _created = self.store.accept_run_control(
             run_id=run_id,
             kind="steer",
@@ -214,26 +200,28 @@ class RunExecutor:
         )
         return control
 
-    def stop(
-        self,
-        *,
-        run_id: str,
-        timing: RunControlTiming = "immediate",
-        request_id: str | None = None,
-        reason: str | None = None,
-    ) -> RunControlRecord:
-        """Persist one stop control for the process that owns the run."""
+    async def shutdown(self) -> None:
+        """Cancel and await all runs owned by this executor."""
 
-        control, _created = self.store.accept_run_control(
-            run_id=run_id,
-            kind="stop",
-            timing=timing,
-            input=Message.user(reason) if reason else None,
-            context={},
-            request_id=request_id,
-            created_at=utc_now(),
-        )
-        return control
+        if self._shutdown:
+            return
+        self._shutdown = True
+        with self._active_lock:
+            tasks = {active.task for active in self._active.values()}
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        monitor = self._monitor_task
+        self._monitor_task = None
+        if monitor is not None and not monitor.done():
+            monitor.cancel()
+            await asyncio.gather(monitor, return_exceptions=True)
+
+    def _require_available(self) -> None:
+        if self._shutdown:
+            raise RuntimeError("run executor is shut down")
 
     def _handler(self, active: _ActiveRun) -> Callable[[RunEvent], None]:
         def emit(event: RunEvent) -> None:
@@ -290,10 +278,10 @@ class RunExecutor:
                 if self._active.get(event.run) is active:
                     self._active.pop(event.run, None)
 
-    def _ensure_monitor(self) -> None:
+    def _ensure_monitor(self, agent_name: str) -> None:
         if self._monitor_task is None or self._monitor_task.done():
             self._monitor_task = asyncio.create_task(
-                self._monitor_controls(), name=f"toolang-controls-{self.name}"
+                self._monitor_controls(), name=f"toolang-controls-{agent_name}"
             )
 
     async def _monitor_controls(self) -> None:
@@ -343,19 +331,32 @@ class _Execution:
         executor: RunExecutor,
         *,
         setup: AgentSetup,
+        state: AgentState,
         emit: Callable[[RunEvent], None],
     ) -> None:
         self.executor = executor
         self.setup = setup
+        config_layers = (state.root_config, state.home_config)
+        self.model_aliases = parse_model_aliases(config_layers)
+        self.default_models = parse_default_models(config_layers)
         self._emit_trace = emit
         self._run_outputs: dict[str, StepPath] = {}
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.executor, name)
+    @property
+    def store(self) -> RunStore:
+        return self.executor.store
 
     @property
     def model_providers(self) -> Mapping[str, ModelProvider]:
         return self.setup.model_providers
+
+    @property
+    def model_environ(self) -> Mapping[str, str]:
+        return self.setup.model_environ
+
+    @property
+    def model_cache_dir(self) -> Path | None:
+        return self.setup.model_cache_dir
 
     async def execute(
         self,
@@ -626,7 +627,7 @@ def _child_binding(
     )
     text = value_text(primary.value) if primary.shape != "none" else ""
     return BoundRun(
-        run_id=allocate_run_id(context.id_state_path),
+        run_id=allocate_run_id(context.executor.id_state_path),
         origin=parent.origin,
         thread_id=parent.thread_id,
         executable_kind=cast(ExecutableKind, executable.kind),

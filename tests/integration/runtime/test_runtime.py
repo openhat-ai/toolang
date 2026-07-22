@@ -104,7 +104,6 @@ from toolang.api.routers import chat as chat_loop
 from toolang.work import inbox as files
 from toolang.up import channels as poll
 from toolang.plugin.tools.loading import load_runtime_tools
-from toolang.plugin.loading import load_loop
 from toolang.work import files as file_requests
 from toolang.work.types import FileSnapshot
 from toolang.state.source import read_authored_source
@@ -7345,7 +7344,7 @@ async def _running_context(
                     await task
             if scheduler_store is not None:
                 scheduler_store.close()
-            await context.executor.close()
+            await context.executor.shutdown()
             context.executor.store.close()
 
     async with lifespan(FastAPI()):
@@ -7384,6 +7383,8 @@ def _build_context(
     )
     store = RunStore(run_store_path(toolang_root, agent_name))
     setup = AgentSetup(
+        name=agent_name,
+        home=agents.agent_home(toolang_root, agent_name),
         tools=load_runtime_tools(
             plugin_config=merge_named_configs(
                 (state.root_config, state.home_config),
@@ -7398,7 +7399,7 @@ def _build_context(
             if name == "openai"
         },
         model_adapters=load_model_adapters(),
-        loop=load_loop("basic"),
+        model_environ={"OPENAI_API_KEY": "secret"},
     )
     config_layers = (state.root_config, state.home_config)
     model_aliases = parse_model_aliases(config_layers)
