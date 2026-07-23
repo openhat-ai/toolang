@@ -666,15 +666,14 @@ identity, status, input text, output summary, failure, and timestamps; there is
 no separate `RunSummary` response type.
 
 `steer` and `cancel` operate on running runs. Thread `rewind` and `fork` request
-bodies take `run_id` as the anchor, plus optional `request_id` and `message`;
-`fork` also accepts `include_anchor`. Task and chore threads cannot be rewound
-or forked because their thread ids are derived from job ids.
+bodies take an optional `run_id` anchor and `request_id`. An omitted run id
+selects the last visible run. Task and chore threads cannot be rewound or forked
+because their thread ids are derived from job ids.
 
 `steer`, `cancel`, and accepted manual chore starts return `RunCommandResult`
-with `run` and `command`. Thread create, rewind, and fork return `ThreadResult`
-with the current `thread` and an optional accepted follow-up `run` command.
-Operation-specific rewind/fork copy metadata is emitted through thread events
-instead of being duplicated in the command response.
+with `run` and `command`. Thread create and fork return the created thread;
+rewind returns the updated existing thread representation. None of these thread
+operations starts a follow-up run.
 
 Run and thread event streams return SSE records with this envelope:
 

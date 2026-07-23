@@ -19,9 +19,9 @@ from .records import (
     step_message_role,
 )
 from .types import (
-    RunControlTiming,
+    ControlTiming,
     RunControlKind,
-    RunControlStatus,
+    ControlStatus,
     RunStatus,
     StepKind,
     StepPath,
@@ -303,9 +303,9 @@ class RunControlInfo:
     run_id: str
     index: int
     kind: RunControlKind
-    timing: RunControlTiming
+    timing: ControlTiming
     request_id: str | None
-    status: RunControlStatus
+    status: ControlStatus
     message: Message | None
     context: dict[str, Any]
     error: str | None
@@ -339,10 +339,9 @@ class RunControlResult:
 
 @dataclass(frozen=True, slots=True)
 class ThreadResult:
-    """One thread mutation result with an optional accepted follow-up run."""
+    """One thread mutation result."""
 
     thread: ThreadInfo
-    run: RunControlResult | None = None
 
 
 @dataclass(frozen=True, slots=True)

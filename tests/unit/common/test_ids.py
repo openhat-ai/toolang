@@ -14,6 +14,7 @@ from toolang.common.ids import (
     AllocatorSnapshot,
     AllocatorState,
     IdFamily,
+    IdIssuer,
     LOCAL_ID_FAMILY,
     RUN_ID_FAMILY,
     allocate_id,
@@ -116,6 +117,15 @@ def test_allocate_id_persists_state_by_family(tmp_path: Path) -> None:
     assert run.seq == 0
     assert snapshot.state_for(LOCAL_ID_FAMILY) == AllocatorState(last_tick=first.tick, last_seq=1)
     assert snapshot.state_for(RUN_ID_FAMILY) == AllocatorState(last_tick=run.tick, last_seq=0)
+
+
+def test_id_issuer_uses_explicit_canonical_prefixes(tmp_path: Path) -> None:
+    ids = IdIssuer(tmp_path / ".meta" / "ids.json")
+
+    assert ids.issue_run().startswith("run_")
+    assert ids.issue_thread("term").startswith("term_")
+    with pytest.raises(ValueError, match="invalid thread prefix"):
+        ids.issue_thread("TUI")
 
 
 def test_allocate_id_is_process_safe(tmp_path: Path) -> None:

@@ -312,6 +312,7 @@ def invoke(
             )
         )
     finally:
+        asyncio.run(executor.shutdown())
         executor.store.close()
 
 
@@ -764,7 +765,6 @@ def _up_local(
             stop_signal.set()
             for task in tuple(context.run_tasks):
                 task.cancel()
-            await executor.shutdown()
             shutdown_tasks: list[asyncio.Task[Any]] = [
                 *bg_tasks,
                 *context.run_tasks,
@@ -778,6 +778,7 @@ def _up_local(
                     "outcome": "stopped",
                 },
             )
+            await executor.shutdown()
             executor.store.close()
 
     app = create_app(context, lifespan=lifespan, shutdown_signal=shutdown_signal)

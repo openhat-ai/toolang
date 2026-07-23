@@ -40,13 +40,13 @@ from .records import (
 )
 from .types import (
     RunControlKind,
-    RunControlTiming,
+    ControlTiming,
     RunStatus,
     StepKind,
     StepStatus,
 )
 
-_SCHEMA_VERSION = 12
+_SCHEMA_VERSION = 13
 
 
 class RunStore:
@@ -61,12 +61,18 @@ class RunStore:
             timeout=30,
         )
         self._conn.row_factory = sqlite3.Row
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._init_schema()
 
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    @property
+    def thread_lock_path(self) -> Path:
+        """Return the shared lock that serializes thread history mutations."""
+
+        return self.db_path.with_name(f"{self.db_path.name}.threads.lock")
 
     def accept_start(
         self,
@@ -169,7 +175,7 @@ class RunStore:
         *,
         run_id: str,
         kind: RunControlKind,
-        timing: RunControlTiming,
+        timing: ControlTiming,
         input: Message | None,
         context: Mapping[str, Any],
         request_id: str | None,
@@ -427,10 +433,10 @@ class RunStore:
                 self._conn.execute(
                     """
                     INSERT INTO thread_controls(
-                        thread, "index", kind, source_thread, anchor_run, result_run,
-                        message, request_id, expected_head_thread, expected_head_index,
+                        thread, "index", kind, source_thread, anchor_run,
+                        request_id, expected_head_thread, expected_head_index,
                         context, status, error, created_at, finished_at
-                    ) VALUES (?, 0, 'create', NULL, NULL, NULL, NULL, ?, NULL, NULL,
+                    ) VALUES (?, 0, 'create', NULL, NULL, ?, NULL, NULL,
                               ?, 'finished', NULL, ?, ?)
                     """,
                     (thread_id, request_id, _dump_json(dict(context or {})), now, now),
@@ -467,8 +473,6 @@ class RunStore:
         anchor_run: str,
         origin: str,
         peer: ThreadPeer,
-        result_run: str | None,
-        message: Message | None,
         request_id: str | None,
         context: Mapping[str, Any],
         created_at: str,
@@ -489,7 +493,6 @@ class RunStore:
                             control.kind != "fork"
                             or control.source_thread != source_thread
                             or control.anchor_run != anchor_run
-                            or control.message != message
                             or control.context != dict(context)
                         ):
                             raise ValueError(
@@ -505,10 +508,12 @@ class RunStore:
                             )
                         self._conn.commit()
                         return _thread_from_row(existing), control, False
-                anchor = self._conn.execute(
-                    "SELECT thread FROM runs WHERE id = ?", (anchor_run,)
-                ).fetchone()
-                if anchor is None or str(anchor["thread"]) != source_thread:
+                history = self._thread_history(
+                    thread_id=source_thread,
+                    include_superseded=False,
+                    visited=set(),
+                )
+                if all(run.id != anchor_run for run in history):
                     raise ValueError(f"invalid fork anchor: {anchor_run}")
                 if (
                     self._conn.execute(
@@ -535,18 +540,16 @@ class RunStore:
                 self._conn.execute(
                     """
                     INSERT INTO thread_controls(
-                        thread, "index", kind, source_thread, anchor_run, result_run,
-                        message, request_id, expected_head_thread, expected_head_index,
+                        thread, "index", kind, source_thread, anchor_run,
+                        request_id, expected_head_thread, expected_head_index,
                         context, status, error, created_at, finished_at
-                    ) VALUES (?, 0, 'fork', ?, ?, ?, ?, ?, NULL, NULL, ?,
+                    ) VALUES (?, 0, 'fork', ?, ?, ?, NULL, NULL, ?,
                               'finished', NULL, ?, ?)
                     """,
                     (
                         thread_id,
                         source_thread,
                         anchor_run,
-                        result_run,
-                        _dump_json(message.to_data()) if message is not None else None,
                         request_id,
                         _dump_json(dict(context)),
                         created_at,
@@ -588,8 +591,6 @@ class RunStore:
         *,
         thread_id: str,
         anchor_run: str,
-        result_run: str | None,
-        message: Message | None,
         request_id: str | None,
         expected_head: ThreadControlRef,
         context: Mapping[str, Any],
@@ -611,7 +612,6 @@ class RunStore:
                             control.kind != "rewind"
                             or control.thread != thread_id
                             or control.anchor_run != anchor_run
-                            or control.message != message
                             or control.context != dict(context)
                         ):
                             raise ValueError(
@@ -632,12 +632,19 @@ class RunStore:
                 thread = _thread_from_row(thread_row)
                 if thread.head != expected_head:
                     raise ValueError(f"thread head changed: {thread_id}")
+                history = self._thread_history(
+                    thread_id=thread_id,
+                    include_superseded=False,
+                    visited=set(),
+                )
+                if all(run.id != anchor_run for run in history):
+                    raise ValueError(f"invalid rewind anchor: {anchor_run}")
                 anchor = self._conn.execute(
-                    "SELECT rowid FROM runs WHERE id = ? AND thread = ?",
-                    (anchor_run, thread_id),
+                    "SELECT rowid, thread FROM runs WHERE id = ?",
+                    (anchor_run,),
                 ).fetchone()
                 if anchor is None:
-                    raise ValueError(f"invalid rewind anchor: {anchor_run}")
+                    raise ValueError(f"run not found: {anchor_run}")
                 index_row = self._conn.execute(
                     'SELECT COALESCE(MAX("index"), -1) + 1 AS next_index '
                     "FROM thread_controls WHERE thread = ?",
@@ -647,18 +654,16 @@ class RunStore:
                 self._conn.execute(
                     """
                     INSERT INTO thread_controls(
-                        thread, "index", kind, source_thread, anchor_run, result_run,
-                        message, request_id, expected_head_thread, expected_head_index,
+                        thread, "index", kind, source_thread, anchor_run,
+                        request_id, expected_head_thread, expected_head_index,
                         context, status, error, created_at, finished_at
-                    ) VALUES (?, ?, 'rewind', NULL, ?, ?, ?, ?, ?, ?, ?,
+                    ) VALUES (?, ?, 'rewind', NULL, ?, ?, ?, ?, ?,
                               'finished', NULL, ?, ?)
                     """,
                     (
                         thread_id,
                         index,
                         anchor_run,
-                        result_run,
-                        _dump_json(message.to_data()) if message is not None else None,
                         request_id,
                         expected_head.thread,
                         expected_head.index,
@@ -667,14 +672,26 @@ class RunStore:
                         created_at,
                     ),
                 )
-                rows = self._conn.execute(
-                    """
-                    SELECT id FROM runs
-                    WHERE thread = ? AND rowid >= ? AND superseded_by_thread IS NULL
-                    ORDER BY rowid ASC
-                    """,
-                    (thread_id, int(anchor["rowid"])),
-                ).fetchall()
+                if str(anchor["thread"]) == thread_id:
+                    rows = self._conn.execute(
+                        """
+                        SELECT id FROM runs
+                        WHERE thread = ?
+                          AND rowid >= ?
+                          AND superseded_by_thread IS NULL
+                        ORDER BY rowid ASC
+                        """,
+                        (thread_id, int(anchor["rowid"])),
+                    ).fetchall()
+                else:
+                    rows = self._conn.execute(
+                        """
+                        SELECT id FROM runs
+                        WHERE thread = ? AND superseded_by_thread IS NULL
+                        ORDER BY rowid ASC
+                        """,
+                        (thread_id,),
+                    ).fetchall()
                 superseded = tuple(str(row["id"]) for row in rows)
                 self._conn.executemany(
                     """
@@ -1001,6 +1018,16 @@ class RunStore:
                         raise ValueError(
                             f"fork anchor is missing from source history: {control.anchor_run}"
                         )
+                if prefix:
+                    positions = {run.id: index for index, run in enumerate(prefix)}
+                    cuts = tuple(
+                        positions[control.anchor_run]
+                        for control in self.list_thread_controls(thread_id=thread_id)
+                        if control.kind == "rewind"
+                        and control.anchor_run in positions
+                    )
+                    if cuts:
+                        prefix = prefix[: min(cuts)]
             own = self.list_thread_runs_chronological(
                 thread_id=thread_id,
                 limit=None,
@@ -1423,8 +1450,6 @@ class RunStore:
                     kind TEXT NOT NULL,
                     source_thread TEXT,
                     anchor_run TEXT,
-                    result_run TEXT,
-                    message TEXT,
                     request_id TEXT,
                     expected_head_thread TEXT,
                     expected_head_index INTEGER,
@@ -1621,7 +1646,7 @@ def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
         run=str(row["run"]),
         index=int(row["index"]),
         kind=cast(RunControlKind, row["kind"]),
-        timing=cast(RunControlTiming, row["timing"]),
+        timing=cast(ControlTiming, row["timing"]),
         input=Message.from_data(input_raw) if isinstance(input_raw, Mapping) else None,
         request_id=str(row["request_id"]) if row["request_id"] is not None else None,
         context=dict(context_raw) if isinstance(context_raw, Mapping) else {},
@@ -1633,9 +1658,6 @@ def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
 
 
 def _thread_control_from_row(row: sqlite3.Row) -> ThreadControlRecord:
-    message_raw = (
-        _load_json(str(row["message"])) if row["message"] is not None else None
-    )
     context_raw = _load_json(str(row["context"])) if row["context"] is not None else {}
     expected_head = (
         ThreadControlRef(
@@ -1654,10 +1676,6 @@ def _thread_control_from_row(row: sqlite3.Row) -> ThreadControlRecord:
             str(row["source_thread"]) if row["source_thread"] is not None else None
         ),
         anchor_run=str(row["anchor_run"]) if row["anchor_run"] is not None else None,
-        result_run=str(row["result_run"]) if row["result_run"] is not None else None,
-        message=Message.from_data(message_raw)
-        if isinstance(message_raw, Mapping)
-        else None,
         request_id=str(row["request_id"]) if row["request_id"] is not None else None,
         expected_head=expected_head,
         context=dict(context_raw) if isinstance(context_raw, Mapping) else {},

@@ -142,7 +142,6 @@ class ThreadRewound:
     thread: str
     control: ThreadControlRef
     anchor_run: str
-    result_run: str | None
     superseded_runs: tuple[str, ...]
     created_at: str
     type: str = "thread_rewound"

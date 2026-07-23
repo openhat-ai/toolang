@@ -15,9 +15,9 @@ class RunRequest:
     """One external request to execute an agic or flow."""
 
     origin: str
+    thread_id: str
     input: Message = field(default_factory=lambda: Message.user(""))
     run_id: str | None = None
-    thread_id: str | None = None
     executable_kind: ExecutableKind = "agic"
     executable_name: str | None = None
     model_selector: str | None = None

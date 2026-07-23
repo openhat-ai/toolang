@@ -69,10 +69,10 @@ For the `run` family:
 
 The proposed full identities are:
 
-- task thread: `tsk_<id>`
-- chore thread: `chr_<id>`
+- task thread: `task_<id>`
+- chore thread: `chore_<id>`
 - web chat thread: `web_<id>`
-- TUI chat thread: `tui_<id>`
+- terminal and TUI chat thread: `term_<id>`
 - file request thread: `file_<full-path-sha256-prefix>`
 - script/invoke agic thread: `agic_<agic-name>`
 - Telegram thread: `tg_<external_id>`

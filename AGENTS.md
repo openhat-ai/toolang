@@ -147,10 +147,12 @@
   `toolang.state.types` owns capability-state vocabulary.
 - `toolang.execution` owns run binding, execution trace, durable run truth,
   response projection, execution storage, and agent-specific built-in tools.
-- `RunExecutor` owns run acceptance, control, and execution. It constructs a
-  mandatory internal `PersistSink`; each `start()` may receive one optional
-  `RunTracer`. Persistence and control-status updates complete before the
-  tracer observes an event.
+- `RunExecutor` owns run acceptance, control, and execution. It receives the
+  process-owned `RunStore` and `IdIssuer`, constructs its mandatory internal
+  `PersistSink`, and may receive one optional `RunTracer` per `start()`.
+  `ThreadManager` shares the same store and issuer without depending on the
+  executor. Persistence and control-status updates complete before the tracer
+  observes an event.
 - `toolang.execution.executor` contains the run executor, external run request,
   its mandatory `PersistSink`, shared run values, model-input preparation, and
   bounded diagnostics. Durable records, events, storage, inspection, schemas,
@@ -167,7 +169,9 @@
 - Agic model-tool sequencing is fixed executor behavior. Do not add a loop
   plugin family or a plugin-facing run-context protocol.
 - `toolang.execution.threads` owns synchronous thread creation, rewind, and
-  fork semantics through `ThreadManager`.
+  fork semantics through `ThreadManager`. Create and fork return a new thread
+  id; rewind mutates in place and returns nothing. Fork retains its anchor in
+  inherited history, while rewind discards its anchor and the suffix after it.
 - `toolang.execution.schemas` owns caller-facing run, thread, step, and failure
   protocol types and reuses canonical message values from `toolang.base`;
   its schema types construct themselves from durable records, while

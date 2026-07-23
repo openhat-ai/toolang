@@ -6,12 +6,11 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 import json
-from pathlib import Path
 from typing import Any, Literal
 
 from toolang.base.types.message import Message, Part, TextPart, message_text
 from toolang.common.errors import ToolangError
-from toolang.common.ids import allocate_run_id, allocate_thread_id
+from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.lang.ast import (
     AgicDecl,
@@ -79,17 +78,18 @@ class BoundRun:
 def bind_run_request(
     request: RunRequest,
     *,
-    id_state_path: Path,
+    ids: IdIssuer,
     state: AgentState,
     setup: AgentSetup,
 ) -> BoundRun:
     """Bind one external request to immutable execution inputs."""
 
-    thread_id = request.thread_id or _request_thread_id(id_state_path, request)
+    if not request.thread_id.strip():
+        raise ValueError("run request requires an existing thread id")
     return BoundRun(
-        run_id=request.run_id or allocate_run_id(id_state_path),
+        run_id=request.run_id or ids.issue_run(),
         origin=request.origin,
-        thread_id=thread_id,
+        thread_id=request.thread_id,
         executable_kind=request.executable_kind,
         executable_name=request.executable_name,
         input=request.input,
@@ -100,10 +100,6 @@ def bind_run_request(
         setup=setup,
         created_at=utc_now(),
     )
-
-
-def _request_thread_id(id_state_path: Path, request: RunRequest) -> str:
-    return allocate_thread_id(id_state_path, request.origin)
 
 
 def _request_model_selector(request: RunRequest) -> str | None:

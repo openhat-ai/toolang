@@ -26,10 +26,10 @@ Thread ids use one underscore-delimited normalized form:
 
 Examples:
 
-- `tsk_3nprht9x`
-- `chr_xy1234ab`
+- `task_3nprht9x`
+- `chore_xy1234ab`
 - `web_def456gh`
-- `tui_jk789mnp`
+- `term_jk789mnp`
 - `tg_123456789`
 
 The parser splits on the first `_`; the trailing id may contain additional
@@ -114,8 +114,8 @@ To build a full transcript, flatten:
 2. each step message in run order
 
 Forked chat threads store their source thread and anchor run in `parent`.
-Inherited transcript context includes visible source-thread runs before the
-anchor run.
+Inherited transcript context includes the anchor run. Run and step rows are not
+copied into the new thread.
 
 
 ## Run API
@@ -142,15 +142,15 @@ Thread lifecycle endpoints are:
 `steer` and `cancel` require a running run. They can target chat, task, and
 chore runs.
 
-`rewind` replaces the visible suffix of a branchable chat thread from the
-anchor run onward and starts a replacement run in the same thread. Superseded
-runs remain inspectable by id but are hidden from normal thread projections.
+`rewind` removes the visible suffix of a branchable chat thread from the anchor
+run onward. Superseded runs remain inspectable by id but are hidden from normal
+thread projections. It does not start a replacement run.
 
-`fork` creates a new chat thread from the context before the anchor run and
-starts one run in the new thread.
+`fork` creates a new chat thread whose inherited context ends with the anchor
+run. It does not start a run in the new thread.
 
-Both lifecycle request bodies identify the anchor with `run_id`. Fork requests
-may additionally set `include_anchor`.
+Both lifecycle request bodies may identify the anchor with `run_id`. Omitting
+it selects the last visible run. Fork includes its anchor; rewind discards it.
 
 Task and chore thread ids are derived from job ids, so job threads cannot be
 rewound or forked. Job execution commands expose explicit job semantics such as
@@ -167,8 +167,8 @@ Buffered chat:
 request body:
 
 - `thread`
-- `client`: `web`, `tui`, or `chat`; defaults to `web` and controls the prefix
-  for newly allocated chat thread ids
+- `client`: `web`, `tui`, or `chat`; defaults to `web`. TUI and local chat
+  clients use the canonical `term` prefix.
 - `peer` optional; defaults to the user peer
 - `message`
   - `role`

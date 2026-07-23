@@ -440,37 +440,32 @@ def allocate_id(
         return allocation
 
 
-def allocate_run_id(state_path: Path) -> str:
-    """Allocate one process-safe run id."""
+@dataclass(frozen=True, slots=True)
+class IdIssuer:
+    """Issue process-safe Toolang ids from one durable allocator state."""
 
-    value = allocate_id(state_path, family=RUN_ID_FAMILY).value
-    return f"run_{value}"
+    state_path: Path
 
+    def issue_run(self) -> str:
+        """Issue one run id."""
 
-def allocate_thread_id(state_path: Path, kind: str) -> str:
-    """Allocate one process-safe thread id for a caller-facing surface."""
+        value = allocate_id(self.state_path, family=RUN_ID_FAMILY).value
+        return f"run_{value}"
 
-    value = allocate_id(state_path, family=LOCAL_ID_FAMILY).value
-    return f"{_thread_id_kind(kind)}_{value}"
+    def issue_thread(self, prefix: str) -> str:
+        """Issue one local thread id with an explicit canonical prefix."""
+
+        normalized = prefix.strip().lower()
+        if normalized != prefix or not normalized or not normalized.isalnum():
+            raise ValueError(f"invalid thread prefix: {prefix}")
+        value = allocate_id(self.state_path, family=LOCAL_ID_FAMILY).value
+        return f"{prefix}_{value}"
 
 
 def archive_prefix(value: str, *, family: IdFamily) -> str:
     """Return the stable archive prefix for one id."""
 
     return decode_id(value, family=family).archive_prefix
-
-
-def _thread_id_kind(kind: str) -> str:
-    text = "".join(char for char in kind.strip().lower() if char.isalnum())
-    if text == "web":
-        return "web"
-    if text in {"term", "terminal", "tui", "chat"}:
-        return "term"
-    if text == "task":
-        return "task"
-    if text == "chore":
-        return "chore"
-    return "script"
 
 
 def _permute_wire_code(value: int, *, family: IdFamily) -> int:

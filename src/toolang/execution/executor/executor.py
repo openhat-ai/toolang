@@ -14,7 +14,7 @@ from typing import Any, Literal, cast
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.message import Message
 from toolang.common.errors import ToolangError
-from toolang.common.ids import allocate_run_id
+from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
@@ -30,7 +30,7 @@ from ..records import (
     trace_run,
 )
 from ..store import RunStore
-from ..types import RunControlKind, RunControlTiming, StepPath
+from ..types import ControlTiming, RunControlKind, StepPath
 from .common import (
     BoundRun,
     Local,
@@ -45,6 +45,7 @@ from .request import ExecutableKind, RunRequest
 from .persist import PersistSink
 
 _LOGGER = logging.getLogger("toolang.run")
+_CONTROL_POLL_INTERVAL = 0.05
 
 
 class _RunStopped(asyncio.CancelledError):
@@ -62,17 +63,11 @@ class _ActiveRun:
 class RunExecutor:
     """Accept, control, and execute runs against durable execution truth."""
 
-    def __init__(
-        self,
-        *,
-        store: RunStore,
-        id_state_path: Path,
-        control_poll_interval: float = 0.05,
-    ) -> None:
-        self.id_state_path = id_state_path
+    def __init__(self, store: RunStore, ids: IdIssuer) -> None:
         self.store = store
-        self._persist = PersistSink(store)
-        self._control_poll_interval = control_poll_interval
+        self.ids = ids
+        self._persist = PersistSink(self.store)
+        self._control_poll_interval = _CONTROL_POLL_INTERVAL
         self._active: dict[str, _ActiveRun] = {}
         self._active_lock = threading.Lock()
         self._monitor_task: asyncio.Task[None] | None = None
@@ -91,18 +86,12 @@ class RunExecutor:
         self._require_available()
         bound = bind_run_request(
             request,
-            id_state_path=self.id_state_path,
+            ids=self.ids,
             state=state,
             setup=setup,
         )
         if self.store.get_thread(thread_id=bound.thread_id) is None:
-            self.store.create_thread(
-                thread_id=bound.thread_id,
-                origin=bound.origin,
-                request_id=None,
-                context={"source": request.origin},
-                created_at=bound.created_at,
-            )
+            raise ValueError(f"thread not found: {bound.thread_id}")
         record, _control, owner = self.store.accept_start(
             run_id=bound.run_id,
             parent=None,
@@ -160,7 +149,7 @@ class RunExecutor:
         self,
         *,
         run_id: str,
-        timing: RunControlTiming = "immediate",
+        timing: ControlTiming = "immediate",
         request_id: str | None = None,
         reason: str | None = None,
     ) -> RunControlRecord:
@@ -183,7 +172,7 @@ class RunExecutor:
         *,
         run_id: str,
         message: Message,
-        timing: RunControlTiming,
+        timing: ControlTiming,
         request_id: str | None = None,
     ) -> RunControlRecord:
         """Persist one steer control for the process that owns the run."""
@@ -627,7 +616,7 @@ def _child_binding(
     )
     text = value_text(primary.value) if primary.shape != "none" else ""
     return BoundRun(
-        run_id=allocate_run_id(context.executor.id_state_path),
+        run_id=context.executor.ids.issue_run(),
         origin=parent.origin,
         thread_id=parent.thread_id,
         executable_kind=cast(ExecutableKind, executable.kind),

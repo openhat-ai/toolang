@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.types.message import Message, TextPart
-from toolang.common.ids import allocate_run_id, allocate_thread_id
+from toolang.common.ids import IdIssuer
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
@@ -30,6 +30,7 @@ from toolang.execution.executor.request import RunRequest
 from toolang.execution.executor.persist import PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
+from toolang.execution.types import ThreadPrefix
 from toolang.lang.ast import AgicDecl, FlowDecl, LetStmt, Program, RunStmt, Span
 from toolang.up.setup import AgentSetup
 
@@ -60,11 +61,10 @@ class _RecordingThreadListener(ThreadListener):
         self.events.append(event)
 
 
-def _executor(tmp_path: Path, store: RunStore) -> RunExecutor:
-    return RunExecutor(
-        store=store,
-        id_state_path=tmp_path / "ids.json",
-    )
+def _executor(tmp_path: Path) -> RunExecutor:
+    store = RunStore(tmp_path / ".runtime" / "runs.db")
+    store.create_thread(thread_id="term_test")
+    return RunExecutor(store, IdIssuer(tmp_path / ".runtime" / "ids.json"))
 
 
 def _state(*flows: FlowDecl) -> Any:
@@ -82,8 +82,8 @@ def _state(*flows: FlowDecl) -> Any:
 
 def _setup() -> AgentSetup:
     return AgentSetup(
+        home=Path("/agent/alice"),
         name="alice",
-        home=Path("/agents/alice"),
         tools={},
         model_providers={},
         model_adapters={},
@@ -95,7 +95,7 @@ def _request(
     name: str,
     *,
     run_id: str | None = None,
-    thread_id: str | None = None,
+    thread_id: str = "term_test",
     request_id: str | None = None,
 ) -> RunRequest:
     return RunRequest(
@@ -114,8 +114,8 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
         stmts=(LetStmt(value="done", span=Span(line=2)),),
         span=Span(line=1),
     )
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
+    executor = _executor(tmp_path)
+    store = executor.store
     tracer = _RecordingTracer(store)
 
     record = asyncio.run(
@@ -141,7 +141,6 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert detail.output.steps[0].output == [TextPart(text="done")]
     assert not hasattr(detail.output.steps[0], "message")
     asyncio.run(executor.shutdown())
-    store.close()
 
 
 def test_top_level_agic_has_no_containing_step_events(
@@ -158,8 +157,8 @@ def test_top_level_agic_has_no_containing_step_events(
             fingerprint="state-test",
         ),
     )
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
+    executor = _executor(tmp_path)
+    store = executor.store
     tracer = _RecordingTracer(store)
 
     async def execute_agic(*_args: Any, **_kwargs: Any) -> Local:
@@ -170,7 +169,7 @@ def test_top_level_agic_has_no_containing_step_events(
         executor.start(
             _setup(),
             state,
-            RunRequest(origin="chat"),
+            RunRequest(origin="chat", thread_id="term_test"),
             tracer=tracer,
         )
     )
@@ -179,13 +178,12 @@ def test_top_level_agic_has_no_containing_step_events(
     assert [event.type for event in tracer.events] == ["run_begin", "run_end"]
     assert store.list_steps(run_id=record.id) == []
     asyncio.run(executor.shutdown())
-    store.close()
 
 
 def test_tracer_failure_does_not_fail_execution(tmp_path: Path) -> None:
     flow = FlowDecl(name="pipeline", span=Span(line=1))
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
+    executor = _executor(tmp_path)
+    store = executor.store
 
     record = asyncio.run(
         executor.start(
@@ -198,13 +196,12 @@ def test_tracer_failure_does_not_fail_execution(tmp_path: Path) -> None:
 
     assert record.status == "finished"
     asyncio.run(executor.shutdown())
-    store.close()
 
 
 def test_start_request_is_idempotent_and_executes_once(tmp_path: Path) -> None:
     flow = FlowDecl(name="pipeline", span=Span(line=1))
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
+    executor = _executor(tmp_path)
+    store = executor.store
     request = _request(
         flow.name,
         run_id="run_idempotent",
@@ -213,6 +210,7 @@ def test_start_request_is_idempotent_and_executes_once(tmp_path: Path) -> None:
     )
     first_tracer = _RecordingTracer(store)
     replay_tracer = _RecordingTracer(store)
+    store.create_thread(thread_id="term_idempotent")
 
     first = asyncio.run(
         executor.start(_setup(), _state(flow), request, tracer=first_tracer)
@@ -226,7 +224,6 @@ def test_start_request_is_idempotent_and_executes_once(tmp_path: Path) -> None:
     assert replay_tracer.events == []
     assert len(store.list_run_controls(run_id=first.id)) == 1
     asyncio.run(executor.shutdown())
-    store.close()
 
 
 def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None:
@@ -240,8 +237,8 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
         stmts=(RunStmt(runnable="child", span=Span(line=4)),),
         span=Span(line=3),
     )
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
+    executor = _executor(tmp_path)
+    store = executor.store
     tracer = _RecordingTracer(store)
 
     root = asyncio.run(
@@ -267,7 +264,6 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
     assert [event.type for event in tracer.events].count("run_begin") == 2
     assert not any(event.type == "run_starting" for event in tracer.events)
     asyncio.run(executor.shutdown())
-    store.close()
 
 
 def test_steer_control_is_finished_when_step_consumes_it(tmp_path: Path) -> None:
@@ -276,8 +272,8 @@ def test_steer_control_is_finished_when_step_consumes_it(tmp_path: Path) -> None
         stmts=(LetStmt(value="default", span=Span(line=2)),),
         span=Span(line=1),
     )
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
+    executor = _executor(tmp_path)
+    store = executor.store
 
     class SteeringTracer(RunTracer):
         control_index: int | None = None
@@ -303,13 +299,12 @@ def test_steer_control_is_finished_when_step_consumes_it(tmp_path: Path) -> None
     steps = store.list_steps(run_id=record.id)
     assert steps[0].input == (RunControlRef(index=tracer.control_index),)
     asyncio.run(executor.shutdown())
-    store.close()
 
 
 def test_unreachable_control_fails_when_run_ends(tmp_path: Path) -> None:
     flow = FlowDecl(name="pipeline", span=Span(line=1))
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
+    executor = _executor(tmp_path)
+    store = executor.store
 
     class SteeringTracer(RunTracer):
         control_index: int | None = None
@@ -333,7 +328,6 @@ def test_unreachable_control_fails_when_run_ends(tmp_path: Path) -> None:
     assert control.status == "failed"
     assert control.error == "run ended before the control could be applied"
     asyncio.run(executor.shutdown())
-    store.close()
 
 
 def test_run_control_acceptance_is_idempotent(tmp_path: Path) -> None:
@@ -486,58 +480,53 @@ def test_persist_sink_does_not_update_control_status(tmp_path: Path) -> None:
 
 
 def test_thread_manager_emits_only_successful_events(tmp_path: Path) -> None:
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
+    executor = _executor(tmp_path)
     listener = _RecordingThreadListener()
-    manager = ThreadManager(executor, listener=listener)
+    manager = ThreadManager(executor.store, executor.ids, listener=listener)
 
-    created = manager.create()
+    thread_id = manager.create(prefix=ThreadPrefix.TERM)
+    created = executor.store.get_thread(thread_id=thread_id)
 
-    assert created.thread.created_by.index == 0
+    assert created is not None and created.created_by.index == 0
     assert [event.type for event in listener.events] == ["thread_created"]
-    with pytest.raises(FileNotFoundError):
-        manager.fork(run_id="run_missing")
+    with pytest.raises(ValueError, match="thread has no runs"):
+        manager.fork(thread_id=thread_id, run_id="run_missing")
     assert [event.type for event in listener.events] == ["thread_created"]
     asyncio.run(executor.shutdown())
-    store.close()
 
 
 def test_thread_create_request_is_idempotent_across_allocated_ids(
     tmp_path: Path,
 ) -> None:
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
+    executor = _executor(tmp_path)
     listener = _RecordingThreadListener()
-    manager = ThreadManager(executor, listener=listener)
+    manager = ThreadManager(executor.store, executor.ids, listener=listener)
 
-    first = manager.create(request_id="create-thread")
-    replay = manager.create(request_id="create-thread")
+    first = manager.create(prefix=ThreadPrefix.TERM, request_id="create-thread")
+    replay = manager.create(prefix=ThreadPrefix.TERM, request_id="create-thread")
 
     assert replay == first
     assert [event.type for event in listener.events] == ["thread_created"]
     asyncio.run(executor.shutdown())
-    store.close()
 
 
 def test_thread_create_request_rejects_conflicting_replay(tmp_path: Path) -> None:
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
-    manager = ThreadManager(executor)
+    executor = _executor(tmp_path)
+    manager = ThreadManager(executor.store, executor.ids)
 
-    manager.create(kind="chat", request_id="create-thread")
+    manager.create(prefix=ThreadPrefix.TERM, request_id="create-thread")
 
     with pytest.raises(ValueError, match="conflicting thread control request"):
-        manager.create(kind="support", request_id="create-thread")
+        manager.create(prefix=ThreadPrefix.WEB, request_id="create-thread")
     asyncio.run(executor.shutdown())
-    store.close()
 
 
 def test_thread_inspection_starts_from_thread_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
-    created = ThreadManager(executor).create()
+    executor = _executor(tmp_path)
+    store = executor.store
+    created = ThreadManager(store, executor.ids).create(prefix=ThreadPrefix.TERM)
     inspection = ExecutionInspection(store)
     monkeypatch.setattr(
         store,
@@ -547,26 +536,24 @@ def test_thread_inspection_starts_from_thread_records(
 
     threads = inspection.list_threads(limit=None)
 
-    assert [thread.id for thread in threads] == [created.thread.thread_id]
-    assert threads[0].run_count == 0
+    projected = next(thread for thread in threads if thread.id == created)
+    assert projected.run_count == 0
     asyncio.run(executor.shutdown())
-    store.close()
 
 
 def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
+    executor = _executor(tmp_path)
+    store = executor.store
     listener = _RecordingThreadListener()
-    manager = ThreadManager(executor, listener=listener)
-    created = manager.create()
+    manager = ThreadManager(store, executor.ids, listener=listener)
+    created = manager.create(prefix=ThreadPrefix.TERM)
     anchor_id = "run_anchor"
     store.accept_start(
         run_id=anchor_id,
         parent=None,
-        thread=created.thread.thread_id,
+        thread=created,
         input=Message.user("hello"),
         context={"origin": "chat"},
         request_id=None,
@@ -591,53 +578,40 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
         )
     )
 
-    forked = manager.fork(run_id=anchor_id)
+    forked = manager.fork(thread_id=created)
 
-    assert store.list_runs(thread_id=forked.thread.thread_id, limit=None) == []
+    assert store.list_runs(thread_id=forked, limit=None) == []
     assert [
         run.id
         for run in store.list_thread_history_chronological(
-            thread_id=forked.thread.thread_id
+            thread_id=forked
         )
     ] == [anchor_id]
-    original_head = created.thread.head
-    rewound = manager.rewind(run_id=anchor_id, expected_head=original_head)
+    assert manager.rewind(thread_id=created, run_id=anchor_id) is None
+    rewound = store.get_thread(thread_id=created)
     anchor = store.get_run(run_id=anchor_id)
-    assert anchor is not None
-    assert anchor.superseded_by == rewound.thread.head
-    assert [event.type for event in listener.events] == [
-        "thread_created",
-        "thread_forked",
-        "thread_rewound",
-    ]
-    monkeypatch.setattr(
-        manager,
-        "_stop_affected_runs",
-        lambda _anchor: pytest.fail("stale rewind must not stop runs"),
-    )
-    with pytest.raises(ValueError, match="thread head changed"):
-        manager.rewind(run_id=anchor_id, expected_head=original_head)
+    assert anchor is not None and rewound is not None
+    assert anchor.superseded_by == rewound.head
     assert [event.type for event in listener.events] == [
         "thread_created",
         "thread_forked",
         "thread_rewound",
     ]
     asyncio.run(executor.shutdown())
-    store.close()
 
 
-def test_thread_fork_and_rewind_replays_return_persisted_result_run(
+def test_thread_fork_and_rewind_replay_without_starting_runs(
     tmp_path: Path,
 ) -> None:
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
+    executor = _executor(tmp_path)
+    store = executor.store
     listener = _RecordingThreadListener()
-    manager = ThreadManager(executor, listener=listener)
-    created = manager.create()
+    manager = ThreadManager(store, executor.ids, listener=listener)
+    created = manager.create(prefix=ThreadPrefix.TERM)
     store.accept_start(
         run_id="run_anchor",
         parent=None,
-        thread=created.thread.thread_id,
+        thread=created,
         input=Message.user("hello"),
         context={"origin": "chat"},
         request_id=None,
@@ -660,53 +634,48 @@ def test_thread_fork_and_rewind_replays_return_persisted_result_run(
     )
 
     forked = manager.fork(
-        run_id="run_anchor",
-        message=Message.user("fork"),
+        thread_id=created,
         request_id="fork-thread",
     )
     fork_replay = manager.fork(
-        run_id="run_anchor",
-        message=Message.user("fork"),
+        thread_id=created,
         request_id="fork-thread",
     )
-    rewound = manager.rewind(
-        run_id="run_anchor",
-        message=Message.user("rewind"),
+    manager.rewind(
+        thread_id=created,
         request_id="rewind-thread",
     )
-    rewind_replay = manager.rewind(
-        run_id="run_anchor",
-        message=Message.user("rewind"),
+    manager.rewind(
+        thread_id=created,
         request_id="rewind-thread",
     )
 
-    assert forked.control.result_run is not None
     assert fork_replay == forked
-    assert rewound.control.result_run is not None
-    assert rewind_replay == rewound
+    assert [
+        run.id for run in store.list_runs(limit=None, include_superseded=True)
+    ] == ["run_anchor"]
     assert [event.type for event in listener.events] == [
         "thread_created",
         "thread_forked",
         "thread_rewound",
     ]
     asyncio.run(executor.shutdown())
-    store.close()
 
 
 def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
     tmp_path: Path,
 ) -> None:
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
-    manager = ThreadManager(executor)
-    created = manager.create()
+    executor = _executor(tmp_path)
+    store = executor.store
+    manager = ThreadManager(store, executor.ids)
+    created = manager.create(prefix=ThreadPrefix.TERM)
     sink = PersistSink(store)
     timestamp = "2026-01-01T00:00:00Z"
     for run_id in ("run_before", "run_anchor", "run_after"):
         store.accept_start(
             run_id=run_id,
             parent=None,
-            thread=created.thread.thread_id,
+            thread=created,
             input=Message.user(run_id),
             context={"origin": "chat"},
             request_id=None,
@@ -721,16 +690,82 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
         )
         sink.on_event(RunEnd(run=run_id, status="finished", finished_at=timestamp))
 
-    rewound = manager.rewind(run_id="run_anchor")
+    manager.rewind(thread_id=created, run_id="run_anchor")
 
     before = store.get_run(run_id="run_before")
     anchor = store.get_run(run_id="run_anchor")
     after = store.get_run(run_id="run_after")
+    rewound = store.get_thread(thread_id=created)
     assert before is not None and before.superseded_by is None
-    assert anchor is not None and anchor.superseded_by == rewound.thread.head
-    assert after is not None and after.superseded_by == rewound.thread.head
+    assert rewound is not None
+    assert anchor is not None and anchor.superseded_by == rewound.head
+    assert after is not None and after.superseded_by == rewound.head
     asyncio.run(executor.shutdown())
-    store.close()
+
+
+def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    store = executor.store
+    manager = ThreadManager(store, executor.ids)
+    source = manager.create(prefix=ThreadPrefix.TERM)
+    sink = PersistSink(store)
+    for run_id in ("run_a", "run_b"):
+        store.accept_start(
+            run_id=run_id,
+            parent=None,
+            thread=source,
+            input=Message.user(run_id),
+            context={"origin": "chat"},
+            request_id=None,
+            created_at="2026-01-01T00:00:00Z",
+        )
+        sink.on_event(
+            RunBegin(
+                run=run_id,
+                input=RunControlRef(index=0),
+                started_at="2026-01-01T00:00:01Z",
+            )
+        )
+        sink.on_event(
+            RunEnd(
+                run=run_id,
+                status="finished",
+                finished_at="2026-01-01T00:00:02Z",
+            )
+        )
+
+    forked = manager.fork(thread_id=source)
+    manager.rewind(thread_id=forked)
+
+    assert [
+        run.id for run in store.list_thread_history_chronological(thread_id=forked)
+    ] == ["run_a"]
+    source_anchor = store.get_run(run_id="run_b")
+    assert source_anchor is not None and source_anchor.superseded_by is None
+    asyncio.run(executor.shutdown())
+
+
+def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    store = executor.store
+    manager = ThreadManager(store, executor.ids)
+    source = manager.create(prefix=ThreadPrefix.TERM)
+    for run_id, parent in (("run_root", None), ("run_child", "run_root/0")):
+        store.accept_start(
+            run_id=run_id,
+            parent=parent,
+            thread=source,
+            input=Message.user(run_id),
+            context={"origin": "chat"},
+            request_id=None,
+            created_at="2026-01-01T00:00:00Z",
+        )
+
+    forked = manager.fork(thread_id=source)
+    control = store.get_thread_control(thread_id=forked, index=0)
+
+    assert control is not None and control.anchor_run == "run_root"
+    asyncio.run(executor.shutdown())
 
 
 def _accept_controls(db_path: str, run_id: str, offset: int, count: int) -> list[int]:
@@ -767,10 +802,10 @@ def _accept_same_start(db_path: str) -> bool:
 
 
 def _allocate_execution_ids(state_path: str, count: int) -> tuple[list[str], list[str]]:
-    path = Path(state_path)
+    ids = IdIssuer(Path(state_path))
     return (
-        [allocate_run_id(path) for _ in range(count)],
-        [allocate_thread_id(path, "chat") for _ in range(count)],
+        [ids.issue_run() for _ in range(count)],
+        [ids.issue_thread(ThreadPrefix.TERM.value) for _ in range(count)],
     )
 
 
@@ -794,8 +829,6 @@ def _rewind_thread(db_path: str, request_id: str) -> tuple[bool, int | None]:
         _thread, control, _superseded, created = store.rewind_thread(
             thread_id="term_thread_controls",
             anchor_run="run_thread_anchor",
-            result_run=None,
-            message=None,
             request_id=request_id,
             expected_head=ThreadControlRef("term_thread_controls", 0),
             context={},
@@ -865,8 +898,8 @@ def test_remote_process_can_stop_an_owned_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     flow = FlowDecl(name="waiting", span=Span(line=1))
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
+    executor = _executor(tmp_path)
+    store = executor.store
 
     async def wait_until_canceled(
         runtime: _Execution,
@@ -899,7 +932,7 @@ def test_remote_process_can_stop_an_owned_run(
             await asyncio.sleep(0.01)
         process = get_context("spawn").Process(
             target=_accept_remote_stop,
-            args=(str(tmp_path / "runs.db"), "run_remote_stop"),
+            args=(str(store.db_path), "run_remote_stop"),
         )
         process.start()
         await asyncio.to_thread(process.join, 10)
@@ -911,15 +944,15 @@ def test_remote_process_can_stop_an_owned_run(
     control = store.get_run_control(run_id=record.id, index=1)
     assert record.status == "canceled"
     assert control is not None and control.status == "finished"
-    store.close()
+    asyncio.run(executor.shutdown())
 
 
 def test_executor_shutdown_cancels_and_persists_active_runs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     flow = FlowDecl(name="waiting", span=Span(line=1))
-    store = RunStore(tmp_path / "runs.db")
-    executor = _executor(tmp_path, store)
+    executor = _executor(tmp_path)
+    store = executor.store
 
     async def wait_until_canceled(
         runtime: _Execution,
@@ -960,7 +993,7 @@ def test_executor_shutdown_cancels_and_persists_active_runs(
     assert executor._monitor_task is None
     with pytest.raises(RuntimeError, match="run executor is shut down"):
         executor.stop(run_id=record.id)
-    store.close()
+    assert store.get_run(run_id=record.id) == record
 
 
 def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> None:

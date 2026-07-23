@@ -9,13 +9,7 @@ observation.
 
 ```python
 class RunExecutor:
-    def __init__(
-        self,
-        *,
-        store: RunStore,
-        id_state_path: Path,
-        control_poll_interval: float = 0.05,
-    ) -> None: ...
+    def __init__(self, store: RunStore, ids: IdIssuer) -> None: ...
 
     async def start(
         self,
@@ -30,7 +24,7 @@ class RunExecutor:
         self,
         *,
         run_id: str,
-        timing: RunControlTiming = "immediate",
+        timing: ControlTiming = "immediate",
         request_id: str | None = None,
         reason: str | None = None,
     ) -> RunControlRecord: ...
@@ -40,7 +34,7 @@ class RunExecutor:
         *,
         run_id: str,
         message: Message,
-        timing: RunControlTiming,
+        timing: ControlTiming,
         request_id: str | None = None,
     ) -> RunControlRecord: ...
 
@@ -49,8 +43,12 @@ class RunExecutor:
 
 Construction makes the executor immediately available; there is no separate
 `open()` phase. `shutdown()` is terminal, cancels all run tasks owned by the
-executor, and stops its control monitor. It does not close the injected
-`RunStore`, whose lifecycle remains with its owner.
+executor, and stops its control monitor. The process composition root owns and
+closes the shared `RunStore`; `RunExecutor` and `ThreadManager` receive the same
+store and `IdIssuer` instances.
+
+Control polling currently uses an internal default and can move into executor
+options when runtime tuning becomes public.
 
 `RunRequest` contains only values selected for one invocation:
 
@@ -58,9 +56,9 @@ executor, and stops its control monitor. It does not close the injected
 @dataclass(frozen=True, slots=True)
 class RunRequest:
     origin: str
+    thread_id: str
     input: Message = field(default_factory=lambda: Message.user(""))
     run_id: str | None = None
-    thread_id: str | None = None
     executable_kind: Literal["agic", "flow"] = "agic"
     executable_name: str | None = None
     model_selector: str | None = None
@@ -82,9 +80,9 @@ an application-owned task.
 
 ## Acceptance
 
-Binding resolves explicit runtime inputs and allocates a process-safe run ID
-and thread ID when absent. A missing thread is synchronously created before run
-acceptance.
+Binding resolves explicit runtime inputs and asks `IdIssuer` for a run ID when
+one is absent. `thread_id` must identify an existing thread. The executor never
+allocates or implicitly creates threads.
 
 `RunStore.accept_start()` uses `BEGIN IMMEDIATE` to:
 

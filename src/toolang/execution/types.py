@@ -1,5 +1,6 @@
 """Shared execution vocabulary and scalar types."""
 
+from enum import StrEnum
 from typing import Literal
 
 
@@ -9,8 +10,7 @@ RunLoop = str
 
 RunStatus = Literal["pending", "running", "finished", "failed", "canceled"]
 StepStatus = Literal["running", "finished", "failed", "canceled"]
-RunControlStatus = Literal["pending", "finished", "canceled", "failed"]
-ThreadControlStatus = Literal["pending", "finished", "canceled", "failed"]
+ControlStatus = Literal["pending", "finished", "canceled", "failed"]
 
 StepKind = Literal[
     "run",
@@ -22,7 +22,14 @@ StepKind = Literal[
     "loop",
     "system",
 ]
-ThreadPeerType = Literal["user", "agent"]
+ControlTiming = Literal["immediate", "next_step", "next_call"]
 RunControlKind = Literal["start", "steer", "stop"]
-RunControlTiming = Literal["immediate", "next_step", "next_call"]
 ThreadControlKind = Literal["create", "fork", "rewind"]
+ThreadPeerType = Literal["user", "agent"]
+
+
+class ThreadPrefix(StrEnum):
+    """Canonical prefixes for locally issued interactive thread ids."""
+
+    WEB = "web"
+    TERM = "term"

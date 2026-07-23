@@ -8,9 +8,9 @@ from typing import Any, cast
 
 from toolang.base.types.message import Message, MessageRole, Part
 from .types import (
-    RunControlTiming,
+    ControlStatus,
+    ControlTiming,
     RunControlKind,
-    RunControlStatus,
     RunId,
     RunStatus,
     StepKind,
@@ -18,7 +18,6 @@ from .types import (
     StepStatus,
     ThreadPeerType,
     ThreadControlKind,
-    ThreadControlStatus,
 )
 
 
@@ -212,11 +211,11 @@ class RunControlRecord:
     run: RunId
     index: int
     kind: RunControlKind
-    timing: RunControlTiming
+    timing: ControlTiming
     input: Message | None
     request_id: str | None = None
     context: dict[str, Any] = field(default_factory=dict)
-    status: RunControlStatus = "pending"
+    status: ControlStatus = "pending"
     error: str | None = None
     created_at: str = ""
     finished_at: str | None = None
@@ -239,12 +238,10 @@ class ThreadControlRecord:
     kind: ThreadControlKind
     source_thread: str | None = None
     anchor_run: str | None = None
-    result_run: str | None = None
-    message: Message | None = None
     request_id: str | None = None
     expected_head: ThreadControlRef | None = None
     context: dict[str, Any] = field(default_factory=dict)
-    status: ThreadControlStatus = "pending"
+    status: ControlStatus = "pending"
     error: str | None = None
     created_at: str = ""
     finished_at: str | None = None

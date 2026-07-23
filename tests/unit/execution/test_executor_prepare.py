@@ -10,6 +10,7 @@ from toolang.base.types.message import Message, message_text
 from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.common.ids import IdIssuer
 from toolang.execution.executor.common import bind_run_request
 from toolang.execution.executor import RunExecutor
 from toolang.execution.executor.prepare import prepare_agic, select_origin_agic
@@ -77,8 +78,8 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     adapter = _Adapter()
     tool = _Tool()
     setup = AgentSetup(
-        name="alice",
         home=home,
+        name="alice",
         tools={tool.name: tool},
         model_providers={provider.name: provider},
         model_adapters={adapter.name: adapter},
@@ -115,7 +116,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
             input=Message.user("hello"),
             thread_id="term_1",
         ),
-        id_state_path=root / ".runtime" / "ids.json",
+        ids=IdIssuer(root / ".runtime" / "ids.json"),
         state=state,
         setup=setup,
     )
@@ -123,6 +124,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         Any,
         SimpleNamespace(
             setup=setup,
+            home=home,
             store=_History(),
             model_providers=setup.model_providers,
             model_aliases={
@@ -162,8 +164,8 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     provider = _Provider()
     adapter = _Adapter()
     setup = AgentSetup(
-        name="alice",
         home=home,
+        name="alice",
         tools={},
         model_providers={provider.name: provider},
         model_adapters={adapter.name: adapter},
@@ -208,10 +210,8 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         ),
     )
     store = RunStore(home / ".runtime" / "runs.db")
-    executor = RunExecutor(
-        store=store,
-        id_state_path=home / ".runtime" / "ids.json",
-    )
+    store.create_thread(thread_id="term_1")
+    executor = RunExecutor(store, IdIssuer(home / ".runtime" / "ids.json"))
     try:
         record = asyncio.run(
             executor.start(
@@ -224,8 +224,6 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                 ),
             )
         )
-        asyncio.run(executor.shutdown())
-
         assert record.status == "finished"
         assert [step.kind for step in store.list_steps(run_id=record.id)] == ["model"]
         assert len(adapter.requests) == 1
@@ -233,4 +231,5 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
             "Answer: hello"
         )
     finally:
+        asyncio.run(executor.shutdown())
         store.close()

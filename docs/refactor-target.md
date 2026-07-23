@@ -263,10 +263,10 @@ values for each top-level run. It does not know `StateWatcher`, jobs, CLI, or
 HTTP.
 
 `ThreadManager` owns chat-thread creation and branching rules. Rewind may
-call the executor's public run-control method to stop replaced runs, but thread
-operations do not spawn follow-up runs. The runtime caller owns any background
-task created from the returned thread operation result. `RunExecutor` does not
-import or expose thread operations.
+write durable stop controls through the shared store, but it never depends on
+the executor and thread operations never spawn follow-up runs. Create and fork
+return a thread id; rewind mutates in place. `RunExecutor` does not import or
+expose thread operations.
 
 At run entry, the caller captures the current `AgentState`. All child runs use
 that same state version. File changes produce a newer state only for later
@@ -304,9 +304,10 @@ execution/
     └── prompts/            # default execution prompt resources
 ```
 
-A process may own one `RunExecutor`, but multiple processes may execute against
-the same agent. Toolang-owned ID allocation and SQLite transactions must
-therefore be process-safe.
+A process owns one shared `RunStore` and `IdIssuer` for an agent and passes both
+to its `RunExecutor` and `ThreadManager`. Multiple processes may execute against
+the same agent, so file-backed ID issuance and SQLite transactions remain
+process-safe.
 
 A general queue limiting the number of top-level runs is not part of the
 target. Future resource control belongs near model providers and should limit

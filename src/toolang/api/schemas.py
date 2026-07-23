@@ -108,15 +108,12 @@ class ThreadCreateRequest(ApiRequest):
 class ThreadRewindRequest(ApiRequest):
     """Request a thread rewind from one anchor run."""
 
-    run_id: str = Field(min_length=1)
+    run_id: str | None = Field(default=None, min_length=1)
     request_id: str | None = None
-    message: InputMessagePayload | None = None
 
 
 class ThreadForkRequest(ThreadRewindRequest):
     """Request a thread fork from one anchor run."""
-
-    include_anchor: bool = False
 
 
 class ChatRequest(ApiRequest):

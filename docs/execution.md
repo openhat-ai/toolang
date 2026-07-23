@@ -40,10 +40,11 @@ process exits.
 
 ## IDs And Indexes
 
-Run and thread IDs are allocated through the shared file-backed allocator in
-`toolang.common.ids`. Every process for one agent must use the same
-`id_state_path`. Allocation is serialized with an inter-process file lock.
-Unused IDs are allowed; duplicates are not.
+Run and interactive-thread IDs are issued through one process-owned `IdIssuer`
+from `toolang.common.ids`. The process composition root gives the same issuer
+and `RunStore` to `RunExecutor` and `ThreadManager`. Separate processes use
+separate objects over the same files. Allocation is serialized with an
+inter-process file lock. Unused IDs are allowed; duplicates are not.
 
 Run-control indexes are local to a run. Thread-control indexes are local to a
 thread. Both are allocated and inserted under `BEGIN IMMEDIATE` in `runs.db`.
@@ -73,6 +74,10 @@ caller. `steer()` and `stop()` only accept durable controls; they do not need
 the target run to be owned by the submitting process. The executor is ready
 after construction and therefore has no separate `open()` method. `shutdown()`
 is terminal and cancels the run tasks owned by that executor instance.
+The process owner closes the shared `RunStore` after the executor shuts down.
+
+`start()` requires an existing thread. Thread creation belongs to
+`ThreadManager` or to the package that owns a deterministic external thread id.
 
 The start request atomically inserts the pending run and its index-zero start
 control. Only the process that performs the first insertion obtains execution
@@ -154,6 +159,12 @@ stop cancels the owning task after the owner observes the durable control.
 ## Threads
 
 `ThreadManager` synchronously performs `create()`, `fork()`, and `rewind()`.
+Create and fork return the newly allocated thread id. Rewind changes the
+specified thread in place and returns nothing. Fork and rewind accept an
+optional run id; omission selects the last visible top-level run. Recursive
+child runs are never thread anchors. An empty thread has no implicit anchor and
+cannot be forked or rewound.
+
 Every successful mutation has a durable `ThreadControlRecord` and produces one
 success event:
 
@@ -167,18 +178,20 @@ Failures are returned or raised by the synchronous operation and do not
 produce failure events.
 
 A fork stores its source thread and anchor run but does not copy run, step, or
-run-control rows. Its history projection combines the source prefix with runs
-created in the new thread. A rewind keeps the same thread, stops affected active
-runs through durable stop controls, marks affected runs with `superseded_by`,
-and advances the thread `head` with an expected-head compare-and-swap. Rewinds
-are serialized across processes with an agent-local file lock so a losing
-concurrent request cannot stop runs before failing its head check.
+run-control rows. Its inherited history includes the anchor. A rewind discards
+its anchor and the visible suffix after it. Runs owned by the rewound thread
+are marked with `superseded_by`; an inherited source run is never modified.
+Affected active runs are stopped through durable controls written directly by
+the manager. Forks and rewinds are serialized across processes with an
+agent-local file lock. The store keeps expected-head comparison as an internal
+defensive check; it is not part of the public manager API.
 
 
 ## State Capture
 
 Each accepted run captures one explicit immutable `AgentState` and
-`toolang.up.setup.AgentSetup`. Child runs inherit both. Source changes affect
+`toolang.up.setup.AgentSetup`. `AgentSetup` supplies the agent home and installed
+runtime implementations. Child runs inherit both. Source changes affect
 only runs accepted after the new state is observed.
 
 Scheduled work also captures its effective job definition in run context.

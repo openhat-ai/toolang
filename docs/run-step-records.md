@@ -137,8 +137,6 @@ index
 kind
 source_thread
 anchor_run
-result_run
-message
 request_id
 expected_head
 context

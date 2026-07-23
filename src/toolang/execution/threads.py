@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
+from pathlib import Path
 import time
 
 from toolang.base.types.message import Message
 from toolang.common.files import file_write_lock
-from toolang.common.ids import allocate_run_id, allocate_thread_id
+from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 
 from .events import (
@@ -18,7 +18,6 @@ from .events import (
     ThreadListener,
     ThreadRewound,
 )
-from .executor import RunExecutor
 from .records import (
     RunRecord,
     ThreadControlRecord,
@@ -26,16 +25,12 @@ from .records import (
     ThreadPeer,
     ThreadRecord,
 )
+from .store import RunStore
+from .types import ThreadControlKind, ThreadPrefix
 
 _LOGGER = logging.getLogger("toolang.thread")
-
-
-@dataclass(frozen=True, slots=True)
-class ThreadMutationResult:
-    """One successful durable thread mutation."""
-
-    thread: ThreadRecord
-    control: ThreadControlRecord
+_CONTROL_TIMEOUT = 30.0
+_CONTROL_POLL_INTERVAL = 0.05
 
 
 class ThreadManager:
@@ -43,35 +38,33 @@ class ThreadManager:
 
     def __init__(
         self,
-        executor: RunExecutor,
+        store: RunStore,
+        ids: IdIssuer,
         *,
         listener: ThreadListener | None = None,
-        control_timeout: float = 30.0,
-        control_poll_interval: float = 0.05,
     ) -> None:
-        self.executor = executor
-        self.store = executor.store
+        self.store = store
+        self.ids = ids
         self.listener = listener
-        self.control_timeout = control_timeout
-        self.control_poll_interval = control_poll_interval
 
     def create(
         self,
         *,
-        kind: str = "chat",
-        peer: ThreadPeer | None = None,
+        prefix: ThreadPrefix,
         request_id: str | None = None,
-    ) -> ThreadMutationResult:
-        """Create and persist one empty thread."""
+        peer: ThreadPeer | None = None,
+    ) -> str:
+        """Create an empty chat thread and return its id."""
 
-        thread_id = allocate_thread_id(self.executor.id_state_path, kind)
+        canonical_prefix = ThreadPrefix(prefix)
+        thread_id = self.ids.issue_thread(canonical_prefix.value)
         created_at = utc_now()
         thread, control, created = self.store.create_thread(
             thread_id=thread_id,
             origin="chat",
             peer=peer,
             request_id=request_id,
-            context={"source": kind},
+            context={"prefix": canonical_prefix.value},
             created_at=created_at,
         )
         if created:
@@ -84,37 +77,75 @@ class ThreadManager:
                     created_at=created_at,
                 )
             )
-        return ThreadMutationResult(thread=thread, control=control)
+        return thread.thread_id
 
     def fork(
         self,
         *,
-        run_id: str,
-        message: Message | None = None,
+        thread_id: str,
+        run_id: str | None = None,
         request_id: str | None = None,
-    ) -> ThreadMutationResult:
-        """Fork a thread at one run without copying execution records."""
+    ) -> str:
+        """Fork after one visible run and return the new thread id."""
 
-        anchor = self._branchable_run(run_id)
-        source = self.store.get_thread(thread_id=anchor.thread)
-        if source is None:
-            raise RuntimeError(f"thread not found: {anchor.thread}")
-        prefix = source.thread_id.split("_", 1)[0].strip() or "thread"
-        thread_id = allocate_thread_id(self.executor.id_state_path, prefix)
-        result_run = (
-            allocate_run_id(self.executor.id_state_path)
-            if message is not None
-            else None
+        with file_write_lock(self._lock_path):
+            return self._fork_locked(
+                thread_id=thread_id,
+                run_id=run_id,
+                request_id=request_id,
+            )
+
+    def rewind(
+        self,
+        *,
+        thread_id: str,
+        run_id: str | None = None,
+        request_id: str | None = None,
+    ) -> None:
+        """Synchronously discard one visible run and the suffix after it."""
+
+        with file_write_lock(self._lock_path):
+            self._rewind_locked(
+                thread_id=thread_id,
+                run_id=run_id,
+                request_id=request_id,
+            )
+
+    @property
+    def _lock_path(self) -> Path:
+        return self.store.thread_lock_path
+
+    def _fork_locked(
+        self,
+        *,
+        thread_id: str,
+        run_id: str | None,
+        request_id: str | None,
+    ) -> str:
+        replay = self._replayed_control(
+            kind="fork",
+            thread_id=thread_id,
+            run_id=run_id,
+            request_id=request_id,
         )
+        if replay is not None:
+            return replay.thread
+        source = self._branchable_thread(thread_id)
+        anchor = self._visible_anchor(thread_id, run_id)
+        try:
+            prefix = ThreadPrefix(source.thread_id.split("_", 1)[0])
+        except ValueError as exc:
+            raise ValueError(
+                f"thread has no issuable prefix: {source.thread_id}"
+            ) from exc
+        result_thread_id = self.ids.issue_thread(prefix.value)
         created_at = utc_now()
         thread, control, created = self.store.fork_thread(
-            thread_id=thread_id,
+            thread_id=result_thread_id,
             source_thread=source.thread_id,
             anchor_run=anchor.id,
             origin=source.origin,
             peer=source.peer,
-            result_run=result_run,
-            message=message,
             request_id=request_id,
             context={},
             created_at=created_at,
@@ -129,74 +160,32 @@ class ThreadManager:
                     created_at=created_at,
                 )
             )
-        return ThreadMutationResult(thread=thread, control=control)
-
-    def rewind(
-        self,
-        *,
-        run_id: str,
-        message: Message | None = None,
-        request_id: str | None = None,
-        expected_head: ThreadControlRef | None = None,
-    ) -> ThreadMutationResult:
-        """Synchronously stop affected runs and rewind their thread."""
-
-        lock_path = self.store.db_path.with_name(
-            f"{self.store.db_path.name}.threads.lock"
-        )
-        with file_write_lock(lock_path):
-            return self._rewind_locked(
-                run_id=run_id,
-                message=message,
-                request_id=request_id,
-                expected_head=expected_head,
-            )
+        return thread.thread_id
 
     def _rewind_locked(
         self,
         *,
-        run_id: str,
-        message: Message | None,
+        thread_id: str,
+        run_id: str | None,
         request_id: str | None,
-        expected_head: ThreadControlRef | None,
-    ) -> ThreadMutationResult:
-        """Perform one rewind while holding the inter-process thread lock."""
-
-        anchor = self._branchable_run(run_id)
-        thread = self.store.get_thread(thread_id=anchor.thread)
-        if thread is None:
-            raise RuntimeError(f"thread not found: {anchor.thread}")
-        if request_id is not None:
-            replay = self.store.get_thread_control_by_request_id(request_id=request_id)
-            if replay is not None:
-                if (
-                    replay.kind != "rewind"
-                    or replay.thread != thread.thread_id
-                    or replay.anchor_run != anchor.id
-                    or replay.message != message
-                    or replay.context
-                ):
-                    raise ValueError(
-                        f"conflicting thread control request: {request_id}"
-                    )
-                return ThreadMutationResult(thread=thread, control=replay)
-        expected = expected_head or thread.head
-        if thread.head != expected:
-            raise ValueError(f"thread head changed: {thread.thread_id}")
-        result_run = (
-            allocate_run_id(self.executor.id_state_path)
-            if message is not None
-            else None
+    ) -> None:
+        replay = self._replayed_control(
+            kind="rewind",
+            thread_id=thread_id,
+            run_id=run_id,
+            request_id=request_id,
         )
-        self._stop_affected_runs(anchor)
+        if replay is not None:
+            return
+        thread = self._branchable_thread(thread_id)
+        anchor = self._visible_anchor(thread_id, run_id)
+        self._stop_affected_runs(thread_id, anchor)
         created_at = utc_now()
         updated, control, superseded, created = self.store.rewind_thread(
             thread_id=thread.thread_id,
             anchor_run=anchor.id,
-            result_run=result_run,
-            message=message,
             request_id=request_id,
-            expected_head=expected,
+            expected_head=thread.head,
             context={},
             created_at=created_at,
         )
@@ -206,48 +195,87 @@ class ThreadManager:
                     thread=updated.thread_id,
                     control=ThreadControlRef(updated.thread_id, control.index),
                     anchor_run=anchor.id,
-                    result_run=control.result_run,
                     superseded_runs=superseded,
                     created_at=created_at,
                 )
             )
-        return ThreadMutationResult(thread=updated, control=control)
 
-    def _branchable_run(self, run_id: str) -> RunRecord:
-        run = self.store.get_run(run_id=run_id)
-        if run is None:
-            raise FileNotFoundError(f"run not found: {run_id}")
-        thread = self.store.get_thread(thread_id=run.thread)
-        origin = thread.origin if thread is not None else run.origin
-        if run.thread.startswith(("task_", "chore_")) or origin != "chat":
-            raise ValueError(f"thread cannot be branched: {run.thread}")
-        return run
+    def _replayed_control(
+        self,
+        *,
+        kind: ThreadControlKind,
+        thread_id: str,
+        run_id: str | None,
+        request_id: str | None,
+    ) -> ThreadControlRecord | None:
+        if request_id is None:
+            return None
+        control = self.store.get_thread_control_by_request_id(request_id=request_id)
+        if control is None:
+            return None
+        source_thread = control.source_thread if kind == "fork" else control.thread
+        if (
+            control.kind != kind
+            or source_thread != thread_id
+            or (run_id is not None and control.anchor_run != run_id)
+        ):
+            raise ValueError(f"conflicting thread control request: {request_id}")
+        return control
 
-    def _stop_affected_runs(self, anchor: RunRecord) -> None:
+    def _branchable_thread(self, thread_id: str) -> ThreadRecord:
+        thread = self.store.get_thread(thread_id=thread_id)
+        if thread is None:
+            raise FileNotFoundError(f"thread not found: {thread_id}")
+        if thread.origin != "chat":
+            raise ValueError(f"thread cannot be branched: {thread.thread_id}")
+        return thread
+
+    def _visible_anchor(self, thread_id: str, run_id: str | None) -> RunRecord:
+        history = self._visible_runs(thread_id)
+        if not history:
+            raise ValueError(f"thread has no runs: {thread_id}")
+        if run_id is None:
+            return history[-1]
+        anchor = next((run for run in history if run.id == run_id), None)
+        if anchor is None:
+            raise ValueError(f"run is not visible in thread {thread_id}: {run_id}")
+        return anchor
+
+    def _stop_affected_runs(self, thread_id: str, anchor: RunRecord) -> None:
+        history = self._visible_runs(thread_id)
+        anchor_index = next(
+            (index for index, run in enumerate(history) if run.id == anchor.id),
+            None,
+        )
+        if anchor_index is None:
+            raise ValueError(f"run is not visible in thread {thread_id}: {anchor.id}")
         active = tuple(
             run
-            for run in self.store.list_runs_from_anchor(run_id=anchor.id)
-            if run.status in {"pending", "running"}
+            for run in history[anchor_index:]
+            if run.thread == thread_id and run.status in {"pending", "running"}
         )
         for run in active:
             try:
-                self.executor.stop(
+                self.store.accept_run_control(
                     run_id=run.id,
+                    kind="stop",
                     timing="immediate",
-                    request_id=f"rewind:{anchor.id}:{run.id}",
-                    reason="Run was rewound.",
+                    input=Message.user("Run was rewound."),
+                    context={},
+                    request_id=f"rewind:{thread_id}:{anchor.id}:{run.id}",
+                    created_at=utc_now(),
                 )
             except ValueError:
                 current = self.store.get_run(run_id=run.id)
                 if current is None or current.status in {"pending", "running"}:
                     raise
-        deadline = time.monotonic() + self.control_timeout
+        deadline = time.monotonic() + _CONTROL_TIMEOUT
         pending = {run.id for run in active}
         while pending:
             pending = {
-                run_id
-                for run_id in pending
-                if (run := self.store.get_run(run_id=run_id)) is not None
+                candidate
+                for candidate in pending
+                if (run := self.store.get_run(run_id=candidate)) is not None
                 and run.status in {"pending", "running"}
             }
             if not pending:
@@ -255,7 +283,16 @@ class ThreadManager:
             if time.monotonic() >= deadline:
                 names = ", ".join(sorted(pending))
                 raise TimeoutError(f"runs did not stop before rewind: {names}")
-            time.sleep(self.control_poll_interval)
+            time.sleep(_CONTROL_POLL_INTERVAL)
+
+    def _visible_runs(self, thread_id: str) -> tuple[RunRecord, ...]:
+        return tuple(
+            run
+            for run in self.store.list_thread_history_chronological(
+                thread_id=thread_id
+            )
+            if run.parent is None
+        )
 
     def _notify(self, event: ThreadEvent) -> None:
         if self.listener is None:
