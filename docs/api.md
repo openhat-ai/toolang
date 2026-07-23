@@ -306,9 +306,9 @@ Each running agent exposes one local FastAPI server.
 The process assembles one `RunExecutor`, one `StateWatcher`, and five authored
 catalog instances for the application lifetime: one `AuthoredJobs`, private and
 shared `AuthoredCaps`, and private and shared `WiredCaps`. FastAPI dependencies
-return these concrete instances directly. The API runtime retains background
-run tasks; `RunExecutor.start()` only executes the supplied request and does not
-spawn or retain tasks.
+return these concrete instances directly. `RunExecutor.start()` returns a
+`RunHandle`; the application retains handles only when its own protocol needs
+additional lifecycle bookkeeping.
 
 Core endpoints are grouped as:
 
@@ -329,7 +329,6 @@ executor must be hosted outside the current process.
 
 - `GET /healthz`
 - `GET /api/v1/profile`
-- `GET /api/v1/updates`
 - `GET /api/v1/models`
 - `GET /api/v1/agics`
 - `GET /api/v1/flows`
@@ -345,10 +344,6 @@ executor must be hosted outside the current process.
 | `threads` | Thread totals grouped by chat, chore, and task |
 | `steps` | Step totals grouped by `model_call`, `tool_call`, and `runtime` |
 | `tokens` | Aggregated input, output, and total token usage |
-
-`/api/v1/updates` returns recent agent-local operational changes, including
-cap and job mutations. Run and thread progress remains available from the
-resource-scoped event endpoints below.
 
 `GET /api/v1/models` returns the effective selectable model selectors for chat
 runs after applying the current activation config and the `chat` agic's

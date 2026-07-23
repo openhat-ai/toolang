@@ -421,6 +421,12 @@ def agent_runtime_state_path(toolang_root: Path, agent_name: str) -> Path:
     return agent_room(toolang_root, agent_name) / "status.json"
 
 
+def agent_run_store_path(toolang_root: Path, agent_name: str) -> Path:
+    """Return one agent execution store path."""
+
+    return agent_room(toolang_root, agent_name) / "runs.db"
+
+
 def agent_runtime_log_path(toolang_root: Path, agent_name: str) -> Path:
     """Return one agent process log path."""
 

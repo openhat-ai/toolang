@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
+from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 import threading
 import time
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from toolang.base.protocols.model import ModelProvider
-from toolang.base.types.message import Message
+from toolang.base.types.message import Message, TextPart
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
@@ -27,6 +27,9 @@ from ..records import (
     RunControlRecord,
     RunControlRef,
     RunRecord,
+    trace_child_path,
+    trace_index,
+    trace_parent,
     trace_run,
 )
 from ..store import RunStore
@@ -34,14 +37,12 @@ from ..types import ControlTiming, RunControlKind, StepPath
 from .common import (
     BoundRun,
     Local,
-    bind_run_request,
     control_text,
     initial_locals,
     statement_has_call,
     value_text,
 )
-from .prepare import effective_agics, require_agic, select_origin_agic
-from .request import ExecutableKind, RunRequest
+from .prepare import effective_agics
 from .persist import PersistSink
 
 _LOGGER = logging.getLogger("toolang.run")
@@ -54,10 +55,79 @@ class _RunStopped(asyncio.CancelledError):
         self.control = control
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class _ActiveRun:
-    task: asyncio.Task[object]
+    task: asyncio.Task[RunRecord]
     tracer: RunTracer | None
+    event_lock: Any = field(default_factory=threading.RLock, repr=False)
+    ended: set[str] = field(default_factory=set, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class RunSpec:
+    """Immutable inputs required to execute one runnable."""
+
+    setup: AgentSetup
+    state: AgentState
+    thread: str
+    runnable: str
+    input: Message = field(default_factory=lambda: Message.user(""))
+    model: str | None = None
+    params: Mapping[str, object] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RunHandle(Awaitable[RunRecord]):
+    """One locally started run that can be controlled and awaited."""
+
+    run_id: str
+    executor: RunExecutor = field(repr=False)
+    task: asyncio.Task[RunRecord] = field(repr=False)
+
+    def stop(
+        self,
+        *,
+        timing: ControlTiming = "immediate",
+        request_id: str | None = None,
+        reason: str | None = None,
+    ) -> RunControlRecord:
+        """Persist a stop control for this run."""
+
+        return self.executor.stop(
+            run_id=self.run_id,
+            timing=timing,
+            request_id=request_id,
+            reason=reason,
+        )
+
+    def steer(
+        self,
+        message: Message,
+        *,
+        timing: ControlTiming = "next_step",
+        request_id: str | None = None,
+    ) -> RunControlRecord:
+        """Persist a steer control for this run."""
+
+        return self.executor.steer(
+            run_id=self.run_id,
+            message=message,
+            timing=timing,
+            request_id=request_id,
+        )
+
+    def __await__(self) -> Generator[Any, None, RunRecord]:
+        return self._wait().__await__()
+
+    async def _wait(self) -> RunRecord:
+        try:
+            return await asyncio.shield(self.task)
+        except asyncio.CancelledError:
+            if self.task.cancelled():
+                record = self.executor.store.get_run(run_id=self.run_id)
+                if record is not None and record.status not in {"pending", "running"}:
+                    return record
+            raise
 
 
 class RunExecutor:
@@ -69,55 +139,75 @@ class RunExecutor:
         self._persist = PersistSink(self.store)
         self._control_poll_interval = _CONTROL_POLL_INTERVAL
         self._active: dict[str, _ActiveRun] = {}
+        self._tasks: dict[
+            asyncio.Task[RunRecord], tuple[str, _ActiveRun]
+        ] = {}
         self._active_lock = threading.Lock()
         self._monitor_task: asyncio.Task[None] | None = None
         self._shutdown = False
 
-    async def start(
+    def start(
         self,
-        setup: AgentSetup,
-        state: AgentState,
-        request: RunRequest,
+        spec: RunSpec,
         *,
+        run_id: str | None = None,
+        request_id: str | None = None,
         tracer: RunTracer | None = None,
-    ) -> RunRecord:
-        """Accept and execute one top-level run to completion."""
+    ) -> RunHandle:
+        """Accept one top-level run and immediately return its local handle."""
 
         self._require_available()
-        bound = bind_run_request(
-            request,
-            ids=self.ids,
-            state=state,
-            setup=setup,
+        asyncio.get_running_loop()
+        executable = _require_runnable(spec.state, spec.runnable)
+        bound = _bind_run(
+            spec,
+            run_id=run_id or self.ids.issue_run(),
         )
-        if self.store.get_thread(thread_id=bound.thread_id) is None:
-            raise ValueError(f"thread not found: {bound.thread_id}")
-        record, _control, owner = self.store.accept_start(
+        self.store.accept_start(
             run_id=bound.run_id,
             parent=None,
-            thread=bound.thread_id,
+            thread=bound.thread,
             input=bound.input,
-            context=_top_run_context(bound),
-            request_id=request.request_id,
+            context=_run_context(bound, executable),
+            request_id=request_id,
             created_at=bound.created_at,
         )
-        if not owner:
-            return record
-        task = asyncio.current_task()
-        if task is None:
-            raise RuntimeError("run start requires an asyncio task")
+        task = asyncio.create_task(
+            self._execute_owned(bound, executable, tracer=tracer),
+            name=f"toolang-run-{bound.run_id}",
+        )
         active = _ActiveRun(task=task, tracer=tracer)
         with self._active_lock:
-            if bound.run_id in self._active:
-                raise ValueError(f"run is already active: {bound.run_id}")
             self._active[bound.run_id] = active
-        self._ensure_monitor(setup.name)
+        self._tasks[task] = (bound.run_id, active)
+        task.add_done_callback(self._task_done)
+        self._ensure_monitor(bound.setup.name)
+        return RunHandle(bound.run_id, self, task)
+
+    async def _execute_owned(
+        self,
+        bound: BoundRun,
+        executable: AgicDecl | FlowDecl,
+        *,
+        tracer: RunTracer | None,
+    ) -> RunRecord:
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("run execution requires an asyncio task")
+        with self._active_lock:
+            active = self._active.get(bound.run_id)
+        if active is None or active.task is not task or active.tracer is not tracer:
+            raise RuntimeError(f"run ownership missing: {bound.run_id}")
         started_at = time.perf_counter()
         emit = self._handler(active)
         try:
-            await _Execution(self, setup=setup, state=state, emit=emit).execute(
+            await _Execution(
+                self,
+                root=bound,
+                emit=emit,
+            ).execute(
                 bound,
-                _resolve_executable(bound),
+                executable,
             )
         except asyncio.CancelledError:
             self._ensure_terminal(bound.run_id, emit=emit, status="canceled")
@@ -156,7 +246,7 @@ class RunExecutor:
         """Persist one stop control for the process that owns the run."""
 
         self._require_available()
-        control, _created = self.store.accept_run_control(
+        control = self.store.accept_run_control(
             run_id=run_id,
             kind="stop",
             timing=timing,
@@ -178,7 +268,7 @@ class RunExecutor:
         """Persist one steer control for the process that owns the run."""
 
         self._require_available()
-        control, _created = self.store.accept_run_control(
+        control = self.store.accept_run_control(
             run_id=run_id,
             kind="steer",
             timing=timing,
@@ -195,13 +285,22 @@ class RunExecutor:
         if self._shutdown:
             return
         self._shutdown = True
-        with self._active_lock:
-            tasks = {active.task for active in self._active.values()}
-        for task in tasks:
+        owned = tuple(self._tasks.items())
+        for task, _run in owned:
             if not task.done():
                 task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        if owned:
+            await asyncio.gather(
+                *(task for task, _run in owned),
+                return_exceptions=True,
+            )
+        for _task, (run_id, active) in owned:
+            self._ensure_terminal(run_id, emit=self._handler(active), status="canceled")
+        with self._active_lock:
+            owned_tasks = {task for task, _run in owned}
+            for run_id, active in tuple(self._active.items()):
+                if active.task in owned_tasks:
+                    self._active.pop(run_id, None)
         monitor = self._monitor_task
         self._monitor_task = None
         if monitor is not None and not monitor.done():
@@ -212,18 +311,45 @@ class RunExecutor:
         if self._shutdown:
             raise RuntimeError("run executor is shut down")
 
+    def _task_done(self, task: asyncio.Task[RunRecord]) -> None:
+        owned = self._tasks.pop(task, None)
+        if owned is None:
+            return
+        run_id, active = owned
+        if task.cancelled():
+            self._ensure_terminal(
+                run_id,
+                emit=self._handler(active),
+                status="canceled",
+            )
+        elif (error := task.exception()) is not None:
+            self._ensure_terminal(
+                run_id,
+                emit=self._handler(active),
+                status="failed",
+                error=str(error) or type(error).__name__,
+            )
+        with self._active_lock:
+            for active_run_id, candidate in tuple(self._active.items()):
+                if candidate is active:
+                    self._active.pop(active_run_id, None)
+
     def _handler(self, active: _ActiveRun) -> Callable[[RunEvent], None]:
         def emit(event: RunEvent) -> None:
-            if _event_is_after_canceled_run(self.store, event):
-                return
-            self._persist.on_event(event)
-            self._update_control_state(event)
-            self._track_active_run(event, active)
-            if active.tracer is not None:
-                try:
-                    active.tracer.on_event(event)
-                except Exception:
-                    _LOGGER.exception("run tracer event handling failed")
+            with active.event_lock:
+                event_run = _run_event_id(event)
+                if event_run in active.ended:
+                    return
+                self._persist.on_event(event)
+                self._update_control_state(event)
+                self._track_active_run(event, active)
+                if isinstance(event, RunEnd):
+                    active.ended.add(event.run)
+                if active.tracer is not None:
+                    try:
+                        active.tracer.on_event(event)
+                    except Exception:
+                        _LOGGER.exception("run tracer event handling failed")
 
         return emit
 
@@ -278,7 +404,7 @@ class RunExecutor:
             await asyncio.sleep(self._control_poll_interval)
             with self._active_lock:
                 active = tuple(self._active.items())
-            canceled: set[asyncio.Task[object]] = set()
+            canceled: set[asyncio.Task[RunRecord]] = set()
             for run_id, owner in active:
                 if owner.task.done() or owner.task in canceled:
                     continue
@@ -319,17 +445,18 @@ class _Execution:
         self,
         executor: RunExecutor,
         *,
-        setup: AgentSetup,
-        state: AgentState,
+        root: BoundRun,
         emit: Callable[[RunEvent], None],
     ) -> None:
         self.executor = executor
-        self.setup = setup
-        config_layers = (state.root_config, state.home_config)
+        self.setup = root.setup
+        config_layers = (root.state.root_config, root.state.home_config)
         self.model_aliases = parse_model_aliases(config_layers)
         self.default_models = parse_default_models(config_layers)
         self._emit_trace = emit
         self._run_outputs: dict[str, StepPath] = {}
+        self._last_step_index: dict[str, int] = {}
+        self._failed_runs: set[str] = set()
 
     @property
     def store(self) -> RunStore:
@@ -352,7 +479,6 @@ class _Execution:
         binding: BoundRun,
         executable: AgicDecl | FlowDecl,
         *,
-        parent: StepPath | None = None,
         locals: Mapping[str, Local] | None = None,
     ) -> Local:
         """Execute one accepted agic or flow run and emit its lifecycle."""
@@ -367,7 +493,7 @@ class _Execution:
             RunBegin(
                 run=binding.run_id,
                 input=RunControlRef(index=0),
-                context=_run_context(binding, executable, parent=parent),
+                context=_run_context(binding, executable),
                 started_at=utc_now(),
             )
         )
@@ -404,12 +530,14 @@ class _Execution:
             )
             raise
         except Exception as exc:
+            error = str(exc) or type(exc).__name__
+            self._emit_system_failure(binding.run_id, error)
             self.emit(
                 RunEnd(
                     run=binding.run_id,
                     status="failed",
                     output=self.run_output(binding.run_id),
-                    error=str(exc) or type(exc).__name__,
+                    error=error,
                     finished_at=utc_now(),
                 )
             )
@@ -434,21 +562,19 @@ class _Execution:
     ) -> Local:
         """Accept and execute one recursive child agic or flow run."""
 
-        executable = _resolve_runnable(parent, name)
+        executable = _require_runnable(parent.state, name)
         binding = _child_binding(self, parent, executable, locals, placement)
-        context = _run_context(binding, executable, parent=step)
-        _run, _control, owner = self.store.accept_start(
+        context = _run_context(binding, executable)
+        self.store.accept_start(
             run_id=binding.run_id,
             parent=step,
-            thread=binding.thread_id,
+            thread=binding.thread,
             input=binding.input,
             context=context,
             request_id=None,
             created_at=binding.created_at,
         )
-        if not owner:
-            raise RuntimeError(f"child run already exists: {binding.run_id}")
-        return await self.execute(binding, executable, parent=step, locals=locals)
+        return await self.execute(binding, executable, locals=locals)
 
     async def parallel_children(
         self,
@@ -560,37 +686,65 @@ class _Execution:
         return OutputRef(step=path) if path is not None else None
 
     def emit(self, event: RunEvent) -> None:
+        self._emit_trace(event)
         if (
             isinstance(event, StepEnd)
             and event.kind == "model"
             and event.status == "finished"
         ):
             self.record_output(trace_run(event.step), event.step)
-        self._emit_trace(event)
+        if isinstance(event, StepBegin | StepEnd):
+            run_id = trace_run(event.step)
+            parent = trace_parent(event.step)
+            index = trace_index(event.step)
+            if parent == run_id and index is not None:
+                self._last_step_index[run_id] = max(
+                    self._last_step_index.get(run_id, -1),
+                    index,
+                )
+            if isinstance(event, StepEnd) and event.status == "failed":
+                self._failed_runs.add(run_id)
+
+    def _emit_system_failure(self, run_id: str, error: str) -> None:
+        if run_id in self._failed_runs:
+            return
+        path = trace_child_path(run_id, self._last_step_index.get(run_id, -1) + 1)
+        started_at = utc_now()
+        self.emit(
+            StepBegin(
+                step=path,
+                kind="system",
+                context={"runtime": "failure"},
+                started_at=started_at,
+            )
+        )
+        self.emit(
+            StepEnd(
+                step=path,
+                kind="system",
+                status="failed",
+                output=(TextPart(text=error),),
+                detail={"message": error},
+                error=error,
+                started_at=started_at,
+                finished_at=utc_now(),
+            )
+        )
 
 
-def _resolve_executable(binding: BoundRun) -> AgicDecl | FlowDecl:
-    program = binding.state.program
-    if binding.executable_kind == "flow":
-        flow_name = binding.executable_name or "main"
-        flow = program.find_flow(flow_name)
-        if flow is None:
-            raise ToolangError(f"Flow not found: {flow_name}")
-        return flow
-    if binding.executable_name is not None:
-        return require_agic(program, binding.executable_name)
-    return select_origin_agic(program, origin=binding.origin, agic_name=None)
-
-
-def _resolve_runnable(binding: BoundRun, name: str) -> AgicDecl | FlowDecl:
-    program = binding.state.program
-    for agic in effective_agics(program):
-        if agic.name == name:
-            return agic
-    for flow in program.flows:
-        if flow.name == name:
-            return flow
-    raise ToolangError(f"Runnable not found: {name}")
+def _require_runnable(state: AgentState, name: str) -> AgicDecl | FlowDecl:
+    if not name or name != name.strip():
+        raise ValueError("run spec requires a canonical runnable name")
+    program = state.program
+    matches: tuple[AgicDecl | FlowDecl, ...] = (
+        *(agic for agic in effective_agics(program) if agic.name == name),
+        *(flow for flow in program.flows if flow.name == name),
+    )
+    if not matches:
+        raise ToolangError(f"Runnable not found: {name}")
+    if len(matches) > 1:
+        raise ToolangError(f"Runnable name is not unique: {name}")
+    return matches[0]
 
 
 def _child_binding(
@@ -601,80 +755,58 @@ def _child_binding(
     placement: Mapping[str, object] | None,
 ) -> BoundRun:
     primary = locals.get("_", Local())
-    metadata = {
-        key: value for key, value in parent.context.items() if key != "invoke_params"
-    }
-    metadata.update(
-        {
-            "root": parent.context.get("root") or parent.run_id,
-            "call": "run",
-            "invoke_params": {
-                name: local.value for name, local in locals.items() if name != "_"
-            },
-            "placement": dict(placement or {}),
-        }
-    )
     text = value_text(primary.value) if primary.shape != "none" else ""
     return BoundRun(
         run_id=context.executor.ids.issue_run(),
-        origin=parent.origin,
-        thread_id=parent.thread_id,
-        executable_kind=cast(ExecutableKind, executable.kind),
-        executable_name=executable.name,
+        root_run_id=parent.root_run_id,
+        thread=parent.thread,
         input=Message.user(text),
-        input_text=text,
-        model_selector=parent.model_selector,
-        context=metadata,
+        params={
+            name: local.value for name, local in locals.items() if name != "_"
+        },
+        model=parent.model,
         state=parent.state,
         setup=parent.setup,
         created_at=utc_now(),
+        call="run",
+        placement=dict(placement or {}),
     )
 
 
-def _top_run_context(binding: BoundRun) -> dict[str, object]:
-    return {
-        **dict(binding.context),
-        "origin": binding.origin,
-        "root": binding.run_id,
-        "state_fingerprint": binding.state.fingerprint,
-        "executable": {
-            "kind": binding.executable_kind,
-            "name": binding.executable_name,
-        },
-        "call": "top",
-    }
+def _bind_run(spec: RunSpec, *, run_id: str) -> BoundRun:
+    if not spec.thread or spec.thread != spec.thread.strip():
+        raise ValueError("run spec requires a canonical thread id")
+    return BoundRun(
+        run_id=run_id,
+        root_run_id=run_id,
+        thread=spec.thread,
+        input=spec.input,
+        params=dict(spec.params or {}),
+        model=spec.model,
+        state=spec.state,
+        setup=spec.setup,
+        created_at=utc_now(),
+    )
 
 
 def _run_context(
     binding: BoundRun,
     executable: AgicDecl | FlowDecl,
-    *,
-    parent: StepPath | None,
 ) -> dict[str, object]:
-    root = (
-        str(binding.context.get("root") or trace_run(parent))
-        if parent is not None
-        else binding.run_id
-    )
-    return {
-        **dict(binding.context),
-        "origin": binding.origin,
-        "root": root,
+    context: dict[str, object] = {
+        "root": binding.root_run_id,
         "state_fingerprint": binding.state.fingerprint,
-        "executable": {"kind": executable.kind, "name": executable.name},
-        "call": "top" if parent is None else "run",
+        "runnable": {"kind": executable.kind, "name": executable.name},
+        "call": binding.call,
     }
+    if binding.params:
+        context["params"] = dict(binding.params)
+    if binding.placement:
+        context["placement"] = dict(binding.placement)
+    return context
 
 
-def _event_is_after_canceled_run(store: RunStore, event: RunEvent) -> bool:
-    if isinstance(event, RunBegin):
-        return False
-    event_run = (
-        event.run
-        if isinstance(event, RunEnd)
-        else trace_run(getattr(event, "step", ""))
-    )
-    if not event_run:
-        event_run = getattr(event, "run", "")
-    record = store.get_run(run_id=event_run)
-    return record is not None and record.status == "canceled"
+def _run_event_id(event: RunEvent) -> str:
+    if isinstance(event, RunBegin | RunEnd):
+        return event.run
+    return trace_run(event.step)

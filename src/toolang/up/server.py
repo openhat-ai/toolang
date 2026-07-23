@@ -57,7 +57,7 @@ from toolang.execution.reply import ReplySink
 from toolang.execution.records import RunRecord
 from toolang.execution.executor.request import ExecutableKind, RunRequest
 from toolang.plugin.models.resolution import select_model_selectors
-from toolang.execution.store import RunStore, run_store_path
+from toolang.execution.store import RunStore
 from toolang.up.setup import AgentSetup
 from toolang.work.scheduler import DEFAULT_INTERVAL_MS as DEFAULT_SCHEDULER_INTERVAL_MS
 from toolang.work.scheduler import Scheduler
@@ -653,13 +653,6 @@ def _up_local(
     )
     state = watcher.current()
     _log_state_loaded(executor, state)
-    executor.store.append_update(
-        kind="started",
-        payload={
-            "state_fingerprint": state.fingerprint,
-        },
-        created_at=started_at,
-    )
     endpoint = f"http://{endpoint_host}:{port}"
     shutdown_signal = threading.Event()
     channel_bindings = parse_channel_bindings(
@@ -772,12 +765,6 @@ def _up_local(
             await _finish_runtime_tasks(shutdown_tasks)
             if job_store is not None:
                 job_store.close()
-            executor.store.append_update(
-                kind="stopped",
-                payload={
-                    "outcome": "stopped",
-                },
-            )
             await executor.shutdown()
             executor.store.close()
 
@@ -984,7 +971,7 @@ def assemble_execution(
     default_model_selector = (
         normalized_model_selectors[0] if normalized_model_selectors else None
     )
-    store = RunStore(run_store_path(toolang_root, agent_name))
+    store = RunStore(agents.agent_run_store_path(toolang_root, agent_name))
     tools = load_runtime_tools(
         plugin_config=merge_named_configs(
             _config_layers(state),

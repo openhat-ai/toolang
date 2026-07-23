@@ -53,11 +53,12 @@ async def execute(
 
     invoke = {name: local.value for name, local in locals.items() if name != "_"}
     primary = locals.get("_", Local())
-    context = {**binding.context, "invoke_params": invoke}
     bound = replace(
         binding,
-        input_text=value_text(primary.value) if primary.shape != "none" else "",
-        context=context,
+        input=Message.user(
+            value_text(primary.value) if primary.shape != "none" else ""
+        ),
+        params=invoke,
     )
     prepared = prepare_agic(execution, bound, agic)
     state = _AgicState(

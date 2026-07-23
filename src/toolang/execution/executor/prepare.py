@@ -29,7 +29,7 @@ from toolang.lang.input import expand_program_input
 from toolang.plugin.models.resolution import resolve_model, select_model_selectors
 from toolang.plugin.tools.registry import selected_tool_names, tool_ref_for_model_tool
 from toolang.state import state as cap_store
-from toolang.state.state import AgentState, PreparedCap
+from toolang.state.state import PreparedCap
 
 from . import prompts
 from .common import BoundRun
@@ -41,7 +41,6 @@ _LOGGER = logging.getLogger("toolang.run")
 _TEXT_HISTORY_MESSAGE_LIMIT = 32
 _DEFAULT_INSTRUCT_TEMPLATE = prompts.load("instruct.default.md")
 _DEFAULT_CONTEXT_TEMPLATE = prompts.load("context.default.md")
-_THREAD_AGIC_NAMES = frozenset({"chat", "task", "chore", "file"})
 _RUNTIME_DEFAULT_AGIC = AgicDecl(
     name="default",
     input=Parameter(name="_", type_name="Part[]", span=Span(line=1)),
@@ -73,7 +72,7 @@ def prepare_agic(context: _Execution, run: BoundRun, agic: AgicDecl) -> Prepared
         if run.input_text
         else ""
     )
-    params = run.invoke_params
+    params = dict(run.params)
     if agic.input is not None and input_text:
         params = {**params, "_": input_text}
 
@@ -84,7 +83,7 @@ def prepare_agic(context: _Execution, run: BoundRun, agic: AgicDecl) -> Prepared
     )
     model = resolve_model(
         context,
-        selector=run.model_selector
+        selector=run.model
         or (model_selectors[0] if model_selectors else None),
         allowed_selectors=model_selectors,
     )
@@ -126,7 +125,7 @@ def prepare_agic(context: _Execution, run: BoundRun, agic: AgicDecl) -> Prepared
     history = (
         tuple(
             context.store.recent_conversation_messages(
-                thread_id=run.thread_id,
+                thread_id=run.thread,
                 limit=_TEXT_HISTORY_MESSAGE_LIMIT,
                 exclude_run_id=run.run_id,
             )
@@ -163,47 +162,10 @@ def prepare_agic(context: _Execution, run: BoundRun, agic: AgicDecl) -> Prepared
     return prepared
 
 
-def select_origin_agic(
-    program: Program,
-    *,
-    origin: str,
-    agic_name: str | None = None,
-) -> AgicDecl:
-    if agic_name is not None:
-        return require_agic(program, agic_name)
-    if origin in _THREAD_AGIC_NAMES and (agic := program.find_agic(origin)) is not None:
-        return agic
-    return require_agic(program, "default")
-
-
 def effective_agics(program: Program) -> tuple[AgicDecl, ...]:
     if program.find_agic("default") is not None:
         return program.agics
     return (*program.agics, _RUNTIME_DEFAULT_AGIC)
-
-
-def require_agic(program: Program, name: str) -> AgicDecl:
-    agic = program.find_agic(name)
-    if agic is None and name == "default":
-        agic = _RUNTIME_DEFAULT_AGIC
-    if agic is None:
-        raise ToolangError(f"Agic not found: {name}")
-    return agic
-
-
-def effective_origin_model_selectors(
-    context: Any,
-    *,
-    state: AgentState,
-    origin: str,
-    agic_name: str | None = None,
-) -> tuple[str, ...]:
-    agic = select_origin_agic(state.program, origin=origin, agic_name=agic_name)
-    return _effective_model_selectors(
-        context,
-        agic=agic,
-        base=_activation_model_selectors(context),
-    )
 
 
 def _activation_model_selectors(context: Any) -> tuple[str, ...]:
@@ -371,33 +333,24 @@ def _run_message(
     rendered: tuple[AstMessage, ...],
     prompt_context: str,
 ) -> Message:
-    if run.origin != "script":
-        original = message_text(run.input.parts)
-        text = (
-            original if not input_text.strip() or input_text == original else input_text
-        )
-        if not prompt_context.strip() and text == original:
-            return run.input
-        non_text = tuple(
-            part for part in run.input.parts if not isinstance(part, TextPart)
-        )
-        return Message(
-            role=run.input.role,
-            parts=(TextPart(text=join_paragraphs(prompt_context, text)), *non_text),
-            meta=dict(run.input.meta),
-        )
+    original = message_text(run.input.parts)
     authored = _message_body(tuple(item for item in rendered if item.role == "user"))
-    if run.origin == "file":
-        return Message.user(join_paragraphs(prompt_context, authored, input_text))
-    if run.origin != "script":
-        return Message.user(join_paragraphs(prompt_context, input_text))
     if input_text.strip() and any(
         item.role == "user" and not item.explicit for item in agic.messages
     ):
         text = join_paragraphs(prompt_context, authored, input_text)
     else:
         text = join_paragraphs(prompt_context, authored or input_text)
-    return Message.user(text)
+    if text == original and not prompt_context.strip() and not authored.strip():
+        return run.input
+    non_text = tuple(
+        part for part in run.input.parts if not isinstance(part, TextPart)
+    )
+    return Message(
+        role=run.input.role,
+        parts=(TextPart(text=text), *non_text),
+        meta=dict(run.input.meta),
+    )
 
 
 def _authored_messages(
@@ -453,18 +406,14 @@ def _runtime_context(
     context: _Execution, *, run: BoundRun, agic: AgicDecl
 ) -> dict[str, object]:
     return {
-        "origin": run.origin,
-        "is_chat": run.origin == "chat",
-        "is_script": run.origin == "script",
-        "is_task": run.origin == "task",
-        "is_chore": run.origin == "chore",
         "run": {
-            "thread_id": run.thread_id,
+            "id": run.run_id,
+            "thread_id": run.thread,
             "program_source": run.state.program_source,
         },
         "agent": {"name": run.setup.name, "home": str(run.setup.home)},
+        "runnable": {"kind": agic.kind, "name": agic.name},
         "agic": {"name": agic.name, "output": agic.output},
-        "job": run.job_context,
     }
 
 
@@ -554,29 +503,28 @@ def _log_prepared(prepared: PreparedAgic) -> None:
         return
     run = prepared.run
     _LOGGER.debug(
-        "prompt.assembled thread=%s run=%s origin=%s agic=%s model=%s tools=%s",
-        run.thread_id,
+        "prompt.assembled thread=%s run=%s runnable=%s model=%s tools=%s",
+        run.thread,
         run.run_id,
-        run.origin,
         prepared.agic.name,
         prepared.model.ref,
         json.dumps(sorted(prepared.tools), ensure_ascii=False),
     )
     _LOGGER.debug(
         "prompt.instructions thread=%s run=%s text=%s",
-        run.thread_id,
+        run.thread,
         run.run_id,
         prepared.instructions,
     )
     _LOGGER.debug(
         "prompt.context thread=%s run=%s text=%s",
-        run.thread_id,
+        run.thread,
         run.run_id,
         prepared.prompt_context,
     )
     _LOGGER.debug(
         "prompt.messages thread=%s run=%s messages=%s",
-        run.thread_id,
+        run.thread,
         run.run_id,
         json.dumps(
             [

@@ -18,7 +18,7 @@ from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.execution.events import RunEnd, RunStarting, StepBegin, StepEnd, TraceEvent
 from toolang.execution.records import trace_index, trace_run
 from toolang.execution.records import RunRecord
-from toolang.execution.store import RunStore, run_store_path
+from toolang.execution.store import RunStore
 from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
 from toolang.cli.common.output import executable_label
 
@@ -45,7 +45,7 @@ def emit_outcome(
         if log_path.exists():
             typer.echo(f"Log: {log_path}", err=True)
         return 1
-    store = RunStore(run_store_path(toolang_root, agent_name))
+    store = RunStore(agents.agent_run_store_path(toolang_root, agent_name))
     try:
         output = store.run_output_text(run_id=outcome.run_id)
     finally:

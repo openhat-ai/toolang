@@ -9,7 +9,8 @@ import pytest
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.tool import ToolContext, ToolService
-from toolang.execution.store import RunStore, run_store_path
+from toolang.execution.store import RunStore
+from toolang.up.process import agent_run_store_path
 from toolang.execution.records import ThreadPeer
 from toolang.execution.tools.agent_chat import create_tool_set as create_agent_chat_tool
 from toolang.plugin.tools.filesystem import create_tool_set as create_filesystem_tool
@@ -163,7 +164,7 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
     root = tmp_path / "toolang"
     home = root / "agents" / "alice"
     home.mkdir(parents=True)
-    store = RunStore(run_store_path(root, "alice"))
+    store = RunStore(agent_run_store_path(root, "alice"))
     project_run_start(store,
         run_id="run-1",
         thread_id="term_user",
@@ -242,7 +243,7 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
     root = tmp_path / "toolang"
     home = root / "agents" / "eve"
     home.mkdir(parents=True)
-    store = RunStore(run_store_path(root, "eve"))
+    store = RunStore(agent_run_store_path(root, "eve"))
     project_run_start(store,
         run_id="run-1",
         thread_id="term_user",
@@ -315,7 +316,7 @@ def test_agent_chat_tool_can_call_streaming_peer_chat(monkeypatch, tmp_path: Pat
     root = tmp_path / "toolang"
     home = root / "agents" / "eve"
     home.mkdir(parents=True)
-    store = RunStore(run_store_path(root, "eve"))
+    store = RunStore(agent_run_store_path(root, "eve"))
     project_run_start(store,
         run_id="run-1",
         thread_id="term_user",

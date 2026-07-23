@@ -1,8 +1,7 @@
 # RunExecutor Design
 
-`RunExecutor` executes one immutable `AgentSetup`, `AgentState`, and
-`RunRequest` combination while keeping durable truth ahead of external
-observation.
+`RunExecutor` executes one immutable `RunSpec` while keeping durable truth
+ahead of external observation.
 
 
 ## Public Shape
@@ -11,14 +10,14 @@ observation.
 class RunExecutor:
     def __init__(self, store: RunStore, ids: IdIssuer) -> None: ...
 
-    async def start(
+    def start(
         self,
-        setup: AgentSetup,
-        state: AgentState,
-        request: RunRequest,
+        spec: RunSpec,
         *,
+        run_id: str | None = None,
+        request_id: str | None = None,
         tracer: RunTracer | None = None,
-    ) -> RunRecord: ...
+    ) -> RunHandle: ...
 
     def stop(
         self,
@@ -50,39 +49,43 @@ store and `IdIssuer` instances.
 Control polling currently uses an internal default and can move into executor
 options when runtime tuning becomes public.
 
-`RunRequest` contains only values selected for one invocation:
+`RunSpec` contains only execution inputs selected for one invocation:
 
 ```python
 @dataclass(frozen=True, slots=True)
-class RunRequest:
-    origin: str
-    thread_id: str
+class RunSpec:
+    setup: AgentSetup
+    state: AgentState
+    thread: str
+    runnable: str
     input: Message = field(default_factory=lambda: Message.user(""))
-    run_id: str | None = None
-    executable_kind: Literal["agic", "flow"] = "agic"
-    executable_name: str | None = None
-    model_selector: str | None = None
-    request_id: str | None = None
-    context: dict[str, object] = field(default_factory=dict)
+    model: str | None = None
+    params: Mapping[str, object] | None = None
 ```
 
-The request does not duplicate installed tools, model providers, or model
-adapters from `AgentSetup`, nor the program and effective caps from
-`AgentState`. Agic directives select from those captured resources. The
-optional singular model selector is the caller's per-run model choice;
-the process-level allowed selectors come from `AgentSetup`, while aliases and
-default selectors are parsed from the captured `AgentState` config.
+`runnable` is required and resolves to exactly one agic or flow in the captured
+program. The spec does not carry an origin, executable kind, run identity,
+request identity, or arbitrary transport context. The optional singular model
+selector is the caller's per-run model choice; aliases and defaults are parsed
+from the captured state config.
 
-There is no `run()`, `execute()`, `spawn()`, or `start()` background-task
-variant. The caller decides whether to await `start()` directly or place it in
-an application-owned task.
+There is no `run()`, `execute()`, or `spawn()` variant. `start()` creates the
+owner task and returns an awaitable `RunHandle`. The handle exposes its run ID,
+executor, and task, and delegates same-process control operations. Its await
+path shields the owner task so canceling a waiting HTTP request or TUI action
+does not cancel the durable run.
 
 
 ## Acceptance
 
-Binding resolves explicit runtime inputs and asks `IdIssuer` for a run ID when
-one is absent. `thread_id` must identify an existing thread. The executor never
-allocates or implicitly creates threads.
+Binding validates explicit runtime inputs and asks `IdIssuer` for a run ID when
+`start()` does not receive one. `RunSpec.thread` must identify an existing
+thread. The executor never allocates or implicitly creates threads.
+
+Supplying a run ID is intentionally limited to one-shot script invocation so
+logging can be configured at a path containing that ID before execution.
+Interactive, job, file, channel, and API callers let the executor allocate the
+ID. The supplied or allocated ID must be globally unique in `RunStore`.
 
 `RunStore.accept_start()` uses `BEGIN IMMEDIATE` to:
 
@@ -90,10 +93,12 @@ allocates or implicitly creates threads.
 2. reject a conflicting run ID;
 3. insert the pending `RunRecord`;
 4. insert start `RunControlRecord(index=0)`;
-5. commit ownership to exactly one process.
+5. commit the accepted run before its owner task is scheduled.
 
-A retry with the same run and request ID returns existing truth. The retrying
-process never executes the run.
+Duplicate run IDs and duplicate non-null request IDs are rejected. Request IDs
+are unique within each control table. Clients that use them must keep them
+globally unique across both run and thread controls; `None` disables request
+identity without weakening the run or control primary keys.
 
 
 ## Active Ownership
@@ -113,7 +118,7 @@ inherit its setup, state, and tracer.
 private `_Execution` that carries the state shared by its recursive run tree.
 The implementation is divided by semantic level:
 
-- `common.py` binds `RunRequest` to immutable state, setup, and durable IDs;
+- `executor.py` binds `RunSpec` to immutable execution state and durable IDs;
 - `prepare.py` resolves an agic's model, tools, caps, prompt, history, and
   adapter in one pass;
 - `runs/agic.py` owns the fixed model-tool cycle for one agic;
@@ -176,8 +181,10 @@ errors remain execution failures because they compromise durable truth.
 ## Terminal Behavior
 
 Successful execution emits one `RunEnd(finished)`. Runtime exceptions emit one
-`RunEnd(failed)`. Cancellation unwinds steps and child runs before the root
-`RunEnd(canceled)`.
+`RunEnd(failed)`. If the exception occurred outside an existing step boundary,
+the runtime first emits a failed system `StepBegin` / `StepEnd` pair. The
+persistence layer never synthesizes steps. Cancellation unwinds steps and child
+runs before the root `RunEnd(canceled)`.
 
 If cancellation came from a stop control, `RunEnd.input` references it. The
 runtime marks that control `finished` and marks all other pending controls
@@ -191,7 +198,8 @@ later model calls, so persistence is not a pluggable executor capability.
 
 `PersistSink` projects only run and step facts. It does not accept controls,
 change control statuses, store live events, or translate events into API/CLI
-protocols.
+protocols. It persists event payloads directly and owns no parallel local or
+output projection state.
 
 
 ## Streaming

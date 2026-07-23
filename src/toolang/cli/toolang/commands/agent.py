@@ -17,7 +17,6 @@ from toolang.catalog.agent import LocalAgents
 from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.state.state import PreparedCap
-from ...common.updates import append_agent_update
 from ...common.context import (
     context_root,
     require_runtime_agent,
@@ -56,12 +55,6 @@ def new_agent(
         home = LocalAgents(root / "agents").create(agent, content=source_text)
     except FileExistsError as exc:
         raise click.ClickException(f"Agent {agent} already exists") from exc
-    append_agent_update(
-        root,
-        agent,
-        "created",
-        {"path": str(home / "agent.too")},
-    )
     typer.echo(f"Created agent {agent}: {home / 'agent.too'}")
 
 
@@ -99,12 +92,6 @@ def clone_agent(
         raise click.ClickException(f"Agent {source} not found") from exc
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    append_agent_update(
-        root,
-        home.name,
-        "created",
-        {"path": str(home / "agent.too"), "source": source},
-    )
     typer.echo(f"Cloned agent {home.name}: {home / 'agent.too'}")
 
 

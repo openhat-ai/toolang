@@ -323,9 +323,8 @@ threads.
 After create, patch, stage action, execution action, or delete, the
 simplest correct behavior is to refetch `GET /api/v1/jobs`.
 
-For background changes, poll `GET /api/v1/jobs` on an interval. `GET
-/api/v1/updates` exposes recent update records such as `task_changed` and
-`chore_changed`, but it currently has no cursor parameter or streaming form.
+For background changes, poll `GET /api/v1/jobs` on an interval until an
+agent/team event hub is defined.
 
 The UI may optimistically update local state after successful write responses,
 because write responses return the updated item.

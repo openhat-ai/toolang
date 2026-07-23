@@ -19,7 +19,7 @@ from .records import JobRecord
 from .types import JobStatus, JobTrigger
 from .state import AgentJobs, JobDefinition
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +28,6 @@ class ClaimedJob:
 
     job: JobRecord
     definition: JobDefinition
-    run_id: str
     trigger: JobTrigger
 
 
@@ -125,7 +124,6 @@ class JobStore:
         *,
         jobs: AgentJobs,
         kind: JobKind,
-        run_id: str,
         now: datetime | None = None,
         manual: bool = False,
     ) -> ClaimedJob | None:
@@ -148,10 +146,10 @@ class JobStore:
             cursor = self._conn.execute(
                 """
                 UPDATE jobs
-                SET status = 'running', last_run_id = ?, updated_at = ?
+                SET status = 'running', last_run_id = NULL, updated_at = ?
                 WHERE job_id = ? AND kind = ? AND status = 'todo'
                 """,
-                (run_id, _iso(current), job.job_id, job.kind),
+                (_iso(current), job.job_id, job.kind),
             )
             if cursor.rowcount != 1:
                 return None
@@ -165,7 +163,6 @@ class JobStore:
         return ClaimedJob(
             job=claimed,
             definition=definition,
-            run_id=run_id,
             trigger=trigger,
         )
 
@@ -174,7 +171,6 @@ class JobStore:
         *,
         jobs: AgentJobs,
         chore_id: str,
-        run_id: str,
         now: datetime | None = None,
     ) -> ClaimedJob:
         """Atomically claim one ready chore for a manual run."""
@@ -197,10 +193,10 @@ class JobStore:
             cursor = self._conn.execute(
                 """
                 UPDATE jobs
-                SET status = 'running', last_run_id = ?, updated_at = ?
+                SET status = 'running', last_run_id = NULL, updated_at = ?
                 WHERE job_id = ? AND kind = 'chore' AND status = 'todo'
                 """,
-                (run_id, _iso(current), chore_id),
+                (_iso(current), chore_id),
             )
             if cursor.rowcount != 1:
                 raise ValueError(f"chore cannot run from status: {job.status}")
@@ -213,9 +209,42 @@ class JobStore:
         return ClaimedJob(
             job=_job_from_row(updated),
             definition=definition,
-            run_id=run_id,
             trigger="manual",
         )
+
+    def bind_run(
+        self,
+        *,
+        job_id: str,
+        kind: JobKind,
+        run_id: str,
+        now: datetime | None = None,
+    ) -> JobRecord:
+        """Bind an executor-assigned run id to one active job claim."""
+
+        current = _utc(now)
+        with self._write():
+            try:
+                cursor = self._conn.execute(
+                    """
+                    UPDATE jobs
+                    SET last_run_id = ?, updated_at = ?
+                    WHERE job_id = ? AND kind = ?
+                      AND status = 'running' AND last_run_id IS NULL
+                    """,
+                    (run_id, _iso(current), job_id, kind),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError(f"job run already bound: {run_id}") from exc
+            if cursor.rowcount != 1:
+                raise ValueError(f"job claim cannot bind run: {kind}:{job_id}")
+            updated = self._conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ? AND kind = ?",
+                (job_id, kind),
+            ).fetchone()
+        if updated is None:
+            raise RuntimeError(f"job not found after run binding: {kind}:{job_id}")
+        return _job_from_row(updated)
 
     def reopen_task(
         self,
@@ -514,7 +543,11 @@ class JobStore:
                     "CREATE INDEX IF NOT EXISTS idx_jobs_thread ON jobs(thread_id)"
                 )
                 self._conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_jobs_last_run ON jobs(last_run_id)"
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_last_run
+                    ON jobs(last_run_id)
+                    WHERE last_run_id IS NOT NULL
+                    """
                 )
                 self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             except Exception:

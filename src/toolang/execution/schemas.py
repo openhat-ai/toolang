@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from typing import Any
 
-from toolang.base.types.message import Message, Part, TextPart, message_summary
+from toolang.base.types.message import Message, Part, message_summary
 from .records import (
     OutputRef,
     RunControlRecord,
@@ -118,7 +118,6 @@ class ThreadRunInfo:
     """One compact run summary embedded in a thread summary."""
 
     id: str
-    origin: str
     status: RunStatus
     created_at: str
     started_at: str
@@ -129,7 +128,6 @@ class ThreadRunInfo:
     def from_record(cls, run: RunRecord) -> ThreadRunInfo:
         return cls(
             id=run.id,
-            origin=run.origin,
             status=run.status,
             created_at=run.created_at,
             started_at=run.started_at,
@@ -191,10 +189,10 @@ class ThreadInfo:
             raise ValueError(f"run start input has no message: {first.id}")
         return cls(
             id=thread.thread_id,
-            title=message_summary(start.input.parts) or first.origin,
+            title=message_summary(start.input.parts) or thread.origin,
             created_at=thread.created_at,
-            origin=last.origin,
-            channel=_thread_channel(thread.thread_id, last.origin),
+            origin=thread.origin,
+            channel=_thread_channel(thread.thread_id, thread.origin),
             status="running" if active is not None else "idle",
             updated_at=max(last.finished_at or last.started_at, thread.updated_at),
             peer=ThreadPeerInfo.from_peer(thread.peer),
@@ -214,11 +212,10 @@ class RunInfo:
 
     id: str
     parent: str | None
-    origin: str
     thread_id: str
     root_run_id: str
-    executable_kind: str
-    executable_name: str | None
+    runnable_kind: str
+    runnable_name: str | None
     call_kind: str
     metadata: dict[str, object]
     input_text: str
@@ -268,11 +265,10 @@ class RunInfo:
         return cls(
             id=run.id,
             parent=run.parent,
-            origin=run.origin,
             thread_id=run.thread,
             root_run_id=run.root_run_id,
-            executable_kind=run.executable_kind,
-            executable_name=run.executable_name,
+            runnable_kind=run.runnable_kind,
+            runnable_name=run.runnable_name,
             call_kind=run.call_kind,
             metadata=dict(run.context),
             input_text=input_text,
@@ -330,14 +326,6 @@ class RunControlInfo:
 
 
 @dataclass(frozen=True, slots=True)
-class RunControlResult:
-    """One accepted run control and the current run schema."""
-
-    run: RunInfo
-    control: RunControlInfo
-
-
-@dataclass(frozen=True, slots=True)
 class ThreadResult:
     """One thread mutation result."""
 
@@ -370,10 +358,9 @@ class StepData:
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
-    virtual: bool = False
 
     @classmethod
-    def from_record(cls, step: StepRecord, *, virtual: bool = False) -> StepData:
+    def from_record(cls, step: StepRecord) -> StepData:
         return cls(
             parent=step.parent,
             index=step.index,
@@ -387,7 +374,6 @@ class StepData:
             created_at=step.created_at,
             started_at=step.started_at,
             finished_at=step.finished_at,
-            virtual=virtual,
         )
 
 
@@ -402,22 +388,15 @@ class RunOutput:
 
     @classmethod
     def from_record(cls, run: RunRecord, *, steps: Sequence[StepRecord]) -> RunOutput:
-        projected_steps = list(steps)
-        virtual_failure = _virtual_runtime_failure_step(run, steps=steps)
-        if virtual_failure is not None:
-            projected_steps.append(virtual_failure)
         return cls(
             status=run.status,
             error=run.error,
             failure=FailureDetail.from_run(
                 status=run.status,
                 error=run.error,
-                steps=projected_steps,
+                steps=steps,
             ),
-            steps=[
-                StepData.from_record(step, virtual=step is virtual_failure)
-                for step in projected_steps
-            ],
+            steps=[StepData.from_record(step) for step in steps],
         )
 
 
@@ -489,30 +468,3 @@ def _start_control(controls: Sequence[RunControlRecord]) -> RunControlRecord:
         if control.index == 0 and control.kind == "start":
             return control
     raise ValueError("run start input not found")
-
-
-def _virtual_runtime_failure_step(
-    run: RunRecord, *, steps: Sequence[StepRecord]
-) -> StepRecord | None:
-    error = run.error
-    if run.status != "failed" or error is None:
-        return None
-    if any(
-        item.kind == "system" and item.status == "failed" and item.error == error
-        for item in steps
-    ):
-        return None
-    step_index = max((item.index for item in steps), default=0) + 1
-    timestamp = run.finished_at or run.started_at
-    return StepRecord(
-        parent=run.id,
-        index=step_index,
-        kind="system",
-        status="failed",
-        input=(),
-        output=(TextPart(text=error),),
-        started_at=timestamp,
-        finished_at=timestamp,
-        detail={"message": error},
-        error=error,
-    )

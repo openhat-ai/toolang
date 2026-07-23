@@ -20,7 +20,6 @@ from toolang.catalog import cap as cap_store
 from toolang.catalog import config as cap_config
 from toolang.catalog.types import CAP_KINDS, CapKind
 from toolang.state import state as cap_state
-from ..common.updates import append_agent_update
 from ..common.context import context_agent, context_root, user_call
 from ..common.output import echo_block, echo_table
 from ..common.routing import (
@@ -332,12 +331,9 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             cap,
         )
         if selected_agent:
-            _refresh_and_append_cap_update(
+            _refresh_agent_state(
                 context_root(ctx),
                 selected_agent,
-                kind=kind,
-                name=name,
-                visibility=visibility,
                 progress_total=1,
             )
         typer.echo(f"Created {kind} {name}: {saved.path}")
@@ -375,12 +371,9 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             cap,
         )
         if selected_agent:
-            _refresh_and_append_cap_update(
+            _refresh_agent_state(
                 context_root(ctx),
                 selected_agent,
-                kind=kind,
-                name=name,
-                visibility=visibility,
                 progress_total=1,
             )
         typer.echo(f"Updated {kind} {name}: {saved.path}")
@@ -430,12 +423,9 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         )
         if selected_agent:
             try:
-                _refresh_and_append_cap_update(
+                _refresh_agent_state(
                     context_root(ctx),
                     selected_agent,
-                    kind=kind,
-                    name=entry.name,
-                    visibility=visibility,
                     progress_total=1,
                     progress=progress,
                 )
@@ -470,12 +460,9 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             name,
         )
         if selected_agent:
-            _refresh_and_append_cap_update(
+            _refresh_agent_state(
                 context_root(ctx),
                 selected_agent,
-                kind=kind,
-                name=name,
-                visibility=visibility,
                 progress_total=0,
             )
         typer.echo(f"Removed {kind} {name}: {entry.ref}")
@@ -507,12 +494,9 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             name,
         )
         if selected_agent:
-            _refresh_and_append_cap_update(
+            _refresh_agent_state(
                 context_root(ctx),
                 selected_agent,
-                kind=kind,
-                name=name,
-                visibility=visibility,
                 progress_total=0,
             )
         typer.echo(f"Deleted {kind} {name}: {deleted_path}")
@@ -725,25 +709,6 @@ def _wired_caps(
     )
 
 
-def _append_cap_update(
-    toolang_root: Path,
-    agent_name: str,
-    *,
-    kind: CapKind,
-    name: str,
-    visibility: PreparedVisibility,
-) -> None:
-    append_agent_update(
-        toolang_root,
-        agent_name,
-        f"{kind}_changed",
-        {
-            "name": name,
-            "visibility": visibility,
-        },
-    )
-
-
 def _make_cap_write_progress() -> CliProgress:
     from ..common.progress import make_cli_progress
 
@@ -753,13 +718,10 @@ def _make_cap_write_progress() -> CliProgress:
     )
 
 
-def _refresh_and_append_cap_update(
+def _refresh_agent_state(
     toolang_root: Path,
     agent_name: str,
     *,
-    kind: CapKind,
-    name: str,
-    visibility: PreparedVisibility,
     progress_total: int,
     progress: CliProgress | None = None,
 ) -> None:
@@ -774,10 +736,3 @@ def _refresh_and_append_cap_update(
     )
     if progress is not None:
         progress.set_prepare_total(progress_total)
-    _append_cap_update(
-        toolang_root,
-        agent_name,
-        kind=kind,
-        name=name,
-        visibility=visibility,
-    )

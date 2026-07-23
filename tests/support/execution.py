@@ -31,7 +31,9 @@ from toolang.execution.records import (
     trace_child_path,
     trace_run,
 )
-from toolang.execution.store import PersistSink, RunStore, utc_now
+from toolang.common.time import utc_now
+from toolang.execution.executor.persist import PersistSink
+from toolang.execution.store import RunStore
 
 
 def emit_event(store: RunStore, event: TraceEvent) -> None:

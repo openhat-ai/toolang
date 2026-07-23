@@ -51,14 +51,14 @@ def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         step_input = (RunControlRef(),)
     _LOGGER.info(
         "Step started thread=%s run=%s step=%s kind=tool tool=%s",
-        run.thread_id,
+        run.thread,
         run.run_id,
         step_index,
         call.name,
     )
     log_tool_call_input(
         call,
-        thread_id=run.thread_id,
+        thread_id=run.thread,
         run_id=run.run_id,
         step_index=step_index,
         plugin_name=plugin_name,
@@ -102,7 +102,7 @@ def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     status = "failed" if record.error else "finished"
     log_tool_call_output(
         record,
-        thread_id=run.thread_id,
+        thread_id=run.thread,
         run_id=run.run_id,
         step_index=step_index,
         plugin_name=plugin_name,
@@ -128,7 +128,7 @@ def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     state.last_step = step_index
     _LOGGER.info(
         "Step finished thread=%s run=%s step=%s kind=tool tool=%s status=%s duration_ms=%s",
-        run.thread_id,
+        run.thread,
         run.run_id,
         step_index,
         call.name,

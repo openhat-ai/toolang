@@ -227,6 +227,7 @@ than watcher objects:
 Scheduler(
     job_store=job_store,
     executor=executor,
+    get_agent_setup=get_agent_setup,
     get_home_jobs=job_watcher.current,
     get_agent_state=state_watcher.current,
 )
@@ -234,11 +235,12 @@ Scheduler(
 
 For one scheduling pass it captures one `AgentState`, merges `AgentJobs` from
 that state and the current `HomeJobs`, atomically claims due work, and submits
-`RunRequest` values to `RunExecutor`. `Scheduler` persists job state through
-`JobStore`; `RunExecutor` persists run state through `RunStore`.
+`RunSpec` values to `RunExecutor`. The executor assigns the run ID, after which
+the scheduler binds it to the active claim. `Scheduler` persists job state
+through `JobStore`; `RunExecutor` persists run state through `RunStore`.
 
-Runs link to their originating job through run origin metadata. `RunStore`
-does not duplicate job records.
+Jobs link to their latest run through `JobRecord.last_run_id`. `RunStore` does
+not duplicate job records.
 
 File inbox requests use the same `toolang.work` ownership boundary but retain
 their independent `files.db` store. `jobs.db` and `files.db` are not merged by
@@ -250,7 +252,8 @@ design and migration.
 
 The public execution concepts are:
 
-- `RunRequest`: an external request to execute an agic or flow
+- `RunSpec`: immutable setup, state, thread, runnable, input, model, and params
+- `RunHandle`: an awaitable locally started run with control conveniences
 - `RunExecutor`: run acceptance, control, and agic/flow execution
 - `ThreadManager`: synchronous thread creation, rewind, and fork orchestration
 - `RunEvent`: the complete ordered execution event stream
@@ -258,9 +261,9 @@ The public execution concepts are:
 - `PersistSink`: mandatory internal run/step projection into `RunStore`
 - `RunTracer`: optional per-start observation of live run events
 
-`RunExecutor.start()` receives explicit immutable `AgentSetup` and `AgentState`
-values for each top-level run. It does not know `StateWatcher`, jobs, CLI, or
-HTTP.
+`RunExecutor.start()` receives one `RunSpec` carrying explicit immutable
+`AgentSetup` and `AgentState` values for each top-level run. It does not know
+`StateWatcher`, jobs, CLI, or HTTP.
 
 `ThreadManager` owns chat-thread creation and branching rules. Rewind may
 write durable stop controls through the shared store, but it never depends on
@@ -275,8 +278,8 @@ top-level runs.
 `RunExecutor.start()` is the external execution entry point. It uses mandatory
 internal persistence and an optional per-start tracer. Internal child runs
 reuse private runtime logic and never call the public entry point. Runtime
-owners decide whether to await `start()` or create and retain a background
-task; `RunExecutor` does not provide `spawn()`.
+owners retain or await the returned `RunHandle`; `RunExecutor` does not provide
+`spawn()`.
 
 The target execution package is:
 
@@ -291,9 +294,8 @@ execution/
 ├── threads.py              # ThreadManager
 ├── tools/                  # agent-specific built-in tools
 └── executor/               # RunExecutor and execution implementation helpers
-    ├── __init__.py         # stable RunExecutor entry point
-    ├── request.py          # RunRequest and executable kind
-    ├── executor.py         # RunExecutor and private per-start _Execution
+    ├── __init__.py         # stable RunExecutor, RunSpec, and RunHandle exports
+    ├── executor.py         # public run contract and private per-start _Execution
     ├── common.py           # bound runs, locals, and shared execution helpers
     ├── prepare.py          # agic resolution and complete model-input preparation
     ├── diagnostics.py      # bounded model and tool diagnostics

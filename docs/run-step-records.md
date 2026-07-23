@@ -77,7 +77,8 @@ finished_at
 
 `(run, index)` is the durable identity. Kinds are `start`, `steer`, and `stop`.
 Timing is `immediate`, `next_step`, or `next_call`. A non-null request ID is
-unique within its run and provides idempotent acceptance.
+unique across the `run_controls` table. Duplicate request IDs are rejected;
+they do not replay a previous result.
 
 The index-zero start control and `RunRecord` are inserted in one transaction.
 Later control indexes are computed and inserted in one transaction; no API
@@ -149,6 +150,9 @@ finished_at
 Kinds are `create`, `fork`, and `rewind`. `(thread, index)` is the durable
 identity. Thread mutations are synchronous, so callers observe their success or
 failure directly. Only successful mutations produce thread events.
+Non-null request IDs are unique across the `thread_controls` table. Clients
+must keep request IDs globally unique across both control tables or pass
+`None`.
 
 
 ## Projection Ownership
@@ -181,12 +185,12 @@ RunEnd          -> fail remaining pending controls
 ## Idempotency And Concurrency
 
 SQLite primary keys protect run, control, thread, and step identities.
-Request IDs protect caller retries. Index allocation and insertion use one
+Non-null request IDs are unique within their control table; duplicate
+submissions are rejected rather than replayed. Index allocation and insertion use one
 `BEGIN IMMEDIATE` transaction, and every process owns its own SQLite
 connection. A configured busy timeout allows concurrent local processes to
 serialize writes.
 
-The first process to insert a start control owns execution. A second process
-with the same run and request ID reads existing records and must not execute the
-run again. Toolang currently leaves records as-is if the owner process exits;
-it does not resume execution.
+The process that successfully inserts a start control owns execution. Toolang
+currently leaves records as-is if the owner process exits; it does not resume
+execution.

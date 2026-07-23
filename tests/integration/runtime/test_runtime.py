@@ -94,7 +94,9 @@ from toolang.execution.executor.invocation import AgicInvocation
 from toolang.execution.executor.binding import bind_run_request as bind_request
 from toolang.execution.executor import Executor
 from toolang.execution.executor.request import RunRequest
-from toolang.execution.store import PersistSink, RunStore, run_store_path
+from toolang.execution.executor.persist import PersistSink
+from toolang.execution.store import RunStore
+from toolang.up.process import agent_run_store_path
 from toolang.execution.reply import SseReplySink
 from toolang.up.setup import AgentSetup
 from tests.support import runtime as inspect
@@ -5352,7 +5354,7 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
                 time.sleep(0.01)
     assert completed
     run = completed[0]
-    run_store = RunStore(run_store_path(toolang_root, "alice"))
+    run_store = RunStore(agent_run_store_path(toolang_root, "alice"))
     try:
         command = run_store.get_command(run_id=run.id, index=0)
     finally:
@@ -6719,12 +6721,8 @@ def test_script_loop_cancel_does_not_wait_for_worker_thread() -> None:
 
 def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    store = RunStore(run_store_path(toolang_root, "alice"))
+    store = RunStore(agent_run_store_path(toolang_root, "alice"))
     try:
-        created = store.append_update(
-            kind="created",
-            payload={"path": str(toolang_root / "agents" / "alice" / "agent.too")},
-        )
         run = project_run_start(
             store,
             run_id="run-1",
@@ -6758,10 +6756,6 @@ def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None
                 "parts": [{"type": "text", "text": "assistant:hello"}],
             },
         ]
-        assert [item.kind for item in store.list_updates(limit=10)] == ["created"]
-        assert created.payload["path"] == str(
-            toolang_root / "agents" / "alice" / "agent.too"
-        )
     finally:
         store.close()
 
@@ -6821,7 +6815,7 @@ def test_chat_accepts_structured_message_parts_and_model_selector(
 
 def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    store = RunStore(run_store_path(toolang_root, "alice"))
+    store = RunStore(agent_run_store_path(toolang_root, "alice"))
     try:
         run = project_run_start(
             store,
@@ -6911,13 +6905,6 @@ def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> Non
             },
             {"role": "assistant", "parts": [{"type": "text", "text": "15"}]},
         ]
-        assert [
-            item.to_data()
-            for item in store.recent_text_conversation_messages(thread_id="thread-1")
-        ] == [
-            {"role": "user", "parts": [{"type": "text", "text": "sum 7 and 8"}]},
-            {"role": "assistant", "parts": [{"type": "text", "text": "15"}]},
-        ]
     finally:
         store.close()
 
@@ -6926,7 +6913,7 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    store = RunStore(run_store_path(toolang_root, "alice"))
+    store = RunStore(agent_run_store_path(toolang_root, "alice"))
     try:
         run = project_run_start(
             store,
@@ -6997,7 +6984,7 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
 
 def test_execution_store_replays_model_reasoning_content(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    store = RunStore(run_store_path(toolang_root, "alice"))
+    store = RunStore(agent_run_store_path(toolang_root, "alice"))
     try:
         run = project_run_start(
             store,
@@ -7381,7 +7368,7 @@ def _build_context(
         toolang_root=toolang_root,
         agent_name=agent_name,
     )
-    store = RunStore(run_store_path(toolang_root, agent_name))
+    store = RunStore(agent_run_store_path(toolang_root, agent_name))
     setup = AgentSetup(
         name=agent_name,
         home=agents.agent_home(toolang_root, agent_name),

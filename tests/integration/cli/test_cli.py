@@ -48,7 +48,8 @@ from toolang.execution.records import InputRef, OutputRef, RunRecord
 from toolang.common.events import ProgressEvent
 from toolang.plugin.loading import PluginInfo
 from toolang.catalog.job import AuthoredJobs, JobFile
-from toolang.execution.store import RunStore, run_store_path
+from toolang.execution.store import RunStore
+from toolang.up.process import agent_run_store_path
 from toolang.up import server as agent_up
 from tests.support.execution import project_run_end, project_run_start, project_step
 from tests.support.catalog import FixtureLocalAgents
@@ -101,7 +102,7 @@ def _fake_invoke_record(
     toolang_root: Path,
     agent_name: str,
 ) -> RunRecord:
-    store = RunStore(run_store_path(toolang_root, agent_name))
+    store = RunStore(agent_run_store_path(toolang_root, agent_name))
     try:
         run = project_run_start(
             store,
@@ -386,7 +387,7 @@ def test_cli_main_roaming_threads_can_read_offline_materialized_store(
         tmp_path, "agic:\n  Reply directly.\n", name="demo"
     )
     toolang_root, agent_name = agents.materialize_roaming_program(program_path)
-    store = RunStore(run_store_path(toolang_root, agent_name))
+    store = RunStore(agent_run_store_path(toolang_root, agent_name))
     try:
         run = project_run_start(
             store,
@@ -6283,27 +6284,7 @@ def test_cli_chore_ready_moves_archived_chore_back(tmp_path: Path, monkeypatch) 
     assert _jobs(toolang_root).get("chore", chore_id, stage="archived") is None
 
 
-def test_cli_task_new_records_task_changed_update(tmp_path: Path, monkeypatch) -> None:
-    toolang_root = tmp_path / "toolang"
-    monkeypatch.setattr(cli.click, "edit", lambda text, **_kwargs: text)
-
-    result = _invoke_app(
-        ["task", "new"],
-        env={"TOOLANG_ROOT": str(toolang_root)},
-        prefix_agent="alice",
-    )
-
-    assert result.exit_code == 0
-    store = RunStore(run_store_path(toolang_root, "alice"))
-    try:
-        updates = store.list_updates(limit=10)
-    finally:
-        store.close()
-    assert [item.kind for item in updates] == ["task_changed"]
-    assert str(updates[0].payload["id"]).strip()
-
-
-def test_cli_global_cap_change_does_not_create_agent_local_update_store(
+def test_cli_global_cap_change_does_not_create_agent_execution_store(
     tmp_path: Path, monkeypatch
 ) -> None:
     toolang_root = tmp_path / "toolang"
@@ -6322,7 +6303,7 @@ def test_cli_global_cap_change_does_not_create_agent_local_update_store(
     )
 
     assert result.exit_code == 0
-    assert not run_store_path(toolang_root, "default").exists()
+    assert not agent_run_store_path(toolang_root, "default").exists()
 
 
 def test_cli_task_requires_agent_prefix(tmp_path: Path) -> None:
@@ -7380,7 +7361,7 @@ def test_cli_threads_lists_offline_runs_when_agent_is_not_running(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    store = RunStore(run_store_path(toolang_root, "alice"))
+    store = RunStore(agent_run_store_path(toolang_root, "alice"))
     try:
         run = project_run_start(
             store,
@@ -7444,7 +7425,7 @@ def test_cli_runs_falls_back_to_offline_store_when_api_is_unavailable(
     monkeypatch,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    store = RunStore(run_store_path(toolang_root, "alice"))
+    store = RunStore(agent_run_store_path(toolang_root, "alice"))
     try:
         run = project_run_start(
             store,

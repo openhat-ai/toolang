@@ -24,7 +24,6 @@ from toolang.work.authoring import (
 from toolang.work.state import AgentJobs, job_display_title
 from toolang.work.store import open_job_store
 from ...common.client import runtime_post
-from ...common.updates import append_agent_update
 from ...common.context import context_root, require_prefix_agent, user_call
 from ...common.output import echo_table
 from ...common.routing import PrefixAgentJobGroup, RequiredPrefixAgentCommand
@@ -234,7 +233,6 @@ def _new(kind: JobKind, _title: str) -> Callable[..., None]:
         path = _job_path(saved)
         if not draft:
             _reconcile(root, agent, kind)
-        _notify(root, agent, kind, path.stem, path)
         typer.echo(f"{kind} {path.stem} created\t{path}")
 
     return command
@@ -257,7 +255,6 @@ def _clone(kind: JobKind, title: str) -> Callable[..., None]:
         )
         path = _job_path(saved)
         _reconcile(root, agent, kind)
-        _notify(root, agent, kind, path.stem, path)
         typer.echo(f"{kind} {path.stem} cloned\t{path}")
 
     return command
@@ -287,7 +284,6 @@ def _edit(kind: JobKind, title: str) -> Callable[..., None]:
         saved = user_call(catalog.update, document.with_meta(document.meta))
         path = _job_path(saved)
         _reconcile(root, agent, kind)
-        _notify(root, agent, kind, id, path)
         typer.echo(str(path))
 
     return command
@@ -302,7 +298,6 @@ def _move(kind: JobKind, title: str, stage: JobStage) -> Callable[..., None]:
         moved = user_call(_jobs(root, agent).move, kind, id, stage)
         path = _job_path(moved)
         _reconcile(root, agent, kind)
-        _notify(root, agent, kind, id, path)
         verb = {"draft": "drafted", "ready": "ready", "archived": "archived"}[stage]
         typer.echo(f"{kind} {id} {verb}\t{path}")
 
@@ -402,21 +397,11 @@ def _delete(kind: JobKind, title: str) -> Callable[..., None]:
         entry = catalog.get(kind, id, stage="archived")
         if entry is None:
             raise click.ClickException(f"archived {kind} not found: {id}")
-        removed = user_call(catalog.remove, kind, id)
+        user_call(catalog.remove, kind, id)
         _reconcile(root, agent, kind)
-        _notify(root, agent, kind, id, _job_path(removed))
         typer.echo(f"{kind} {id} deleted")
 
     return command
-
-
-def _notify(root: Path, agent: str, kind: JobKind, id: str, path: Path) -> None:
-    append_agent_update(
-        root,
-        agent,
-        f"{kind}_changed",
-        {"id": id, "path": str(path)},
-    )
 
 
 def _reconcile(root: Path, agent: str, kind: JobKind) -> None:

@@ -306,7 +306,7 @@ def _find_or_create_local_thread(
     value = allocate_id(
         context.home / ".runtime" / "ids.json", family=LOCAL_ID_FAMILY
     ).value
-    thread, _control, _created = store.create_thread(
+    thread, _control = store.create_thread(
         thread_id=f"script_{value}",
         origin="chat",
         peer=ThreadPeer(type="agent", name=peer, thread=None),
@@ -347,9 +347,8 @@ def _record_local_a2a_exchange(
         },
     )
     run_context = {
-        "origin": "chat",
         "root": run_id,
-        "executable": {"kind": "agent", "name": peer},
+        "runnable": {"kind": "agent", "name": peer},
         "call": "agent_chat",
     }
     sink = PersistSink(store)

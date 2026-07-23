@@ -40,13 +40,6 @@ def create_task(
     document = _task_document_from_create(context, payload)
     saved = context.authored_jobs.create(document)
     _reconcile_jobs(context, kind="task")
-    _append_job_update(
-        context,
-        kind="task",
-        item_id=saved.id,
-        action="created",
-        path=_job_path(saved),
-    )
     entry = _find_task_or_404(context, saved.id)
     return _task_detail_item(context, entry)
 
@@ -72,16 +65,9 @@ def update_archived_task(
     response_class=Response,
 )
 def delete_archived_task(context: ApiContextDep, task_id: str) -> None:
-    entry = _find_archived_task_or_404(context, task_id)
+    _find_archived_task_or_404(context, task_id)
     context.authored_jobs.remove("task", task_id)
     _reconcile_jobs(context, kind="task")
-    _append_job_update(
-        context,
-        kind="task",
-        item_id=task_id,
-        action="deleted",
-        path=_job_path(entry),
-    )
 
 
 @router.patch("/tasks/{task_id}", summary="Update Task", response_model=JobDetail)
@@ -97,15 +83,8 @@ def update_task(
 @router.post("/tasks/{task_id}/draft", summary="Draft Task", response_model=JobDetail)
 def draft_task(context: ApiContextDep, task_id: str) -> JobDetail:
     catalog = context.authored_jobs
-    moved = catalog.move("task", task_id, "draft")
+    catalog.move("task", task_id, "draft")
     _reconcile_jobs(context, kind="task")
-    _append_job_update(
-        context,
-        kind="task",
-        item_id=task_id,
-        action="drafted",
-        path=_job_path(moved),
-    )
     entry = catalog.get("task", task_id, stage="draft")
     if entry is None:
         raise HTTPException(
@@ -116,15 +95,8 @@ def draft_task(context: ApiContextDep, task_id: str) -> JobDetail:
 
 @router.post("/tasks/{task_id}/ready", summary="Ready Task", response_model=JobDetail)
 def ready_task(context: ApiContextDep, task_id: str) -> JobDetail:
-    moved = context.authored_jobs.move("task", task_id, "ready")
+    context.authored_jobs.move("task", task_id, "ready")
     _reconcile_jobs(context, kind="task")
-    _append_job_update(
-        context,
-        kind="task",
-        item_id=task_id,
-        action="ready",
-        path=_job_path(moved),
-    )
     entry = _find_task_or_404(context, task_id)
     return _task_detail_item(context, entry)
 
@@ -133,15 +105,8 @@ def ready_task(context: ApiContextDep, task_id: str) -> JobDetail:
     "/tasks/{task_id}/archive", summary="Archive Task", response_model=JobDetail
 )
 def archive_task(context: ApiContextDep, task_id: str) -> JobDetail:
-    moved = context.authored_jobs.move("task", task_id, "archived")
+    context.authored_jobs.move("task", task_id, "archived")
     _reconcile_jobs(context, kind="task")
-    _append_job_update(
-        context,
-        kind="task",
-        item_id=task_id,
-        action="archived",
-        path=_job_path(moved),
-    )
     entry = _find_archived_task_or_404(context, task_id)
     return _task_detail_item(context, entry)
 
@@ -202,13 +167,6 @@ def create_chore(
     document = _chore_document_from_create(context, payload)
     saved = context.authored_jobs.create(document)
     _reconcile_jobs(context, kind="chore")
-    _append_job_update(
-        context,
-        kind="chore",
-        item_id=saved.id,
-        action="created",
-        path=_job_path(saved),
-    )
     entry = _find_chore_or_404(context, saved.id)
     return _chore_detail_item(context, entry)
 
@@ -302,16 +260,9 @@ def update_archived_chore(
     response_class=Response,
 )
 def delete_archived_chore(context: ApiContextDep, chore_id: str) -> None:
-    entry = _find_archived_chore_or_404(context, chore_id)
+    _find_archived_chore_or_404(context, chore_id)
     context.authored_jobs.remove("chore", chore_id)
     _reconcile_jobs(context, kind="chore")
-    _append_job_update(
-        context,
-        kind="chore",
-        item_id=chore_id,
-        action="deleted",
-        path=_job_path(entry),
-    )
 
 
 @router.patch("/chores/{chore_id}", summary="Update Chore", response_model=JobDetail)
@@ -329,15 +280,8 @@ def update_chore(
 )
 def draft_chore(context: ApiContextDep, chore_id: str) -> JobDetail:
     catalog = context.authored_jobs
-    moved = catalog.move("chore", chore_id, "draft")
+    catalog.move("chore", chore_id, "draft")
     _reconcile_jobs(context, kind="chore")
-    _append_job_update(
-        context,
-        kind="chore",
-        item_id=chore_id,
-        action="drafted",
-        path=_job_path(moved),
-    )
     entry = catalog.get("chore", chore_id, stage="draft")
     if entry is None:
         raise HTTPException(
@@ -350,15 +294,8 @@ def draft_chore(context: ApiContextDep, chore_id: str) -> JobDetail:
     "/chores/{chore_id}/ready", summary="Ready Chore", response_model=JobDetail
 )
 def ready_chore(context: ApiContextDep, chore_id: str) -> JobDetail:
-    moved = context.authored_jobs.move("chore", chore_id, "ready")
+    context.authored_jobs.move("chore", chore_id, "ready")
     _reconcile_jobs(context, kind="chore")
-    _append_job_update(
-        context,
-        kind="chore",
-        item_id=chore_id,
-        action="ready",
-        path=_job_path(moved),
-    )
     entry = _find_chore_or_404(context, chore_id)
     return _chore_detail_item(context, entry)
 
@@ -367,15 +304,8 @@ def ready_chore(context: ApiContextDep, chore_id: str) -> JobDetail:
     "/chores/{chore_id}/archive", summary="Archive Chore", response_model=JobDetail
 )
 def archive_chore(context: ApiContextDep, chore_id: str) -> JobDetail:
-    moved = context.authored_jobs.move("chore", chore_id, "archived")
+    context.authored_jobs.move("chore", chore_id, "archived")
     _reconcile_jobs(context, kind="chore")
-    _append_job_update(
-        context,
-        kind="chore",
-        item_id=chore_id,
-        action="archived",
-        path=_job_path(moved),
-    )
     entry = _find_archived_chore_or_404(context, chore_id)
     return _chore_detail_item(context, entry)
 
@@ -614,13 +544,6 @@ def _update_task(
 ) -> JobDetail:
     document = _patch_task_document(entry, payload)
     saved = context.authored_jobs.update(document)
-    _append_job_update(
-        context,
-        kind="task",
-        item_id=saved.id,
-        action="updated",
-        path=_job_path(saved),
-    )
     return _job_inspection(context).detail(saved)
 
 
@@ -632,13 +555,6 @@ def _update_chore(
 ) -> JobDetail:
     document = _patch_chore_document(entry, payload)
     saved = context.authored_jobs.update(document)
-    _append_job_update(
-        context,
-        kind="chore",
-        item_id=saved.id,
-        action="updated",
-        path=_job_path(saved),
-    )
     return _job_inspection(context).detail(saved)
 
 
@@ -665,26 +581,3 @@ def _patch_document(
         return document.patch(changes)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-def _append_job_update(
-    context,
-    *,
-    kind: JobKind,
-    item_id: str,
-    action: str,
-    path: Path,
-) -> None:
-    try:
-        relative_path = str(path.relative_to(context.home))
-    except ValueError:
-        relative_path = str(path)
-    context.executor.store.append_update(
-        kind=f"{kind}_changed",
-        payload={
-            "id": item_id,
-            "kind": kind,
-            "action": action,
-            "path": relative_path,
-        },
-    )

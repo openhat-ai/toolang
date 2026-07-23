@@ -1,5 +1,5 @@
 """Run execution implementation."""
 
-from .executor import RunExecutor
+from .executor import RunExecutor, RunHandle, RunSpec
 
-__all__ = ["RunExecutor"]
+__all__ = ["RunExecutor", "RunHandle", "RunSpec"]

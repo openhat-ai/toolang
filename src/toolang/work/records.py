@@ -41,7 +41,7 @@ class FileRequestRecord:
     fingerprint: str
     thread_id: str
     status: FileRequestStatus
-    run_id: str
+    run_id: str | None
     error: str | None
     first_seen_at: str
     processed_at: str | None

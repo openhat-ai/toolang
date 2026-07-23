@@ -63,7 +63,6 @@ def put_file_cap(
         name=name,
     )
     _wrap_user_error(catalog.upsert, cap)
-    _append_cap_update(context, kind=kind, name=name, visibility=visibility)
     entry = _find_authored_entry(context, visibility=visibility, kind=kind, name=name)
     return CapDetail.from_cap(entry, agent_name=context.name)
 
@@ -91,7 +90,6 @@ def put_wired_cap(
     )
     cap = cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
     _wrap_user_error(catalog.upsert, cap)
-    _append_cap_update(context, kind=kind, name=name, visibility=visibility)
     entry = _find_authored_entry(context, visibility=visibility, kind=kind, name=name)
     return CapDetail.from_cap(entry, agent_name=context.name)
 
@@ -137,7 +135,6 @@ def delete_file_cap(
         kind,
         name,
     )
-    _append_cap_update(context, kind=kind, name=name, visibility=requested_visibility)
 
 
 @router.delete(
@@ -181,7 +178,6 @@ def delete_wired_cap(
         kind,
         name,
     )
-    _append_cap_update(context, kind=kind, name=name, visibility=requested_visibility)
 
 
 @router.get("/caps", summary="Get Caps Summary")
@@ -325,19 +321,6 @@ def _find_authored_entry(
         if entry.name == name:
             return entry
     raise HTTPException(status_code=404, detail=f"{kind} not found: {name}")
-
-
-def _append_cap_update(
-    context, *, kind: CapKind, name: str, visibility: PreparedVisibility
-) -> None:
-    payload = {
-        "name": name,
-        "visibility": visibility,
-    }
-    context.executor.store.append_update(
-        kind=f"{kind}_changed",
-        payload=payload,
-    )
 
 
 def _cap_infos(

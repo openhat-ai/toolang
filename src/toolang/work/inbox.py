@@ -10,11 +10,10 @@ from pathlib import Path
 from collections.abc import Callable
 
 from toolang.base.types.message import Message
-from toolang.common.ids import allocate_run_id
-from toolang.execution.executor import Executor
+from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
-from toolang.execution.executor.request import RunRequest
 from toolang.state.state import AgentState
+from toolang.up.setup import AgentSetup
 from toolang.work import files
 from toolang.work.records import FileRequestRecord
 from toolang.work.types import FileSnapshot
@@ -29,16 +28,15 @@ class FileSubmission:
     """One claimed file request ready for execution."""
 
     record: FileRequestRecord
-    run_id: str
-    text: str
-    parts: list[dict[str, str]]
+    input: Message
 
 
 def spawn(
     *,
     root: Path,
     name: str,
-    executor: Executor,
+    executor: RunExecutor,
+    get_agent_setup: Callable[[], AgentSetup],
     get_agent_state: Callable[[], AgentState],
     inboxes: tuple[Path, ...],
     interval_ms: float,
@@ -52,6 +50,7 @@ def spawn(
             root=root,
             name=name,
             executor=executor,
+            get_agent_setup=get_agent_setup,
             get_agent_state=get_agent_state,
             inboxes=inboxes,
             interval_ms=interval_ms,
@@ -65,7 +64,8 @@ async def run(
     *,
     root: Path,
     name: str,
-    executor: Executor,
+    executor: RunExecutor,
+    get_agent_setup: Callable[[], AgentSetup],
     get_agent_state: Callable[[], AgentState],
     inboxes: tuple[Path, ...],
     interval_ms: float,
@@ -93,32 +93,46 @@ async def run(
                 now=now,
             )
             for submission in collect_file_submissions(
-                executor, store, inboxes=inboxes, stable_ms=stable_ms, now=now
+                store, inboxes=inboxes, stable_ms=stable_ms, now=now
             ):
-                active[submission.run_id] = asyncio.create_task(
-                    executor.run(
-                        RunRequest(
-                            origin="file",
-                            input=Message.user(submission.text),
-                            run_id=submission.run_id,
-                            thread_id=submission.record.thread_id,
-                            executable_name="file",
-                            context={
-                                "invoke_parts": submission.parts,
-                                "file_request": {
-                                    "id": submission.record.request_id,
-                                    "watch_root": submission.record.watch_root,
-                                    "relative_path": submission.record.relative_path,
-                                    "path": submission.record.absolute_path,
-                                    "size": submission.record.size,
-                                    "mtime_ns": submission.record.mtime_ns,
-                                    "fingerprint": submission.record.fingerprint,
-                                },
-                            },
+                if (
+                    executor.store.get_thread(
+                        thread_id=submission.record.thread_id
+                    )
+                    is None
+                ):
+                    executor.store.create_thread(
+                        thread_id=submission.record.thread_id,
+                        origin="file",
+                        context={"file_request_id": submission.record.request_id},
+                    )
+                state = get_agent_state()
+                handle = executor.start(
+                    RunSpec(
+                        setup=get_agent_setup(),
+                        state=state,
+                        thread=submission.record.thread_id,
+                        runnable=(
+                            "file"
+                            if state.program.find_agic("file") is not None
+                            else "default"
                         ),
-                        get_agent_state(),
+                        input=submission.input,
                     )
                 )
+                try:
+                    store.bind_run(
+                        request_id=submission.record.request_id,
+                        run_id=handle.run_id,
+                        now=now,
+                    )
+                except Exception:
+                    try:
+                        handle.stop(reason="File run binding failed.")
+                    except (RuntimeError, ValueError):
+                        pass
+                    raise
+                active[handle.run_id] = handle.task
             try:
                 await asyncio.wait_for(stop_signal.wait(), timeout=interval_timeout)
             except TimeoutError:
@@ -133,7 +147,6 @@ async def run(
 
 
 def collect_file_submissions(
-    executor: Executor,
     store: files.FileRequestStore,
     *,
     inboxes: tuple[Path, ...],
@@ -147,25 +160,20 @@ def collect_file_submissions(
     for inbox in inboxes:
         for snapshot in _scan_inbox(inbox, now=current, stable_ms=stable_ms):
             try:
-                text, parts = files.render_file_input(Path(snapshot.absolute_path))
+                message = files.file_input_message(Path(snapshot.absolute_path))
             except (OSError, UnicodeDecodeError) as exc:
                 logger.debug(
                     "files.input_skipped path=%s error=%s", snapshot.absolute_path, exc
                 )
                 continue
-            run_id = allocate_run_id(executor.id_state_path)
             thread_id = files.file_thread_id(snapshot.absolute_path)
-            record = store.claim(
-                snapshot, run_id=run_id, thread_id=thread_id, now=current
-            )
+            record = store.claim(snapshot, thread_id=thread_id, now=current)
             if record is None:
                 continue
             submissions.append(
                 FileSubmission(
                     record=record,
-                    run_id=run_id,
-                    text=text,
-                    parts=parts,
+                    input=message,
                 )
             )
     return submissions

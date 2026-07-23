@@ -62,9 +62,6 @@ def snapshot_context(context: ApiContext) -> dict[str, object]:
         },
         "channels": [],
         "execution": {
-            "recent_updates": [
-                asdict(item) for item in context.executor.store.list_updates(limit=20)
-            ],
             "recent_runs": [asdict(item) for item in recent_runs],
             "recent_messages": [
                 message.to_data()

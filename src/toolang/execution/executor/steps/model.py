@@ -71,7 +71,7 @@ def execute(state: _AgicState) -> ModelCallResult:
     stream = _ModelStream(step=step_index)
     _LOGGER.info(
         "Step started thread=%s run=%s step=%s kind=model",
-        run.thread_id,
+        run.thread,
         run.run_id,
         step_index,
     )
@@ -102,13 +102,13 @@ def execute(state: _AgicState) -> ModelCallResult:
     )
     log_model_target(
         prepared.model,
-        thread_id=run.thread_id,
+        thread_id=run.thread,
         run_id=run.run_id,
         step_index=step_index,
     )
     log_model_request(
         request,
-        thread_id=run.thread_id,
+        thread_id=run.thread,
         run_id=run.run_id,
         step_index=step_index,
     )
@@ -134,7 +134,7 @@ def execute(state: _AgicState) -> ModelCallResult:
         )
         _LOGGER.error(
             "Step failed thread=%s run=%s step=%s kind=model error=%r duration_ms=%s",
-            run.thread_id,
+            run.thread,
             run.run_id,
             step_index,
             str(exc),
@@ -167,7 +167,7 @@ def _apply_response(
     parsed_calls = tuple(current.tool_calls)
     log_model_result(
         current,
-        thread_id=run.thread_id,
+        thread_id=run.thread,
         run_id=run.run_id,
         step_index=step_index,
     )
@@ -227,7 +227,7 @@ def _apply_response(
     usage = current.usage
     _LOGGER.info(
         "Step finished thread=%s run=%s step=%s kind=model status=finished input=%s output=%s tool_calls=%s duration_ms=%s",
-        run.thread_id,
+        run.thread,
         run.run_id,
         step_index,
         usage.input_tokens if usage is not None else 0,

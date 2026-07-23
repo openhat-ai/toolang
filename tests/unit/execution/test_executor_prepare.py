@@ -11,10 +11,9 @@ from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.ids import IdIssuer
-from toolang.execution.executor.common import bind_run_request
-from toolang.execution.executor import RunExecutor
-from toolang.execution.executor.prepare import prepare_agic, select_origin_agic
-from toolang.execution.executor.request import RunRequest
+from toolang.execution.executor import RunExecutor, RunSpec
+from toolang.execution.executor.common import BoundRun
+from toolang.execution.executor.prepare import prepare_agic
 from toolang.execution.store import RunStore
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
 from toolang.up.setup import AgentSetup
@@ -110,15 +109,16 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
             fingerprint="state-1",
         ),
     )
-    run = bind_run_request(
-        RunRequest(
-            origin="chat",
-            input=Message.user("hello"),
-            thread_id="term_1",
-        ),
-        ids=IdIssuer(root / ".runtime" / "ids.json"),
+    run = BoundRun(
+        run_id="run_1",
+        root_run_id="run_1",
+        thread="term_1",
+        input=Message.user("hello"),
+        params={},
+        model=None,
         state=state,
         setup=setup,
+        created_at="2026-01-01T00:00:00Z",
     )
     context = cast(
         Any,
@@ -142,7 +142,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         ),
     )
 
-    prepared = prepare_agic(context, run, select_origin_agic(program, origin="chat"))
+    prepared = prepare_agic(context, run, agic)
 
     assert prepared.run is run
     assert prepared.agic is agic
@@ -213,17 +213,18 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     store.create_thread(thread_id="term_1")
     executor = RunExecutor(store, IdIssuer(home / ".runtime" / "ids.json"))
     try:
-        record = asyncio.run(
-            executor.start(
-                setup,
-                state,
-                RunRequest(
-                    origin="chat",
+        async def execute() -> Any:
+            return await executor.start(
+                RunSpec(
+                    setup=setup,
+                    state=state,
+                    thread="term_1",
+                    runnable="chat",
                     input=Message.user("hello"),
-                    thread_id="term_1",
-                ),
+                )
             )
-        )
+
+        record = asyncio.run(execute())
         assert record.status == "finished"
         assert [step.kind for step in store.list_steps(run_id=record.id)] == ["model"]
         assert len(adapter.requests) == 1

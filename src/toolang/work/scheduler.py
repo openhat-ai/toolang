@@ -7,12 +7,10 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 
 from toolang.base.types.message import Message
-from toolang.common.ids import allocate_run_id
-
-from ..execution.executor import Executor
-from ..execution.executor.request import RunRequest
+from ..execution.executor import RunExecutor, RunSpec
 from ..execution.records import RunRecord
 from ..state.state import AgentState
+from ..up.setup import AgentSetup
 from toolang.catalog.types import JobKind
 from .state import AgentJobs, HomeJobs
 from .store import ClaimedJob, JobStore
@@ -27,7 +25,8 @@ class Scheduler:
         self,
         *,
         job_store: JobStore,
-        executor: Executor,
+        executor: RunExecutor,
+        get_agent_setup: Callable[[], AgentSetup],
         get_home_jobs: Callable[[], HomeJobs],
         get_agent_state: Callable[[], AgentState],
         kinds: tuple[JobKind, ...] = ("task", "chore"),
@@ -35,6 +34,7 @@ class Scheduler:
     ) -> None:
         self.job_store = job_store
         self.executor = executor
+        self.get_agent_setup = get_agent_setup
         self.get_home_jobs = get_home_jobs
         self.get_agent_state = get_agent_state
         self.kinds = kinds
@@ -71,33 +71,47 @@ class Scheduler:
             while claimed := self.job_store.claim_due(
                 jobs=jobs,
                 kind=kind,
-                run_id=allocate_run_id(self.executor.id_state_path),
                 now=current,
             ):
-                if not claimed.definition.input.strip():
-                    self.job_store.finish_run(
-                        jobs=jobs,
-                        run_id=claimed.run_id,
-                        run_status="finished",
-                        now=current,
+                if (
+                    self.executor.store.get_thread(
+                        thread_id=claimed.job.thread_id
                     )
-                    continue
-                task = asyncio.create_task(
-                    self.executor.run(
-                        RunRequest(
-                            origin=kind,
-                            input=Message.user(claimed.definition.input),
-                            run_id=claimed.run_id,
-                            thread_id=claimed.job.thread_id,
-                            context={
-                                "job": claimed.definition.run_metadata(),
-                                "job_trigger": claimed.trigger,
-                            },
-                        ),
-                        state,
+                    is None
+                ):
+                    self.executor.store.create_thread(
+                        thread_id=claimed.job.thread_id,
+                        origin=kind,
+                        context={"job_id": claimed.job.job_id},
+                    )
+                runnable = (
+                    kind
+                    if state.program.find_agic(kind) is not None
+                    else "default"
+                )
+                handle = self.executor.start(
+                    RunSpec(
+                        setup=self.get_agent_setup(),
+                        state=state,
+                        thread=claimed.job.thread_id,
+                        runnable=runnable,
+                        input=Message.user(claimed.definition.input),
                     )
                 )
-                self._active[claimed.run_id] = (task, jobs)
+                try:
+                    self.job_store.bind_run(
+                        job_id=claimed.job.job_id,
+                        kind=claimed.job.kind,
+                        run_id=handle.run_id,
+                        now=current,
+                    )
+                except Exception:
+                    try:
+                        handle.stop(reason="Job run binding failed.")
+                    except (RuntimeError, ValueError):
+                        pass
+                    raise
+                self._active[handle.run_id] = (handle.task, jobs)
                 claimed_jobs.append(claimed)
         return tuple(claimed_jobs)
 

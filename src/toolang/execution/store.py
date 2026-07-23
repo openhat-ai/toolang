@@ -31,7 +31,6 @@ from .records import (
     ThreadControlRecord,
     ThreadControlRef,
     ThreadRecord,
-    UpdateRecord,
     step_message_role,
     step_input_items_from_data,
     step_input_items_to_data,
@@ -46,7 +45,7 @@ from .types import (
     StepStatus,
 )
 
-_SCHEMA_VERSION = 13
+_SCHEMA_VERSION = 15
 
 
 class RunStore:
@@ -84,38 +83,31 @@ class RunStore:
         context: Mapping[str, Any],
         request_id: str | None,
         created_at: str,
-    ) -> tuple[RunRecord, RunControlRecord, bool]:
-        """Atomically accept one run and return whether this caller owns it."""
+    ) -> tuple[RunRecord, RunControlRecord]:
+        """Atomically insert one new run and its start control."""
 
         if not run_id or "/" in run_id:
             raise ValueError(f"invalid run id: {run_id!r}")
+        _validate_request_id(request_id)
 
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
-                existing_run = self._conn.execute(
-                    "SELECT * FROM runs WHERE id = ?", (run_id,)
-                ).fetchone()
-                if existing_run is not None:
-                    existing_control = self._conn.execute(
-                        'SELECT * FROM run_controls WHERE run = ? AND "index" = 0',
-                        (run_id,),
+                if (
+                    self._conn.execute(
+                        "SELECT 1 FROM runs WHERE id = ?", (run_id,)
                     ).fetchone()
-                    if existing_control is None:
-                        raise ValueError(f"run start control is missing: {run_id}")
-                    control = _run_control_from_row(existing_control)
-                    if request_id is None or control.request_id != request_id:
-                        raise ValueError(f"run already exists: {run_id}")
-                    existing = _run_from_row(existing_run)
-                    if (
-                        existing.parent != parent
-                        or existing.thread != thread
-                        or control.input != input
-                        or control.context != dict(context)
-                    ):
-                        raise ValueError(f"conflicting run start request: {run_id}")
-                    self._conn.commit()
-                    return existing, control, False
+                    is not None
+                ):
+                    raise ValueError(f"run already exists: {run_id}")
+                if request_id is not None and (
+                    self._conn.execute(
+                        "SELECT 1 FROM run_controls WHERE request_id = ?",
+                        (request_id,),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise ValueError(f"run control request already exists: {request_id}")
                 if (
                     self._conn.execute(
                         "SELECT 1 FROM threads WHERE thread_id = ?", (thread,)
@@ -163,12 +155,16 @@ class RunStore:
                     (run_id,),
                 ).fetchone()
                 self._conn.commit()
+            except sqlite3.IntegrityError as exc:
+                self._conn.rollback()
+                identity = request_id or run_id
+                raise ValueError(f"run control already exists: {identity}") from exc
             except Exception:
                 self._conn.rollback()
                 raise
         if run_row is None or control_row is None:
             raise RuntimeError(f"run acceptance failed: {run_id}")
-        return _run_from_row(run_row), _run_control_from_row(control_row), True
+        return _run_from_row(run_row), _run_control_from_row(control_row)
 
     def accept_run_control(
         self,
@@ -180,7 +176,7 @@ class RunStore:
         context: Mapping[str, Any],
         request_id: str | None,
         created_at: str,
-    ) -> tuple[RunControlRecord, bool]:
+    ) -> RunControlRecord:
         """Atomically allocate and accept one steer or stop control."""
 
         if kind not in {"steer", "stop"}:
@@ -189,33 +185,24 @@ class RunStore:
             raise ValueError(f"unsupported run control timing: {timing}")
         if kind == "steer" and input is None:
             raise ValueError("steer control requires input")
+        _validate_request_id(request_id)
 
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
+                if request_id is not None and (
+                    self._conn.execute(
+                        "SELECT 1 FROM run_controls WHERE request_id = ?",
+                        (request_id,),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise ValueError(f"run control request already exists: {request_id}")
                 run = self._conn.execute(
                     "SELECT status FROM runs WHERE id = ?", (run_id,)
                 ).fetchone()
                 if run is None:
                     raise ValueError(f"run not found: {run_id}")
-                if request_id is not None:
-                    existing = self._conn.execute(
-                        "SELECT * FROM run_controls WHERE run = ? AND request_id = ?",
-                        (run_id, request_id),
-                    ).fetchone()
-                    if existing is not None:
-                        control = _run_control_from_row(existing)
-                        if (
-                            control.kind != kind
-                            or control.timing != timing
-                            or control.input != input
-                            or control.context != dict(context)
-                        ):
-                            raise ValueError(
-                                f"conflicting run control request: {run_id}:{request_id}"
-                            )
-                        self._conn.commit()
-                        return control, False
                 if str(run["status"]) not in {"pending", "running"}:
                     raise ValueError(f"run is not active: {run_id}")
                 row = self._conn.execute(
@@ -247,12 +234,16 @@ class RunStore:
                     (run_id, index),
                 ).fetchone()
                 self._conn.commit()
+            except sqlite3.IntegrityError as exc:
+                self._conn.rollback()
+                identity = request_id or f"{run_id}:{index}"
+                raise ValueError(f"run control already exists: {identity}") from exc
             except Exception:
                 self._conn.rollback()
                 raise
         if inserted is None:
             raise RuntimeError(f"run control acceptance failed: {run_id}")
-        return _run_control_from_row(inserted), True
+        return _run_control_from_row(inserted)
 
     def begin_run(
         self,
@@ -321,29 +312,6 @@ class RunStore:
             )
             self._conn.commit()
 
-    def cancel_run_control(
-        self, *, run_id: str, index: int, finished_at: str
-    ) -> RunControlRecord:
-        """Cancel one pending control explicitly withdrawn by its caller."""
-
-        with self._lock:
-            self._conn.execute(
-                """
-                UPDATE run_controls
-                SET status = 'canceled', finished_at = ?
-                WHERE run = ? AND "index" = ? AND status = 'pending'
-                """,
-                (finished_at, run_id, index),
-            )
-            row = self._conn.execute(
-                'SELECT * FROM run_controls WHERE run = ? AND "index" = ?',
-                (run_id, index),
-            ).fetchone()
-            self._conn.commit()
-        if row is None:
-            raise ValueError(f"run control not found: {run_id}:{index}")
-        return _run_control_from_row(row)
-
     def fail_pending_run_controls(
         self, *, run_id: str, finished_at: str, error: str
     ) -> None:
@@ -369,67 +337,30 @@ class RunStore:
         request_id: str | None = None,
         context: Mapping[str, Any] | None = None,
         created_at: str | None = None,
-    ) -> tuple[ThreadRecord, ThreadControlRecord, bool]:
+    ) -> tuple[ThreadRecord, ThreadControlRecord]:
         """Atomically create one thread and its create control."""
 
+        _validate_request_id(request_id)
         now = created_at or utc_now()
         effective_peer = peer or ThreadPeer()
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
-                if request_id is not None:
-                    replay = self._conn.execute(
-                        "SELECT * FROM thread_controls WHERE request_id = ?",
+                if request_id is not None and (
+                    self._conn.execute(
+                        "SELECT 1 FROM thread_controls WHERE request_id = ?",
                         (request_id,),
                     ).fetchone()
-                    if replay is not None:
-                        control = _thread_control_from_row(replay)
-                        if control.kind != "create":
-                            raise ValueError(
-                                f"conflicting thread control request: {request_id}"
-                            )
-                        existing = self._conn.execute(
-                            "SELECT * FROM threads WHERE thread_id = ?",
-                            (control.thread,),
-                        ).fetchone()
-                        if existing is None:
-                            raise RuntimeError(
-                                f"thread control result is missing: {control.thread}"
-                            )
-                        thread = _thread_from_row(existing)
-                        if (
-                            thread.origin != origin
-                            or thread.peer != effective_peer
-                            or control.context != dict(context or {})
-                        ):
-                            raise ValueError(
-                                f"conflicting thread control request: {request_id}"
-                            )
-                        self._conn.commit()
-                        return thread, control, False
+                    is not None
+                ):
+                    raise ValueError(
+                        f"thread control request already exists: {request_id}"
+                    )
                 existing_thread = self._conn.execute(
                     "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
                 ).fetchone()
                 if existing_thread is not None:
-                    existing_control = self._conn.execute(
-                        'SELECT * FROM thread_controls WHERE thread = ? AND "index" = 0',
-                        (thread_id,),
-                    ).fetchone()
-                    if existing_control is None:
-                        raise ValueError(
-                            f"thread create control is missing: {thread_id}"
-                        )
-                    control = _thread_control_from_row(existing_control)
-                    thread = _thread_from_row(existing_thread)
-                    if (
-                        control.kind != "create"
-                        or control.context != dict(context or {})
-                        or thread.origin != origin
-                        or thread.peer != effective_peer
-                    ):
-                        raise ValueError(f"conflicting thread create: {thread_id}")
-                    self._conn.commit()
-                    return thread, control, False
+                    raise ValueError(f"thread already exists: {thread_id}")
                 self._conn.execute(
                     """
                     INSERT INTO thread_controls(
@@ -458,12 +389,16 @@ class RunStore:
                     (thread_id,),
                 ).fetchone()
                 self._conn.commit()
+            except sqlite3.IntegrityError as exc:
+                self._conn.rollback()
+                identity = request_id or thread_id
+                raise ValueError(f"thread control already exists: {identity}") from exc
             except Exception:
                 self._conn.rollback()
                 raise
         if thread_row is None or control_row is None:
             raise RuntimeError(f"thread creation failed: {thread_id}")
-        return _thread_from_row(thread_row), _thread_control_from_row(control_row), True
+        return _thread_from_row(thread_row), _thread_control_from_row(control_row)
 
     def fork_thread(
         self,
@@ -476,38 +411,23 @@ class RunStore:
         request_id: str | None,
         context: Mapping[str, Any],
         created_at: str,
-    ) -> tuple[ThreadRecord, ThreadControlRecord, bool]:
+    ) -> tuple[ThreadRecord, ThreadControlRecord]:
         """Atomically fork one thread without copying execution records."""
 
+        _validate_request_id(request_id)
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
-                if request_id is not None:
-                    replay = self._conn.execute(
-                        "SELECT * FROM thread_controls WHERE request_id = ?",
+                if request_id is not None and (
+                    self._conn.execute(
+                        "SELECT 1 FROM thread_controls WHERE request_id = ?",
                         (request_id,),
                     ).fetchone()
-                    if replay is not None:
-                        control = _thread_control_from_row(replay)
-                        if (
-                            control.kind != "fork"
-                            or control.source_thread != source_thread
-                            or control.anchor_run != anchor_run
-                            or control.context != dict(context)
-                        ):
-                            raise ValueError(
-                                f"conflicting thread control request: {request_id}"
-                            )
-                        existing = self._conn.execute(
-                            "SELECT * FROM threads WHERE thread_id = ?",
-                            (control.thread,),
-                        ).fetchone()
-                        if existing is None:
-                            raise RuntimeError(
-                                f"thread control result is missing: {control.thread}"
-                            )
-                        self._conn.commit()
-                        return _thread_from_row(existing), control, False
+                    is not None
+                ):
+                    raise ValueError(
+                        f"thread control request already exists: {request_id}"
+                    )
                 history = self._thread_history(
                     thread_id=source_thread,
                     include_superseded=False,
@@ -521,22 +441,7 @@ class RunStore:
                     ).fetchone()
                     is not None
                 ):
-                    existing = self._conn.execute(
-                        'SELECT * FROM thread_controls WHERE thread = ? AND "index" = 0',
-                        (thread_id,),
-                    ).fetchone()
-                    if existing is None:
-                        raise ValueError(f"thread already exists: {thread_id}")
-                    control = _thread_control_from_row(existing)
-                    if request_id is None or control.request_id != request_id:
-                        raise ValueError(f"thread already exists: {thread_id}")
-                    row = self._conn.execute(
-                        "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
-                    ).fetchone()
-                    self._conn.commit()
-                    if row is None:
-                        raise RuntimeError(f"thread not found: {thread_id}")
-                    return _thread_from_row(row), control, False
+                    raise ValueError(f"thread already exists: {thread_id}")
                 self._conn.execute(
                     """
                     INSERT INTO thread_controls(
@@ -579,12 +484,16 @@ class RunStore:
                     (thread_id,),
                 ).fetchone()
                 self._conn.commit()
+            except sqlite3.IntegrityError as exc:
+                self._conn.rollback()
+                identity = request_id or thread_id
+                raise ValueError(f"thread control already exists: {identity}") from exc
             except Exception:
                 self._conn.rollback()
                 raise
         if thread_row is None or control_row is None:
             raise RuntimeError(f"thread fork failed: {thread_id}")
-        return _thread_from_row(thread_row), _thread_control_from_row(control_row), True
+        return _thread_from_row(thread_row), _thread_control_from_row(control_row)
 
     def rewind_thread(
         self,
@@ -595,35 +504,23 @@ class RunStore:
         expected_head: ThreadControlRef,
         context: Mapping[str, Any],
         created_at: str,
-    ) -> tuple[ThreadRecord, ThreadControlRecord, tuple[str, ...], bool]:
+    ) -> tuple[ThreadRecord, ThreadControlRecord, tuple[str, ...]]:
         """Atomically rewind one thread using optimistic head comparison."""
 
+        _validate_request_id(request_id)
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
-                if request_id is not None:
-                    existing = self._conn.execute(
-                        "SELECT * FROM thread_controls WHERE request_id = ?",
+                if request_id is not None and (
+                    self._conn.execute(
+                        "SELECT 1 FROM thread_controls WHERE request_id = ?",
                         (request_id,),
                     ).fetchone()
-                    if existing is not None:
-                        control = _thread_control_from_row(existing)
-                        if (
-                            control.kind != "rewind"
-                            or control.thread != thread_id
-                            or control.anchor_run != anchor_run
-                            or control.context != dict(context)
-                        ):
-                            raise ValueError(
-                                f"conflicting thread control request: {request_id}"
-                            )
-                        thread_row = self._conn.execute(
-                            "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
-                        ).fetchone()
-                        self._conn.commit()
-                        if thread_row is None:
-                            raise RuntimeError(f"thread not found: {thread_id}")
-                        return _thread_from_row(thread_row), control, (), False
+                    is not None
+                ):
+                    raise ValueError(
+                        f"thread control request already exists: {request_id}"
+                    )
                 thread_row = self._conn.execute(
                     "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
                 ).fetchone()
@@ -716,6 +613,10 @@ class RunStore:
                     (thread_id, index),
                 ).fetchone()
                 self._conn.commit()
+            except sqlite3.IntegrityError as exc:
+                self._conn.rollback()
+                identity = request_id or f"{thread_id}:{index}"
+                raise ValueError(f"thread control already exists: {identity}") from exc
             except Exception:
                 self._conn.rollback()
                 raise
@@ -725,7 +626,6 @@ class RunStore:
             _thread_from_row(updated_thread),
             _thread_control_from_row(control_row),
             superseded,
-            True,
         )
 
     def get_thread(self, *, thread_id: str) -> ThreadRecord | None:
@@ -750,18 +650,6 @@ class RunStore:
             row = self._conn.execute(
                 'SELECT * FROM thread_controls WHERE thread = ? AND "index" = ?',
                 (thread_id, index),
-            ).fetchone()
-        return _thread_control_from_row(row) if row is not None else None
-
-    def get_thread_control_by_request_id(
-        self, *, request_id: str
-    ) -> ThreadControlRecord | None:
-        """Return the globally idempotent thread control for one request."""
-
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM thread_controls WHERE request_id = ?",
-                (request_id,),
             ).fetchone()
         return _thread_control_from_row(row) if row is not None else None
 
@@ -914,32 +802,6 @@ class RunStore:
         with self._lock:
             rows = self._conn.execute(query, tuple(params)).fetchall()
         return [_run_from_row(row) for row in rows]
-
-    def active_run_for_thread(self, *, thread_id: str) -> RunRecord | None:
-        """Return the currently running run for one thread, if any."""
-
-        runs = self.list_runs(thread_id=thread_id, status="running", limit=1)
-        return runs[0] if runs else None
-
-    def list_runs_from_anchor(self, *, run_id: str) -> tuple[RunRecord, ...]:
-        """Return visible runs accepted at or after one anchor in its thread."""
-
-        with self._lock:
-            anchor = self._conn.execute(
-                "SELECT thread, rowid FROM runs WHERE id = ?",
-                (run_id,),
-            ).fetchone()
-            if anchor is None:
-                raise ValueError(f"run not found: {run_id}")
-            rows = self._conn.execute(
-                """
-                SELECT * FROM runs
-                WHERE thread = ? AND rowid >= ? AND superseded_by_thread IS NULL
-                ORDER BY rowid ASC
-                """,
-                (str(anchor["thread"]), int(anchor["rowid"])),
-            ).fetchall()
-        return tuple(_run_from_row(row) for row in rows)
 
     def list_thread_runs_chronological(
         self,
@@ -1239,78 +1101,11 @@ class RunStore:
                 results.extend(_replay_messages_from_step(step))
         return _recent_valid_model_history(results, limit=limit)
 
-    def recent_text_conversation_messages(
-        self,
-        *,
-        thread_id: str,
-        limit: int = 32,
-    ) -> list[Message]:
-        """Return recent actor messages without raw tool-call or tool-result parts."""
-
-        runs = self._conversation_runs(thread_id=thread_id, limit=max(limit * 4, 100))
-        steps_by_run = self.list_steps_for_runs(
-            run_ids=tuple(run.id for run in runs)
-        )
-        results: list[Message] = []
-        for run in runs:
-            inputs = self.list_run_controls(run_id=run.id)
-            input_messages = [item.input for item in inputs if item.input is not None]
-            for input_message in input_messages:
-                actor_message = _actor_text_message(input_message)
-                if actor_message is not None:
-                    results.append(actor_message)
-            for step in steps_by_run.get(run.id, ()):
-                for message in _replay_messages_from_step(step):
-                    actor_message = _actor_text_message(message)
-                    if actor_message is not None:
-                        results.append(actor_message)
-        return results[-limit:]
-
     def _conversation_runs(self, *, thread_id: str, limit: int) -> list[RunRecord]:
         current = list(
             self.list_thread_history_chronological(thread_id=thread_id, limit=None)
         )
         return current[-limit:]
-
-    def append_update(
-        self,
-        *,
-        kind: str,
-        payload: dict[str, Any] | None = None,
-        created_at: str | None = None,
-    ) -> UpdateRecord:
-        now = created_at or utc_now()
-        with self._lock:
-            cursor = self._conn.execute(
-                """
-                INSERT INTO updates(
-                    kind,
-                    payload,
-                    created_at
-                ) VALUES (?, ?, ?)
-                """,
-                (
-                    kind,
-                    _dump_json(payload or {}),
-                    now,
-                ),
-            )
-            inserted = self._conn.execute(
-                "SELECT * FROM updates WHERE update_id = ?",
-                (cursor.lastrowid,),
-            ).fetchone()
-            self._conn.commit()
-        if inserted is None:
-            raise RuntimeError("update insert returned no row")
-        return _update_from_row(inserted)
-
-    def list_updates(self, *, limit: int = 100) -> list[UpdateRecord]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM updates ORDER BY update_id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-        return [_update_from_row(row) for row in reversed(rows)]
 
     def get_run_control(self, *, run_id: str, index: int) -> RunControlRecord | None:
         with self._lock:
@@ -1370,20 +1165,27 @@ class RunStore:
             self._conn.execute("PRAGMA foreign_keys=ON;")
             self._conn.execute("BEGIN IMMEDIATE")
             version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-            if version != _SCHEMA_VERSION:
-                self._conn.execute("DROP TABLE IF EXISTS steps")
-                self._conn.execute("DROP TABLE IF EXISTS run_control_counters")
-                self._conn.execute("DROP TABLE IF EXISTS command_counters")
-                self._conn.execute("DROP TABLE IF EXISTS thread_controls")
-                self._conn.execute("DROP TABLE IF EXISTS run_controls")
-                self._conn.execute("DROP TABLE IF EXISTS commands")
-                self._conn.execute("DROP TABLE IF EXISTS inputs")
-                self._conn.execute("DROP TABLE IF EXISTS runs")
-                self._conn.execute("DROP TABLE IF EXISTS threads")
-                self._conn.execute("DROP TABLE IF EXISTS updates")
-                self._conn.execute("DROP TABLE IF EXISTS events")
-                self._conn.execute("DROP TABLE IF EXISTS instruction_blobs")
-                self._conn.execute("DROP TABLE IF EXISTS prompts")
+            if version not in {0, 13, 14, _SCHEMA_VERSION}:
+                self._conn.rollback()
+                raise RuntimeError(
+                    f"unsupported run store schema version: {version}; "
+                    f"expected 13, 14, or {_SCHEMA_VERSION}"
+                )
+            if version == 13:
+                self._conn.execute("DROP INDEX IF EXISTS idx_run_controls_request")
+                try:
+                    self._conn.execute(
+                        """
+                        CREATE UNIQUE INDEX idx_run_controls_request
+                        ON run_controls(request_id)
+                        WHERE request_id IS NOT NULL
+                        """
+                    )
+                except sqlite3.IntegrityError as exc:
+                    self._conn.rollback()
+                    raise RuntimeError(
+                        "run store schema migration found duplicate request ids"
+                    ) from exc
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS threads (
@@ -1438,7 +1240,7 @@ class RunStore:
             self._conn.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_run_controls_request
-                ON run_controls(run, request_id)
+                ON run_controls(request_id)
                 WHERE request_id IS NOT NULL
                 """
             )
@@ -1490,16 +1292,6 @@ class RunStore:
             )
             self._conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS updates (
-                    update_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    kind TEXT NOT NULL,
-                    payload TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                )
-                """
-            )
-            self._conn.execute(
-                """
                 CREATE TABLE IF NOT EXISTS prompts (
                     hash TEXT PRIMARY KEY,
                     body TEXT NOT NULL
@@ -1515,21 +1307,23 @@ class RunStore:
             self._conn.execute(
                 'CREATE INDEX IF NOT EXISTS idx_steps_parent_index ON steps(parent, "index")'
             )
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_updates_created ON updates(created_at)"
-            )
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
 
 
-def run_store_path(toolang_root: Path, agent_name: str) -> Path:
-    return toolang_root / "agents" / agent_name / ".runtime" / "runs.db"
 def _dump_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def _load_json(value: str) -> Any:
     return json.loads(value)
+
+
+def _validate_request_id(request_id: str | None) -> None:
+    if request_id is not None and (
+        not request_id.strip() or request_id != request_id.strip()
+    ):
+        raise ValueError(f"invalid request id: {request_id!r}")
 
 
 def _like_prefix(value: str) -> str:
@@ -1629,16 +1423,6 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
     )
 
 
-def _update_from_row(row: sqlite3.Row) -> UpdateRecord:
-    payload_raw = _load_json(str(row["payload"]))
-    return UpdateRecord(
-        update_id=int(row["update_id"]),
-        kind=str(row["kind"]),
-        payload=dict(payload_raw) if isinstance(payload_raw, Mapping) else {},
-        created_at=str(row["created_at"]),
-    )
-
-
 def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
     input_raw = _load_json(str(row["input"])) if row["input"] is not None else None
     context_raw = _load_json(str(row["context"])) if row["context"] is not None else {}
@@ -1697,17 +1481,6 @@ def _replay_messages_from_step(step: StepRecord) -> list[Message]:
     if isinstance(reasoning_content, str) and reasoning_content:
         meta["reasoning_content"] = reasoning_content
     return [Message(role=role, parts=tuple(step.output), meta=meta)]
-def _actor_text_message(message: Message) -> Message | None:
-    if message.role not in {"user", "assistant"}:
-        return None
-    parts = tuple(
-        part
-        for part in message.parts
-        if not isinstance(part, (ToolCallPart, ToolResultPart))
-    )
-    if not parts:
-        return None
-    return Message(role=message.role, parts=parts, meta=dict(message.meta))
 
 
 def _recent_valid_model_history(

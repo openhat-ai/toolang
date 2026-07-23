@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 
 from toolang.api.app import ApiContextDep
 from toolang.common.errors import ToolangError
@@ -33,17 +33,6 @@ def profile(context: ApiContextDep) -> dict[str, object]:
         "avatar": None,
         "environment": _profile_environment(context, runtime_state=runtime_state),
         "metrics": _profile_metrics(context),
-    }
-
-
-@router.get("/updates", summary="List Updates")
-def updates(
-    context: ApiContextDep, limit: int = Query(default=100)
-) -> dict[str, object]:
-    return {
-        "items": [
-            item.to_data() for item in context.executor.store.list_updates(limit=limit)
-        ]
     }
 
 

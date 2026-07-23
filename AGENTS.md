@@ -153,15 +153,14 @@
   `ThreadManager` shares the same store and issuer without depending on the
   executor. Persistence and control-status updates complete before the tracer
   observes an event.
-- `toolang.execution.executor` contains the run executor, external run request,
+- `toolang.execution.executor` contains `RunExecutor`, `RunSpec`, `RunHandle`,
   its mandatory `PersistSink`, shared run values, model-input preparation, and
   bounded diagnostics. Durable records, events, storage, inspection, schemas,
   and thread management remain at the `toolang.execution` package level.
-- `RunRequest` carries canonical message input, run and thread identity,
-  executable selection, an optional single model choice, idempotency identity,
-  and caller context. It must not duplicate tools, providers, adapters,
-  programs, caps, or selector sets already captured by `AgentSetup` or
-  `AgentState`.
+- `RunSpec` carries the captured `AgentSetup` and `AgentState`, existing thread
+  id, unique runnable name, canonical message input, optional model choice, and
+  optional runnable parameters. Run and request identities are `start()`
+  arguments rather than executable input.
 - Within `toolang.execution.executor`, `runs` owns complete agic and flow run
   bodies, `stmts` owns lowered flow-statement semantics, and `steps` owns step
   execution and event emission. Top-level runs have no synthetic containing
@@ -229,6 +228,9 @@
 - Persist run controls directly through `RunExecutor` and `RunStore`; runtime
   owns their application status. Persist run and step facts by sending
   `RunEvent` values through the executor's mandatory internal `PersistSink`.
+- Run events are the complete source of durable run and step facts.
+  `PersistSink` stores their references and output edges directly and never
+  synthesizes steps or reconstructs runtime locals.
 - Run and thread IDs use the shared file-backed allocator. Run-control and
   thread-control indexes are allocated and inserted in one SQLite transaction
   so all durable identities remain safe across local processes.

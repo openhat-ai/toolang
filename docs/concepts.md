@@ -167,23 +167,16 @@ A run is one concrete handling attempt inside one thread.
 
 A run has:
 
-- one origin
-- one start command input
+- one globally unique run id
+- one thread
+- one runnable name
+- one start-control input
 - one status
 - zero or more steps
 
-The run origin names the semantic source of the run. Current origins are:
-
-| Origin | Meaning |
-| --- | --- |
-| `chat` | A conversational user message |
-| `task` | A local task execution |
-| `chore` | A scheduled chore execution |
-| `script` | A direct CLI executable invocation |
-
-Placement and origin are independent. Placement decides how the agent is
-assembled; origin decides how instructions, messages, and execution context are
-assembled for one run.
+The runnable name resolves uniquely to an agic or flow in the captured program.
+Thread metadata describes the conversation or work context; execution does not
+carry a separate run-origin switch.
 
 Toolang-owned run ids may also use one dedicated short generated id family. See
 [ids.md](./ids.md).

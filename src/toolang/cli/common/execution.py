@@ -12,8 +12,9 @@ import typer
 
 from toolang.execution.inspection import ExecutionInspection
 from toolang.execution.schemas import RunDetail, RunInfo, ThreadDetail, ThreadInfo
-from toolang.execution.store import RunStore, run_store_path
+from toolang.execution.store import RunStore
 from toolang.execution.types import RunStatus
+from toolang.up.process import agent_run_store_path
 from .context import context_root, require_prefix_agent
 
 
@@ -34,7 +35,7 @@ class LocalExecutionClient:
 
     @classmethod
     def open(cls, ctx: typer.Context) -> LocalExecutionClient | None:
-        path = run_store_path(context_root(ctx), require_prefix_agent(ctx))
+        path = agent_run_store_path(context_root(ctx), require_prefix_agent(ctx))
         return cls(RunStore(path)) if path.exists() else None
 
     def close(self) -> None:

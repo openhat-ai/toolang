@@ -6,7 +6,6 @@ from typing import Literal
 
 StepPath = str
 RunId = str
-RunLoop = str
 
 RunStatus = Literal["pending", "running", "finished", "failed", "canceled"]
 StepStatus = Literal["running", "finished", "failed", "canceled"]

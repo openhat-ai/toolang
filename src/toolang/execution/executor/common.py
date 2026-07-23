@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from typing import Any, Literal
 
 from toolang.base.types.message import Message, Part, TextPart, message_text
 from toolang.common.errors import ToolangError
-from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.lang.ast import (
     AgicDecl,
@@ -35,8 +34,7 @@ from toolang.state.state import AgentState
 from toolang.up.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
-from ..records import RunControlRecord, RunControlRef
-from .request import ExecutableKind, RunRequest
+from ..records import OutputRef, RunControlRecord, RunControlRef, StepInputItem
 from ..types import StepKind, StepPath
 
 Shape = Literal["none", "item", "list"]
@@ -45,68 +43,23 @@ EventEmitter = Callable[[RunEvent], None]
 
 @dataclass(frozen=True, slots=True)
 class BoundRun:
-    """One request bound to immutable state, setup, and durable IDs."""
+    """One accepted run bound to immutable execution inputs."""
 
     run_id: str
-    origin: str
-    thread_id: str
-    executable_kind: ExecutableKind
-    executable_name: str | None
+    root_run_id: str
+    thread: str
     input: Message
-    input_text: str
-    model_selector: str | None
-    context: dict[str, Any]
+    params: Mapping[str, object]
+    model: str | None
     state: AgentState
     setup: AgentSetup
     created_at: str
+    call: Literal["top", "run"] = "top"
+    placement: Mapping[str, object] | None = None
 
     @property
-    def invoke_params(self) -> dict[str, Any]:
-        value = self.context.get("invoke_params")
-        if not isinstance(value, dict):
-            return {}
-        return {str(key): item for key, item in value.items()}
-
-    @property
-    def job_context(self) -> dict[str, object] | None:
-        value = self.context.get("job")
-        if not isinstance(value, Mapping):
-            return None
-        return {str(key): item for key, item in value.items()}
-
-
-def bind_run_request(
-    request: RunRequest,
-    *,
-    ids: IdIssuer,
-    state: AgentState,
-    setup: AgentSetup,
-) -> BoundRun:
-    """Bind one external request to immutable execution inputs."""
-
-    if not request.thread_id.strip():
-        raise ValueError("run request requires an existing thread id")
-    return BoundRun(
-        run_id=request.run_id or ids.issue_run(),
-        origin=request.origin,
-        thread_id=request.thread_id,
-        executable_kind=request.executable_kind,
-        executable_name=request.executable_name,
-        input=request.input,
-        input_text=message_text(request.input.parts),
-        model_selector=_request_model_selector(request),
-        context=dict(request.context),
-        state=state,
-        setup=setup,
-        created_at=utc_now(),
-    )
-
-
-def _request_model_selector(request: RunRequest) -> str | None:
-    selector = request.model_selector
-    if isinstance(selector, str) and selector.strip():
-        return selector.strip()
-    return None
+    def input_text(self) -> str:
+        return message_text(self.input.parts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +68,7 @@ class Local:
 
     value: Any = None
     shape: Shape = "none"
+    source: RunControlRef | OutputRef | None = None
 
 
 async def execute_step(
@@ -131,16 +85,24 @@ async def execute_step(
     """Execute one statement step inside its canonical event boundary."""
 
     started_at = utc_now()
-    inputs = tuple(RunControlRef(index=item.index) for item in controls)
+    inputs = _unique_step_inputs(
+        (
+            *(RunControlRef(index=item.index) for item in controls),
+            *(
+                local.source
+                for _name, local in sorted(locals.items())
+                if not isinstance(statement, LetStmt) and local.source is not None
+            ),
+        )
+    )
     emit(
         StepBegin(
             step=path,
             kind=kind,
-            input=tuple(inputs),
+            input=inputs,
             context={
                 **statement_context(statement),
                 "binding": statement.binding,
-                "reads": [] if isinstance(statement, LetStmt) else sorted(locals),
                 "placement": dict(placement or {}),
                 "source": {"line": statement.span.line},
             },
@@ -195,7 +157,7 @@ async def execute_step(
             finished_at=utc_now(),
         )
     )
-    return result
+    return replace(result, source=OutputRef(step=path))
 
 
 def initial_locals(
@@ -203,13 +165,14 @@ def initial_locals(
 ) -> dict[str, Local]:
     """Build the initial locals for one executable run."""
 
+    start = RunControlRef()
     locals = {
-        name: Local(value, "item") for name, value in binding.invoke_params.items()
+        name: Local(value, "item", start) for name, value in binding.params.items()
     }
     if executable.input is not None:
-        locals["_"] = Local(binding.input_text, "item")
+        locals["_"] = Local(binding.input_text, "item", start)
     else:
-        locals.setdefault("_", Local())
+        locals.setdefault("_", Local(source=start))
     return locals
 
 
@@ -225,7 +188,11 @@ def apply_steer(locals: dict[str, Local], controls: Sequence[RunControlRecord]) 
 
     for control in controls:
         if control.input is not None:
-            locals["_"] = Local(message_text(control.input.parts), "item")
+            locals["_"] = Local(
+                message_text(control.input.parts),
+                "item",
+                RunControlRef(index=control.index),
+            )
 
 
 def statement_has_call(statement: FlowStmt) -> bool:
@@ -451,3 +418,11 @@ def control_text(control: RunControlRecord | None) -> str:
     if control is None or control.input is None:
         return ""
     return message_text(control.input.parts)
+
+
+def _unique_step_inputs(items: Sequence[StepInputItem]) -> tuple[StepInputItem, ...]:
+    result: list[StepInputItem] = []
+    for item in items:
+        if item not in result:
+            result.append(item)
+    return tuple(result)

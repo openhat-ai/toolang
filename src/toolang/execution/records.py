@@ -89,22 +89,17 @@ class RunRecord:
         return str(value) if value is not None else self.id
 
     @property
-    def origin(self) -> str:
-        value = self.context.get("origin")
-        return str(value) if value is not None else ""
-
-    @property
-    def executable_kind(self) -> str:
-        executable = self.context.get("executable")
-        if isinstance(executable, Mapping):
-            return str(executable.get("kind") or "")
+    def runnable_kind(self) -> str:
+        runnable = self.context.get("runnable")
+        if isinstance(runnable, Mapping):
+            return str(runnable.get("kind") or "")
         return ""
 
     @property
-    def executable_name(self) -> str | None:
-        executable = self.context.get("executable")
-        if isinstance(executable, Mapping) and executable.get("name") is not None:
-            return str(executable.get("name"))
+    def runnable_name(self) -> str | None:
+        runnable = self.context.get("runnable")
+        if isinstance(runnable, Mapping) and runnable.get("name") is not None:
+            return str(runnable.get("name"))
         return None
 
     @property
@@ -184,24 +179,6 @@ class StepRecord:
     @property
     def run_id(self) -> str:
         return trace_run(self.parent)
-
-
-@dataclass(frozen=True, slots=True)
-class UpdateRecord:
-    """One agent-local operational update."""
-
-    update_id: int
-    kind: str
-    payload: dict[str, Any]
-    created_at: str
-
-    def to_data(self) -> dict[str, Any]:
-        return {
-            "id": self.update_id,
-            "kind": self.kind,
-            "payload": dict(self.payload),
-            "created_at": self.created_at,
-        }
 
 
 @dataclass(frozen=True, slots=True)

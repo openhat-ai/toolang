@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 from multiprocessing import get_context
 from pathlib import Path
+import sqlite3
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
 from toolang.base.types.message import Message, TextPart
+from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.execution.events import (
     RunBegin,
@@ -20,13 +22,12 @@ from toolang.execution.events import (
     ThreadEvent,
     ThreadListener,
 )
-from toolang.execution.executor import RunExecutor
+from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor.common import Local
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.runs import agic as agic_run
 from toolang.execution.inspection import ExecutionInspection
 from toolang.execution.records import OutputRef, RunControlRef, ThreadControlRef
-from toolang.execution.executor.request import RunRequest
 from toolang.execution.executor.persist import PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
@@ -91,20 +92,27 @@ def _setup() -> AgentSetup:
     )
 
 
-def _request(
+async def _start(
+    executor: RunExecutor,
+    setup: AgentSetup,
+    state: Any,
     name: str,
     *,
     run_id: str | None = None,
     thread_id: str = "term_test",
     request_id: str | None = None,
-) -> RunRequest:
-    return RunRequest(
-        origin="chat",
+    tracer: RunTracer | None = None,
+) -> Any:
+    return await executor.start(
+        RunSpec(
+            setup=setup,
+            state=state,
+            thread=thread_id,
+            runnable=name,
+        ),
         run_id=run_id,
-        thread_id=thread_id,
-        executable_kind="flow",
-        executable_name=name,
         request_id=request_id,
+        tracer=tracer,
     )
 
 
@@ -119,7 +127,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     tracer = _RecordingTracer(store)
 
     record = asyncio.run(
-        executor.start(_setup(), _state(flow), _request(flow.name), tracer=tracer)
+        _start(executor, _setup(), _state(flow), flow.name, tracer=tracer)
     )
 
     assert record.status == "finished"
@@ -134,6 +142,8 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert start is not None and start.status == "finished"
     detail = ExecutionInspection(store).run_detail(record.id)
     assert detail is not None
+    assert detail.runnable_kind == "flow"
+    assert detail.runnable_name == "pipeline"
     assert detail.input == Message.user("")
     assert [control.index for control in detail.inputs] == [0]
     assert detail.inputs[0].message == detail.input
@@ -166,17 +176,111 @@ def test_top_level_agic_has_no_containing_step_events(
 
     monkeypatch.setattr(agic_run, "execute", execute_agic)
     record = asyncio.run(
-        executor.start(
-            _setup(),
-            state,
-            RunRequest(origin="chat", thread_id="term_test"),
-            tracer=tracer,
-        )
+        _start(executor, _setup(), state, "default", tracer=tracer)
     )
 
     assert record.status == "finished"
     assert [event.type for event in tracer.events] == ["run_begin", "run_end"]
     assert store.list_steps(run_id=record.id) == []
+    asyncio.run(executor.shutdown())
+
+
+def test_runtime_emits_and_persists_system_failure_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agic = AgicDecl(name="default", span=Span(line=1))
+    state = cast(
+        Any,
+        SimpleNamespace(
+            program=Program(span=Span(line=1), agics=(agic,)),
+            program_source="agents/alice/agent.too",
+            root_config={},
+            home_config={},
+            fingerprint="state-test",
+        ),
+    )
+    executor = _executor(tmp_path)
+    tracer = _RecordingTracer(executor.store)
+
+    async def fail_agic(*_args: Any, **_kwargs: Any) -> Local:
+        raise RuntimeError("runtime failed")
+
+    monkeypatch.setattr(agic_run, "execute", fail_agic)
+    record = asyncio.run(
+        _start(executor, _setup(), state, "default", tracer=tracer)
+    )
+
+    assert record.status == "failed"
+    assert [event.type for event in tracer.events] == [
+        "run_begin",
+        "step_begin",
+        "step_end",
+        "run_end",
+    ]
+    steps = executor.store.list_steps(run_id=record.id)
+    assert len(steps) == 1
+    assert steps[0].kind == "system"
+    assert steps[0].status == "failed"
+    assert steps[0].error == "runtime failed"
+    assert steps[0].context == {"runtime": "failure"}
+    asyncio.run(executor.shutdown())
+
+
+def test_event_delivery_does_not_read_run_state_per_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    flow = FlowDecl(
+        name="pipeline",
+        stmts=(LetStmt(value="done", span=Span(line=2)),),
+        span=Span(line=1),
+    )
+    executor = _executor(tmp_path)
+    original = executor.store.get_run
+    reads = 0
+
+    def get_run(*, run_id: str):
+        nonlocal reads
+        reads += 1
+        return original(run_id=run_id)
+
+    monkeypatch.setattr(executor.store, "get_run", get_run)
+    record = asyncio.run(_start(executor, _setup(), _state(flow), flow.name))
+
+    assert record.status == "finished"
+    assert reads == 1
+    asyncio.run(executor.shutdown())
+
+
+def test_start_rejects_ambiguous_runnable_name(tmp_path: Path) -> None:
+    runnable = "shared"
+    state = cast(
+        Any,
+        SimpleNamespace(
+            program=Program(
+                span=Span(line=1),
+                agics=(AgicDecl(name=runnable, span=Span(line=1)),),
+                flows=(FlowDecl(name=runnable, span=Span(line=2)),),
+            ),
+            program_source="agents/alice/agent.too",
+            root_config={},
+            home_config={},
+            fingerprint="state-test",
+        ),
+    )
+    executor = _executor(tmp_path)
+
+    async def scenario() -> None:
+        with pytest.raises(ToolangError, match="Runnable name is not unique"):
+            executor.start(
+                RunSpec(
+                    setup=_setup(),
+                    state=state,
+                    thread="term_test",
+                    runnable=runnable,
+                )
+            )
+
+    asyncio.run(scenario())
     asyncio.run(executor.shutdown())
 
 
@@ -186,10 +290,11 @@ def test_tracer_failure_does_not_fail_execution(tmp_path: Path) -> None:
     store = executor.store
 
     record = asyncio.run(
-        executor.start(
+        _start(
+            executor,
             _setup(),
             _state(flow),
-            _request(flow.name),
+            flow.name,
             tracer=_RecordingTracer(store, fail=True),
         )
     )
@@ -198,30 +303,76 @@ def test_tracer_failure_does_not_fail_execution(tmp_path: Path) -> None:
     asyncio.run(executor.shutdown())
 
 
-def test_start_request_is_idempotent_and_executes_once(tmp_path: Path) -> None:
+def test_run_handle_shields_execution_from_waiter_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    flow = FlowDecl(name="waiting", span=Span(line=1))
+    executor = _executor(tmp_path)
+
+    async def wait_forever(*_args: Any, **_kwargs: Any) -> Any:
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(_Execution, "execute", wait_forever)
+
+    async def scenario() -> Any:
+        handle = executor.start(
+            RunSpec(
+                setup=_setup(),
+                state=_state(flow),
+                thread="term_test",
+                runnable=flow.name,
+            )
+        )
+        assert handle.executor is executor
+        accepted = executor.store.get_run(run_id=handle.run_id)
+        assert accepted is not None and accepted.status == "pending"
+        waiter = asyncio.ensure_future(handle)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert not handle.task.cancelled()
+        handle.stop(reason="done")
+        return await asyncio.wait_for(handle, timeout=2)
+
+    record = asyncio.run(scenario())
+
+    assert record.status == "canceled"
+    asyncio.run(executor.shutdown())
+
+
+def test_duplicate_start_request_is_rejected(tmp_path: Path) -> None:
     flow = FlowDecl(name="pipeline", span=Span(line=1))
     executor = _executor(tmp_path)
     store = executor.store
-    request = _request(
-        flow.name,
-        run_id="run_idempotent",
-        thread_id="term_idempotent",
-        request_id="start-idempotent",
-    )
     first_tracer = _RecordingTracer(store)
-    replay_tracer = _RecordingTracer(store)
     store.create_thread(thread_id="term_idempotent")
 
     first = asyncio.run(
-        executor.start(_setup(), _state(flow), request, tracer=first_tracer)
+        _start(
+            executor,
+            _setup(),
+            _state(flow),
+            flow.name,
+            run_id="run_unique",
+            thread_id="term_idempotent",
+            request_id="start-unique",
+            tracer=first_tracer,
+        )
     )
-    replay = asyncio.run(
-        executor.start(_setup(), _state(flow), request, tracer=replay_tracer)
-    )
+    with pytest.raises(ValueError, match="run already exists"):
+        asyncio.run(
+            _start(
+                executor,
+                _setup(),
+                _state(flow),
+                flow.name,
+                run_id="run_unique",
+                thread_id="term_idempotent",
+                request_id="start-unique",
+            )
+        )
 
-    assert replay == first
     assert first.status == "finished"
-    assert replay_tracer.events == []
     assert len(store.list_run_controls(run_id=first.id)) == 1
     asyncio.run(executor.shutdown())
 
@@ -242,8 +393,12 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
     tracer = _RecordingTracer(store)
 
     root = asyncio.run(
-        executor.start(
-            _setup(), _state(parent, child), _request(parent.name), tracer=tracer
+        _start(
+            executor,
+            _setup(),
+            _state(parent, child),
+            parent.name,
+            tracer=tracer,
         )
     )
 
@@ -263,6 +418,38 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
     ]
     assert [event.type for event in tracer.events].count("run_begin") == 2
     assert not any(event.type == "run_starting" for event in tracer.events)
+    asyncio.run(executor.shutdown())
+
+
+def test_flow_step_events_carry_complete_input_references(tmp_path: Path) -> None:
+    child = FlowDecl(
+        name="child",
+        stmts=(LetStmt(value="done", span=Span(line=2)),),
+        span=Span(line=1),
+    )
+    parent = FlowDecl(
+        name="parent",
+        stmts=(
+            RunStmt(runnable="child", span=Span(line=4)),
+            RunStmt(runnable="child", span=Span(line=5)),
+        ),
+        span=Span(line=3),
+    )
+    executor = _executor(tmp_path)
+
+    root = asyncio.run(
+        _start(executor, _setup(), _state(parent, child), parent.name)
+    )
+
+    steps = [
+        step
+        for step in executor.store.list_steps(run_id=root.id)
+        if step.parent == root.id
+    ]
+    assert [step.input for step in steps] == [
+        (RunControlRef(),),
+        (OutputRef(step=f"{root.id}/0"),),
+    ]
     asyncio.run(executor.shutdown())
 
 
@@ -290,7 +477,7 @@ def test_steer_control_is_finished_when_step_consumes_it(tmp_path: Path) -> None
 
     tracer = SteeringTracer()
     record = asyncio.run(
-        executor.start(_setup(), _state(flow), _request(flow.name), tracer=tracer)
+        _start(executor, _setup(), _state(flow), flow.name, tracer=tracer)
     )
 
     assert tracer.control_index is not None
@@ -319,7 +506,7 @@ def test_unreachable_control_fails_when_run_ends(tmp_path: Path) -> None:
 
     tracer = SteeringTracer()
     record = asyncio.run(
-        executor.start(_setup(), _state(flow), _request(flow.name), tracer=tracer)
+        _start(executor, _setup(), _state(flow), flow.name, tracer=tracer)
     )
 
     assert tracer.control_index is not None
@@ -330,9 +517,10 @@ def test_unreachable_control_fails_when_run_ends(tmp_path: Path) -> None:
     asyncio.run(executor.shutdown())
 
 
-def test_run_control_acceptance_is_idempotent(tmp_path: Path) -> None:
+def test_run_control_request_id_is_unique_across_runs(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     store.create_thread(thread_id="term_test")
+    store.create_thread(thread_id="term_other")
     store.accept_start(
         run_id="run_test",
         parent=None,
@@ -342,8 +530,17 @@ def test_run_control_acceptance_is_idempotent(tmp_path: Path) -> None:
         request_id="start-1",
         created_at="2026-01-01T00:00:00Z",
     )
+    store.accept_start(
+        run_id="run_other",
+        parent=None,
+        thread="term_other",
+        input=Message.user("hello"),
+        context={},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
+    )
 
-    first, created = store.accept_run_control(
+    first = store.accept_run_control(
         run_id="run_test",
         kind="steer",
         timing="next_step",
@@ -352,24 +549,20 @@ def test_run_control_acceptance_is_idempotent(tmp_path: Path) -> None:
         request_id="steer-1",
         created_at="2026-01-01T00:00:01Z",
     )
-    store.finish_run(
-        run_id="run_test",
-        status="finished",
-        finished_at="2026-01-01T00:00:02Z",
-    )
-    second, replayed = store.accept_run_control(
-        run_id="run_test",
-        kind="steer",
-        timing="next_step",
-        input=Message.user("continue"),
-        context={},
-        request_id="steer-1",
-        created_at="2026-01-01T00:00:03Z",
-    )
+    with pytest.raises(
+        ValueError, match="run control request already exists: steer-1"
+    ):
+        store.accept_run_control(
+            run_id="run_other",
+            kind="steer",
+            timing="next_step",
+            input=Message.user("continue"),
+            context={},
+            request_id="steer-1",
+            created_at="2026-01-01T00:00:03Z",
+        )
 
-    assert created is True
-    assert replayed is False
-    assert second == first
+    assert first.run == "run_test"
     store.close()
 
 
@@ -419,39 +612,6 @@ def test_run_control_acceptance_rejects_invalid_runtime_values(tmp_path: Path) -
     store.close()
 
 
-def test_pending_control_can_be_canceled_explicitly(tmp_path: Path) -> None:
-    store = RunStore(tmp_path / "runs.db")
-    store.create_thread(thread_id="term_test")
-    store.accept_start(
-        run_id="run_test",
-        parent=None,
-        thread="term_test",
-        input=Message.user("hello"),
-        context={},
-        request_id=None,
-        created_at="2026-01-01T00:00:00Z",
-    )
-    control, _created = store.accept_run_control(
-        run_id="run_test",
-        kind="steer",
-        timing="next_call",
-        input=Message.user("continue"),
-        context={},
-        request_id="steer-cancel",
-        created_at="2026-01-01T00:00:01Z",
-    )
-
-    canceled = store.cancel_run_control(
-        run_id="run_test",
-        index=control.index,
-        finished_at="2026-01-01T00:00:02Z",
-    )
-
-    assert canceled.status == "canceled"
-    assert canceled.finished_at == "2026-01-01T00:00:02Z"
-    store.close()
-
-
 def test_persist_sink_does_not_update_control_status(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     store.create_thread(thread_id="term_test")
@@ -495,7 +655,7 @@ def test_thread_manager_emits_only_successful_events(tmp_path: Path) -> None:
     asyncio.run(executor.shutdown())
 
 
-def test_thread_create_request_is_idempotent_across_allocated_ids(
+def test_thread_create_rejects_duplicate_request_id(
     tmp_path: Path,
 ) -> None:
     executor = _executor(tmp_path)
@@ -503,20 +663,21 @@ def test_thread_create_request_is_idempotent_across_allocated_ids(
     manager = ThreadManager(executor.store, executor.ids, listener=listener)
 
     first = manager.create(prefix=ThreadPrefix.TERM, request_id="create-thread")
-    replay = manager.create(prefix=ThreadPrefix.TERM, request_id="create-thread")
+    with pytest.raises(ValueError, match="thread control request already exists"):
+        manager.create(prefix=ThreadPrefix.TERM, request_id="create-thread")
 
-    assert replay == first
+    assert executor.store.get_thread(thread_id=first) is not None
     assert [event.type for event in listener.events] == ["thread_created"]
     asyncio.run(executor.shutdown())
 
 
-def test_thread_create_request_rejects_conflicting_replay(tmp_path: Path) -> None:
+def test_thread_request_id_is_unique_across_thread_kinds(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     manager = ThreadManager(executor.store, executor.ids)
 
     manager.create(prefix=ThreadPrefix.TERM, request_id="create-thread")
 
-    with pytest.raises(ValueError, match="conflicting thread control request"):
+    with pytest.raises(ValueError, match="thread control request already exists"):
         manager.create(prefix=ThreadPrefix.WEB, request_id="create-thread")
     asyncio.run(executor.shutdown())
 
@@ -555,7 +716,7 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
         parent=None,
         thread=created,
         input=Message.user("hello"),
-        context={"origin": "chat"},
+        context={"runnable": {"kind": "flow", "name": "test"}},
         request_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
@@ -600,7 +761,7 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
     asyncio.run(executor.shutdown())
 
 
-def test_thread_fork_and_rewind_replay_without_starting_runs(
+def test_thread_fork_rejects_duplicate_request_without_starting_runs(
     tmp_path: Path,
 ) -> None:
     executor = _executor(tmp_path)
@@ -613,7 +774,7 @@ def test_thread_fork_and_rewind_replay_without_starting_runs(
         parent=None,
         thread=created,
         input=Message.user("hello"),
-        context={"origin": "chat"},
+        context={"runnable": {"kind": "flow", "name": "test"}},
         request_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
@@ -637,20 +798,17 @@ def test_thread_fork_and_rewind_replay_without_starting_runs(
         thread_id=created,
         request_id="fork-thread",
     )
-    fork_replay = manager.fork(
-        thread_id=created,
-        request_id="fork-thread",
-    )
-    manager.rewind(
-        thread_id=created,
-        request_id="rewind-thread",
-    )
+    with pytest.raises(ValueError, match="thread control request already exists"):
+        manager.fork(
+            thread_id=created,
+            request_id="fork-thread",
+        )
     manager.rewind(
         thread_id=created,
         request_id="rewind-thread",
     )
 
-    assert fork_replay == forked
+    assert store.get_thread(thread_id=forked) is not None
     assert [
         run.id for run in store.list_runs(limit=None, include_superseded=True)
     ] == ["run_anchor"]
@@ -677,7 +835,7 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
             parent=None,
             thread=created,
             input=Message.user(run_id),
-            context={"origin": "chat"},
+            context={"runnable": {"kind": "flow", "name": "test"}},
             request_id=None,
             created_at=timestamp,
         )
@@ -715,7 +873,7 @@ def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
             parent=None,
             thread=source,
             input=Message.user(run_id),
-            context={"origin": "chat"},
+            context={"runnable": {"kind": "flow", "name": "test"}},
             request_id=None,
             created_at="2026-01-01T00:00:00Z",
         )
@@ -756,7 +914,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
             parent=parent,
             thread=source,
             input=Message.user(run_id),
-            context={"origin": "chat"},
+            context={"runnable": {"kind": "flow", "name": "test"}},
             request_id=None,
             created_at="2026-01-01T00:00:00Z",
         )
@@ -779,7 +937,7 @@ def _accept_controls(db_path: str, run_id: str, offset: int, count: int) -> list
             context={},
             request_id=f"worker-{offset + index}",
             created_at="2026-01-01T00:00:01Z",
-        )[0].index
+        ).index
         for index in range(count)
     ]
     store.close()
@@ -788,17 +946,21 @@ def _accept_controls(db_path: str, run_id: str, offset: int, count: int) -> list
 
 def _accept_same_start(db_path: str) -> bool:
     store = RunStore(Path(db_path))
-    _run, _control, owner = store.accept_start(
-        run_id="run_shared_start",
-        parent=None,
-        thread="term_shared_start",
-        input=Message.user("hello"),
-        context={"origin": "chat"},
-        request_id="shared-start",
-        created_at="2026-01-01T00:00:00Z",
-    )
-    store.close()
-    return owner
+    try:
+        store.accept_start(
+            run_id="run_shared_start",
+            parent=None,
+            thread="term_shared_start",
+            input=Message.user("hello"),
+            context={"runnable": {"kind": "flow", "name": "shared"}},
+            request_id="shared-start",
+            created_at="2026-01-01T00:00:00Z",
+        )
+        return True
+    except ValueError:
+        return False
+    finally:
+        store.close()
 
 
 def _allocate_execution_ids(state_path: str, count: int) -> tuple[list[str], list[str]]:
@@ -823,10 +985,10 @@ def _accept_remote_stop(db_path: str, run_id: str) -> None:
     store.close()
 
 
-def _rewind_thread(db_path: str, request_id: str) -> tuple[bool, int | None]:
+def _rewind_thread(db_path: str, request_id: str) -> int | None:
     store = RunStore(Path(db_path))
     try:
-        _thread, control, _superseded, created = store.rewind_thread(
+        _thread, control, _superseded = store.rewind_thread(
             thread_id="term_thread_controls",
             anchor_run="run_thread_anchor",
             request_id=request_id,
@@ -834,9 +996,9 @@ def _rewind_thread(db_path: str, request_id: str) -> tuple[bool, int | None]:
             context={},
             created_at="2026-01-01T00:00:03Z",
         )
-        return created, control.index
+        return control.index
     except ValueError:
-        return False, None
+        return None
     finally:
         store.close()
 
@@ -919,12 +1081,14 @@ def test_remote_process_can_stop_an_owned_run(
     monkeypatch.setattr(_Execution, "execute", wait_until_canceled)
 
     async def scenario() -> Any:
-        task = asyncio.create_task(
-            executor.start(
-                _setup(),
-                _state(flow),
-                _request(flow.name, run_id="run_remote_stop"),
-            )
+        handle = executor.start(
+            RunSpec(
+                setup=_setup(),
+                state=_state(flow),
+                thread="term_test",
+                runnable=flow.name,
+            ),
+            run_id="run_remote_stop",
         )
         while (
             run := store.get_run(run_id="run_remote_stop")
@@ -937,7 +1101,7 @@ def test_remote_process_can_stop_an_owned_run(
         process.start()
         await asyncio.to_thread(process.join, 10)
         assert process.exitcode == 0
-        return await asyncio.wait_for(task, timeout=2)
+        return await asyncio.wait_for(handle, timeout=2)
 
     record = asyncio.run(scenario())
 
@@ -972,19 +1136,21 @@ def test_executor_shutdown_cancels_and_persists_active_runs(
     monkeypatch.setattr(_Execution, "execute", wait_until_canceled)
 
     async def scenario() -> Any:
-        task = asyncio.create_task(
-            executor.start(
-                _setup(),
-                _state(flow),
-                _request(flow.name, run_id="run_shutdown"),
-            )
+        handle = executor.start(
+            RunSpec(
+                setup=_setup(),
+                state=_state(flow),
+                thread="term_test",
+                runnable=flow.name,
+            ),
+            run_id="run_shutdown",
         )
         while (
             run := store.get_run(run_id="run_shutdown")
         ) is None or run.status != "running":
             await asyncio.sleep(0.01)
         await executor.shutdown()
-        return await task
+        return await handle
 
     record = asyncio.run(scenario())
 
@@ -994,6 +1160,32 @@ def test_executor_shutdown_cancels_and_persists_active_runs(
     with pytest.raises(RuntimeError, match="run executor is shut down"):
         executor.stop(run_id=record.id)
     assert store.get_run(run_id=record.id) == record
+
+
+def test_executor_shutdown_persists_run_before_owner_task_starts(
+    tmp_path: Path,
+) -> None:
+    flow = FlowDecl(name="never-started", span=Span(line=1))
+    executor = _executor(tmp_path)
+
+    async def scenario() -> Any:
+        handle = executor.start(
+            RunSpec(
+                setup=_setup(),
+                state=_state(flow),
+                thread="term_test",
+                runnable=flow.name,
+            ),
+            run_id="run_never_started",
+        )
+        await executor.shutdown()
+        return await handle
+
+    record = asyncio.run(scenario())
+
+    assert record.status == "canceled"
+    assert record.started_at == ""
+    assert executor._active == {}
 
 
 def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> None:
@@ -1032,7 +1224,7 @@ def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> Non
             [(str(db_path), "rewind-a"), (str(db_path), "rewind-b")],
         )
 
-    assert sorted(results) == [(False, None), (True, 1)]
+    assert sorted(results, key=lambda value: value is not None) == [None, 1]
     reopened = RunStore(db_path)
     assert [
         control.index
@@ -1091,11 +1283,44 @@ def test_persist_sink_projects_run_and_step_records(tmp_path: Path) -> None:
     assert run is not None and run.status == "finished"
     assert store.run_output_text(run_id="run_test") == "done"
     assert len(store.list_steps(run_id="run_test")) == 1
-    assert sink._last_step_index == {}
-    assert sink._failed_runs == set()
-    assert sink._locals == {}
-    assert sink._bindings == {}
     store.close()
+
+
+def test_run_store_migrates_schema_without_deleting_history(tmp_path: Path) -> None:
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    store.create_thread(thread_id="term_test")
+    store.accept_start(
+        run_id="run_test",
+        parent=None,
+        thread="term_test",
+        input=Message.user("hello"),
+        context={"runnable": {"kind": "flow", "name": "pipeline"}},
+        request_id="start-test",
+        created_at="2026-01-01T00:00:00Z",
+    )
+    store.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("DROP INDEX idx_run_controls_request")
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX idx_run_controls_request
+        ON run_controls(run, request_id)
+        WHERE request_id IS NOT NULL
+        """
+    )
+    connection.execute("PRAGMA user_version=13")
+    connection.commit()
+    connection.close()
+
+    reopened = RunStore(path)
+    try:
+        assert reopened.get_thread(thread_id="term_test") is not None
+        assert reopened.get_run(run_id="run_test") is not None
+        assert len(reopened.list_run_controls(run_id="run_test")) == 1
+    finally:
+        reopened.close()
 
 
 def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
