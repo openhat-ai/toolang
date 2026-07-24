@@ -93,10 +93,12 @@ The materialized root and home remain the authoritative data in every hosting
 driver. A hosted process exposes the same agent API on the same selected
 numeric port from the caller's perspective.
 
-Foreground CLI sessions may avoid an API process when the resolved driver is
-`none`. For example, chat can use a process-local executor in the current CLI.
-Managed drivers use a session-owned API so the executor remains inside the
-selected host.
+Foreground CLI sessions do not use the agent API as their execution client.
+With `none`, chat launches a dedicated process that assembles the core objects
+and calls `RunExecutor` directly, while one-shot invoke may execute in the
+invoking process. Managed drivers place execution inside the selected host and
+transport native events through process/channel orchestration. Starting a
+persistent agent API remains a separate operation.
 
 
 ## Caps
@@ -144,9 +146,6 @@ Current built-in job kinds are:
 
 - `task`
 - `chore`
-
-The jobs API also exposes one `will` endpoint for a long-horizon definition.
-When no will is configured, that endpoint returns `null`.
 
 Jobs are definitions. They are not runs.
 
@@ -241,6 +240,20 @@ other local names. Durable input and output refs are persistence metadata, not
 part of a local.
 
 
+## Perceiving And Coercion
+
+Toolang uses three operations at runnable boundaries:
+
+- input perceiving interprets supported input as one ordered `Percept`
+- input coercion converts that percept to the runnable's declared primary type
+- output coercion converts the runnable's final value to its declared output
+  type
+
+Input perceiving applies equally to plain text, authored bodies with runtime
+values, and multimodal caller input. Input and output coercion are
+language-owned type operations; they do not define transport serialization.
+
+
 ## Message
 
 A message is the canonical model and projection unit used across:
@@ -254,16 +267,26 @@ Each message has:
 
 - one role
 - ordered `parts`
-- optional `meta`
 
-Current core part kinds are:
+Toolang separates authored and executable content from message-only protocol
+parts:
 
-- `text`
-- `tool_call`
-- `tool_result`
+```text
+PerceptPart = TextPart | ImagePart | AudioPart | DocumentPart
+Percept     = PerceptPart[]
+MessagePart = PerceptPart | ToolCallPart | ToolResultPart
+Message     = { role: MessageRole, parts: MessagePart[] }
+```
 
-Toolang executable values use `Part` and `Part[]`; `Message` is not a language
-value type.
+At the language boundary, `Part` maps to one `PerceptPart` and `Part[]` maps to
+one `Percept`. The `lang` AST keeps those concise source type names; other
+packages use `PerceptPart` and `Percept`. Messages use ordered `MessagePart`
+values so model and tool interaction can add tool calls and results. `Message`
+and `MessagePart` are not Toolang language value types.
+
+User messages contain only `PerceptPart` values. Assistant messages may
+additionally contain `ToolCallPart` values, and tool messages contain only
+`ToolResultPart` values.
 
 
 ## Relationships

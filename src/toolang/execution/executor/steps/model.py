@@ -54,7 +54,7 @@ class _ModelStream:
     started_parts: set[int] = field(default_factory=set)
 
 
-def execute(state: _AgicState) -> ModelCallResult:
+async def execute(state: _AgicState) -> ModelCallResult:
     """Perform one model call and emit its complete step event stream."""
 
     prepared = state.prepared
@@ -89,7 +89,7 @@ def execute(state: _AgicState) -> ModelCallResult:
         ),
         state=state.model_state,
     )
-    state.emit(
+    await state.emit(
         StepBegin(
             step=trace_child_path(run.run_id, step_index),
             kind="model",
@@ -115,15 +115,15 @@ def execute(state: _AgicState) -> ModelCallResult:
     )
     try:
         if prepared.model.streaming:
-            current = prepared.adapter.stream(
+            current = await prepared.adapter.stream(
                 prepared.model,
                 request,
                 on_event=lambda event: _handle_event(state, stream, event),
             )
         else:
-            current = prepared.adapter.invoke(prepared.model, request)
+            current = await prepared.adapter.invoke(prepared.model, request)
     except Exception as exc:
-        state.emit(
+        await state.emit(
             StepEnd(
                 step=trace_child_path(run.run_id, step_index),
                 kind="model",
@@ -141,25 +141,21 @@ def execute(state: _AgicState) -> ModelCallResult:
             elapsed_ms(step_started),
         )
         raise
-    return _apply_response(
+    return await _apply_response(
         state,
         stream,
         current,
-        request=request,
         step_index=step_index,
-        started_at=started_at,
         duration_ms=elapsed_ms(step_started),
     )
 
 
-def _apply_response(
+async def _apply_response(
     state: _AgicState,
     stream: _ModelStream,
     current: ModelCallResult,
     *,
-    request: ModelCall,
     step_index: int,
-    started_at: str,
     duration_ms: int,
 ) -> ModelCallResult:
     prepared = state.prepared
@@ -177,13 +173,13 @@ def _apply_response(
         tool_calls=parsed_calls,
     )
     for part_index, part in output_parts:
-        _emit_part_begin(
+        await _emit_part_begin(
             state,
             stream,
             part_index=part_index,
             kind=part.type,
         )
-        state.emit(
+        await state.emit(
             PartEnd(
                 step=trace_child_path(run.run_id, step_index),
                 part=part_index,
@@ -196,7 +192,7 @@ def _apply_response(
     if current.message is not None:
         state.messages.append(current.message)
     state.model_state = current.state
-    state.emit(
+    await state.emit(
         StepEnd(
             step=trace_child_path(run.run_id, step_index),
             kind="model",
@@ -232,10 +228,14 @@ def _apply_response(
     return current
 
 
-def _handle_event(state: _AgicState, stream: _ModelStream, event: object) -> None:
+async def _handle_event(
+    state: _AgicState,
+    stream: _ModelStream,
+    event: object,
+) -> None:
     if isinstance(event, ModelPartStart):
         if event.kind == "text":
-            _emit_part_begin(
+            await _emit_part_begin(
                 state,
                 stream,
                 part_index=_ensure_text_part_index(stream),
@@ -245,14 +245,14 @@ def _handle_event(state: _AgicState, stream: _ModelStream, event: object) -> Non
     if isinstance(event, ModelPartDelta):
         if isinstance(event.delta, TextDelta):
             part_index = _ensure_text_part_index(stream)
-            _emit_part_begin(
+            await _emit_part_begin(
                 state,
                 stream,
                 part_index=part_index,
                 kind="text",
             )
             if event.delta.text:
-                state.emit(
+                await state.emit(
                     PartDelta(
                         step=trace_child_path(state.prepared.run.run_id, stream.step),
                         part=part_index,
@@ -262,14 +262,14 @@ def _handle_event(state: _AgicState, stream: _ModelStream, event: object) -> Non
             return
         if isinstance(event.delta, ToolCallDelta):
             part_index = _ensure_tool_part_index(stream, event.delta.tool_call_id)
-            _emit_part_begin(
+            await _emit_part_begin(
                 state,
                 stream,
                 part_index=part_index,
                 kind="tool_call",
             )
             if event.delta.text:
-                state.emit(
+                await state.emit(
                     PartDelta(
                         step=trace_child_path(state.prepared.run.run_id, stream.step),
                         part=part_index,
@@ -357,7 +357,7 @@ def _ensure_tool_part_index(stream: _ModelStream, tool_call_id: str) -> int:
     return part_index
 
 
-def _emit_part_begin(
+async def _emit_part_begin(
     state: _AgicState,
     stream: _ModelStream,
     *,
@@ -367,7 +367,7 @@ def _emit_part_begin(
     if part_index in stream.started_parts:
         return
     stream.started_parts.add(part_index)
-    state.emit(
+    await state.emit(
         PartBegin(
             step=trace_child_path(state.prepared.run.run_id, stream.step),
             part=part_index,

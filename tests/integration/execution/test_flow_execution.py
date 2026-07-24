@@ -4,6 +4,7 @@ import asyncio
 from multiprocessing import get_context
 from pathlib import Path
 import sqlite3
+import threading
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -50,17 +51,26 @@ class _RecordingTracer(RunTracer):
         self.store = store
         self.fail = fail
         self.events: list[RunEvent] = []
+        self.thread_ids: set[int] = set()
+        self._handling = False
 
-    def on_event(self, event: RunEvent) -> None:
+    async def on_event(self, event: RunEvent) -> None:
+        assert not self._handling
+        self._handling = True
         run_id = (
             event.run
             if isinstance(event, RunBegin | RunEnd)
             else event.step.split("/", 1)[0]
         )
         assert self.store.get_run(run_id=run_id) is not None
-        self.events.append(event)
-        if self.fail:
-            raise RuntimeError("tracer failed")
+        self.thread_ids.add(threading.get_ident())
+        try:
+            await asyncio.sleep(0)
+            self.events.append(event)
+            if self.fail:
+                raise RuntimeError("tracer failed")
+        finally:
+            self._handling = False
 
 
 class _RecordingThreadListener(ThreadListener):
@@ -151,6 +161,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     store = executor.store
     tracer = _RecordingTracer(store)
+    owner_thread = threading.get_ident()
 
     record = asyncio.run(
         _start(executor, _setup(), _state(flow), flow.name, tracer=tracer)
@@ -164,6 +175,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
         "step_end",
         "run_end",
     ]
+    assert tracer.thread_ids == {owner_thread}
     start = store.get_run_control(run_id=record.id, index=0)
     assert start is not None and start.status == "finished"
     detail = ExecutionInspection(store).run_detail(record.id)
@@ -538,7 +550,7 @@ def test_steer_control_is_finished_when_step_consumes_it(tmp_path: Path) -> None
     class SteeringTracer(RunTracer):
         control_index: int | None = None
 
-        def on_event(self, event: RunEvent) -> None:
+        async def on_event(self, event: RunEvent) -> None:
             if isinstance(event, RunBegin) and self.control_index is None:
                 control = executor.steer(
                     run_id=event.run,
@@ -569,7 +581,7 @@ def test_unreachable_control_fails_when_run_ends(tmp_path: Path) -> None:
     class SteeringTracer(RunTracer):
         control_index: int | None = None
 
-        def on_event(self, event: RunEvent) -> None:
+        async def on_event(self, event: RunEvent) -> None:
             if isinstance(event, RunBegin):
                 self.control_index = executor.steer(
                     run_id=event.run,
@@ -1142,7 +1154,7 @@ def test_remote_process_can_stop_an_owned_run(
         executable: Any,
         **_kwargs: Any,
     ) -> Any:
-        runtime.emit(
+        await runtime.emit(
             RunBegin(
                 run=binding.run_id,
                 input=RunControlRef(index=0),
@@ -1197,7 +1209,7 @@ def test_executor_shutdown_cancels_and_persists_active_runs(
         executable: Any,
         **_kwargs: Any,
     ) -> Any:
-        runtime.emit(
+        await runtime.emit(
             RunBegin(
                 run=binding.run_id,
                 input=RunControlRef(index=0),

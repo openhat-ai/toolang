@@ -58,7 +58,7 @@ class RunSpec:
     state: AgentState
     thread: str
     runnable: str
-    input: tuple[Part, ...] = ()
+    input: Percept = ()
     model: str | None = None
     args: Mapping[str, object] | None = None
 ```
@@ -69,7 +69,10 @@ request identity, or arbitrary transport context. The optional singular model
 selector is the caller's per-run model choice; aliases and defaults are parsed
 from the captured state config. `input` is the primary multimodal input; `args`
 contains values for the runnable's declared `params`. The executor validates
-both before accepting the run and constructs the user message internally.
+both before accepting the run and constructs the user message internally. It
+keeps the original canonical `Percept` for the start control and durable
+history, while language-owned input coercion initializes `_` with the
+runnable's declared primary type.
 
 There is no `run()`, `execute()`, or `spawn()` variant. `start()` creates the
 owner task and returns an awaitable `RunHandle`. The handle exposes its run ID,
@@ -134,10 +137,17 @@ There is no loop plugin or public run-context protocol, and there are no
 separate effective-resource, invocation, model-call assembly, or tool-snapshot
 layers.
 
+Agic and flow bodies run natively on the owner event loop. Model adapters,
+tool invocation, step emission, and run tracing are asynchronous. A wrapper
+may move an explicitly synchronous Python tool callable to a worker thread,
+but the agic loop itself never moves between threads.
+
 The `_Execution` object emits `RunBegin` and `RunEnd` and dispatches each
-accepted executable to the appropriate run body. A top-level agic or flow has
-no containing step. When a flow statement invokes another agic or flow,
-`steps/run.py` emits the containing run-step events around the child run:
+accepted executable to the appropriate run body. Input coercion initializes the
+primary local before the body starts, and output coercion validates its final
+value before `RunEnd`. A top-level agic or flow has no containing step. When a
+flow statement invokes another agic or flow, `steps/run.py` emits the containing
+run-step events around the child run:
 
 ```text
 StepBegin(run)
@@ -174,10 +184,13 @@ in this order:
 1. `PersistSink.on_event(event)`;
 2. update control statuses referenced by the persisted event;
 3. maintain the local active-run index;
-4. call the optional `RunTracer`.
+4. await the optional `RunTracer.on_event()`.
 
 Tracer exceptions are logged and ignored. Persistence or control-transition
 errors remain execution failures because they compromise durable truth.
+An `asyncio.Lock` serializes the complete handler sequence across parallel
+child runs, preserving one ordered tracer stream without requiring a
+thread-safe tracer.
 
 
 ## Terminal Behavior
@@ -209,6 +222,10 @@ output projection state.
 Model providers stream deltas whenever supported. The executor never disables
 provider streaming based on caller type. A tracer can ignore `PartDelta` and
 observe only step or run boundaries.
+
+`ModelAdapter.invoke()` and `ModelAdapter.stream()` are asynchronous.
+Streaming adapters await each `ModelStreamHandler` update before requesting
+the next provider chunk, which makes ordering and backpressure explicit.
 
 API SSE, TUI rendering, channel replies, and buffered responses are tracer or
 transport implementations outside `toolang.execution`.

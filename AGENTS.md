@@ -44,7 +44,7 @@
   serialization logic across multiple modules.
 - Scheduled work definitions should use RRULE-based scheduling in persisted
   entities and APIs. Do not introduce new `interval_sec`-style schedule fields
-  for chores or will.
+  for chores.
 - Persisted Pydantic entities or records should own their `load()` / `save()`
   methods. Do not add serializer wrapper modules unless they add real meaning.
 - Let the package that owns a source format own its parsing and source-editing
@@ -90,16 +90,16 @@
 - `docs/program.md` defines `.too` declarations, executable signatures,
   agics, flows, directives, and surface rules.
 - `docs/flow-syntax.md` defines flow statements, bindings, and clauses.
-- `docs/input-syntax.md` defines commands, content, executable input coercion,
-  and output rendering.
+- `docs/input-syntax.md` defines `ContentBody` syntax, input perceiving, input
+  coercion, and output coercion.
 - `docs/layout.md` defines Toolang root, agent home, and agent room layout.
 - `docs/caps.md` defines cap kinds, scopes, sources, and effective-cap rules.
 - `docs/tasks.md` defines task and chore documents and their runtime mapping.
 - `docs/execution.md` defines execution boundaries, lifecycle, locals,
-  persistence, and reply projection.
+  persistence, tracing, and caller-facing projection.
 - `docs/executor.md` defines agic and flow executor behavior.
 - `docs/run-step-records.md` defines durable execution records and their source
-  trace events.
+  run events.
 - `docs/chat.md` defines thread, run, and message projections.
 - `docs/models.md` defines model selectors, profiles, and built-in model
   integrations.
@@ -114,14 +114,18 @@
   runtime.
 - `toolang.base` owns the shared plugin-facing protocols, value types, and
   helper utilities used across tool, channel, sandbox, model provider,
-  and model adapter plugins, including the shared Toolang error type.
+  and model adapter plugins, including canonical `PerceptPart`, `Percept`,
+  `MessagePart`, and `Message` values and the shared Toolang error type.
 - `toolang.common` owns package-neutral filesystem, immutable-container, and
   text-template helpers, progress events, selectors, Toolang-owned id allocation,
   and shared GitHub source-reference parsing and rendering.
   `toolang.common.errors` is a compatibility export of the error type owned by
   `toolang.base`.
-- `toolang.lang` owns `.too` parsing, authored source semantics, and source
-  editing.
+- `toolang.lang` owns `.too` parsing, authored source semantics, source
+  editing, pure `ContentBody` parsing, input perceiving, input coercion, and
+  output coercion. The language and its AST retain the concise `Part` and `Part[]`
+  type names; they map to package-level `PerceptPart` and `Percept` values
+  respectively.
 - `toolang.up` owns remote agent target resolution, runtime-state files,
   managed processes, visiting and roaming materialization, sandbox filesystem
   assembly, resolved `AgentHosting`, installed `AgentSetup`, API process
@@ -152,29 +156,38 @@
   `PersistSink`, and may receive one optional `RunTracer` per `start()`.
   `ThreadManager` shares the same store and issuer without depending on the
   executor. Persistence and control-status updates complete before the tracer
-  observes an event.
+  observes an event. `RunTracer.on_event()` is async, serialized by the
+  executor, and always awaited on the owner event loop.
 - `toolang.execution.executor` contains `RunExecutor`, `RunSpec`, `RunHandle`,
   its mandatory `PersistSink`, shared run values, model-input preparation, and
   bounded diagnostics. Durable records, events, storage, inspection, schemas,
   and thread management remain at the `toolang.execution` package level.
 - `RunSpec` carries the captured `AgentSetup` and `AgentState`, existing thread
-  id, unique runnable name, canonical primary `Part[]` input, optional model
+  id, unique runnable name, canonical primary `Percept` input, optional model
   choice, and optional runnable `args`. Runnable declarations call their formal
-  arguments `params`; runtime calls provide `args`. Run and request identities
-  are `start()` arguments rather than executable input.
+  arguments `params`; runtime calls provide `args`. After runnable resolution,
+  the executor uses language-owned input coercion to initialize typed `_` while
+  preserving the original `Percept` in the start control. Run and request
+  identities are `start()` arguments rather than executable input.
 - Within `toolang.execution.executor`, `runs` owns complete agic and flow run
   bodies, `stmts` owns lowered flow-statement semantics, and `steps` owns step
   execution and event emission. Top-level runs have no synthetic containing
   step; recursive calls are wrapped by the invoking run step.
 - Agic model-tool sequencing is fixed executor behavior. Do not add a loop
   plugin family or a plugin-facing run-context protocol.
-- Prompt caps, instruct declarations, and context declarations are all text
-  templates. Agic and prompt bodies see flat `_` plus declared argument
-  variables; instruct and context templates see only flat runtime variables.
-  Do not add wrapper namespaces such as `args.*` or `runtime.*`.
+- Agic and flow execution, model adapters, agent tools, and run tracers use
+  async contracts. Sync Python tool callables may be isolated with
+  `asyncio.to_thread()` at the function-tool boundary; do not move the agic
+  loop itself into a worker thread.
+- Prompt caps, agic bodies, and applicable flow statement bodies are
+  `ContentBody` sources perceived as canonical `Percept` values. Language
+  `Part` and `Part[]` variables remain percept parts rather than becoming text.
+  Instruct and context declarations remain text templates and see only flat
+  runtime variables. Body variables stay flat; do not add wrapper namespaces
+  such as `args.*` or `runtime.*`.
 - Templates are authored source concepts. Execution persistence stores their
-  rendered effects as normalized model text and message blobs; do not label
-  rendered request data as template source.
+  effective data in normalized model calls, with instructions, messages, and
+  toolsets content-addressed; do not label model request data as template source.
 - `toolang.execution.threads` owns synchronous thread creation, rewind, and
   fork semantics through `ThreadManager`. Create and fork return a new thread
   id; rewind mutates in place and returns nothing. Fork retains its anchor in

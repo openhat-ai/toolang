@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
+from collections.abc import Awaitable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
@@ -36,6 +36,7 @@ from ..store import RunStore
 from ..types import ControlTiming, RunControlKind, StepPath
 from .common import (
     BoundRun,
+    EventEmitter,
     Local,
     control_text,
     initial_locals,
@@ -59,7 +60,7 @@ class _RunStopped(asyncio.CancelledError):
 class _ActiveRun:
     task: asyncio.Task[RunRecord]
     tracer: RunTracer | None
-    event_lock: Any = field(default_factory=threading.RLock, repr=False)
+    event_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     ended: set[str] = field(default_factory=set, repr=False)
 
 
@@ -211,9 +212,9 @@ class RunExecutor:
                 executable,
             )
         except asyncio.CancelledError:
-            self._ensure_terminal(bound.run_id, emit=emit, status="canceled")
+            await self._ensure_terminal(bound.run_id, emit=emit, status="canceled")
         except Exception as exc:
-            self._ensure_terminal(
+            await self._ensure_terminal(
                 bound.run_id,
                 emit=emit,
                 status="failed",
@@ -296,7 +297,11 @@ class RunExecutor:
                 return_exceptions=True,
             )
         for _task, (run_id, active) in owned:
-            self._ensure_terminal(run_id, emit=self._handler(active), status="canceled")
+            await self._ensure_terminal(
+                run_id,
+                emit=self._handler(active),
+                status="canceled",
+            )
         with self._active_lock:
             owned_tasks = {task for task, _run in owned}
             for run_id, active in tuple(self._active.items()):
@@ -317,27 +322,20 @@ class RunExecutor:
         if owned is None:
             return
         run_id, active = owned
-        if task.cancelled():
-            self._ensure_terminal(
+        if not task.cancelled() and (error := task.exception()) is not None:
+            _LOGGER.error(
+                "Run task failed outside runtime handling run=%s error=%r",
                 run_id,
-                emit=self._handler(active),
-                status="canceled",
-            )
-        elif (error := task.exception()) is not None:
-            self._ensure_terminal(
-                run_id,
-                emit=self._handler(active),
-                status="failed",
-                error=str(error) or type(error).__name__,
+                str(error) or type(error).__name__,
             )
         with self._active_lock:
             for active_run_id, candidate in tuple(self._active.items()):
                 if candidate is active:
                     self._active.pop(active_run_id, None)
 
-    def _handler(self, active: _ActiveRun) -> Callable[[RunEvent], None]:
-        def emit(event: RunEvent) -> None:
-            with active.event_lock:
+    def _handler(self, active: _ActiveRun) -> EventEmitter:
+        async def emit(event: RunEvent) -> None:
+            async with active.event_lock:
                 event_run = _run_event_id(event)
                 if event_run in active.ended:
                     return
@@ -348,7 +346,7 @@ class RunExecutor:
                     active.ended.add(event.run)
                 if active.tracer is not None:
                     try:
-                        active.tracer.on_event(event)
+                        await active.tracer.on_event(event)
                     except Exception:
                         _LOGGER.exception("run tracer event handling failed")
 
@@ -414,11 +412,11 @@ class RunExecutor:
                     canceled.add(owner.task)
                     owner.task.cancel()
 
-    def _ensure_terminal(
+    async def _ensure_terminal(
         self,
         run_id: str,
         *,
-        emit: Callable[[RunEvent], None],
+        emit: EventEmitter,
         status: Literal["failed", "canceled"],
         error: str | None = None,
     ) -> None:
@@ -428,7 +426,7 @@ class RunExecutor:
         stop = next(
             iter(self.store.pending_run_controls(run_id=run_id, kind="stop")), None
         )
-        emit(
+        await emit(
             RunEnd(
                 run=run_id,
                 status=status,
@@ -447,7 +445,7 @@ class _Execution:
         executor: RunExecutor,
         *,
         root: BoundRun,
-        emit: Callable[[RunEvent], None],
+        emit: EventEmitter,
     ) -> None:
         self.executor = executor
         self.setup = root.setup
@@ -490,7 +488,7 @@ class _Execution:
         current = (
             dict(locals) if locals is not None else initial_locals(binding, executable)
         )
-        self.emit(
+        await self.emit(
             RunBegin(
                 run=binding.run_id,
                 input=RunControlRef(index=0),
@@ -517,7 +515,7 @@ class _Execution:
                     None,
                 )
             )
-            self.emit(
+            await self.emit(
                 RunEnd(
                     run=binding.run_id,
                     status="canceled",
@@ -532,8 +530,8 @@ class _Execution:
             raise
         except Exception as exc:
             error = str(exc) or type(exc).__name__
-            self._emit_system_failure(binding.run_id, error)
-            self.emit(
+            await self._emit_system_failure(binding.run_id, error)
+            await self.emit(
                 RunEnd(
                     run=binding.run_id,
                     status="failed",
@@ -543,7 +541,7 @@ class _Execution:
                 )
             )
             raise
-        self.emit(
+        await self.emit(
             RunEnd(
                 run=binding.run_id,
                 status="finished",
@@ -686,8 +684,8 @@ class _Execution:
         path = self._run_outputs.get(run_id)
         return OutputRef(step=path) if path is not None else None
 
-    def emit(self, event: RunEvent) -> None:
-        self._emit_trace(event)
+    async def emit(self, event: RunEvent) -> None:
+        await self._emit_trace(event)
         if (
             isinstance(event, StepEnd)
             and event.kind == "model"
@@ -706,12 +704,12 @@ class _Execution:
             if isinstance(event, StepEnd) and event.status == "failed":
                 self._failed_runs.add(run_id)
 
-    def _emit_system_failure(self, run_id: str, error: str) -> None:
+    async def _emit_system_failure(self, run_id: str, error: str) -> None:
         if run_id in self._failed_runs:
             return
         path = trace_child_path(run_id, self._last_step_index.get(run_id, -1) + 1)
         started_at = utc_now()
-        self.emit(
+        await self.emit(
             StepBegin(
                 step=path,
                 kind="system",
@@ -719,7 +717,7 @@ class _Execution:
                 started_at=started_at,
             )
         )
-        self.emit(
+        await self.emit(
             StepEnd(
                 step=path,
                 kind="system",

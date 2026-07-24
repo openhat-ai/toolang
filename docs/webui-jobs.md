@@ -74,7 +74,7 @@ Task list item:
   "path": "tasks/3nprht9x.md",
   "updated_at": "2026-04-23T10:10:00Z",
   "runtime": {
-    "thread_id": "tsk_3nprht9x",
+    "thread_id": "task_3nprht9x",
     "last_run": null,
     "next_run_at": null
   }
@@ -94,7 +94,7 @@ Chore list item:
   "path": "chores/xy1234ab.md",
   "updated_at": "2026-04-23T10:10:00Z",
   "runtime": {
-    "thread_id": "chr_xy1234ab",
+    "thread_id": "chore_xy1234ab",
     "last_run": {
       "id": "run_ab12cd34",
       "status": "finished",

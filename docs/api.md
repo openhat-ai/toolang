@@ -2,6 +2,11 @@
 
 This document defines the public CLI and local agent HTTP API.
 
+Interactive CLI, TUI, and WebUI surfaces recognize and handle their slash and
+shell commands before passing remaining input to `ContentBody` parsing and input
+perceiving. Command dispatch belongs to the control surface rather than the
+Toolang input syntax.
+
 
 ## CLI
 
@@ -94,12 +99,12 @@ toolang start alice --sandbox docker
 toolang stop alice
 toolang info alice
 toolang alice chat
-toolang alice chat tui_3nprht9x
+toolang alice chat term_3nprht9x
 toolang alice chat --sandbox docker
 toolang alice threads
-toolang alice runs --thread tui_3nprht9x
+toolang alice runs --thread term_3nprht9x
 toolang alice steer run_ppkp9e94 "Use the smaller patch"
-toolang alice cancel tui_3nprht9x
+toolang alice cancel term_3nprht9x
 toolang alice rewind run_ppkp9e94 "Try again from here"
 toolang alice fork run_ppkp9e94 "Explore a different approach"
 toolang model list
@@ -141,7 +146,7 @@ Foreground runtime port selection depends on the agent mode:
 | Resident | Local managed name such as `alice` | Reuse the agent's last port when available, otherwise choose from `7001-7999` |
 | Visiting | Remote selector such as `brice/alice` or `https://toolang.ai/alice.too` | Reuse the visiting root's last port when available, otherwise choose an OS temporary port |
 | Roaming invoke with `--sandbox none` | Local `.too` path with an agic or flow name | No HTTP runtime port; the executable is invoked directly |
-| Sandboxed roaming invoke | Local `.too` path with an agic or flow name and a managed `--sandbox` | Reuse the roaming agent's last port when available, otherwise choose from `7001-7999`; the session-owned API is removed after the run |
+| Sandboxed roaming invoke | Local `.too` path with an agic or flow name and a managed `--sandbox` | No HTTP runtime port; use a dedicated execution process inside the selected host |
 | Roaming file runtime | Local `.too` path with `--inbox` and no agic name | Choose an OS temporary port |
 
 
@@ -150,40 +155,45 @@ Foreground runtime port selection depends on the agent mode:
 Roaming invoke uses one local `.too` source path directly:
 
 ```bash
-toolang SCRIPT AGIC [OPTIONS] [PARAMS] [INPUT]...
+toolang SCRIPT RUNNABLE [OPTIONS] [ARGS] [INPUT]...
 ```
 
 Arguments:
 
 - `SCRIPT` is the local Toolang script or agent file
-- `AGIC` is the agic to invoke
-- `PARAMS` are named agic parameters, written as `NAME=VALUE`
-- `INPUT` values are assembled into one multimodal message
+- `RUNNABLE` is the uniquely named agic or flow to invoke
+- `ARGS` provide named runnable parameters, written as `NAME=VALUE`
+- `INPUT` values form a `ContentBody` perceived as the canonical primary
+  `Percept`
 
 Behavior:
 
 - one local `.too` path enters roaming invoke mode
-- stdout is reserved for the final agic result
+- stdout is reserved for the final runnable result
 - progress messages are written to stderr only when stderr is a TTY
 - `-q` or `--quiet` suppresses progress messages
 - `--sandbox SELECTOR` hosts execution in the selected sandbox; `none` keeps
   direct execution in the current CLI process
-- managed sandbox execution streams the same trace events back to the
-  foreground CLI and removes its session-owned API after the run
-- `PY_LOG=toolang.run=info toolang a.too agic ...` writes runtime logs under `.toolang/agents/<agent>/.runtime/logs/<agic>/<run_id>.log`
-- `PY_LOG=debug toolang a.too agic ...` also writes lower-level provider and HTTP logs to that run log file
-- `toolang a.too --help` lists invokable agics
-- `toolang a.too agic --help` prints agic-specific dynamic usage
-- `toolang a.too` shows usage instead of invoking a default agic
-- roaming invoke exposes the agent's effective tools, subject to agic tool directives
-- `NAME=VALUE` sets one agic named param when `NAME` matches the agic signature
+- managed sandbox execution returns native run events through its process
+  channel rather than an HTTP streaming endpoint
+- `PY_LOG=toolang.run=info toolang a.too summarize ...` writes runtime logs
+  under `.toolang/agents/<agent>/.runtime/logs/<runnable>/<run_id>.log`
+- `PY_LOG=debug toolang a.too summarize ...` also writes lower-level provider
+  and HTTP logs to that run log file
+- `toolang a.too --help` lists invokable runnables
+- `toolang a.too summarize --help` prints runnable-specific dynamic usage
+- `toolang a.too` shows usage instead of invoking a default runnable
+- roaming invoke exposes the agent's effective tools, subject to runnable
+  directives
+- `NAME=VALUE` supplies one named argument and is coerced using its declared
+  parameter type
 - `INPUT` rules:
   - `TEXT` adds one text part; use `@@TEXT` for literal text beginning with `@`
-  - `@PATH` adds one path-based part; text-like paths become text parts
+  - `@PATH` adds one path-based percept part; text-like paths become text parts
   - image extensions such as `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, and `.svg` infer image parts
   - audio extensions such as `.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, and `.flac` infer audio parts
-  - video extensions such as `.mp4`, `.mov`, `.m4v`, `.webm`, `.mkv`, `.avi`, `.mpeg`, `.mpg`, `.3gp`, and `.ogv` infer video parts
-  - all other path extensions infer generic file parts
+  - supported document extensions infer document parts
+  - unsupported video, archive, executable, and binary formats are rejected
 - `--` ends option parsing so later arguments stay `INPUT` values
 - `--option` is reserved for Toolang runtime options
 - `PY_LOG` uses env_logger-style directive formatting and does not affect stdout
@@ -193,7 +203,7 @@ Behavior:
 ## File Request Runtime
 
 Roaming scripts can also start a foreground file request runtime without naming
-an agic:
+a runnable:
 
 ```bash
 toolang SCRIPT --inbox PATH [--inbox PATH...]
@@ -204,15 +214,15 @@ Behavior:
 - `SCRIPT` is materialized into its sibling `.toolang` roaming root.
 - Each `--inbox` value must name an existing directory.
 - Startup enables `runner.file` and `trigger.file`; AgentState watching is always active.
-- Startup requires an agic named `file` that accepts message input and has no
-  required parameters.
+- Startup requires an agic named `file` that accepts primary input and has no
+  required named parameters.
 - Files already present in an inbox at startup are eligible for processing.
 - Newly discovered stable files are passed to the `file` agic using the same
-  file input part rules as `@PATH`.
+  percept-part classification rules as `@PATH`.
 - File request progress is stored in `.runtime/files.db`.
 - Finished, failed, and canceled file fingerprints are not automatically retried.
-- When an agic name is present, such as `toolang SCRIPT file ...`, Toolang uses
-  normal one-shot agic invocation.
+- When a runnable name is present, such as `toolang SCRIPT summarize ...`,
+  Toolang uses normal one-shot runnable invocation.
 
 
 ## Runtime Commands
@@ -303,12 +313,18 @@ include richer discovery details such as:
 
 Each running agent exposes one local FastAPI server.
 
-The process assembles one `RunExecutor`, one `StateWatcher`, and five authored
-catalog instances for the application lifetime: one `AuthoredJobs`, private and
-shared `AuthoredCaps`, and private and shared `WiredCaps`. FastAPI dependencies
-return these concrete instances directly. `RunExecutor.start()` returns a
-`RunHandle`; the application retains handles only when its own protocol needs
-additional lifecycle bookkeeping.
+The process assembles one `RunExecutor`, one `StateWatcher`, and five catalog
+instances for the application lifetime: one `AuthoredJobs`, private and shared
+`AuthoredCaps`, and private and shared `WiredCaps`. These objects are
+fields of one `ApiContext` stored on `app.state`. One request dependency returns
+that context, and route functions use its fields directly. Application-wide
+FastAPI dependencies are reserved for side-effect-only concerns such as
+authentication or common validation. FastAPI lifespan owns required startup and
+shutdown; module globals, `ContextVar`, and router-factory closures do not carry
+application state.
+
+`RunExecutor.start()` returns a `RunHandle`; the application retains handles
+only when its own protocol needs additional lifecycle bookkeeping.
 
 Core endpoints are grouped as:
 
@@ -320,9 +336,9 @@ Core endpoints are grouped as:
 - `threads`
 
 Non-interactive execution uses `POST /api/v1/runs/stream`. It accepts an agic
-or flow selector, input, model/tool/cap selectors, and metadata, and returns the
-canonical trace event stream. The roaming CLI uses this endpoint when the
-executor must be hosted outside the current process.
+or flow's unique `runnable` name, primary input, optional model, and optional
+declared arguments, and returns the canonical trace event stream for HTTP
+clients. CLI invoke and TUI execution do not consume this endpoint.
 
 
 ## Agent Endpoints
@@ -452,56 +468,58 @@ agent's authored caps. Read payloads expose runtime `form`, `scope`, and
 Chat request body uses:
 
 - `thread`
-- `client`: `web`, `tui`, or `chat`; defaults to `web` and controls the prefix
-  for newly allocated chat thread ids
+- `client`: `web` or `term`; defaults to `web` and controls the prefix for
+  newly allocated chat thread ids
 - `peer` optional thread peer descriptor
   - `type`: `user` or `agent`; defaults to `user`
   - `name`: peer name; defaults to `user`
   - `thread`: peer-local thread id; defaults to `null`
 - `message`
-  - `role`
+  - `role`: must be `user`
   - `parts`
 - `model` optional selected model selector for this run
-- `agic` optional agic name for this run
-- `flow` optional flow name for this run; `agic` and `flow` are mutually exclusive
+- `runnable` optional executable name; omission uses the chat/default runnable
 
 `message.parts` accepts canonical message parts such as:
 
 - `text`
 - `image`
 - `audio`
-- `file`
+- `document`
 
-Actual part support still depends on the selected model route. For example, the
-built-in OpenAI `responses` routes currently accept text, image, and file
-inputs, but not audio inputs.
+Actual part support still depends on the selected model route. The built-in
+OpenAI Chat Completions and Responses adapters map text, image, audio, and
+document inputs. Chat Completions rejects a `DocumentPart` that has only a
+document URL; the caller must first provide document data or a provider file
+id.
 
 For multipart payload details:
 
-- `image.image_url` may be a remote URL or a local `data:` URL
-- `audio.data` should be base64 payload; `audio.data_url` is also accepted as an alias and is normalized to base64
-- `file.file_url` is for remote files
-- `file.file_data` should carry the provider-facing file payload and may be a full `data:...;base64,...` URL
-- `file.data_url` is also accepted as an alias and is normalized to `file_data`
+- an image part's `image_url` may be a remote URL or a local `data:` URL
+- an audio part's `data` should be base64 payload; `data_url` is also accepted
+  as an alias and is normalized to base64
+- a document part's `url` is for remote documents
+- a document part's `data` carries inline provider-facing document data and may
+  be a full `data:...;base64,...` URL
+- `file_id` references a document already uploaded to the selected provider
 
 `POST /api/v1/chat` returns one completed `ChatResult` containing `thread`,
 `run`, `message`, and `assistant` projections.
 
 `POST /api/v1/chat/stream` returns one SSE stream that follows an AI SDK UI
 message stream subset. This endpoint is an adapter for chat UI clients. The
-canonical progress protocol is exposed through the activity event streams.
+canonical progress protocol is exposed through the live run and thread
+streams.
 
 The CLI command for interactive chat is
 `toolang <agent> chat [thread] [--sandbox <selector>]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
-a thread id, it continues that thread. When the agent API is already running,
-the TUI uses it. Without a running API, effective `sandbox=none` creates a
-process-local chat session and calls `RunExecutor` in the current foreground CLI.
-A managed sandbox such as Docker instead uses a session-owned API and stops it
-when the session closes. Both paths use the same root, home, state watcher, run
-store, and chat-client contract. Job thread ids are inspectable and controllable
-through thread and run commands, but `chat` does not implicitly reopen tasks or
-create manual chore runs.
+a thread id, it continues that thread. The TUI runs in its own process, assembles
+the same core objects, calls `RunExecutor` directly, and observes native
+`RunEvent` values through a `RunTracer`. It does not depend on the chat or run
+SSE endpoints. Starting an agent HTTP server remains a separate CLI operation.
+Job thread ids are inspectable and controllable through thread and run commands,
+but `chat` does not implicitly reopen tasks or create manual chore runs.
 
 
 ## Job Endpoints
@@ -640,9 +658,9 @@ Delete is destructive and is available only through archived routes.
 
 ## Run And Thread Endpoints
 
+- `POST /api/v1/runs/stream`
 - `GET /api/v1/runs`
 - `GET /api/v1/runs/{run_id}`
-- `GET /api/v1/runs/{run_id}/events`
 - `GET /api/v1/runs/{run_id}/stream`
 - `POST /api/v1/runs/{run_id}/steer`
 - `POST /api/v1/runs/{run_id}/cancel`
@@ -651,7 +669,6 @@ Delete is destructive and is available only through archived routes.
 - `GET /api/v1/threads/{thread_id}`
 - `POST /api/v1/threads/{thread_id}/rewind`
 - `POST /api/v1/threads/{thread_id}/fork`
-- `GET /api/v1/threads/{thread_id}/events`
 - `GET /api/v1/threads/{thread_id}/stream`
 
 `/api/v1/runs/{run_id}` is the main trace-detail endpoint.
@@ -665,23 +682,22 @@ bodies take an optional `run_id` anchor and `request_id`. An omitted run id
 selects the last visible run. Task and chore threads cannot be rewound or forked
 because their thread ids are derived from job ids.
 
-`steer`, `cancel`, and accepted manual chore starts return `RunCommandResult`
-with `run` and `command`. Thread create and fork return the created thread;
-rewind returns the updated existing thread representation. None of these thread
-operations starts a follow-up run.
+`steer` and `cancel` return the accepted `RunControlInfo`. An accepted manual
+chore start returns its `RunInfo`. Thread create and fork return the created
+thread; rewind returns the updated existing thread representation. None of
+these thread operations starts a follow-up run.
 
-Run and thread event streams return SSE records with this envelope:
+Run and thread streams expose only live events; Toolang does not persist an
+exact event log or provide a historical `/events` collection. A reconnecting
+client first reads run or thread detail from durable records, then observes new
+events from the live stream.
 
-- `type`
-- `event_type`
-- `payload`
+Streams use SSE framing directly: the SSE `event` field is the canonical event
+type, and `data` is that event's serialized payload. The API does not wrap a
+`RunEvent` or `ThreadEvent` in a second transport event type.
 
 Canonical run progress event names are:
 
-- `run_starting`
-- `run_waiting`
-- `run_steering`
-- `run_stopping`
 - `run_begin`
 - `step_begin`
 - `part_begin`
@@ -690,9 +706,10 @@ Canonical run progress event names are:
 - `step_end`
 - `run_end`
 
-`run_starting`, `run_steering`, and `run_stopping` mean the runtime accepted the
-corresponding command. `run_begin` means execution has begun. `run_waiting`
-reports a queued or blocked run with a `reason` and optional `position`.
+Run control acceptance and status are durable `RunControlRecord` truth, not
+synthetic stream events. A thread stream may additionally carry
+`thread_created`, `thread_forked`, and `thread_rewound`, and aggregates live run
+events belonging to that thread.
 
 
 ## Hook Endpoints

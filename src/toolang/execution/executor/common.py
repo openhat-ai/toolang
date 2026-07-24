@@ -38,7 +38,7 @@ from ..records import OutputRef, RunControlRecord, RunControlRef, StepInputItem
 from ..types import StepKind, StepPath
 
 Shape = Literal["none", "item", "list"]
-EventEmitter = Callable[[RunEvent], None]
+EventEmitter = Callable[[RunEvent], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +95,7 @@ async def execute_step(
             ),
         )
     )
-    emit(
+    await emit(
         StepBegin(
             step=path,
             kind=kind,
@@ -112,7 +112,7 @@ async def execute_step(
     try:
         result = await operation()
     except asyncio.CancelledError:
-        emit(
+        await emit(
             StepEnd(
                 step=path,
                 kind=kind,
@@ -122,7 +122,7 @@ async def execute_step(
         )
         raise
     except Exception as exc:
-        emit(
+        await emit(
             StepEnd(
                 step=path,
                 kind=kind,
@@ -132,7 +132,7 @@ async def execute_step(
             )
         )
         raise
-    emit(
+    await emit(
         StepEnd(
             step=path,
             kind=kind,

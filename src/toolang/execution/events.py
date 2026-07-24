@@ -105,7 +105,7 @@ class RunTracer(ABC):
     """Observe the ordered run tree started by one caller."""
 
     @abstractmethod
-    def on_event(self, event: RunEvent) -> None:
+    async def on_event(self, event: RunEvent) -> None:
         """Observe one run event after durable projection."""
 
 

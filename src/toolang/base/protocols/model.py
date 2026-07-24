@@ -41,14 +41,14 @@ class ModelAdapter(Protocol):
     name: str
     description: str | None
 
-    def invoke(
+    async def invoke(
         self,
         target: ModelTarget,
         request: ModelCall,
     ) -> ModelCallResult:
         """Execute one non-streaming model turn."""
 
-    def stream(
+    async def stream(
         self,
         target: ModelTarget,
         request: ModelCall,

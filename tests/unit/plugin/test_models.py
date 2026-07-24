@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 import tomllib
@@ -8,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 
-from toolang.base.protocols.model import ModelProvider
+from toolang.base.protocols.model import ModelAdapter, ModelProvider
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import (
     AudioPart,
@@ -61,12 +62,12 @@ class _FakeTool(AgentTool):
             parameters={"type": "object"},
         )
 
-    def invoke(self, arguments, context: ToolContext) -> dict[str, Any]:
+    async def invoke(self, arguments, context: ToolContext) -> dict[str, Any]:
         del context
         return {"ok": True, "stdout": f"ran:{arguments['command']}"}
 
 
-class _FakeModelProvider(ModelProvider):
+class _FakeModelProvider(ModelProvider, ModelAdapter):
     def __init__(
         self,
         *,
@@ -102,16 +103,24 @@ class _FakeModelProvider(ModelProvider):
         self.list_models_calls += 1
         return self._models
 
-    def invoke(self, target: ModelTarget, request: ModelCall) -> ModelCallResult:
+    async def invoke(
+        self,
+        target: ModelTarget,
+        request: ModelCall,
+    ) -> ModelCallResult:
         del target
         self.requests.append(request)
         return self._responses.pop(0)
 
-    def stream(
+    async def stream(
         self, target: ModelTarget, request: ModelCall, *, on_event
     ) -> ModelCallResult:
         del on_event
-        return self.invoke(target, request)
+        return await self.invoke(target, request)
+
+
+async def _ignore_event(_event: object) -> None:
+    return None
 
 
 def test_model_resolution_resolves_named_route(tmp_path: Path) -> None:
@@ -1342,7 +1351,7 @@ def test_openrouter_provider_discovers_remote_models(monkeypatch) -> None:
 def test_openrouter_provider_prepares_chat_completions_target(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_invoke_chat_completion(target, request):
+    async def fake_invoke_chat_completion(target, request):
         captured["target"] = target
         captured["request"] = request
         return ModelCallResult(message=Message.assistant("done"))
@@ -1361,7 +1370,7 @@ def test_openrouter_provider_prepares_chat_completions_target(monkeypatch) -> No
     )
     request = ModelCall(instructions="dev", messages=[Message.user("hello")])
 
-    result = adapter.invoke(provider.prepare_target(target), request)
+    result = asyncio.run(adapter.invoke(provider.prepare_target(target), request))
 
     assert result.message == Message.assistant("done")
     assert captured["request"] == request
@@ -1383,7 +1392,7 @@ def test_chat_completions_adapter_invokes_openai_compatible_client(monkeypatch) 
     captured: dict[str, object] = {}
 
     class _Completions:
-        def create(self, **payload):
+        async def create(self, **payload):
             captured["payload"] = payload
             return SimpleNamespace(
                 choices=(
@@ -1432,7 +1441,7 @@ def test_chat_completions_adapter_invokes_openai_compatible_client(monkeypatch) 
         ),
     )
 
-    result = adapter.invoke(target, request)
+    result = asyncio.run(adapter.invoke(target, request))
 
     assert captured["payload"] == {
         "model": "deepseek-v4-pro",
@@ -1558,7 +1567,7 @@ def test_chat_completions_adapter_rejects_tool_calls_without_names() -> None:
 
 def test_chat_completions_stream_rejects_tool_deltas_without_names(monkeypatch) -> None:
     class _Stream:
-        def __iter__(self):
+        async def __aiter__(self):
             yield SimpleNamespace(
                 choices=(
                     SimpleNamespace(
@@ -1577,11 +1586,11 @@ def test_chat_completions_stream_rejects_tool_deltas_without_names(monkeypatch) 
                 )
             )
 
-        def close(self) -> None:
+        async def close(self) -> None:
             return None
 
     class _Completions:
-        def create(self, **payload):
+        async def create(self, **payload):
             del payload
             return _Stream()
 
@@ -1594,24 +1603,31 @@ def test_chat_completions_stream_rejects_tool_deltas_without_names(monkeypatch) 
     adapter = chat_completions_models.create_model_adapter({})
 
     with pytest.raises(ToolangError, match="tool call without a function name"):
-        adapter.stream(
-            ModelTarget(
-                ref="deepseek/deepseek-reasoner",
-                provider="deepseek",
-                name="deepseek-reasoner",
-                model="deepseek-reasoner",
-                adapter="chat_completions",
-            ),
-            ModelCall(instructions="", messages=[Message.user("hello")]),
-            on_event=lambda _event: None,
+        asyncio.run(
+            adapter.stream(
+                ModelTarget(
+                    ref="deepseek/deepseek-reasoner",
+                    provider="deepseek",
+                    name="deepseek-reasoner",
+                    model="deepseek-reasoner",
+                    adapter="chat_completions",
+                ),
+                ModelCall(instructions="", messages=[Message.user("hello")]),
+                on_event=_ignore_event,
+            )
         )
 
 
 def test_chat_completions_stream_collects_deepseek_usage(monkeypatch) -> None:
     captured: dict[str, object] = {}
+    events: list[str] = []
+
+    async def record_event(event: object) -> None:
+        await asyncio.sleep(0)
+        events.append(type(event).__name__)
 
     class _Stream:
-        def __iter__(self):
+        async def __aiter__(self):
             yield SimpleNamespace(
                 choices=(
                     SimpleNamespace(
@@ -1641,11 +1657,11 @@ def test_chat_completions_stream_collects_deepseek_usage(monkeypatch) -> None:
                 usage=SimpleNamespace(prompt_tokens=13, completion_tokens=8),
             )
 
-        def close(self) -> None:
+        async def close(self) -> None:
             return None
 
     class _Completions:
-        def create(self, **payload):
+        async def create(self, **payload):
             captured["payload"] = payload
             return _Stream()
 
@@ -1657,16 +1673,18 @@ def test_chat_completions_stream_collects_deepseek_usage(monkeypatch) -> None:
     )
     adapter = chat_completions_models.create_model_adapter({})
 
-    result = adapter.stream(
-        ModelTarget(
-            ref="deepseek/deepseek-v4-flash",
-            provider="deepseek",
-            name="deepseek-v4-flash",
-            model="deepseek-v4-flash",
-            adapter="chat_completions",
-        ),
-        ModelCall(instructions="", messages=[Message.user("hello")]),
-        on_event=lambda _event: None,
+    result = asyncio.run(
+        adapter.stream(
+            ModelTarget(
+                ref="deepseek/deepseek-v4-flash",
+                provider="deepseek",
+                name="deepseek-v4-flash",
+                model="deepseek-v4-flash",
+                adapter="chat_completions",
+            ),
+            ModelCall(instructions="", messages=[Message.user("hello")]),
+            on_event=record_event,
+        )
     )
 
     payload = cast(dict[str, object], captured["payload"])
@@ -1674,6 +1692,7 @@ def test_chat_completions_stream_collects_deepseek_usage(monkeypatch) -> None:
     assert payload["stream_options"] == {"include_usage": True}
     assert result.message == Message.assistant("done")
     assert result.usage == ModelUsage(input_tokens=13, output_tokens=8)
+    assert events == ["ModelPartStart", "ModelPartDelta", "ModelPartEnd"]
 
 
 def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models(
@@ -1707,7 +1726,7 @@ def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models(
     with pytest.raises(
         ToolangError, match="audio input is not supported for OpenAI model 'gpt-5'"
     ):
-        adapter.invoke(target, request)
+        asyncio.run(adapter.invoke(target, request))
 
 
 def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models_in_streaming(
@@ -1741,13 +1760,13 @@ def test_responses_adapter_rejects_openai_audio_inputs_for_non_audio_models_in_s
     with pytest.raises(
         ToolangError, match="audio input is not supported for OpenAI model 'gpt-5'"
     ):
-        adapter.stream(target, request, on_event=lambda _event: None)
+        asyncio.run(adapter.stream(target, request, on_event=_ignore_event))
 
 
 def test_openrouter_provider_preserves_route_header_overrides(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_invoke_chat_completion(target, request):
+    async def fake_invoke_chat_completion(target, request):
         captured["target"] = target
         captured["request"] = request
         return ModelCallResult(message=Message.assistant("done"))
@@ -1769,9 +1788,11 @@ def test_openrouter_provider_preserves_route_header_overrides(monkeypatch) -> No
         },
     )
 
-    adapter.invoke(
-        provider.prepare_target(target),
-        ModelCall(instructions="dev", messages=[Message.user("hello")]),
+    asyncio.run(
+        adapter.invoke(
+            provider.prepare_target(target),
+            ModelCall(instructions="dev", messages=[Message.user("hello")]),
+        )
     )
 
     resolved_target = cast(ModelTarget, captured["target"])
@@ -2053,7 +2074,7 @@ def test_responses_adapter_logs_api_request_and_response_at_debug(
     captured: dict[str, object] = {}
 
     class _FakeResponses:
-        def create(self, **kwargs):
+        async def create(self, **kwargs):
             captured["payload"] = kwargs
             return _FakeResponse()
 
@@ -2078,7 +2099,9 @@ def test_responses_adapter_logs_api_request_and_response_at_debug(
     )
 
     with caplog.at_level(logging.DEBUG, logger="toolang.model.adapter"):
-        result = responses_models.invoke_response(target, request, stateful=True)
+        result = asyncio.run(
+            responses_models.invoke_response(target, request, stateful=True)
+        )
 
     assert result.message == Message.assistant("done")
     assert result.usage == ModelUsage(input_tokens=11, output_tokens=7)
@@ -2391,14 +2414,11 @@ def _prepared_agic(
     return PreparedAgic(
         run=BoundRun(
             run_id="run-1",
-            origin="chat",
-            thread_id="thread-1",
-            executable_kind="agic",
-            executable_name=None,
+            root_run_id="run-1",
+            thread="thread-1",
             input=Message.user("hello"),
-            input_text="hello",
-            model_selector=None,
-            context={},
+            args={},
+            model=None,
             state=cast(Any, state),
             setup=AgentSetup(
                 name="test",
@@ -2434,13 +2454,15 @@ def _prepared_agic(
 
 
 def _run_agic(prepared: PreparedAgic) -> Message | None:
-    return _execute(
-        _AgicState(
-            prepared=prepared,
-            home=Path("/tmp/home"),
-            emit=lambda _event: None,
-            pending_inputs=tuple,
-            before_call=lambda: None,
-            messages=list(prepared.messages),
+    return asyncio.run(
+        _execute(
+            _AgicState(
+                prepared=prepared,
+                home=Path("/tmp/home"),
+                emit=_ignore_event,
+                pending_inputs=tuple,
+                before_call=lambda: None,
+                messages=list(prepared.messages),
+            )
         )
     )

@@ -90,7 +90,7 @@ Key paths:
 | `agent.log`    | Runtime log                                                  |
 | `logs/<agic>/<run_id>.log` | Per-run script invoke logs when `PY_LOG` is set |
 | `jobs.db` | Scheduler job projection and atomic job claims                |
-| `runs.db` | Threads, run controls, runs, steps, and prompt blobs          |
+| `runs.db` | Threads, controls, runs, steps, and replayable model inputs   |
 | `files.db` | File request claims, fingerprints, and completion state        |
 | `ids.json`     | Local id allocator state                                     |
 | `tools/`       | Per-tool plugin working directories                          |

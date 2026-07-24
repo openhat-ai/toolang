@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from toolang.base.errors import ToolangError
+from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.tool import ToolContext, ToolService
 from toolang.execution.store import RunStore
@@ -64,17 +67,27 @@ def _service_context(
     )
 
 
+def _invoke(
+    tool: AgentTool,
+    arguments: dict[str, object],
+    context: ToolContext,
+) -> dict[str, Any]:
+    return asyncio.run(tool.invoke(arguments, context))
+
+
 def test_filesystem_tool_reads_and_writes_within_agent_home(tmp_path: Path) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     plugin = create_filesystem_tool({})
     tools = plugin.tools()
 
-    written = tools["write_text"].invoke(
+    written = _invoke(
+        tools["write_text"],
         {"path": "notes/todo.txt", "text": "hello"},
         _tool_context(home, "filesystem"),
     )
-    loaded = tools["read_text"].invoke(
+    loaded = _invoke(
+        tools["read_text"],
         {"path": "notes/todo.txt"},
         _tool_context(home, "filesystem"),
     )
@@ -89,11 +102,13 @@ def test_filesystem_tool_appends_to_missing_file(tmp_path: Path) -> None:
     plugin = create_filesystem_tool({})
     tools = plugin.tools()
 
-    appended = tools["append_text"].invoke(
+    appended = _invoke(
+        tools["append_text"],
         {"path": "outbox/index.md", "text": "- hello\n"},
         _tool_context(home, "filesystem"),
     )
-    loaded = tools["read_text"].invoke(
+    loaded = _invoke(
+        tools["read_text"],
         {"path": "outbox/index.md"},
         _tool_context(home, "filesystem"),
     )
@@ -108,7 +123,8 @@ def test_filesystem_tool_rejects_paths_outside_agent_home(tmp_path: Path) -> Non
     tool = create_filesystem_tool({}).tools()["read_text"]
 
     with pytest.raises(Exception, match="escapes agent home"):
-        tool.invoke(
+        _invoke(
+            tool,
             {"path": "../secret.txt"},
             _tool_context(home, "filesystem"),
         )
@@ -119,7 +135,11 @@ def test_shell_tool_runs_one_command(tmp_path: Path) -> None:
     home.mkdir()
     tool = create_shell_tool({}).tools()["execute"]
 
-    result = tool.invoke({"command": "printf hi"}, _tool_context(home, "shell"))
+    result = _invoke(
+        tool,
+        {"command": "printf hi"},
+        _tool_context(home, "shell"),
+    )
 
     assert result["ok"] is True
     assert result["exit_code"] == 0
@@ -145,7 +165,8 @@ def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:
         ],
     )
 
-    result = tool.invoke(
+    result = _invoke(
+        tool,
         {"query": "toolang", "domains": ["example.com"]},
         _tool_context(tmp_path, "web_search"),
     )
@@ -199,7 +220,8 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
     ).tools()["send"]
 
     try:
-        result = tool.invoke(
+        result = _invoke(
+            tool,
             {"peer": "bob", "message": "please review"},
             _tool_context(home, "agent_chat"),
         )
@@ -208,10 +230,18 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
         local_commands = [
             input
             for run in local_runs
-            for input in store.list_commands(run_id=run.run_id)
+            for input in store.list_run_controls(run_id=run.id)
             if input.input is not None
         ]
         local_steps = store.list_steps(run_id=str(result["local_run_id"]))
+        local_control = (
+            store.get_thread_control(
+                thread_id=local.thread_id,
+                index=local.created_by.index,
+            )
+            if local is not None
+            else None
+        )
     finally:
         store.close()
 
@@ -233,7 +263,8 @@ def test_agent_chat_tool_creates_child_thread_and_sends_peer_request(monkeypatch
     assert result["local_run_id"].startswith("run_")
     assert result["assistant_text"] == "bob says yes"
     assert local is not None
-    assert local.parent == "term_user"
+    assert local_control is not None
+    assert local_control.context["parent"] == "term_user"
     assert local.peer == ThreadPeer(type="agent", name="bob", thread="term_bob")
     assert [message_text(input.input.parts) for input in local_commands if input.input is not None] == ["please review"]
     assert [part.text for part in local_steps[0].output if isinstance(part, TextPart)] == ["bob says yes"]
@@ -276,7 +307,8 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
     tool = create_agent_chat_tool({}).tools()["send"]
 
     try:
-        result = tool.invoke(
+        result = _invoke(
+            tool,
             {
                 "peer": {"name": "merkle", "endpoint": "http://127.0.0.1:7002/"},
                 "message": "ping",
@@ -288,7 +320,7 @@ def test_agent_chat_tool_accepts_direct_peer_object_without_config(monkeypatch, 
         local_commands = [
             input
             for run in local_runs
-            for input in store.list_commands(run_id=run.run_id)
+            for input in store.list_run_controls(run_id=run.id)
             if input.input is not None
         ]
     finally:
@@ -351,7 +383,8 @@ def test_agent_chat_tool_can_call_streaming_peer_chat(monkeypatch, tmp_path: Pat
     tool = create_agent_chat_tool({}).tools()["send"]
 
     try:
-        result = tool.invoke(
+        result = _invoke(
+            tool,
             {
                 "peer": {"name": "merkle", "endpoint": "http://127.0.0.1:7002"},
                 "message": "ping",
@@ -432,11 +465,13 @@ def test_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Pat
     monkeypatch.setattr("mcat_cli.mcp.init_session", fake_init_session)
     monkeypatch.setattr("mcat_cli.mcp.list_tools", fake_list_tools)
 
-    plugin.tools()["init"].invoke(
+    _invoke(
+        plugin.tools()["init"],
         {"service": "github"},
         context,
     )
-    result = plugin.tools()["tool_list"].invoke(
+    result = _invoke(
+        plugin.tools()["tool_list"],
         {"service": "github"},
         context,
     )
@@ -459,7 +494,8 @@ def test_service_use_requires_explicitly_resolved_environment(
     plugin = create_service_use_tool({})
 
     with pytest.raises(ToolangError, match="service env var is missing: GITHUB_TOKEN"):
-        plugin.tools()["init"].invoke(
+        _invoke(
+            plugin.tools()["init"],
             {"service": "github"},
             _service_context(home, env_names=("GITHUB_TOKEN",)),
         )
@@ -488,11 +524,13 @@ def test_service_use_tool_serializes_dict_input_for_tool_call(monkeypatch, tmp_p
     monkeypatch.setattr("mcat_cli.mcp.init_session", fake_init_session)
     monkeypatch.setattr("mcat_cli.mcp.call_tool", fake_call_tool)
 
-    plugin.tools()["init"].invoke(
+    _invoke(
+        plugin.tools()["init"],
         {"service": "github"},
         context,
     )
-    result = plugin.tools()["tool_call"].invoke(
+    result = _invoke(
+        plugin.tools()["tool_call"],
         {
             "service": "github",
             "tool_name": "search_issues",
@@ -541,7 +579,8 @@ def test_service_use_bridge_start_is_not_required_for_http_service(tmp_path: Pat
     home.mkdir()
     plugin = create_service_use_tool({})
 
-    result = plugin.tools()["bridge_start"].invoke(
+    result = _invoke(
+        plugin.tools()["bridge_start"],
         {"service": "github"},
         _service_context(home),
     )
@@ -565,7 +604,8 @@ def test_service_use_bridge_start_parses_effective_stdio_target(
 
     monkeypatch.setattr("mcat_cli.bridge.bridge_start", fake_bridge_start)
 
-    result = plugin.tools()["bridge_start"].invoke(
+    result = _invoke(
+        plugin.tools()["bridge_start"],
         {"service": "local"},
         _service_context(
             home,
@@ -588,7 +628,8 @@ def test_service_use_rejects_service_outside_effective_run(tmp_path: Path) -> No
         ToolangError,
         match="service is not visible to this agent: github",
     ):
-        plugin.tools()["init"].invoke(
+        _invoke(
+            plugin.tools()["init"],
             {"service": "github"},
             _tool_context(home, "service_use"),
         )
@@ -608,7 +649,8 @@ def test_service_use_auth_start_prepares_http_connection(monkeypatch, tmp_path: 
 
     monkeypatch.setattr("mcat_cli.auth.run_auth", fake_run_auth)
 
-    result = plugin.tools()["auth_start"].invoke(
+    result = _invoke(
+        plugin.tools()["auth_start"],
         {"service": "linear"},
         _service_context(
             home,
@@ -627,7 +669,8 @@ def test_service_use_tool_init_fails_without_bridge_state(tmp_path: Path) -> Non
     plugin = create_service_use_tool({})
 
     with pytest.raises(Exception):
-        plugin.tools()["init"].invoke(
+        _invoke(
+            plugin.tools()["init"],
             {"service": "github"},
             _service_context(home),
         )
@@ -639,13 +682,15 @@ def test_service_use_tool_call_fails_without_init(tmp_path: Path) -> None:
     plugin = create_service_use_tool({})
     context = _service_context(home)
 
-    plugin.tools()["bridge_start"].invoke(
+    _invoke(
+        plugin.tools()["bridge_start"],
         {"service": "github"},
         context,
     )
 
     with pytest.raises(Exception):
-        plugin.tools()["tool_list"].invoke(
+        _invoke(
+            plugin.tools()["tool_list"],
             {"service": "github"},
             context,
         )
@@ -667,11 +712,13 @@ def test_service_use_reuses_service_scoped_session_file(monkeypatch, tmp_path: P
     monkeypatch.setattr("mcat_cli.mcp.init_session", fake_init_session)
     monkeypatch.setattr("mcat_cli.mcp.list_tools", lambda *, sess_info_file: {"session_file": sess_info_file})
 
-    plugin.tools()["init"].invoke(
+    _invoke(
+        plugin.tools()["init"],
         {"service": "github"},
         _service_context(home, run_id="run-a"),
     )
-    plugin.tools()["init"].invoke(
+    _invoke(
+        plugin.tools()["init"],
         {"service": "github"},
         _service_context(home, run_id="run-b"),
     )

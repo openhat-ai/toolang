@@ -3,6 +3,9 @@
 Toolang exposes tools through the tool plugin family.
 
 Tools execute inside normal runs and are recorded as `tool_call` steps.
+`AgentTool.invoke()` is asynchronous. Function-tool wrappers await native
+async callables and isolate synchronous Python callables in a worker thread,
+so blocking tool implementations do not stall the run event loop.
 
 
 ## Built-In Tool Families

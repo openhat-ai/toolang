@@ -6,7 +6,7 @@ Shared contracts and canonical value types live in:
 
 - `toolang.base`
 
-Plugins should raise `toolang.common.errors.ToolangError` for invalid Toolang
+Plugins should raise `toolang.base.errors.ToolangError` for invalid Toolang
 configuration, input, or runtime behavior that should be presented to users.
 
 
@@ -42,7 +42,7 @@ Plugins do not mutate durable runtime truth directly.
 ### Tool
 
 Tool plugins expose one `AgentToolSet`, which may return one or more
-model-facing `AgentTool` values.
+model-facing `AgentTool` values. `AgentTool.invoke()` is asynchronous.
 
 ### Channel
 
@@ -60,7 +60,8 @@ provider-specific target preparation.
 ### Model Adapter
 
 Model adapter plugins execute one model turn for a resolved target and return
-`ModelCallResult`.
+`ModelCallResult`. Both non-streaming and streaming adapter calls are
+asynchronous, and streaming adapters await their model-part handler.
 
 
 ## Loading

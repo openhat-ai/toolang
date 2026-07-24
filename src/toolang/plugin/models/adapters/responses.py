@@ -51,7 +51,7 @@ class ResponsesModelAdapter(ModelAdapter):
     name: str = "responses"
     description: str | None = "Use the OpenAI Responses-compatible API shape."
 
-    def invoke(
+    async def invoke(
         self,
         target: ModelTarget,
         request: ModelCall,
@@ -59,13 +59,13 @@ class ResponsesModelAdapter(ModelAdapter):
         """Execute one non-streaming Responses API call."""
 
         _require_supported_inputs(target, request)
-        return invoke_response(
+        return await invoke_response(
             target,
             request,
             stateful=_stateful_target(target),
         )
 
-    def stream(
+    async def stream(
         self,
         target: ModelTarget,
         request: ModelCall,
@@ -75,7 +75,7 @@ class ResponsesModelAdapter(ModelAdapter):
         """Execute one streaming Responses API call."""
 
         _require_supported_inputs(target, request)
-        return stream_response(
+        return await stream_response(
             target,
             request,
             stateful=_stateful_target(target),
@@ -135,7 +135,7 @@ def create_client(target: ModelTarget) -> Any:
     """Create one OpenAI-compatible client for a resolved model target."""
 
     try:
-        from openai import OpenAI
+        from openai import AsyncOpenAI
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise ToolangError(
             "The 'openai' package is not installed. Reinstall toolang with its runtime dependencies to enable runtime execution."
@@ -147,10 +147,10 @@ def create_client(target: ModelTarget) -> Any:
         kwargs["api_key"] = target.api_key
     if target.headers:
         kwargs["default_headers"] = dict(target.headers)
-    return OpenAI(**kwargs)
+    return AsyncOpenAI(**kwargs)
 
 
-def invoke_response(
+async def invoke_response(
     target: ModelTarget,
     request: ModelCall,
     *,
@@ -170,7 +170,7 @@ def invoke_response(
         stateful=stateful,
         stream=False,
     )
-    response = client.responses.create(
+    response = await client.responses.create(
         **payload
     )
     _log_api_response(
@@ -186,7 +186,7 @@ def invoke_response(
     )
 
 
-def stream_response(
+async def stream_response(
     target: ModelTarget,
     request: ModelCall,
     *,
@@ -207,20 +207,20 @@ def stream_response(
         stateful=stateful,
         stream=True,
     )
-    with client.responses.stream(
+    async with client.responses.stream(
         **payload
     ) as stream:
         seen_tool_inputs: set[str] = set()
         text_started = False
-        for event in stream:
+        async for event in stream:
             event_type = getattr(event, "type", None)
             if event_type == "response.output_text.delta":
                 delta = str(getattr(event, "delta", ""))
                 if delta:
                     if not text_started:
                         text_started = True
-                        on_event(ModelPartStart(kind="text"))
-                    on_event(ModelPartDelta(delta=TextDelta(text=delta)))
+                        await on_event(ModelPartStart(kind="text"))
+                    await on_event(ModelPartDelta(delta=TextDelta(text=delta)))
                 continue
             if event_type != "response.function_call_arguments.delta":
                 continue
@@ -231,14 +231,14 @@ def stream_response(
             )
             if current_tool_call_id not in seen_tool_inputs:
                 seen_tool_inputs.add(current_tool_call_id)
-                on_event(
+                await on_event(
                     ModelPartStart(
                         kind="tool_call",
                     )
                 )
             delta = str(getattr(event, "delta", ""))
             if delta:
-                on_event(
+                await on_event(
                     ModelPartDelta(
                         delta=ToolCallDelta(
                             text=delta,
@@ -246,7 +246,7 @@ def stream_response(
                         ),
                     )
                 )
-        response = stream.get_final_response()
+        response = await stream.get_final_response()
     _log_api_response(
         target,
         response,
@@ -261,7 +261,7 @@ def stream_response(
     if result.message is not None:
         for part in result.message.parts:
             if isinstance(part, (TextPart, ToolCallPart)):
-                on_event(ModelPartEnd(data=part))
+                await on_event(ModelPartEnd(data=part))
     return result
 
 

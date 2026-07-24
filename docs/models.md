@@ -135,6 +135,39 @@ Streaming providers report these model-part updates through `ModelStreamHandler`
 - `ModelPartDelta`
 - `ModelPartEnd`
 
+`ModelAdapter.invoke()` and `ModelAdapter.stream()` are asynchronous.
+Streaming adapters await `ModelStreamHandler` for every update so execution
+observes provider parts in order.
+
+
+## Canonical Multimodal Mapping
+
+`ModelCall` contains provider-neutral `Message` values. One `Percept` is an
+ordered sequence of `TextPart`, `ImagePart`, `AudioPart`, and `DocumentPart`
+values. Model/tool protocol messages may additionally use `ToolCallPart` and
+`ToolResultPart`. Adapters translate these typed values to provider payloads
+and reject unsupported combinations before sending a request. They never
+flatten a non-text part into prompt text.
+
+The built-in OpenAI adapters map multimodal input as follows:
+
+| PerceptPart | Chat Completions | Responses |
+| --- | --- | --- |
+| `TextPart` | text content | `input_text` |
+| `ImagePart` | image content | `input_image` |
+| `AudioPart` | input audio | `input_audio` |
+| `DocumentPart` with data or file id | file content | `input_file` |
+| `DocumentPart` with only a document URL | reject | `input_file` |
+
+Chat Completions callers must resolve a document URL to document data or a
+provider file id before invocation. Actual support still depends on the
+selected model and provider route.
+
+When a provider returns audio with a transcript, the adapter produces one
+`AudioPart` carrying both the audio and transcript. It does not synthesize a
+second `TextPart`, because doing so would duplicate one provider output in
+canonical history.
+
 
 ## Built-In Model Providers
 

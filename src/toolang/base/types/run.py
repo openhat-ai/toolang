@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -127,4 +127,4 @@ class ModelPartEnd:
 
 
 ModelPartUpdate = ModelPartStart | ModelPartDelta | ModelPartEnd
-ModelStreamHandler = Callable[[ModelPartUpdate], None]
+ModelStreamHandler = Callable[[ModelPartUpdate], Awaitable[None]]

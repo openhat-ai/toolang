@@ -27,7 +27,7 @@ hubs, or exact historical event replay.
 - `ThreadRecord` and `ThreadControlRecord`;
 - `RunRecord` and `RunControlRecord`;
 - `StepRecord` and complete step outputs;
-- deduplicated prompt bodies.
+- content-addressed model instructions, messages, and toolsets.
 
 Run events are transient facts emitted during execution. They are never stored
 as `EventRecord` rows. A reconnecting caller reconstructs current state from
@@ -111,6 +111,9 @@ and isolated from execution. One tracer observes the complete run tree started
 by its `start()` call, including child runs, steps, parts, and terminal events.
 Each event already contains its complete durable references and output edge;
 `PersistSink` does not reconstruct runtime locals or infer alternate output.
+`RunTracer.on_event()` is asynchronous. The executor serializes tracer calls
+and awaits each one on the owner event loop, so tracers never need to infer
+which worker thread emitted an event.
 
 
 ## Run Events
@@ -201,5 +204,9 @@ defensive check; it is not part of the public manager API.
 
 `RunSpec` carries one explicit immutable `AgentState` and
 `toolang.up.setup.AgentSetup`. `AgentSetup` supplies the agent home and installed
-runtime implementations. Child runs inherit both. Source changes affect only
-runs accepted after the new state is observed.
+runtime implementations. Its primary input is one protocol-level `Percept`;
+after runnable resolution, input coercion exposes that value as `Part[]` or
+another explicitly declared primary type. Output coercion validates the final
+run value against the runnable's declared output type. Child runs inherit setup
+and state. Source changes affect only runs accepted after the new state is
+observed.

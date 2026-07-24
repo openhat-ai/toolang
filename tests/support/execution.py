@@ -9,34 +9,33 @@ from toolang.base.types.message import Message, Part
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
-    RunStarting,
-    RunSteering,
-    RunStopping,
+    RunEvent,
     StepBegin,
     StepEnd,
-    TraceEvent,
 )
 from toolang.execution.records import (
-    CommandApply,
-    CommandKind,
-    CommandRecord,
-    InputRef,
     OutputRef,
+    RunControlRecord,
+    RunControlRef,
     RunRecord,
-    RunStatus,
     StepInputItem,
-    StepKind,
     StepRecord,
-    StepStatus,
     trace_child_path,
     trace_run,
 )
 from toolang.common.time import utc_now
 from toolang.execution.executor.persist import PersistSink
 from toolang.execution.store import RunStore
+from toolang.execution.types import (
+    ControlTiming,
+    RunControlKind,
+    RunStatus,
+    StepKind,
+    StepStatus,
+)
 
 
-def emit_event(store: RunStore, event: TraceEvent) -> None:
+def emit_event(store: RunStore, event: RunEvent) -> None:
     """Persist one trace event through the store's canonical sink."""
 
     sink = getattr(store, "_test_persist_sink", None)
@@ -71,33 +70,33 @@ def project_run_start(
     run_context = dict(context or metadata or {})
     run_context.setdefault("origin", origin)
     run_context.setdefault("root", root_run_id or run_id)
-    run_context.setdefault(
-        "executable", {"kind": executable_kind, "name": executable_name}
-    )
+    run_context.setdefault("runnable", {"kind": executable_kind, "name": executable_name})
     run_context.setdefault("call", call_kind)
-    if request_id is not None:
-        run_context.setdefault("request_id", request_id)
-    emit_event(
-        store,
-        RunStarting(
-            run=run_id,
-            cmd=0,
-            parent=parent,
-            thread=thread_id,
-            input=input,
-            context=run_context,
+    if store.get_thread(thread_id=thread_id) is None:
+        store.create_thread(
+            thread_id=thread_id,
+            origin=origin,
             created_at=created,
-        ),
+        )
+    store.accept_start(
+        run_id=run_id,
+        parent=parent,
+        thread=thread_id,
+        input=input,
+        context=run_context,
+        request_id=request_id,
+        created_at=created,
     )
     emit_event(
         store,
         RunBegin(
             run=run_id,
-            input=InputRef(cmd=0),
+            input=RunControlRef(index=0),
             context=run_context,
             started_at=started,
         ),
     )
+    store.finish_run_controls(run_id=run_id, indexes=(0,), finished_at=started)
     run = store.get_run(run_id=run_id)
     if run is None:
         raise AssertionError(f"run was not projected: {run_id}")
@@ -108,47 +107,28 @@ def project_command(
     store: RunStore,
     *,
     run_id: str,
-    kind: CommandKind,
-    apply: CommandApply = "now",
+    kind: RunControlKind,
+    timing: ControlTiming = "immediate",
     input: Message | None = None,
     context: Mapping[str, Any] | None = None,
     request_id: str | None = None,
     created_at: str | None = None,
-) -> CommandRecord:
+) -> RunControlRecord:
     """Project one accepted steer or stop command event."""
 
-    index = store.reserve_command_index(run_id=run_id)
-    command_context = dict(context or {})
-    if request_id is not None:
-        command_context["request_id"] = request_id
-    created = created_at or utc_now()
-    if kind == "steer":
-        if input is None:
-            raise ValueError("steer command requires input")
-        event: TraceEvent = RunSteering(
-            run=run_id,
-            cmd=index,
-            input=input,
-            apply=apply,
-            context=command_context,
-            created_at=created,
-        )
-    elif kind == "stop":
-        event = RunStopping(
-            run=run_id,
-            cmd=index,
-            input=input,
-            apply=apply,
-            context=command_context,
-            created_at=created,
-        )
-    else:
-        raise ValueError(f"unsupported projected command kind: {kind}")
-    emit_event(store, event)
-    command = store.get_command(run_id=run_id, index=index)
-    if command is None:
-        raise AssertionError(f"command was not projected: {run_id}:{index}")
-    return command
+    if kind == "start":
+        raise ValueError("start controls are created by project_run_start")
+    if kind == "steer" and input is None:
+        raise ValueError("steer control requires input")
+    return store.accept_run_control(
+        run_id=run_id,
+        kind=kind,
+        timing=timing,
+        input=input,
+        context=dict(context or {}),
+        request_id=request_id,
+        created_at=created_at or utc_now(),
+    )
 
 
 def project_step(
@@ -195,7 +175,6 @@ def project_step(
                 output=tuple(output),
                 noted=dict(detail or {}),
                 error=error,
-                started_at=started_at,
                 finished_at=finished_at or started_at,
             ),
         )

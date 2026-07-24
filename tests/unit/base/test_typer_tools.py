@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 import json
 
@@ -87,9 +88,11 @@ def test_typer_tool_definition_includes_parent_options() -> None:
 def test_typer_tool_invocation_runs_full_cli_path(tmp_path) -> None:
     tools = create_typer_tools(_build_test_app(), prog_name="too")
 
-    result = tools["skill_add"].invoke(
-        {"agent": "alice", "locator": "by3gus/pdf-processing"},
-        _tool_context(tmp_path),
+    result = asyncio.run(
+        tools["skill_add"].invoke(
+            {"agent": "alice", "locator": "by3gus/pdf-processing"},
+            _tool_context(tmp_path),
+        )
     )
 
     assert result["ok"] is True
@@ -102,7 +105,7 @@ def test_typer_tool_invocation_runs_full_cli_path(tmp_path) -> None:
 def test_typer_tool_invocation_returns_cli_error_payload(tmp_path) -> None:
     tools = create_typer_tools(_build_test_app(), prog_name="too")
 
-    result = tools["skill_add"].invoke({}, _tool_context(tmp_path))
+    result = asyncio.run(tools["skill_add"].invoke({}, _tool_context(tmp_path)))
 
     assert result["ok"] is False
     assert result["exit_code"] == 2
@@ -116,9 +119,11 @@ def test_typer_tool_invocation_runs_inside_tool_context_working_directory(tmp_pa
     def pwd() -> None:
         typer.echo(str(Path.cwd()))
 
-    result = create_typer_tools(app, prog_name="too")["pwd"].invoke(
-        {},
-        _tool_context(tmp_path),
+    result = asyncio.run(
+        create_typer_tools(app, prog_name="too")["pwd"].invoke(
+            {},
+            _tool_context(tmp_path),
+        )
     )
 
     assert result["ok"] is True
@@ -176,7 +181,12 @@ def test_typer_tool_config_can_prepare_hidden_arguments_once(tmp_path: Path) -> 
     )
 
     definition = tools["push"].definition()
-    result = tools["push"].invoke({"input": {"hello": "world"}}, _tool_context(tmp_path))
+    result = asyncio.run(
+        tools["push"].invoke(
+            {"input": {"hello": "world"}},
+            _tool_context(tmp_path),
+        )
+    )
 
     assert "secret" not in definition.parameters["properties"]
     assert definition.parameters["properties"]["input"]["type"] == "object"

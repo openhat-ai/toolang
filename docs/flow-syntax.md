@@ -39,6 +39,10 @@ KEYWORD ...:
   TEXT
 ```
 
+When a statement consumes authored content, its `BODY` is a `ContentBody` and
+follows [input-syntax.md](./input-syntax.md). A statement block uses `STMTS`
+instead.
+
 
 ## Flow And Binding
 
@@ -50,7 +54,7 @@ STMT                    update `_`
 let NAME = STMT         update `NAME`
 let STMT                discard the result
 
-let NAME: BODY          assign authored text directly to `NAME`
+let NAME: BODY          perceive a ContentBody and assign one `Percept` to `NAME`
 ```
 
 Flow signatures use the executable parameter rules in
@@ -138,7 +142,10 @@ repeat   repeat a statement block, bounded by N or until
 - Inline bodies use `-> T` only when their produced item type is configurable.
   Statement semantics determine whether those items form an `item` or `list`
   result shape.
-- `ask` returns the human owner's input.
+- `ask` perceives its ContentBody for the human owner and returns the owner's
+  canonical `Percept`, represented in the language as `Part[]`.
+- A direct `let NAME: BODY` perceives its ContentBody as one `Percept` local
+  with language type `Part[]`, without starting a child run.
 - Inline `keep`, `drop`, and `until` bodies return `Boolean`.
 - A `SCORER` or inline `rank` body returns `Number`.
 - `repeat` is control flow. Its result is the last executed child result.

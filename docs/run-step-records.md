@@ -28,13 +28,13 @@ index)` references a durable thread mutation.
 ## Statuses
 
 ```text
-RunStatus           pending | running | finished | failed | canceled
-StepStatus          running | finished | failed | canceled
-RunControlStatus    pending | finished | canceled | failed
-ThreadControlStatus pending | finished | canceled | failed
+RunStatus     pending | running | finished | failed | canceled
+StepStatus    running | finished | failed | canceled
+ControlStatus pending | finished | canceled | failed
 ```
 
-For a control, `finished` means applied rather than merely accepted.
+Both run and thread controls use `ControlStatus`. For a control, `finished`
+means applied rather than merely accepted.
 
 
 ## RunRecord
@@ -104,7 +104,11 @@ finished_at
 
 `(parent, index)` is the durable identity. A step path is `parent / index`.
 Step input may contain run-control references, output references, and inline
-messages.
+messages. Step output is ordered `MessagePart[]`: ordinary content uses
+`PerceptPart` values (the runtime representation of language `Part`), model
+steps may add `ToolCallPart`, and tool steps emit `ToolResultPart`. The
+corresponding `PartEnd.data` event carries the same `MessagePart` value that is
+later persisted in step output.
 
 `given` contains information known when `StepBegin` is emitted. `noted`
 contains additional information recorded by `StepEnd`. Neither repeats the

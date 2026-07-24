@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger("toolang.run")
 
 
-def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
+async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     """Perform one tool call and emit its complete step event stream."""
 
     prepared = state.prepared
@@ -63,7 +63,7 @@ def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         step_index=step_index,
         plugin_name=plugin_name,
     )
-    state.emit(
+    await state.emit(
         StepBegin(
             step=trace_child_path(run.run_id, step_index),
             kind="tool",
@@ -77,7 +77,7 @@ def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             started_at=started_at,
         )
     )
-    record = invoke_tool_call(
+    record = await invoke_tool_call(
         run_id=run.run_id,
         tools=prepared.tools,
         services=prepared.services,
@@ -91,14 +91,14 @@ def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         tool_family=record.name,
         output=dict(record.output),
     )
-    state.emit(
+    await state.emit(
         PartBegin(
             step=trace_child_path(run.run_id, step_index),
             part=0,
             type_=part.type,
         )
     )
-    state.emit(
+    await state.emit(
         PartEnd(
             step=trace_child_path(run.run_id, step_index),
             part=0,
@@ -113,7 +113,7 @@ def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         step_index=step_index,
         plugin_name=plugin_name,
     )
-    state.emit(
+    await state.emit(
         StepEnd(
             step=trace_child_path(run.run_id, step_index),
             kind="tool",
@@ -144,7 +144,7 @@ def _plugin_name(tool: AgentTool | None) -> str:
     return "-"
 
 
-def invoke_tool_call(
+async def invoke_tool_call(
     *,
     run_id: str,
     tools: Mapping[str, AgentTool],
@@ -160,7 +160,7 @@ def invoke_tool_call(
         raise ToolangError(f"unknown tool call: {name or '<empty>'}")
     arguments = dict(call.input)
     try:
-        output = tool.invoke(
+        output = await tool.invoke(
             arguments,
             _tool_context(
                 run_id=run_id,

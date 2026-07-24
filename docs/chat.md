@@ -15,7 +15,7 @@ Chat uses the same runtime units as the rest of Toolang:
 | `run` | One handling attempt inside that thread |
 | `step` | One execution unit inside the run |
 
-One chat submission creates one start command, one run, and one thread when no
+One chat submission creates one start control, one run, and one thread when no
 thread id is supplied.
 
 Thread ids use one underscore-delimited normalized form:
@@ -56,7 +56,6 @@ The public message shape is:
 - `role`
 - `parts`
 - `created_at`
-- `meta`
 
 Current roles are:
 
@@ -64,17 +63,21 @@ Current roles are:
 - `assistant`
 - `tool`
 
-Current part kinds are:
+Messages use the shared canonical part vocabularies:
 
-- `text`
-- `image`
-- `audio`
-- `file`
-- `tool_call`
-- `tool_result`
+```text
+PerceptPart = TextPart | ImagePart | AudioPart | DocumentPart
+Percept     = PerceptPart[]
+MessagePart = PerceptPart | ToolCallPart | ToolResultPart
+Message     = { role: MessageRole, parts: MessagePart[] }
+```
 
-The initial `start` command projects to the user message. Later `steer`
-commands project to additional user messages in the same run. Step output
+User messages contain only `PerceptPart` values. Assistant messages may
+additionally contain `ToolCallPart` values, while tool messages contain only
+`ToolResultPart` values.
+
+The initial `start` control projects to the user message. Later `steer`
+controls project to additional user messages in the same run. Step output
 projects to assistant or tool messages.
 
 
@@ -110,7 +113,7 @@ There is no separate top-level `thread.messages` field.
 
 To build a full transcript, flatten:
 
-1. each run command with a message
+1. each run control with a message
 2. each step message in run order
 
 Forked chat threads store their source thread and anchor run in `parent`.
@@ -168,13 +171,14 @@ Buffered chat:
 request body:
 
 - `thread`
-- `client`: `web`, `tui`, or `chat`; defaults to `web`. TUI and local chat
-  clients use the canonical `term` prefix.
+- `client`: `web` or `term`; defaults to `web`. TUI and local chat clients use
+  `term`.
 - `peer` optional; defaults to the user peer
 - `message`
-  - `role`
+  - `role`: must be `user`
   - `parts`
 - `model` optional selected model selector
+- `runnable` optional executable name; omission uses the chat/default runnable
 
 returns:
 
@@ -203,6 +207,9 @@ Runtime surfaces should treat the canonical thread and run event streams as the
 source of progress truth. The chat SSE endpoint exposes an AI SDK UI message
 stream adapter for web clients that use AI SDK Elements; it is not the canonical
 execution protocol.
+
+The TUI does not consume that HTTP adapter. Its process calls `RunExecutor`
+directly and renders native `RunEvent` values received through a `RunTracer`.
 
 UIs should keep exactly one active mutable block for the visible run. Finalized
 blocks can move into scrollback immediately instead of waiting for the whole run

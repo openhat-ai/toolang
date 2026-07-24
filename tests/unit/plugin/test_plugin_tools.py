@@ -218,15 +218,19 @@ def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> 
         name: str = "package_adapter"
         description: str | None = None
 
-        def invoke(self, target: ModelTarget, request: ModelCall) -> ModelCallResult:
+        async def invoke(
+            self,
+            target: ModelTarget,
+            request: ModelCall,
+        ) -> ModelCallResult:
             del target, request
             return ModelCallResult()
 
-        def stream(
+        async def stream(
             self, target: ModelTarget, request: ModelCall, *, on_event
         ) -> ModelCallResult:
             del on_event
-            return self.invoke(target, request)
+            return await self.invoke(target, request)
 
     def create_model_adapter(config: Mapping[str, Any]) -> ModelAdapter:
         del config

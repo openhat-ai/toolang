@@ -29,11 +29,13 @@ The following suffixes have specific meanings:
 - `Store`: durable SQLite truth or a durable runtime projection
 - `State`: an immutable in-memory snapshot
 - `Watcher`: source changes projected into immutable state
-- `Sink`: events projected into persistence or a reply
+- `Sink`: values projected into one destination
 - `Layout`: filesystem placement and path construction
 
-Avoid generic `Manager`, `Service`, `Factory`, and `Utils` types. A class should
-exist only when it owns state, invariants, or a meaningful protocol.
+Avoid generic `Service`, `Factory`, and `Utils` types. Use `Manager` only for a
+concept such as `ThreadManager` that owns state transitions and orchestration
+invariants. A class should exist only when it owns state, invariants, or a
+meaningful protocol.
 
 
 ## Target Packages
@@ -252,7 +254,7 @@ design and migration.
 
 The public execution concepts are:
 
-- `RunSpec`: immutable setup, state, thread, runnable, primary `Part[]` input,
+- `RunSpec`: immutable setup, state, thread, runnable, primary `Percept` input,
   model, and call args
 - `RunHandle`: an awaitable locally started run with control conveniences
 - `RunExecutor`: run acceptance, control, and agic/flow execution
@@ -324,7 +326,7 @@ The CLI has four first-level areas with one-way dependencies:
 ```text
 toolang/cli/
 ├── toolang/                # too/toolang CLI
-│   ├── cli.py
+│   ├── main.py
 │   ├── __main__.py         # thin python -m adapter
 │   └── commands/
 │       ├── agent.py
@@ -335,7 +337,7 @@ toolang/cli/
 │       ├── plugin.py
 │       └── program.py
 ├── caps/                   # reusable cap commands and standalone caps CLI
-│   ├── cli.py
+│   ├── main.py
 │   ├── __main__.py         # thin python -m adapter
 │   └── commands.py
 ├── impl/                   # command implementations, never CLI entry points
@@ -413,22 +415,24 @@ decides whether the API process runs on the host, in Docker, or in a future
 remote or hybrid environment. The server core and `RunExecutor` do not inspect
 that hosting decision.
 
-`toolang.api.app` owns `ApiContext`, API-owned run tasks, durable run-submission
-acknowledgment, and FastAPI application assembly. `toolang.api.router` mounts
+`toolang.api.app` owns `ApiContext`, its `app.state` registration and request
+dependency, and FastAPI application assembly. `toolang.api.router` mounts
 versioned resource routers under the shared `/api/v1` prefix. Resource modules
 under `toolang.api.routers`, such as `agent`, `chat`, `caps`, `jobs`, `runs`,
-and `threads`, own HTTP request mapping and export a router factory bound to the
-application context. `common` owns shared transport helpers. Typed inspection
+and `threads`, own HTTP request mapping and export module-level `APIRouter`
+instances. Route functions receive the shared `ApiContext` dependency and use
+its fields directly. `common` owns shared transport helpers. Typed inspection
 projections belong to the core package that owns the inspected state rather
 than to an API-wide view module. Process-level routes such as `/healthz` remain
 on the application itself.
 
 Scripts with `sandbox=none` may assemble an executor for one-shot invocation.
-Managed-sandbox script runs use a session-owned API and stream canonical trace
-events back to the CLI. Chat reuses an existing API when present. Without one,
-`sandbox=none` uses a process-local executor and managed hosting owns a temporary
-API for the session. A central runtime event bus is not required by the target
-architecture.
+Managed-sandbox script runs transport native run events through their
+process/channel orchestration rather than an HTTP streaming endpoint. The chat
+TUI runs in its own process, assembles the core objects and `RunExecutor`
+directly, and observes native events through a `RunTracer`; it does not depend
+on API streaming endpoints. A central runtime event bus is not required by the
+target architecture.
 
 
 ## Dependency Direction

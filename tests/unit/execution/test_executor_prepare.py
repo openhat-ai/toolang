@@ -53,12 +53,16 @@ class _Adapter:
     def __init__(self) -> None:
         self.requests: list[ModelCall] = []
 
-    def invoke(self, target: ModelTarget, request: ModelCall) -> ModelCallResult:
+    async def invoke(
+        self,
+        target: ModelTarget,
+        request: ModelCall,
+    ) -> ModelCallResult:
         self.requests.append(request)
         return ModelCallResult(message=Message.assistant("done"))
 
-    def stream(self, target: ModelTarget, request: ModelCall, *, on_event):
-        return self.invoke(target, request)
+    async def stream(self, target: ModelTarget, request: ModelCall, *, on_event):
+        return await self.invoke(target, request)
 
 
 class _Tool(AgentTool):
@@ -68,7 +72,7 @@ class _Tool(AgentTool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(name=self.name, description="Run a command.")
 
-    def invoke(self, arguments, context: ToolContext) -> dict[str, object]:
+    async def invoke(self, arguments, context: ToolContext) -> dict[str, object]:
         return {}
 
 
@@ -81,7 +85,7 @@ class _Tracer(RunTracer):
     def __init__(self) -> None:
         self.events: list[RunEvent] = []
 
-    def on_event(self, event: RunEvent) -> None:
+    async def on_event(self, event: RunEvent) -> None:
         self.events.append(event)
 
 

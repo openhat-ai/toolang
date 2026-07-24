@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -50,8 +51,12 @@ class _LeafTool(AgentTool):
     def definition(self) -> ToolDefinition:
         return self._definition
 
-    def invoke(self, arguments: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
-        return self._invoke(arguments, context)
+    async def invoke(
+        self,
+        arguments: Mapping[str, Any],
+        context: ToolContext,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self._invoke, arguments, context)
 
 
 @dataclass(frozen=True, slots=True)

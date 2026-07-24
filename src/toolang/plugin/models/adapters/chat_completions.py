@@ -45,16 +45,16 @@ class ChatCompletionsModelAdapter(ModelAdapter):
     name: str = "chat_completions"
     description: str | None = "Use the OpenAI Chat Completions-compatible API shape."
 
-    def invoke(
+    async def invoke(
         self,
         target: ModelTarget,
         request: ModelCall,
     ) -> ModelCallResult:
         """Execute one non-streaming Chat Completions API call."""
 
-        return invoke_chat_completion(target, request)
+        return await invoke_chat_completion(target, request)
 
-    def stream(
+    async def stream(
         self,
         target: ModelTarget,
         request: ModelCall,
@@ -63,7 +63,7 @@ class ChatCompletionsModelAdapter(ModelAdapter):
     ) -> ModelCallResult:
         """Execute one streaming Chat Completions API call."""
 
-        return stream_chat_completion(target, request, on_event=on_event)
+        return await stream_chat_completion(target, request, on_event=on_event)
 
 
 def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
@@ -77,7 +77,7 @@ def create_client(target: ModelTarget) -> Any:
     """Create one OpenAI-compatible client for a resolved model target."""
 
     try:
-        from openai import OpenAI
+        from openai import AsyncOpenAI
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise ToolangError(
             "The 'openai' package is not installed. Reinstall toolang with its runtime dependencies to enable runtime execution."
@@ -89,10 +89,10 @@ def create_client(target: ModelTarget) -> Any:
         kwargs["api_key"] = target.api_key
     if target.headers:
         kwargs["default_headers"] = dict(target.headers)
-    return OpenAI(**kwargs)
+    return AsyncOpenAI(**kwargs)
 
 
-def invoke_chat_completion(
+async def invoke_chat_completion(
     target: ModelTarget,
     request: ModelCall,
 ) -> ModelCallResult:
@@ -101,12 +101,12 @@ def invoke_chat_completion(
     client = create_client(target)
     payload = chat_completion_payload(target, request, stream=False)
     _log_api_request(target, payload, stream=False)
-    response = client.chat.completions.create(**payload)
+    response = await client.chat.completions.create(**payload)
     _log_api_response(target, response, stream=False)
     return parse_chat_completion(response)
 
 
-def stream_chat_completion(
+async def stream_chat_completion(
     target: ModelTarget,
     request: ModelCall,
     *,
@@ -122,9 +122,9 @@ def stream_chat_completion(
     tool_buffers: dict[int, _ToolCallBuffer] = {}
     final_usage: ModelUsage | None = None
     text_started = False
-    stream = client.chat.completions.create(**payload)
+    stream = await client.chat.completions.create(**payload)
     try:
-        for chunk in stream:
+        async for chunk in stream:
             chunk_usage = chat_usage(chunk)
             if chunk_usage is not None:
                 final_usage = chunk_usage
@@ -141,9 +141,9 @@ def stream_chat_completion(
             if isinstance(content, str) and content:
                 if not text_started:
                     text_started = True
-                    on_event(ModelPartStart(kind="text"))
+                    await on_event(ModelPartStart(kind="text"))
                 text_parts.append(content)
-                on_event(ModelPartDelta(delta=TextDelta(text=content)))
+                await on_event(ModelPartDelta(delta=TextDelta(text=content)))
             for call_delta in getattr(delta, "tool_calls", None) or ():
                 index = getattr(call_delta, "index", None)
                 if not isinstance(index, int):
@@ -151,11 +151,11 @@ def stream_chat_completion(
                 buffer = tool_buffers.setdefault(index, _ToolCallBuffer())
                 if not buffer.started:
                     buffer.started = True
-                    on_event(ModelPartStart(kind="tool_call"))
+                    await on_event(ModelPartStart(kind="tool_call"))
                 buffer.append(call_delta)
                 arguments_delta = _tool_call_delta_arguments(call_delta)
                 if arguments_delta:
-                    on_event(
+                    await on_event(
                         ModelPartDelta(
                             delta=ToolCallDelta(
                                 text=arguments_delta,
@@ -166,7 +166,7 @@ def stream_chat_completion(
     finally:
         close = getattr(stream, "close", None)
         if callable(close):
-            close()
+            await close()
     text = "".join(text_parts)
     tool_calls = tuple(buffer.to_tool_call(index) for index, buffer in sorted(tool_buffers.items()))
     message = _assistant_message(
@@ -175,9 +175,9 @@ def stream_chat_completion(
         reasoning_content="".join(reasoning_parts),
     )
     if text:
-        on_event(ModelPartEnd(data=TextPart(text=text)))
+        await on_event(ModelPartEnd(data=TextPart(text=text)))
     for call in tool_calls:
-        on_event(
+        await on_event(
             ModelPartEnd(
                 data=ToolCallPart(
                     tool_call_id=call.tool_call_id,

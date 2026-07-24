@@ -17,7 +17,11 @@ class AgentTool(Protocol):
     def definition(self) -> ToolDefinition:
         """Return one stable tool definition."""
 
-    def invoke(self, arguments: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
+    async def invoke(
+        self,
+        arguments: Mapping[str, Any],
+        context: ToolContext,
+    ) -> dict[str, Any]:
         """Execute one tool call."""
 
 
