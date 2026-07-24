@@ -6,7 +6,9 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from toolang.base.types.message import Message
 from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE
+from toolang.execution.schemas import RunInfo, ThreadInfo
 
 
 class ApiRequest(BaseModel):
@@ -197,3 +199,18 @@ class RunSteerRequest(ApiRequest):
     request_id: str | None = None
     mode: Literal["immediate", "next_step", "next_call"] = "next_step"
     message: InputMessagePayload
+
+
+class ThreadResult(BaseModel):
+    """One HTTP thread mutation response."""
+
+    thread: ThreadInfo
+
+
+class ChatResult(BaseModel):
+    """One completed HTTP chat response."""
+
+    thread: ThreadInfo
+    run: RunInfo
+    message: Message
+    assistant: Message

@@ -58,7 +58,7 @@ async def execute(
         input=Message.user(
             value_text(primary.value) if primary.shape != "none" else ""
         ),
-        params=invoke,
+        args=invoke,
     )
     prepared = prepare_agic(execution, bound, agic)
     state = _AgicState(

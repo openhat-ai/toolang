@@ -252,7 +252,8 @@ design and migration.
 
 The public execution concepts are:
 
-- `RunSpec`: immutable setup, state, thread, runnable, input, model, and params
+- `RunSpec`: immutable setup, state, thread, runnable, primary `Part[]` input,
+  model, and call args
 - `RunHandle`: an awaitable locally started run with control conveniences
 - `RunExecutor`: run acceptance, control, and agic/flow execution
 - `ThreadManager`: synchronous thread creation, rewind, and fork orchestration

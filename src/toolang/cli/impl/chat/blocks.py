@@ -347,7 +347,7 @@ class DefaultStepBlock(MutableBlock):
     @classmethod
     def create(cls, event: StepBegin) -> "DefaultStepBlock":
         step_kind = event.kind
-        payload = event.context
+        payload = event.given
         return cls(
             step=event.step,
             step_kind=step_kind,
@@ -381,7 +381,7 @@ class DefaultStepBlock(MutableBlock):
         if event.type == "step_end":
             step_end = cast(StepEnd, event)
             self.status = "completed"
-            payload = step_end.detail
+            payload = step_end.noted
             self.error = step_end.error or ""
             self.final_label = self._final_label(payload)
 
@@ -449,7 +449,7 @@ class FlowStepBlock(MutableBlock):
 
     @classmethod
     def create(cls, event: StepBegin) -> "FlowStepBlock":
-        summary = cls._summary(event.kind, event.context)
+        summary = cls._summary(event.kind, event.given)
         return cls(
             step=event.step,
             step_kind=event.kind,
@@ -463,7 +463,7 @@ class FlowStepBlock(MutableBlock):
         step_end = cast(StepEnd, event)
         self.status = step_end.status
         self.error = step_end.error or ""
-        payload = step_end.detail
+        payload = step_end.noted
         self.summary = self._summary(step_end.kind, payload)
 
     def render(self) -> RenderableType:
@@ -521,7 +521,7 @@ class ChildRunStepBlock(MutableBlock):
     def create(cls, event: StepBegin) -> "ChildRunStepBlock":
         return cls(
             step=event.step,
-            summary=cls._summary(event.context),
+            summary=cls._summary(event.given),
         )
 
     def update(self, event: StepBegin | PartBegin | PartDelta | PartEnd | StepEnd) -> None:
@@ -531,7 +531,7 @@ class ChildRunStepBlock(MutableBlock):
         step_end = cast(StepEnd, event)
         self.status = step_end.status
         self.error = step_end.error or ""
-        self.summary = self._summary(step_end.detail)
+        self.summary = self._summary(step_end.noted)
 
     def render(self) -> RenderableType:
         summary = self.summary or "child run"
@@ -570,11 +570,13 @@ class ModelStepBlock(MutableBlock):
 
     @classmethod
     def create(cls, event: StepBegin) -> "ModelStepBlock":
-        payload = event.context
+        payload = event.given
+        model = payload.get("model")
+        model_data = model if isinstance(model, Mapping) else {}
         return cls(
             step=event.step,
-            model=as_text(payload.get("model_ref"))
-            or as_text(payload.get("model"))
+            model=as_text(model_data.get("ref"))
+            or as_text(model_data.get("model"))
             or "",
         )
 
@@ -591,12 +593,6 @@ class ModelStepBlock(MutableBlock):
             self.status = "completed"
             self.output = _parts_text(step_end.output)
             self.tool_requests = self._tool_request_summary(step_end)
-            payload = step_end.detail
-            self.model = (
-                as_text(payload.get("model_ref"))
-                or as_text(payload.get("model"))
-                or self.model
-            )
 
     def render(self) -> RenderableType:
         running = self.status != "completed"

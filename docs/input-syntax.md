@@ -44,8 +44,8 @@ spelling but is a content item, not a command.
 | CLI chat | Submission | yes | execute | none | command or executable arguments |
 | WebUI chat | Submission | yes | reject | none | command or executable arguments |
 | task/chore body | ContentBody | no | text | none | executable arguments |
-| agic body/message | ContentBody | no | text | locals and runtime | ModelCall content |
-| flow inline agic | ContentBody | no | text | locals and runtime | generated AgicDecl |
+| agic body/message | ContentBody | no | text | `_` and declared params | ModelCall content |
+| flow inline agic | ContentBody | no | text | `_` and declared params | generated AgicDecl |
 | flow `let` | ContentBody | no | text | locals and runtime | Local |
 | flow `ask` | ContentBody | no | text | locals and runtime | HumanCall content |
 | prompt template | ContentBody | no | text | declared params and `_` | expanded Content |
@@ -55,8 +55,9 @@ syntax instead of executing it on the server or sending it to the model.
 
 Includes resolve relative to the owning task, chore, `.too` source, or prompt
 definition. Browser sources may resolve only uploaded or otherwise authorized
-references. Prompt templates see only declared parameters, explicit `_` input,
-and documented prompt runtime values.
+references. Prompt templates see only declared parameters and explicit `_`
+input. Instruct and context templates see only the flat runtime variables
+supplied by the executor.
 
 
 ## Submission

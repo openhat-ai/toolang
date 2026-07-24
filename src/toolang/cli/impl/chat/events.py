@@ -243,7 +243,7 @@ def step_block(event: TraceEvent) -> MutableBlock:
         return ToolStepBlock.create(step_begin)
     if step_begin.kind == "run":
         return ChildRunStepBlock.create(step_begin)
-    if step_begin.context.get("statement"):
+    if step_begin.given.get("statement"):
         return FlowStepBlock.create(step_begin)
     return DefaultStepBlock.create(step_begin)
 

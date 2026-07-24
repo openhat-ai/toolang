@@ -68,6 +68,12 @@ def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             step=trace_child_path(run.run_id, step_index),
             kind="tool",
             input=step_input,
+            given={
+                "tool": call.name,
+                "plugin": plugin_name,
+                "tool_call_id": call.tool_call_id,
+                "call_id": call.call_id,
+            },
             started_at=started_at,
         )
     )
@@ -113,13 +119,6 @@ def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             kind="tool",
             status=status,
             output=(part,),
-            detail={
-                "tool": call.name,
-                "plugin": plugin_name,
-                "tool_call_id": call.tool_call_id,
-                "call_id": call.call_id,
-            },
-            started_at=started_at,
             finished_at=utc_now(),
             error=record.error,
         )

@@ -58,16 +58,18 @@ class RunSpec:
     state: AgentState
     thread: str
     runnable: str
-    input: Message = field(default_factory=lambda: Message.user(""))
+    input: tuple[Part, ...] = ()
     model: str | None = None
-    params: Mapping[str, object] | None = None
+    args: Mapping[str, object] | None = None
 ```
 
 `runnable` is required and resolves to exactly one agic or flow in the captured
 program. The spec does not carry an origin, executable kind, run identity,
 request identity, or arbitrary transport context. The optional singular model
 selector is the caller's per-run model choice; aliases and defaults are parsed
-from the captured state config.
+from the captured state config. `input` is the primary multimodal input; `args`
+contains values for the runnable's declared `params`. The executor validates
+both before accepting the run and constructs the user message internally.
 
 There is no `run()`, `execute()`, or `spawn()` variant. `start()` creates the
 owner task and returns an awaitable `RunHandle`. The handle exposes its run ID,

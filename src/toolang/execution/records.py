@@ -164,8 +164,8 @@ class StepRecord:
     kind: StepKind
     input: tuple[StepInputItem, ...]
     output: tuple[Part, ...]
-    context: dict[str, Any] = field(default_factory=dict)
-    detail: dict[str, Any] = field(default_factory=dict)
+    given: dict[str, Any] = field(default_factory=dict)
+    noted: dict[str, Any] = field(default_factory=dict)
     status: StepStatus = "running"
     error: str | None = None
     created_at: str = ""
@@ -219,7 +219,6 @@ class ThreadControlRecord:
     expected_head: ThreadControlRef | None = None
     context: dict[str, Any] = field(default_factory=dict)
     status: ControlStatus = "pending"
-    error: str | None = None
     created_at: str = ""
     finished_at: str | None = None
 

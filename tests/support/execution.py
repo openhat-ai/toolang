@@ -181,7 +181,7 @@ def project_step(
             step=path,
             kind=kind,
             input=tuple(input),
-            context=dict(context or {}),
+            given=dict(context or {}),
             started_at=started_at,
         ),
     )
@@ -193,7 +193,7 @@ def project_step(
                 kind=kind,
                 status=status,
                 output=tuple(output),
-                detail=dict(detail or {}),
+                noted=dict(detail or {}),
                 error=error,
                 started_at=started_at,
                 finished_at=finished_at or started_at,

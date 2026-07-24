@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import sqlite3
 from types import SimpleNamespace
 from typing import Any, cast
+
+from pydantic import TypeAdapter
 
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, message_text
@@ -11,9 +14,13 @@ from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.ids import IdIssuer
+from toolang.execution.events import RunEvent, RunTracer, StepBegin
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor.common import BoundRun
+from toolang.execution.executor.persist import PersistSink
 from toolang.execution.executor.prepare import prepare_agic
+from toolang.execution.inspection import ExecutionInspection
+from toolang.execution.schemas import RunDetail
 from toolang.execution.store import RunStore
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
 from toolang.up.setup import AgentSetup
@@ -70,6 +77,14 @@ class _History:
         return [Message.user("previous")]
 
 
+class _Tracer(RunTracer):
+    def __init__(self) -> None:
+        self.events: list[RunEvent] = []
+
+    def on_event(self, event: RunEvent) -> None:
+        self.events.append(event)
+
+
 def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     home = root / "agents" / "alice"
@@ -89,10 +104,11 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     agic = AgicDecl(
         name="chat",
         input=Parameter(name="_", type_name="Text", span=Span(1)),
+        params=(Parameter(name="focus", type_name="Text", span=Span(1)),),
         messages=(
             AstMessage(
                 role="user",
-                content="Answer: {{_}}",
+                content="Answer: {{_}}; focus={{focus}}",
                 explicit=True,
                 span=Span(1),
             ),
@@ -114,7 +130,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         root_run_id="run_1",
         thread="term_1",
         input=Message.user("hello"),
-        params={},
+        args={"focus": "events"},
         model=None,
         state=state,
         setup=setup,
@@ -154,7 +170,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     assert "agent_name: alice" in prepared.prompt_context
     assert [message_text(message.parts) for message in prepared.messages] == [
         "previous",
-        prepared.prompt_context + "\n\nAnswer: hello",
+        prepared.prompt_context + "\n\nAnswer: hello; focus=events",
     ]
 
 
@@ -163,10 +179,11 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     home = root / "agents" / "alice"
     provider = _Provider()
     adapter = _Adapter()
+    tool = _Tool()
     setup = AgentSetup(
         home=home,
         name="alice",
-        tools={},
+        tools={tool.name: tool},
         model_providers={provider.name: provider},
         model_adapters={adapter.name: adapter},
         model_environ={},
@@ -176,10 +193,11 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     agic = AgicDecl(
         name="chat",
         input=Parameter(name="_", type_name="Text", span=Span(1)),
+        params=(Parameter(name="focus", type_name="Text", span=Span(1)),),
         messages=(
             AstMessage(
                 role="user",
-                content="Answer: {{_}}",
+                content="Answer: {{_}}; focus={{focus}}",
                 explicit=True,
                 span=Span(1),
             ),
@@ -202,6 +220,8 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                             "provider": "test",
                             "model": "model",
                             "adapter": "test",
+                            "endpoint": "https://models.example/v1",
+                            "headers": {"X-Secret": "do-not-store"},
                         }
                     },
                 }
@@ -212,6 +232,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     store = RunStore(home / ".runtime" / "runs.db")
     store.create_thread(thread_id="term_1")
     executor = RunExecutor(store, IdIssuer(home / ".runtime" / "ids.json"))
+    tracer = _Tracer()
     try:
         async def execute() -> Any:
             return await executor.start(
@@ -220,17 +241,63 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                     state=state,
                     thread="term_1",
                     runnable="chat",
-                    input=Message.user("hello"),
-                )
+                    input=Message.user("hello").parts,
+                    args={"focus": "events"},
+                ),
+                tracer=tracer,
             )
 
         record = asyncio.run(execute())
         assert record.status == "finished"
-        assert [step.kind for step in store.list_steps(run_id=record.id)] == ["model"]
+        steps = store.list_steps(run_id=record.id)
+        assert [step.kind for step in steps] == ["model"]
         assert len(adapter.requests) == 1
         assert message_text(adapter.requests[0].messages[-1].parts).endswith(
-            "Answer: hello"
+            "Answer: hello; focus=events"
         )
+        assert store.rebuild_model_call(steps[0]) == adapter.requests[0]
+        begin = next(event for event in tracer.events if isinstance(event, StepBegin))
+        assert begin.given["call"] == adapter.requests[0].to_data()
+        assert steps[0].given["call"] != begin.given["call"]
+        assert steps[0].given["model"] == {
+            "ref": "test/model",
+            "provider": "test",
+            "name": "model",
+            "model": "model",
+            "adapter": "test",
+            "base_url": "https://models.example/v1",
+            "scope": "remote",
+            "tags": [],
+            "options": {},
+            "tools": True,
+            "streaming": True,
+        }
+        assert "headers" not in steps[0].given["model"]
+        assert "api_key" not in steps[0].given["model"]
+        assert "adapter_request" not in steps[0].noted
+        detail = ExecutionInspection(store).run_detail(record.id)
+        assert detail is not None
+        assert detail.steps[0].given["call"] == adapter.requests[0].to_data()
+        payload = TypeAdapter(RunDetail).dump_python(detail, mode="json")
+        serialized_call = cast(
+            dict[str, Any],
+            payload["steps"][0]["given"]["call"],
+        )
+        assert ModelCall.from_data(serialized_call) == adapter.requests[0]
+        PersistSink(store).on_event(begin)
+        connection = sqlite3.connect(store.db_path)
+        try:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM model_texts"
+            ).fetchone() == (1,)
+            assert connection.execute(
+                "SELECT COUNT(*) FROM model_messages"
+            ).fetchone() == (1,)
+            assert connection.execute(
+                "SELECT COUNT(*) FROM model_toolsets"
+            ).fetchone() == (1,)
+        finally:
+            connection.close()
     finally:
         asyncio.run(executor.shutdown())
         store.close()

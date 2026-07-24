@@ -158,15 +158,23 @@
   bounded diagnostics. Durable records, events, storage, inspection, schemas,
   and thread management remain at the `toolang.execution` package level.
 - `RunSpec` carries the captured `AgentSetup` and `AgentState`, existing thread
-  id, unique runnable name, canonical message input, optional model choice, and
-  optional runnable parameters. Run and request identities are `start()`
-  arguments rather than executable input.
+  id, unique runnable name, canonical primary `Part[]` input, optional model
+  choice, and optional runnable `args`. Runnable declarations call their formal
+  arguments `params`; runtime calls provide `args`. Run and request identities
+  are `start()` arguments rather than executable input.
 - Within `toolang.execution.executor`, `runs` owns complete agic and flow run
   bodies, `stmts` owns lowered flow-statement semantics, and `steps` owns step
   execution and event emission. Top-level runs have no synthetic containing
   step; recursive calls are wrapped by the invoking run step.
 - Agic model-tool sequencing is fixed executor behavior. Do not add a loop
   plugin family or a plugin-facing run-context protocol.
+- Prompt caps, instruct declarations, and context declarations are all text
+  templates. Agic and prompt bodies see flat `_` plus declared argument
+  variables; instruct and context templates see only flat runtime variables.
+  Do not add wrapper namespaces such as `args.*` or `runtime.*`.
+- Templates are authored source concepts. Execution persistence stores their
+  rendered effects as normalized model text and message blobs; do not label
+  rendered request data as template source.
 - `toolang.execution.threads` owns synchronous thread creation, rewind, and
   fork semantics through `ThreadManager`. Create and fork return a new thread
   id; rewind mutates in place and returns nothing. Fork retains its anchor in
@@ -231,6 +239,11 @@
 - Run events are the complete source of durable run and step facts.
   `PersistSink` stores their references and output edges directly and never
   synthesizes steps or reconstructs runtime locals.
+- Model steps persist a non-secret effective target snapshot and references
+  that rebuild the normalized `ModelCall` accepted by `ModelAdapter`.
+  Instructions, canonical messages, and toolsets are content-addressed in
+  `runs.db`; provider-specific HTTP payloads, API keys, and request headers are
+  not stored.
 - Run and thread IDs use the shared file-backed allocator. Run-control and
   thread-control indexes are allocated and inserted in one SQLite transaction
   so all durable identities remain safe across local processes.

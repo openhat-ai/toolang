@@ -122,12 +122,13 @@ copied into the new thread.
 
 Run detail returns:
 
-- `info`
 - `input`
-- `output`
+- `controls`
+- `steps`
 
-`output.steps` contains the projected step detail for the run. This is the
-source used by trace and chat inspection pages.
+The inherited `RunInfo` fields contain summary and lifecycle information.
+`steps` contains the projected step detail used by trace and chat inspection
+pages.
 
 Run control endpoints are:
 

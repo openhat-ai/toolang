@@ -36,7 +36,7 @@ class StepBegin:
     step: StepPath
     kind: StepKind
     input: tuple[StepInputItem, ...] = ()
-    context: dict[str, Any] = field(default_factory=dict)
+    given: dict[str, Any] = field(default_factory=dict)
     started_at: str = ""
     type: str = "step_begin"
 
@@ -79,10 +79,9 @@ class StepEnd:
     kind: StepKind
     status: StepStatus
     output: tuple[Part, ...] = ()
-    detail: dict[str, Any] = field(default_factory=dict)
+    noted: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     finished_at: str = ""
-    started_at: str = ""
     type: str = "step_end"
 
 
@@ -94,7 +93,6 @@ class RunEnd:
     status: RunStatus
     input: RunControlRef | None = None
     output: OutputRef | None = None
-    detail: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     finished_at: str = ""
     type: str = "run_end"

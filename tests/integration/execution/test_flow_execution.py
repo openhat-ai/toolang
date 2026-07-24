@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.types.message import Message, TextPart
+from toolang.base.types.run import ModelCall
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.execution.events import (
@@ -32,7 +33,15 @@ from toolang.execution.executor.persist import PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
-from toolang.lang.ast import AgicDecl, FlowDecl, LetStmt, Program, RunStmt, Span
+from toolang.lang.ast import (
+    AgicDecl,
+    FlowDecl,
+    LetStmt,
+    Parameter,
+    Program,
+    RunStmt,
+    Span,
+)
 from toolang.up.setup import AgentSetup
 
 
@@ -92,6 +101,23 @@ def _setup() -> AgentSetup:
     )
 
 
+def _capture_model_text(store: RunStore, body: str) -> str:
+    captured = store.capture_model_call(
+        target={
+            "ref": "test/model",
+            "provider": "test",
+            "name": "model",
+            "model": "model",
+            "adapter": "test",
+        },
+        call=ModelCall(instructions=body, messages=[]),
+    )
+    call = captured.get("call")
+    if not isinstance(call, dict) or not isinstance(call.get("instructions"), str):
+        raise AssertionError("captured model instructions are missing")
+    return call["instructions"]
+
+
 async def _start(
     executor: RunExecutor,
     setup: AgentSetup,
@@ -144,12 +170,59 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert detail is not None
     assert detail.runnable_kind == "flow"
     assert detail.runnable_name == "pipeline"
-    assert detail.input == Message.user("")
-    assert [control.index for control in detail.inputs] == [0]
-    assert detail.inputs[0].message == detail.input
-    assert [step.kind for step in detail.output.steps] == ["system"]
-    assert detail.output.steps[0].output == [TextPart(text="done")]
-    assert not hasattr(detail.output.steps[0], "message")
+    assert detail.input == Message(role="user")
+    assert [control.index for control in detail.controls] == [0]
+    assert detail.controls[0].message == detail.input
+    assert [step.kind for step in detail.steps] == ["system"]
+    assert detail.steps[0].output == [TextPart(text="done")]
+    assert not hasattr(detail.steps[0], "message")
+    asyncio.run(executor.shutdown())
+
+
+def test_run_executor_validates_args_against_runnable_params(
+    tmp_path: Path,
+) -> None:
+    flow = FlowDecl(
+        name="pipeline",
+        params=(Parameter(name="focus", span=Span(line=1)),),
+        span=Span(line=1),
+    )
+    executor = _executor(tmp_path)
+    setup = _setup()
+    state = _state(flow)
+
+    async def scenario() -> None:
+        with pytest.raises(ValueError, match="missing arguments.*focus"):
+            executor.start(
+                RunSpec(
+                    setup=setup,
+                    state=state,
+                    thread="term_test",
+                    runnable=flow.name,
+                )
+            )
+        with pytest.raises(ValueError, match="unknown arguments.*other"):
+            executor.start(
+                RunSpec(
+                    setup=setup,
+                    state=state,
+                    thread="term_test",
+                    runnable=flow.name,
+                    args={"focus": "events", "other": True},
+                )
+            )
+        record = await executor.start(
+            RunSpec(
+                setup=setup,
+                state=state,
+                thread="term_test",
+                runnable=flow.name,
+                args={"focus": "events"},
+            )
+        )
+        assert record.status == "finished"
+
+    asyncio.run(scenario())
     asyncio.run(executor.shutdown())
 
 
@@ -222,7 +295,7 @@ def test_runtime_emits_and_persists_system_failure_step(
     assert steps[0].kind == "system"
     assert steps[0].status == "failed"
     assert steps[0].error == "runtime failed"
-    assert steps[0].context == {"runtime": "failure"}
+    assert steps[0].given == {"runtime": "failure"}
     asyncio.run(executor.shutdown())
 
 
@@ -1319,6 +1392,113 @@ def test_run_store_migrates_schema_without_deleting_history(tmp_path: Path) -> N
         assert reopened.get_thread(thread_id="term_test") is not None
         assert reopened.get_run(run_id="run_test") is not None
         assert len(reopened.list_run_controls(run_id="run_test")) == 1
+    finally:
+        reopened.close()
+
+
+def test_run_store_removes_legacy_thread_control_error_without_deleting_history(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    store.create_thread(thread_id="term_test")
+    store.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE thread_controls ADD COLUMN error TEXT")
+    connection.execute("PRAGMA user_version=17")
+    connection.commit()
+    connection.close()
+
+    reopened = RunStore(path)
+    try:
+        assert reopened.get_thread(thread_id="term_test") is not None
+        assert len(reopened.list_thread_controls(thread_id="term_test")) == 1
+    finally:
+        reopened.close()
+
+    connection = sqlite3.connect(path)
+    try:
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(thread_controls)"
+            ).fetchall()
+        }
+        assert "error" not in columns
+    finally:
+        connection.close()
+
+
+def test_run_store_migrates_step_and_model_text_names_in_place(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    store.create_thread(thread_id="term_test")
+    store.accept_start(
+        run_id="run_test",
+        parent=None,
+        thread="term_test",
+        input=Message.user("hello"),
+        context={"runnable": {"kind": "flow", "name": "pipeline"}},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
+    )
+    sink = PersistSink(store)
+    sink.on_event(
+        StepBegin(
+            step="run_test/0",
+            kind="system",
+            given={"runtime": "test"},
+            started_at="2026-01-01T00:00:01Z",
+        )
+    )
+    sink.on_event(
+        StepEnd(
+            step="run_test/0",
+            kind="system",
+            status="finished",
+            noted={"shape": "item"},
+            finished_at="2026-01-01T00:00:02Z",
+        )
+    )
+    text_hash = _capture_model_text(store, "stable")
+    store.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE steps RENAME COLUMN given TO context")
+    connection.execute("ALTER TABLE steps RENAME COLUMN noted TO detail")
+    connection.execute("ALTER TABLE model_texts RENAME TO prompts")
+    connection.execute("PRAGMA user_version=15")
+    connection.commit()
+    connection.close()
+
+    reopened = RunStore(path)
+    try:
+        step = reopened.list_steps(run_id="run_test")[0]
+        assert step.given == {"runtime": "test"}
+        assert step.noted == {"shape": "item"}
+        assert reopened.get_model_text(text_hash=text_hash) == "stable"
+    finally:
+        reopened.close()
+
+
+def test_run_store_migrates_v16_model_texts_in_place(tmp_path: Path) -> None:
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    text_hash = _capture_model_text(store, "stable")
+    store.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE model_texts RENAME TO templates")
+    connection.execute("PRAGMA user_version=16")
+    connection.commit()
+    connection.close()
+
+    reopened = RunStore(path)
+    try:
+        assert reopened.get_model_text(text_hash=text_hash) == "stable"
     finally:
         reopened.close()
 

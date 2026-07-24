@@ -117,7 +117,7 @@ async def run(
                             if state.program.find_agic("file") is not None
                             else "default"
                         ),
-                        input=submission.input,
+                        input=submission.input.parts,
                     )
                 )
                 try:

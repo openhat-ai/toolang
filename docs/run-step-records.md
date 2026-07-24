@@ -93,8 +93,8 @@ index
 kind
 input
 output
-context
-detail
+given
+noted
 status
 error
 created_at
@@ -105,6 +105,10 @@ finished_at
 `(parent, index)` is the durable identity. A step path is `parent / index`.
 Step input may contain run-control references, output references, and inline
 messages.
+
+`given` contains information known when `StepBegin` is emitted. `noted`
+contains additional information recorded by `StepEnd`. Neither repeats the
+step's input, output, status, or error.
 
 Step kinds remain intentionally small:
 
@@ -142,7 +146,6 @@ request_id
 expected_head
 context
 status
-error
 created_at
 finished_at
 ```
@@ -169,6 +172,18 @@ Run and step facts are event projection:
 ```text
 runtime -> RunEvent -> PersistSink -> RunRecord / StepRecord
 ```
+
+For model steps, `given` references the normalized `ModelCall`:
+content-addressed instructions, ordered canonical messages, one
+content-addressed toolset, and opaque adapter state. It also records a
+non-secret effective model-target snapshot, including the provider, model,
+adapter, base URL, options, and streaming mode. API keys and headers are never
+stored. `RunStore.rebuild_model_call()` resolves the call references without
+depending on a provider-specific HTTP payload.
+
+Durable `StepRecord.given["call"]` keeps those compact references.
+Caller-facing inspection resolves the same field back to normalized
+`ModelCall` data, so storage details do not become a second public shape.
 
 After `PersistSink` commits an event fact, runtime updates referenced controls:
 

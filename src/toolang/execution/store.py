@@ -19,6 +19,8 @@ from toolang.base.types.message import (
     parts_from_data,
     parts_to_data,
 )
+from toolang.base.types.run import ModelCall
+from toolang.base.types.tool import ToolDefinition
 from toolang.common.time import utc_now
 from .records import (
     RunControlRecord,
@@ -45,7 +47,7 @@ from .types import (
     StepStatus,
 )
 
-_SCHEMA_VERSION = 15
+_SCHEMA_VERSION = 18
 
 
 class RunStore:
@@ -366,9 +368,9 @@ class RunStore:
                     INSERT INTO thread_controls(
                         thread, "index", kind, source_thread, anchor_run,
                         request_id, expected_head_thread, expected_head_index,
-                        context, status, error, created_at, finished_at
+                        context, status, created_at, finished_at
                     ) VALUES (?, 0, 'create', NULL, NULL, ?, NULL, NULL,
-                              ?, 'finished', NULL, ?, ?)
+                              ?, 'finished', ?, ?)
                     """,
                     (thread_id, request_id, _dump_json(dict(context or {})), now, now),
                 )
@@ -447,9 +449,9 @@ class RunStore:
                     INSERT INTO thread_controls(
                         thread, "index", kind, source_thread, anchor_run,
                         request_id, expected_head_thread, expected_head_index,
-                        context, status, error, created_at, finished_at
+                        context, status, created_at, finished_at
                     ) VALUES (?, 0, 'fork', ?, ?, ?, NULL, NULL, ?,
-                              'finished', NULL, ?, ?)
+                              'finished', ?, ?)
                     """,
                     (
                         thread_id,
@@ -553,9 +555,9 @@ class RunStore:
                     INSERT INTO thread_controls(
                         thread, "index", kind, source_thread, anchor_run,
                         request_id, expected_head_thread, expected_head_index,
-                        context, status, error, created_at, finished_at
+                        context, status, created_at, finished_at
                     ) VALUES (?, ?, 'rewind', NULL, ?, ?, ?, ?, ?,
-                              'finished', NULL, ?, ?)
+                              'finished', ?, ?)
                     """,
                     (
                         thread_id,
@@ -906,7 +908,7 @@ class RunStore:
         index: int,
         kind: StepKind,
         input: Sequence[StepInputItem],
-        context: Mapping[str, Any],
+        given: Mapping[str, Any],
         started_at: str,
     ) -> StepRecord:
         """Project one step_begin event."""
@@ -915,7 +917,7 @@ class RunStore:
             self._conn.execute(
                 """
                 INSERT INTO steps(
-                    parent, "index", kind, input, output, context, detail,
+                    parent, "index", kind, input, output, given, noted,
                     status, error, created_at, started_at, finished_at
                 ) VALUES (?, ?, ?, ?, '[]', ?, '{}', 'running', NULL, ?, ?, NULL)
                 ON CONFLICT(parent, "index") DO NOTHING
@@ -925,7 +927,7 @@ class RunStore:
                     index,
                     kind,
                     _dump_json(step_input_items_to_data(tuple(input))),
-                    _dump_json(dict(context)),
+                    _dump_json(dict(given)),
                     started_at,
                     started_at,
                 ),
@@ -941,7 +943,7 @@ class RunStore:
         if (
             step.kind != kind
             or step.input != tuple(input)
-            or step.context != dict(context)
+            or step.given != dict(given)
             or step.started_at != started_at
         ):
             raise ValueError(f"conflicting step_begin event: {parent}/{index}")
@@ -955,7 +957,7 @@ class RunStore:
         kind: StepKind,
         status: StepStatus,
         output: Sequence[Part],
-        detail: Mapping[str, Any],
+        noted: Mapping[str, Any],
         error: str | None,
         finished_at: str,
     ) -> StepRecord:
@@ -975,12 +977,12 @@ class RunStore:
                 self._conn.execute(
                     """
                     UPDATE steps
-                    SET output = ?, detail = ?, status = ?, error = ?, finished_at = ?
+                    SET output = ?, noted = ?, status = ?, error = ?, finished_at = ?
                     WHERE parent = ? AND "index" = ?
                     """,
                     (
                         _dump_json(parts_to_data(output)),
-                        _dump_json(dict(detail)),
+                        _dump_json(dict(noted)),
                         status,
                         error,
                         finished_at,
@@ -999,7 +1001,7 @@ class RunStore:
         if (
             step.status != status
             or step.output != tuple(output)
-            or step.detail != dict(detail)
+            or step.noted != dict(noted)
             or step.error != error
             or step.finished_at != finished_at
         ):
@@ -1047,33 +1049,160 @@ class RunStore:
             grouped.setdefault(record.run_id, []).append(record)
         return grouped
 
-    def put_prompt(self, *, body: str) -> str:
-        prompt_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
-        with self._lock:
-            self._conn.execute(
-                """
-                INSERT OR IGNORE INTO prompts(
-                    hash,
-                    body
-                ) VALUES (?, ?)
-                """,
-                (prompt_hash, body),
-            )
-            self._conn.commit()
-        return prompt_hash
+    def get_model_text(self, *, text_hash: str) -> str | None:
+        """Return normalized model-request text by hash."""
 
-    def get_prompt(self, *, prompt_hash: str) -> str | None:
         with self._lock:
             row = self._conn.execute(
                 """
-                SELECT body FROM prompts
+                SELECT body FROM model_texts
                 WHERE hash = ?
                 """,
-                (prompt_hash,),
+                (text_hash,),
             ).fetchone()
         if row is None:
             return None
         return str(row["body"])
+
+    def capture_model_call(
+        self,
+        *,
+        target: Mapping[str, Any],
+        call: ModelCall,
+    ) -> dict[str, Any]:
+        """Persist deduplicated normalized model-call inputs."""
+
+        with self._lock:
+            try:
+                instruction_ref = self._put_model_text(call.instructions)
+                message_refs = [
+                    self._put_model_message(message) for message in call.messages
+                ]
+                toolset_ref = self._put_toolset(call.tools) if call.tools else None
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        return {
+            "model": _model_target_snapshot(target),
+            "call": {
+                "instructions": instruction_ref,
+                "messages": message_refs,
+                "tools": toolset_ref,
+                "state": dict(call.state) if call.state is not None else None,
+            },
+        }
+
+    def rebuild_model_call(self, step: StepRecord) -> ModelCall:
+        """Rebuild the normalized model call captured by one model step."""
+
+        if step.kind != "model":
+            raise ValueError(f"step is not a model call: {step.path}")
+        raw_call = step.given.get("call")
+        if not isinstance(raw_call, Mapping):
+            raise ValueError(f"model call metadata is missing: {step.path}")
+        instruction_ref = _required_text(raw_call.get("instructions"), "instructions")
+        instructions = self.get_model_text(text_hash=instruction_ref)
+        if instructions is None:
+            raise ValueError(f"model instructions are missing: {instruction_ref}")
+        raw_messages = raw_call.get("messages")
+        if not isinstance(raw_messages, Sequence) or isinstance(
+            raw_messages, (str, bytes, bytearray)
+        ):
+            raise ValueError(f"model message references are invalid: {step.path}")
+        messages = [
+            self._get_model_message(
+                _required_text(message_ref, f"messages[{index}]")
+            )
+            for index, message_ref in enumerate(raw_messages)
+        ]
+        toolset_ref = raw_call.get("tools")
+        tools = (
+            self._get_toolset(_required_text(toolset_ref, "tools"))
+            if toolset_ref is not None
+            else ()
+        )
+        raw_state = raw_call.get("state")
+        if raw_state is not None and not isinstance(raw_state, Mapping):
+            raise ValueError(f"model adapter state is invalid: {step.path}")
+        return ModelCall(
+            instructions=instructions,
+            messages=messages,
+            tools=tools,
+            state=dict(raw_state) if isinstance(raw_state, Mapping) else None,
+        )
+
+    def _put_model_text(self, body: str) -> str:
+        text_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        self._conn.execute(
+            "INSERT OR IGNORE INTO model_texts(hash, body) VALUES (?, ?)",
+            (text_hash, body),
+        )
+        return text_hash
+
+    def _put_model_message(self, message: Message) -> str:
+        data = _dump_json(message.to_data())
+        message_hash = hashlib.sha256(data.encode("utf-8")).hexdigest()
+        self._conn.execute(
+            "INSERT OR IGNORE INTO model_messages(hash, data) VALUES (?, ?)",
+            (message_hash, data),
+        )
+        return message_hash
+
+    def _get_model_message(self, message_hash: str) -> Message:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT data FROM model_messages WHERE hash = ?",
+                (message_hash,),
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"model message is missing: {message_hash}")
+        data = _load_json(str(row["data"]))
+        if not isinstance(data, Mapping):
+            raise ValueError(f"model message is invalid: {message_hash}")
+        return Message.from_data(data)
+
+    def _put_toolset(self, tools: Sequence[ToolDefinition]) -> str:
+        data = _dump_json(
+            [
+                tool.to_data()
+                for tool in tools
+            ]
+        )
+        toolset_hash = hashlib.sha256(data.encode("utf-8")).hexdigest()
+        self._conn.execute(
+            "INSERT OR IGNORE INTO model_toolsets(hash, data) VALUES (?, ?)",
+            (toolset_hash, data),
+        )
+        return toolset_hash
+
+    def _get_toolset(self, toolset_hash: str) -> tuple[ToolDefinition, ...]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT data FROM model_toolsets WHERE hash = ?",
+                (toolset_hash,),
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"model toolset is missing: {toolset_hash}")
+        data = _load_json(str(row["data"]))
+        if not isinstance(data, Sequence) or isinstance(
+            data, (str, bytes, bytearray)
+        ):
+            raise ValueError(f"model toolset is invalid: {toolset_hash}")
+        tools: list[ToolDefinition] = []
+        for index, raw_tool in enumerate(data):
+            if not isinstance(raw_tool, Mapping):
+                raise ValueError(
+                    f"model toolset item is invalid: {toolset_hash}[{index}]"
+                )
+            tool_data = cast(Mapping[str, Any], raw_tool)
+            parameters = tool_data.get("parameters")
+            if not isinstance(parameters, Mapping):
+                raise ValueError(
+                    f"model tool parameters are invalid: {toolset_hash}[{index}]"
+                )
+            tools.append(ToolDefinition.from_data(tool_data))
+        return tuple(tools)
 
     def recent_conversation_messages(
         self,
@@ -1165,11 +1294,11 @@ class RunStore:
             self._conn.execute("PRAGMA foreign_keys=ON;")
             self._conn.execute("BEGIN IMMEDIATE")
             version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-            if version not in {0, 13, 14, _SCHEMA_VERSION}:
+            if version not in {0, 13, 14, 15, 16, 17, _SCHEMA_VERSION}:
                 self._conn.rollback()
                 raise RuntimeError(
                     f"unsupported run store schema version: {version}; "
-                    f"expected 13, 14, or {_SCHEMA_VERSION}"
+                    f"expected 13, 14, 15, 16, 17, or {_SCHEMA_VERSION}"
                 )
             if version == 13:
                 self._conn.execute("DROP INDEX IF EXISTS idx_run_controls_request")
@@ -1257,13 +1386,22 @@ class RunStore:
                     expected_head_index INTEGER,
                     context TEXT NOT NULL,
                     status TEXT NOT NULL,
-                    error TEXT,
                     created_at TEXT NOT NULL,
                     finished_at TEXT,
                     PRIMARY KEY(thread, "index")
                 )
                 """
             )
+            thread_control_columns = {
+                str(row["name"])
+                for row in self._conn.execute(
+                    "PRAGMA table_info(thread_controls)"
+                ).fetchall()
+            }
+            if "error" in thread_control_columns:
+                self._conn.execute(
+                    "ALTER TABLE thread_controls DROP COLUMN error"
+                )
             self._conn.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_thread_controls_request
@@ -1279,8 +1417,8 @@ class RunStore:
                     kind TEXT NOT NULL,
                     input TEXT NOT NULL,
                     output TEXT NOT NULL,
-                    context TEXT NOT NULL,
-                    detail TEXT NOT NULL,
+                    given TEXT NOT NULL,
+                    noted TEXT NOT NULL,
                     status TEXT NOT NULL,
                     error TEXT,
                     created_at TEXT NOT NULL,
@@ -1290,14 +1428,59 @@ class RunStore:
                 )
                 """
             )
+            step_columns = {
+                str(row["name"])
+                for row in self._conn.execute("PRAGMA table_info(steps)").fetchall()
+            }
+            if "context" in step_columns and "given" not in step_columns:
+                self._conn.execute(
+                    "ALTER TABLE steps RENAME COLUMN context TO given"
+                )
+            if "detail" in step_columns and "noted" not in step_columns:
+                self._conn.execute(
+                    "ALTER TABLE steps RENAME COLUMN detail TO noted"
+                )
             self._conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS prompts (
+                CREATE TABLE IF NOT EXISTS model_texts (
                     hash TEXT PRIMARY KEY,
                     body TEXT NOT NULL
                 )
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS model_messages (
+                    hash TEXT PRIMARY KEY,
+                    data TEXT NOT NULL
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS model_toolsets (
+                    hash TEXT PRIMARY KEY,
+                    data TEXT NOT NULL
+                )
+                """
+            )
+            for legacy_table in ("templates", "prompts"):
+                legacy = self._conn.execute(
+                    """
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table' AND name = ?
+                    """,
+                    (legacy_table,),
+                ).fetchone()
+                if legacy is None:
+                    continue
+                self._conn.execute(
+                    f"""
+                    INSERT OR IGNORE INTO model_texts(hash, body)
+                    SELECT hash, body FROM {legacy_table}
+                    """
+                )
+                self._conn.execute(f"DROP TABLE {legacy_table}")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_thread_created ON runs(thread, created_at)"
             )
@@ -1312,11 +1495,58 @@ class RunStore:
 
 
 def _dump_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _load_json(value: str) -> Any:
     return json.loads(value)
+
+
+def _required_text(value: object, name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty string")
+    return value
+
+
+def _model_target_snapshot(target: Mapping[str, Any]) -> dict[str, Any]:
+    snapshot = {
+        name: _required_text(target.get(name), f"model {name}")
+        for name in ("ref", "provider", "name", "model", "adapter")
+    }
+    base_url = target.get("base_url")
+    if base_url is not None and not isinstance(base_url, str):
+        raise ValueError("model base_url must be text or null")
+    scope = target.get("scope")
+    if scope is not None and not isinstance(scope, str):
+        raise ValueError("model scope must be text or null")
+    tags = target.get("tags", ())
+    if not isinstance(tags, Sequence) or isinstance(
+        tags, (str, bytes, bytearray)
+    ) or not all(isinstance(tag, str) for tag in tags):
+        raise ValueError("model tags must be a list of text")
+    options = target.get("options", {})
+    if not isinstance(options, Mapping):
+        raise ValueError("model options must be an object")
+    tools = target.get("tools", True)
+    if not isinstance(tools, bool):
+        raise ValueError("model tools must be boolean")
+    streaming = target.get("streaming", True)
+    if not isinstance(streaming, bool):
+        raise ValueError("model streaming must be boolean")
+    return {
+        **snapshot,
+        "base_url": base_url,
+        "scope": scope,
+        "tags": list(tags),
+        "options": dict(options),
+        "tools": tools,
+        "streaming": streaming,
+    }
 
 
 def _validate_request_id(request_id: str | None) -> None:
@@ -1389,8 +1619,8 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
     raw = dict(row)
     input_raw = _load_json(str(raw["input"]))
     output_raw = _load_json(str(raw["output"]))
-    context_raw = _load_json(str(raw["context"]))
-    detail_raw = _load_json(str(raw["detail"]))
+    given_raw = _load_json(str(raw["given"]))
+    noted_raw = _load_json(str(raw["noted"]))
     input_items = (
         input_raw
         if isinstance(input_raw, Sequence)
@@ -1413,8 +1643,8 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         output=parts_from_data(
             [item for item in output_items if isinstance(item, Mapping)]
         ),
-        context=dict(context_raw) if isinstance(context_raw, Mapping) else {},
-        detail=dict(detail_raw) if isinstance(detail_raw, Mapping) else {},
+        given=dict(given_raw) if isinstance(given_raw, Mapping) else {},
+        noted=dict(noted_raw) if isinstance(noted_raw, Mapping) else {},
         status=cast(StepStatus, raw["status"]),
         error=str(raw["error"]) if raw["error"] is not None else None,
         created_at=str(raw["created_at"]),
@@ -1464,7 +1694,6 @@ def _thread_control_from_row(row: sqlite3.Row) -> ThreadControlRecord:
         expected_head=expected_head,
         context=dict(context_raw) if isinstance(context_raw, Mapping) else {},
         status=row["status"],
-        error=str(row["error"]) if row["error"] is not None else None,
         created_at=str(row["created_at"]),
         finished_at=str(row["finished_at"]) if row["finished_at"] is not None else None,
     )
@@ -1477,7 +1706,7 @@ def _replay_messages_from_step(step: StepRecord) -> list[Message]:
     meta: dict[str, Any] = {}
     if step.error is not None:
         meta["error"] = step.error
-    reasoning_content = step.detail.get("reasoning_content")
+    reasoning_content = step.noted.get("reasoning_content")
     if isinstance(reasoning_content, str) and reasoning_content:
         meta["reasoning_content"] = reasoning_content
     return [Message(role=role, parts=tuple(step.output), meta=meta)]

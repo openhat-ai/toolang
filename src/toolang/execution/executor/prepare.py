@@ -72,9 +72,9 @@ def prepare_agic(context: _Execution, run: BoundRun, agic: AgicDecl) -> Prepared
         if run.input_text
         else ""
     )
-    params = dict(run.params)
+    args = dict(run.args)
     if agic.input is not None and input_text:
-        params = {**params, "_": input_text}
+        args = {**args, "_": input_text}
 
     model_selectors = _effective_model_selectors(
         context,
@@ -93,10 +93,7 @@ def prepare_agic(context: _Execution, run: BoundRun, agic: AgicDecl) -> Prepared
     skills = _select_caps(_caps(caps, "skill"), _directives(agic, "skills"))
     services = _select_caps(_caps(caps, "service"), _directives(agic, "services"))
 
-    user_context = _template_context(
-        params=_template_params(agic, params),
-        runtime=_runtime_context(context, run=run, agic=agic),
-    )
+    body_variables = _body_variables(agic, args)
     system_runtime = _runtime_context(context, run=run, agic=agic)
     system_runtime.update(
         {
@@ -109,12 +106,8 @@ def prepare_agic(context: _Execution, run: BoundRun, agic: AgicDecl) -> Prepared
             "has_services": bool(services),
         }
     )
-    system_context = _template_context(
-        params=_template_params(agic, params),
-        runtime=system_runtime,
-    )
-    rendered = _render_messages(agic.messages, user_context)
-    prompt_context = _render_context(run.state.program, agic, system_context)
+    rendered = _render_messages(agic.messages, body_variables)
+    prompt_context = _render_context(run.state.program, agic, system_runtime)
     fallback = _run_message(
         run,
         agic=agic,
@@ -141,7 +134,7 @@ def prepare_agic(context: _Execution, run: BoundRun, agic: AgicDecl) -> Prepared
             fallback=fallback,
         ),
     )
-    instructions = _render_instructions(run.state.program, agic, system_context)
+    instructions = _render_instructions(run.state.program, agic, system_runtime)
     provider = run.setup.model_providers[model.provider]
     prepared_model = provider.prepare_target(model)
     adapter = run.setup.model_adapters.get(prepared_model.adapter)
@@ -387,19 +380,13 @@ def _recalls_history(agic: AgicDecl) -> bool:
     return not values or "default" in values or "history" in values
 
 
-def _template_params(agic: AgicDecl, params: dict[str, Any]) -> dict[str, object]:
+def _body_variables(agic: AgicDecl, args: dict[str, Any]) -> dict[str, object]:
     values: dict[str, object] = {}
     if agic.input is not None:
-        values["_"] = params.get("_")
+        values["_"] = args.get("_")
     for param in agic.params:
-        values[param.name] = params.get(param.name)
+        values[param.name] = args.get(param.name)
     return values
-
-
-def _template_context(
-    *, params: dict[str, object], runtime: dict[str, object]
-) -> dict[str, object]:
-    return {"runtime": runtime, **params}
 
 
 def _runtime_context(
@@ -412,8 +399,11 @@ def _runtime_context(
             "program_source": run.state.program_source,
         },
         "agent": {"name": run.setup.name, "home": str(run.setup.home)},
-        "runnable": {"kind": agic.kind, "name": agic.name},
-        "agic": {"name": agic.name, "output": agic.output},
+        "runnable": {
+            "kind": agic.kind,
+            "name": agic.name,
+            "output": agic.output,
+        },
     }
 
 

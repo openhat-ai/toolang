@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from .message import Delta, Message, Part, PartType
 from .tool import ToolDefinition
@@ -48,6 +48,51 @@ class ModelCall:
     messages: list[Message]
     tools: tuple[ToolDefinition, ...] = field(default_factory=tuple)
     state: dict[str, Any] | None = None
+
+    @classmethod
+    def from_data(cls, payload: Mapping[str, Any]) -> ModelCall:
+        instructions = payload.get("instructions")
+        if not isinstance(instructions, str):
+            raise ValueError("model call instructions must be text")
+        raw_messages = payload.get("messages")
+        if not isinstance(raw_messages, Sequence) or isinstance(
+            raw_messages, (str, bytes, bytearray)
+        ):
+            raise ValueError("model call messages must be a list")
+        raw_tools = payload.get("tools", ())
+        if not isinstance(raw_tools, Sequence) or isinstance(
+            raw_tools, (str, bytes, bytearray)
+        ):
+            raise ValueError("model call tools must be a list")
+        state = payload.get("state")
+        if state is not None and not isinstance(state, Mapping):
+            raise ValueError("model call state must be an object")
+        messages: list[Message] = []
+        for index, item in enumerate(raw_messages):
+            if not isinstance(item, Mapping):
+                raise ValueError(f"model call message {index} must be an object")
+            messages.append(Message.from_data(cast(Mapping[str, Any], item)))
+        tools: list[ToolDefinition] = []
+        for index, item in enumerate(raw_tools):
+            if not isinstance(item, Mapping):
+                raise ValueError(f"model call tool {index} must be an object")
+            tools.append(
+                ToolDefinition.from_data(cast(Mapping[str, Any], item))
+            )
+        return cls(
+            instructions=instructions,
+            messages=messages,
+            tools=tuple(tools),
+            state=dict(state) if isinstance(state, Mapping) else None,
+        )
+
+    def to_data(self) -> dict[str, Any]:
+        return {
+            "instructions": self.instructions,
+            "messages": [message.to_data() for message in self.messages],
+            "tools": [tool.to_data() for tool in self.tools],
+            "state": dict(self.state) if self.state is not None else None,
+        }
 
 
 @dataclass(frozen=True, slots=True)

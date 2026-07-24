@@ -17,6 +17,30 @@ class ToolDefinition:
     description: str
     parameters: dict[str, Any] = field(default_factory=dict)
 
+    @classmethod
+    def from_data(cls, payload: Mapping[str, Any]) -> ToolDefinition:
+        name = payload.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("tool definition name must be non-empty text")
+        description = payload.get("description")
+        if not isinstance(description, str):
+            raise ValueError("tool definition description must be text")
+        parameters = payload.get("parameters", {})
+        if not isinstance(parameters, Mapping):
+            raise ValueError("tool definition parameters must be an object")
+        return cls(
+            name=name,
+            description=description,
+            parameters=dict(parameters),
+        )
+
+    def to_data(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": dict(self.parameters),
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class ToolService:

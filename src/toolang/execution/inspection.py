@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
-from .records import RunRecord, StepRecord
+from .records import RunRecord
 from .schemas import RunDetail, RunInfo, ThreadDetail, ThreadInfo
 from .store import RunStore
 from .types import RunStatus
@@ -134,28 +132,9 @@ class ExecutionInspection:
             run,
             steps=steps,
             controls=self.store.list_run_controls(run_id=run.id),
-            prompts=_prompt_bodies(self.store, steps),
+            model_calls={
+                step.path: self.store.rebuild_model_call(step)
+                for step in steps
+                if step.kind == "model" and "call" in step.given
+            },
         )
-
-
-def _prompt_bodies(store: RunStore, steps: Sequence[StepRecord]) -> dict[str, str]:
-    prompts: dict[str, str] = {}
-    for prompt_hash in _prompt_hashes(steps):
-        body = store.get_prompt(prompt_hash=prompt_hash)
-        if body is not None:
-            prompts[prompt_hash] = body
-    return prompts
-
-
-def _prompt_hashes(steps: Sequence[StepRecord]) -> tuple[str, ...]:
-    hashes: list[str] = []
-    for step in steps:
-        for payload, keys in (
-            (step.context, ("instruct", "prompt_context")),
-            (step.detail, ("instruct", "context")),
-        ):
-            for key in keys:
-                value = payload.get(key)
-                if isinstance(value, str) and value and value not in hashes:
-                    hashes.append(value)
-    return tuple(hashes)

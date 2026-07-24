@@ -103,7 +103,7 @@ def _profile_metrics(context) -> dict[str, object]:
             step_total += 1
             if step.kind == "model":
                 model_total += 1
-                usage = step.detail.get("usage")
+                usage = step.noted.get("usage")
                 if isinstance(usage, Mapping):
                     input_tokens += int(usage.get("input_tokens", 0) or 0)
                     output_tokens += int(usage.get("output_tokens", 0) or 0)

@@ -376,6 +376,8 @@ prompt review:
   Review {{path}} carefully.
   {{focus}}
 
+  {{_}}
+
 agic:
   Respond directly.
 """.strip(),

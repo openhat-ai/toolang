@@ -9066,7 +9066,7 @@ def test_script_progress_defaults_to_stage_summary() -> None:
             kind="par",
             input=(),
             started_at="2026-01-01T00:00:01Z",
-            context={
+            given={
                 "statement": "map",
                 "runnable": "search_web",
                 "par": 2,
@@ -9103,7 +9103,7 @@ def test_script_progress_defaults_to_stage_summary() -> None:
             kind="par",
             status="finished",
             output=(),
-            detail={
+            noted={
                 "statement": "map",
                 "runnable": "search_web",
                 "par": 2,
@@ -9155,7 +9155,7 @@ def test_script_progress_expands_lanes_with_verbosity() -> None:
             step="run_parent/0",
             kind="par",
             input=(),
-            context={
+            given={
                 "statement": "storm",
                 "count": 2,
                 "runnable": "search_web",

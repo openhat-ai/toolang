@@ -49,7 +49,7 @@ class BoundRun:
     root_run_id: str
     thread: str
     input: Message
-    params: Mapping[str, object]
+    args: Mapping[str, object]
     model: str | None
     state: AgentState
     setup: AgentSetup
@@ -100,7 +100,7 @@ async def execute_step(
             step=path,
             kind=kind,
             input=inputs,
-            context={
+            given={
                 **statement_context(statement),
                 "binding": statement.binding,
                 "placement": dict(placement or {}),
@@ -117,7 +117,6 @@ async def execute_step(
                 step=path,
                 kind=kind,
                 status="canceled",
-                started_at=started_at,
                 finished_at=utc_now(),
             )
         )
@@ -129,7 +128,6 @@ async def execute_step(
                 kind=kind,
                 status="failed",
                 error=str(exc) or type(exc).__name__,
-                started_at=started_at,
                 finished_at=utc_now(),
             )
         )
@@ -140,7 +138,7 @@ async def execute_step(
             kind=kind,
             status="finished",
             output=output_parts(result),
-            detail={
+            noted={
                 "shape": result.shape,
                 **(
                     {"reshape": reshape}
@@ -153,7 +151,6 @@ async def execute_step(
                     else {}
                 ),
             },
-            started_at=started_at,
             finished_at=utc_now(),
         )
     )
@@ -167,7 +164,7 @@ def initial_locals(
 
     start = RunControlRef()
     locals = {
-        name: Local(value, "item", start) for name, value in binding.params.items()
+        name: Local(value, "item", start) for name, value in binding.args.items()
     }
     if executable.input is not None:
         locals["_"] = Local(binding.input_text, "item", start)

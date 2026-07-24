@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from toolang.base.types.message import Message
+from toolang.base.types.message import TextPart
 from ..execution.executor import RunExecutor, RunSpec
 from ..execution.records import RunRecord
 from ..state.state import AgentState
@@ -95,7 +95,7 @@ class Scheduler:
                         state=state,
                         thread=claimed.job.thread_id,
                         runnable=runnable,
-                        input=Message.user(claimed.definition.input),
+                        input=(TextPart(text=claimed.definition.input),),
                     )
                 )
                 try:

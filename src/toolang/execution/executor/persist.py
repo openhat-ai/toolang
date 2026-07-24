@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+from toolang.base.types.run import ModelCall
+
 from ..events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
 from ..records import trace_index, trace_parent
 from ..store import RunStore
@@ -37,12 +41,22 @@ class PersistSink:
         index = trace_index(event.step)
         if parent is None or index is None:
             raise ValueError(f"step_begin requires a step path: {event.step}")
+        given = event.given
+        if event.kind == "model" and "call" in given:
+            raw_model = given.get("model")
+            raw_call = given.get("call")
+            if not isinstance(raw_model, Mapping) or not isinstance(raw_call, Mapping):
+                raise ValueError("model step requires model and call objects")
+            given = self._store.capture_model_call(
+                target=raw_model,
+                call=ModelCall.from_data(raw_call),
+            )
         self._store.begin_step(
             parent=parent,
             index=index,
             kind=event.kind,
             input=event.input,
-            context=event.context,
+            given=given,
             started_at=event.started_at,
         )
 
@@ -57,7 +71,7 @@ class PersistSink:
             kind=event.kind,
             status=event.status,
             output=event.output,
-            detail=event.detail,
+            noted=event.noted,
             error=event.error,
             finished_at=event.finished_at,
         )

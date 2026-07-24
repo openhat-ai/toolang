@@ -170,8 +170,8 @@ class ScriptProgressSink:
             return
         if event.type == "step_begin":
             event = cast(StepBegin, event)
-            if trace_run(event.step) == self._run_id and event.context.get("statement"):
-                self._ensure_stage({**event.context, "_step": event.step})
+            if trace_run(event.step) == self._run_id and event.given.get("statement"):
+                self._ensure_stage({**event.given, "_step": event.step})
                 self._render()
             else:
                 self._update_call_step(
@@ -205,7 +205,7 @@ class ScriptProgressSink:
         self.finish()
 
     def _update_step(self, event: StepEnd) -> None:
-        payload = event.detail
+        payload = event.noted
         root, _, indexes = event.step.partition("/")
         first_index = indexes.split("/", 1)[0] if indexes else ""
         stage_key = f"{root}/{first_index}" if first_index else event.step

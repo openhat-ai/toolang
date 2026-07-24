@@ -284,7 +284,7 @@ Unnamed declarations define program defaults:
 
 ```too
 context:
-  Current agent: {{runtime.agent.name}}
+  Current agent: {{agent.name}}
 
 instruct:
   Use tools only when they materially help.
@@ -297,7 +297,7 @@ context report:
   Include the report constraints.
 
 instruct strict:
-  Return only data matching {{runtime.agic.output}}.
+  Run the {{runnable.name}} runnable in strict mode.
 ```
 
 An agic may select one of each:

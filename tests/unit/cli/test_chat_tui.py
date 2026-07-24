@@ -738,7 +738,7 @@ def _model_step_end(
         kind="model",
         status="finished",
         output=(TextPart(text=output),),
-        detail={"model_ref": "test/model", "usage": {"input_tokens": 1, "output_tokens": 1}},
+        noted={"model_ref": "test/model", "usage": {"input_tokens": 1, "output_tokens": 1}},
         started_at="2026-01-01T00:00:01Z",
         finished_at=finished_at,
     )
@@ -750,7 +750,7 @@ def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
         kind="par",
         input=(),
         started_at="2026-01-01T00:00:01Z",
-        context={
+        given={
             "statement": "map",
             "runnable": "summarize",
             "par": 2,
@@ -764,7 +764,7 @@ def _flow_step_end(*, step_index: int = 1) -> StepEnd:
         kind="par",
         status="finished",
         output=(),
-        detail={
+        noted={
             "statement": "map",
             "runnable": "summarize",
             "par": 2,
@@ -783,7 +783,7 @@ def _child_run_step_begin(
         kind="run",
         input=(),
         started_at="2026-01-01T00:00:01Z",
-        context={
+        given={
             "statement": "run",
             "runnable": "summarize",
         },
@@ -798,7 +798,7 @@ def _child_run_step_end(
         kind="run",
         status="finished",
         output=(TextPart(text="done"),),
-        detail={
+        noted={
             "statement": "run",
             "runnable": "summarize",
             "shape": "item",
@@ -814,7 +814,7 @@ def _parallel_child_step_begin(*, step_index: int, item_index: int) -> StepBegin
         kind="run",
         input=(),
         started_at="2026-01-01T00:00:01Z",
-        context={
+        given={
             "call": "stage",
             "target_kind": "agic",
             "target": "score",
@@ -836,7 +836,7 @@ def _parallel_child_step_end(*, step_index: int, item_index: int) -> StepEnd:
         kind="run",
         status="finished",
         output=(TextPart(text="done"),),
-        detail={
+        noted={
             "call": "stage",
             "target": {"kind": "agic", "name": "score"},
             "child_runs": [f"run_child_{item_index}"],
@@ -879,7 +879,7 @@ def _tool_step_end(
                 output={"stdout": "ok\n"},
             ),
         ),
-        detail={"tool": "shell__execute"},
+        noted={"tool": "shell__execute"},
         started_at="2026-01-01T00:00:01Z",
         finished_at=finished_at,
     )

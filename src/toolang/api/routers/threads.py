@@ -9,6 +9,7 @@ from toolang.api.schemas import (
     ThreadForkRequest,
     ThreadPeerPayload,
     ThreadRewindRequest,
+    ThreadResult,
 )
 from toolang.base.types.message import Message
 from toolang.execution.inspection import ExecutionInspection
@@ -19,7 +20,6 @@ from toolang.execution.schemas import (
     RunControlInfo,
     ThreadDetail,
     ThreadInfo,
-    ThreadResult,
 )
 from toolang.execution.stream import event_data, stream_events
 from toolang.execution.thread import ThreadChange, ThreadOperations

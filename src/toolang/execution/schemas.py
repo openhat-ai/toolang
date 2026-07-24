@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, fields
 from typing import Any
 
 from toolang.base.types.message import Message, Part, message_summary
+from toolang.base.types.run import ModelCall
 from .records import (
     OutputRef,
     RunControlRecord,
@@ -326,23 +327,6 @@ class RunControlInfo:
 
 
 @dataclass(frozen=True, slots=True)
-class ThreadResult:
-    """One thread mutation result."""
-
-    thread: ThreadInfo
-
-
-@dataclass(frozen=True, slots=True)
-class ChatResult:
-    """One completed chat exchange."""
-
-    thread: ThreadInfo
-    run: RunInfo
-    message: Message
-    assistant: Message
-
-
-@dataclass(frozen=True, slots=True)
 class StepData:
     """One caller-facing execution step."""
 
@@ -351,8 +335,8 @@ class StepData:
     kind: StepKind
     input: list[StepInputData]
     output: list[Part]
-    context: dict[str, Any] = field(default_factory=dict)
-    detail: dict[str, Any] = field(default_factory=dict)
+    given: dict[str, Any] = field(default_factory=dict)
+    noted: dict[str, Any] = field(default_factory=dict)
     status: StepStatus = "running"
     error: str | None = None
     created_at: str = ""
@@ -360,15 +344,23 @@ class StepData:
     finished_at: str | None = None
 
     @classmethod
-    def from_record(cls, step: StepRecord) -> StepData:
+    def from_record(
+        cls,
+        step: StepRecord,
+        *,
+        call: ModelCall | None = None,
+    ) -> StepData:
+        given = dict(step.given)
+        if call is not None:
+            given["call"] = call.to_data()
         return cls(
             parent=step.parent,
             index=step.index,
             kind=step.kind,
             input=[_step_input_data(item) for item in step.input],
             output=list(step.output),
-            context=dict(step.context),
-            detail=dict(step.detail),
+            given=given,
+            noted=dict(step.noted),
             status=step.status,
             error=step.error,
             created_at=step.created_at,
@@ -378,36 +370,12 @@ class StepData:
 
 
 @dataclass(frozen=True, slots=True)
-class RunOutput:
-    """One run output schema."""
-
-    status: RunStatus
-    error: str | None
-    failure: FailureDetail | None
-    steps: list[StepData] = field(default_factory=list)
-
-    @classmethod
-    def from_record(cls, run: RunRecord, *, steps: Sequence[StepRecord]) -> RunOutput:
-        return cls(
-            status=run.status,
-            error=run.error,
-            failure=FailureDetail.from_run(
-                status=run.status,
-                error=run.error,
-                steps=steps,
-            ),
-            steps=[StepData.from_record(step) for step in steps],
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class RunDetail(RunInfo):
     """One complete run detail schema."""
 
     input: Message | None
-    inputs: list[RunControlInfo]
-    output: RunOutput
-    prompts: dict[str, str] = field(default_factory=dict)
+    controls: list[RunControlInfo]
+    steps: list[StepData] = field(default_factory=list)
 
     @classmethod
     def from_record(
@@ -416,7 +384,7 @@ class RunDetail(RunInfo):
         *,
         steps: Sequence[StepRecord],
         controls: Sequence[RunControlRecord] = (),
-        prompts: Mapping[str, str] | None = None,
+        model_calls: Mapping[StepPath, ModelCall] | None = None,
     ) -> RunDetail:
         """Build complete caller-facing run detail from durable records."""
 
@@ -425,9 +393,14 @@ class RunDetail(RunInfo):
         return cls(
             **{item.name: getattr(info, item.name) for item in fields(RunInfo)},
             input=start.input,
-            inputs=[RunControlInfo.from_record(run, item) for item in controls],
-            output=RunOutput.from_record(run, steps=steps),
-            prompts=dict(prompts or {}),
+            controls=[RunControlInfo.from_record(run, item) for item in controls],
+            steps=[
+                StepData.from_record(
+                    step,
+                    call=(model_calls or {}).get(step.path),
+                )
+                for step in steps
+            ],
         )
 
 

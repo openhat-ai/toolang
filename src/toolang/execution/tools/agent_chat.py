@@ -12,6 +12,7 @@ import httpx
 from toolang.common.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.message import Message, TextPart, message_text
+from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.common.time import utc_now
@@ -375,7 +376,25 @@ def _record_local_a2a_exchange(
             step=f"{run_id}/0",
             kind="model",
             input=(RunControlRef(index=0),),
-            context={"model_ref": f"agent_chat/{peer}"},
+            given={
+                "model": {
+                    "ref": f"agent_chat/{peer}",
+                    "provider": "agent_chat",
+                    "name": peer,
+                    "model": peer,
+                    "adapter": "chat",
+                    "base_url": None,
+                    "scope": None,
+                    "tags": [],
+                    "options": {},
+                    "tools": False,
+                    "streaming": False,
+                },
+                "call": ModelCall(
+                    instructions="",
+                    messages=[input_message],
+                ).to_data(),
+            },
             started_at=started_at,
         )
     )
@@ -386,14 +405,9 @@ def _record_local_a2a_exchange(
             kind="model",
             status="finished",
             output=(TextPart(text=assistant_text),),
-            detail={
-                "model_ref": f"agent_chat/{peer}",
+            noted={
                 "usage": {"input_tokens": 0, "output_tokens": 0},
-                "provider": "agent_chat",
-                "model": peer,
-                "adapter": "chat",
             },
-            started_at=started_at,
             finished_at=finished_at,
         )
     )

@@ -8,11 +8,11 @@ from toolang.api.app import ApiContext, ApiContextDep
 from toolang.api.conversion import parse_user_message
 from toolang.api.schemas import (
     ChatRequest,
+    ChatResult,
 )
 from toolang.base.types.message import Message
 from toolang.common.ids import allocate_run_id
 from toolang.execution.inspection import ExecutionInspection
-from toolang.execution.schemas import ChatResult
 from toolang.execution.records import ThreadPeer
 from toolang.execution.records import RunRecord
 from toolang.execution.threads import ThreadManager

@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import re
-from re import Match
 import shlex
 
 from toolang.base.errors import ToolangError
+from toolang.common.template import render_text_template
 
 from .ast import Parameter, Program
 
 _PROMPT_CALL_RE = re.compile(r"^/([A-Za-z_][\w-]*)(?:\s+(.*))?$")
-_TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([A-Za-z_][\w-]*)\s*\}\}")
 
 
 def expand_program_input(program: Program, raw_input: str) -> str:
@@ -43,19 +42,14 @@ def expand_program_input(program: Program, raw_input: str) -> str:
         params=prompt_cap.params,
         prompt_name=prompt_name,
     )
-    rendered = _TEMPLATE_VAR_RE.sub(
-        lambda item: _render_template_var(item, bindings),
-        prompt_cap.body,
-    ).strip()
     extra_lines = lines[1:]
     if extra_lines and not extra_lines[0].strip():
         extra_lines = extra_lines[1:]
     extra_text = "\n".join(extra_lines).strip("\n")
-    if not extra_text:
-        return rendered
-    if not rendered:
-        return extra_text
-    return f"{rendered}\n\n{extra_text}"
+    return render_text_template(
+        prompt_cap.body,
+        {"_": extra_text, **bindings},
+    ).strip()
 
 
 def _parse_prompt_args(
@@ -105,10 +99,3 @@ def _parse_prompt_args(
     if positional_index < len(positionals):
         raise ToolangError(f"Too many prompt arguments for /{prompt_name}.")
     return bindings
-
-
-def _render_template_var(match: Match[str], bindings: dict[str, str]) -> str:
-    name = match.group(1)
-    if name not in bindings:
-        raise ToolangError(f"Unknown template variable {name!r}.")
-    return bindings[name]

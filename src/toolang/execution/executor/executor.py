@@ -12,7 +12,7 @@ import time
 from typing import Any, Literal
 
 from toolang.base.protocols.model import ModelProvider
-from toolang.base.types.message import Message, TextPart
+from toolang.base.types.message import Message, Part, TextPart
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
@@ -71,9 +71,9 @@ class RunSpec:
     state: AgentState
     thread: str
     runnable: str
-    input: Message = field(default_factory=lambda: Message.user(""))
+    input: tuple[Part, ...] = ()
     model: str | None = None
-    params: Mapping[str, object] | None = None
+    args: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +159,7 @@ class RunExecutor:
         self._require_available()
         asyncio.get_running_loop()
         executable = _require_runnable(spec.state, spec.runnable)
+        _validate_call(spec, executable)
         bound = _bind_run(
             spec,
             run_id=run_id or self.ids.issue_run(),
@@ -714,7 +715,7 @@ class _Execution:
             StepBegin(
                 step=path,
                 kind="system",
-                context={"runtime": "failure"},
+                given={"runtime": "failure"},
                 started_at=started_at,
             )
         )
@@ -724,9 +725,7 @@ class _Execution:
                 kind="system",
                 status="failed",
                 output=(TextPart(text=error),),
-                detail={"message": error},
                 error=error,
-                started_at=started_at,
                 finished_at=utc_now(),
             )
         )
@@ -761,7 +760,7 @@ def _child_binding(
         root_run_id=parent.root_run_id,
         thread=parent.thread,
         input=Message.user(text),
-        params={
+        args={
             name: local.value for name, local in locals.items() if name != "_"
         },
         model=parent.model,
@@ -780,8 +779,8 @@ def _bind_run(spec: RunSpec, *, run_id: str) -> BoundRun:
         run_id=run_id,
         root_run_id=run_id,
         thread=spec.thread,
-        input=spec.input,
-        params=dict(spec.params or {}),
+        input=Message(role="user", parts=tuple(spec.input)),
+        args=dict(spec.args or {}),
         model=spec.model,
         state=spec.state,
         setup=spec.setup,
@@ -799,11 +798,34 @@ def _run_context(
         "runnable": {"kind": executable.kind, "name": executable.name},
         "call": binding.call,
     }
-    if binding.params:
-        context["params"] = dict(binding.params)
+    if binding.args:
+        context["args"] = dict(binding.args)
     if binding.placement:
         context["placement"] = dict(binding.placement)
     return context
+
+
+def _validate_call(spec: RunSpec, executable: AgicDecl | FlowDecl) -> None:
+    args = dict(spec.args or {})
+    params = {param.name: param for param in executable.params}
+    unknown = sorted(set(args) - set(params))
+    if unknown:
+        joined = ", ".join(unknown)
+        raise ValueError(f"unknown arguments for {executable.name}: {joined}")
+    missing = sorted(
+        name for name, param in params.items() if not param.optional and name not in args
+    )
+    if missing:
+        joined = ", ".join(missing)
+        raise ValueError(f"missing arguments for {executable.name}: {joined}")
+    if executable.input is None and spec.input:
+        raise ValueError(f"{executable.name} does not accept primary input")
+    if (
+        executable.input is not None
+        and not executable.input.optional
+        and not spec.input
+    ):
+        raise ValueError(f"{executable.name} requires primary input")
 
 
 def _run_event_id(event: RunEvent) -> str:

@@ -839,7 +839,7 @@ def test_steer_run_event_precedes_consuming_step_event(tmp_path: Path) -> None:
                 kind="model",
                 input=(OutputRef(step="run-1/1"), InputRef(cmd=1)),
                 started_at="2026-01-01T00:00:01Z",
-                context={"instruct": "call prompt", "prompt_context": "call context"},
+                given={"instruct": "call prompt", "prompt_context": "call context"},
             ),
         )
         events = client.get("/api/v1/threads/thread-1/events").json()["items"]
@@ -7582,7 +7582,7 @@ def _started(
         input=tuple(input)
         or _default_step_input(run_id=run_id, step_index=step_index, kind=kind),
         started_at="2026-01-01T00:00:00Z",
-        context=step_context,
+        given=step_context,
     )
 
 
@@ -7612,7 +7612,7 @@ def _completed(
         kind=kind,
         status="failed" if error else "finished",
         output=tuple(output),
-        detail=detail,
+        noted=detail,
         started_at="2026-01-01T00:00:00Z",
         finished_at="2026-01-01T00:00:01Z",
         error=error,
@@ -7663,15 +7663,17 @@ def test_model_step_detail_preserves_target_metadata(tmp_path: Path) -> None:
     finally:
         store.close()
 
-    assert step.detail == detail
+    assert step.noted == detail
 
 
-def test_prompt_store_uses_content_hash_for_all_prompt_kinds(tmp_path: Path) -> None:
+def test_model_text_store_uses_content_hash(
+    tmp_path: Path,
+) -> None:
     store = RunStore(tmp_path / "runs.db")
     try:
-        instruct_hash = store.put_prompt(body="shared body")
-        context_hash = store.put_prompt(body="shared body")
-        body = store.get_prompt(prompt_hash=instruct_hash)
+        instruct_hash = store.put_model_text(body="shared body")
+        context_hash = store.put_model_text(body="shared body")
+        body = store.get_model_text(text_hash=instruct_hash)
     finally:
         store.close()
 

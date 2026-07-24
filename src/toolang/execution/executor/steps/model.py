@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from toolang.base.types.message import (
     Message,
@@ -18,6 +18,7 @@ from toolang.base.types.message import (
     ToolCallPart,
     message_text,
 )
+from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -75,18 +76,6 @@ def execute(state: _AgicState) -> ModelCallResult:
         run.run_id,
         step_index,
     )
-    state.emit(
-        StepBegin(
-            step=trace_child_path(run.run_id, step_index),
-            kind="model",
-            input=step_input,
-            started_at=started_at,
-            context={
-                "prompt_context": prepared.prompt_context,
-                "instruct": prepared.instructions,
-            },
-        )
-    )
     request = ModelCall(
         instructions=prepared.instructions,
         messages=list(state.messages),
@@ -99,6 +88,18 @@ def execute(state: _AgicState) -> ModelCallResult:
             else ()
         ),
         state=state.model_state,
+    )
+    state.emit(
+        StepBegin(
+            step=trace_child_path(run.run_id, step_index),
+            kind="model",
+            input=step_input,
+            started_at=started_at,
+            given={
+                "model": _model_target_data(prepared.model),
+                "call": request.to_data(),
+            },
+        )
     )
     log_model_target(
         prepared.model,
@@ -128,7 +129,6 @@ def execute(state: _AgicState) -> ModelCallResult:
                 kind="model",
                 status="failed",
                 error=str(exc) or type(exc).__name__,
-                started_at=started_at,
                 finished_at=utc_now(),
             )
         )
@@ -202,8 +202,7 @@ def _apply_response(
             kind="model",
             status="finished",
             output=output,
-            detail={
-                "model_ref": prepared.model.ref,
+            noted={
                 "usage": {
                     "input_tokens": current.usage.input_tokens
                     if current.usage is not None
@@ -212,14 +211,9 @@ def _apply_response(
                     if current.usage is not None
                     else 0,
                 },
-                "provider": prepared.model.provider,
-                "model": prepared.model.model,
-                "adapter": prepared.model.adapter,
-                "base_url": prepared.model.base_url,
                 "reasoning_content": _message_reasoning_content(current.message),
-                "adapter_request": _request_data(request),
+                "state": dict(current.state) if current.state is not None else None,
             },
-            started_at=started_at,
             finished_at=utc_now(),
         )
     )
@@ -382,22 +376,6 @@ def _emit_part_begin(
     )
 
 
-def _request_data(request: ModelCall) -> dict[str, Any]:
-    return {
-        "instructions": request.instructions,
-        "messages": [message.to_data() for message in request.messages],
-        "tools": [
-            {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": dict(tool.parameters),
-            }
-            for tool in request.tools
-        ],
-        "state": request.state,
-    }
-
-
 def _message_reasoning_content(message: Message | None) -> str | None:
     if message is None:
         return None
@@ -406,3 +384,19 @@ def _message_reasoning_content(message: Message | None) -> str | None:
         return None
     text = value.strip()
     return text or None
+
+
+def _model_target_data(target: ModelTarget) -> dict[str, object]:
+    return {
+        "ref": target.ref,
+        "provider": target.provider,
+        "name": target.name,
+        "model": target.model,
+        "adapter": target.adapter,
+        "base_url": target.base_url,
+        "scope": target.scope,
+        "tags": list(target.tags),
+        "options": dict(target.options),
+        "tools": target.tools,
+        "streaming": target.streaming,
+    }
