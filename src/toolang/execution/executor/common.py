@@ -6,9 +6,18 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 import json
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from toolang.base.types.message import Message, Part, TextPart, message_text
+from toolang.base.types.message import (
+    AudioPart,
+    DocumentPart,
+    ImagePart,
+    Message,
+    MessagePart,
+    Percept,
+    TextPart,
+    message_text,
+)
 from toolang.common.errors import ToolangError
 from toolang.common.time import utc_now
 from toolang.lang.ast import (
@@ -30,6 +39,7 @@ from toolang.lang.ast import (
     StormStmt,
     StructDecl,
 )
+from toolang.lang.input import coerce_input, validate_value
 from toolang.state.state import AgentState
 from toolang.up.setup import AgentSetup
 
@@ -57,10 +67,6 @@ class BoundRun:
     call: Literal["top", "run"] = "top"
     placement: Mapping[str, object] | None = None
 
-    @property
-    def input_text(self) -> str:
-        return message_text(self.input.parts)
-
 
 @dataclass(frozen=True, slots=True)
 class Local:
@@ -69,6 +75,7 @@ class Local:
     value: Any = None
     shape: Shape = "none"
     source: RunControlRef | OutputRef | None = None
+    type_name: str | None = None
 
 
 async def execute_step(
@@ -163,11 +170,36 @@ def initial_locals(
     """Build the initial locals for one executable run."""
 
     start = RunControlRef()
-    locals = {
-        name: Local(value, "item", start) for name, value in binding.args.items()
-    }
+    structs = program_structs(binding)
+    params = {parameter.name: parameter for parameter in executable.params}
+    locals: dict[str, Local] = {}
+    for name, value in binding.args.items():
+        parameter = params.get(name)
+        if parameter is None:
+            continue
+        validate_value(
+            value,
+            parameter.type_name or "Part[]",
+            structs=structs,
+            path=f"argument {name}",
+        )
+        locals[name] = Local(
+            value,
+            "item",
+            start,
+            parameter.type_name or "Part[]",
+        )
     if executable.input is not None:
-        locals["_"] = Local(binding.input_text, "item", start)
+        locals["_"] = Local(
+            coerce_input(
+                binding.input.percept,
+                executable.input.type_name or "Part[]",
+                structs=structs,
+            ),
+            "item",
+            start,
+            executable.input.type_name or "Part[]",
+        )
     else:
         locals.setdefault("_", Local(source=start))
     return locals
@@ -180,15 +212,27 @@ def update_locals(locals: dict[str, Local], binding: str | None, result: Local) 
         locals[binding] = result
 
 
-def apply_steer(locals: dict[str, Local], controls: Sequence[RunControlRecord]) -> None:
+def apply_steer(
+    locals: dict[str, Local],
+    controls: Sequence[RunControlRecord],
+    *,
+    input_type: str | None,
+    structs: Mapping[str, StructDecl],
+) -> None:
     """Apply accepted steer inputs to the primary local."""
 
     for control in controls:
         if control.input is not None:
+            effective_type = input_type or "Part[]"
             locals["_"] = Local(
-                message_text(control.input.parts),
+                coerce_input(
+                    control.input.percept,
+                    effective_type,
+                    structs=structs,
+                ),
                 "item",
                 RunControlRef(index=control.index),
+                effective_type,
             )
 
 
@@ -294,109 +338,36 @@ def number(value: Any, *, operation: str) -> float:
     return float(value)
 
 
-def decode_agic_output(
-    message: Message | None,
-    output_type: str | None,
-    *,
-    structs: Mapping[str, StructDecl] | None = None,
-) -> Any:
-    text = message_text(message.parts) if message is not None else ""
-    if output_type is None or output_type in {"Text", "Path"}:
-        return text
-    if output_type == "Part":
-        parts = message.parts if message is not None else ()
-        if len(parts) != 1:
-            raise ToolangError(
-                f"agic output is not a Part: expected 1 part, got {len(parts)}"
-            )
-        return parts[0].to_data()
-    if output_type == "Part[]":
-        return [part.to_data() for part in message.parts] if message else []
-    try:
-        value = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ToolangError(
-            f"agic output is not valid {output_type}: {exc.msg}"
-        ) from exc
-    validate_output(value, output_type, structs=structs or {})
-    return value
-
-
 def program_structs(binding: BoundRun) -> dict[str, StructDecl]:
     return {item.name: item for item in binding.state.program.structs}
 
 
-def validate_output(
-    value: Any,
-    type_name: str,
-    *,
-    structs: Mapping[str, StructDecl],
-    path: str = "output",
-) -> None:
-    if type_name.endswith("[]"):
-        if not isinstance(value, list):
-            raise ToolangError(f"{path} is not {type_name}")
-        item_type = type_name[:-2]
-        for index, item in enumerate(value):
-            validate_output(item, item_type, structs=structs, path=f"{path}[{index}]")
-        return
-
-    if type_name in {"Text", "Path"}:
-        valid = isinstance(value, str)
-    elif type_name == "Number":
-        valid = not isinstance(value, bool) and isinstance(value, int | float)
-    elif type_name == "Boolean":
-        valid = isinstance(value, bool)
-    elif type_name == "Json":
-        valid = is_json_value(value)
-    elif type_name == "Part":
-        valid = isinstance(value, Mapping) and isinstance(value.get("type"), str)
-    elif type_name == "Artifact":
-        valid = isinstance(value, Mapping) and is_json_value(value)
-    elif struct := structs.get(type_name):
-        if not isinstance(value, Mapping):
-            valid = False
-        else:
-            fields = {field.name: field for field in struct.fields}
-            unknown = set(value) - set(fields)
-            missing = {
-                name
-                for name, field in fields.items()
-                if not field.optional and name not in value
-            }
-            if unknown:
-                names = ", ".join(sorted(str(name) for name in unknown))
-                raise ToolangError(f"{path} has unknown {type_name} fields: {names}")
-            if missing:
-                names = ", ".join(sorted(missing))
-                raise ToolangError(f"{path} is missing {type_name} fields: {names}")
-            for name, item in value.items():
-                validate_output(
-                    item,
-                    fields[str(name)].type_name,
-                    structs=structs,
-                    path=f"{path}.{name}",
-                )
-            return
-    else:
-        raise ToolangError(f"unknown output type: {type_name}")
-
-    if not valid:
-        raise ToolangError(f"{path} is not {type_name}")
-
-
-def is_json_value(value: Any) -> bool:
-    try:
-        json.dumps(value, allow_nan=False)
-    except (TypeError, ValueError):
-        return False
-    return True
-
-
-def output_parts(local: Local) -> tuple[Part, ...]:
+def output_parts(local: Local) -> tuple[MessagePart, ...]:
     if local.shape == "none":
         return ()
+    if local.shape == "item" and (
+        percept := value_percept(local.value)
+    ) is not None:
+        return tuple(percept)
     return (TextPart(text=value_text(local.value)),)
+
+
+def value_percept(value: object) -> Percept | None:
+    """Return a canonical percept when one value already represents content."""
+
+    if isinstance(value, Message):
+        try:
+            return value.percept
+        except ValueError as exc:
+            raise ToolangError(str(exc)) from exc
+    if isinstance(value, (TextPart, ImagePart, AudioPart, DocumentPart)):
+        return (value,)
+    if isinstance(value, tuple | list) and all(
+        isinstance(part, (TextPart, ImagePart, AudioPart, DocumentPart))
+        for part in value
+    ):
+        return cast(Percept, tuple(value))
+    return None
 
 
 def value_text(value: Any) -> str:
@@ -406,8 +377,14 @@ def value_text(value: Any) -> str:
         return value
     if isinstance(value, Message):
         return message_text(value.parts)
+    if (percept := value_percept(value)) is not None:
+        return message_text(percept)
     if isinstance(value, bool | int | float | list | dict | tuple):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(
+            json_value(value),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     return str(value)
 
 
@@ -423,3 +400,18 @@ def _unique_step_inputs(items: Sequence[StepInputItem]) -> tuple[StepInputItem, 
         if item not in result:
             result.append(item)
     return tuple(result)
+
+
+def json_value(value: object) -> object:
+    """Return a JSON-compatible representation of one runtime value."""
+
+    if isinstance(value, (TextPart, ImagePart, AudioPart, DocumentPart)):
+        return value.to_data()
+    if isinstance(value, Mapping):
+        return {
+            str(name): json_value(item)
+            for name, item in value.items()
+        }
+    if isinstance(value, tuple | list):
+        return [json_value(item) for item in value]
+    return value

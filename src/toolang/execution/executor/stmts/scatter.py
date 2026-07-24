@@ -32,7 +32,12 @@ async def execute(
             raise ToolangError(
                 f"scatter expected {statement.count} items, got {len(values)}"
             )
-        return Local(values, "list")
+        item_type = (
+            result.type_name[:-2]
+            if result.type_name is not None and result.type_name.endswith("[]")
+            else None
+        )
+        return Local(values, "list", type_name=item_type)
 
     return await run_step.execute(
         execution,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
-from toolang.base.types.message import Message, Part
+from toolang.base.types.message import Message, MessagePart
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
@@ -141,7 +141,7 @@ def project_step(
     kind: StepKind,
     status: StepStatus,
     input: Sequence[StepInputItem],
-    output: Sequence[Part],
+    output: Sequence[MessagePart],
     detail: Mapping[str, Any] | None = None,
     error: str | None = None,
     started_at: str,

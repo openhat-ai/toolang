@@ -26,11 +26,12 @@ async def execute(
     placement: Mapping[str, object] | None,
 ) -> Local:
     async def operation() -> Local:
+        input_type = locals.get("_", Local()).type_name
         items = require_list(locals, operation="settle")
         accumulator = Local()
         for index, item in enumerate(items):
             child_locals = dict(locals)
-            child_locals["_"] = Local(item, "item")
+            child_locals["_"] = Local(item, "item", type_name=input_type)
             child_locals["accumulator"] = accumulator
             accumulator = await execution.execute_child(
                 binding,

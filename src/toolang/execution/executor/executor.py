@@ -12,11 +12,16 @@ import time
 from typing import Any, Literal
 
 from toolang.base.protocols.model import ModelProvider
-from toolang.base.types.message import Message, Part, TextPart
+from toolang.base.types.message import (
+    Message,
+    Percept,
+    TextPart,
+)
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt
+from toolang.lang.input import coerce_input, validate_value
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 from toolang.state.state import AgentState
 from toolang.up.setup import AgentSetup
@@ -40,7 +45,9 @@ from .common import (
     Local,
     control_text,
     initial_locals,
+    json_value,
     statement_has_call,
+    value_percept,
     value_text,
 )
 from .prepare import effective_agics
@@ -72,7 +79,7 @@ class RunSpec:
     state: AgentState
     thread: str
     runnable: str
-    input: tuple[Part, ...] = ()
+    input: Percept = ()
     model: str | None = None
     args: Mapping[str, object] | None = None
 
@@ -270,6 +277,9 @@ class RunExecutor:
         """Persist one steer control for the process that owns the run."""
 
         self._require_available()
+        if message.role != "user":
+            raise ValueError("run steer requires a user message")
+        _ = message.percept
         control = self.store.accept_run_control(
             run_id=run_id,
             kind="steer",
@@ -563,6 +573,12 @@ class _Execution:
 
         executable = _require_runnable(parent.state, name)
         binding = _child_binding(self, parent, executable, locals, placement)
+        _validate_inputs(
+            state=binding.state,
+            executable=executable,
+            input=binding.input.percept,
+            args=binding.args,
+        )
         context = _run_context(binding, executable)
         self.store.accept_start(
             run_id=binding.run_id,
@@ -573,7 +589,7 @@ class _Execution:
             request_id=None,
             created_at=binding.created_at,
         )
-        return await self.execute(binding, executable, locals=locals)
+        return await self.execute(binding, executable)
 
     async def parallel_children(
         self,
@@ -584,17 +600,19 @@ class _Execution:
         inputs: Sequence[Any],
         *,
         limit: int | None,
-    ) -> list[Any]:
-        """Execute child runs concurrently with stable placement metadata."""
+    ) -> Local:
+        """Execute child runs concurrently and preserve their output type."""
 
+        executable = _require_runnable(binding.state, runnable)
         semaphore = asyncio.Semaphore(limit or max(len(inputs), 1))
         lanes = limit or max(len(inputs), 1)
+        input_type = locals.get("_", Local()).type_name
 
-        async def execute(index: int, value: Any) -> Any:
+        async def execute(index: int, value: Any) -> Local:
             async with semaphore:
                 child_locals = dict(locals)
-                child_locals["_"] = Local(value, "item")
-                result = await self.execute_child(
+                child_locals["_"] = Local(value, "item", type_name=input_type)
+                return await self.execute_child(
                     binding,
                     child_locals,
                     parent,
@@ -606,20 +624,24 @@ class _Execution:
                         "lanes": lanes,
                     },
                 )
-                return result.value
 
         tasks = [
             asyncio.create_task(execute(index, value))
             for index, value in enumerate(inputs)
         ]
         try:
-            return list(await asyncio.gather(*tasks))
+            results = list(await asyncio.gather(*tasks))
         except BaseException:
             for task in tasks:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
+        return Local(
+            [result.value for result in results],
+            "list",
+            type_name=_parallel_output_type(results, executable),
+        )
 
     async def execute_statements(
         self,
@@ -744,6 +766,18 @@ def _require_runnable(state: AgentState, name: str) -> AgicDecl | FlowDecl:
     return matches[0]
 
 
+def _parallel_output_type(
+    results: Sequence[Local],
+    executable: AgicDecl | FlowDecl,
+) -> str | None:
+    actual = {result.type_name for result in results if result.type_name is not None}
+    if len(actual) == 1:
+        return next(iter(actual))
+    if isinstance(executable, AgicDecl):
+        return executable.output or "Part[]"
+    return executable.output
+
+
 def _child_binding(
     context: _Execution,
     parent: BoundRun,
@@ -751,15 +785,23 @@ def _child_binding(
     locals: Mapping[str, Local],
     placement: Mapping[str, object] | None,
 ) -> BoundRun:
-    primary = locals.get("_", Local())
-    text = value_text(primary.value) if primary.shape != "none" else ""
+    if executable.input is None:
+        percept: Percept = ()
+    else:
+        primary = locals.get("_", Local())
+        percept = value_percept(primary.value) if primary.shape != "none" else ()
+        if percept is None:
+            percept = (TextPart(value_text(primary.value)),)
+    parameters = {parameter.name for parameter in executable.params}
     return BoundRun(
         run_id=context.executor.ids.issue_run(),
         root_run_id=parent.root_run_id,
         thread=parent.thread,
-        input=Message.user(text),
+        input=Message(role="user", parts=percept),
         args={
-            name: local.value for name, local in locals.items() if name != "_"
+            name: local.value
+            for name, local in locals.items()
+            if name in parameters
         },
         model=parent.model,
         state=parent.state,
@@ -797,14 +839,32 @@ def _run_context(
         "call": binding.call,
     }
     if binding.args:
-        context["args"] = dict(binding.args)
+        context["args"] = {
+            name: json_value(value)
+            for name, value in binding.args.items()
+        }
     if binding.placement:
         context["placement"] = dict(binding.placement)
     return context
 
 
 def _validate_call(spec: RunSpec, executable: AgicDecl | FlowDecl) -> None:
-    args = dict(spec.args or {})
+    _validate_inputs(
+        state=spec.state,
+        executable=executable,
+        input=tuple(spec.input),
+        args=dict(spec.args or {}),
+    )
+
+
+def _validate_inputs(
+    *,
+    state: AgentState,
+    executable: AgicDecl | FlowDecl,
+    input: Percept,
+    args: Mapping[str, object],
+) -> None:
+    structs = {item.name: item for item in state.program.structs}
     params = {param.name: param for param in executable.params}
     unknown = sorted(set(args) - set(params))
     if unknown:
@@ -816,14 +876,27 @@ def _validate_call(spec: RunSpec, executable: AgicDecl | FlowDecl) -> None:
     if missing:
         joined = ", ".join(missing)
         raise ValueError(f"missing arguments for {executable.name}: {joined}")
-    if executable.input is None and spec.input:
+    if executable.input is None and input:
         raise ValueError(f"{executable.name} does not accept primary input")
     if (
         executable.input is not None
         and not executable.input.optional
-        and not spec.input
+        and not input
     ):
         raise ValueError(f"{executable.name} requires primary input")
+    if executable.input is not None:
+        coerce_input(
+            input,
+            executable.input.type_name or "Part[]",
+            structs=structs,
+        )
+    for name, value in args.items():
+        validate_value(
+            value,
+            params[name].type_name or "Part[]",
+            structs=structs,
+            path=f"argument {name}",
+        )
 
 
 def _run_event_id(event: RunEvent) -> str:

@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from toolang.lang.ast import LetStmt
+from toolang.lang.input import perceive_input
 
 from ...records import RunControlRecord, StepPath
 from ..common import BoundRun
@@ -25,10 +26,25 @@ async def execute(
     controls: Sequence[RunControlRecord],
     placement: Mapping[str, object] | None,
 ) -> Local:
-    del binding
-
     async def operation() -> Local:
-        return Local(statement.value, "item")
+        return Local(
+            perceive_input(
+                statement.value,
+                program=binding.state.program,
+                values={
+                    name: local.value
+                    for name, local in locals.items()
+                    if local.shape != "none"
+                },
+                types={
+                    name: local.type_name
+                    for name, local in locals.items()
+                    if local.type_name is not None
+                },
+            ),
+            "item",
+            type_name="Part[]",
+        )
 
     return await system_step.execute(
         execution.emit,

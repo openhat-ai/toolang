@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from typing import Any
 
-from toolang.base.types.message import Message, Part, message_summary
+from toolang.base.types.message import Message, MessagePart, message_summary
 from toolang.base.types.run import ModelCall
 from .records import (
     OutputRef,
@@ -334,7 +334,7 @@ class StepData:
     index: int
     kind: StepKind
     input: list[StepInputData]
-    output: list[Part]
+    output: list[MessagePart]
     given: dict[str, Any] = field(default_factory=dict)
     noted: dict[str, Any] = field(default_factory=dict)
     status: StepStatus = "running"

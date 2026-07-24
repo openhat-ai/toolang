@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from toolang.base.types.message import Delta, Part, PartType
+from toolang.base.types.message import Delta, MessagePart, MessagePartType
 
 from .records import (
     OutputRef,
@@ -47,7 +47,7 @@ class PartBegin:
 
     step: StepPath
     part: int
-    type_: PartType
+    type_: MessagePartType
     type: str = "part_begin"
 
 
@@ -67,7 +67,7 @@ class PartEnd:
 
     step: StepPath
     part: int
-    data: Part
+    data: MessagePart
     type: str = "part_end"
 
 
@@ -78,7 +78,7 @@ class StepEnd:
     step: StepPath
     kind: StepKind
     status: StepStatus
-    output: tuple[Part, ...] = ()
+    output: tuple[MessagePart, ...] = ()
     noted: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     finished_at: str = ""

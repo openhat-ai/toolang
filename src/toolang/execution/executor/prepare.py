@@ -6,17 +6,23 @@ from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool
-from toolang.base.types.message import Message, TextPart, message_text
+from toolang.base.types.message import (
+    Message,
+    Percept,
+    PerceptPart,
+    TextPart,
+    message_text,
+)
 from toolang.base.types.model import ModelTarget
 from toolang.base.types.tool import ToolService
 from toolang.common.errors import ToolangError
 from toolang.common.immutable import mutable_data
 from toolang.common.template import render_text_template
-from toolang.common.text import join_paragraphs
 from toolang.lang.ast import (
     AgicDecl,
     Directive,
@@ -25,14 +31,14 @@ from toolang.lang.ast import (
     Program,
     Span,
 )
-from toolang.lang.input import expand_program_input
+from toolang.lang.input import coerce_input, perceive_input
 from toolang.plugin.models.resolution import resolve_model, select_model_selectors
 from toolang.plugin.tools.registry import selected_tool_names, tool_ref_for_model_tool
 from toolang.state import state as cap_store
 from toolang.state.state import PreparedCap
 
 from . import prompts
-from .common import BoundRun
+from .common import BoundRun, value_percept
 
 if TYPE_CHECKING:
     from .executor import _Execution
@@ -41,6 +47,9 @@ _LOGGER = logging.getLogger("toolang.run")
 _TEXT_HISTORY_MESSAGE_LIMIT = 32
 _DEFAULT_INSTRUCT_TEMPLATE = prompts.load("instruct.default.md")
 _DEFAULT_CONTEXT_TEMPLATE = prompts.load("context.default.md")
+_PRIMARY_REFERENCE_RE = re.compile(
+    r"{{\s*(?:[#^/]\s*)?_(?:\.[A-Za-z_][\w-]*)*\s*}}"
+)
 _RUNTIME_DEFAULT_AGIC = AgicDecl(
     name="default",
     input=Parameter(name="_", type_name="Part[]", span=Span(line=1)),
@@ -64,17 +73,16 @@ class PreparedAgic:
     services: tuple[ToolService, ...]
 
 
-def prepare_agic(context: _Execution, run: BoundRun, agic: AgicDecl) -> PreparedAgic:
+def prepare_agic(
+    context: _Execution,
+    run: BoundRun,
+    agic: AgicDecl,
+    *,
+    variables: Mapping[str, object] | None = None,
+) -> PreparedAgic:
     """Resolve runtime resources and render the complete model input."""
 
-    input_text = (
-        expand_program_input(run.state.program, run.input_text)
-        if run.input_text
-        else ""
-    )
     args = dict(run.args)
-    if agic.input is not None and input_text:
-        args = {**args, "_": input_text}
 
     model_selectors = _effective_model_selectors(
         context,
@@ -93,7 +101,23 @@ def prepare_agic(context: _Execution, run: BoundRun, agic: AgicDecl) -> Prepared
     skills = _select_caps(_caps(caps, "skill"), _directives(agic, "skills"))
     services = _select_caps(_caps(caps, "service"), _directives(agic, "services"))
 
-    body_variables = _body_variables(agic, args)
+    if variables is None:
+        default_variables: dict[str, object] = dict(args)
+        if agic.input is not None:
+            percept = value_percept(run.input)
+            if percept is None:
+                raise ToolangError("user run input is not a Percept")
+            default_variables["_"] = coerce_input(
+                percept,
+                agic.input.type_name or "Part[]",
+                structs={
+                    item.name: item
+                    for item in run.state.program.structs
+                },
+            )
+        variables = default_variables
+    body_variables = _body_variables(agic, variables)
+    body_types = _body_types(agic)
     system_runtime = _runtime_context(context, run=run, agic=agic)
     system_runtime.update(
         {
@@ -106,12 +130,16 @@ def prepare_agic(context: _Execution, run: BoundRun, agic: AgicDecl) -> Prepared
             "has_services": bool(services),
         }
     )
-    rendered = _render_messages(agic.messages, body_variables)
+    rendered = _render_messages(
+        run.state.program,
+        agic.messages,
+        values=body_variables,
+        types=body_types,
+    )
     prompt_context = _render_context(run.state.program, agic, system_runtime)
     fallback = _run_message(
         run,
         agic=agic,
-        input_text=input_text,
         rendered=rendered,
         prompt_context=prompt_context,
     )
@@ -260,15 +288,23 @@ def _entry_agent_name(entries: tuple[PreparedCap, ...]) -> str:
 
 
 def _render_messages(
-    blocks: tuple[AstMessage, ...], context: dict[str, object]
-) -> tuple[AstMessage, ...]:
+    program: Program,
+    blocks: tuple[AstMessage, ...],
+    *,
+    values: Mapping[str, object],
+    types: Mapping[str, str],
+) -> tuple[tuple[AstMessage, Percept], ...]:
     return tuple(
-        AstMessage(
-            role=block.role,
-            content=render_text_template(block.content, context).strip(),
-            explicit=block.explicit,
-            span=block.span,
-            doc=block.doc,
+        (
+            block,
+            _strip_percept(
+                perceive_input(
+                    block.content,
+                    program=program,
+                    values=values,
+                    types=types,
+                )
+            ),
         )
         for block in blocks
     )
@@ -322,52 +358,66 @@ def _run_message(
     run: BoundRun,
     *,
     agic: AgicDecl,
-    input_text: str,
-    rendered: tuple[AstMessage, ...],
+    rendered: tuple[tuple[AstMessage, Percept], ...],
     prompt_context: str,
 ) -> Message:
-    original = message_text(run.input.parts)
-    authored = _message_body(tuple(item for item in rendered if item.role == "user"))
-    if input_text.strip() and any(
-        item.role == "user" and not item.explicit for item in agic.messages
-    ):
-        text = join_paragraphs(prompt_context, authored, input_text)
-    else:
-        text = join_paragraphs(prompt_context, authored or input_text)
-    if text == original and not prompt_context.strip() and not authored.strip():
+    implicit = tuple(
+        parts
+        for block, parts in rendered
+        if block.role == "user" and not block.explicit
+    )
+    authored = _join_percepts(*implicit)
+    primary = value_percept(run.input)
+    if primary is None:
+        raise ToolangError("user run input is not a Percept")
+    references_primary = any(
+        block.role == "user"
+        and not block.explicit
+        and _PRIMARY_REFERENCE_RE.search(block.content) is not None
+        for block in agic.messages
+    )
+    parts = _join_percepts(
+        (TextPart(prompt_context.strip()),) if prompt_context.strip() else (),
+        authored,
+        primary if (not authored or not references_primary) else (),
+    )
+    if parts == primary:
         return run.input
-    non_text = tuple(
-        part for part in run.input.parts if not isinstance(part, TextPart)
-    )
-    return Message(
-        role=run.input.role,
-        parts=(TextPart(text=text), *non_text),
-        meta=dict(run.input.meta),
-    )
+    return Message(role="user", parts=parts)
 
 
 def _authored_messages(
     *,
-    rendered: tuple[AstMessage, ...],
+    rendered: tuple[tuple[AstMessage, Percept], ...],
     prompt_context: str,
     fallback: Message,
 ) -> tuple[Message, ...]:
     blocks = tuple(
-        block for block in rendered if block.role in {"user", "assistant", "tool"}
+        (block, parts)
+        for block, parts in rendered
+        if block.role in {"user", "assistant", "tool"}
     )
-    if not any(block.explicit for block in blocks):
+    if not any(block.explicit for block, _parts in blocks):
         return (fallback,)
+    last_user = next(
+        (
+            index
+            for index in range(len(blocks) - 1, -1, -1)
+            if blocks[index][0].role == "user"
+        ),
+        None,
+    )
     messages: list[Message] = []
-    context_pending = bool(prompt_context.strip())
-    for block in blocks:
-        text = block.content.strip()
-        if not text and not (context_pending and block.role == "user"):
+    for index, (block, parts) in enumerate(blocks):
+        if index == last_user and prompt_context.strip():
+            parts = _join_percepts((TextPart(prompt_context.strip()),), parts)
+        if not parts:
             continue
-        if context_pending and block.role == "user":
-            text = join_paragraphs(prompt_context, text)
-            context_pending = False
-        messages.append(Message(role=block.role, parts=(TextPart(text=text),)))
-    if context_pending:
+        try:
+            messages.append(Message(role=block.role, parts=parts))
+        except ValueError as exc:
+            raise ToolangError(str(exc)) from exc
+    if last_user is None and prompt_context.strip():
         messages.insert(0, Message.user(prompt_context.strip()))
     return tuple(messages) if messages else (fallback,)
 
@@ -380,13 +430,30 @@ def _recalls_history(agic: AgicDecl) -> bool:
     return not values or "default" in values or "history" in values
 
 
-def _body_variables(agic: AgicDecl, args: dict[str, Any]) -> dict[str, object]:
+def _body_variables(
+    agic: AgicDecl,
+    source: Mapping[str, object],
+) -> dict[str, object]:
     values: dict[str, object] = {}
     if agic.input is not None:
-        values["_"] = args.get("_")
+        values["_"] = source.get("_")
     for param in agic.params:
-        values[param.name] = args.get(param.name)
+        values[param.name] = source.get(param.name)
     return values
+
+
+def _body_types(agic: AgicDecl) -> dict[str, str]:
+    return {
+        **(
+            {"_": agic.input.type_name or "Part[]"}
+            if agic.input is not None
+            else {}
+        ),
+        **{
+            parameter.name: parameter.type_name or "Part[]"
+            for parameter in agic.params
+        },
+    }
 
 
 def _runtime_context(
@@ -460,10 +527,32 @@ def _metadata_items(meta: Mapping[str, object]) -> list[dict[str, str]]:
     return items
 
 
-def _message_body(blocks: tuple[AstMessage, ...]) -> str:
-    return "\n\n".join(
-        block.content.strip() for block in blocks if block.content.strip()
-    ).strip()
+def _strip_percept(parts: Percept) -> Percept:
+    result = list(parts)
+    if result and isinstance(result[0], TextPart):
+        result[0] = TextPart(result[0].text.lstrip())
+    if result and isinstance(result[-1], TextPart):
+        result[-1] = TextPart(result[-1].text.rstrip())
+    return tuple(part for part in result if not isinstance(part, TextPart) or part.text)
+
+
+def _join_percepts(*groups: Percept) -> Percept:
+    result: list[PerceptPart] = []
+    for group in groups:
+        if not group:
+            continue
+        if result:
+            _append_percept_part(result, TextPart("\n\n"))
+        for part in group:
+            _append_percept_part(result, part)
+    return tuple(result)
+
+
+def _append_percept_part(parts: list[PerceptPart], part: PerceptPart) -> None:
+    if isinstance(part, TextPart) and parts and isinstance(parts[-1], TextPart):
+        parts[-1] = TextPart(parts[-1].text + part.text)
+    else:
+        parts.append(part)
 
 
 def _tool_services(

@@ -9,7 +9,7 @@ from toolang.lang.ast import RankStmt
 
 from ...records import RunControlRecord, StepPath
 from ..common import BoundRun
-from ..common import Local, number, require_list
+from ..common import Local, number, require_list, result_list
 from ..steps import par as par_step
 
 if TYPE_CHECKING:
@@ -26,8 +26,9 @@ async def execute(
     placement: Mapping[str, object] | None,
 ) -> Local:
     async def operation() -> Local:
+        input_type = locals.get("_", Local()).type_name
         items = require_list(locals, operation="rank")
-        values = await execution.parallel_children(
+        evaluated = await execution.parallel_children(
             binding,
             locals,
             path,
@@ -35,7 +36,10 @@ async def execute(
             items,
             limit=statement.par,
         )
-        scores = [number(value, operation="rank") for value in values]
+        scores = [
+            number(value, operation="rank")
+            for value in result_list(evaluated, operation="rank")
+        ]
         ranked = [
             item
             for _, item, _ in sorted(
@@ -48,7 +52,7 @@ async def execute(
         elif statement.limit == "bottom":
             count = statement.count or 0
             ranked = ranked[-count:] if count else []
-        return Local(ranked, "list")
+        return Local(ranked, "list", type_name=input_type)
 
     return await par_step.execute(
         execution.emit,

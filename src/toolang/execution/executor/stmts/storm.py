@@ -27,7 +27,7 @@ async def execute(
 ) -> Local:
     async def operation() -> Local:
         basis = require_item(locals, operation="storm")
-        values = await execution.parallel_children(
+        return await execution.parallel_children(
             binding,
             locals,
             path,
@@ -35,7 +35,6 @@ async def execute(
             [basis] * statement.count,
             limit=statement.par,
         )
-        return Local(values, "list")
 
     return await par_step.execute(
         execution.emit,

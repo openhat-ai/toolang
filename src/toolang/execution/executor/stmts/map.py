@@ -27,7 +27,7 @@ async def execute(
 ) -> Local:
     async def operation() -> Local:
         items = require_list(locals, operation="map")
-        mapped = await execution.parallel_children(
+        return await execution.parallel_children(
             binding,
             locals,
             path,
@@ -35,7 +35,6 @@ async def execute(
             items,
             limit=statement.par,
         )
-        return Local(mapped, "list")
 
     return await par_step.execute(
         execution.emit,

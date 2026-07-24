@@ -6,7 +6,7 @@ import logging
 from collections.abc import Mapping
 from pathlib import Path
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Message, ToolResultPart
@@ -90,6 +90,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         tool_name=record.name,
         tool_family=record.name,
         output=dict(record.output),
+        error=record.error,
     )
     await state.emit(
         PartBegin(
@@ -206,9 +207,6 @@ def _tool_context(
 
 
 def _followup_message(tool_call: ToolCallResult) -> Message:
-    meta: dict[str, Any] = {}
-    if tool_call.error is not None:
-        meta["error"] = tool_call.error
     return Message(
         role="tool",
         parts=(
@@ -218,7 +216,7 @@ def _followup_message(tool_call: ToolCallResult) -> Message:
                 tool_name=tool_call.name,
                 tool_family=tool_call.name,
                 output=dict(tool_call.output),
+                error=tool_call.error,
             ),
         ),
-        meta=meta,
     )

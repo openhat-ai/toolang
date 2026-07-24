@@ -7,16 +7,17 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from toolang.base.types.message import Message
+from toolang.base.types.message import Message, TextPart
 from toolang.common.errors import ToolangError
 from toolang.lang.ast import AgicDecl
+from toolang.lang.input import coerce_output
 
 from ..common import (
     BoundRun,
     EventEmitter,
     Local,
-    decode_agic_output,
     program_structs,
+    value_percept,
     value_text,
 )
 from ..prepare import PreparedAgic, prepare_agic
@@ -56,14 +57,31 @@ async def execute(
 
     invoke = {name: local.value for name, local in locals.items() if name != "_"}
     primary = locals.get("_", Local())
+    primary_parts = (
+        value_percept(primary.value) if primary.shape != "none" else ()
+    )
     bound = replace(
         binding,
-        input=Message.user(
-            value_text(primary.value) if primary.shape != "none" else ""
+        input=Message(
+            role="user",
+            parts=(
+                primary_parts
+                if primary_parts is not None
+                else (TextPart(value_text(primary.value)),)
+            ),
         ),
         args=invoke,
     )
-    prepared = prepare_agic(execution, bound, agic)
+    prepared = prepare_agic(
+        execution,
+        bound,
+        agic,
+        variables={
+            name: local.value
+            for name, local in locals.items()
+            if local.shape != "none"
+        },
+    )
     state = _AgicState(
         prepared,
         home=execution.setup.home,
@@ -74,12 +92,13 @@ async def execute(
     )
     message = await _execute(state)
     return Local(
-        decode_agic_output(
-            message,
+        coerce_output(
+            message or Message(role="assistant"),
             agic.output,
             structs=program_structs(binding),
         ),
         "item",
+        type_name=agic.output or "Part[]",
     )
 
 

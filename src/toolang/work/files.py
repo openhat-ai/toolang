@@ -10,7 +10,12 @@ import sqlite3
 import threading
 from typing import cast
 
-from toolang.base.types.message import FilePart, ImagePart, Message, TextPart
+from toolang.base.types.message import (
+    DocumentPart,
+    ImagePart,
+    Message,
+    TextPart,
+)
 from toolang.up import process as agents
 from toolang.execution.types import RunStatus
 from .records import FileRequestRecord
@@ -332,8 +337,8 @@ def file_input_message(path: Path) -> Message:
             media_type=media_type,
         )
         if part_type == "image"
-        else FilePart(
-            file_url=resolved.as_uri(),
+        else DocumentPart(
+            url=resolved.as_uri(),
             filename=resolved.name,
             media_type=media_type,
         )

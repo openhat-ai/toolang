@@ -9,7 +9,8 @@ from tests import FIXTURES_ROOT, PROJECT_ROOT
 from toolang.common.errors import ToolangError
 from toolang.lang import Program, to_data
 from toolang.lang.ast import LetStmt, RepeatStmt
-from toolang.lang.input import expand_program_input
+from toolang.base.types.message import TextPart
+from toolang.lang.input import perceive_input
 from toolang.state.source import read_authored_source
 
 
@@ -384,12 +385,15 @@ agic:
     )
     program = read_authored_source(root, "alice").load_program().parse()
 
-    expanded = expand_program_input(
-        program, '/review src/app.py "only errors"\n\nAlso inspect tests.'
+    expanded = perceive_input(
+        '/review src/app.py "only errors"\n\nAlso inspect tests.',
+        program=program,
     )
 
     assert expanded == (
-        "Review src/app.py carefully.\nonly errors\n\nAlso inspect tests."
+        TextPart(
+            "Review src/app.py carefully.\nonly errors\n\nAlso inspect tests."
+        ),
     )
 
 

@@ -13,7 +13,7 @@ from toolang.base.protocols.model import ModelAdapter, ModelProvider
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import (
     AudioPart,
-    FilePart,
+    DocumentPart,
     ImagePart,
     Message,
     ToolCallPart,
@@ -23,9 +23,11 @@ from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.errors import ToolangError
+from toolang.execution.events import RunEvent, StepEnd
 from toolang.execution.executor.common import BoundRun
 from toolang.execution.executor.prepare import PreparedAgic
 from toolang.execution.executor.runs.agic import _AgicState, _execute
+from toolang.execution.records import RunControlRecord
 from toolang.plugin.models.discovery import model_infos
 from toolang.plugin.models.resolution import resolve_model, select_model_selectors
 from toolang.plugin.models.views import model_target_profile
@@ -1447,7 +1449,10 @@ def test_chat_completions_adapter_invokes_openai_compatible_client(monkeypatch) 
         "model": "deepseek-v4-pro",
         "messages": [
             {"role": "system", "content": "dev"},
-            {"role": "user", "content": "hello"},
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "hello"}],
+            },
         ],
         "tools": [
             {
@@ -1511,9 +1516,14 @@ def test_chat_completions_adapter_replays_deepseek_reasoning_content() -> None:
     result = chat_completions_models.parse_chat_completion(response)
 
     assert result.message is not None
-    assert result.message.meta == {
-        "reasoning_content": "The user asked for the directory, so list the current folder."
-    }
+    call_part = next(
+        part
+        for part in result.message.parts
+        if isinstance(part, ToolCallPart)
+    )
+    assert call_part.reasoning == (
+        "The user asked for the directory, so list the current folder."
+    )
 
     payload = chat_completions_models.chat_completion_payload(
         ModelTarget(
@@ -2178,6 +2188,225 @@ def test_agic_logs_model_and_tool_io_at_debug(caplog) -> None:
     assert '"stdout": "ran:pwd"' in caplog.text
 
 
+def test_chat_completions_encode_multimodal_user_parts() -> None:
+    encoded = chat_completions_models.encode_message(
+        ModelTarget(
+            ref="openai/gpt-audio",
+            provider="openai",
+            name="gpt-audio",
+            model="gpt-audio",
+            adapter="chat_completions",
+        ),
+        Message(
+            role="user",
+            parts=(
+                Message.user("describe").parts[0],
+                ImagePart(
+                    image_url="https://example.com/image.png",
+                    detail="high",
+                ),
+                AudioPart(data="ZGF0YQ==", format="mp3"),
+                DocumentPart(
+                    data="data:application/pdf;base64,JVBERi0xLjc=",
+                    filename="report.pdf",
+                ),
+            ),
+        ),
+    )
+
+    assert encoded == {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "describe"},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "https://example.com/image.png",
+                    "detail": "high",
+                },
+            },
+            {
+                "type": "input_audio",
+                "input_audio": {"data": "ZGF0YQ==", "format": "mp3"},
+            },
+            {
+                "type": "file",
+                "file": {
+                    "file_data": "data:application/pdf;base64,JVBERi0xLjc=",
+                    "filename": "report.pdf",
+                },
+            },
+        ],
+    }
+
+
+def test_chat_completions_reject_document_url() -> None:
+    target = ModelTarget(
+        ref="openai/gpt-5",
+        provider="openai",
+        name="gpt-5",
+        model="gpt-5",
+        adapter="chat_completions",
+    )
+
+    with pytest.raises(
+        ToolangError,
+        match="does not accept a URL",
+    ):
+        chat_completions_models.encode_message(
+            target,
+            Message(
+                role="user",
+                parts=(
+                    DocumentPart(url="https://example.com/report.pdf"),
+                ),
+            ),
+        )
+
+
+def test_chat_completions_audio_response_keeps_transcript_on_audio_part() -> None:
+    result = chat_completions_models.parse_chat_completion(
+        SimpleNamespace(
+            choices=(
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=None,
+                        audio=SimpleNamespace(
+                            data="ZGF0YQ==",
+                            transcript="hello",
+                        ),
+                        tool_calls=(),
+                    )
+                ),
+            ),
+            usage=None,
+        ),
+        audio_format="mp3",
+    )
+
+    assert result.message == Message(
+        role="assistant",
+        parts=(
+            AudioPart(
+                data="ZGF0YQ==",
+                format="mp3",
+                transcript="hello",
+            ),
+        ),
+    )
+
+
+def test_chat_completions_replays_assistant_multimodal_output_as_text() -> None:
+    encoded = chat_completions_models.encode_message(
+        ModelTarget(
+            ref="openai/gpt-audio",
+            provider="openai",
+            name="gpt-audio",
+            model="gpt-audio",
+            adapter="chat_completions",
+        ),
+        Message(
+            role="assistant",
+            parts=(
+                ImagePart(
+                    image_url="data:image/png;base64,aW1hZ2U=",
+                    filename="chart.png",
+                ),
+                AudioPart(
+                    data="ZGF0YQ==",
+                    format="mp3",
+                    transcript="spoken result",
+                ),
+                DocumentPart(file_id="file-1", filename="report.pdf"),
+            ),
+        ),
+    )
+
+    assert encoded == {
+        "role": "assistant",
+        "content": "[image:chart.png]\nspoken result\n[document:report.pdf]",
+    }
+
+
+def test_chat_completions_audio_stream_does_not_open_duplicate_text_part(
+    monkeypatch,
+) -> None:
+    events: list[object] = []
+
+    async def record_event(event: object) -> None:
+        events.append(event)
+
+    class _Stream:
+        async def __aiter__(self):
+            yield SimpleNamespace(
+                choices=(
+                    SimpleNamespace(
+                        delta=SimpleNamespace(
+                            reasoning_content=None,
+                            content="hello",
+                            audio=SimpleNamespace(
+                                data="ZGF0YQ==",
+                                transcript="hello",
+                            ),
+                            tool_calls=(),
+                        )
+                    ),
+                ),
+                usage=None,
+            )
+
+        async def close(self) -> None:
+            return None
+
+    class _Completions:
+        async def create(self, **payload):
+            del payload
+            return _Stream()
+
+    class _Client:
+        chat = SimpleNamespace(completions=_Completions())
+
+    monkeypatch.setattr(
+        chat_completions_models, "create_client", lambda target: _Client()
+    )
+
+    result = asyncio.run(
+        chat_completions_models.stream_chat_completion(
+            ModelTarget(
+                ref="openai/gpt-audio",
+                provider="openai",
+                name="gpt-audio",
+                model="gpt-audio",
+                adapter="chat_completions",
+                options={
+                    "modalities": ["text", "audio"],
+                    "audio": {"format": "mp3", "voice": "alloy"},
+                },
+            ),
+            ModelCall(instructions="", messages=[Message.user("hello")]),
+            on_event=record_event,
+        )
+    )
+
+    assert result.message == Message(
+        role="assistant",
+        parts=(
+            AudioPart(
+                data="ZGF0YQ==",
+                format="mp3",
+                transcript="hello",
+            ),
+        ),
+    )
+    assert [
+        (type(event).__name__, getattr(event, "kind", None))
+        for event in events
+    ] == [
+        ("ModelPartStart", "audio"),
+        ("ModelPartEnd", None),
+    ]
+
+
 def test_responses_encode_message_preserves_structured_content() -> None:
     encoded = encode_message(
         Message(role="user", parts=(Message.user("hello").parts[0],))
@@ -2203,8 +2432,9 @@ def test_responses_encode_message_supports_multimodal_user_parts() -> None:
                 Message.user("describe this").parts[0],
                 ImagePart(image_url="https://example.com/image.png", detail="high"),
                 AudioPart(data="ZGF0YQ==", format="mp3"),
-                FilePart(
-                    file_url="https://example.com/report.pdf", filename="report.pdf"
+                DocumentPart(
+                    url="https://example.com/report.pdf",
+                    filename="report.pdf",
                 ),
             ),
         )
@@ -2252,36 +2482,318 @@ def test_audio_part_accepts_data_url_in_data_field() -> None:
     assert part.media_type == "audio/mpeg"
 
 
-def test_file_part_preserves_data_url_as_file_data() -> None:
+def test_document_part_preserves_data_url() -> None:
     part = Message.from_data(
         {
             "role": "user",
             "parts": [
                 {
-                    "type": "file",
-                    "data_url": "data:application/pdf;base64,JVBERi0xLjc=",
+                    "type": "document",
+                    "data": "data:application/pdf;base64,JVBERi0xLjc=",
                     "filename": "report.pdf",
                 }
             ],
         }
     ).parts[0]
 
-    assert isinstance(part, FilePart)
-    assert part.file_data == "data:application/pdf;base64,JVBERi0xLjc="
+    assert isinstance(part, DocumentPart)
+    assert part.data == "data:application/pdf;base64,JVBERi0xLjc="
     assert part.media_type == "application/pdf"
     assert part.filename == "report.pdf"
 
 
-def test_responses_reject_non_text_assistant_multimodal_parts() -> None:
-    with pytest.raises(
-        ToolangError, match="assistant messages cannot contain image parts"
-    ):
-        encode_message(
-            Message(
-                role="assistant",
-                parts=(ImagePart(image_url="https://example.com/image.png"),),
+def test_responses_audio_response_keeps_transcript_on_audio_part() -> None:
+    result = responses_models.assistant_message(
+        SimpleNamespace(
+            output=(
+                SimpleNamespace(
+                    type="message",
+                    content=(
+                        SimpleNamespace(
+                            type="output_audio",
+                            data="ZGF0YQ==",
+                            format="wav",
+                            transcript="hello",
+                        ),
+                    ),
+                ),
+            ),
+            output_text="hello",
+        ),
+        tool_calls=(),
+    )
+
+    assert result == Message(
+        role="assistant",
+        parts=(
+            AudioPart(
+                data="ZGF0YQ==",
+                format="wav",
+                transcript="hello",
+            ),
+        ),
+    )
+
+
+def test_responses_image_generation_output_becomes_image_part() -> None:
+    result = responses_models.assistant_message(
+        SimpleNamespace(
+            output=(
+                SimpleNamespace(
+                    type="image_generation_call",
+                    result="aW1hZ2U=",
+                ),
+            ),
+            output_text="",
+        ),
+        tool_calls=(),
+    )
+
+    assert result == Message(
+        role="assistant",
+        parts=(
+            ImagePart(
+                image_url="data:image/png;base64,aW1hZ2U=",
+                media_type="image/png",
+            ),
+        ),
+    )
+
+
+def test_agic_preserves_multimodal_steer_and_model_output() -> None:
+    image = ImagePart(file_id="image-1")
+    audio = AudioPart(
+        data="ZGF0YQ==",
+        format="wav",
+        transcript="done",
+    )
+    steer = Message(
+        role="user",
+        parts=(Message.user("inspect").parts[0], image),
+    )
+    provider = _FakeModelProvider(
+        name="openai",
+        responses=[
+            ModelCallResult(
+                message=Message(role="assistant", parts=(audio,)),
+            ),
+        ],
+    )
+    prepared = _prepared_agic(
+        provider,
+        ModelTarget(
+            ref="openai/gpt-audio",
+            provider="openai",
+            name="gpt-audio",
+            model="gpt-audio",
+            adapter="chat_completions",
+        ),
+    )
+    pending = [
+        RunControlRecord(
+            run="run-1",
+            index=1,
+            kind="steer",
+            timing="next_call",
+            input=steer,
+        )
+    ]
+    events: list[RunEvent] = []
+
+    async def emit(event: RunEvent) -> None:
+        events.append(event)
+
+    def pending_inputs() -> tuple[RunControlRecord, ...]:
+        current = tuple(pending)
+        pending.clear()
+        return current
+
+    result = asyncio.run(
+        _execute(
+            _AgicState(
+                prepared=prepared,
+                home=Path("/tmp/home"),
+                emit=emit,
+                pending_inputs=pending_inputs,
+                before_call=lambda: None,
+                messages=list(prepared.messages),
             )
         )
+    )
+
+    assert result == Message(role="assistant", parts=(audio,))
+    assert provider.requests[0].messages[-1] == steer
+    step_end = next(event for event in events if isinstance(event, StepEnd))
+    assert step_end.output == (audio,)
+    assert [event.type for event in events] == [
+        "step_begin",
+        "part_begin",
+        "part_end",
+        "step_end",
+    ]
+
+
+def test_responses_replays_assistant_multimodal_output_as_text() -> None:
+    assert encode_message(
+        Message(
+            role="assistant",
+            parts=(
+                ImagePart(
+                    image_url="data:image/png;base64,aW1hZ2U=",
+                    filename="chart.png",
+                ),
+                AudioPart(
+                    data="ZGF0YQ==",
+                    format="wav",
+                    transcript="spoken result",
+                ),
+                DocumentPart(file_id="file-1", filename="report.pdf"),
+            ),
+        )
+    ) == {
+        "type": "message",
+        "role": "assistant",
+        "content": [
+            {"type": "output_text", "text": "[image:chart.png]"},
+            {"type": "output_text", "text": "spoken result"},
+            {"type": "output_text", "text": "[document:report.pdf]"},
+        ],
+        "id": "msg_current",
+        "status": "completed",
+    }
+
+
+def test_responses_non_audio_model_accepts_assistant_audio_history(
+    monkeypatch,
+) -> None:
+    async def fake_invoke_response(target, request, *, stateful):
+        del target, request, stateful
+        return ModelCallResult(message=Message.assistant("done"))
+
+    monkeypatch.setattr(
+        responses_models,
+        "invoke_response",
+        fake_invoke_response,
+    )
+    adapter = responses_models.create_model_adapter({})
+    result = asyncio.run(
+        adapter.invoke(
+            ModelTarget(
+                ref="openai/gpt-5",
+                provider="openai",
+                name="gpt-5",
+                model="gpt-5",
+                adapter="responses",
+            ),
+            ModelCall(
+                instructions="",
+                messages=[
+                    Message(
+                        role="assistant",
+                        parts=(
+                            AudioPart(
+                                data="ZGF0YQ==",
+                                format="wav",
+                                transcript="previous",
+                            ),
+                        ),
+                    ),
+                    Message.user("continue"),
+                ],
+            ),
+        )
+    )
+
+    assert result.message == Message.assistant("done")
+
+
+def test_responses_audio_stream_does_not_open_duplicate_text_part(
+    monkeypatch,
+) -> None:
+    events: list[object] = []
+
+    async def record_event(event: object) -> None:
+        events.append(event)
+
+    response = SimpleNamespace(
+        id="resp-1",
+        output=(
+            SimpleNamespace(
+                type="message",
+                content=(
+                    SimpleNamespace(
+                        type="output_audio",
+                        data="ZGF0YQ==",
+                        format="wav",
+                        transcript="hello",
+                    ),
+                ),
+            ),
+        ),
+        output_text="hello",
+        usage=None,
+    )
+
+    class _Stream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            del exc_type, exc, traceback
+
+        async def __aiter__(self):
+            yield SimpleNamespace(
+                type="response.output_text.delta",
+                delta="hello",
+            )
+
+        async def get_final_response(self):
+            return response
+
+    class _Responses:
+        def stream(self, **payload):
+            del payload
+            return _Stream()
+
+    class _Client:
+        responses = _Responses()
+
+    monkeypatch.setattr(
+        responses_models, "create_client", lambda target: _Client()
+    )
+
+    result = asyncio.run(
+        responses_models.stream_response(
+            ModelTarget(
+                ref="openai/gpt-audio",
+                provider="openai",
+                name="gpt-audio",
+                model="gpt-audio",
+                adapter="responses",
+            ),
+            ModelCall(instructions="", messages=[Message.user("hello")]),
+            stateful=True,
+            on_event=record_event,
+        )
+    )
+
+    assert result.message == Message(
+        role="assistant",
+        parts=(
+            AudioPart(
+                data="ZGF0YQ==",
+                format="wav",
+                transcript="hello",
+            ),
+        ),
+    )
+    assert [
+        (type(event).__name__, getattr(event, "kind", None))
+        for event in events
+    ] == [
+        ("ModelPartStart", "audio"),
+        ("ModelPartEnd", None),
+    ]
 
 
 def test_responses_skip_historical_tool_items_without_previous_response_id() -> None:

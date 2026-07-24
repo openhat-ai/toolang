@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from toolang.common.errors import ToolangError
 from toolang.lang.ast import FlowDecl, FlowStmt
+from toolang.lang.input import coerce_output
 
 from ...records import StepPath, trace_child_path
 from ..common import BoundRun
@@ -16,7 +17,6 @@ from ..common import (
     program_structs,
     statement_has_call,
     update_locals,
-    validate_output,
 )
 from .. import stmts
 
@@ -43,10 +43,15 @@ async def execute(
     if flow.output is not None:
         if result.shape == "none":
             raise ToolangError(f"flow output is missing; expected {flow.output}")
-        validate_output(
-            result.value,
+        result = Local(
+            coerce_output(
+                result.value,
+                flow.output,
+                structs=program_structs(binding),
+            ),
+            result.shape,
+            result.source,
             flow.output,
-            structs=program_structs(binding),
         )
     return result
 
@@ -70,7 +75,12 @@ async def execute_statements(
             call=statement_has_call(statement),
         )
         controls = execution.steer_controls(binding.run_id, statement)
-        apply_steer(locals, controls)
+        apply_steer(
+            locals,
+            controls,
+            input_type=locals.get("_", Local()).type_name,
+            structs=program_structs(binding),
+        )
         path = trace_child_path(parent, index)
         result = await stmts.execute(
             execution,

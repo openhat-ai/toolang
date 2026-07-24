@@ -10,7 +10,7 @@ from toolang.lang.ast import DropStmt, KeepStmt
 
 from ...records import RunControlRecord, StepPath
 from ..common import BoundRun
-from ..common import Local, boolean, require_list
+from ..common import Local, boolean, require_list, result_list
 from ..steps import par as par_step
 from ..steps import system as system_step
 
@@ -28,6 +28,7 @@ async def execute(
     placement: Mapping[str, object] | None,
 ) -> Local:
     async def operation() -> Local:
+        input_type = locals.get("_", Local()).type_name
         items = require_list(locals, operation=statement.kind)
         if statement.position is not None:
             count = statement.count or 0
@@ -40,7 +41,7 @@ async def execute(
         else:
             if statement.predicate is None:
                 raise ToolangError(f"{statement.kind} requires a predicate")
-            values = await execution.parallel_children(
+            evaluated = await execution.parallel_children(
                 binding,
                 locals,
                 path,
@@ -48,13 +49,16 @@ async def execute(
                 items,
                 limit=statement.par,
             )
-            matches = [boolean(value, operation=statement.kind) for value in values]
+            matches = [
+                boolean(value, operation=statement.kind)
+                for value in result_list(evaluated, operation=statement.kind)
+            ]
         kept = [
             item
             for item, matched in zip(items, matches, strict=True)
             if matched == isinstance(statement, KeepStmt)
         ]
-        return Local(kept, "list")
+        return Local(kept, "list", type_name=input_type)
 
     step = par_step if statement.predicate is not None else system_step
     return await step.execute(

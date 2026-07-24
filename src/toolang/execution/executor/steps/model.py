@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING
 
 from toolang.base.types.message import (
     Message,
-    Part,
-    PartType,
+    MessagePart,
+    MessagePartType,
     TextDelta,
     TextPart,
     ToolCallDelta,
@@ -286,8 +286,8 @@ def _output_parts(
     *,
     current: ModelCallResult,
     tool_calls: Sequence[ToolCall],
-) -> list[tuple[int, Part]]:
-    items: list[tuple[int, Part]] = []
+) -> list[tuple[int, MessagePart]]:
+    items: list[tuple[int, MessagePart]] = []
     seen_tool_calls: set[str] = set()
     saw_text = False
     message = current.message
@@ -302,6 +302,8 @@ def _output_parts(
                 part_index = _ensure_tool_part_index(stream, part.tool_call_id)
                 items.append((part_index, part))
                 seen_tool_calls.add(part.tool_call_id)
+                continue
+            items.append((_next_part_index(stream), part))
     current_text = message_text(message.parts) if message is not None else ""
     if not saw_text and current_text:
         part_index = _ensure_text_part_index(stream)
@@ -357,12 +359,18 @@ def _ensure_tool_part_index(stream: _ModelStream, tool_call_id: str) -> int:
     return part_index
 
 
+def _next_part_index(stream: _ModelStream) -> int:
+    part_index = stream.part_count
+    stream.part_count += 1
+    return part_index
+
+
 async def _emit_part_begin(
     state: _AgicState,
     stream: _ModelStream,
     *,
     part_index: int,
-    kind: PartType,
+    kind: MessagePartType,
 ) -> None:
     if part_index in stream.started_parts:
         return
@@ -379,11 +387,14 @@ async def _emit_part_begin(
 def _message_reasoning_content(message: Message | None) -> str | None:
     if message is None:
         return None
-    value = message.meta.get("reasoning_content")
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    return text or None
+    return next(
+        (
+            part.reasoning
+            for part in message.parts
+            if isinstance(part, ToolCallPart) and part.reasoning
+        ),
+        None,
+    )
 
 
 def _model_target_data(target: ModelTarget) -> dict[str, object]:

@@ -28,7 +28,7 @@ async def execute(
     require_list(locals, operation="gather")
 
     def transform(result: Local) -> Local:
-        return Local(result.value, "item")
+        return Local(result.value, "item", type_name=result.type_name)
 
     return await run_step.execute(
         execution,

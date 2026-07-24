@@ -9,14 +9,21 @@ from typing import Any, cast
 from pydantic import TypeAdapter
 
 from toolang.base.protocols.tool import AgentTool
-from toolang.base.types.message import Message, message_text
+from toolang.base.types.message import (
+    AudioPart,
+    DocumentPart,
+    ImagePart,
+    Message,
+    TextPart,
+    message_text,
+)
 from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.ids import IdIssuer
 from toolang.execution.events import RunEvent, RunTracer, StepBegin
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.executor.common import BoundRun
+from toolang.execution.executor.common import BoundRun, Local, output_parts
 from toolang.execution.executor.persist import PersistSink
 from toolang.execution.executor.prepare import prepare_agic
 from toolang.execution.inspection import ExecutionInspection
@@ -50,8 +57,9 @@ class _Adapter:
     name = "test"
     description = None
 
-    def __init__(self) -> None:
+    def __init__(self, response: Message | None = None) -> None:
         self.requests: list[ModelCall] = []
+        self.response = response or Message.assistant("done")
 
     async def invoke(
         self,
@@ -59,7 +67,7 @@ class _Adapter:
         request: ModelCall,
     ) -> ModelCallResult:
         self.requests.append(request)
-        return ModelCallResult(message=Message.assistant("done"))
+        return ModelCallResult(message=self.response)
 
     async def stream(self, target: ModelTarget, request: ModelCall, *, on_event):
         return await self.invoke(target, request)
@@ -87,6 +95,24 @@ class _Tracer(RunTracer):
 
     async def on_event(self, event: RunEvent) -> None:
         self.events.append(event)
+
+
+def test_multimodal_list_shape_has_replayable_step_output() -> None:
+    image = ImagePart(file_id="image-1")
+
+    assert output_parts(
+        Local(
+            value=[(TextPart("one"), image)],
+            shape="list",
+        )
+    ) == (
+        TextPart(
+            '[['
+            '{"type":"text","text":"one"},'
+            '{"type":"image","detail":"auto","file_id":"image-1"}'
+            ']]'
+        ),
+    )
 
 
 def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
@@ -178,11 +204,104 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     ]
 
 
-def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> None:
+def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     home = root / "agents" / "alice"
     provider = _Provider()
     adapter = _Adapter()
+    setup = AgentSetup(
+        home=home,
+        name="alice",
+        tools={},
+        model_providers={provider.name: provider},
+        model_adapters={adapter.name: adapter},
+        model_environ={},
+        model_selectors=("default",),
+    )
+    agic = AgicDecl(
+        name="inspect",
+        input=Parameter(name="_", type_name="Part[]", span=Span(1)),
+        params=(
+            Parameter(name="appendix", type_name="Part", span=Span(1)),
+        ),
+        messages=(
+            AstMessage(
+                role="user",
+                content="Review {{_}} with {{appendix}}.",
+                explicit=False,
+                span=Span(1),
+            ),
+        ),
+        span=Span(1),
+    )
+    program = Program(agics=(agic,), span=Span(1))
+    state = cast(
+        Any,
+        SimpleNamespace(
+            program=program,
+            program_source="agents/alice/agent.too",
+            caps=(),
+            fingerprint="state-1",
+        ),
+    )
+    image = ImagePart(file_id="image-1")
+    document = DocumentPart(file_id="file-1")
+    run = BoundRun(
+        run_id="run_1",
+        root_run_id="run_1",
+        thread="term_1",
+        input=Message(
+            role="user",
+            parts=(TextPart("this diagram "), image),
+        ),
+        args={"appendix": document},
+        model=None,
+        state=state,
+        setup=setup,
+        created_at="2026-01-01T00:00:00Z",
+    )
+    context = cast(
+        Any,
+        SimpleNamespace(
+            setup=setup,
+            store=_History(),
+            model_aliases={
+                "default": ModelAlias(
+                    name="default",
+                    ref="test/model",
+                    provider="test",
+                    model="model",
+                    adapter="test",
+                )
+            },
+            default_models=("default",),
+            model_providers=setup.model_providers,
+            model_environ=setup.model_environ,
+            model_cache_dir=None,
+        ),
+    )
+
+    prepared = prepare_agic(context, run, agic)
+
+    assert prepared.messages[-1].parts == (
+        TextPart(prepared.prompt_context + "\n\nReview this diagram "),
+        image,
+        TextPart(" with "),
+        document,
+        TextPart("."),
+    )
+
+
+def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    home = root / "agents" / "alice"
+    provider = _Provider()
+    audio = AudioPart(
+        data="ZGF0YQ==",
+        format="wav",
+        transcript="done",
+    )
+    adapter = _Adapter(Message(role="assistant", parts=(audio,)))
     tool = _Tool()
     setup = AgentSetup(
         home=home,
@@ -196,7 +315,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     )
     agic = AgicDecl(
         name="chat",
-        input=Parameter(name="_", type_name="Text", span=Span(1)),
+        input=Parameter(name="_", type_name="Part[]", span=Span(1)),
         params=(Parameter(name="focus", type_name="Text", span=Span(1)),),
         messages=(
             AstMessage(
@@ -237,6 +356,10 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     store.create_thread(thread_id="term_1")
     executor = RunExecutor(store, IdIssuer(home / ".runtime" / "ids.json"))
     tracer = _Tracer()
+    image = ImagePart(
+        image_url="https://example.com/diagram.png",
+        detail="high",
+    )
     try:
         async def execute() -> Any:
             return await executor.start(
@@ -245,7 +368,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                     state=state,
                     thread="term_1",
                     runnable="chat",
-                    input=Message.user("hello").parts,
+                    input=(TextPart(text="hello"), image),
                     args={"focus": "events"},
                 ),
                 tracer=tracer,
@@ -255,10 +378,13 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert record.status == "finished"
         steps = store.list_steps(run_id=record.id)
         assert [step.kind for step in steps] == ["model"]
+        assert steps[0].output == (audio,)
+        assert store.run_output(run_id=record.id) == (audio,)
         assert len(adapter.requests) == 1
         assert message_text(adapter.requests[0].messages[-1].parts).endswith(
             "Answer: hello; focus=events"
         )
+        assert image in adapter.requests[0].messages[-1].parts
         assert store.rebuild_model_call(steps[0]) == adapter.requests[0]
         begin = next(event for event in tracer.events if isinstance(event, StepBegin))
         assert begin.given["call"] == adapter.requests[0].to_data()
@@ -281,6 +407,8 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert "adapter_request" not in steps[0].noted
         detail = ExecutionInspection(store).run_detail(record.id)
         assert detail is not None
+        assert detail.input is not None
+        assert detail.input.parts == (TextPart("hello"), image)
         assert detail.steps[0].given["call"] == adapter.requests[0].to_data()
         payload = TypeAdapter(RunDetail).dump_python(detail, mode="json")
         serialized_call = cast(

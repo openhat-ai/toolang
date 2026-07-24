@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import pytest
 
-from toolang.base.types.message import Message, TextPart
+from toolang.base.types.message import ImagePart, Message, TextPart
 from toolang.base.types.run import ModelCall
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
@@ -25,7 +25,7 @@ from toolang.execution.events import (
     ThreadListener,
 )
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.executor.common import Local
+from toolang.execution.executor.common import BoundRun, Local
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.runs import agic as agic_run
 from toolang.execution.inspection import ExecutionInspection
@@ -220,7 +220,10 @@ def test_run_executor_validates_args_against_runnable_params(
                     state=state,
                     thread="term_test",
                     runnable=flow.name,
-                    args={"focus": "events", "other": True},
+                    args={
+                        "focus": (TextPart("events"),),
+                        "other": True,
+                    },
                 )
             )
         record = await executor.start(
@@ -229,12 +232,43 @@ def test_run_executor_validates_args_against_runnable_params(
                 state=state,
                 thread="term_test",
                 runnable=flow.name,
-                args={"focus": "events"},
+                args={"focus": (TextPart("events"),)},
             )
         )
         assert record.status == "finished"
 
     asyncio.run(scenario())
+    asyncio.run(executor.shutdown())
+
+
+def test_run_executor_rejects_lossy_input_before_acceptance(
+    tmp_path: Path,
+) -> None:
+    flow = FlowDecl(
+        name="pipeline",
+        input=Parameter(
+            name="_",
+            type_name="Text",
+            span=Span(line=1),
+        ),
+        span=Span(line=1),
+    )
+    executor = _executor(tmp_path)
+
+    async def scenario() -> None:
+        with pytest.raises(ToolangError, match="non-text parts"):
+            executor.start(
+                RunSpec(
+                    setup=_setup(),
+                    state=_state(flow),
+                    thread="term_test",
+                    runnable=flow.name,
+                    input=(ImagePart(file_id="image-1"),),
+                )
+            )
+
+    asyncio.run(scenario())
+    assert executor.store.list_runs() == []
     asyncio.run(executor.shutdown())
 
 
@@ -503,6 +537,66 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
     ]
     assert [event.type for event in tracer.events].count("run_begin") == 2
     assert not any(event.type == "run_starting" for event in tracer.events)
+    asyncio.run(executor.shutdown())
+
+
+def test_parallel_children_preserve_input_and_output_types(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = FlowDecl(
+        name="child",
+        input=Parameter(name="_", type_name="Text", span=Span(line=1)),
+        output="Number",
+        span=Span(line=1),
+    )
+    parent = FlowDecl(name="parent", span=Span(line=2))
+    executor = _executor(tmp_path)
+    setup = _setup()
+    state = _state(parent, child)
+    binding = BoundRun(
+        run_id="run_root",
+        root_run_id="run_root",
+        thread="term_test",
+        input=Message.user("input"),
+        args={},
+        model=None,
+        state=state,
+        setup=setup,
+        created_at="2026-01-01T00:00:00Z",
+    )
+
+    async def emit(_event: RunEvent) -> None:
+        return None
+
+    execution = _Execution(executor, root=binding, emit=emit)
+    observed_types: list[str | None] = []
+
+    async def execute_child(
+        _parent: BoundRun,
+        child_locals: dict[str, Local],
+        _step: str,
+        _name: str,
+        _placement: dict[str, object] | None,
+    ) -> Local:
+        observed_types.append(child_locals["_"].type_name)
+        return Local(1, "item", type_name="Number")
+
+    monkeypatch.setattr(execution, "execute_child", execute_child)
+
+    result = asyncio.run(
+        execution.parallel_children(
+            binding,
+            {"_": Local(["one", "two"], "list", type_name="Text")},
+            "run_root/0",
+            child.name,
+            ["one", "two"],
+            limit=2,
+        )
+    )
+
+    assert result == Local([1, 1], "list", type_name="Number")
+    assert observed_types == ["Text", "Text"]
     asyncio.run(executor.shutdown())
 
 

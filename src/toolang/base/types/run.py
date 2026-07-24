@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from .message import Delta, Message, Part, PartType
+from .message import Delta, Message, MessagePart, MessagePartType
 from .tool import ToolDefinition
 
 
@@ -109,7 +109,7 @@ class ModelCallResult:
 class ModelPartStart:
     """One streamed model-part start update."""
 
-    kind: PartType
+    kind: MessagePartType
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +123,7 @@ class ModelPartDelta:
 class ModelPartEnd:
     """One streamed model-part end update."""
 
-    data: Part
+    data: MessagePart
 
 
 ModelPartUpdate = ModelPartStart | ModelPartDelta | ModelPartEnd

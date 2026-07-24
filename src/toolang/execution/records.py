@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from toolang.base.types.message import Message, MessageRole, Part
+from toolang.base.types.message import Message, MessagePart, MessageRole
 from .types import (
     ControlStatus,
     ControlTiming,
@@ -163,7 +163,7 @@ class StepRecord:
     index: int
     kind: StepKind
     input: tuple[StepInputItem, ...]
-    output: tuple[Part, ...]
+    output: tuple[MessagePart, ...]
     given: dict[str, Any] = field(default_factory=dict)
     noted: dict[str, Any] = field(default_factory=dict)
     status: StepStatus = "running"

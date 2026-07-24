@@ -12,7 +12,7 @@ from typing import Any, cast
 
 from toolang.base.types.message import (
     Message,
-    Part,
+    MessagePart,
     ToolCallPart,
     ToolResultPart,
     message_text,
@@ -747,7 +747,7 @@ class RunStore:
             ).fetchone()
         return _run_from_row(row) if row is not None else None
 
-    def run_output(self, *, run_id: str) -> tuple[Part, ...]:
+    def run_output(self, *, run_id: str) -> tuple[MessagePart, ...]:
         """Return the parts referenced by one run's durable output edge."""
 
         run = self.get_run(run_id=run_id)
@@ -956,7 +956,7 @@ class RunStore:
         index: int,
         kind: StepKind,
         status: StepStatus,
-        output: Sequence[Part],
+        output: Sequence[MessagePart],
         noted: Mapping[str, Any],
         error: str | None,
         finished_at: str,
@@ -1703,13 +1703,7 @@ def _replay_messages_from_step(step: StepRecord) -> list[Message]:
     role = step_message_role(step.kind)
     if role is None or not step.output:
         return []
-    meta: dict[str, Any] = {}
-    if step.error is not None:
-        meta["error"] = step.error
-    reasoning_content = step.noted.get("reasoning_content")
-    if isinstance(reasoning_content, str) and reasoning_content:
-        meta["reasoning_content"] = reasoning_content
-    return [Message(role=role, parts=tuple(step.output), meta=meta)]
+    return [Message(role=role, parts=tuple(step.output))]
 
 
 def _recent_valid_model_history(

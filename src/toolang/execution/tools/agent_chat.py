@@ -334,23 +334,21 @@ def _record_local_a2a_exchange(
     input_message = Message(
         role="user",
         parts=(TextPart(text=message),),
-        meta={
-            "agent_chat": {
-                "peer": peer,
-                "remote_thread": thread.peer.thread,
-                "remote_run_id": remote_run_id,
-                "parent_thread": (
-                    thread_control.context.get("parent")
-                    if thread_control is not None
-                    else None
-                ),
-            }
-        },
     )
     run_context = {
         "root": run_id,
         "runnable": {"kind": "agent", "name": peer},
         "call": "agent_chat",
+        "agent_chat": {
+            "peer": peer,
+            "remote_thread": thread.peer.thread,
+            "remote_run_id": remote_run_id,
+            "parent_thread": (
+                thread_control.context.get("parent")
+                if thread_control is not None
+                else None
+            ),
+        },
     }
     sink = PersistSink(store)
     store.accept_start(
