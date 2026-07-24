@@ -42,19 +42,16 @@ class OpenRouterModelProvider(ModelProvider):
         api_key = environ.get(self.key_env, "").strip()
         if not api_key:
             return ()
-        try:
-            response = httpx.get(
-                f"{self.base_url}/models",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    **_app_attribution_headers(),
-                },
-                timeout=3.0,
-            )
-            response.raise_for_status()
-            payload = response.json()
-        except Exception:
-            return ()
+        response = httpx.get(
+            f"{self.base_url}/models",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                **_app_attribution_headers(),
+            },
+            timeout=3.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
         raw_models = payload.get("data")
         if not isinstance(raw_models, list):
             return ()

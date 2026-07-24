@@ -10,7 +10,7 @@ from toolang.base.types.message import TextPart
 from ..execution.executor import RunExecutor, RunSpec
 from ..execution.records import RunRecord
 from ..state.state import AgentState
-from ..up.setup import AgentSetup
+from ..setup import AgentSetup
 from toolang.catalog.types import JobKind
 from .state import AgentJobs, HomeJobs
 from .store import ClaimedJob, JobStore

@@ -28,7 +28,7 @@ from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.lang import Program
 from toolang.state.state import AgentState, agent_state_version
-from toolang.up.setup import AgentSetup
+from toolang.setup import AgentSetup
 
 TEST_MODEL_REF = "test/scripted"
 
@@ -296,12 +296,11 @@ class ExecutionHarness:
         setup = AgentSetup(
             name="alice",
             home=home,
+            providers={provider.name: provider},
+            adapters={adapter.name: adapter},
+            models=provider.list_models(environ={}),
             tools=tools or {},
-            model_providers={provider.name: provider},
-            model_adapters={adapter.name: adapter},
-            model_environ={},
-            model_selectors=(TEST_MODEL_REF,),
-            model_cache_dir=runtime / "models",
+            envs={},
         )
         store = RunStore(runtime / "runs.db")
         ids = IdIssuer(runtime / "ids.json")

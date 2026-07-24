@@ -43,7 +43,7 @@ from toolang.lang.ast import (
     RunStmt,
     Span,
 )
-from toolang.up.setup import AgentSetup
+from toolang.setup import AgentSetup
 
 
 class _RecordingTracer(RunTracer):
@@ -104,10 +104,11 @@ def _setup() -> AgentSetup:
     return AgentSetup(
         home=Path("/agent/alice"),
         name="alice",
+        providers={},
+        adapters={},
+        models=(),
         tools={},
-        model_providers={},
-        model_adapters={},
-        model_environ={},
+        envs={},
     )
 
 

@@ -25,6 +25,8 @@ ${TOOLANG_ROOT}/
   services/
   prompts/
   .prepared/
+  .runtime/
+    models/
   .sandbox/
   agents/
     <agent>/
@@ -77,6 +79,14 @@ Key paths:
 
 
 ## Runtime Room
+
+Runtime data shared by every local agent process lives under:
+
+- `${TOOLANG_ROOT}/.runtime/`
+
+| Path | Purpose |
+| --- | --- |
+| `models/` | Last-good provider model lists shared across agents and processes |
 
 Each agent runtime stores operational state under:
 

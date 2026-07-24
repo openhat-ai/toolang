@@ -41,7 +41,7 @@ from toolang.lang.ast import (
 )
 from toolang.lang.input import coerce_input, validate_value
 from toolang.state.state import AgentState
-from toolang.up.setup import AgentSetup
+from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
 from ..records import OutputRef, RunControlRecord, RunControlRef, StepInputItem

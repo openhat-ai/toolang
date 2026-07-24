@@ -30,7 +30,7 @@ from toolang.execution.history import RunHistory
 from toolang.execution.schemas import RunDetail
 from toolang.execution.store import RunStore
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
-from toolang.up.setup import AgentSetup
+from toolang.setup import AgentSetup
 
 
 class _Provider:
@@ -124,12 +124,11 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     setup = AgentSetup(
         home=home,
         name="alice",
+        providers={provider.name: provider},
+        adapters={adapter.name: adapter},
+        models=(),
         tools={tool.name: tool},
-        model_providers={provider.name: provider},
-        model_adapters={adapter.name: adapter},
-        model_environ={},
-        model_selectors=("default",),
-        model_cache_dir=root / ".runtime" / "model-cache",
+        envs={},
     )
     agic = AgicDecl(
         name="chat",
@@ -172,7 +171,8 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
             setup=setup,
             home=home,
             store=_History(),
-            model_providers=setup.model_providers,
+            providers=setup.providers,
+            models=setup.models,
             model_aliases={
                 "default": ModelAlias(
                     name="default",
@@ -183,8 +183,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
                 )
             },
             default_models=("default",),
-            model_environ=setup.model_environ,
-            model_cache_dir=root / ".runtime" / "model-cache",
+            envs=setup.envs,
         ),
     )
 
@@ -212,11 +211,11 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
     setup = AgentSetup(
         home=home,
         name="alice",
+        providers={provider.name: provider},
+        adapters={adapter.name: adapter},
+        models=(),
         tools={},
-        model_providers={provider.name: provider},
-        model_adapters={adapter.name: adapter},
-        model_environ={},
-        model_selectors=("default",),
+        envs={},
     )
     agic = AgicDecl(
         name="inspect",
@@ -273,9 +272,9 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
                 )
             },
             default_models=("default",),
-            model_providers=setup.model_providers,
-            model_environ=setup.model_environ,
-            model_cache_dir=None,
+            providers=setup.providers,
+            models=setup.models,
+            envs=setup.envs,
         ),
     )
 
@@ -304,12 +303,11 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     setup = AgentSetup(
         home=home,
         name="alice",
+        providers={provider.name: provider},
+        adapters={adapter.name: adapter},
+        models=(),
         tools={tool.name: tool},
-        model_providers={provider.name: provider},
-        model_adapters={adapter.name: adapter},
-        model_environ={},
-        model_selectors=("default",),
-        model_cache_dir=root / ".runtime" / "model-cache",
+        envs={},
     )
     agic = AgicDecl(
         name="chat",

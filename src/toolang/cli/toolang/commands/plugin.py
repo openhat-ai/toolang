@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ from toolang.cli.config import load_config_layers
 from toolang.plugin.models.loading import load_model_providers
 from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.tools.loading import load_tool_plugins
+from toolang.setup import ModelListCache, discover_models, model_cache_dir
 
 model_app = typer.Typer(
     help="Inspect available models.",
@@ -175,13 +177,21 @@ def model_rows(
 
     config_layers = load_config_layers(root, agent_name)
     provider_configs = parse_model_provider_configs(config_layers)
+    providers = load_model_providers(provider_configs)
+    models = asyncio.run(
+        discover_models(
+            providers,
+            envs=environ,
+            cache=ModelListCache(model_cache_dir(root)),
+            refresh=refresh,
+        )
+    )
     return model_list_rows(
-        providers=load_model_providers(provider_configs),
+        providers=providers,
+        models=models,
         aliases=parse_model_aliases(config_layers),
-        environ=environ,
+        envs=environ,
         selectors=model_selectors,
-        cache_dir=root / ".runtime" / "model-cache",
-        refresh=refresh,
     )
 
 
@@ -197,12 +207,20 @@ def model_provider_rows(
 
     config_layers = load_config_layers(root)
     provider_configs = parse_model_provider_configs(config_layers)
+    providers = load_model_providers(provider_configs)
+    models = asyncio.run(
+        discover_models(
+            providers,
+            envs=environ,
+            cache=ModelListCache(model_cache_dir(root)),
+        )
+    )
     return build_rows(
-        providers=load_model_providers(provider_configs),
+        providers=providers,
+        models=models,
         aliases=parse_model_aliases(config_layers),
         provider_configs=provider_configs,
-        environ=environ,
-        cache_dir=root / ".runtime" / "model-cache",
+        envs=environ,
     )
 
 

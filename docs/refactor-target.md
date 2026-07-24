@@ -178,21 +178,20 @@ sources. It does not know about `RunExecutor` or `Scheduler`. Every API process
 that can accept runs starts its watcher as process infrastructure; watching is
 not an optional runtime component.
 
-`toolang.up.setup.AgentSetup` is separate from source state and contains
-process-local identity, placement, installed implementations, resolved
-environment values, and model activation limits:
+`toolang.setup.AgentSetup` is separate from source state and contains
+process-local identity, placement, installed implementations, the available
+model snapshot, and resolved environment values:
 
 ```python
 @dataclass(frozen=True, slots=True)
 class AgentSetup:
     name: str
     home: Path
+    providers: Mapping[str, ModelProvider]
+    adapters: Mapping[str, ModelAdapter]
+    models: tuple[ModelInfo, ...]
     tools: Mapping[str, AgentTool]
-    model_providers: Mapping[str, ModelProvider]
-    model_adapters: Mapping[str, ModelAdapter]
-    model_environ: Mapping[str, str]
-    model_selectors: tuple[str, ...] = ()
-    model_cache_dir: Path | None = None
+    envs: Mapping[str, str]
 ```
 
 Effective service definitions remain in the `AgentState` captured for each

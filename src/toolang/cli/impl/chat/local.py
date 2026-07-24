@@ -74,12 +74,11 @@ class LocalChatSession:
             origin="chat",
         )
         targets = selectable_model_targets(
-            providers=self.executor.setup.model_providers,
+            providers=self.executor.setup.providers,
+            models=self.executor.setup.models,
             aliases=self.executor.model_aliases,
-            environ=self.executor.model_environ,
+            envs=self.executor.setup.envs,
             selectors=selectors,
-            cache_dir=self.executor.model_cache_dir,
-            refresh=self.executor.model_cache_refresh,
         )
         return {
             "default": selectors[0] if selectors else None,

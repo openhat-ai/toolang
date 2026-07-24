@@ -72,6 +72,23 @@ Toolang uses model infos for:
 - route-neutral agic ref expansion
 - selector matching inside one provider
 
+`toolang.setup` discovers model infos before accepting a run. The resulting
+`AgentSetup.models` tuple is an immutable availability snapshot; model
+selection during execution never calls a provider or reads a cache.
+
+Provider lists are cached under `${TOOLANG_ROOT}/.runtime/models/`. Cache
+entries are keyed by provider configuration and a non-reversible digest of
+required environment values. Writes use provider-specific inter-process locks
+and atomic replacement. A successful refresh advances the entry generation.
+Remote providers may fall back to the last good list when refresh fails; local
+providers do not report a stale list as current availability.
+
+`SetupWatcher` receives an explicit environment callback from its process
+owner. It periodically rebuilds the snapshot, so environment changes, local
+provider availability, and cache generations written by another process become
+visible to newly accepted runs. Existing runs retain the setup snapshot they
+started with.
+
 
 ## Model Config
 

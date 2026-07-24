@@ -6,12 +6,12 @@ import asyncio
 from collections.abc import Awaitable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
 import logging
-from pathlib import Path
 import threading
 import time
 from typing import Any, Literal
 
 from toolang.base.protocols.model import ModelProvider
+from toolang.base.types.model import ModelInfo
 from toolang.base.types.message import (
     Message,
     Percept,
@@ -24,7 +24,7 @@ from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt
 from toolang.lang.input import coerce_input, validate_value
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 from toolang.state.state import AgentState
-from toolang.up.setup import AgentSetup
+from toolang.setup import AgentSetup
 
 from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin, StepEnd
 from ..records import (
@@ -599,16 +599,16 @@ class _Execution:
         return self.executor.store
 
     @property
-    def model_providers(self) -> Mapping[str, ModelProvider]:
-        return self.setup.model_providers
+    def providers(self) -> Mapping[str, ModelProvider]:
+        return self.setup.providers
 
     @property
-    def model_environ(self) -> Mapping[str, str]:
-        return self.setup.model_environ
+    def models(self) -> tuple[ModelInfo, ...]:
+        return self.setup.models
 
     @property
-    def model_cache_dir(self) -> Path | None:
-        return self.setup.model_cache_dir
+    def envs(self) -> Mapping[str, str]:
+        return self.setup.envs
 
     async def execute(
         self,

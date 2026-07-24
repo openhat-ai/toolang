@@ -28,7 +28,7 @@ from toolang.execution.executor.common import BoundRun
 from toolang.execution.executor.prepare import PreparedAgic
 from toolang.execution.executor.runs.agic import _AgicState, _execute
 from toolang.execution.records import RunControlRecord
-from toolang.plugin.models.discovery import model_infos
+from toolang.plugin.models.discovery import missing_provider_env_vars
 from toolang.plugin.models.resolution import resolve_model, select_model_selectors
 from toolang.plugin.models.views import model_target_profile
 from toolang.plugin.models.providers import deepseek as deepseek_models
@@ -36,7 +36,7 @@ from toolang.plugin.models.providers import google as google_models
 from toolang.plugin.models.providers import ollama as ollama_models
 from toolang.plugin.models.providers import openai as openai_models
 from toolang.plugin.models.providers import openrouter as openrouter_models
-from toolang.up.setup import AgentSetup
+from toolang.setup import AgentSetup
 from toolang.plugin.models.loading import load_model_adapters, load_model_providers
 from toolang.plugin.models.adapters import chat_completions as chat_completions_models
 from toolang.plugin.models.adapters import responses as responses_models
@@ -121,6 +121,30 @@ class _FakeModelProvider(ModelProvider, ModelAdapter):
         return await self.invoke(target, request)
 
 
+class _SelectionContext:
+    """Adapt concise test fixtures to the immutable model snapshot contract."""
+
+    def __init__(
+        self,
+        *,
+        model_providers: dict[str, ModelProvider],
+        model_aliases: dict[str, Any],
+        default_models: tuple[str, ...],
+        model_environ: dict[str, str],
+        **_ignored: object,
+    ) -> None:
+        self.providers = model_providers
+        self.model_aliases = model_aliases
+        self.default_models = default_models
+        self.envs = model_environ
+        self.models = tuple(
+            model
+            for provider in self.providers.values()
+            if not missing_provider_env_vars(provider, environ=self.envs)
+            for model in provider.list_models(environ=self.envs)
+        )
+
+
 async def _ignore_event(_event: object) -> None:
     return None
 
@@ -151,7 +175,7 @@ def test_model_resolution_resolves_named_route(tmp_path: Path) -> None:
         ),
         default_api_key_env="OPENAI_API_KEY",
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openai": provider},
         model_aliases=parse_model_aliases(load_config_layers(toolang_root, "alice")),
         default_models=parse_default_models(load_config_layers(toolang_root, "alice")),
@@ -180,7 +204,7 @@ def test_model_resolution_resolves_explicit_provider_route() -> None:
             ),
         ),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openrouter": provider},
         model_aliases={},
         default_models=(),
@@ -194,7 +218,7 @@ def test_model_resolution_resolves_explicit_provider_route() -> None:
 
 
 def test_model_resolution_rejects_ambiguous_selector() -> None:
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={
             "openai": _FakeModelProvider(
                 name="openai",
@@ -247,7 +271,7 @@ def test_model_resolution_rejects_missing_provider_env_before_target_use() -> No
         ),
         required_env_vars=("OPENAI_API_KEY",),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openai": provider},
         model_aliases={},
         default_models=(),
@@ -289,7 +313,7 @@ def test_model_resolution_skips_unconfigured_provider_when_configured_match_exis
         ),
         required_env_vars=("OPENROUTER_API_KEY",),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openai": openai, "openrouter": openrouter},
         model_aliases={},
         default_models=(),
@@ -323,7 +347,7 @@ def test_model_resolution_uses_first_allowed_selector_as_default() -> None:
             ),
         ),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openrouter": provider},
         model_aliases={},
         default_models=(),
@@ -363,7 +387,7 @@ def test_model_resolution_allows_selector_within_allowed_set() -> None:
             ),
         ),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openrouter": provider},
         model_aliases={},
         default_models=(),
@@ -403,7 +427,7 @@ def test_model_resolution_rejects_selector_outside_allowed_set() -> None:
             ),
         ),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openrouter": provider},
         model_aliases={},
         default_models=(),
@@ -434,7 +458,7 @@ def test_model_resolution_reports_no_matched_models_when_selector_misses() -> No
         ),
         required_env_vars=("OPENROUTER_API_KEY",),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openrouter": provider},
         model_aliases={},
         default_models=(),
@@ -467,7 +491,7 @@ def test_select_model_selectors_preserves_activation_order_for_intersection() ->
             ),
         ),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openrouter": provider},
         model_aliases={},
         default_models=(),
@@ -505,7 +529,7 @@ def test_select_model_selectors_supports_name_glob_without_matching_family() -> 
             ),
         ),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openrouter": provider},
         model_aliases={},
         default_models=(),
@@ -569,7 +593,7 @@ def test_select_model_selectors_expands_route_neutral_agic_refs_from_discovery()
         ),
         required_env_vars=("OPENROUTER_API_KEY",),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openai": openai, "openrouter": openrouter},
         model_aliases={},
         default_models=(),
@@ -618,13 +642,12 @@ def test_select_model_selectors_skips_providers_missing_required_env() -> None:
         ),
         required_env_vars=("OPENROUTER_API_KEY",),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openai": openai, "openrouter": openrouter},
         model_aliases={},
         default_models=(),
         model_environ={"OPENROUTER_API_KEY": "secret"},
     )
-
     selectors = select_model_selectors(
         context,
         agic_selectors=("openai/gpt-5",),
@@ -660,7 +683,7 @@ def test_select_model_selectors_prefers_exact_ref_over_version_aliases() -> None
         ),
         required_env_vars=("OPENROUTER_API_KEY",),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openrouter": openrouter},
         model_aliases={},
         default_models=(),
@@ -720,7 +743,7 @@ def test_select_model_selectors_returns_all_discoverable_when_unrestricted() -> 
         ),
         required_env_vars=("OPENROUTER_API_KEY",),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openai": openai, "openrouter": openrouter},
         model_aliases={},
         default_models=(),
@@ -737,7 +760,7 @@ def test_select_model_selectors_returns_all_discoverable_when_unrestricted() -> 
     )
 
 
-def test_model_info_discovery_is_cached_within_one_process() -> None:
+def test_model_resolution_only_reads_captured_model_snapshot() -> None:
     openrouter = _FakeModelProvider(
         name="openrouter",
         models=(
@@ -755,12 +778,13 @@ def test_model_info_discovery_is_cached_within_one_process() -> None:
         ),
         required_env_vars=("OPENROUTER_API_KEY",),
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openrouter": openrouter},
         model_aliases={},
         default_models=(),
         model_environ={"OPENROUTER_API_KEY": "secret"},
     )
+    discovery_calls = openrouter.list_models_calls
 
     selectors = select_model_selectors(
         context,
@@ -770,126 +794,10 @@ def test_model_info_discovery_is_cached_within_one_process() -> None:
 
     assert selectors == ("anthropic/claude-4.5-sonnet-20250929[openrouter]",)
     assert target.ref == "anthropic/claude-4.5-sonnet-20250929"
-    assert openrouter.list_models_calls == 1
+    assert openrouter.list_models_calls == discovery_calls
 
 
-def test_model_info_discovery_uses_persistent_cache(tmp_path: Path) -> None:
-    cached_provider = _FakeModelProvider(
-        name="openrouter",
-        models=(
-            ModelInfo(
-                ref="anthropic/claude-4.5-sonnet-20250929",
-                provider="openrouter",
-                name="claude-4.5-sonnet-20250929",
-                model="anthropic/claude-sonnet-4.5",
-                selectors=("anthropic/claude-sonnet-4.5",),
-                adapter="responses",
-            ),
-        ),
-        required_env_vars=("OPENROUTER_API_KEY",),
-    )
-    cache_dir = tmp_path / "model-cache"
-    environ = {"OPENROUTER_API_KEY": "secret"}
-
-    assert model_infos(cached_provider, environ=environ, cache_dir=cache_dir)[
-        0
-    ].ref == ("anthropic/claude-4.5-sonnet-20250929")
-    assert cached_provider.list_models_calls == 1
-
-    same_provider = _FakeModelProvider(
-        name="openrouter",
-        models=(
-            ModelInfo(
-                ref="anthropic/claude-4.5-sonnet-20250929",
-                provider="openrouter",
-                name="claude-4.5-sonnet-20250929",
-                model="anthropic/claude-sonnet-4.5",
-                selectors=("anthropic/claude-sonnet-4.5",),
-                adapter="responses",
-            ),
-        ),
-        required_env_vars=("OPENROUTER_API_KEY",),
-    )
-    changed_provider = _FakeModelProvider(
-        name="openrouter",
-        models=(
-            ModelInfo(
-                ref="openai/gpt-5",
-                provider="openrouter",
-                name="gpt-5",
-                model="openai/gpt-5",
-                adapter="responses",
-            ),
-        ),
-        required_env_vars=("OPENROUTER_API_KEY",),
-    )
-
-    cached = model_infos(same_provider, environ=environ, cache_dir=cache_dir)
-
-    assert cached[0].ref == "anthropic/claude-4.5-sonnet-20250929"
-    assert same_provider.list_models_calls == 0
-
-    changed = model_infos(changed_provider, environ=environ, cache_dir=cache_dir)
-    refreshed = model_infos(
-        changed_provider, environ=environ, cache_dir=cache_dir, refresh=True
-    )
-
-    assert changed[0].ref == "openai/gpt-5"
-    assert refreshed[0].ref == "openai/gpt-5"
-    assert changed_provider.list_models_calls == 2
-
-
-def test_model_info_persistent_cache_ignores_projection_only_provider_state(
-    tmp_path: Path,
-) -> None:
-    models = (
-        ModelInfo(
-            ref="openai/gpt-5",
-            provider="openai",
-            name="gpt-5",
-            model="gpt-5",
-            selectors=("gpt-5",),
-            adapter="responses",
-        ),
-    )
-    provider = _FakeModelProvider(
-        name="openai",
-        models=models,
-        required_env_vars=("OPENAI_API_KEY",),
-        default_base_url="https://api.openai.com/v1",
-    )
-    provider.adapter = "responses"  # type: ignore[attr-defined]
-    provider.options = {"temperature": 0}  # type: ignore[attr-defined]
-    provider.scope = "remote"  # type: ignore[attr-defined]
-    cache_dir = tmp_path / "model-cache"
-
-    assert (
-        model_infos(
-            provider, environ={"OPENAI_API_KEY": "secret"}, cache_dir=cache_dir
-        )[0].ref
-        == "openai/gpt-5"
-    )
-    assert provider.list_models_calls == 1
-
-    same_source_provider = _FakeModelProvider(
-        name="openai",
-        models=models,
-        required_env_vars=("OPENAI_API_KEY",),
-        default_base_url="https://api.openai.com/v1",
-    )
-    same_source_provider.adapter = "chat_completions"  # type: ignore[attr-defined]
-    same_source_provider.options = {"temperature": 1}  # type: ignore[attr-defined]
-    same_source_provider.scope = "local"  # type: ignore[attr-defined]
-
-    assert model_infos(
-        same_source_provider, environ={"OPENAI_API_KEY": "secret"}, cache_dir=cache_dir
-    )[0].ref == ("openai/gpt-5")
-    assert same_source_provider.list_models_calls == 0
-
-
-def test_model_selection_discovers_all_providers_before_filtering(
-    tmp_path: Path,
-) -> None:
+def test_model_selection_filters_the_complete_captured_snapshot() -> None:
     openai = _FakeModelProvider(
         name="openai",
         models=(
@@ -918,38 +826,20 @@ def test_model_selection_discovers_all_providers_before_filtering(
         ),
         required_env_vars=("OPENROUTER_API_KEY",),
     )
-    cache_dir = tmp_path / "model-cache"
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openai": openai, "openrouter": openrouter},
         model_aliases={},
         default_models=(),
         model_environ={"OPENAI_API_KEY": "secret", "OPENROUTER_API_KEY": "secret"},
-        model_cache_dir=cache_dir,
     )
+    discovery_calls = (openai.list_models_calls, openrouter.list_models_calls)
 
     selectors = select_model_selectors(
         context, activation_selectors=("openai/gpt-5[openai]",)
     )
 
     assert selectors == ("openai/gpt-5[openai]",)
-    assert openai.list_models_calls == 1
-    assert openrouter.list_models_calls == 1
-
-    same_openrouter = _FakeModelProvider(
-        name="openrouter",
-        models=openrouter._models,
-        required_env_vars=("OPENROUTER_API_KEY",),
-    )
-
-    assert (
-        model_infos(
-            same_openrouter,
-            environ={"OPENROUTER_API_KEY": "secret"},
-            cache_dir=cache_dir,
-        )[0].ref
-        == "anthropic/claude-sonnet-4.5"
-    )
-    assert same_openrouter.list_models_calls == 0
+    assert (openai.list_models_calls, openrouter.list_models_calls) == discovery_calls
 
 
 def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
@@ -971,7 +861,7 @@ def test_model_route_can_override_provider_defaults(tmp_path: Path) -> None:
         default_base_url="https://api.openai.com/v1",
         default_api_key_env="OPENAI_API_KEY",
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openai": provider},
         model_aliases=parse_model_aliases(load_config_layers(toolang_root, "alice")),
         default_models=(),
@@ -1002,7 +892,7 @@ def test_model_alias_uses_provider_default_key_env(tmp_path: Path) -> None:
         default_base_url="https://openrouter.ai/api/v1",
         default_api_key_env="OPENROUTER_API_KEY",
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openrouter": provider},
         model_aliases=parse_model_aliases(load_config_layers(toolang_root, "alice")),
         default_models=(),
@@ -1036,7 +926,7 @@ def test_model_alias_reports_missing_key_env(tmp_path: Path) -> None:
         required_env_vars=("OPENAI_API_KEY",),
         default_api_key_env="OPENAI_API_KEY",
     )
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"openai": provider},
         model_aliases=parse_model_aliases(load_config_layers(toolang_root, "alice")),
         default_models=(),
@@ -1173,7 +1063,7 @@ def test_deepseek_provider_lists_curated_model_profiles() -> None:
 
 def test_deepseek_provider_resolves_chat_completions_target() -> None:
     provider = deepseek_models.create_model_provider({})
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"deepseek": provider},
         model_aliases={},
         default_models=(),
@@ -1221,7 +1111,7 @@ def test_google_provider_lists_curated_gemini_model_profiles() -> None:
 
 def test_google_provider_resolves_chat_completions_target() -> None:
     provider = google_models.create_model_provider({})
-    context = SimpleNamespace(
+    context = _SelectionContext(
         model_providers={"google": provider},
         model_aliases={},
         default_models=(),
@@ -1254,7 +1144,10 @@ def test_model_target_profile_formats_token_counts_as_decimal_units() -> None:
         adapter="chat_completions",
     )
 
-    assert model_target_profile(target, provider=provider, environ={}) == (
+    assert model_target_profile(
+        target,
+        models=provider.list_models(environ={}),
+    ) == (
         "streaming=y, tools=y, ctx=1M, max_out=384k, price=$0.14/$0.28"
     )
     assert (
@@ -1266,8 +1159,7 @@ def test_model_target_profile_formats_token_counts_as_decimal_units() -> None:
                 model="gpt-5.3-chat-latest",
                 adapter="responses",
             ),
-            provider=openai_models.create_model_provider({}),
-            environ={},
+            models=openai_models.create_model_provider({}).list_models(environ={}),
         )
         == "streaming=y, tools=y, ctx=128k, max_out=16.4k, price=$1.75/$14"
     )
@@ -2935,10 +2827,11 @@ def _prepared_agic(
             setup=AgentSetup(
                 name="test",
                 home=Path("/agents/test"),
+                providers={},
+                adapters={},
+                models=(),
                 tools={},
-                model_providers={},
-                model_adapters={},
-                model_environ={},
+                envs={},
             ),
             created_at="2026-04-10T00:00:00Z",
         ),

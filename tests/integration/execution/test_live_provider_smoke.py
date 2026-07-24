@@ -28,7 +28,7 @@ from toolang.lang.input import perceive_input
 from toolang.plugin.models.loading import load_model_adapters, load_model_providers
 from toolang.plugin.models.resolution import parse_model_selector
 from toolang.state.state import AgentState, agent_state_version
-from toolang.up.setup import AgentSetup
+from toolang.setup import AgentSetup
 
 pytestmark = pytest.mark.live_provider
 
@@ -100,15 +100,19 @@ class _LiveExecution:
         )
         if provider_hint is not None:
             providers = {provider_hint: providers[provider_hint]}
+        envs = dict(os.environ)
         setup = AgentSetup(
             name="alice",
             home=home,
+            providers=providers,
+            adapters=load_model_adapters(),
+            models=tuple(
+                model_info
+                for provider in providers.values()
+                for model_info in provider.list_models(environ=envs)
+            ),
             tools={},
-            model_providers=providers,
-            model_adapters=load_model_adapters(),
-            model_environ=dict(os.environ),
-            model_selectors=(model,),
-            model_cache_dir=runtime / "models",
+            envs=envs,
         )
         store = RunStore(runtime / "runs.db")
         ids = IdIssuer(runtime / "ids.json")

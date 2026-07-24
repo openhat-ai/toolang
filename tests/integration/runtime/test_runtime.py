@@ -98,7 +98,7 @@ from toolang.execution.executor.persist import PersistSink
 from toolang.execution.store import RunStore
 from toolang.up.process import agent_run_store_path
 from toolang.execution.reply import SseReplySink
-from toolang.up.setup import AgentSetup
+from toolang.setup import AgentSetup
 from tests.support import runtime as inspect
 from toolang.api.common import ShutdownAwareStreamingResponse, guarded_stream
 from toolang.api.schemas import ChatRequest, InputMessagePayload, TextInputPart
@@ -7369,9 +7369,21 @@ def _build_context(
         agent_name=agent_name,
     )
     store = RunStore(agent_run_store_path(toolang_root, agent_name))
+    providers = {
+        name: provider
+        for name, provider in load_model_providers().items()
+        if name == "openai"
+    }
     setup = AgentSetup(
         name=agent_name,
         home=agents.agent_home(toolang_root, agent_name),
+        providers=providers,
+        adapters=load_model_adapters(),
+        models=tuple(
+            model
+            for provider in providers.values()
+            for model in provider.list_models(environ={"OPENAI_API_KEY": "secret"})
+        ),
         tools=load_runtime_tools(
             plugin_config=merge_named_configs(
                 (state.root_config, state.home_config),
@@ -7380,13 +7392,7 @@ def _build_context(
             ),
             selectors=tool_selectors,
         ),
-        model_providers={
-            name: provider
-            for name, provider in load_model_providers().items()
-            if name == "openai"
-        },
-        model_adapters=load_model_adapters(),
-        model_environ={"OPENAI_API_KEY": "secret"},
+        envs={"OPENAI_API_KEY": "secret"},
     )
     config_layers = (state.root_config, state.home_config)
     model_aliases = parse_model_aliases(config_layers)

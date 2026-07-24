@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool
@@ -87,7 +87,6 @@ def prepare_agic(
     model_selectors = _effective_model_selectors(
         context,
         agic=agic,
-        base=_activation_model_selectors(context),
     )
     model = resolve_model(
         context,
@@ -163,9 +162,9 @@ def prepare_agic(
         ),
     )
     instructions = _render_instructions(run.state.program, agic, system_runtime)
-    provider = run.setup.model_providers[model.provider]
+    provider = run.setup.providers[model.provider]
     prepared_model = provider.prepare_target(model)
-    adapter = run.setup.model_adapters.get(prepared_model.adapter)
+    adapter = run.setup.adapters.get(prepared_model.adapter)
     if adapter is None:
         raise ToolangError(f"unknown model adapter: {prepared_model.adapter}")
     prepared = PreparedAgic(
@@ -177,7 +176,7 @@ def prepare_agic(
         prompt_context=prompt_context,
         messages=messages,
         tools=tools,
-        services=_tool_services(services, context.setup.model_environ),
+        services=_tool_services(services, context.setup.envs),
     )
     _log_prepared(prepared)
     return prepared
@@ -189,21 +188,15 @@ def effective_agics(program: Program) -> tuple[AgicDecl, ...]:
     return (*program.agics, _RUNTIME_DEFAULT_AGIC)
 
 
-def _activation_model_selectors(context: Any) -> tuple[str, ...]:
-    return tuple(item for item in context.setup.model_selectors if item.strip())
-
-
 def _effective_model_selectors(
     context: _Execution,
     *,
     agic: AgicDecl,
-    base: tuple[str, ...],
 ) -> tuple[str, ...]:
     selected = _select_values((), _directives(agic, "models"), lambda values: values)
     return select_model_selectors(
         context,
         agic_selectors=selected,
-        activation_selectors=base,
     )
 
 

@@ -13,7 +13,7 @@ from toolang.base.types.message import Message
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
 from toolang.state.state import AgentState
-from toolang.up.setup import AgentSetup
+from toolang.setup import AgentSetup
 from toolang.work import files
 from toolang.work.records import FileRequestRecord
 from toolang.work.types import FileSnapshot

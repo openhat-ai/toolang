@@ -28,7 +28,7 @@ from toolang.state import state as cap_store
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.message import Message
-from toolang.base.types.model import ModelAlias
+from toolang.base.types.model import ModelAlias, ModelInfo
 from toolang.base.types.sandbox import (
     SandboxSelector,
     SandboxStartRequest,
@@ -58,7 +58,12 @@ from toolang.execution.records import RunRecord
 from toolang.execution.executor.request import ExecutableKind, RunRequest
 from toolang.plugin.models.resolution import select_model_selectors
 from toolang.execution.store import RunStore
-from toolang.up.setup import AgentSetup
+from toolang.setup import (
+    AgentSetup,
+    ModelListCache,
+    discover_models,
+    model_cache_dir,
+)
 from toolang.work.scheduler import DEFAULT_INTERVAL_MS as DEFAULT_SCHEDULER_INTERVAL_MS
 from toolang.work.scheduler import Scheduler
 from toolang.work.store import open_job_store
@@ -133,12 +138,11 @@ class StartupSpec:
 
 @dataclass(frozen=True, slots=True)
 class _StartupModelSelection:
-    model_providers: Mapping[str, ModelProvider]
+    providers: Mapping[str, ModelProvider]
+    models: tuple[ModelInfo, ...]
     model_aliases: Mapping[str, ModelAlias]
     default_models: tuple[str, ...]
-    model_environ: Mapping[str, str]
-    model_cache_dir: Path | None = None
-    model_cache_refresh: bool = False
+    envs: Mapping[str, str]
 
 
 def up(
@@ -522,6 +526,23 @@ def _load_model_providers(
     return load_model_providers(parse_model_provider_configs(config_layers))
 
 
+def _discover_models(
+    providers: Mapping[str, ModelProvider],
+    *,
+    toolang_root: Path,
+    envs: Mapping[str, str],
+    refresh: bool = False,
+) -> tuple[ModelInfo, ...]:
+    return asyncio.run(
+        discover_models(
+            providers,
+            envs=envs,
+            cache=ModelListCache(model_cache_dir(toolang_root)),
+            refresh=refresh,
+        )
+    )
+
+
 def _validate_startup_models(
     *,
     toolang_root: Path,
@@ -531,17 +552,25 @@ def _validate_startup_models(
     agent_state: AgentState,
 ) -> None:
     context = _StartupModelSelection(
-        model_providers=_load_model_providers(
+        providers=_load_model_providers(
             toolang_root, agent_name, agent_state=agent_state
         ),
+        models=(),
         model_aliases=load_model_aliases(
             toolang_root, agent_name, agent_state=agent_state
         ),
         default_models=load_default_models(
             toolang_root, agent_name, agent_state=agent_state
         ),
-        model_environ=environ,
-        model_cache_dir=toolang_root / ".runtime" / "model-cache",
+        envs=environ,
+    )
+    context = replace(
+        context,
+        models=_discover_models(
+            context.providers,
+            toolang_root=toolang_root,
+            envs=environ,
+        ),
     )
     if not selectors:
         select_model_selectors(context)
@@ -958,11 +987,15 @@ def assemble_execution(
     default_models = load_default_models(toolang_root, agent_name, agent_state=state)
     _validate_model_selectors(
         _StartupModelSelection(
-            model_providers=model_providers,
+            providers=model_providers,
+            models=_discover_models(
+                model_providers,
+                toolang_root=toolang_root,
+                envs=environ,
+            ),
             model_aliases=model_aliases,
             default_models=default_models,
-            model_environ=environ,
-            model_cache_dir=toolang_root / ".runtime" / "model-cache",
+            envs=environ,
         ),
         normalized_model_selectors,
     )
@@ -984,12 +1017,15 @@ def assemble_execution(
     setup = AgentSetup(
         name=agent_name,
         home=agents.agent_home(toolang_root, agent_name),
+        providers=model_providers,
+        adapters=load_model_adapters(),
+        models=_discover_models(
+            model_providers,
+            toolang_root=toolang_root,
+            envs=environ,
+        ),
         tools=selected_tools,
-        model_providers=model_providers,
-        model_adapters=load_model_adapters(),
-        model_environ=environ,
-        model_selectors=normalized_model_selectors,
-        model_cache_dir=toolang_root / ".runtime" / "model-cache",
+        envs=environ,
     )
     executor = Executor(
         root=toolang_root,

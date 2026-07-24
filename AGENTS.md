@@ -129,8 +129,8 @@
   respectively.
 - `toolang.up` owns remote agent target resolution, runtime-state files,
   managed processes, visiting and roaming materialization, sandbox filesystem
-  assembly, resolved `AgentHosting`, installed `AgentSetup`, API process
-  assembly, and channel execution orchestration.
+  assembly, resolved `AgentHosting`, API process assembly, and channel
+  execution orchestration.
 - `toolang.catalog` owns local agent-home CRUD, authored cap and job CRUD,
   wired cap references, and bundled authored-file templates. Its collections
   receive explicit directories or config-file paths and do not resolve remote
@@ -147,6 +147,13 @@
 - `toolang.state` owns remote cap source resolution, durable/prepared source
   snapshots, effective cap projection and materialization, immutable
   root/home/agent state, and source-state watching.
+- `toolang.setup` owns immutable installed runtime setup snapshots, provider
+  model discovery, and the multi-process-safe model-list cache under
+  `${TOOLANG_ROOT}/.runtime/models/`. `AgentSetup` carries `providers`,
+  `adapters`, `models`, `tools`, and `envs`; execution consumes this snapshot
+  without provider discovery or cache access. `SetupWatcher` receives
+  environment values through an explicit caller callback and publishes new
+  snapshots for later runs.
 - `toolang.state.schemas` owns caller-facing capability protocol types;
   its schema types construct themselves from prepared capability state;
   `toolang.state.types` owns capability-state vocabulary.

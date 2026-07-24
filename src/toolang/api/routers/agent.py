@@ -45,12 +45,11 @@ def models(context: ApiContextDep) -> dict[str, object]:
             origin="chat",
         )
         targets = selectable_model_targets(
-            providers=context.executor.setup.model_providers,
+            providers=context.executor.setup.providers,
+            models=context.executor.setup.models,
             aliases=context.executor.model_aliases,
-            environ=context.executor.model_environ,
+            envs=context.executor.setup.envs,
             selectors=selectors,
-            cache_dir=context.executor.model_cache_dir,
-            refresh=context.executor.model_cache_refresh,
         )
     except ToolangError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
