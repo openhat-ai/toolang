@@ -71,7 +71,8 @@
   depend on stores, watchers, runtime services, or event emitters.
 - Do not create `projection.py`. Put pure record-to-schema and type-to-schema
   conversion on the schema type itself. Put aggregate loading or store-backed
-  inspection in a focused `inspection.py` owned by the same package.
+  read access in a focused concept module owned by the same package, such as
+  `execution/history.py`.
 - Reserve `model.py`, `models.py`, and `models/` for LLM model concepts so
   business data types cannot be confused with language-model integrations.
 - Use `config.py` for the configuration-file types and parsing owned by one
@@ -198,7 +199,8 @@
 - `toolang.execution.schemas` owns caller-facing run, thread, step, and failure
   protocol types and reuses canonical message values from `toolang.base`;
   its schema types construct themselves from durable records, while
-  `toolang.execution.inspection` performs store-backed aggregate reads. API
+  `toolang.execution.history.RunHistory` provides the four store-backed read
+  operations `list_threads()`, `get_thread()`, `list_runs()`, and `get_run()`. API
   code only serializes these schemas; CLI code reads them through the shared
   remote-or-local execution adapter and only renders them.
   `toolang.execution.types` owns shared execution lifecycle and run-control

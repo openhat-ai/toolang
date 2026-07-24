@@ -978,66 +978,134 @@ class RunStore:
     ) -> tuple[RunRecord, ...]:
         """Return projected history, following a fork's source prefix."""
 
-        runs = self._thread_history(
-            thread_id=thread_id,
+        return self.list_thread_histories_chronological(
+            thread_ids=(thread_id,),
+            limit=limit,
             include_superseded=include_superseded,
-            visited=set(),
-        )
-        return tuple(runs if limit is None else runs[-limit:])
+        ).get(thread_id, ())
 
-    def _thread_history(
+    def list_thread_histories_chronological(
         self,
         *,
-        thread_id: str,
-        include_superseded: bool,
-        visited: set[str],
-    ) -> list[RunRecord]:
-        if thread_id in visited:
-            raise ValueError(f"thread fork cycle: {thread_id}")
-        visited.add(thread_id)
-        try:
-            thread = self.get_thread(thread_id=thread_id)
-            prefix: list[RunRecord] = []
-            if thread is not None:
-                control = self.get_thread_control(
-                    thread_id=thread_id, index=thread.created_by.index
-                )
-                if (
-                    control is not None
-                    and control.kind == "fork"
-                    and control.source_thread is not None
-                    and control.anchor_run is not None
-                ):
-                    source = self._thread_history(
-                        thread_id=control.source_thread,
-                        include_superseded=True,
-                        visited=visited,
+        thread_ids: Sequence[str],
+        limit: int | None = None,
+        include_superseded: bool = False,
+    ) -> dict[str, tuple[RunRecord, ...]]:
+        """Return projected histories for several threads from one store snapshot."""
+
+        selected = tuple(dict.fromkeys(item for item in thread_ids if item))
+        if not selected:
+            return {}
+        with self._lock:
+            owner = not self._conn.in_transaction
+            if owner:
+                self._conn.execute("BEGIN")
+            try:
+                thread_rows = self._conn.execute("SELECT * FROM threads").fetchall()
+                control_rows = self._conn.execute(
+                    'SELECT * FROM thread_controls ORDER BY thread ASC, "index" ASC'
+                ).fetchall()
+                run_rows = self._conn.execute(
+                    "SELECT * FROM runs ORDER BY rowid ASC"
+                ).fetchall()
+                if owner:
+                    self._conn.commit()
+            except BaseException:
+                if owner:
+                    self._conn.rollback()
+                raise
+        threads = {
+            record.thread_id: record
+            for record in (_thread_from_row(row) for row in thread_rows)
+        }
+        controls_by_thread: dict[str, list[ThreadControlRecord]] = {}
+        for row in control_rows:
+            control = _thread_control_from_row(row)
+            controls_by_thread.setdefault(control.thread, []).append(control)
+        runs_by_thread: dict[str, list[RunRecord]] = {}
+        for row in run_rows:
+            run = _run_from_row(row)
+            runs_by_thread.setdefault(run.thread, []).append(run)
+        cache: dict[tuple[str, bool], tuple[RunRecord, ...]] = {}
+
+        def history(
+            thread_id: str,
+            *,
+            include_hidden: bool,
+            visited: set[str],
+        ) -> list[RunRecord]:
+            key = (thread_id, include_hidden)
+            cached = cache.get(key)
+            if cached is not None:
+                return list(cached)
+            if thread_id in visited:
+                raise ValueError(f"thread fork cycle: {thread_id}")
+            visited.add(thread_id)
+            try:
+                thread = threads.get(thread_id)
+                controls = controls_by_thread.get(thread_id, ())
+                prefix: list[RunRecord] = []
+                if thread is not None:
+                    created_by = next(
+                        (
+                            control
+                            for control in controls
+                            if control.index == thread.created_by.index
+                        ),
+                        None,
                     )
-                    for run in source:
-                        prefix.append(run)
-                        if run.id == control.anchor_run:
-                            break
-                    else:
-                        raise ValueError(
-                            f"fork anchor is missing from source history: {control.anchor_run}"
+                    if (
+                        created_by is not None
+                        and created_by.kind == "fork"
+                        and created_by.source_thread is not None
+                        and created_by.anchor_run is not None
+                    ):
+                        source = history(
+                            created_by.source_thread,
+                            include_hidden=True,
+                            visited=visited,
                         )
-                if prefix:
-                    positions = {run.id: index for index, run in enumerate(prefix)}
-                    cuts = tuple(
-                        positions[control.anchor_run]
-                        for control in self.list_thread_controls(thread_id=thread_id)
-                        if control.kind == "rewind" and control.anchor_run in positions
-                    )
-                    if cuts:
-                        prefix = prefix[: min(cuts)]
-            own = self.list_thread_runs_chronological(
-                thread_id=thread_id,
-                limit=None,
-                include_superseded=include_superseded,
+                        for run in source:
+                            prefix.append(run)
+                            if run.id == created_by.anchor_run:
+                                break
+                        else:
+                            raise ValueError(
+                                "fork anchor is missing from source history: "
+                                f"{created_by.anchor_run}"
+                            )
+                    if prefix:
+                        positions = {
+                            run.id: position for position, run in enumerate(prefix)
+                        }
+                        cuts = tuple(
+                            positions[control.anchor_run]
+                            for control in controls
+                            if control.kind == "rewind"
+                            and control.anchor_run in positions
+                        )
+                        if cuts:
+                            prefix = prefix[: min(cuts)]
+                own = [
+                    run
+                    for run in runs_by_thread.get(thread_id, ())
+                    if include_hidden or run.superseded_by is None
+                ]
+                result = [*prefix, *own]
+                cache[key] = tuple(result)
+                return result
+            finally:
+                visited.remove(thread_id)
+
+        result: dict[str, tuple[RunRecord, ...]] = {}
+        for thread_id in selected:
+            runs = history(
+                thread_id,
+                include_hidden=include_superseded,
+                visited=set(),
             )
-            return [*prefix, *own]
-        finally:
-            visited.remove(thread_id)
+            result[thread_id] = _history_tail(runs, limit=limit)
+        return result
 
     def _resolve_thread_anchor(
         self,
@@ -1050,10 +1118,9 @@ class RunStore:
 
         history = tuple(
             run
-            for run in self._thread_history(
+            for run in self.list_thread_history_chronological(
                 thread_id=thread_id,
                 include_superseded=False,
-                visited=set(),
             )
             if run.parent is None
         )
@@ -1223,23 +1290,7 @@ class RunStore:
     def get_model_text(self, *, text_hash: str) -> str | None:
         """Return normalized model-request text by hash."""
 
-        with self._lock:
-            row = self._conn.execute(
-                """
-                SELECT body FROM model_texts
-                WHERE hash = ?
-                """,
-                (text_hash,),
-            ).fetchone()
-        if row is None:
-            return None
-        body = str(row["body"])
-        _verify_content_hash(
-            body,
-            expected=text_hash,
-            label="model text",
-        )
-        return body
+        return self._get_model_texts({text_hash}).get(text_hash)
 
     def capture_model_call(
         self,
@@ -1268,39 +1319,145 @@ class RunStore:
     def rebuild_model_call(self, step: StepRecord) -> ModelCall:
         """Rebuild the normalized model call captured by one model step."""
 
-        if step.kind != "model":
-            raise ValueError(f"step is not a model call: {step.path}")
-        raw_call = step.given.get("call")
-        if not isinstance(raw_call, Mapping):
-            raise ValueError(f"model call metadata is missing: {step.path}")
-        instruction_ref = _required_text(raw_call.get("instructions"), "instructions")
-        instructions = self.get_model_text(text_hash=instruction_ref)
-        if instructions is None:
-            raise ValueError(f"model instructions are missing: {instruction_ref}")
-        raw_messages = raw_call.get("messages")
-        if not isinstance(raw_messages, Sequence) or isinstance(
-            raw_messages, (str, bytes, bytearray)
-        ):
-            raise ValueError(f"model message references are invalid: {step.path}")
-        messages = [
-            self._get_model_message(_required_text(message_ref, f"messages[{index}]"))
-            for index, message_ref in enumerate(raw_messages)
-        ]
-        toolset_ref = raw_call.get("tools")
-        tools = (
-            self._get_toolset(_required_text(toolset_ref, "tools"))
-            if toolset_ref is not None
-            else ()
+        return self.rebuild_model_calls((step,))[step.path]
+
+    def rebuild_model_calls(self, steps: Sequence[StepRecord]) -> dict[str, ModelCall]:
+        """Rebuild normalized model calls for several model steps in batches."""
+
+        references: dict[
+            str,
+            tuple[str, tuple[str, ...], str | None, dict[str, Any] | None],
+        ] = {}
+        instruction_hashes: set[str] = set()
+        message_hashes: set[str] = set()
+        toolset_hashes: set[str] = set()
+        for step in steps:
+            if step.kind != "model":
+                raise ValueError(f"step is not a model call: {step.path}")
+            raw_call = step.given.get("call")
+            if not isinstance(raw_call, Mapping):
+                raise ValueError(f"model call metadata is missing: {step.path}")
+            instruction_ref = _required_text(
+                raw_call.get("instructions"), "instructions"
+            )
+            raw_messages = raw_call.get("messages")
+            if not isinstance(raw_messages, Sequence) or isinstance(
+                raw_messages, (str, bytes, bytearray)
+            ):
+                raise ValueError(f"model message references are invalid: {step.path}")
+            message_refs = tuple(
+                _required_text(message_ref, f"messages[{index}]")
+                for index, message_ref in enumerate(raw_messages)
+            )
+            raw_toolset_ref = raw_call.get("tools")
+            toolset_ref = (
+                _required_text(raw_toolset_ref, "tools")
+                if raw_toolset_ref is not None
+                else None
+            )
+            raw_state = raw_call.get("state")
+            if raw_state is not None and not isinstance(raw_state, Mapping):
+                raise ValueError(f"model adapter state is invalid: {step.path}")
+            state = dict(raw_state) if isinstance(raw_state, Mapping) else None
+            references[step.path] = (
+                instruction_ref,
+                message_refs,
+                toolset_ref,
+                state,
+            )
+            instruction_hashes.add(instruction_ref)
+            message_hashes.update(message_refs)
+            if toolset_ref is not None:
+                toolset_hashes.add(toolset_ref)
+
+        texts = self._get_model_texts(instruction_hashes)
+        messages = self._get_model_messages(message_hashes)
+        toolsets = self._get_toolsets(toolset_hashes)
+        calls: dict[str, ModelCall] = {}
+        for path, (
+            instruction_ref,
+            message_refs,
+            toolset_ref,
+            state,
+        ) in references.items():
+            instructions = texts.get(instruction_ref)
+            if instructions is None:
+                raise ValueError(f"model instructions are missing: {instruction_ref}")
+            missing_message = next(
+                (item for item in message_refs if item not in messages), None
+            )
+            if missing_message is not None:
+                raise ValueError(f"model message is missing: {missing_message}")
+            if toolset_ref is not None and toolset_ref not in toolsets:
+                raise ValueError(f"model toolset is missing: {toolset_ref}")
+            calls[path] = ModelCall(
+                instructions=instructions,
+                messages=[messages[item] for item in message_refs],
+                tools=toolsets[toolset_ref] if toolset_ref is not None else (),
+                state=state,
+            )
+        return calls
+
+    def _get_model_texts(self, text_hashes: set[str]) -> dict[str, str]:
+        rows = self._content_rows(
+            table="model_texts",
+            value_column="body",
+            hashes=text_hashes,
         )
-        raw_state = raw_call.get("state")
-        if raw_state is not None and not isinstance(raw_state, Mapping):
-            raise ValueError(f"model adapter state is invalid: {step.path}")
-        return ModelCall(
-            instructions=instructions,
-            messages=messages,
-            tools=tools,
-            state=dict(raw_state) if isinstance(raw_state, Mapping) else None,
+        texts: dict[str, str] = {}
+        for text_hash, raw in rows.items():
+            body = str(raw)
+            _verify_content_hash(body, expected=text_hash, label="model text")
+            texts[text_hash] = body
+        return texts
+
+    def _get_model_messages(self, message_hashes: set[str]) -> dict[str, Message]:
+        rows = self._content_rows(
+            table="model_messages",
+            value_column="data",
+            hashes=message_hashes,
         )
+        return {
+            message_hash: _model_message_from_stored(message_hash, str(raw))
+            for message_hash, raw in rows.items()
+        }
+
+    def _get_toolsets(
+        self, toolset_hashes: set[str]
+    ) -> dict[str, tuple[ToolDefinition, ...]]:
+        rows = self._content_rows(
+            table="model_toolsets",
+            value_column="data",
+            hashes=toolset_hashes,
+        )
+        return {
+            toolset_hash: _toolset_from_stored(toolset_hash, str(raw))
+            for toolset_hash, raw in rows.items()
+        }
+
+    def _content_rows(
+        self,
+        *,
+        table: str,
+        value_column: str,
+        hashes: set[str],
+    ) -> dict[str, object]:
+        if not hashes:
+            return {}
+        values = tuple(sorted(hashes))
+        rows: list[sqlite3.Row] = []
+        with self._lock:
+            for offset in range(0, len(values), 500):
+                chunk = values[offset : offset + 500]
+                placeholders = ", ".join("?" for _ in chunk)
+                rows.extend(
+                    self._conn.execute(
+                        f"SELECT hash, {value_column} FROM {table} "
+                        f"WHERE hash IN ({placeholders})",
+                        chunk,
+                    ).fetchall()
+                )
+        return {str(row["hash"]): row[value_column] for row in rows}
 
     def _put_model_text(self, body: str) -> str:
         text_hash = _content_hash(body)
@@ -1319,31 +1476,6 @@ class RunStore:
         )
         return message_hash
 
-    def _get_model_message(self, message_hash: str) -> Message:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT data FROM model_messages WHERE hash = ?",
-                (message_hash,),
-            ).fetchone()
-        if row is None:
-            raise ValueError(f"model message is missing: {message_hash}")
-        stored = str(row["data"])
-        _verify_content_hash(
-            stored,
-            expected=message_hash,
-            label="model message",
-        )
-        try:
-            data = _load_json(stored)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"model message is invalid: {message_hash}") from exc
-        if not isinstance(data, Mapping):
-            raise ValueError(f"model message is invalid: {message_hash}")
-        try:
-            return Message.from_data(data)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"model message is invalid: {message_hash}") from exc
-
     def _put_toolset(self, tools: Sequence[ToolDefinition]) -> str:
         data = _dump_json([tool.to_data() for tool in tools])
         toolset_hash = _content_hash(data)
@@ -1352,46 +1484,6 @@ class RunStore:
             (toolset_hash, data),
         )
         return toolset_hash
-
-    def _get_toolset(self, toolset_hash: str) -> tuple[ToolDefinition, ...]:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT data FROM model_toolsets WHERE hash = ?",
-                (toolset_hash,),
-            ).fetchone()
-        if row is None:
-            raise ValueError(f"model toolset is missing: {toolset_hash}")
-        stored = str(row["data"])
-        _verify_content_hash(
-            stored,
-            expected=toolset_hash,
-            label="model toolset",
-        )
-        try:
-            data = _load_json(stored)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"model toolset is invalid: {toolset_hash}") from exc
-        if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
-            raise ValueError(f"model toolset is invalid: {toolset_hash}")
-        tools: list[ToolDefinition] = []
-        for index, raw_tool in enumerate(data):
-            if not isinstance(raw_tool, Mapping):
-                raise ValueError(
-                    f"model toolset item is invalid: {toolset_hash}[{index}]"
-                )
-            tool_data = cast(Mapping[str, Any], raw_tool)
-            parameters = tool_data.get("parameters")
-            if not isinstance(parameters, Mapping):
-                raise ValueError(
-                    f"model tool parameters are invalid: {toolset_hash}[{index}]"
-                )
-            try:
-                tools.append(ToolDefinition.from_data(tool_data))
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"model toolset item is invalid: {toolset_hash}[{index}]"
-                ) from exc
-        return tuple(tools)
 
     def recent_conversation_messages(
         self,
@@ -1453,6 +1545,40 @@ class RunStore:
                 tuple(params),
             ).fetchall()
         return tuple(_run_control_from_row(row) for row in rows)
+
+    def list_run_controls_for_runs(
+        self,
+        *,
+        run_ids: Sequence[str],
+        kind: RunControlKind | None = None,
+    ) -> dict[str, tuple[RunControlRecord, ...]]:
+        """Return controls for several runs, grouped by run id."""
+
+        selected = tuple(dict.fromkeys(item for item in run_ids if item))
+        if not selected:
+            return {}
+        grouped: dict[str, list[RunControlRecord]] = {run_id: [] for run_id in selected}
+        with self._lock:
+            for offset in range(0, len(selected), 500):
+                chunk = selected[offset : offset + 500]
+                placeholders = ", ".join("?" for _ in chunk)
+                params: tuple[object, ...] = chunk
+                kind_clause = ""
+                if kind is not None:
+                    kind_clause = " AND kind = ?"
+                    params = (*chunk, kind)
+                rows = self._conn.execute(
+                    f"""
+                    SELECT * FROM run_controls
+                    WHERE run IN ({placeholders}){kind_clause}
+                    ORDER BY run ASC, "index" ASC
+                    """,
+                    params,
+                ).fetchall()
+                for row in rows:
+                    control = _run_control_from_row(row)
+                    grouped[control.run].append(control)
+        return {run_id: tuple(controls) for run_id, controls in grouped.items()}
 
     def pending_run_controls(
         self,
@@ -1771,6 +1897,55 @@ def _required_text(value: object, name: str) -> str:
     return value
 
 
+def _model_message_from_stored(message_hash: str, stored: str) -> Message:
+    _verify_content_hash(
+        stored,
+        expected=message_hash,
+        label="model message",
+    )
+    try:
+        data = _load_json(stored)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"model message is invalid: {message_hash}") from exc
+    if not isinstance(data, Mapping):
+        raise ValueError(f"model message is invalid: {message_hash}")
+    try:
+        return Message.from_data(data)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"model message is invalid: {message_hash}") from exc
+
+
+def _toolset_from_stored(toolset_hash: str, stored: str) -> tuple[ToolDefinition, ...]:
+    _verify_content_hash(
+        stored,
+        expected=toolset_hash,
+        label="model toolset",
+    )
+    try:
+        data = _load_json(stored)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"model toolset is invalid: {toolset_hash}") from exc
+    if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
+        raise ValueError(f"model toolset is invalid: {toolset_hash}")
+    tools: list[ToolDefinition] = []
+    for index, raw_tool in enumerate(data):
+        if not isinstance(raw_tool, Mapping):
+            raise ValueError(f"model toolset item is invalid: {toolset_hash}[{index}]")
+        tool_data = cast(Mapping[str, Any], raw_tool)
+        parameters = tool_data.get("parameters")
+        if not isinstance(parameters, Mapping):
+            raise ValueError(
+                f"model tool parameters are invalid: {toolset_hash}[{index}]"
+            )
+        try:
+            tools.append(ToolDefinition.from_data(tool_data))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"model toolset item is invalid: {toolset_hash}[{index}]"
+            ) from exc
+    return tuple(tools)
+
+
 def _model_target_snapshot(target: Mapping[str, Any]) -> dict[str, Any]:
     snapshot = {
         name: _required_text(target.get(name), f"model {name}")
@@ -1820,6 +1995,18 @@ def _like_prefix(value: str) -> str:
     """Escape one literal prefix for a SQLite LIKE expression."""
 
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _history_tail(
+    runs: Sequence[RunRecord], *, limit: int | None
+) -> tuple[RunRecord, ...]:
+    if limit is None:
+        return tuple(runs)
+    if limit < 0:
+        raise ValueError("history limit must not be negative")
+    if limit == 0:
+        return ()
+    return tuple(runs[-limit:])
 
 
 def _run_from_row(row: sqlite3.Row) -> RunRecord:

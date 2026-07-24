@@ -21,7 +21,7 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolDefinition
-from toolang.execution.inspection import ExecutionInspection
+from toolang.execution.history import RunHistory
 from toolang.execution.records import StepRecord
 from toolang.execution.store import RunStore
 from toolang.execution.types import ThreadPrefix
@@ -108,7 +108,7 @@ agic chat(_: Part[]) -> Part[]:
             Message.user("question"),
             Message.assistant("answer"),
         ]
-        detail = ExecutionInspection(reopened).run_detail(run_id)
+        detail = RunHistory(reopened).get_run(run_id)
         assert detail is not None
         assert detail.steps[0].given["call"] == expected_call.to_data()
     finally:

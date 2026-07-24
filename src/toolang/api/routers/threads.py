@@ -12,7 +12,7 @@ from toolang.api.schemas import (
     ThreadResult,
 )
 from toolang.base.types.message import Message
-from toolang.execution.inspection import ExecutionInspection
+from toolang.execution.history import RunHistory
 from toolang.execution.records import ThreadPeer
 from toolang.execution.executor.request import RunRequest
 from toolang.execution.schemas import (
@@ -48,7 +48,7 @@ def threads(
     channel: str | None = None,
     status: str | None = None,
 ) -> list[ThreadInfo]:
-    items = ExecutionInspection(context.executor.store).list_threads(
+    items = RunHistory(context.executor.store).list_threads(
         limit=limit,
         origin=origin,
         channel=channel,
@@ -63,9 +63,7 @@ def thread_detail(
     thread_id: str,
     limit: int = Query(default=50),
 ) -> ThreadDetail:
-    detail = ExecutionInspection(context.executor.store).thread_detail(
-        thread_id, limit=limit
-    )
+    detail = RunHistory(context.executor.store).get_thread(thread_id, run_limit=limit)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"thread not found: {thread_id}")
     return detail
@@ -191,11 +189,16 @@ async def _thread_result(
             request_id=request_id,
         )
     )
-    inspection = ExecutionInspection(context.executor.store)
+    run_detail = RunHistory(context.executor.store).get_run(run.id)
+    if run_detail is None:
+        raise HTTPException(
+            status_code=500,
+            detail=f"run not found after acceptance: {run.id}",
+        )
     return ThreadResult(
         thread=thread_info(context, change.thread_id),
         run=RunCommandResult(
-            run=inspection.run_info(run),
+            run=run_detail,
             command=RunControlInfo.from_record(run, command),
         ),
     )
@@ -204,7 +207,7 @@ async def _thread_result(
 def thread_info(context: ApiContext, thread_id: str) -> ThreadInfo:
     """Return one persisted thread after a write operation."""
 
-    info = ExecutionInspection(context.executor.store).thread_info(thread_id)
+    info = RunHistory(context.executor.store).get_thread(thread_id, run_limit=0)
     if info is None:
         raise HTTPException(
             status_code=500,

@@ -12,7 +12,7 @@ from toolang.api.schemas import (
 )
 from toolang.base.types.message import Message
 from toolang.common.ids import allocate_run_id
-from toolang.execution.inspection import ExecutionInspection
+from toolang.execution.history import RunHistory
 from toolang.execution.records import ThreadPeer
 from toolang.execution.records import RunRecord
 from toolang.execution.threads import ThreadManager
@@ -29,8 +29,8 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 async def submit_chat(context: ApiContextDep, payload: ChatRequest) -> ChatResult:
     thread_id = _chat_thread_id_or_404(context, payload)
     result, reply = await _submit_chat_run(context, payload, thread_id=thread_id)
-    inspection = ExecutionInspection(context.executor.store)
-    detail = inspection.run_detail(result.id)
+    history = RunHistory(context.executor.store)
+    detail = history.get_run(result.id)
     if detail is None:
         if result.status == "failed" and result.error:
             raise HTTPException(status_code=500, detail=result.error)
@@ -61,7 +61,7 @@ async def submit_chat(context: ApiContextDep, payload: ChatRequest) -> ChatResul
         )
     return ChatResult(
         thread=thread_info(context, result.thread),
-        run=inspection.run_info(result),
+        run=detail,
         message=user_message,
         assistant=assistant_message,
     )

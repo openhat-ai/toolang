@@ -19,6 +19,13 @@ This document defines the ownership and lifecycle boundaries of
 It does not own API streaming protocols, CLI rendering, agent events, event
 hubs, or exact historical event replay.
 
+`RunHistory` is the read-only caller-facing entry point over durable execution
+truth. Its public surface is limited to `list_threads()`, `get_thread()`,
+`list_runs()`, and `get_run()`. It remains independent from `RunExecutor` and
+`ThreadManager`, so callers can inspect `runs.db` while no agent process is
+running. `RunStore` performs raw and batched record reads; execution schemas
+perform the final pure record-to-schema conversion.
+
 
 ## Durable Truth
 

@@ -10,7 +10,7 @@ import click
 from pydantic import TypeAdapter
 import typer
 
-from toolang.execution.inspection import ExecutionInspection
+from toolang.execution.history import RunHistory
 from toolang.execution.schemas import RunDetail, RunInfo, ThreadDetail, ThreadInfo
 from toolang.execution.store import RunStore
 from toolang.execution.types import RunStatus
@@ -31,7 +31,7 @@ class LocalExecutionClient:
 
     def __init__(self, store: RunStore) -> None:
         self.store = store
-        self.inspection = ExecutionInspection(store)
+        self.history = RunHistory(store)
 
     @classmethod
     def open(cls, ctx: typer.Context) -> LocalExecutionClient | None:
@@ -51,7 +51,7 @@ class LocalExecutionClient:
         query = parse_qs(parsed.query)
         resource = parts[2:]
         if resource == ("threads",):
-            items = self.inspection.list_threads(
+            items = self.history.list_threads(
                 limit=_query_int(query, "limit", default=50),
                 origin=_query_text(query, "origin"),
                 channel=_query_text(query, "channel"),
@@ -59,20 +59,20 @@ class LocalExecutionClient:
             )
             return {"items": _THREAD_INFOS.dump_python(items, mode="json")}
         if resource == ("runs",):
-            items = self.inspection.list_runs(
+            items = self.history.list_runs(
                 limit=_query_int(query, "limit", default=50),
                 thread_id=_query_text(query, "thread_id"),
                 status=_run_status(_query_text(query, "status")),
             )
             return {"items": _RUN_INFOS.dump_python(items, mode="json")}
         if len(resource) == 2 and resource[0] == "runs":
-            detail = self.inspection.run_detail(resource[1])
+            detail = self.history.get_run(resource[1])
             if detail is None:
                 raise click.ClickException(f"run not found: {resource[1]}")
             return cast(dict[str, Any], _RUN_DETAIL.dump_python(detail, mode="json"))
         if len(resource) == 2 and resource[0] == "threads":
-            detail = self.inspection.thread_detail(
-                resource[1], limit=_query_int(query, "limit", default=50)
+            detail = self.history.get_thread(
+                resource[1], run_limit=_query_int(query, "limit", default=50)
             )
             if detail is None:
                 raise click.ClickException(f"thread not found: {resource[1]}")

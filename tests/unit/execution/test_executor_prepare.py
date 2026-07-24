@@ -26,7 +26,7 @@ from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor.common import BoundRun, Local, output_parts
 from toolang.execution.executor.persist import PersistSink
 from toolang.execution.executor.prepare import prepare_agic
-from toolang.execution.inspection import ExecutionInspection
+from toolang.execution.history import RunHistory
 from toolang.execution.schemas import RunDetail
 from toolang.execution.store import RunStore
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
@@ -107,10 +107,10 @@ def test_multimodal_list_shape_has_replayable_step_output() -> None:
         )
     ) == (
         TextPart(
-            '[['
+            "[["
             '{"type":"text","text":"one"},'
             '{"type":"image","detail":"auto","file_id":"image-1"}'
-            ']]'
+            "]]"
         ),
     )
 
@@ -221,9 +221,7 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
     agic = AgicDecl(
         name="inspect",
         input=Parameter(name="_", type_name="Part[]", span=Span(1)),
-        params=(
-            Parameter(name="appendix", type_name="Part", span=Span(1)),
-        ),
+        params=(Parameter(name="appendix", type_name="Part", span=Span(1)),),
         messages=(
             AstMessage(
                 role="user",
@@ -361,6 +359,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         detail="high",
     )
     try:
+
         async def execute() -> Any:
             return await executor.start(
                 RunSpec(
@@ -405,7 +404,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert "headers" not in steps[0].given["model"]
         assert "api_key" not in steps[0].given["model"]
         assert "adapter_request" not in steps[0].noted
-        detail = ExecutionInspection(store).run_detail(record.id)
+        detail = RunHistory(store).get_run(record.id)
         assert detail is not None
         assert detail.input is not None
         assert detail.input.parts == (TextPart("hello"), image)

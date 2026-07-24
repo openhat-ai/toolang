@@ -24,7 +24,7 @@ from toolang.work.authoring import (
 from toolang.work.inspection import JobInspection
 from toolang.work.schemas import JobDetail, JobInfo
 from toolang.work.store import open_job_store
-from toolang.execution.inspection import ExecutionInspection
+from toolang.execution.history import RunHistory
 from toolang.execution.executor.request import RunRequest
 from toolang.execution.schemas import RunCommandResult, RunControlInfo
 
@@ -205,9 +205,14 @@ async def run_chore(context: ApiContextDep, chore_id: str) -> RunCommandResult:
             },
         ),
     )
-    inspection = ExecutionInspection(context.executor.store)
+    detail = RunHistory(context.executor.store).get_run(run.id)
+    if detail is None:
+        raise HTTPException(
+            status_code=500,
+            detail=f"run not found after acceptance: {run.id}",
+        )
     return RunCommandResult(
-        run=inspection.run_info(run),
+        run=detail,
         command=RunControlInfo.from_record(run, command),
     )
 

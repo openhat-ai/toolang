@@ -28,7 +28,7 @@ from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor.common import BoundRun, Local
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.runs import agic as agic_run
-from toolang.execution.inspection import ExecutionInspection
+from toolang.execution.history import RunHistory
 from toolang.execution.records import OutputRef, RunControlRef, ThreadControlRef
 from toolang.execution.executor.persist import PersistSink
 from toolang.execution.store import RunStore
@@ -178,7 +178,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert tracer.thread_ids == {owner_thread}
     start = store.get_run_control(run_id=record.id, index=0)
     assert start is not None and start.status == "finished"
-    detail = ExecutionInspection(store).run_detail(record.id)
+    detail = RunHistory(store).get_run(record.id)
     assert detail is not None
     assert detail.runnable_kind == "flow"
     assert detail.runnable_name == "pipeline"
@@ -294,9 +294,7 @@ def test_top_level_agic_has_no_containing_step_events(
         return Local("done", "item")
 
     monkeypatch.setattr(agic_run, "execute", execute_agic)
-    record = asyncio.run(
-        _start(executor, _setup(), state, "default", tracer=tracer)
-    )
+    record = asyncio.run(_start(executor, _setup(), state, "default", tracer=tracer))
 
     assert record.status == "finished"
     assert [event.type for event in tracer.events] == ["run_begin", "run_end"]
@@ -325,9 +323,7 @@ def test_runtime_emits_and_persists_system_failure_step(
         raise RuntimeError("runtime failed")
 
     monkeypatch.setattr(agic_run, "execute", fail_agic)
-    record = asyncio.run(
-        _start(executor, _setup(), state, "default", tracer=tracer)
-    )
+    record = asyncio.run(_start(executor, _setup(), state, "default", tracer=tracer))
 
     assert record.status == "failed"
     assert [event.type for event in tracer.events] == [
@@ -616,9 +612,7 @@ def test_flow_step_events_carry_complete_input_references(tmp_path: Path) -> Non
     )
     executor = _executor(tmp_path)
 
-    root = asyncio.run(
-        _start(executor, _setup(), _state(parent, child), parent.name)
-    )
+    root = asyncio.run(_start(executor, _setup(), _state(parent, child), parent.name))
 
     steps = [
         step
@@ -728,9 +722,7 @@ def test_run_control_request_id_is_unique_across_runs(tmp_path: Path) -> None:
         request_id="steer-1",
         created_at="2026-01-01T00:00:01Z",
     )
-    with pytest.raises(
-        ValueError, match="run control request already exists: steer-1"
-    ):
+    with pytest.raises(ValueError, match="run control request already exists: steer-1"):
         store.accept_run_control(
             run_id="run_other",
             kind="steer",
@@ -861,20 +853,20 @@ def test_thread_request_id_is_unique_across_thread_kinds(tmp_path: Path) -> None
     asyncio.run(executor.shutdown())
 
 
-def test_thread_inspection_starts_from_thread_records(
+def test_run_history_starts_from_thread_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     executor = _executor(tmp_path)
     store = executor.store
     created = ThreadManager(store, executor.ids).create(prefix=ThreadPrefix.TERM)
-    inspection = ExecutionInspection(store)
+    history = RunHistory(store)
     monkeypatch.setattr(
         store,
         "list_runs",
         lambda **_kwargs: pytest.fail("thread inspection must not scan all runs"),
     )
 
-    threads = inspection.list_threads(limit=None)
+    threads = history.list_threads(limit=None)
 
     projected = next(thread for thread in threads if thread.id == created)
     assert projected.run_count == 0
@@ -922,10 +914,7 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
 
     assert store.list_runs(thread_id=forked, limit=None) == []
     assert [
-        run.id
-        for run in store.list_thread_history_chronological(
-            thread_id=forked
-        )
+        run.id for run in store.list_thread_history_chronological(thread_id=forked)
     ] == [anchor_id]
     assert manager.rewind(thread_id=created, run_id=anchor_id) is None
     rewound = store.get_thread(thread_id=created)
@@ -988,9 +977,9 @@ def test_thread_fork_rejects_duplicate_request_without_starting_runs(
     )
 
     assert store.get_thread(thread_id=forked) is not None
-    assert [
-        run.id for run in store.list_runs(limit=None, include_superseded=True)
-    ] == ["run_anchor"]
+    assert [run.id for run in store.list_runs(limit=None, include_superseded=True)] == [
+        "run_anchor"
+    ]
     assert [event.type for event in listener.events] == [
         "thread_created",
         "thread_forked",

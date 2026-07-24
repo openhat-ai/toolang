@@ -290,7 +290,7 @@ execution/
 ├── types.py                # execution lifecycle vocabulary
 ├── records.py              # durable thread, run, control, and step truth
 ├── schemas.py              # protocol types and pure record conversion
-├── inspection.py           # store-backed aggregate inspection
+├── history.py              # caller-facing durable run history
 ├── events.py               # RunEvent, RunTracer, and thread events
 ├── store.py                # RunStore
 ├── threads.py              # ThreadManager

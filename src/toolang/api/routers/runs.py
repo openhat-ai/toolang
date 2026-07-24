@@ -13,7 +13,7 @@ from toolang.api.schemas import (
 )
 from toolang.base.types.message import Message
 from toolang.common.ids import allocate_run_id
-from toolang.execution.inspection import ExecutionInspection
+from toolang.execution.history import RunHistory
 from toolang.execution.records import RunRecord
 from toolang.execution.reply import TraceReplySink
 from toolang.execution.executor.request import RunRequest
@@ -42,7 +42,7 @@ def runs(
     thread_id: str | None = None,
     status: RunStatus | None = None,
 ) -> list[RunInfo]:
-    items = ExecutionInspection(context.executor.store).list_runs(
+    items = RunHistory(context.executor.store).list_runs(
         limit=limit, thread_id=thread_id, status=status
     )
     return items
@@ -80,7 +80,7 @@ async def execute_run_stream(
 
 @router.get("/{run_id}", summary="Get Run", response_model=RunDetail)
 def run_detail(context: ApiContextDep, run_id: str) -> RunDetail:
-    detail = ExecutionInspection(context.executor.store).run_detail(run_id)
+    detail = RunHistory(context.executor.store).get_run(run_id)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
     return detail
@@ -136,9 +136,14 @@ async def cancel_run(
         request_id=payload.request_id if payload else None,
         reason=payload.reason if payload else None,
     )
-    inspection = ExecutionInspection(context.executor.store)
+    detail = RunHistory(context.executor.store).get_run(run.id)
+    if detail is None:
+        raise HTTPException(
+            status_code=500,
+            detail=f"run not found after control: {run.id}",
+        )
     return RunCommandResult(
-        run=inspection.run_info(run),
+        run=detail,
         command=RunControlInfo.from_record(run, command_record),
     )
 
@@ -163,9 +168,14 @@ def steer_run(
         message=message,
     )
     updated = _run_or_404(context, run_id)
-    inspection = ExecutionInspection(context.executor.store)
+    detail = RunHistory(context.executor.store).get_run(updated.id)
+    if detail is None:
+        raise HTTPException(
+            status_code=500,
+            detail=f"run not found after control: {updated.id}",
+        )
     return RunCommandResult(
-        run=inspection.run_info(updated),
+        run=detail,
         command=RunControlInfo.from_record(updated, command_record),
     )
 

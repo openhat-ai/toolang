@@ -12,7 +12,7 @@ from toolang.execution.executor.prepare import (
     effective_origin_model_selectors,
     select_origin_agic,
 )
-from toolang.execution.inspection import ExecutionInspection
+from toolang.execution.history import RunHistory
 from toolang.execution.schemas import ThreadInfo
 from toolang.plugin.models.resolution import selectable_model_targets
 from toolang.up import process as agents
@@ -82,7 +82,7 @@ def flows(context: ApiContextDep) -> dict[str, object]:
 
 
 def _profile_metrics(context) -> dict[str, object]:
-    threads = ExecutionInspection(context.executor.store).list_threads(limit=None)
+    threads = RunHistory(context.executor.store).list_threads(limit=None)
     runs = context.executor.store.list_runs(limit=None)
     steps_by_run = context.executor.store.list_steps_for_runs(
         run_ids=tuple(item.id for item in runs)
