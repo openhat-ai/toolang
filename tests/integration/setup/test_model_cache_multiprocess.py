@@ -9,7 +9,7 @@ import time
 from typing import Any
 
 from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.setup import ModelListCache
+from toolang.setup.models import ModelListCache
 
 
 @dataclass(frozen=True)

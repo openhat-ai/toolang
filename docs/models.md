@@ -81,7 +81,10 @@ entries are keyed by provider configuration and a non-reversible digest of
 required environment values. Writes use provider-specific inter-process locks
 and atomic replacement. A successful refresh advances the entry generation.
 Remote providers may fall back to the last good list when refresh fails; local
-providers do not report a stale list as current availability.
+providers do not report a stale list as current availability. This cache is a
+`toolang.setup` implementation detail: callers prepare or refresh an
+`AgentSetup` and consume its `models` snapshot instead of constructing or
+querying the cache directly.
 
 `SetupWatcher` receives an explicit environment callback from its process
 owner. It periodically rebuilds the snapshot, so environment changes, local

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Mapping
+from pathlib import Path
 
-from .models import ModelListCache
 from .prepare import prepare_agent_setup
 from .types import AgentSetup
 
@@ -19,11 +19,11 @@ class SetupWatcher:
         self,
         setup: AgentSetup,
         *,
-        cache: ModelListCache,
+        toolang_root: Path,
         get_envs: Callable[[], Mapping[str, str]],
     ) -> None:
         self._setup = setup
-        self._cache = cache
+        self._toolang_root = toolang_root
         self._get_envs = get_envs
         self._refresh_lock = asyncio.Lock()
 
@@ -38,13 +38,13 @@ class SetupWatcher:
         async with self._refresh_lock:
             current = self._setup
             self._setup = await prepare_agent_setup(
+                toolang_root=self._toolang_root,
                 name=current.name,
                 home=current.home,
                 providers=current.providers,
                 adapters=current.adapters,
                 tools=current.tools,
                 envs=self._get_envs(),
-                cache=self._cache,
                 refresh_models=force,
             )
             return self._setup

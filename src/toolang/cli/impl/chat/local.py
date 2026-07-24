@@ -49,35 +49,38 @@ class LocalChatSession:
         tools: Sequence[str] | None = None,
         caps: Sequence[str] = (),
     ) -> None:
-        self.executor, self.state_watcher = agent_up.assemble_execution(
-            toolang_root=root,
-            agent_name=name,
-            environ=environ,
-            model_selectors=models,
-            tool_selectors=tools,
-            cap_selectors=caps,
-            agent_state=agent_state,
+        self.executor, self.setup_watcher, self.state_watcher = (
+            agent_up.assemble_execution(
+                toolang_root=root,
+                agent_name=name,
+                environ=environ,
+                model_selectors=models,
+                tool_selectors=tools,
+                cap_selectors=caps,
+                agent_state=agent_state,
+            )
         )
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
         self._stop_signal: asyncio.Event | None = None
-        self._watch_task: asyncio.Task[None] | None = None
+        self._watch_tasks: tuple[asyncio.Task[None], ...] = ()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._closed = False
         self._thread.start()
         self._ready.wait()
 
     def list_models(self) -> Mapping[str, Any]:
+        setup = self.setup_watcher.current()
         selectors = effective_origin_model_selectors(
             self.executor,
             state=self.state_watcher.current(),
             origin="chat",
         )
         targets = selectable_model_targets(
-            providers=self.executor.setup.providers,
-            models=self.executor.setup.models,
+            providers=setup.providers,
+            models=setup.models,
             aliases=self.executor.model_aliases,
-            envs=self.executor.setup.envs,
+            envs=setup.envs,
             selectors=selectors,
         )
         return {
@@ -208,8 +211,8 @@ class LocalChatSession:
         if self._stop_signal is not None:
             self._stop_signal.set()
         await self.executor.shutdown()
-        if self._watch_task is not None:
-            await self._watch_task
+        if self._watch_tasks:
+            await asyncio.gather(*self._watch_tasks)
 
     def _submit(self, coroutine: Any, *, allow_closed: bool = False) -> Future[Any]:
         if self._closed and not allow_closed:
@@ -219,8 +222,13 @@ class LocalChatSession:
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
         self._stop_signal = asyncio.Event()
-        self._watch_task = self._loop.create_task(
-            self.state_watcher.run(stop_signal=self._stop_signal)
+        self._watch_tasks = (
+            self._loop.create_task(
+                self.state_watcher.run(stop_signal=self._stop_signal)
+            ),
+            self._loop.create_task(
+                self.setup_watcher.run(stop_signal=self._stop_signal)
+            ),
         )
         self._ready.set()
         self._loop.run_forever()

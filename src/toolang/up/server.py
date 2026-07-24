@@ -60,9 +60,8 @@ from toolang.plugin.models.resolution import select_model_selectors
 from toolang.execution.store import RunStore
 from toolang.setup import (
     AgentSetup,
-    ModelListCache,
-    discover_models,
-    model_cache_dir,
+    SetupWatcher,
+    prepare_agent_setup,
 )
 from toolang.work.scheduler import DEFAULT_INTERVAL_MS as DEFAULT_SCHEDULER_INTERVAL_MS
 from toolang.work.scheduler import Scheduler
@@ -276,7 +275,7 @@ def invoke(
     state = agent_state or prepare_agent(
         toolang_root=toolang_root, agent_name=agent_name
     )
-    executor, watcher = assemble_execution(
+    executor, _setup_watcher, watcher = assemble_execution(
         toolang_root=toolang_root,
         agent_name=agent_name,
         environ=invoke_environ,
@@ -380,13 +379,6 @@ def resolve_startup(
     tool_selectors = _normalize_tool_selectors(tools)
     cap_selectors = _normalize_cap_selectors(caps)
     resolved_file_inboxes = _normalize_file_inboxes(file_inboxes)
-    _validate_startup_models(
-        toolang_root=toolang_root,
-        agent_name=agent_name,
-        selectors=model_selectors,
-        environ=environ,
-        agent_state=state,
-    )
     if resolved_file_inboxes:
         _validate_file_agic(toolang_root=toolang_root, agent_name=agent_name)
     return StartupSpec(
@@ -526,56 +518,41 @@ def _load_model_providers(
     return load_model_providers(parse_model_provider_configs(config_layers))
 
 
-def _discover_models(
-    providers: Mapping[str, ModelProvider],
-    *,
-    toolang_root: Path,
-    envs: Mapping[str, str],
-    refresh: bool = False,
-) -> tuple[ModelInfo, ...]:
-    return asyncio.run(
-        discover_models(
-            providers,
-            envs=envs,
-            cache=ModelListCache(model_cache_dir(toolang_root)),
-            refresh=refresh,
-        )
-    )
-
-
-def _validate_startup_models(
+def _prepare_installed_setup(
     *,
     toolang_root: Path,
     agent_name: str,
-    selectors: Sequence[str],
+    state: AgentState,
     environ: Mapping[str, str],
-    agent_state: AgentState,
-) -> None:
-    context = _StartupModelSelection(
-        providers=_load_model_providers(
-            toolang_root, agent_name, agent_state=agent_state
-        ),
-        models=(),
-        model_aliases=load_model_aliases(
-            toolang_root, agent_name, agent_state=agent_state
-        ),
-        default_models=load_default_models(
-            toolang_root, agent_name, agent_state=agent_state
-        ),
-        envs=environ,
+    tool_selectors: Sequence[str] | None = None,
+    refresh_models: bool = False,
+) -> AgentSetup:
+    providers = _load_model_providers(
+        toolang_root,
+        agent_name,
+        agent_state=state,
     )
-    context = replace(
-        context,
-        models=_discover_models(
-            context.providers,
+    tools = load_runtime_tools(
+        plugin_config=merge_named_configs(
+            _config_layers(state),
+            section="tools",
+            environ=environ,
+        ),
+    )
+    selected_tools = select_tools(tools, tool_selectors)
+    validate_tool_selectors(tools, tool_selectors)
+    return asyncio.run(
+        prepare_agent_setup(
             toolang_root=toolang_root,
+            name=agent_name,
+            home=agents.agent_home(toolang_root, agent_name),
+            providers=providers,
+            adapters=load_model_adapters(),
+            tools=selected_tools,
             envs=environ,
-        ),
+            refresh_models=refresh_models,
+        )
     )
-    if not selectors:
-        select_model_selectors(context)
-        return
-    _validate_model_selectors(context, selectors)
 
 
 def build_run_argv(
@@ -670,7 +647,7 @@ def _up_local(
         environ=environ,
     )
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    executor, watcher = assemble_execution(
+    executor, setup_watcher, watcher = assemble_execution(
         toolang_root=toolang_root,
         agent_name=agent_name,
         environ=environ,
@@ -681,7 +658,12 @@ def _up_local(
         agent_state=prepared_state,
     )
     state = watcher.current()
-    _log_state_loaded(executor, state)
+    setup = setup_watcher.current()
+    _log_state_loaded(
+        setup,
+        state,
+        model_selectors=model_selectors,
+    )
     endpoint = f"http://{endpoint_host}:{port}"
     shutdown_signal = threading.Event()
     channel_bindings = parse_channel_bindings(
@@ -698,13 +680,14 @@ def _up_local(
     context = ApiContext(
         root=toolang_root,
         name=agent_name,
-        home=executor.home,
+        home=setup.home,
         executor=executor,
+        setup_watcher=setup_watcher,
         state_watcher=watcher,
-        authored_jobs=AuthoredJobs(executor.home),
-        private_authored_caps=AuthoredCaps(executor.home),
+        authored_jobs=AuthoredJobs(setup.home),
+        private_authored_caps=AuthoredCaps(setup.home),
         shared_authored_caps=AuthoredCaps(toolang_root),
-        private_wired_caps=WiredCaps(executor.home / "config.toml"),
+        private_wired_caps=WiredCaps(setup.home / "config.toml"),
         shared_wired_caps=WiredCaps(toolang_root / "config.toml"),
         host=host,
         port=port,
@@ -731,6 +714,7 @@ def _up_local(
             scheduler = Scheduler(
                 job_store=job_store,
                 executor=executor,
+                get_agent_setup=setup_watcher.current,
                 get_home_jobs=job_watcher.current,
                 get_agent_state=watcher.current,
                 kinds=("task", "chore"),
@@ -742,7 +726,7 @@ def _up_local(
                     scheduler.start(stop_signal=stop_signal),
                     poll.spawn(
                         name=agent_name,
-                        home=executor.home,
+                        home=setup.home,
                         bindings=channel_bindings,
                         plugins=channel_plugins,
                         executor=executor,
@@ -761,12 +745,20 @@ def _up_local(
                     )
                 )
             )
+            bg_tasks.append(
+                asyncio.create_task(
+                    setup_watcher.run(
+                        stop_signal=stop_signal,
+                    )
+                )
+            )
             if file_inboxes:
                 bg_tasks.append(
                     files.spawn(
                         root=toolang_root,
                         name=agent_name,
                         executor=executor,
+                        get_agent_setup=setup_watcher.current,
                         get_agent_state=watcher.current,
                         inboxes=file_inboxes,
                         interval_ms=DEFAULT_TRIGGER_INTERVAL_MS["file"],
@@ -832,26 +824,44 @@ def _runtime_log_spec_value(
     return env_spec or None
 
 
-def _log_state_loaded(executor: Executor, state: AgentState) -> None:
+def _log_state_loaded(
+    setup: AgentSetup,
+    state: AgentState,
+    *,
+    model_selectors: Sequence[str] = (),
+) -> None:
     state_logger.info(
         "Agent loaded state=%s models=%s tools=%s psyches=%s skills=%s services=%s",
         _short_fingerprint(state.fingerprint),
-        _model_count(executor),
-        len(executor.setup.tools),
+        _model_count(setup, state, selectors=model_selectors),
+        len(setup.tools),
         _cap_count(state, "psyche"),
         _cap_count(state, "skill"),
         _cap_count(state, "service"),
     )
 
 
-def _model_count(executor: Executor) -> int:
+def _model_count(
+    setup: AgentSetup,
+    state: AgentState,
+    *,
+    selectors: Sequence[str] = (),
+) -> int:
+    context = _StartupModelSelection(
+        providers=setup.providers,
+        models=setup.models,
+        model_aliases=parse_model_aliases(_config_layers(state)),
+        default_models=parse_default_models(_config_layers(state)),
+        envs=setup.envs,
+    )
     try:
-        selectors = executor.allowed_model_selectors
         if selectors:
-            return len(select_model_selectors(executor, activation_selectors=selectors))
-        return len(select_model_selectors(executor))
+            return len(
+                select_model_selectors(context, activation_selectors=selectors)
+            )
+        return len(select_model_selectors(context))
     except Exception:
-        return len(executor.allowed_model_selectors)
+        return len(selectors)
 
 
 def _cap_count(state: AgentState, kind: str) -> int:
@@ -972,7 +982,7 @@ def assemble_execution(
     cap_selectors: Sequence[str] = (),
     progress: ProgressSink | None = None,
     agent_state: AgentState | None = None,
-) -> tuple[Executor, state_watcher.StateWatcher]:
+) -> tuple[Executor, SetupWatcher, state_watcher.StateWatcher]:
     """Assemble one executor and its versioned agent state."""
     if agent_state is None:
         agent_state = prepare_agent(
@@ -982,20 +992,22 @@ def assemble_execution(
     normalized_model_selectors = _normalize_model_selectors(model_selectors)
     normalized_tool_selectors = _normalize_tool_selectors(tool_selectors)
     normalized_cap_selectors = _normalize_cap_selectors(cap_selectors)
-    model_providers = _load_model_providers(toolang_root, agent_name, agent_state=state)
     model_aliases = load_model_aliases(toolang_root, agent_name, agent_state=state)
     default_models = load_default_models(toolang_root, agent_name, agent_state=state)
+    setup = _prepare_installed_setup(
+        toolang_root=toolang_root,
+        agent_name=agent_name,
+        state=state,
+        environ=environ,
+        tool_selectors=normalized_tool_selectors,
+    )
     _validate_model_selectors(
         _StartupModelSelection(
-            providers=model_providers,
-            models=_discover_models(
-                model_providers,
-                toolang_root=toolang_root,
-                envs=environ,
-            ),
+            providers=setup.providers,
+            models=setup.models,
             model_aliases=model_aliases,
             default_models=default_models,
-            envs=environ,
+            envs=setup.envs,
         ),
         normalized_model_selectors,
     )
@@ -1005,28 +1017,6 @@ def assemble_execution(
         normalized_model_selectors[0] if normalized_model_selectors else None
     )
     store = RunStore(agents.agent_run_store_path(toolang_root, agent_name))
-    tools = load_runtime_tools(
-        plugin_config=merge_named_configs(
-            _config_layers(state),
-            section="tools",
-            environ=environ,
-        ),
-    )
-    selected_tools = select_tools(tools, normalized_tool_selectors)
-    validate_tool_selectors(tools, normalized_tool_selectors)
-    setup = AgentSetup(
-        name=agent_name,
-        home=agents.agent_home(toolang_root, agent_name),
-        providers=model_providers,
-        adapters=load_model_adapters(),
-        models=_discover_models(
-            model_providers,
-            toolang_root=toolang_root,
-            envs=environ,
-        ),
-        tools=selected_tools,
-        envs=environ,
-    )
     executor = Executor(
         root=toolang_root,
         name=agent_name,
@@ -1048,7 +1038,12 @@ def assemble_execution(
             value, normalized_cap_selectors, agent_name=agent_name
         ),
     )
-    return executor, watcher
+    installed = SetupWatcher(
+        setup,
+        toolang_root=toolang_root,
+        get_envs=lambda: environ,
+    )
+    return executor, installed, watcher
 
 
 def _runtime_webui_url(

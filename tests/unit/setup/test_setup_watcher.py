@@ -10,10 +10,10 @@ from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.setup import (
     AgentSetup,
-    ModelListCache,
     SetupWatcher,
     prepare_agent_setup,
 )
+from toolang.setup.models import ModelListCache, model_cache_dir
 
 
 @dataclass
@@ -21,6 +21,7 @@ class _Provider:
     models: tuple[ModelInfo, ...]
     name: str = "test"
     description: str | None = None
+    calls: int = 0
 
     def required_env_vars(self) -> tuple[str, ...]:
         return ("TEST_API_KEY",)
@@ -34,6 +35,7 @@ class _Provider:
 
     def list_models(self, *, environ: Mapping[str, str]) -> tuple[ModelInfo, ...]:
         del environ
+        self.calls += 1
         return self.models
 
     def prepare_target(self, target: ModelTarget) -> ModelTarget:
@@ -54,13 +56,13 @@ def test_prepare_agent_setup_captures_discovered_models(tmp_path: Path) -> None:
 
     setup = asyncio.run(
         prepare_agent_setup(
+            toolang_root=tmp_path,
             name="alice",
             home=tmp_path / "agents" / "alice",
             providers={"test": provider},
             adapters={"default": cast(ModelAdapter, cast(Any, object()))},
             tools={},
             envs={"TEST_API_KEY": "secret"},
-            cache=ModelListCache(tmp_path / ".runtime" / "models"),
         )
     )
 
@@ -83,35 +85,56 @@ def test_prepare_agent_setup_excludes_models_without_installed_adapter(
 
     setup = asyncio.run(
         prepare_agent_setup(
+            toolang_root=tmp_path,
             name="alice",
             home=tmp_path / "agents" / "alice",
             providers={"test": provider},
             adapters={"default": cast(ModelAdapter, cast(Any, object()))},
             tools={},
             envs={"TEST_API_KEY": "secret"},
-            cache=ModelListCache(tmp_path / ".runtime" / "models"),
         )
     )
 
     assert setup.models == (default,)
 
 
+def test_prepare_agent_setup_reuses_internal_shared_cache(tmp_path: Path) -> None:
+    provider = _Provider((_model("one"),))
+
+    async def prepare() -> AgentSetup:
+        return await prepare_agent_setup(
+            toolang_root=tmp_path,
+            name="alice",
+            home=tmp_path / "agents" / "alice",
+            providers={"test": provider},
+            adapters={"default": cast(ModelAdapter, cast(Any, object()))},
+            tools={},
+            envs={"TEST_API_KEY": "secret"},
+        )
+
+    first = asyncio.run(prepare())
+    second = asyncio.run(prepare())
+
+    assert first.models == second.models == (_model("one"),)
+    assert provider.calls == 1
+
+
 def test_setup_watcher_observes_external_cache_refresh(tmp_path: Path) -> None:
     provider = _Provider((_model("one"),))
     envs = {"TEST_API_KEY": "secret"}
-    cache = ModelListCache(tmp_path / ".runtime" / "models")
+    cache = ModelListCache(model_cache_dir(tmp_path))
     initial = asyncio.run(
         prepare_agent_setup(
+            toolang_root=tmp_path,
             name="alice",
             home=tmp_path / "agents" / "alice",
             providers={"test": provider},
             adapters={"default": cast(ModelAdapter, cast(Any, object()))},
             tools={},
             envs=envs,
-            cache=cache,
         )
     )
-    watcher = SetupWatcher(initial, cache=cache, get_envs=lambda: envs)
+    watcher = SetupWatcher(initial, toolang_root=tmp_path, get_envs=lambda: envs)
     provider.models = (_model("two"),)
     asyncio.run(cache.get(provider, envs=envs, refresh=True))
 
@@ -120,10 +143,35 @@ def test_setup_watcher_observes_external_cache_refresh(tmp_path: Path) -> None:
     assert current.models == (_model("two"),)
 
 
+def test_setup_watcher_force_refreshes_without_exposing_cache(tmp_path: Path) -> None:
+    provider = _Provider((_model("one"),))
+    envs = {"TEST_API_KEY": "secret"}
+    initial = asyncio.run(
+        prepare_agent_setup(
+            toolang_root=tmp_path,
+            name="alice",
+            home=tmp_path / "agents" / "alice",
+            providers={"test": provider},
+            adapters={"default": cast(ModelAdapter, cast(Any, object()))},
+            tools={},
+            envs=envs,
+        )
+    )
+    watcher = SetupWatcher(
+        initial,
+        toolang_root=tmp_path,
+        get_envs=lambda: envs,
+    )
+
+    refreshed = asyncio.run(watcher.refresh(force=True))
+
+    assert refreshed.models == (_model("one"),)
+    assert provider.calls == 2
+
+
 def test_setup_watcher_rebuilds_snapshot_when_envs_change(tmp_path: Path) -> None:
     provider = _Provider((_model("one"),))
     envs = {"TEST_API_KEY": "first"}
-    cache = ModelListCache(tmp_path / ".runtime" / "models")
     initial = AgentSetup(
         name="alice",
         home=tmp_path / "agents" / "alice",
@@ -133,7 +181,7 @@ def test_setup_watcher_rebuilds_snapshot_when_envs_change(tmp_path: Path) -> Non
         tools={},
         envs=envs,
     )
-    watcher = SetupWatcher(initial, cache=cache, get_envs=lambda: envs)
+    watcher = SetupWatcher(initial, toolang_root=tmp_path, get_envs=lambda: envs)
     envs["TEST_API_KEY"] = "second"
 
     current = asyncio.run(watcher.refresh())
@@ -153,17 +201,20 @@ def test_setup_watcher_publishes_changed_snapshot(tmp_path: Path) -> None:
 
         provider = _Provider((_model("one"),))
         envs = {"TEST_API_KEY": "first"}
-        cache = ModelListCache(tmp_path / ".runtime" / "models")
         initial = await prepare_agent_setup(
+            toolang_root=tmp_path,
             name="alice",
             home=tmp_path / "agents" / "alice",
             providers={"test": provider},
             adapters={"default": cast(ModelAdapter, cast(Any, object()))},
             tools={},
             envs=envs,
-            cache=cache,
         )
-        watcher = SetupWatcher(initial, cache=cache, get_envs=lambda: envs)
+        watcher = SetupWatcher(
+            initial,
+            toolang_root=tmp_path,
+            get_envs=lambda: envs,
+        )
         stop_signal = asyncio.Event()
         next_update = asyncio.create_task(next_setup(watcher, stop_signal))
         envs["TEST_API_KEY"] = "second"
@@ -181,17 +232,20 @@ def test_setup_watcher_run_stops_without_a_change(tmp_path: Path) -> None:
     async def exercise() -> AgentSetup:
         provider = _Provider((_model("one"),))
         envs = {"TEST_API_KEY": "secret"}
-        cache = ModelListCache(tmp_path / ".runtime" / "models")
         initial = await prepare_agent_setup(
+            toolang_root=tmp_path,
             name="alice",
             home=tmp_path / "agents" / "alice",
             providers={"test": provider},
             adapters={"default": cast(ModelAdapter, cast(Any, object()))},
             tools={},
             envs=envs,
-            cache=cache,
         )
-        watcher = SetupWatcher(initial, cache=cache, get_envs=lambda: envs)
+        watcher = SetupWatcher(
+            initial,
+            toolang_root=tmp_path,
+            get_envs=lambda: envs,
+        )
         stop_signal = asyncio.Event()
         running = asyncio.create_task(
             watcher.run(

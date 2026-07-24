@@ -6,8 +6,18 @@ from typing import Any, cast
 
 import pytest
 
+import toolang.setup as setup_package
 from toolang.base.types.model import ModelInfo
 from toolang.setup import AgentSetup
+
+
+def test_setup_facade_exposes_snapshots_without_cache_details() -> None:
+    assert setup_package.__all__ == [
+        "AgentSetup",
+        "SetupWatcher",
+        "prepare_agent_setup",
+    ]
+    assert not hasattr(setup_package, "ModelListCache")
 
 
 def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:

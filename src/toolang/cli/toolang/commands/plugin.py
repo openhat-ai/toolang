@@ -13,10 +13,11 @@ import typer
 from ...common.context import resolve_root
 from ...common.output import echo_table
 from toolang.cli.config import load_config_layers
-from toolang.plugin.models.loading import load_model_providers
+from toolang.plugin.models.loading import load_model_adapters, load_model_providers
 from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.tools.loading import load_tool_plugins
-from toolang.setup import ModelListCache, discover_models, model_cache_dir
+from toolang.setup import prepare_agent_setup
+from toolang.up.process import agent_home
 
 model_app = typer.Typer(
     help="Inspect available models.",
@@ -178,17 +179,21 @@ def model_rows(
     config_layers = load_config_layers(root, agent_name)
     provider_configs = parse_model_provider_configs(config_layers)
     providers = load_model_providers(provider_configs)
-    models = asyncio.run(
-        discover_models(
-            providers,
+    setup = asyncio.run(
+        prepare_agent_setup(
+            toolang_root=root,
+            name=agent_name,
+            home=agent_home(root, agent_name) if agent_name else root,
+            providers=providers,
+            adapters=load_model_adapters(),
+            tools={},
             envs=environ,
-            cache=ModelListCache(model_cache_dir(root)),
-            refresh=refresh,
+            refresh_models=refresh,
         )
     )
     return model_list_rows(
         providers=providers,
-        models=models,
+        models=setup.models,
         aliases=parse_model_aliases(config_layers),
         envs=environ,
         selectors=model_selectors,
@@ -208,16 +213,20 @@ def model_provider_rows(
     config_layers = load_config_layers(root)
     provider_configs = parse_model_provider_configs(config_layers)
     providers = load_model_providers(provider_configs)
-    models = asyncio.run(
-        discover_models(
-            providers,
+    setup = asyncio.run(
+        prepare_agent_setup(
+            toolang_root=root,
+            name="",
+            home=root,
+            providers=providers,
+            adapters=load_model_adapters(),
+            tools={},
             envs=environ,
-            cache=ModelListCache(model_cache_dir(root)),
         )
     )
     return build_rows(
         providers=providers,
-        models=models,
+        models=setup.models,
         aliases=parse_model_aliases(config_layers),
         provider_configs=provider_configs,
         envs=environ,

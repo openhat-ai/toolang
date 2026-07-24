@@ -8,19 +8,19 @@ from pathlib import Path
 from toolang.base.protocols.model import ModelAdapter, ModelProvider
 from toolang.base.protocols.tool import AgentTool
 
-from .models import ModelListCache, discover_models
+from .models import ModelListCache, discover_models, model_cache_dir
 from .types import AgentSetup
 
 
 async def prepare_agent_setup(
     *,
+    toolang_root: Path,
     name: str,
     home: Path,
     providers: Mapping[str, ModelProvider],
     adapters: Mapping[str, ModelAdapter],
     tools: Mapping[str, AgentTool],
     envs: Mapping[str, str],
-    cache: ModelListCache,
     refresh_models: bool = False,
 ) -> AgentSetup:
     """Discover available models and capture one immutable runtime setup."""
@@ -28,7 +28,7 @@ async def prepare_agent_setup(
     models = await discover_models(
         providers,
         envs=envs,
-        cache=cache,
+        cache=ModelListCache(model_cache_dir(toolang_root)),
         refresh=refresh_models,
     )
     return AgentSetup(

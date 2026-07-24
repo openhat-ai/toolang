@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.setup import ModelListCache, discover_models, model_cache_dir
 from toolang.setup import models as models_module
+from toolang.setup.models import ModelListCache, discover_models, model_cache_dir
 from toolang.setup.records import ModelListRecord
 
 

@@ -98,7 +98,7 @@ from toolang.execution.executor.persist import PersistSink
 from toolang.execution.store import RunStore
 from toolang.up.process import agent_run_store_path
 from toolang.execution.reply import SseReplySink
-from toolang.setup import AgentSetup
+from toolang.setup import AgentSetup, SetupWatcher
 from tests.support import runtime as inspect
 from toolang.api.common import ShutdownAwareStreamingResponse, guarded_stream
 from toolang.api.schemas import ChatRequest, InputMessagePayload, TextInputPart
@@ -3044,7 +3044,9 @@ def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> No
     )
 
     caplog.set_level(logging.INFO, logger="toolang.state")
-    up_module._log_state_loaded(context.executor, context.state_watcher.current())
+    setup = context.setup_watcher.current()
+    state = context.state_watcher.current()
+    up_module._log_state_loaded(setup, state)
 
     messages = [
         record.getMessage()
@@ -3053,17 +3055,20 @@ def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> No
     ]
     assert messages == [
         (
-            f"Agent loaded state={context.state_watcher.current().fingerprint[:12]} "
-            f"models={up_module._model_count(context.executor)} "
-            f"tools={len(context.executor.setup.tools)} "
+            f"Agent loaded state={state.fingerprint[:12]} "
+            f"models={up_module._model_count(setup, state)} "
+            f"tools={len(setup.tools)} "
             "psyches=0 skills=0 services=0"
         )
     ]
-    assert up_module._model_count(context.executor) > 0
-    unrestricted_count = up_module._model_count(context.executor)
-    context.executor.allowed_model_selectors = ("openai/gpt-5[openai]",)
-    assert up_module._model_count(context.executor) == 1
-    assert up_module._model_count(context.executor) < unrestricted_count
+    assert up_module._model_count(setup, state) > 0
+    unrestricted_count = up_module._model_count(setup, state)
+    selectors = ("openai/gpt-5[openai]",)
+    assert up_module._model_count(setup, state, selectors=selectors) == 1
+    assert (
+        up_module._model_count(setup, state, selectors=selectors)
+        < unrestricted_count
+    )
 
 
 def test_assemble_execution_rejects_unmatched_tool_selector(tmp_path: Path) -> None:
@@ -3114,7 +3119,7 @@ def test_assemble_execution_applies_tool_and_cap_selectors(tmp_path: Path) -> No
         text="---\ndescription: Extra\n---\n# Extra\n",
     )
 
-    executor, watcher = up_module.assemble_execution(
+    _executor, setup_watcher, watcher = up_module.assemble_execution(
         toolang_root=toolang_root,
         agent_name="alice",
         environ={"OPENAI_API_KEY": "secret"},
@@ -3122,7 +3127,7 @@ def test_assemble_execution_applies_tool_and_cap_selectors(tmp_path: Path) -> No
         cap_selectors=("skill/local-reviewer",),
     )
 
-    assert tuple(executor.setup.tools) == ("shell__execute",)
+    assert tuple(setup_watcher.current().tools) == ("shell__execute",)
     assert [(entry.kind, entry.name) for entry in watcher.current().caps] == [
         ("skill", "local-reviewer")
     ]
@@ -3139,7 +3144,7 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
         name="local-reviewer",
         text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
     )
-    executor, watcher = up_module.assemble_execution(
+    executor, setup_watcher, watcher = up_module.assemble_execution(
         toolang_root=toolang_root,
         agent_name="alice",
         environ={"OPENAI_API_KEY": "secret"},
@@ -3150,7 +3155,7 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
         RunRequest(group="chat", origin="chat", input="hello"),
         id_state_path=executor.id_state_path,
         state=watcher.current(),
-        setup=executor.setup,
+        setup=setup_watcher.current(),
         store=executor.store,
     )
     accepted_setup = binding.setup
@@ -3168,10 +3173,10 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
     assert expected_fingerprint != before
 
     assert watcher.current().fingerprint == expected_fingerprint
-    assert executor.setup is accepted_setup
+    assert setup_watcher.current() is accepted_setup
     assert binding.setup is accepted_setup
     assert tuple(binding.setup.tools) == ("shell__execute",)
-    assert tuple(executor.setup.tools) == ("shell__execute",)
+    assert tuple(setup_watcher.current().tools) == ("shell__execute",)
     assert [(entry.kind, entry.name) for entry in watcher.current().caps] == [
         ("skill", "local-reviewer")
     ]
@@ -7410,10 +7415,16 @@ def _build_context(
         model_environ=model_environ,
     )
     watcher = state_watcher.StateWatcher(toolang_root, agent_name, state)
+    setup_watcher = SetupWatcher(
+        setup,
+        toolang_root=toolang_root,
+        get_envs=lambda: {"OPENAI_API_KEY": "secret"},
+    )
     return _TestApiContext(
         root=toolang_root,
         name=agent_name,
         home=agents.agent_home(toolang_root, agent_name),
+        setup_watcher=setup_watcher,
         state_watcher=watcher,
         authored_jobs=AuthoredJobs(agents.agent_home(toolang_root, agent_name)),
         private_authored_caps=caps.AuthoredCaps(

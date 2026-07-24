@@ -151,9 +151,10 @@
   model discovery, and the multi-process-safe model-list cache under
   `${TOOLANG_ROOT}/.runtime/models/`. `AgentSetup` carries `providers`,
   `adapters`, `models`, `tools`, and `envs`; execution consumes this snapshot
-  without provider discovery or cache access. `SetupWatcher` receives
-  environment values through an explicit caller callback and publishes new
-  snapshots for later runs.
+  without provider discovery or cache access. The cache is an internal setup
+  implementation detail; callers prepare or refresh a setup and read
+  `AgentSetup.models`. `SetupWatcher` receives environment values through an
+  explicit caller callback and publishes new snapshots for later runs.
 - `toolang.state.schemas` owns caller-facing capability protocol types;
   its schema types construct themselves from prepared capability state;
   `toolang.state.types` owns capability-state vocabulary.

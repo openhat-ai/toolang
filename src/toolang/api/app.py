@@ -24,6 +24,7 @@ from toolang.execution.records import CommandRecord, RunRecord
 from toolang.execution.reply import ReplySink
 from toolang.execution.executor.request import RunRequest
 from toolang.state.watcher import StateWatcher
+from toolang.setup import SetupWatcher
 
 DEFAULT_CORS_ORIGINS = [
     "http://localhost:3000",
@@ -51,6 +52,7 @@ class ApiContext:
     name: str
     home: Path
     executor: Executor
+    setup_watcher: SetupWatcher
     state_watcher: StateWatcher
     authored_jobs: AuthoredJobs
     private_authored_caps: AuthoredCaps

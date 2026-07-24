@@ -39,16 +39,17 @@ def profile(context: ApiContextDep) -> dict[str, object]:
 @router.get("/models", summary="List Agent Models")
 def models(context: ApiContextDep) -> dict[str, object]:
     try:
+        setup = context.setup_watcher.current()
         selectors = effective_origin_model_selectors(
             context.executor,
             state=context.state_watcher.current(),
             origin="chat",
         )
         targets = selectable_model_targets(
-            providers=context.executor.setup.providers,
-            models=context.executor.setup.models,
+            providers=setup.providers,
+            models=setup.models,
             aliases=context.executor.model_aliases,
-            envs=context.executor.setup.envs,
+            envs=setup.envs,
             selectors=selectors,
         )
     except ToolangError as exc:
