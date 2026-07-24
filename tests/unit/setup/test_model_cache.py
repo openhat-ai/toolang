@@ -9,6 +9,8 @@ import pytest
 
 from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.setup import ModelListCache, discover_models, model_cache_dir
+from toolang.setup import models as models_module
+from toolang.setup.records import ModelListRecord
 
 
 @dataclass
@@ -121,6 +123,71 @@ def test_cache_paths_and_payloads_do_not_expose_secret_values(tmp_path: Path) ->
         for path in paths
         if path.suffix == ".json"
     )
+
+
+def test_different_credentials_use_independent_cache_records(tmp_path: Path) -> None:
+    provider = _Provider(
+        "remote",
+        (_model("remote", "one"),),
+        required=("REMOTE_API_KEY",),
+    )
+    directory = tmp_path / "models"
+    cache = ModelListCache(directory)
+
+    asyncio.run(cache.get(provider, envs={"REMOTE_API_KEY": "first"}))
+    asyncio.run(cache.get(provider, envs={"REMOTE_API_KEY": "second"}))
+
+    assert provider.calls == 2
+    assert len(tuple(directory.glob("*.json"))) == 2
+
+
+def test_corrupted_cache_record_is_replaced_by_discovery(tmp_path: Path) -> None:
+    provider = _Provider("remote", (_model("remote", "one"),))
+    directory = tmp_path / "models"
+    cache = ModelListCache(directory)
+    expected = asyncio.run(cache.get(provider, envs={}))
+    path = next(directory.glob("*.json"))
+    path.write_text("{not-json", encoding="utf-8")
+
+    actual = asyncio.run(cache.get(provider, envs={}))
+
+    assert actual == expected
+    assert provider.calls == 2
+    assert cache.read(provider, envs={}) is not None
+
+
+def test_expired_remote_cache_falls_back_to_last_good_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = 1_000.0
+    monkeypatch.setattr(models_module, "time", lambda: now)
+    provider = _Provider("remote", (_model("remote", "one"),))
+    cache = ModelListCache(tmp_path / "models")
+    expected = asyncio.run(cache.get(provider, envs={}))
+    provider.error = RuntimeError("offline")
+    now += models_module.REMOTE_MODEL_LIST_TTL_SEC + 1
+
+    actual = asyncio.run(cache.get(provider, envs={}))
+
+    assert actual == expected
+    assert provider.calls == 2
+
+
+def test_successful_discovery_survives_cache_write_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider("remote", (_model("remote", "one"),))
+    cache = ModelListCache(tmp_path / "models")
+
+    def fail_save(_record: ModelListRecord, _path: Path) -> None:
+        raise OSError("read-only cache")
+
+    monkeypatch.setattr(ModelListRecord, "save", fail_save)
+
+    assert asyncio.run(cache.get(provider, envs={})) == provider.models
+    assert cache.read(provider, envs={}) is None
 
 
 def test_discover_models_skips_unconfigured_providers_and_sorts_results(

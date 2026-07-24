@@ -56,3 +56,43 @@ def test_agent_setup_rejects_models_without_installed_provider() -> None:
             tools={},
             envs={},
         )
+
+
+def test_agent_setup_rejects_mismatched_provider_mapping_key() -> None:
+    with pytest.raises(
+        ValueError,
+        match="provider mapping key 'alias' does not match 'actual'",
+    ):
+        AgentSetup(
+            name="alice",
+            home=Path("/agents/alice"),
+            providers={
+                "alias": cast(Any, SimpleNamespace(name="actual")),
+            },
+            adapters={},
+            models=(),
+            tools={},
+            envs={},
+        )
+
+
+def test_agent_setup_rejects_duplicate_model_identity() -> None:
+    model = ModelInfo(
+        ref="openai/gpt",
+        provider="openai",
+        name="gpt",
+        model="gpt",
+    )
+
+    with pytest.raises(ValueError, match="unique by provider and ref"):
+        AgentSetup(
+            name="alice",
+            home=Path("/agents/alice"),
+            providers={
+                "openai": cast(Any, SimpleNamespace(name="openai")),
+            },
+            adapters={},
+            models=(model, model),
+            tools={},
+            envs={},
+        )

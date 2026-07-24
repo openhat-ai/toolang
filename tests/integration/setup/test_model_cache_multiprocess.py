@@ -79,3 +79,7 @@ def test_concurrent_force_refresh_is_coalesced_across_processes(
 
     assert all(process.exitcode == 0 for process in processes)
     assert calls_path.read_text(encoding="utf-8").splitlines() == ["called"]
+    record = ModelListCache(cache_dir).read(_SlowProvider(calls_path), envs={})
+    assert record is not None
+    assert record.generation == 1
+    assert tuple(model.ref for model in record.models) == ("shared/one",)
