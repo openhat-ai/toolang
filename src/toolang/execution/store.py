@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 import hashlib
 import json
 from pathlib import Path
@@ -47,7 +48,7 @@ from .types import (
     StepStatus,
 )
 
-_SCHEMA_VERSION = 18
+_SCHEMA_VERSION = 19
 
 
 class RunStore:
@@ -68,6 +69,24 @@ class RunStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    @contextmanager
+    def write_transaction(self) -> Iterator[None]:
+        """Commit one durable write unit, joining an existing store transaction."""
+
+        with self._lock:
+            owner = not self._conn.in_transaction
+            if owner:
+                self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+            except BaseException:
+                if owner:
+                    self._conn.rollback()
+                raise
+            else:
+                if owner:
+                    self._conn.commit()
 
     @property
     def thread_lock_path(self) -> Path:
@@ -109,7 +128,9 @@ class RunStore:
                     ).fetchone()
                     is not None
                 ):
-                    raise ValueError(f"run control request already exists: {request_id}")
+                    raise ValueError(
+                        f"run control request already exists: {request_id}"
+                    )
                 if (
                     self._conn.execute(
                         "SELECT 1 FROM threads WHERE thread_id = ?", (thread,)
@@ -138,8 +159,11 @@ class RunStore:
                     """
                     INSERT INTO run_controls(
                         run, "index", kind, timing, input, request_id, context,
-                        status, error, created_at, finished_at
-                    ) VALUES (?, 0, 'start', 'immediate', ?, ?, ?, 'pending', NULL, ?, NULL)
+                        status, error, created_at, finished_at, revision
+                    ) VALUES (
+                        ?, 0, 'start', 'immediate', ?, ?, ?,
+                        'pending', NULL, ?, NULL, ?
+                    )
                     """,
                     (
                         run_id,
@@ -147,6 +171,7 @@ class RunStore:
                         request_id,
                         _dump_json(dict(context)),
                         created_at,
+                        self._next_run_control_revision(),
                     ),
                 )
                 run_row = self._conn.execute(
@@ -199,7 +224,9 @@ class RunStore:
                     ).fetchone()
                     is not None
                 ):
-                    raise ValueError(f"run control request already exists: {request_id}")
+                    raise ValueError(
+                        f"run control request already exists: {request_id}"
+                    )
                 run = self._conn.execute(
                     "SELECT status FROM runs WHERE id = ?", (run_id,)
                 ).fetchone()
@@ -217,8 +244,10 @@ class RunStore:
                     """
                     INSERT INTO run_controls(
                         run, "index", kind, timing, input, request_id, context,
-                        status, error, created_at, finished_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL)
+                        status, error, created_at, finished_at, revision
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL, ?
+                    )
                     """,
                     (
                         run_id,
@@ -229,6 +258,7 @@ class RunStore:
                         request_id,
                         _dump_json(dict(context)),
                         created_at,
+                        self._next_run_control_revision(),
                     ),
                 )
                 inserted = self._conn.execute(
@@ -256,7 +286,7 @@ class RunStore:
     ) -> RunRecord:
         """Project run execution beginning."""
 
-        with self._lock:
+        with self.write_transaction():
             existing = self._conn.execute(
                 "SELECT context FROM runs WHERE id = ?", (run_id,)
             ).fetchone()
@@ -280,7 +310,6 @@ class RunStore:
             row = self._conn.execute(
                 "SELECT * FROM runs WHERE id = ?", (run_id,)
             ).fetchone()
-            self._conn.commit()
         if row is None:
             raise ValueError(f"run not found: {run_id}")
         run = _run_from_row(row)
@@ -303,32 +332,139 @@ class RunStore:
         if not control_indexes:
             return
         placeholders = ", ".join("?" for _ in control_indexes)
-        with self._lock:
+        with self.write_transaction():
+            pending = self._conn.execute(
+                f"""
+                SELECT 1 FROM run_controls
+                WHERE run = ? AND "index" IN ({placeholders})
+                  AND status = 'pending'
+                LIMIT 1
+                """,
+                (run_id, *control_indexes),
+            ).fetchone()
+            if pending is None:
+                return
             self._conn.execute(
                 f"""
                 UPDATE run_controls
-                SET status = 'finished', finished_at = ?
+                SET status = 'finished', finished_at = ?, revision = ?
                 WHERE run = ? AND "index" IN ({placeholders}) AND status = 'pending'
                 """,
-                (finished_at, run_id, *control_indexes),
+                (
+                    finished_at,
+                    self._next_run_control_revision(),
+                    run_id,
+                    *control_indexes,
+                ),
             )
-            self._conn.commit()
 
     def fail_pending_run_controls(
         self, *, run_id: str, finished_at: str, error: str
     ) -> None:
         """Fail controls that can no longer be applied to a terminal run."""
 
-        with self._lock:
+        with self.write_transaction():
+            pending = self._conn.execute(
+                """
+                SELECT 1 FROM run_controls
+                WHERE run = ? AND status = 'pending'
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            if pending is None:
+                return
             self._conn.execute(
                 """
                 UPDATE run_controls
-                SET status = 'failed', error = ?, finished_at = ?
+                SET status = 'failed', error = ?, finished_at = ?, revision = ?
                 WHERE run = ? AND status = 'pending'
                 """,
-                (error, finished_at, run_id),
+                (
+                    error,
+                    finished_at,
+                    self._next_run_control_revision(),
+                    run_id,
+                ),
             )
-            self._conn.commit()
+
+    def cancel_run_control(
+        self,
+        *,
+        run_id: str,
+        index: int,
+        canceled_at: str,
+    ) -> RunControlRecord:
+        """Cancel one pending steer or stop control."""
+
+        with self.write_transaction():
+            row = self._conn.execute(
+                'SELECT * FROM run_controls WHERE run = ? AND "index" = ?',
+                (run_id, index),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"run control not found: {run_id}:{index}")
+            control = _run_control_from_row(row)
+            if control.kind == "start":
+                raise ValueError("start controls cannot be canceled")
+            if control.status != "pending":
+                raise ValueError(f"run control is not pending: {run_id}:{index}")
+            if bool(row["claimed"]):
+                raise ValueError(
+                    f"run control is already being applied: {run_id}:{index}"
+                )
+            self._conn.execute(
+                """
+                UPDATE run_controls
+                SET status = 'canceled', finished_at = ?, revision = ?
+                WHERE run = ? AND "index" = ? AND status = 'pending'
+                """,
+                (
+                    canceled_at,
+                    self._next_run_control_revision(),
+                    run_id,
+                    index,
+                ),
+            )
+            updated = self._conn.execute(
+                'SELECT * FROM run_controls WHERE run = ? AND "index" = ?',
+                (run_id, index),
+            ).fetchone()
+        if updated is None:
+            raise RuntimeError(f"run control cancellation failed: {run_id}:{index}")
+        return _run_control_from_row(updated)
+
+    def claim_run_controls(
+        self,
+        *,
+        run_id: str,
+        indexes: Sequence[int],
+    ) -> set[int]:
+        """Atomically claim pending controls before runtime application."""
+
+        control_indexes = tuple(dict.fromkeys(int(index) for index in indexes))
+        if not control_indexes:
+            return set()
+        placeholders = ", ".join("?" for _ in control_indexes)
+        with self.write_transaction():
+            self._conn.execute(
+                f"""
+                UPDATE run_controls
+                SET claimed = 1
+                WHERE run = ? AND "index" IN ({placeholders})
+                  AND status = 'pending'
+                """,
+                (run_id, *control_indexes),
+            )
+            rows = self._conn.execute(
+                f"""
+                SELECT "index" FROM run_controls
+                WHERE run = ? AND "index" IN ({placeholders})
+                  AND status = 'pending' AND claimed = 1
+                """,
+                (run_id, *control_indexes),
+            ).fetchall()
+        return {int(row["index"]) for row in rows}
 
     def create_thread(
         self,
@@ -711,7 +847,7 @@ class RunStore:
         output: OutputRef | None = None,
     ) -> RunRecord:
         now = finished_at or utc_now()
-        with self._lock:
+        with self.write_transaction():
             self._conn.execute(
                 """
                 UPDATE runs
@@ -730,7 +866,6 @@ class RunStore:
                 "SELECT * FROM runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
-            self._conn.commit()
         if row is None:
             raise RuntimeError(f"run not found: {run_id}")
         run = _run_from_row(row)
@@ -891,8 +1026,7 @@ class RunStore:
                     cuts = tuple(
                         positions[control.anchor_run]
                         for control in self.list_thread_controls(thread_id=thread_id)
-                        if control.kind == "rewind"
-                        and control.anchor_run in positions
+                        if control.kind == "rewind" and control.anchor_run in positions
                     )
                     if cuts:
                         prefix = prefix[: min(cuts)]
@@ -952,7 +1086,7 @@ class RunStore:
     ) -> StepRecord:
         """Project one step_begin event."""
 
-        with self._lock:
+        with self.write_transaction():
             self._conn.execute(
                 """
                 INSERT INTO steps(
@@ -975,7 +1109,6 @@ class RunStore:
                 'SELECT * FROM steps WHERE parent = ? AND "index" = ?',
                 (parent, index),
             ).fetchone()
-            self._conn.commit()
         if row is None:
             raise RuntimeError(f"step begin projection failed: {parent}/{index}")
         step = _step_from_row(row)
@@ -1002,7 +1135,7 @@ class RunStore:
     ) -> StepRecord:
         """Project one step_end event."""
 
-        with self._lock:
+        with self.write_transaction():
             existing = self._conn.execute(
                 'SELECT * FROM steps WHERE parent = ? AND "index" = ?',
                 (parent, index),
@@ -1033,7 +1166,6 @@ class RunStore:
                 'SELECT * FROM steps WHERE parent = ? AND "index" = ?',
                 (parent, index),
             ).fetchone()
-            self._conn.commit()
         if row is None:
             raise RuntimeError(f"step end projection failed: {parent}/{index}")
         step = _step_from_row(row)
@@ -1101,7 +1233,13 @@ class RunStore:
             ).fetchone()
         if row is None:
             return None
-        return str(row["body"])
+        body = str(row["body"])
+        _verify_content_hash(
+            body,
+            expected=text_hash,
+            label="model text",
+        )
+        return body
 
     def capture_model_call(
         self,
@@ -1111,17 +1249,12 @@ class RunStore:
     ) -> dict[str, Any]:
         """Persist deduplicated normalized model-call inputs."""
 
-        with self._lock:
-            try:
-                instruction_ref = self._put_model_text(call.instructions)
-                message_refs = [
-                    self._put_model_message(message) for message in call.messages
-                ]
-                toolset_ref = self._put_toolset(call.tools) if call.tools else None
-                self._conn.commit()
-            except Exception:
-                self._conn.rollback()
-                raise
+        with self.write_transaction():
+            instruction_ref = self._put_model_text(call.instructions)
+            message_refs = [
+                self._put_model_message(message) for message in call.messages
+            ]
+            toolset_ref = self._put_toolset(call.tools) if call.tools else None
         return {
             "model": _model_target_snapshot(target),
             "call": {
@@ -1150,9 +1283,7 @@ class RunStore:
         ):
             raise ValueError(f"model message references are invalid: {step.path}")
         messages = [
-            self._get_model_message(
-                _required_text(message_ref, f"messages[{index}]")
-            )
+            self._get_model_message(_required_text(message_ref, f"messages[{index}]"))
             for index, message_ref in enumerate(raw_messages)
         ]
         toolset_ref = raw_call.get("tools")
@@ -1172,7 +1303,7 @@ class RunStore:
         )
 
     def _put_model_text(self, body: str) -> str:
-        text_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        text_hash = _content_hash(body)
         self._conn.execute(
             "INSERT OR IGNORE INTO model_texts(hash, body) VALUES (?, ?)",
             (text_hash, body),
@@ -1181,7 +1312,7 @@ class RunStore:
 
     def _put_model_message(self, message: Message) -> str:
         data = _dump_json(message.to_data())
-        message_hash = hashlib.sha256(data.encode("utf-8")).hexdigest()
+        message_hash = _content_hash(data)
         self._conn.execute(
             "INSERT OR IGNORE INTO model_messages(hash, data) VALUES (?, ?)",
             (message_hash, data),
@@ -1196,19 +1327,26 @@ class RunStore:
             ).fetchone()
         if row is None:
             raise ValueError(f"model message is missing: {message_hash}")
-        data = _load_json(str(row["data"]))
+        stored = str(row["data"])
+        _verify_content_hash(
+            stored,
+            expected=message_hash,
+            label="model message",
+        )
+        try:
+            data = _load_json(stored)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"model message is invalid: {message_hash}") from exc
         if not isinstance(data, Mapping):
             raise ValueError(f"model message is invalid: {message_hash}")
-        return Message.from_data(data)
+        try:
+            return Message.from_data(data)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"model message is invalid: {message_hash}") from exc
 
     def _put_toolset(self, tools: Sequence[ToolDefinition]) -> str:
-        data = _dump_json(
-            [
-                tool.to_data()
-                for tool in tools
-            ]
-        )
-        toolset_hash = hashlib.sha256(data.encode("utf-8")).hexdigest()
+        data = _dump_json([tool.to_data() for tool in tools])
+        toolset_hash = _content_hash(data)
         self._conn.execute(
             "INSERT OR IGNORE INTO model_toolsets(hash, data) VALUES (?, ?)",
             (toolset_hash, data),
@@ -1223,10 +1361,17 @@ class RunStore:
             ).fetchone()
         if row is None:
             raise ValueError(f"model toolset is missing: {toolset_hash}")
-        data = _load_json(str(row["data"]))
-        if not isinstance(data, Sequence) or isinstance(
-            data, (str, bytes, bytearray)
-        ):
+        stored = str(row["data"])
+        _verify_content_hash(
+            stored,
+            expected=toolset_hash,
+            label="model toolset",
+        )
+        try:
+            data = _load_json(stored)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"model toolset is invalid: {toolset_hash}") from exc
+        if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
             raise ValueError(f"model toolset is invalid: {toolset_hash}")
         tools: list[ToolDefinition] = []
         for index, raw_tool in enumerate(data):
@@ -1240,7 +1385,12 @@ class RunStore:
                 raise ValueError(
                     f"model tool parameters are invalid: {toolset_hash}[{index}]"
                 )
-            tools.append(ToolDefinition.from_data(tool_data))
+            try:
+                tools.append(ToolDefinition.from_data(tool_data))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"model toolset item is invalid: {toolset_hash}[{index}]"
+                ) from exc
         return tuple(tools)
 
     def recent_conversation_messages(
@@ -1257,9 +1407,7 @@ class RunStore:
         if exclude_run_id is not None:
             runs = [run for run in runs if run.id != exclude_run_id]
             runs = runs[-limit:]
-        steps_by_run = self.list_steps_for_runs(
-            run_ids=tuple(run.id for run in runs)
-        )
+        steps_by_run = self.list_steps_for_runs(run_ids=tuple(run.id for run in runs))
         results: list[Message] = []
         for run in runs:
             inputs = self.list_run_controls(run_id=run.id)
@@ -1325,6 +1473,46 @@ class RunStore:
             ).fetchall()
         return tuple(_run_control_from_row(row) for row in rows)
 
+    def latest_run_control_revision(self) -> int:
+        """Return the latest durable run-control change revision."""
+
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(revision), 0) AS sequence FROM run_controls"
+            ).fetchone()
+        return int(row["sequence"]) if row is not None else 0
+
+    def changed_run_controls(
+        self,
+        *,
+        after_revision: int,
+    ) -> tuple[int, tuple[RunControlRecord, ...]]:
+        """Return controls changed after one process-local polling cursor."""
+
+        if after_revision < 0:
+            raise ValueError("run control cursor must not be negative")
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM run_controls
+                WHERE revision > ?
+                ORDER BY revision ASC, run ASC, "index" ASC
+                """,
+                (after_revision,),
+            ).fetchall()
+        if not rows:
+            return after_revision, ()
+        return (
+            max(int(row["revision"]) for row in rows),
+            tuple(_run_control_from_row(row) for row in rows),
+        )
+
+    def _next_run_control_revision(self) -> int:
+        row = self._conn.execute(
+            "SELECT COALESCE(MAX(revision), 0) + 1 AS revision FROM run_controls"
+        ).fetchone()
+        return int(row["revision"]) if row is not None else 1
+
     def _init_schema(self) -> None:
         with self._lock:
             self._conn.execute("PRAGMA busy_timeout=30000;")
@@ -1333,11 +1521,11 @@ class RunStore:
             self._conn.execute("PRAGMA foreign_keys=ON;")
             self._conn.execute("BEGIN IMMEDIATE")
             version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-            if version not in {0, 13, 14, 15, 16, 17, _SCHEMA_VERSION}:
+            if version not in {0, 13, 14, 15, 16, 17, 18, _SCHEMA_VERSION}:
                 self._conn.rollback()
                 raise RuntimeError(
                     f"unsupported run store schema version: {version}; "
-                    f"expected 13, 14, 15, 16, 17, or {_SCHEMA_VERSION}"
+                    f"expected 13, 14, 15, 16, 17, 18, or {_SCHEMA_VERSION}"
                 )
             if version == 13:
                 self._conn.execute("DROP INDEX IF EXISTS idx_run_controls_request")
@@ -1400,16 +1588,44 @@ class RunStore:
                     error TEXT,
                     created_at TEXT NOT NULL,
                     finished_at TEXT,
+                    claimed INTEGER NOT NULL DEFAULT 0,
+                    revision INTEGER NOT NULL,
                     PRIMARY KEY(run, "index"),
                     FOREIGN KEY(run) REFERENCES runs(id)
                 )
                 """
             )
+            run_control_columns = {
+                str(row["name"])
+                for row in self._conn.execute(
+                    "PRAGMA table_info(run_controls)"
+                ).fetchall()
+            }
+            if "revision" not in run_control_columns:
+                self._conn.execute(
+                    """
+                    ALTER TABLE run_controls
+                    ADD COLUMN revision INTEGER NOT NULL DEFAULT 0
+                    """
+                )
+            if "claimed" not in run_control_columns:
+                self._conn.execute(
+                    """
+                    ALTER TABLE run_controls
+                    ADD COLUMN claimed INTEGER NOT NULL DEFAULT 0
+                    """
+                )
             self._conn.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_run_controls_request
                 ON run_controls(request_id)
                 WHERE request_id IS NOT NULL
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_run_controls_revision
+                ON run_controls(revision)
                 """
             )
             self._conn.execute(
@@ -1438,9 +1654,7 @@ class RunStore:
                 ).fetchall()
             }
             if "error" in thread_control_columns:
-                self._conn.execute(
-                    "ALTER TABLE thread_controls DROP COLUMN error"
-                )
+                self._conn.execute("ALTER TABLE thread_controls DROP COLUMN error")
             self._conn.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_thread_controls_request
@@ -1472,13 +1686,9 @@ class RunStore:
                 for row in self._conn.execute("PRAGMA table_info(steps)").fetchall()
             }
             if "context" in step_columns and "given" not in step_columns:
-                self._conn.execute(
-                    "ALTER TABLE steps RENAME COLUMN context TO given"
-                )
+                self._conn.execute("ALTER TABLE steps RENAME COLUMN context TO given")
             if "detail" in step_columns and "noted" not in step_columns:
-                self._conn.execute(
-                    "ALTER TABLE steps RENAME COLUMN detail TO noted"
-                )
+                self._conn.execute("ALTER TABLE steps RENAME COLUMN detail TO noted")
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS model_texts (
@@ -1542,6 +1752,15 @@ def _dump_json(value: Any) -> str:
     )
 
 
+def _content_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _verify_content_hash(value: str, *, expected: str, label: str) -> None:
+    if _content_hash(value) != expected:
+        raise ValueError(f"{label} is corrupted: {expected}")
+
+
 def _load_json(value: str) -> Any:
     return json.loads(value)
 
@@ -1564,9 +1783,11 @@ def _model_target_snapshot(target: Mapping[str, Any]) -> dict[str, Any]:
     if scope is not None and not isinstance(scope, str):
         raise ValueError("model scope must be text or null")
     tags = target.get("tags", ())
-    if not isinstance(tags, Sequence) or isinstance(
-        tags, (str, bytes, bytearray)
-    ) or not all(isinstance(tag, str) for tag in tags):
+    if (
+        not isinstance(tags, Sequence)
+        or isinstance(tags, (str, bytes, bytearray))
+        or not all(isinstance(tag, str) for tag in tags)
+    ):
         raise ValueError("model tags must be a list of text")
     options = target.get("options", {})
     if not isinstance(options, Mapping):
@@ -1784,17 +2005,31 @@ def _valid_model_history_groups(
             groups.append((message,))
             index += 1
             continue
+        if any(not tool_call_id for tool_call_id in tool_call_ids) or len(
+            set(tool_call_ids)
+        ) != len(tool_call_ids):
+            index += 1
+            continue
         tool_group: list[Message] = []
         remaining = set(tool_call_ids)
+        valid = True
         cursor = index + 1
         while cursor < len(messages) and messages[cursor].role == "tool":
             tool_message = messages[cursor]
-            matched = _message_tool_result_ids(tool_message) & remaining
-            if matched:
+            result_ids = _message_tool_result_ids(tool_message)
+            matched = set(result_ids)
+            if (
+                not result_ids
+                or any(not result_id for result_id in result_ids)
+                or len(matched) != len(result_ids)
+                or not matched.issubset(remaining)
+            ):
+                valid = False
+            else:
                 tool_group.append(tool_message)
                 remaining -= matched
             cursor += 1
-        if not remaining:
+        if valid and not remaining:
             groups.append((message, *tool_group))
         index = cursor
     return groups
@@ -1802,15 +2037,11 @@ def _valid_model_history_groups(
 
 def _message_tool_call_ids(message: Message) -> tuple[str, ...]:
     return tuple(
-        part.tool_call_id
-        for part in message.parts
-        if isinstance(part, ToolCallPart) and part.tool_call_id
+        part.tool_call_id for part in message.parts if isinstance(part, ToolCallPart)
     )
 
 
-def _message_tool_result_ids(message: Message) -> set[str]:
-    return {
-        part.tool_call_id
-        for part in message.parts
-        if isinstance(part, ToolResultPart) and part.tool_call_id
-    }
+def _message_tool_result_ids(message: Message) -> tuple[str, ...]:
+    return tuple(
+        part.tool_call_id for part in message.parts if isinstance(part, ToolResultPart)
+    )

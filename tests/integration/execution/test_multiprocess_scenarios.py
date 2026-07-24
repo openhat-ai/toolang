@@ -16,6 +16,7 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
 from toolang.common.ids import IdIssuer
+from toolang.execution.executor import RunExecutor
 from toolang.execution.records import ThreadControlRef
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
@@ -43,6 +44,20 @@ def _accept_remote_steer(db_path: str, run_id: str) -> None:
             request_id="remote-steer",
             created_at="2026-01-01T00:00:01Z",
         )
+    finally:
+        store.close()
+
+
+def _cancel_remote_control(
+    db_path: str,
+    id_path: str,
+    run_id: str,
+    index: int,
+) -> None:
+    store = RunStore(Path(db_path))
+    try:
+        executor = RunExecutor(store, IdIssuer(Path(id_path)))
+        executor.cancel_control(run_id=run_id, index=index)
     finally:
         store.close()
 
@@ -144,6 +159,48 @@ def _race_rewind(
         store.close()
 
 
+def _race_cancel_control(
+    db_path: str,
+    run_id: str,
+    index: int,
+    ready: Any,
+    start: Any,
+    results: Any,
+) -> None:
+    store = RunStore(Path(db_path))
+    try:
+        ready.put(run_id)
+        start.wait()
+        control = store.cancel_run_control(
+            run_id=run_id,
+            index=index,
+            canceled_at="2026-01-01T00:00:02Z",
+        )
+        results.put(("canceled", control.status))
+    except ValueError as exc:
+        results.put(("rejected", str(exc)))
+    finally:
+        store.close()
+
+
+def _race_claim_control(
+    db_path: str,
+    run_id: str,
+    index: int,
+    ready: Any,
+    start: Any,
+    results: Any,
+) -> None:
+    store = RunStore(Path(db_path))
+    try:
+        ready.put(run_id)
+        start.wait()
+        claimed = store.claim_run_controls(run_id=run_id, indexes=(index,))
+        results.put(("claimed" if index in claimed else "skipped",))
+    finally:
+        store.close()
+
+
 def _race_processes(
     *targets: tuple[Any, tuple[object, ...]],
 ) -> list[tuple[object, ...]]:
@@ -229,6 +286,64 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_remote_process_can_cancel_a_pending_steer(tmp_path: Path) -> None:
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=_CHAT_SOURCE,
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("draft")),
+                gate=gate,
+            ),
+            ModelCallResult(message=Message.assistant("revised")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            handle = harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="chat",
+                    input=perceive_input("initial input"),
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
+            steer = handle.steer(
+                Message.user("replace the draft"),
+                timing="next_call",
+            )
+
+            process = get_context("spawn").Process(
+                target=_cancel_remote_control,
+                args=(
+                    str(harness.store.db_path),
+                    str(harness.ids.state_path),
+                    handle.run_id,
+                    steer.index,
+                ),
+            )
+            process.start()
+            await asyncio.to_thread(process.join, 10)
+            assert process.exitcode == 0
+
+            gate.release()
+            record = await asyncio.wait_for(handle, timeout=2)
+            assert record.status == "finished"
+            assert harness.store.run_output_text(run_id=record.id) == "draft"
+            assert len(harness.adapter.invocations) == 1
+            stored = harness.store.get_run_control(
+                run_id=record.id,
+                index=steer.index,
+            )
+            assert stored is not None
+            assert stored.status == "canceled"
+
+    asyncio.run(scenario())
+
+
 def test_duplicate_run_control_request_has_one_process_winner(
     tmp_path: Path,
 ) -> None:
@@ -266,6 +381,112 @@ def test_duplicate_run_control_request_has_one_process_winner(
         ]
         assert len(controls) == 1
         assert controls[0].index == 1
+    finally:
+        reopened.close()
+
+
+def test_pending_control_has_one_cross_process_cancellation_winner(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "runs.db"
+    store = RunStore(db_path)
+    try:
+        store.create_thread(thread_id="term_cancel_race")
+        store.accept_start(
+            run_id="run_cancel_race",
+            parent=None,
+            thread="term_cancel_race",
+            input=Message.user("hello"),
+            context={},
+            request_id=None,
+            created_at="2026-01-01T00:00:00Z",
+        )
+        control = store.accept_run_control(
+            run_id="run_cancel_race",
+            kind="steer",
+            timing="next_step",
+            input=Message.user("updated"),
+            context={},
+            request_id=None,
+            created_at="2026-01-01T00:00:01Z",
+        )
+    finally:
+        store.close()
+
+    outcomes = _race_processes(
+        (
+            _race_cancel_control,
+            (str(db_path), "run_cancel_race", control.index),
+        ),
+        (
+            _race_cancel_control,
+            (str(db_path), "run_cancel_race", control.index),
+        ),
+    )
+
+    assert [outcome[0] for outcome in outcomes].count("canceled") == 1
+    assert [outcome[0] for outcome in outcomes].count("rejected") == 1
+    reopened = RunStore(db_path)
+    try:
+        stored = reopened.get_run_control(
+            run_id="run_cancel_race",
+            index=control.index,
+        )
+        assert stored is not None
+        assert stored.status == "canceled"
+    finally:
+        reopened.close()
+
+
+def test_control_claim_and_cross_process_cancellation_are_linearizable(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "runs.db"
+    store = RunStore(db_path)
+    try:
+        store.create_thread(thread_id="term_claim_cancel_race")
+        store.accept_start(
+            run_id="run_claim_cancel_race",
+            parent=None,
+            thread="term_claim_cancel_race",
+            input=Message.user("hello"),
+            context={},
+            request_id=None,
+            created_at="2026-01-01T00:00:00Z",
+        )
+        control = store.accept_run_control(
+            run_id="run_claim_cancel_race",
+            kind="steer",
+            timing="next_step",
+            input=Message.user("updated"),
+            context={},
+            request_id=None,
+            created_at="2026-01-01T00:00:01Z",
+        )
+    finally:
+        store.close()
+
+    outcomes = _race_processes(
+        (
+            _race_claim_control,
+            (str(db_path), control.run, control.index),
+        ),
+        (
+            _race_cancel_control,
+            (str(db_path), control.run, control.index),
+        ),
+    )
+    kinds = {str(outcome[0]) for outcome in outcomes}
+    assert kinds in ({"claimed", "rejected"}, {"skipped", "canceled"})
+
+    reopened = RunStore(db_path)
+    try:
+        stored = reopened.get_run_control(
+            run_id=control.run,
+            index=control.index,
+        )
+        assert stored is not None
+        assert stored.status == ("pending" if "claimed" in kinds else "canceled")
     finally:
         reopened.close()
 
@@ -360,9 +581,7 @@ def test_start_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
             assert thread.head == ThreadControlRef("term_race", 1)
             anchor = reopened.get_run(run_id="run_race_anchor")
             assert anchor is not None
-            assert anchor.superseded_by == (
-                ThreadControlRef("term_race", 1)
-            )
+            assert anchor.superseded_by == (ThreadControlRef("term_race", 1))
             assert [
                 run.id
                 for run in reopened.list_thread_history_chronological(

@@ -67,6 +67,11 @@ class _RunStopped(asyncio.CancelledError):
 class _ActiveRun:
     task: asyncio.Task[RunRecord]
     tracer: RunTracer | None
+    loop: asyncio.AbstractEventLoop = field(repr=False)
+    controls: dict[str, dict[int, RunControlRecord]] = field(
+        default_factory=dict,
+        repr=False,
+    )
     event_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     ended: set[str] = field(default_factory=set, repr=False)
 
@@ -124,6 +129,11 @@ class RunHandle(Awaitable[RunRecord]):
             request_id=request_id,
         )
 
+    def cancel_control(self, index: int) -> RunControlRecord:
+        """Cancel one pending steer or stop control for this run."""
+
+        return self.executor.cancel_control(run_id=self.run_id, index=index)
+
     def __await__(self) -> Generator[Any, None, RunRecord]:
         return self._wait().__await__()
 
@@ -147,11 +157,10 @@ class RunExecutor:
         self._persist = PersistSink(self.store)
         self._control_poll_interval = _CONTROL_POLL_INTERVAL
         self._active: dict[str, _ActiveRun] = {}
-        self._tasks: dict[
-            asyncio.Task[RunRecord], tuple[str, _ActiveRun]
-        ] = {}
+        self._tasks: dict[asyncio.Task[RunRecord], tuple[str, _ActiveRun]] = {}
         self._active_lock = threading.Lock()
         self._monitor_task: asyncio.Task[None] | None = None
+        self._control_revision = self.store.latest_run_control_revision()
         self._shutdown = False
 
     def start(
@@ -165,7 +174,7 @@ class RunExecutor:
         """Accept one top-level run and immediately return its local handle."""
 
         self._require_available()
-        asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()
         executable = _require_runnable(spec.state, spec.runnable)
         _validate_call(spec, executable)
         bound = _bind_run(
@@ -185,7 +194,7 @@ class RunExecutor:
             self._execute_owned(bound, executable, tracer=tracer),
             name=f"toolang-run-{bound.run_id}",
         )
-        active = _ActiveRun(task=task, tracer=tracer)
+        active = _ActiveRun(task=task, tracer=tracer, loop=loop)
         with self._active_lock:
             self._active[bound.run_id] = active
         self._tasks[task] = (bound.run_id, active)
@@ -264,6 +273,7 @@ class RunExecutor:
             request_id=request_id,
             created_at=utc_now(),
         )
+        self._observe_control(control)
         return control
 
     def steer(
@@ -289,6 +299,19 @@ class RunExecutor:
             request_id=request_id,
             created_at=utc_now(),
         )
+        self._observe_control(control)
+        return control
+
+    def cancel_control(self, *, run_id: str, index: int) -> RunControlRecord:
+        """Cancel one pending steer or stop control from any local process."""
+
+        self._require_available()
+        control = self.store.cancel_run_control(
+            run_id=run_id,
+            index=index,
+            canceled_at=utc_now(),
+        )
+        self._observe_control(control)
         return control
 
     async def shutdown(self) -> None:
@@ -349,8 +372,10 @@ class RunExecutor:
                 event_run = _run_event_id(event)
                 if event_run in active.ended:
                     return
-                self._persist.on_event(event)
-                self._update_control_state(event)
+                with self.store.write_transaction():
+                    self._persist.on_event(event)
+                    self._update_control_state(event)
+                self._update_cached_control_state(event)
                 self._track_active_run(event, active)
                 if isinstance(event, RunEnd):
                     active.ended.add(event.run)
@@ -402,6 +427,117 @@ class RunExecutor:
                 if self._active.get(event.run) is active:
                     self._active.pop(event.run, None)
 
+    def _register_child_run(self, *, run_id: str, root_run_id: str) -> None:
+        with self._active_lock:
+            active = self._active.get(root_run_id)
+            if active is None:
+                raise RuntimeError(f"root run ownership missing: {root_run_id}")
+            self._active[run_id] = active
+
+    def _observe_control(self, control: RunControlRecord) -> None:
+        if control.kind == "start":
+            return
+        cancel: asyncio.Task[RunRecord] | None = None
+        loop: asyncio.AbstractEventLoop | None = None
+        with self._active_lock:
+            active = self._active.get(control.run)
+            if active is None:
+                return
+            controls = active.controls.setdefault(control.run, {})
+            if control.status == "pending":
+                observed = control.index in controls
+                controls[control.index] = control
+                if (
+                    not observed
+                    and control.kind == "stop"
+                    and control.timing == "immediate"
+                ):
+                    cancel = active.task
+                    loop = active.loop
+            else:
+                controls.pop(control.index, None)
+                if not controls:
+                    active.controls.pop(control.run, None)
+        if cancel is not None and loop is not None and not cancel.done():
+            claimed = self.store.claim_run_controls(
+                run_id=control.run,
+                indexes=(control.index,),
+            )
+            if control.index not in claimed:
+                return
+            loop.call_soon_threadsafe(cancel.cancel)
+
+    def _pending_controls(
+        self,
+        *,
+        run_id: str,
+        kind: RunControlKind,
+    ) -> tuple[RunControlRecord, ...]:
+        self._refresh_controls()
+        with self._active_lock:
+            active = self._active.get(run_id)
+            if active is None:
+                return ()
+            controls = active.controls.get(run_id, {})
+            return tuple(
+                control
+                for _index, control in sorted(controls.items())
+                if control.kind == kind and control.status == "pending"
+            )
+
+    def _claim_controls(
+        self,
+        *,
+        run_id: str,
+        controls: Sequence[RunControlRecord],
+    ) -> tuple[RunControlRecord, ...]:
+        if not controls:
+            return ()
+        claimed = self.store.claim_run_controls(
+            run_id=run_id,
+            indexes=tuple(control.index for control in controls),
+        )
+        return tuple(control for control in controls if control.index in claimed)
+
+    def _update_cached_control_state(self, event: RunEvent) -> None:
+        if isinstance(event, RunBegin):
+            return
+        if isinstance(event, StepBegin):
+            run_id = trace_run(event.step)
+            indexes = {
+                item.index for item in event.input if isinstance(item, RunControlRef)
+            }
+        elif isinstance(event, RunEnd):
+            run_id = event.run
+            indexes = None
+        else:
+            return
+        with self._active_lock:
+            active = self._active.get(run_id)
+            if active is None:
+                return
+            if indexes is None:
+                active.controls.pop(run_id, None)
+                return
+            controls = active.controls.get(run_id)
+            if controls is None:
+                return
+            for index in indexes:
+                controls.pop(index, None)
+            if not controls:
+                active.controls.pop(run_id, None)
+
+    def _refresh_controls(self) -> bool:
+        revision, controls = self.store.changed_run_controls(
+            after_revision=self._control_revision
+        )
+        if not controls:
+            return False
+        for control in controls:
+            self._observe_control(control)
+        self._control_revision = revision
+        return True
+
     def _ensure_monitor(self, agent_name: str) -> None:
         if self._monitor_task is None or self._monitor_task.done():
             self._monitor_task = asyncio.create_task(
@@ -411,16 +547,7 @@ class RunExecutor:
     async def _monitor_controls(self) -> None:
         while True:
             await asyncio.sleep(self._control_poll_interval)
-            with self._active_lock:
-                active = tuple(self._active.items())
-            canceled: set[asyncio.Task[RunRecord]] = set()
-            for run_id, owner in active:
-                if owner.task.done() or owner.task in canceled:
-                    continue
-                controls = self.store.pending_run_controls(run_id=run_id, kind="stop")
-                if any(control.timing == "immediate" for control in controls):
-                    canceled.add(owner.task)
-                    owner.task.cancel()
+            self._refresh_controls()
 
     async def _ensure_terminal(
         self,
@@ -589,6 +716,10 @@ class _Execution:
             request_id=None,
             created_at=binding.created_at,
         )
+        self.executor._register_child_run(
+            run_id=binding.run_id,
+            root_run_id=trace_run(step),
+        )
         return await self.execute(binding, executable)
 
     async def parallel_children(
@@ -670,7 +801,7 @@ class _Execution:
     def pending_controls(
         self, run_id: str, kind: RunControlKind
     ) -> tuple[RunControlRecord, ...]:
-        return tuple(self.store.pending_run_controls(run_id=run_id, kind=kind))
+        return self.executor._pending_controls(run_id=run_id, kind=kind)
 
     def steer_controls(
         self, run_id: str, statement: FlowStmt
@@ -678,10 +809,23 @@ class _Execution:
         allowed = {"immediate", "next_step"}
         if statement_has_call(statement):
             allowed.add("next_call")
-        return tuple(
+        selected = tuple(
             control
             for control in self.pending_controls(run_id, "steer")
             if control.timing in allowed
+        )
+        return self.executor._claim_controls(
+            run_id=run_id,
+            controls=selected,
+        )
+
+    def steer_controls_for_call(
+        self,
+        run_id: str,
+    ) -> tuple[RunControlRecord, ...]:
+        return self.executor._claim_controls(
+            run_id=run_id,
+            controls=self.pending_controls(run_id, "steer"),
         )
 
     def raise_if_stopping(self, run_id: str, *, call: bool) -> None:
@@ -696,8 +840,14 @@ class _Execution:
             ),
             None,
         )
-        if control is not None:
-            raise _RunStopped(control)
+        if control is None:
+            return
+        claimed = self.executor._claim_controls(
+            run_id=run_id,
+            controls=(control,),
+        )
+        if claimed:
+            raise _RunStopped(claimed[0])
 
     def record_output(self, run_id: str, path: StepPath) -> None:
         self._run_outputs[run_id] = path
@@ -840,8 +990,7 @@ def _run_context(
     }
     if binding.args:
         context["args"] = {
-            name: json_value(value)
-            for name, value in binding.args.items()
+            name: json_value(value) for name, value in binding.args.items()
         }
     if binding.placement:
         context["placement"] = dict(binding.placement)
@@ -871,18 +1020,16 @@ def _validate_inputs(
         joined = ", ".join(unknown)
         raise ValueError(f"unknown arguments for {executable.name}: {joined}")
     missing = sorted(
-        name for name, param in params.items() if not param.optional and name not in args
+        name
+        for name, param in params.items()
+        if not param.optional and name not in args
     )
     if missing:
         joined = ", ".join(missing)
         raise ValueError(f"missing arguments for {executable.name}: {joined}")
     if executable.input is None and input:
         raise ValueError(f"{executable.name} does not accept primary input")
-    if (
-        executable.input is not None
-        and not executable.input.optional
-        and not input
-    ):
+    if executable.input is not None and not executable.input.optional and not input:
         raise ValueError(f"{executable.name} requires primary input")
     if executable.input is not None:
         coerce_input(

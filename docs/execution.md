@@ -67,20 +67,24 @@ Step indexes are local to their parent step path and are protected by the
 start(RunSpec, run_id?, request_id?, tracer?) -> RunHandle
 stop(run_id, timing, request_id?, reason?)     -> RunControlRecord
 steer(run_id, message, timing, request_id?)    -> RunControlRecord
+cancel_control(run_id, index)                  -> RunControlRecord
 shutdown()                                     -> None
 ```
 
 `start()` accepts durable truth, creates the owner task, and immediately
 returns an awaitable `RunHandle`. Awaiting the handle returns the terminal
 `RunRecord`; canceling one waiter does not cancel execution. The handle also
-provides same-process `stop()` and `steer()` conveniences. Cross-process
-callers address the run by ID through their local `RunExecutor`.
+provides same-process `stop()`, `steer()`, and `cancel_control()` conveniences.
+Cross-process callers address the run by ID through their local `RunExecutor`.
 
-`steer()` and `stop()` only accept durable controls; they do not need the
-target run to be owned by the submitting process. The executor is ready after
-construction and therefore has no separate `open()` method. `shutdown()` is
-terminal and cancels the run tasks owned by that executor instance. The
-process owner closes the shared `RunStore` after the executor shuts down.
+`steer()` and `stop()` only accept durable controls; `cancel_control()` changes
+one pending steer or stop to `canceled`. None of these operations needs the
+target run to be owned by the submitting process. Start remains local: the
+process that calls `start(spec)` accepts and executes that run. The executor is
+ready after construction and therefore has no separate `open()` method.
+`shutdown()` is terminal and cancels the run tasks owned by that executor
+instance. The process owner closes the shared `RunStore` after the executor
+shuts down.
 
 `start()` requires an existing thread. Thread creation belongs to
 `ThreadManager` or to the package that owns a deterministic external thread id.
@@ -101,8 +105,8 @@ For every `RunEvent`, ordering is:
 
 ```text
 runtime produces event
-  -> PersistSink projects RunRecord or StepRecord
-  -> runtime updates referenced RunControlRecord statuses
+  -> one transaction projects RunRecord or StepRecord
+     and updates referenced RunControlRecord statuses
   -> optional RunTracer observes the event
 ```
 
@@ -164,9 +168,21 @@ failed   no longer applicable because the run ended or the checkpoint vanished
 A stop control that cancels a run is therefore `finished`. An unapplied steer
 left behind by a terminal run is `failed`.
 
-The run owner polls pending controls from SQLite. Local and remote submissions
-use the same path; there is no process-local wake optimization. An immediate
-stop cancels the owning task after the owner observes the durable control.
+Every run-control insert or status change receives a monotonically increasing
+SQLite revision. Each executor remembers the latest revision it observed and
+loads only rows changed after that cursor. An unchanged table returns no rows
+and causes no active-run processing. Changed pending controls are merged into
+the matching locally owned run tree; changed terminal controls are removed.
+Runtime checkpoints read this in-memory view instead of repeatedly querying
+all pending controls for every active run.
+
+Local submissions update the same cache immediately after their durable write.
+Remote submissions and cancellations arrive through revision polling. An
+immediate stop cancels the owning task after the owner observes the durable
+control. Before applying a steer or stop, runtime atomically claims it in
+SQLite. Cancellation is allowed only while a control remains unclaimed, so a
+cross-process claim/cancel race has exactly one winner without adding another
+public control status.
 
 
 ## Threads

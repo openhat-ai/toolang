@@ -57,9 +57,7 @@ async def execute(
 
     invoke = {name: local.value for name, local in locals.items() if name != "_"}
     primary = locals.get("_", Local())
-    primary_parts = (
-        value_percept(primary.value) if primary.shape != "none" else ()
-    )
+    primary_parts = value_percept(primary.value) if primary.shape != "none" else ()
     bound = replace(
         binding,
         input=Message(
@@ -77,16 +75,14 @@ async def execute(
         bound,
         agic,
         variables={
-            name: local.value
-            for name, local in locals.items()
-            if local.shape != "none"
+            name: local.value for name, local in locals.items() if local.shape != "none"
         },
     )
     state = _AgicState(
         prepared,
         home=execution.setup.home,
         emit=execution.emit,
-        pending_inputs=lambda: execution.pending_controls(binding.run_id, "steer"),
+        pending_inputs=lambda: execution.steer_controls_for_call(binding.run_id),
         before_call=lambda: execution.raise_if_stopping(binding.run_id, call=True),
         messages=list(prepared.messages),
     )

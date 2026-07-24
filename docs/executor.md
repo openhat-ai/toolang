@@ -37,6 +37,13 @@ class RunExecutor:
         request_id: str | None = None,
     ) -> RunControlRecord: ...
 
+    def cancel_control(
+        self,
+        *,
+        run_id: str,
+        index: int,
+    ) -> RunControlRecord: ...
+
     async def shutdown(self) -> None: ...
 ```
 
@@ -76,9 +83,9 @@ runnable's declared primary type.
 
 There is no `run()`, `execute()`, or `spawn()` variant. `start()` creates the
 owner task and returns an awaitable `RunHandle`. The handle exposes its run ID,
-executor, and task, and delegates same-process control operations. Its await
-path shields the owner task so canceling a waiting HTTP request or TUI action
-does not cancel the durable run.
+executor, and task, and delegates same-process `stop()`, `steer()`, and
+`cancel_control()` operations. Its await path shields the owner task so
+canceling a waiting HTTP request or TUI action does not cancel the durable run.
 
 
 ## Acceptance
@@ -163,17 +170,29 @@ same canonical event sequence and never filter a synthetic top-level step.
 
 ## Control Observation
 
-Any process may call `steer()` or `stop()` because both only write to shared
-SQLite truth. The owner process polls pending controls for locally active run
-IDs at a short fixed interval.
+Any process may call `steer()`, `stop()`, or `cancel_control()` because these
+operations only mutate shared SQLite truth. `start(spec)` is also process-safe,
+but the process that calls it owns and executes that run; start is not a
+cross-process dispatch queue.
+
+Every inserted or changed control receives a global monotonic revision inside
+the same SQLite write transaction. The owner process polls only revisions
+newer than its cursor. An unchanged control table returns no rows. Changed
+pending controls are merged into the matching `_ActiveRun` cache, while
+`finished`, `canceled`, and `failed` controls are removed. Runtime checkpoints
+read the cache rather than querying SQLite once per active run.
 
 An `immediate` stop cancels the owner task. `next_step` and `next_call` controls
 are consumed at runtime checkpoints. Flows check before statements and calls;
 agics check before model and tool calls.
 
-Local submissions deliberately use the same SQLite polling path as remote
-submissions. There is no `asyncio.Event`, wake channel, or process-local fast
-path whose behavior can diverge.
+Local submissions update the cache immediately after their durable write.
+Remote submissions and cancellations use the same revision feed, so SQLite
+remains the cross-process source of truth without an additional wake channel.
+Runtime atomically claims a pending steer or stop immediately before applying
+it. A cancellation updates only an unclaimed pending control, making
+application and cancellation linearizable without exposing an intermediate
+public status.
 
 
 ## Event Ordering
@@ -181,8 +200,9 @@ path whose behavior can diverge.
 Runtime emits only canonical `RunEvent` values. `RunExecutor` handles each one
 in this order:
 
-1. `PersistSink.on_event(event)`;
-2. update control statuses referenced by the persisted event;
+1. in one transaction, call `PersistSink.on_event(event)` and update referenced
+   control statuses;
+2. update the in-memory control cache;
 3. maintain the local active-run index;
 4. await the optional `RunTracer.on_event()`.
 

@@ -84,6 +84,13 @@ The index-zero start control and `RunRecord` are inserted in one transaction.
 Later control indexes are computed and inserted in one transaction; no API
 reserves an index independently.
 
+`runs.db` also stores an internal monotonic revision on every run-control
+insert and status change. The revision is a polling cursor, not part of
+`RunControlRecord`'s protocol shape. It lets an owning executor observe remote
+steer, stop, and cancellation changes without rescanning controls for every
+active run. A storage-only claim flag serializes runtime application against
+cross-process cancellation; it is not another `ControlStatus`.
+
 
 ## StepRecord
 
@@ -167,7 +174,7 @@ must keep request IDs globally unique across both control tables or pass
 Control acceptance is not event projection:
 
 ```text
-RunExecutor.start/steer/stop -> RunStore -> RunControlRecord
+RunExecutor.start/steer/stop/cancel_control -> RunStore -> RunControlRecord
 ThreadManager operations     -> RunStore -> ThreadControlRecord
 ```
 
@@ -189,7 +196,8 @@ Durable `StepRecord.given["call"]` keeps those compact references.
 Caller-facing inspection resolves the same field back to normalized
 `ModelCall` data, so storage details do not become a second public shape.
 
-After `PersistSink` commits an event fact, runtime updates referenced controls:
+The runtime projects each event fact and its referenced control transitions in
+one SQLite write transaction:
 
 ```text
 RunBegin.input  -> finish start control
