@@ -154,7 +154,10 @@ thread projections. It does not start a replacement run.
 run. It does not start a run in the new thread.
 
 Both lifecycle request bodies may identify the anchor with `run_id`. Omitting
-it selects the last visible run. Fork includes its anchor; rewind discards it.
+it selects the last visible top-level run. An anchor must be terminal. Fork
+includes its anchor and may select an earlier terminal run while a later run
+remains active. Rewind discards its anchor and requires the entire thread to
+have no pending or running runs; callers must stop active runs before rewinding.
 
 Task and chore thread ids are derived from job ids, so job threads cannot be
 rewound or forked. Job execution commands expose explicit job semantics such as

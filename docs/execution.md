@@ -176,7 +176,7 @@ Create and fork return the newly allocated thread id. Rewind changes the
 specified thread in place and returns nothing. Fork and rewind accept an
 optional run id; omission selects the last visible top-level run. Recursive
 child runs are never thread anchors. An empty thread has no implicit anchor and
-cannot be forked or rewound.
+cannot be forked or rewound. Every selected anchor must be terminal.
 
 Every successful mutation has a durable `ThreadControlRecord` and produces one
 success event:
@@ -191,13 +191,17 @@ Failures are returned or raised by the synchronous operation and do not
 produce failure events.
 
 A fork stores its source thread and anchor run but does not copy run, step, or
-run-control rows. Its inherited history includes the anchor. A rewind discards
-its anchor and the visible suffix after it. Runs owned by the rewound thread
-are marked with `superseded_by`; an inherited source run is never modified.
-Affected active runs are stopped through durable controls written directly by
-the manager. Forks and rewinds are serialized across processes with an
-agent-local file lock. The store keeps expected-head comparison as an internal
-defensive check; it is not part of the public manager API.
+run-control rows. Its inherited history includes the anchor. It may select an
+earlier terminal anchor even when the source thread has a later active run. A
+rewind discards its anchor and the visible suffix after it, and is rejected
+while any visible top-level run is pending or running. The caller must stop
+active runs before retrying; `ThreadManager` never writes run controls. Runs
+owned by the rewound thread are marked with `superseded_by`; an inherited
+source run is never modified. Forks and rewinds are serialized across
+processes with an agent-local file lock. Anchor resolution, terminal checks,
+the rewind idle check, and control insertion occur in one SQLite write
+transaction. The store keeps expected-head comparison as an internal defensive
+check; it is not part of the public manager API.
 
 
 ## State Capture

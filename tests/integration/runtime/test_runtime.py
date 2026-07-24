@@ -123,9 +123,9 @@ from toolang.up.channels import start_delivery
 from toolang.up.server import up as run_experiments_up
 from toolang.api.app import create_app
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
-from tests.support.execution import (
-    emit_event,
-    project_command,
+from tests.support.execution_fixtures import (
+    persist_event,
+    project_run_control,
     project_run_end,
     project_run_start,
     project_step,
@@ -226,7 +226,7 @@ def bind_run_request(context, request, *, state=None):
 
 
 def _emit_trace(context: ApiContext, event) -> None:
-    emit_event(context.executor.store, event)
+    persist_event(context.executor.store, event)
 
 
 def test_executor_stop_projects_command_and_canceled_run(tmp_path: Path) -> None:
@@ -878,7 +878,7 @@ def test_run_detail_preserves_step_input_ref_kinds(tmp_path: Path) -> None:
         created_at="2026-01-01T00:00:00Z",
         started_at="2026-01-01T00:00:00Z",
     )
-    project_command(
+    project_run_control(
         context.executor.store,
         run_id="run-1",
         kind="steer",

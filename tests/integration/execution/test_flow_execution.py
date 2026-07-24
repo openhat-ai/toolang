@@ -1087,6 +1087,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     store = executor.store
     manager = ThreadManager(store, executor.ids)
     source = manager.create(prefix=ThreadPrefix.TERM)
+    sink = PersistSink(store)
     for run_id, parent in (("run_root", None), ("run_child", "run_root/0")):
         store.accept_start(
             run_id=run_id,
@@ -1096,6 +1097,20 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
             context={"runnable": {"kind": "flow", "name": "test"}},
             request_id=None,
             created_at="2026-01-01T00:00:00Z",
+        )
+        sink.on_event(
+            RunBegin(
+                run=run_id,
+                input=RunControlRef(index=0),
+                started_at="2026-01-01T00:00:01Z",
+            )
+        )
+        sink.on_event(
+            RunEnd(
+                run=run_id,
+                status="finished",
+                finished_at="2026-01-01T00:00:02Z",
+            )
         )
 
     forked = manager.fork(thread_id=source)

@@ -26,10 +26,13 @@ async def execute(
     placement: Mapping[str, object] | None,
     runnable: str,
     transform: Callable[[Local], Local] | None = None,
+    validate: Callable[[], None] | None = None,
 ) -> Local:
     """Execute one child-run operation and emit its run-step events."""
 
     async def operation() -> Local:
+        if validate is not None:
+            validate()
         result = await execution.execute_child(
             binding,
             locals,

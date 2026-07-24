@@ -51,7 +51,11 @@ from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.execution.store import RunStore
 from toolang.up.process import agent_run_store_path
 from toolang.up import server as agent_up
-from tests.support.execution import project_run_end, project_run_start, project_step
+from tests.support.execution_fixtures import (
+    project_run_end,
+    project_run_start,
+    project_step,
+)
 from tests.support.catalog import FixtureLocalAgents
 from wcwidth import wcswidth
 

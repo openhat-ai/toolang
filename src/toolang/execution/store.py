@@ -407,14 +407,12 @@ class RunStore:
         *,
         thread_id: str,
         source_thread: str,
-        anchor_run: str,
-        origin: str,
-        peer: ThreadPeer,
+        anchor_run: str | None,
         request_id: str | None,
         context: Mapping[str, Any],
         created_at: str,
     ) -> tuple[ThreadRecord, ThreadControlRecord]:
-        """Atomically fork one thread without copying execution records."""
+        """Atomically fork from one terminal anchor without copying runs."""
 
         _validate_request_id(request_id)
         with self._lock:
@@ -430,13 +428,18 @@ class RunStore:
                     raise ValueError(
                         f"thread control request already exists: {request_id}"
                     )
-                history = self._thread_history(
+                source_row = self._conn.execute(
+                    "SELECT * FROM threads WHERE thread_id = ?",
+                    (source_thread,),
+                ).fetchone()
+                if source_row is None:
+                    raise ValueError(f"thread not found: {source_thread}")
+                source = _thread_from_row(source_row)
+                anchor = self._resolve_thread_anchor(
                     thread_id=source_thread,
-                    include_superseded=False,
-                    visited=set(),
+                    run_id=anchor_run,
+                    require_idle=False,
                 )
-                if all(run.id != anchor_run for run in history):
-                    raise ValueError(f"invalid fork anchor: {anchor_run}")
                 if (
                     self._conn.execute(
                         "SELECT 1 FROM threads WHERE thread_id = ?", (thread_id,)
@@ -456,7 +459,7 @@ class RunStore:
                     (
                         thread_id,
                         source_thread,
-                        anchor_run,
+                        anchor.id,
                         request_id,
                         _dump_json(dict(context)),
                         created_at,
@@ -472,8 +475,8 @@ class RunStore:
                     """,
                     (
                         thread_id,
-                        origin,
-                        _dump_json(peer.to_data()),
+                        source.origin,
+                        _dump_json(source.peer.to_data()),
                         created_at,
                         created_at,
                     ),
@@ -501,15 +504,16 @@ class RunStore:
         self,
         *,
         thread_id: str,
-        anchor_run: str,
+        anchor_run: str | None,
         request_id: str | None,
         expected_head: ThreadControlRef,
         context: Mapping[str, Any],
         created_at: str,
     ) -> tuple[ThreadRecord, ThreadControlRecord, tuple[str, ...]]:
-        """Atomically rewind one thread using optimistic head comparison."""
+        """Atomically rewind one idle thread using optimistic head comparison."""
 
         _validate_request_id(request_id)
+        index: int | None = None
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
@@ -531,19 +535,17 @@ class RunStore:
                 thread = _thread_from_row(thread_row)
                 if thread.head != expected_head:
                     raise ValueError(f"thread head changed: {thread_id}")
-                history = self._thread_history(
+                anchor_record = self._resolve_thread_anchor(
                     thread_id=thread_id,
-                    include_superseded=False,
-                    visited=set(),
+                    run_id=anchor_run,
+                    require_idle=True,
                 )
-                if all(run.id != anchor_run for run in history):
-                    raise ValueError(f"invalid rewind anchor: {anchor_run}")
                 anchor = self._conn.execute(
                     "SELECT rowid, thread FROM runs WHERE id = ?",
-                    (anchor_run,),
+                    (anchor_record.id,),
                 ).fetchone()
                 if anchor is None:
-                    raise ValueError(f"run not found: {anchor_run}")
+                    raise ValueError(f"run not found: {anchor_record.id}")
                 index_row = self._conn.execute(
                     'SELECT COALESCE(MAX("index"), -1) + 1 AS next_index '
                     "FROM thread_controls WHERE thread = ?",
@@ -562,7 +564,7 @@ class RunStore:
                     (
                         thread_id,
                         index,
-                        anchor_run,
+                        anchor_record.id,
                         request_id,
                         expected_head.thread,
                         expected_head.index,
@@ -617,7 +619,9 @@ class RunStore:
                 self._conn.commit()
             except sqlite3.IntegrityError as exc:
                 self._conn.rollback()
-                identity = request_id or f"{thread_id}:{index}"
+                identity = request_id or (
+                    f"{thread_id}:{index}" if index is not None else thread_id
+                )
                 raise ValueError(f"thread control already exists: {identity}") from exc
             except Exception:
                 self._conn.rollback()
@@ -900,6 +904,41 @@ class RunStore:
             return [*prefix, *own]
         finally:
             visited.remove(thread_id)
+
+    def _resolve_thread_anchor(
+        self,
+        *,
+        thread_id: str,
+        run_id: str | None,
+        require_idle: bool,
+    ) -> RunRecord:
+        """Resolve one visible terminal root run inside a write transaction."""
+
+        history = tuple(
+            run
+            for run in self._thread_history(
+                thread_id=thread_id,
+                include_superseded=False,
+                visited=set(),
+            )
+            if run.parent is None
+        )
+        if not history:
+            raise ValueError(f"thread has no runs: {thread_id}")
+        if require_idle and any(
+            run.status in {"pending", "running"} for run in history
+        ):
+            raise ValueError(f"thread is running: {thread_id}")
+        anchor = (
+            history[-1]
+            if run_id is None
+            else next((run for run in history if run.id == run_id), None)
+        )
+        if anchor is None:
+            raise ValueError(f"run is not visible in thread {thread_id}: {run_id}")
+        if anchor.status not in {"finished", "failed", "canceled"}:
+            raise ValueError(f"anchor run is not terminal: {anchor.id}")
+        return anchor
 
     def begin_step(
         self,

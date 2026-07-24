@@ -1,4 +1,4 @@
-"""Trace-event builders for execution persistence tests."""
+"""Build durable execution fixtures without running the executor."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ from toolang.execution.types import (
 )
 
 
-def emit_event(store: RunStore, event: RunEvent) -> None:
+def persist_event(store: RunStore, event: RunEvent) -> None:
     """Persist one trace event through the store's canonical sink."""
 
     sink = getattr(store, "_test_persist_sink", None)
@@ -87,7 +87,7 @@ def project_run_start(
         request_id=request_id,
         created_at=created,
     )
-    emit_event(
+    persist_event(
         store,
         RunBegin(
             run=run_id,
@@ -103,7 +103,7 @@ def project_run_start(
     return run
 
 
-def project_command(
+def project_run_control(
     store: RunStore,
     *,
     run_id: str,
@@ -114,7 +114,7 @@ def project_command(
     request_id: str | None = None,
     created_at: str | None = None,
 ) -> RunControlRecord:
-    """Project one accepted steer or stop command event."""
+    """Project one accepted steer or stop run control."""
 
     if kind == "start":
         raise ValueError("start controls are created by project_run_start")
@@ -155,7 +155,7 @@ def project_step(
     if step_parent is None or resolved_index is None:
         raise ValueError("project_step requires parent/index or run_id/step_index")
     path = trace_child_path(step_parent, resolved_index)
-    emit_event(
+    persist_event(
         store,
         StepBegin(
             step=path,
@@ -166,7 +166,7 @@ def project_step(
         ),
     )
     if status != "running":
-        emit_event(
+        persist_event(
             store,
             StepEnd(
                 step=path,
@@ -198,7 +198,7 @@ def project_run_end(
 ) -> RunRecord:
     """Project one terminal run event, returning durable run truth."""
 
-    emit_event(
+    persist_event(
         store,
         RunEnd(
             run=run_id,

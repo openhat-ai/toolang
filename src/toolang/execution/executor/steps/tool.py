@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Mapping
 from pathlib import Path
@@ -77,13 +78,45 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             started_at=started_at,
         )
     )
-    record = await invoke_tool_call(
-        run_id=run.run_id,
-        tools=prepared.tools,
-        services=prepared.services,
-        home=state.home,
-        call=call,
-    )
+    try:
+        record = await invoke_tool_call(
+            run_id=run.run_id,
+            tools=prepared.tools,
+            services=prepared.services,
+            home=state.home,
+            call=call,
+        )
+    except asyncio.CancelledError:
+        await state.emit(
+            StepEnd(
+                step=trace_child_path(run.run_id, step_index),
+                kind="tool",
+                status="canceled",
+                finished_at=utc_now(),
+            )
+        )
+        raise
+    except Exception as exc:
+        error = str(exc) or type(exc).__name__
+        await state.emit(
+            StepEnd(
+                step=trace_child_path(run.run_id, step_index),
+                kind="tool",
+                status="failed",
+                error=error,
+                finished_at=utc_now(),
+            )
+        )
+        _LOGGER.error(
+            "Step failed thread=%s run=%s step=%s kind=tool tool=%s error=%r duration_ms=%s",
+            run.thread,
+            run.run_id,
+            step_index,
+            call.name,
+            error,
+            elapsed_ms(step_started),
+        )
+        raise
     part = ToolResultPart(
         tool_call_id=record.tool_call_id,
         call_id=record.call_id,
@@ -156,11 +189,11 @@ async def invoke_tool_call(
     """Invoke one selected tool and normalize its result or error."""
 
     name = call.name
-    tool = tools.get(name)
-    if tool is None:
-        raise ToolangError(f"unknown tool call: {name or '<empty>'}")
     arguments = dict(call.input)
     try:
+        tool = tools.get(name)
+        if tool is None:
+            raise ToolangError(f"unknown tool call: {name or '<empty>'}")
         output = await tool.invoke(
             arguments,
             _tool_context(

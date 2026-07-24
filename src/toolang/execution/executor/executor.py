@@ -465,7 +465,7 @@ class _Execution:
         self._emit_trace = emit
         self._run_outputs: dict[str, StepPath] = {}
         self._last_step_index: dict[str, int] = {}
-        self._failed_runs: set[str] = set()
+        self._step_failures: dict[str, str | None] = {}
 
     @property
     def store(self) -> RunStore:
@@ -724,10 +724,10 @@ class _Execution:
                     index,
                 )
             if isinstance(event, StepEnd) and event.status == "failed":
-                self._failed_runs.add(run_id)
+                self._step_failures[run_id] = event.error
 
     async def _emit_system_failure(self, run_id: str, error: str) -> None:
-        if run_id in self._failed_runs:
+        if self._step_failures.get(run_id) == error:
             return
         path = trace_child_path(run_id, self._last_step_index.get(run_id, -1) + 1)
         started_at = utc_now()
@@ -801,7 +801,7 @@ def _child_binding(
         args={
             name: local.value
             for name, local in locals.items()
-            if name in parameters
+            if name in parameters and local.shape != "none"
         },
         model=parent.model,
         state=parent.state,

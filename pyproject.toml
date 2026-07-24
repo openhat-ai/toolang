@@ -105,3 +105,6 @@ target-version = "py311"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "live_provider: opt-in smoke tests that call a real model provider",
+]

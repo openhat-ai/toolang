@@ -268,11 +268,10 @@ The public execution concepts are:
 `AgentSetup` and `AgentState` values for each top-level run. It does not know
 `StateWatcher`, jobs, CLI, or HTTP.
 
-`ThreadManager` owns chat-thread creation and branching rules. Rewind may
-write durable stop controls through the shared store, but it never depends on
-the executor and thread operations never spawn follow-up runs. Create and fork
-return a thread id; rewind mutates in place. `RunExecutor` does not import or
-expose thread operations.
+`ThreadManager` owns chat-thread creation and branching rules. It never writes
+run controls or depends on the executor, and thread operations never spawn
+follow-up runs. Create and fork return a thread id; rewind mutates an idle
+thread in place. `RunExecutor` does not import or expose thread operations.
 
 At run entry, the caller captures the current `AgentState`. All child runs use
 that same state version. File changes produce a newer state only for later

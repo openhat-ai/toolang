@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 import logging
@@ -122,6 +123,16 @@ async def execute(state: _AgicState) -> ModelCallResult:
             )
         else:
             current = await prepared.adapter.invoke(prepared.model, request)
+    except asyncio.CancelledError:
+        await state.emit(
+            StepEnd(
+                step=trace_child_path(run.run_id, step_index),
+                kind="model",
+                status="canceled",
+                finished_at=utc_now(),
+            )
+        )
+        raise
     except Exception as exc:
         await state.emit(
             StepEnd(

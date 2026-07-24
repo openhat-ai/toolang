@@ -25,8 +25,6 @@ async def execute(
     controls: Sequence[RunControlRecord],
     placement: Mapping[str, object] | None,
 ) -> Local:
-    require_list(locals, operation="gather")
-
     def transform(result: Local) -> Local:
         return Local(result.value, "item", type_name=result.type_name)
 
@@ -40,4 +38,5 @@ async def execute(
         placement=placement,
         runnable=statement.runnable,
         transform=transform,
+        validate=lambda: require_list(locals, operation="gather"),
     )
