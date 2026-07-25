@@ -23,6 +23,7 @@ from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.errors import ToolangError
+from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, StepEnd
 from toolang.execution.executor.common import BoundRun
 from toolang.execution.executor.prepare import PreparedAgic
@@ -1147,9 +1148,7 @@ def test_model_target_profile_formats_token_counts_as_decimal_units() -> None:
     assert model_target_profile(
         target,
         models=provider.list_models(environ={}),
-    ) == (
-        "streaming=y, tools=y, ctx=1M, max_out=384k, price=$0.14/$0.28"
-    )
+    ) == ("streaming=y, tools=y, ctx=1M, max_out=384k, price=$0.14/$0.28")
     assert (
         model_target_profile(
             ModelTarget(
@@ -1409,9 +1408,7 @@ def test_chat_completions_adapter_replays_deepseek_reasoning_content() -> None:
 
     assert result.message is not None
     call_part = next(
-        part
-        for part in result.message.parts
-        if isinstance(part, ToolCallPart)
+        part for part in result.message.parts if isinstance(part, ToolCallPart)
     )
     assert call_part.reasoning == (
         "The user asked for the directory, so list the current folder."
@@ -2149,9 +2146,7 @@ def test_chat_completions_reject_document_url() -> None:
             target,
             Message(
                 role="user",
-                parts=(
-                    DocumentPart(url="https://example.com/report.pdf"),
-                ),
+                parts=(DocumentPart(url="https://example.com/report.pdf"),),
             ),
         )
 
@@ -2291,8 +2286,7 @@ def test_chat_completions_audio_stream_does_not_open_duplicate_text_part(
         ),
     )
     assert [
-        (type(event).__name__, getattr(event, "kind", None))
-        for event in events
+        (type(event).__name__, getattr(event, "kind", None)) for event in events
     ] == [
         ("ModelPartStart", "audio"),
         ("ModelPartEnd", None),
@@ -2504,7 +2498,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
         _execute(
             _AgicState(
                 prepared=prepared,
-                home=Path("/tmp/home"),
+                layout=AgentLayout.resident(Path("/tmp"), "home"),
                 emit=emit,
                 pending_inputs=pending_inputs,
                 before_call=lambda: None,
@@ -2650,9 +2644,7 @@ def test_responses_audio_stream_does_not_open_duplicate_text_part(
     class _Client:
         responses = _Responses()
 
-    monkeypatch.setattr(
-        responses_models, "create_client", lambda target: _Client()
-    )
+    monkeypatch.setattr(responses_models, "create_client", lambda target: _Client())
 
     result = asyncio.run(
         responses_models.stream_response(
@@ -2680,8 +2672,7 @@ def test_responses_audio_stream_does_not_open_duplicate_text_part(
         ),
     )
     assert [
-        (type(event).__name__, getattr(event, "kind", None))
-        for event in events
+        (type(event).__name__, getattr(event, "kind", None)) for event in events
     ] == [
         ("ModelPartStart", "audio"),
         ("ModelPartEnd", None),
@@ -2825,8 +2816,7 @@ def _prepared_agic(
             model=None,
             state=cast(Any, state),
             setup=AgentSetup(
-                name="test",
-                home=Path("/agents/test"),
+                layout=AgentLayout.resident(Path("/"), "alice"),
                 providers={},
                 adapters={},
                 models=(),
@@ -2863,7 +2853,7 @@ def _run_agic(prepared: PreparedAgic) -> Message | None:
         _execute(
             _AgicState(
                 prepared=prepared,
-                home=Path("/tmp/home"),
+                layout=AgentLayout.resident(Path("/tmp"), "home"),
                 emit=_ignore_event,
                 pending_inputs=tuple,
                 before_call=lambda: None,

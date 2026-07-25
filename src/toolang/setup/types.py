@@ -4,20 +4,19 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from types import MappingProxyType
 
 from toolang.base.protocols.model import ModelAdapter, ModelProvider
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelInfo
+from toolang.common.layout import AgentLayout
 
 
 @dataclass(frozen=True, slots=True)
 class AgentSetup:
-    """Installed implementations and available models fixed for one run."""
+    """Installed implementations and models fixed for one agent run."""
 
-    name: str
-    home: Path
+    layout: AgentLayout
     providers: Mapping[str, ModelProvider]
     adapters: Mapping[str, ModelAdapter]
     models: tuple[ModelInfo, ...]

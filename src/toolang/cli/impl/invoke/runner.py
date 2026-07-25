@@ -13,6 +13,7 @@ from toolang.up import process as agents
 from toolang.up import server as agent_up
 from toolang.base.types.sandbox import SandboxSelector
 from toolang.common.errors import ToolangError
+from toolang.common.layout import AgentLayout
 from toolang.up.logging import resolve_agent_logging
 from toolang.cli.common.client import (
     RuntimeClient,
@@ -81,10 +82,9 @@ def handle_roaming_invoke(
     script_progress: ScriptProgressSink | None = None
     request: RoamingInvokeRequest | None = None
     runtime_environ: dict[str, str] | None = None
-    toolang_root: Path | None = None
-    agent_name: str | None = None
+    layout: AgentLayout | None = None
     try:
-        toolang_root, agent_name, state, program = _load_roaming_program(
+        layout, state, program = _load_roaming_program(
             source_path,
             progress=as_progress_sink(prepare_progress),
         )
@@ -130,7 +130,8 @@ def handle_roaming_invoke(
             )
             return 0
         runtime_environ = load_runtime_environ(
-            toolang_root, agent_name, base_environ=os.environ
+            layout,
+            base_environ=os.environ,
         )
         script_progress = progress_sink(
             executable_name=request.executable_name,
@@ -144,8 +145,7 @@ def handle_roaming_invoke(
         selector = SandboxSelector.parse(request.sandbox or "none")
         if selector.driver == "none":
             outcome = agent_up.invoke(
-                toolang_root=toolang_root,
-                agent_name=agent_name,
+                layout=layout,
                 executable_kind=request.executable_kind,
                 executable_name=request.executable_name,
                 input_text=request.input_text,
@@ -159,8 +159,7 @@ def handle_roaming_invoke(
             )
         else:
             outcome = _invoke_hosted(
-                toolang_root=toolang_root,
-                agent_name=agent_name,
+                layout=layout,
                 request=request,
                 metadata=metadata,
                 environ=runtime_environ,
@@ -174,8 +173,7 @@ def handle_roaming_invoke(
             prepare_progress.interrupt()
         emit_interrupt(
             script_progress=script_progress,
-            toolang_root=toolang_root,
-            agent_name=agent_name,
+            layout=layout,
             executable_name=request.executable_name if request is not None else None,
             environ=runtime_environ,
         )
@@ -195,16 +193,14 @@ def handle_roaming_invoke(
         return 1
     return emit_outcome(
         outcome,
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        layout=layout,
         executable_name=request.executable_name,
     )
 
 
 def _invoke_hosted(
     *,
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     request: RoamingInvokeRequest,
     metadata: dict[str, object],
     environ: dict[str, str],
@@ -212,11 +208,11 @@ def _invoke_hosted(
     reply: ScriptProgressSink,
 ) -> RunRecord:
     selector = SandboxSelector.parse(request.sandbox or "none")
-    process = agents.AgentProcess(toolang_root, agent_name)
+    process = agents.AgentProcess(layout)
     status = process.status(ui_base_url="")
     if status is not None and status.status in {"running", "preparing", "starting"}:
         if status.status != "running" or status.endpoint is None:
-            raise click.ClickException(f"agent API is not ready: {agent_name}")
+            raise click.ClickException(f"agent API is not ready: {layout.name}")
         if not _sandbox_matches(status.sandbox, selector):
             raise click.ClickException(
                 f"agent is already running in sandbox {status.sandbox or 'unknown'}; "
@@ -225,15 +221,14 @@ def _invoke_hosted(
         return _invoke_client(RuntimeClient(status.endpoint), request, metadata, reply)
 
     runtime_environ = dict(environ)
-    runtime_environ["TOOLANG_ROOT"] = str(toolang_root)
+    runtime_environ["TOOLANG_ROOT"] = str(layout.root)
     log_plan = resolve_agent_logging(
         mode="start",
         environ=runtime_environ,
-        agent_log_path=agents.agent_runtime_log_path(toolang_root, agent_name),
+        agent_log_path=layout.runtime_log,
     )
     startup = agent_up.resolve_startup(
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        layout=layout,
         sandbox=selector.render(),
         models=request.models,
         tools=request.tools or None,
@@ -245,8 +240,7 @@ def _invoke_hosted(
     if log_plan.path is None:
         raise click.ClickException("agent log path was not resolved")
     with owned_runtime_client(
-        root=toolang_root,
-        name=agent_name,
+        layout=layout,
         startup=startup,
         environ=log_plan.environ,
         log_path=log_plan.path,
@@ -298,12 +292,13 @@ def _load_roaming_program(
     source_path: Path,
     *,
     progress=None,
-) -> tuple[Path, str, AgentState, Program]:
-    toolang_root, agent_name = agents.materialize_roaming_program(source_path)
+) -> tuple[AgentLayout, AgentState, Program]:
+    layout = agents.materialize_roaming_program(source_path)
     state = agent_up.prepare_agent(
-        toolang_root=toolang_root, agent_name=agent_name, progress=progress
+        layout=layout,
+        progress=progress,
     )
-    return toolang_root, agent_name, state, state.program
+    return layout, state, state.program
 
 
 def _select_roaming_executable(

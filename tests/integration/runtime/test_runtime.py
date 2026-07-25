@@ -33,6 +33,7 @@ from toolang.work.store import JobStore, open_job_store
 from toolang.work.watcher import JobWatcher
 from tests.support.catalog import FixtureLocalAgents
 from toolang.common.errors import ToolangError
+from toolang.common.layout import AgentLayout
 from toolang.base.protocols.channel import AgentChannel
 from toolang.base.protocols.sandbox import AgentSandbox
 from toolang.base.types.channel import (
@@ -96,7 +97,6 @@ from toolang.execution.executor import Executor
 from toolang.execution.executor.request import RunRequest
 from toolang.execution.executor.persist import PersistSink
 from toolang.execution.store import RunStore
-from toolang.up.process import agent_run_store_path
 from toolang.execution.reply import SseReplySink
 from toolang.setup import AgentSetup, SetupWatcher
 from tests.support import runtime as inspect
@@ -136,6 +136,10 @@ from tests.support.execution_fixtures import (
 class _TestApiContext(ApiContext):
     channel_bindings: dict[str, ChannelBinding] = field(default_factory=dict)
     channel_plugins: dict[str, AgentChannel] = field(default_factory=dict)
+
+
+def _layout(root: Path, name: str = "alice") -> AgentLayout:
+    return AgentLayout.resident(root, name)
 
 
 def _put_cap(
@@ -211,7 +215,10 @@ def _agents(root: Path) -> FixtureLocalAgents:
 
 def _jobs(root: Path, agent: str = "alice") -> AuthoredJobs:
     catalog = AuthoredJobs(root / "agents" / agent)
-    assign_missing_authored_job_ids(root, agent, catalog=catalog)
+    assign_missing_authored_job_ids(
+        _layout(root, agent),
+        catalog=catalog,
+    )
     return catalog
 
 
@@ -350,7 +357,7 @@ def test_sse_response_sink_streams_canceled_run_end() -> None:
 
 def test_file_request_store_deduplicates_same_fingerprint(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    store = file_requests.open_file_request_store(toolang_root, "alice")
+    store = file_requests.open_file_request_store(_layout(toolang_root))
     snapshot = FileSnapshot(
         watch_root=str(tmp_path / "inbox"),
         relative_path="note.txt",
@@ -408,7 +415,7 @@ def test_collect_file_submissions_scans_existing_inbox_files_once(
         toolang_root=toolang_root,
         agent_name="alice",
     )
-    store = file_requests.open_file_request_store(toolang_root, "alice")
+    store = file_requests.open_file_request_store(_layout(toolang_root))
     try:
         first = files.collect_file_submissions(
             context.executor, store, inboxes=(inbox,), stable_ms=0.0
@@ -473,7 +480,7 @@ def test_create_app_mounts_complete_api(tmp_path: Path) -> None:
 
             assert profile["environment"] == {
                 "sandbox": "none",
-                "home": str(context.home),
+                "home": str(context.layout.home),
                 "endpoint": "http://127.0.0.1:8765",
             }
             assert profile["metrics"] == {
@@ -994,9 +1001,9 @@ def test_trace_events_after_run_cancel_are_ignored(tmp_path: Path) -> None:
         error="User stopped the run.",
     )
     executor = run_executor_module.Executor(
-        root=context.root,
-        name=context.name,
-        home=context.home,
+        root=context.layout.root,
+        name=context.layout.name,
+        home=context.layout.home,
         id_state_path=context.executor.id_state_path,
         setup=context.executor.setup,
         store=context.executor.store,
@@ -1644,8 +1651,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
     app = _create_test_app(context)
     store = context.executor.store
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:9999",
         started_at="2026-01-01T00:00:00Z",
         pid=123,
@@ -1737,7 +1743,7 @@ def test_profile_reports_activity_metrics(tmp_path: Path) -> None:
         assert profile.status_code == 200
         assert profile.json()["environment"] == {
             "sandbox": "docker:python:3.13-slim",
-            "home": str(context.home),
+            "home": str(context.layout.home),
             "endpoint": "http://127.0.0.1:9999",
         }
         assert profile.json()["metrics"] == {
@@ -2363,7 +2369,7 @@ def test_poll_loop_queues_channel_deliveries_and_delivers_reply(tmp_path: Path) 
             "assistant:hello from poll",
         ),
     ]
-    state_path = agents.channel_room(toolang_root, "alice", "telegram") / "state.json"
+    state_path = _layout(toolang_root).channel_room("telegram") / "state.json"
     assert state_path.is_file()
     assert (
         ChannelState.from_data(
@@ -2814,9 +2820,10 @@ def test_job_store_claims_due_chores_and_tasks(tmp_path: Path) -> None:
     )
     context = _build_context(toolang_root=toolang_root, agent_name="alice")
     definitions = AgentJobs.load(
-        toolang_root, "alice", context.state_watcher.current().program
+        _layout(toolang_root),
+        context.state_watcher.current().program,
     )
-    store = open_job_store(toolang_root, "alice")
+    store = open_job_store(_layout(toolang_root))
     try:
         store.reconcile(jobs=definitions, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
         claimed = tuple(
@@ -3014,8 +3021,7 @@ def test_local_runtime_configures_logging_before_state_loaded(
     monkeypatch.setattr(up_module, "_run_uvicorn_app", fake_run_uvicorn_app)
 
     result = up_module._up_local(
-        toolang_root=toolang_root,
-        agent_name="alice",
+        layout=_layout(toolang_root),
         host="127.0.0.1",
         endpoint_host="localhost",
         port=8765,
@@ -3066,8 +3072,7 @@ def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> No
     selectors = ("openai/gpt-5[openai]",)
     assert up_module._model_count(setup, state, selectors=selectors) == 1
     assert (
-        up_module._model_count(setup, state, selectors=selectors)
-        < unrestricted_count
+        up_module._model_count(setup, state, selectors=selectors) < unrestricted_count
     )
 
 
@@ -3079,8 +3084,7 @@ def test_assemble_execution_rejects_unmatched_tool_selector(tmp_path: Path) -> N
         ValueError, match="tool selector matched no tools: missing/none"
     ):
         up_module.assemble_execution(
-            toolang_root=toolang_root,
-            agent_name="alice",
+            layout=_layout(toolang_root),
             environ={"OPENAI_API_KEY": "secret"},
             tool_selectors=("missing/none",),
         )
@@ -3092,8 +3096,7 @@ def test_assemble_execution_rejects_unmatched_cap_selector(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match="cap selector matched no caps: skill/missing"):
         up_module.assemble_execution(
-            toolang_root=toolang_root,
-            agent_name="alice",
+            layout=_layout(toolang_root),
             environ={"OPENAI_API_KEY": "secret"},
             cap_selectors=("skill/missing",),
         )
@@ -3120,8 +3123,7 @@ def test_assemble_execution_applies_tool_and_cap_selectors(tmp_path: Path) -> No
     )
 
     _executor, setup_watcher, watcher = up_module.assemble_execution(
-        toolang_root=toolang_root,
-        agent_name="alice",
+        layout=_layout(toolang_root),
         environ={"OPENAI_API_KEY": "secret"},
         tool_selectors=("shell/*",),
         cap_selectors=("skill/local-reviewer",),
@@ -3145,8 +3147,7 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
         text="---\ndescription: Review local changes\n---\n# Local Reviewer\n",
     )
     executor, setup_watcher, watcher = up_module.assemble_execution(
-        toolang_root=toolang_root,
-        agent_name="alice",
+        layout=_layout(toolang_root),
         environ={"OPENAI_API_KEY": "secret"},
         tool_selectors=("shell/*",),
         cap_selectors=("skill/local-reviewer",),
@@ -3194,8 +3195,7 @@ def test_up_reuses_previous_agent_port_when_unspecified(
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:53322",
         started_at="2026-04-07T11:00:00Z",
         pid=12345,
@@ -3252,8 +3252,7 @@ def test_up_falls_back_when_previous_agent_port_is_unavailable(
         blocker.bind(("127.0.0.1", 0))
         blocked_port = int(blocker.getsockname()[1])
         agents.write_runtime_state(
-            toolang_root,
-            "alice",
+            _layout(toolang_root),
             endpoint=f"http://127.0.0.1:{blocked_port}",
             started_at="2026-04-07T11:00:00Z",
             pid=12345,
@@ -3304,13 +3303,12 @@ def test_up_falls_back_when_stopped_agent_port_is_unavailable(
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:53322",
         started_at="2026-04-07T11:00:00Z",
         pid=12345,
     )
-    agents.stop_runtime_state(toolang_root, "alice")
+    agents.stop_runtime_state(_layout(toolang_root))
     captured: dict[str, object] = {}
 
     def fake_port_is_available(host: str, port: int) -> bool:
@@ -3368,13 +3366,12 @@ def test_resolve_runtime_port_does_not_wait_for_stopped_preferred_port(
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:53322",
         started_at="2026-04-07T11:00:00Z",
         pid=12345,
     )
-    agents.stop_runtime_state(toolang_root, "alice")
+    agents.stop_runtime_state(_layout(toolang_root))
 
     monkeypatch.setattr(
         "toolang.up.server._port_is_available", lambda host, port: False
@@ -3387,14 +3384,13 @@ def test_resolve_runtime_port_does_not_wait_for_stopped_preferred_port(
     )
     monkeypatch.setattr(
         "toolang.up.server._pick_runtime_port",
-        lambda host, *, toolang_root, agent_name, preferred_port=None: 43210,
+        lambda host, *, layout, preferred_port=None: 43210,
     )
 
     resolved = up_module.resolve_runtime_port(
         host="127.0.0.1",
         explicit_port=None,
-        toolang_root=toolang_root,
-        agent_name="alice",
+        layout=_layout(toolang_root),
     )
 
     assert resolved == 43210
@@ -3419,8 +3415,7 @@ def test_resolve_runtime_port_uses_temporary_picker_for_visiting_agents(
     resolved = up_module.resolve_runtime_port(
         host="127.0.0.1",
         explicit_port=None,
-        toolang_root=toolang_root,
-        agent_name="alice",
+        layout=_layout(toolang_root),
         temporary=True,
     )
 
@@ -3433,8 +3428,7 @@ def test_resolve_runtime_port_reuses_visiting_agent_previous_port(
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:45679",
         started_at="2026-04-07T11:00:00Z",
         pid=None,
@@ -3453,8 +3447,7 @@ def test_resolve_runtime_port_reuses_visiting_agent_previous_port(
     resolved = up_module.resolve_runtime_port(
         host="127.0.0.1",
         explicit_port=None,
-        toolang_root=toolang_root,
-        agent_name="alice",
+        layout=_layout(toolang_root),
         temporary=True,
     )
 
@@ -3468,16 +3461,14 @@ def test_pick_runtime_port_uses_first_available_auto_port(
     _write_text(toolang_root / "agents" / "bob" / "agent.too", "agent bob\n")
     _write_text(toolang_root / "agents" / "carol" / "agent.too", "agent carol\n")
     agents.write_runtime_state(
-        toolang_root,
-        "bob",
+        _layout(toolang_root, "bob"),
         endpoint="http://127.0.0.1:7001",
         started_at="2026-04-07T11:00:00Z",
         pid=None,
         status="stopped",
     )
     agents.write_runtime_state(
-        toolang_root,
-        "carol",
+        _layout(toolang_root, "carol"),
         endpoint="http://127.0.0.1:7002",
         started_at="2026-04-07T11:00:00Z",
         pid=12345,
@@ -3494,8 +3485,7 @@ def test_pick_runtime_port_uses_first_available_auto_port(
 
     resolved = up_module._pick_runtime_port(
         "127.0.0.1",
-        toolang_root=toolang_root,
-        agent_name="alice",
+        layout=_layout(toolang_root),
     )
 
     assert resolved == 7003
@@ -3635,7 +3625,8 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(
         for mount in request.mounts
     } == {
         "config.toml",
-        ".prepared",
+        ".setup",
+        ".state",
         "psyches",
         "skills",
         "services",
@@ -3660,9 +3651,7 @@ def test_up_starts_managed_sandbox_without_local_uvicorn(
     assert "--sandbox-child" in request.run_command
     assert "--enable" not in request.run_command
     runtime_state = json.loads(
-        agents.agent_runtime_state_path(toolang_root, "alice").read_text(
-            encoding="utf-8"
-        )
+        _layout(toolang_root).runtime_status.read_text(encoding="utf-8")
     )
     assert runtime_state["status"] == "running"
     assert runtime_state["endpoint"] == "http://localhost:8765"
@@ -3842,9 +3831,7 @@ def test_up_marks_managed_sandbox_failed_when_ready_check_fails(
         raise AssertionError("expected managed sandbox startup failure")
 
     runtime_state = json.loads(
-        agents.agent_runtime_state_path(toolang_root, "alice").read_text(
-            encoding="utf-8"
-        )
+        _layout(toolang_root).runtime_status.read_text(encoding="utf-8")
     )
     assert runtime_state["status"] == "failed"
     assert runtime_state["message"] == "sandbox failed"
@@ -3900,9 +3887,7 @@ def test_up_marks_managed_sandbox_failed_when_prepare_fails(
         raise AssertionError("expected managed sandbox prepare failure")
 
     runtime_state = json.loads(
-        agents.agent_runtime_state_path(toolang_root, "alice").read_text(
-            encoding="utf-8"
-        )
+        _layout(toolang_root).runtime_status.read_text(encoding="utf-8")
     )
     assert runtime_state["status"] == "failed"
     assert runtime_state["message"] == "prepare failed"
@@ -3915,8 +3900,7 @@ def test_list_agent_statuses_surfaces_preparing_and_failed_states(
     _agents(toolang_root).create("alice")
     _agents(toolang_root).create("bob")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-08T10:00:00Z",
         pid=os.getpid(),
@@ -3932,8 +3916,7 @@ def test_list_agent_statuses_surfaces_preparing_and_failed_states(
         status="preparing",
     )
     agents.write_runtime_state(
-        toolang_root,
-        "bob",
+        _layout(toolang_root, "bob"),
         endpoint="http://127.0.0.1:9000",
         started_at="2026-04-08T10:00:00Z",
         pid=None,
@@ -3973,36 +3956,33 @@ def test_stop_runtime_state_requires_matching_owner_when_expected(
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-08T10:00:00Z",
         pid=111,
     )
 
     stopped = agents.stop_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         expected_pid=222,
         expected_started_at="2026-04-08T10:00:00Z",
     )
 
     runtime_state = cast(
-        dict[str, object], agents.AgentProcess(toolang_root, "alice").state()
+        dict[str, object], agents.AgentProcess(_layout(toolang_root)).state()
     )
     assert stopped is False
     assert runtime_state["status"] == "running"
     assert runtime_state["pid"] == 111
 
     stopped = agents.stop_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         expected_pid=111,
         expected_started_at="2026-04-08T10:00:00Z",
     )
 
     runtime_state = cast(
-        dict[str, object], agents.AgentProcess(toolang_root, "alice").state()
+        dict[str, object], agents.AgentProcess(_layout(toolang_root)).state()
     )
     assert stopped is True
     assert runtime_state["status"] == "stopped"
@@ -4015,8 +3995,7 @@ def test_agent_status_uses_matching_process_when_runtime_state_is_stale(
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-08T10:00:00Z",
         pid=None,
@@ -4027,7 +4006,7 @@ def test_agent_status_uses_matching_process_when_runtime_state_is_stale(
         "toolang.up.process._agent_runtime_process_pids", lambda *_args: (43210,)
     )
 
-    status = agents.AgentProcess(toolang_root, "alice").status(
+    status = agents.AgentProcess(_layout(toolang_root)).status(
         ui_base_url="http://localhost:3000"
     )
 
@@ -4074,18 +4053,17 @@ def test_stop_agent_terminates_local_pid_and_marks_state_stopped(
 
     monkeypatch.setattr("toolang.up.process.os.kill", fake_kill)
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-08T10:00:00Z",
         pid=pid,
     )
 
-    stopped = agents.AgentProcess(toolang_root, "alice").stop()
+    stopped = agents.AgentProcess(_layout(toolang_root)).stop()
 
     assert stopped is True
     runtime_state = cast(
-        dict[str, object], agents.AgentProcess(toolang_root, "alice").state()
+        dict[str, object], agents.AgentProcess(_layout(toolang_root)).state()
     )
     assert runtime_state["status"] == "stopped"
     assert runtime_state["pid"] is None
@@ -4097,8 +4075,7 @@ def test_stop_agent_marks_state_stopped_without_waiting_for_endpoint_release(
     toolang_root = tmp_path / "toolang"
     _write_text(toolang_root / "agents" / "alice" / "agent.too", "agent alice\n")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:53322",
         started_at="2026-04-08T10:00:00Z",
         pid=43210,
@@ -4111,7 +4088,7 @@ def test_stop_agent_marks_state_stopped_without_waiting_for_endpoint_release(
         lambda pid, *, force: observed.setdefault("stopped_pid", pid) and True,
     )
 
-    process = agents.AgentProcess(toolang_root, "alice")
+    process = agents.AgentProcess(_layout(toolang_root))
     stopped = process.stop()
 
     assert stopped is True
@@ -4127,8 +4104,7 @@ def test_stop_agent_terminates_matching_process_when_runtime_state_is_stale(
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-08T10:00:00Z",
         pid=None,
@@ -4144,12 +4120,12 @@ def test_stop_agent_terminates_matching_process_when_runtime_state_is_stale(
         lambda pid, *, force: stopped_pids.append(pid) or True,
     )
 
-    stopped = agents.AgentProcess(toolang_root, "alice").stop()
+    stopped = agents.AgentProcess(_layout(toolang_root)).stop()
 
     assert stopped is True
     assert stopped_pids == [43210]
     runtime_state = cast(
-        dict[str, object], agents.AgentProcess(toolang_root, "alice").state()
+        dict[str, object], agents.AgentProcess(_layout(toolang_root)).state()
     )
     assert runtime_state["status"] == "stopped"
     assert runtime_state["pid"] is None
@@ -4161,8 +4137,7 @@ def test_stop_agent_rejects_stubborn_process_without_marking_state_stopped(
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-08T10:00:00Z",
         pid=None,
@@ -4175,10 +4150,10 @@ def test_stop_agent_rejects_stubborn_process_without_marking_state_stopped(
     monkeypatch.setattr("toolang.up.process._stop_pid", lambda _pid, *, force: False)
 
     with pytest.raises(ValueError, match="retry with --force"):
-        agents.AgentProcess(toolang_root, "alice").stop()
+        agents.AgentProcess(_layout(toolang_root)).stop()
 
     runtime_state = cast(
-        dict[str, object], agents.AgentProcess(toolang_root, "alice").state()
+        dict[str, object], agents.AgentProcess(_layout(toolang_root)).state()
     )
     assert runtime_state["status"] == "running"
 
@@ -4198,8 +4173,7 @@ def test_stop_agent_stops_managed_sandbox_and_marks_state_stopped(
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-08T10:00:00Z",
         pid=None,
@@ -4210,7 +4184,7 @@ def test_stop_agent_stops_managed_sandbox_and_marks_state_stopped(
     )
     plugin = FakeSandbox()
 
-    stopped = agents.AgentProcess(toolang_root, "alice").stop(
+    stopped = agents.AgentProcess(_layout(toolang_root)).stop(
         sandbox_plugin=cast("AgentSandbox", plugin),
         force=True,
     )
@@ -4219,7 +4193,7 @@ def test_stop_agent_stops_managed_sandbox_and_marks_state_stopped(
     assert plugin.runtime_id == "sandbox-alice"
     assert plugin.force is True
     runtime_state = cast(
-        dict[str, object], agents.AgentProcess(toolang_root, "alice").state()
+        dict[str, object], agents.AgentProcess(_layout(toolang_root)).state()
     )
     assert runtime_state["status"] == "stopped"
     assert runtime_state["pid"] is None
@@ -4332,8 +4306,8 @@ def test_prepare_reload_refreshes_prepared_and_agent_state(tmp_path: Path) -> No
             refreshed = await _wait_for_fingerprint_change(context, initial_fingerprint)
             assert refreshed
             current = context.state_watcher.current()
-            root = load_root_prepared(toolang_root, current.root_version)
-            home = load_home_prepared(toolang_root, "alice", current.home_version)
+            root = load_root_prepared(_layout(toolang_root), current.root_version)
+            home = load_home_prepared(_layout(toolang_root), current.home_version)
             assert root.caps == ()
             assert current.program == initial_program
             assert any(
@@ -4432,8 +4406,8 @@ def test_prepare_materializes_remote_entries_from_config(
     )
     assert config_path == toolang_root / "config.toml"
 
-    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    root = load_root_prepared(toolang_root, state.root_version)
+    state = up_module.prepare_agent(layout=_layout(toolang_root))
+    root = load_root_prepared(_layout(toolang_root), state.root_version)
 
     assert [entry.source.origin for entry in root.caps] == ["remote"]
     assert [entry.source.form for entry in root.caps] == ["wired"]
@@ -4540,8 +4514,8 @@ def test_remote_skill_add_canonicalizes_github_tree_url(
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(
         encoding="utf-8"
     )
-    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    home = load_home_prepared(toolang_root, "alice", state.home_version)
+    state = up_module.prepare_agent(layout=_layout(toolang_root))
+    home = load_home_prepared(_layout(toolang_root), state.home_version)
 
     assert (
         'answers = { ref = "github://brave/brave-search-skills/skills/answers@main" }'
@@ -4578,8 +4552,8 @@ def test_remote_skill_add_canonicalizes_github_skill_file_url(
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(
         encoding="utf-8"
     )
-    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    home = load_home_prepared(toolang_root, "alice", state.home_version)
+    state = up_module.prepare_agent(layout=_layout(toolang_root))
+    home = load_home_prepared(_layout(toolang_root), state.home_version)
 
     expected_ref = "github://vercel-labs/agent-browser/skills/agent-browser@main"
     assert f'agent-browser = {{ ref = "{expected_ref}" }}' in config_text
@@ -4611,8 +4585,8 @@ def test_remote_skill_add_canonicalizes_raw_refs_heads_skill_file_url(
     config_text = (toolang_root / "agents" / "alice" / "config.toml").read_text(
         encoding="utf-8"
     )
-    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    home = load_home_prepared(toolang_root, "alice", state.home_version)
+    state = up_module.prepare_agent(layout=_layout(toolang_root))
+    home = load_home_prepared(_layout(toolang_root), state.home_version)
 
     expected_ref = (
         "github://vercel-labs/agent-browser/skills/agent-browser@refs/heads/main"
@@ -4643,7 +4617,7 @@ def test_state_watcher_refreshes_remote_cap_state(tmp_path: Path, monkeypatch) -
         kind="skill",
         ref="acme/pdf",
     )
-    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
+    state = up_module.prepare_agent(layout=_layout(toolang_root))
     _wire_cap(
         toolang_root,
         "alice",
@@ -4651,7 +4625,7 @@ def test_state_watcher_refreshes_remote_cap_state(tmp_path: Path, monkeypatch) -
         kind="skill",
         ref="acme/review",
     )
-    watcher = state_watcher.StateWatcher(toolang_root, "alice", state)
+    watcher = state_watcher.StateWatcher(_layout(toolang_root), state)
     next_state = watcher.refresh()
 
     assert any(cap.name == "review" for cap in next_state.caps)
@@ -4662,8 +4636,8 @@ def test_state_watcher_refreshes_remote_cap_state(tmp_path: Path, monkeypatch) -
 def test_state_watcher_reparses_changed_program(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
-    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    watcher = state_watcher.StateWatcher(toolang_root, "alice", state)
+    state = up_module.prepare_agent(layout=_layout(toolang_root))
+    watcher = state_watcher.StateWatcher(_layout(toolang_root), state)
 
     _write_text(
         toolang_root / "agents" / "alice" / "agent.too",
@@ -4687,9 +4661,9 @@ def test_prepared_config_is_deeply_immutable(tmp_path: Path) -> None:
         '[runtime]\nmodels = ["home"]\n',
     )
 
-    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    root = load_root_prepared(toolang_root, state.root_version)
-    home = load_home_prepared(toolang_root, "alice", state.home_version)
+    state = up_module.prepare_agent(layout=_layout(toolang_root))
+    root = load_root_prepared(_layout(toolang_root), state.root_version)
+    home = load_home_prepared(_layout(toolang_root), state.home_version)
     root_runtime = cast(Any, root.config["runtime"])
     home_runtime = cast(Any, home.config["runtime"])
 
@@ -4742,8 +4716,8 @@ def test_prepare_materializes_remote_skill_directory(
 
     monkeypatch.setattr(cap_state, "_fetch_github_directory", fake_directory)
 
-    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    home = load_home_prepared(toolang_root, "alice", state.home_version)
+    state = up_module.prepare_agent(layout=_layout(toolang_root))
+    home = load_home_prepared(_layout(toolang_root), state.home_version)
     skill_dir = home.version_dir / "files" / "wired" / "skills" / "pdf"
 
     assert (skill_dir / "SKILL.md").read_text(
@@ -4772,8 +4746,8 @@ def test_prepare_materializes_remote_skill_from_program_use(
         },
     )
 
-    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    home = load_home_prepared(toolang_root, "alice", state.home_version)
+    state = up_module.prepare_agent(layout=_layout(toolang_root))
+    home = load_home_prepared(_layout(toolang_root), state.home_version)
 
     skill_path = Path(state.caps[0].path)
     assert skill_path.read_text(encoding="utf-8").startswith(
@@ -4814,8 +4788,8 @@ def test_prepare_materializes_embedded_caps_for_caps_api(tmp_path: Path) -> None
         ),
     )
 
-    state = up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    home = load_home_prepared(toolang_root, "alice", state.home_version)
+    state = up_module.prepare_agent(layout=_layout(toolang_root))
+    home = load_home_prepared(_layout(toolang_root), state.home_version)
 
     inline_dir = home.version_dir / "files" / "inline"
     psyche_path = inline_dir / "psyches" / "reviewer.md"
@@ -4932,9 +4906,9 @@ def test_prepare_rejects_duplicate_embedded_cap_names(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ToolangError, match=r"Duplicate prompt name 'summarize'"):
-        up_module.prepare_agent(toolang_root=toolang_root, agent_name="alice")
+        up_module.prepare_agent(layout=_layout(toolang_root))
 
-    assert not (toolang_root / "agents" / "alice" / ".prepared" / "current").exists()
+    assert not (toolang_root / "agents" / "alice" / ".state" / "current").exists()
 
 
 def test_prepare_fetches_remote_caps_with_bounded_concurrency(
@@ -5359,7 +5333,7 @@ def test_new_task_reloads_and_pulse_runs_it(tmp_path: Path) -> None:
                 time.sleep(0.01)
     assert completed
     run = completed[0]
-    run_store = RunStore(agent_run_store_path(toolang_root, "alice"))
+    run_store = RunStore(AgentLayout.resident(toolang_root, "alice").run_store)
     try:
         command = run_store.get_command(run_id=run.id, index=0)
     finally:
@@ -5394,7 +5368,8 @@ def test_task_run_includes_local_task_protocol_in_prompt_bundle(tmp_path: Path) 
     task_entry = _jobs(toolang_root, "alice").list(kind="task")[0]
     task = task_entry
     definition = AgentJobs.load(
-        toolang_root, "alice", context.state_watcher.current().program
+        _layout(toolang_root),
+        context.state_watcher.current().program,
     ).get("task", task.id)
     assert definition is not None
     bound = bind_run_request(
@@ -5467,7 +5442,8 @@ def test_chore_run_includes_remote_task_sync_protocol_in_prompt_bundle(
     )
     chore = _jobs(toolang_root, "alice").list(kind="chore")[0]
     definition = AgentJobs.load(
-        toolang_root, "alice", context.state_watcher.current().program
+        _layout(toolang_root),
+        context.state_watcher.current().program,
     ).get("chore", chore.id)
     assert definition is not None
     bound = bind_run_request(
@@ -5511,9 +5487,10 @@ def test_pulse_marks_finished_task_job_done(tmp_path: Path) -> None:
         toolang_root=toolang_root,
         agent_name="alice",
     )
-    store = open_job_store(toolang_root, "alice")
+    store = open_job_store(_layout(toolang_root))
     definitions = AgentJobs.load(
-        toolang_root, "alice", context.state_watcher.current().program
+        _layout(toolang_root),
+        context.state_watcher.current().program,
     )
     store.reconcile(jobs=definitions, kind="task")
     claimed = store.claim_due(
@@ -5559,9 +5536,10 @@ def test_pulse_marks_failed_task_job_failed(tmp_path: Path) -> None:
         toolang_root=toolang_root,
         agent_name="alice",
     )
-    store = open_job_store(toolang_root, "alice")
+    store = open_job_store(_layout(toolang_root))
     definitions = AgentJobs.load(
-        toolang_root, "alice", context.state_watcher.current().program
+        _layout(toolang_root),
+        context.state_watcher.current().program,
     )
     store.reconcile(jobs=definitions, kind="task")
     claimed = store.claim_due(
@@ -6726,7 +6704,7 @@ def test_script_loop_cancel_does_not_wait_for_worker_thread() -> None:
 
 def test_execution_store_records_runs_steps_and_messages(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    store = RunStore(agent_run_store_path(toolang_root, "alice"))
+    store = RunStore(AgentLayout.resident(toolang_root, "alice").run_store)
     try:
         run = project_run_start(
             store,
@@ -6820,7 +6798,7 @@ def test_chat_accepts_structured_message_parts_and_model_selector(
 
 def test_execution_store_rebuilds_tool_history_from_steps(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    store = RunStore(agent_run_store_path(toolang_root, "alice"))
+    store = RunStore(AgentLayout.resident(toolang_root, "alice").run_store)
     try:
         run = project_run_start(
             store,
@@ -6918,7 +6896,7 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    store = RunStore(agent_run_store_path(toolang_root, "alice"))
+    store = RunStore(AgentLayout.resident(toolang_root, "alice").run_store)
     try:
         run = project_run_start(
             store,
@@ -6989,7 +6967,7 @@ def test_execution_store_does_not_return_orphan_tool_history_when_limited(
 
 def test_execution_store_replays_model_reasoning_content(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
-    store = RunStore(agent_run_store_path(toolang_root, "alice"))
+    store = RunStore(AgentLayout.resident(toolang_root, "alice").run_store)
     try:
         run = project_run_start(
             store,
@@ -7285,8 +7263,8 @@ async def _running_context(
         background_tasks: list[asyncio.Task[None]] = []
         scheduler_store = None
         if schedule_jobs:
-            scheduler_store = open_job_store(context.root, context.name)
-            job_watcher = JobWatcher(context.root, context.name)
+            scheduler_store = open_job_store(context.layout)
+            job_watcher = JobWatcher(context.layout)
             scheduler = Scheduler(
                 job_store=scheduler_store,
                 executor=context.executor,
@@ -7303,8 +7281,7 @@ async def _running_context(
         if poll_channels:
             background_tasks.append(
                 poll.spawn(
-                    name=context.name,
-                    home=context.home,
+                    layout=context.layout,
                     bindings=context.channel_bindings,
                     plugins=context.channel_plugins,
                     executor=context.executor,
@@ -7314,7 +7291,8 @@ async def _running_context(
                 )
             )
         watcher = state_watcher.StateWatcher(
-            context.root, context.name, context.state_watcher.current()
+            context.layout,
+            context.state_watcher.current(),
         )
         context.state_watcher = watcher
         background_tasks.append(
@@ -7370,18 +7348,16 @@ def _build_context(
     tool_selectors: tuple[str, ...] | None = None,
 ) -> _TestApiContext:
     state = up_module.prepare_agent(
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        layout=_layout(toolang_root, agent_name),
     )
-    store = RunStore(agent_run_store_path(toolang_root, agent_name))
+    store = RunStore(AgentLayout.resident(toolang_root, agent_name).run_store)
     providers = {
         name: provider
         for name, provider in load_model_providers().items()
         if name == "openai"
     }
     setup = AgentSetup(
-        name=agent_name,
-        home=agents.agent_home(toolang_root, agent_name),
+        layout=AgentLayout.resident(toolang_root, agent_name),
         providers=providers,
         adapters=load_model_adapters(),
         models=tuple(
@@ -7406,33 +7382,27 @@ def _build_context(
     executor = Executor(
         root=toolang_root,
         name=agent_name,
-        home=agents.agent_home(toolang_root, agent_name),
-        id_state_path=agents.agent_id_state_path(toolang_root, agent_name),
+        home=_layout(toolang_root, agent_name).home,
+        id_state_path=_layout(toolang_root, agent_name).id_state,
         setup=setup,
         store=store,
         model_aliases=model_aliases,
         default_models=default_models,
         model_environ=model_environ,
     )
-    watcher = state_watcher.StateWatcher(toolang_root, agent_name, state)
-    setup_watcher = SetupWatcher(
-        setup,
-        toolang_root=toolang_root,
-        get_envs=lambda: {"OPENAI_API_KEY": "secret"},
-    )
+    layout = _layout(toolang_root, agent_name)
+    watcher = state_watcher.StateWatcher(layout, state)
+    setup_watcher = SetupWatcher(layout)
+    asyncio.run(setup_watcher.refresh())
     return _TestApiContext(
-        root=toolang_root,
-        name=agent_name,
-        home=agents.agent_home(toolang_root, agent_name),
+        layout=layout,
         setup_watcher=setup_watcher,
         state_watcher=watcher,
-        authored_jobs=AuthoredJobs(agents.agent_home(toolang_root, agent_name)),
-        private_authored_caps=caps.AuthoredCaps(
-            agents.agent_home(toolang_root, agent_name)
-        ),
+        authored_jobs=AuthoredJobs(_layout(toolang_root, agent_name).home),
+        private_authored_caps=caps.AuthoredCaps(_layout(toolang_root, agent_name).home),
         shared_authored_caps=caps.AuthoredCaps(toolang_root),
         private_wired_caps=caps_config.WiredCaps(
-            agents.agent_home(toolang_root, agent_name) / "config.toml"
+            _layout(toolang_root, agent_name).home / "config.toml"
         ),
         shared_wired_caps=caps_config.WiredCaps(toolang_root / "config.toml"),
         channel_bindings=channel_bindings or {},
@@ -7453,7 +7423,7 @@ async def _run_delivery(
         executor=context.executor,
         get_agent_state=context.state_watcher.current,
         plugins=context.channel_plugins,
-        home=context.home,
+        layout=context.layout,
         binding_name=binding_name,
         delivery=delivery,
     )
@@ -7466,7 +7436,8 @@ async def _record_pulse_result(
 ) -> None:
     store.finish_run(
         jobs=AgentJobs.load(
-            context.root, context.name, context.state_watcher.current().program
+            context.layout,
+            context.state_watcher.current().program,
         ),
         run_id=run.id,
         run_status=run.status,

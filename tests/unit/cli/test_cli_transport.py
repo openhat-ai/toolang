@@ -20,10 +20,13 @@ from toolang.cli.common.client import (
     owned_runtime_client,
 )
 from toolang.cli.common.errors import RuntimeClientError
+from toolang.common.layout import AgentLayout
 from toolang.up import process as agents
 
 
-def test_runtime_client_get_accepts_json_values(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_client_get_accepts_json_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     responses = iter((b"not json", b"[]"))
     monkeypatch.setattr(
         client_module,
@@ -37,7 +40,9 @@ def test_runtime_client_get_accepts_json_values(monkeypatch: pytest.MonkeyPatch)
     assert client.get("/list") == []
 
 
-def test_runtime_client_post_sends_json_request(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runtime_client_post_sends_json_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, Any] = {}
 
     def open_request(request: Request, *, timeout: float | None) -> BytesIO:
@@ -69,11 +74,7 @@ def test_runtime_client_post_sends_json_request(monkeypatch: pytest.MonkeyPatch)
 def test_runtime_client_events_flushes_final_sse_event_at_eof(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    response = BytesIO(
-        b'data: {"type":"first"}\n\n'
-        b'data: {"type":\n'
-        b'data: "last"}'
-    )
+    response = BytesIO(b'data: {"type":"first"}\n\ndata: {"type":\ndata: "last"}')
     monkeypatch.setattr(client_module, "urlopen", lambda *_args, **_kwargs: response)
 
     events = list(RuntimeClient("http://runtime").events("/events"))
@@ -169,8 +170,7 @@ def test_owned_runtime_client_cleans_up_failed_start(
 
     with pytest.raises(click.ClickException, match="agent API failed to start"):
         with owned_runtime_client(
-            root=tmp_path,
-            name="alice",
+            layout=AgentLayout.resident(tmp_path, "alice"),
             startup=cast(Any, startup),
             environ={},
             log_path=tmp_path / "agent.log",
@@ -203,8 +203,7 @@ def test_owned_runtime_client_cleans_up_when_start_raises(
 
     with pytest.raises(TimeoutError, match="timed out"):
         with owned_runtime_client(
-            root=tmp_path,
-            name="alice",
+            layout=AgentLayout.resident(tmp_path, "alice"),
             startup=cast(Any, startup),
             environ={},
             log_path=tmp_path / "agent.log",

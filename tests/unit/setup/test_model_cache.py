@@ -8,8 +8,9 @@ from pathlib import Path
 import pytest
 
 from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.common.layout import AgentLayout
 from toolang.setup import models as models_module
-from toolang.setup.models import ModelListCache, discover_models, model_cache_dir
+from toolang.setup.models import ModelListCache, discover_models
 from toolang.setup.records import ModelListRecord
 
 
@@ -54,8 +55,10 @@ def _model(provider: str, name: str) -> ModelInfo:
     )
 
 
-def test_model_cache_dir_uses_shared_root_runtime_models(tmp_path: Path) -> None:
-    assert model_cache_dir(tmp_path) == tmp_path / ".runtime" / "models"
+def test_agent_layout_uses_shared_root_setup_models(tmp_path: Path) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+
+    assert layout.model_cache == tmp_path / ".setup" / "models"
 
 
 def test_model_list_cache_reuses_fresh_models_and_refreshes_explicitly(

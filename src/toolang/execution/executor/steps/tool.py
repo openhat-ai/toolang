@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Mapping
-from pathlib import Path
 import time
 from typing import TYPE_CHECKING
 
@@ -14,6 +13,7 @@ from toolang.base.types.message import Message, ToolResultPart
 from toolang.base.types.run import ToolCall, ToolCallResult
 from toolang.base.types.tool import ToolContext, ToolService
 from toolang.common.errors import ToolangError
+from toolang.common.layout import AgentLayout
 from toolang.common.time import elapsed_ms, utc_now
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
@@ -83,7 +83,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             run_id=run.run_id,
             tools=prepared.tools,
             services=prepared.services,
-            home=state.home,
+            layout=state.layout,
             call=call,
         )
     except asyncio.CancelledError:
@@ -183,7 +183,7 @@ async def invoke_tool_call(
     run_id: str,
     tools: Mapping[str, AgentTool],
     services: tuple[ToolService, ...],
-    home: Path,
+    layout: AgentLayout,
     call: ToolCall,
 ) -> ToolCallResult:
     """Invoke one selected tool and normalize its result or error."""
@@ -198,7 +198,7 @@ async def invoke_tool_call(
             arguments,
             _tool_context(
                 run_id=run_id,
-                home=home,
+                layout=layout,
                 tool_name=name,
                 tools=tools,
                 services=services,
@@ -221,7 +221,7 @@ async def invoke_tool_call(
 def _tool_context(
     *,
     run_id: str,
-    home: Path,
+    layout: AgentLayout,
     tool_name: str,
     tools: Mapping[str, AgentTool],
     services: tuple[ToolService, ...],
@@ -232,10 +232,11 @@ def _tool_context(
         raise ToolangError(f"unknown tool plugin for tool: {tool_name}")
     return ToolContext(
         run_id=run_id,
-        home=home,
-        room=home / ".runtime" / "tools" / plugin_name,
-        wd=home,
+        home=layout.home,
+        room=layout.tool_room(plugin_name),
+        wd=layout.home,
         services=services,
+        placement=layout.placement,
     )
 
 

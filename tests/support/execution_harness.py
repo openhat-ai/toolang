@@ -22,6 +22,7 @@ from toolang.base.types.run import (
 )
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.ids import IdIssuer
+from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.store import RunStore
@@ -294,8 +295,7 @@ class ExecutionHarness:
         provider = FakeModelProvider(streaming=streaming)
         adapter = ScriptedModelAdapter(responses)
         setup = AgentSetup(
-            name="alice",
-            home=home,
+            layout=AgentLayout.resident(root, "alice"),
             providers={provider.name: provider},
             adapters={adapter.name: adapter},
             models=provider.list_models(environ={}),

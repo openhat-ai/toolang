@@ -345,9 +345,7 @@ def program_structs(binding: BoundRun) -> dict[str, StructDecl]:
 def output_parts(local: Local) -> tuple[MessagePart, ...]:
     if local.shape == "none":
         return ()
-    if local.shape == "item" and (
-        percept := value_percept(local.value)
-    ) is not None:
+    if local.shape == "item" and (percept := value_percept(local.value)) is not None:
         return tuple(percept)
     return (TextPart(text=value_text(local.value)),)
 
@@ -408,10 +406,7 @@ def json_value(value: object) -> object:
     if isinstance(value, (TextPart, ImagePart, AudioPart, DocumentPart)):
         return value.to_data()
     if isinstance(value, Mapping):
-        return {
-            str(name): json_value(item)
-            for name, item in value.items()
-        }
+        return {str(name): json_value(item) for name, item in value.items()}
     if isinstance(value, tuple | list):
         return [json_value(item) for item in value]
     return value

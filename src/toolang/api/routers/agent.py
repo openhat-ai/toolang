@@ -23,10 +23,10 @@ router = APIRouter(tags=["agent"])
 
 @router.get("/profile", summary="Get Profile")
 def profile(context: ApiContextDep) -> dict[str, object]:
-    runtime_state = agents.AgentProcess(context.root, context.name).state() or {}
+    runtime_state = agents.AgentProcess(context.layout).state() or {}
     return {
-        "agent": context.name,
-        "display_name": context.name,
+        "agent": context.layout.name,
+        "display_name": context.layout.name,
         "title": None,
         "summary": None,
         "description": None,
@@ -141,7 +141,7 @@ def _profile_environment(
 ) -> dict[str, object]:
     return {
         "sandbox": _runtime_sandbox_spec(runtime_state),
-        "home": str(context.home),
+        "home": str(context.layout.home),
         "endpoint": _runtime_endpoint(context, runtime_state=runtime_state),
     }
 

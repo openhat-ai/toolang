@@ -13,11 +13,10 @@ import typer
 from ...common.context import resolve_root
 from ...common.output import echo_table
 from toolang.cli.config import load_config_layers
-from toolang.plugin.models.loading import load_model_adapters, load_model_providers
+from toolang.common.layout import AgentLayout
 from toolang.plugin.loading import list_plugin_infos
 from toolang.plugin.tools.loading import load_tool_plugins
-from toolang.setup import prepare_agent_setup
-from toolang.up.process import agent_home
+from toolang.setup import SetupWatcher
 
 model_app = typer.Typer(
     help="Inspect available models.",
@@ -170,32 +169,20 @@ def model_rows(
     model_selectors: Sequence[str] = (),
     refresh: bool = False,
 ) -> list[tuple[str, str, str]]:
+    del environ
     from toolang.plugin.models.config import (
         parse_model_aliases,
-        parse_model_provider_configs,
     )
     from toolang.plugin.models.views import model_list_rows
 
     config_layers = load_config_layers(root, agent_name)
-    provider_configs = parse_model_provider_configs(config_layers)
-    providers = load_model_providers(provider_configs)
-    setup = asyncio.run(
-        prepare_agent_setup(
-            toolang_root=root,
-            name=agent_name,
-            home=agent_home(root, agent_name) if agent_name else root,
-            providers=providers,
-            adapters=load_model_adapters(),
-            tools={},
-            envs=environ,
-            refresh_models=refresh,
-        )
-    )
+    watcher = SetupWatcher(AgentLayout.resident(root, agent_name or "default"))
+    setup = asyncio.run(watcher.refresh(force=refresh))
     return model_list_rows(
-        providers=providers,
+        providers=setup.providers,
         models=setup.models,
         aliases=parse_model_aliases(config_layers),
-        envs=environ,
+        envs=setup.envs,
         selectors=model_selectors,
     )
 
@@ -204,6 +191,7 @@ def model_provider_rows(
     root: Path,
     environ: dict[str, str],
 ) -> list[tuple[str, str, str]]:
+    del environ
     from toolang.plugin.models.config import (
         parse_model_aliases,
         parse_model_provider_configs,
@@ -212,24 +200,14 @@ def model_provider_rows(
 
     config_layers = load_config_layers(root)
     provider_configs = parse_model_provider_configs(config_layers)
-    providers = load_model_providers(provider_configs)
-    setup = asyncio.run(
-        prepare_agent_setup(
-            toolang_root=root,
-            name="",
-            home=root,
-            providers=providers,
-            adapters=load_model_adapters(),
-            tools={},
-            envs=environ,
-        )
-    )
+    watcher = SetupWatcher(AgentLayout.resident(root, "default"))
+    setup = asyncio.run(watcher.refresh())
     return build_rows(
-        providers=providers,
+        providers=setup.providers,
         models=setup.models,
         aliases=parse_model_aliases(config_layers),
         provider_configs=provider_configs,
-        envs=environ,
+        envs=setup.envs,
     )
 
 

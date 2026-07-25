@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from toolang.common.errors import ToolangError
+from toolang.common.layout import AgentLayout
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCall
@@ -132,7 +133,8 @@ class AgentChatPlugin:
             text = str(message)
             if not text.strip():
                 raise ToolangError("agent_chat message cannot be empty")
-            store = RunStore(context.home / ".runtime" / "runs.db")
+            layout = _agent_layout(context)
+            store = RunStore(layout.run_store)
             try:
                 current_run = store.get_run(run_id=context.run_id)
                 if current_run is None:
@@ -141,7 +143,7 @@ class AgentChatPlugin:
                     _load_local_thread(store, thread)
                     if thread is not None
                     else _find_or_create_local_thread(
-                        store, context, parent=current_run.thread, peer=target.name
+                        store, layout, parent=current_run.thread, peer=target.name
                     )
                 )
                 if local_thread.peer.name != target.name:
@@ -153,7 +155,7 @@ class AgentChatPlugin:
                     "client": "chat",
                     "peer": {
                         "type": "agent",
-                        "name": context.home.name,
+                        "name": layout.name,
                         "thread": local_thread.thread_id,
                     },
                     "message": {
@@ -186,7 +188,7 @@ class AgentChatPlugin:
                 assistant_text = full_assistant_text[: self._max_response_chars]
                 mirror_run_id = _record_local_a2a_exchange(
                     store,
-                    context,
+                    layout,
                     thread=local_thread,
                     peer=target.name,
                     message=text,
@@ -286,9 +288,22 @@ def _load_local_thread(store: RunStore, thread_id: str | None) -> ThreadRecord:
     return record
 
 
+def _agent_layout(context: ToolContext) -> AgentLayout:
+    home = context.home.resolve()
+    if home.parent.name != "agents":
+        raise ToolangError(
+            f"agent_chat tool requires an agent home under agents/: {home}"
+        )
+    return AgentLayout(
+        root=home.parent.parent,
+        name=home.name,
+        placement=context.placement,
+    )
+
+
 def _find_or_create_local_thread(
     store: RunStore,
-    context: ToolContext,
+    layout: AgentLayout,
     *,
     parent: str,
     peer: str,
@@ -304,9 +319,7 @@ def _find_or_create_local_thread(
             and thread.peer.name == peer
         ):
             return thread
-    value = allocate_id(
-        context.home / ".runtime" / "ids.json", family=LOCAL_ID_FAMILY
-    ).value
+    value = allocate_id(layout.id_state, family=LOCAL_ID_FAMILY).value
     thread, _control = store.create_thread(
         thread_id=f"script_{value}",
         origin="chat",
@@ -318,7 +331,7 @@ def _find_or_create_local_thread(
 
 def _record_local_a2a_exchange(
     store: RunStore,
-    context: ToolContext,
+    layout: AgentLayout,
     *,
     thread: ThreadRecord,
     peer: str,
@@ -326,7 +339,7 @@ def _record_local_a2a_exchange(
     assistant_text: str,
     remote_run_id: object,
 ) -> str:
-    run_id = f"run_{allocate_id(context.home / '.runtime' / 'ids.json', family=RUN_ID_FAMILY).value}"
+    run_id = f"run_{allocate_id(layout.id_state, family=RUN_ID_FAMILY).value}"
     started_at = utc_now()
     thread_control = store.get_thread_control(
         thread_id=thread.thread_id, index=thread.created_by.index

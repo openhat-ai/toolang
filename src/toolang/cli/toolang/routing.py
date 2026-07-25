@@ -109,11 +109,11 @@ def dispatch_roaming(
         if global_args:
             return _unsupported_global_options()
         try:
-            root, agent = agents.materialize_roaming_program(source)
+            layout = agents.materialize_roaming_program(source)
         except (FileExistsError, FileNotFoundError, ValueError) as exc:
             typer.echo(f"toolang error: {exc}", err=True)
             return 1
-        return run_app(["--root", str(root), *body[1:]], agent)
+        return run_app(["--root", str(layout.root), *body[1:]], layout.name)
     if runtime.is_roaming_file_request(body[1:]):
         if global_args:
             return _unsupported_global_options()

@@ -27,12 +27,6 @@ LOCAL_MODEL_LIST_TTL_SEC = 5.0
 _LOGGER = logging.getLogger("toolang.setup")
 
 
-def model_cache_dir(toolang_root: Path) -> Path:
-    """Return the shared provider model-list cache directory."""
-
-    return toolang_root / ".runtime" / "models"
-
-
 class ModelListCache:
     """Share provider model lists safely across local processes."""
 
@@ -88,7 +82,11 @@ class ModelListCache:
 
         with file_write_lock(lock_path):
             current = self._read_path(path)
-            if refresh and current is not None and current.generation > observed_generation:
+            if (
+                refresh
+                and current is not None
+                and current.generation > observed_generation
+            ):
                 return current.models
             if (
                 not refresh
@@ -158,10 +156,7 @@ async def discover_models(
         and not missing_provider_env_vars(provider, environ=envs)
     )
     discovered = await asyncio.gather(
-        *(
-            cache.get(provider, envs=envs, refresh=refresh)
-            for provider in available
-        )
+        *(cache.get(provider, envs=envs, refresh=refresh) for provider in available)
     )
     models: dict[tuple[str, str], ModelInfo] = {}
     for provider, provider_models in zip(available, discovered, strict=True):
@@ -172,10 +167,7 @@ async def discover_models(
                     f"{model.provider!r}: {model.ref}"
                 )
             models[(model.provider, model.ref)] = model
-    return tuple(
-        models[key]
-        for key in sorted(models)
-    )
+    return tuple(models[key] for key in sorted(models))
 
 
 def _provider_fingerprint(
@@ -248,9 +240,7 @@ def _is_local_provider(
     if provider.name == "ollama":
         return True
     base_url = (default_provider_base_url(provider, environ=envs) or "").lower()
-    return base_url.startswith(
-        ("http://127.0.0.1", "http://localhost", "http://[::1]")
-    )
+    return base_url.startswith(("http://127.0.0.1", "http://localhost", "http://[::1]"))
 
 
 def _is_fresh(record: ModelListRecord | None, *, ttl_sec: float) -> bool:

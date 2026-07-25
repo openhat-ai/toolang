@@ -38,6 +38,7 @@ import toolang.cli.impl.invoke.runner as cli_invoke
 import toolang.cli.impl.invoke.rendering as invoke_rendering
 import toolang.cli.common.version as cli_version
 import toolang.cli.caps.main as caps_cli
+import toolang.setup.watcher as setup_watcher_module
 from toolang.cli.common.context import CliContext
 import toolang.cli.common.output as cli_output
 from toolang.cli.common.progress import CliProgress
@@ -49,7 +50,7 @@ from toolang.common.events import ProgressEvent
 from toolang.plugin.loading import PluginInfo
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.execution.store import RunStore
-from toolang.up.process import agent_run_store_path
+from toolang.common.layout import AgentLayout
 from toolang.up import server as agent_up
 from tests.support.execution_fixtures import (
     project_run_end,
@@ -93,6 +94,10 @@ def _agents(root: Path) -> FixtureLocalAgents:
     return FixtureLocalAgents(root / "agents")
 
 
+def _layout(root: Path, name: str = "alice") -> AgentLayout:
+    return AgentLayout.resident(root, name)
+
+
 def _wired_caps(
     root: Path,
     agent: str,
@@ -106,7 +111,7 @@ def _fake_invoke_record(
     toolang_root: Path,
     agent_name: str,
 ) -> RunRecord:
-    store = RunStore(agent_run_store_path(toolang_root, agent_name))
+    store = RunStore(AgentLayout.resident(toolang_root, agent_name).run_store)
     try:
         run = project_run_start(
             store,
@@ -390,8 +395,8 @@ def test_cli_main_roaming_threads_can_read_offline_materialized_store(
     program_path = _write_roaming_program(
         tmp_path, "agic:\n  Reply directly.\n", name="demo"
     )
-    toolang_root, agent_name = agents.materialize_roaming_program(program_path)
-    store = RunStore(agent_run_store_path(toolang_root, agent_name))
+    layout = agents.materialize_roaming_program(program_path)
+    store = RunStore(layout.run_store)
     try:
         run = project_run_start(
             store,
@@ -654,13 +659,13 @@ def test_cli_clone_copies_agent_without_caps(tmp_path: Path) -> None:
     source_home = toolang_root / "agents" / "alice"
     (source_home / "skills" / "reviewer").mkdir(parents=True, exist_ok=True)
     (source_home / ".caps").mkdir(parents=True, exist_ok=True)
-    (source_home / ".prepared").mkdir(parents=True, exist_ok=True)
+    (source_home / ".state").mkdir(parents=True, exist_ok=True)
     (source_home / "agent.too").write_text("agent alice\n", encoding="utf-8")
     (source_home / "skills" / "reviewer" / "SKILL.md").write_text(
         "# Reviewer\n", encoding="utf-8"
     )
     (source_home / ".caps" / "lock.json").write_text("{}", encoding="utf-8")
-    (source_home / ".prepared" / "current").write_text("cached", encoding="utf-8")
+    (source_home / ".state" / "current").write_text("cached", encoding="utf-8")
 
     result = runner.invoke(
         cli.app,
@@ -676,7 +681,7 @@ def test_cli_clone_copies_agent_without_caps(tmp_path: Path) -> None:
         toolang_root / "agents" / "bob" / "skills" / "reviewer" / "SKILL.md"
     ).is_file()
     assert not (toolang_root / "agents" / "bob" / ".caps").exists()
-    assert not (toolang_root / "agents" / "bob" / ".prepared").exists()
+    assert not (toolang_root / "agents" / "bob" / ".state").exists()
 
 
 def test_cli_clone_remote_shorthand_defaults_target_name(
@@ -1453,12 +1458,10 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
         wait: bool = False,
     ) -> int:
         del environ, sandbox_child, progress, agent_state
-        captured["toolang_root"] = startup.toolang_root
-        captured["agent_name"] = startup.agent_name
+        captured["toolang_root"] = startup.layout.root
+        captured["agent_name"] = startup.layout.name
         captured["port"] = startup.port
-        program_path = (
-            startup.toolang_root / "agents" / startup.agent_name / "agent.too"
-        )
+        program_path = startup.layout.program
         captured["program_exists"] = program_path.is_file()
         captured["program_text"] = program_path.read_text(encoding="utf-8")
         return 0
@@ -1485,10 +1488,12 @@ def test_cli_run_supports_remote_selector(tmp_path: Path, monkeypatch) -> None:
     assert captured["agent_name"] == "alice"
     assert captured["program_exists"] is True
     assert captured["program_text"] == "agent remote-source\n"
-    assert captured["toolang_root"] == agents.visiting_source_root(
-        toolang_root,
-        source="brice/alice",
-        agent_name="alice",
+    assert (
+        captured["toolang_root"]
+        == AgentLayout.visiting(
+            "brice/alice",
+            "alice",
+        ).root
     )
     assert captured["port"] == 45123
 
@@ -1512,8 +1517,8 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
         wait: bool = False,
     ) -> int:
         del environ, sandbox_child, progress, agent_state
-        captured["toolang_root"] = startup.toolang_root
-        captured["agent_name"] = startup.agent_name
+        captured["toolang_root"] = startup.layout.root
+        captured["agent_name"] = startup.layout.name
         captured["port"] = startup.port
         return 0
 
@@ -1529,9 +1534,12 @@ def test_cli_run_supports_remote_url_selector(tmp_path: Path, monkeypatch) -> No
 
     assert result.exit_code == 0
     assert captured["agent_name"] == "researcher"
-    assert captured["toolang_root"] == agents.visiting_root(
-        toolang_root,
-        agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too"),
+    assert (
+        captured["toolang_root"]
+        == AgentLayout.visiting(
+            "https://toolang.ai/demo/researcher.too",
+            "researcher",
+        ).root
     )
     assert captured["port"] == 45124
 
@@ -1540,8 +1548,7 @@ def test_cli_run_rejects_active_resident_agent(tmp_path: Path, monkeypatch) -> N
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        AgentLayout.resident(toolang_root, "alice"),
         endpoint="http://localhost:7001",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
@@ -1584,7 +1591,7 @@ def test_cli_run_rejects_missing_resident_agent(tmp_path: Path, monkeypatch) -> 
 
     assert result.exit_code == 1
     assert "Agent missing not found" in result.stderr
-    assert not agents.agent_home(toolang_root, "missing").exists()
+    assert not AgentLayout.resident(toolang_root, "missing").home.exists()
 
 
 def test_cli_run_interrupts_prepare_once(tmp_path: Path, monkeypatch) -> None:
@@ -1618,11 +1625,10 @@ def test_cli_run_interrupts_prepare_once(tmp_path: Path, monkeypatch) -> None:
 def test_cli_run_rejects_active_visiting_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
-    visiting_root = agents.visiting_root(toolang_root, ref)
-    (visiting_root / "agents" / "researcher").mkdir(parents=True, exist_ok=True)
+    visiting = AgentLayout.visiting(ref.render(), ref.default_name())
+    visiting.home.mkdir(parents=True, exist_ok=True)
     agents.write_runtime_state(
-        visiting_root,
-        "researcher",
+        visiting,
         endpoint="http://localhost:45124",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
@@ -1689,44 +1695,50 @@ def test_visiting_run_target_reuses_stable_root_and_program(
 
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
-    with agents.resolved_run_target(toolang_root, ref.render()) as first:
-        agents.write_runtime_state(
-            first.toolang_root,
-            first.agent_name,
-            endpoint="http://127.0.0.1:45678",
-            started_at="2026-04-07T11:00:00Z",
-            pid=None,
-            status="stopped",
-        )
-        first_program = first.toolang_root / "agents" / first.agent_name / "agent.too"
+    first = agents.resolve_run_layout(toolang_root, ref.render())
+    agents.write_runtime_state(
+        first,
+        endpoint="http://127.0.0.1:45678",
+        started_at="2026-04-07T11:00:00Z",
+        pid=None,
+        status="stopped",
+    )
+    first_program = first.program
 
-    with agents.resolved_run_target(toolang_root, ref.render()) as second:
-        second_program = (
-            second.toolang_root / "agents" / second.agent_name / "agent.too"
-        )
+    second = agents.resolve_run_layout(toolang_root, ref.render())
+    second_program = second.program
 
-    assert first.toolang_root == agents.visiting_root(toolang_root, ref)
-    assert second.toolang_root == first.toolang_root
-    assert second.toolang_root.parent == Path("/tmp")
+    assert (
+        first.root
+        == AgentLayout.visiting(
+            ref.render(),
+            ref.default_name(),
+        ).root
+    )
+    assert second.root == first.root
+    assert second.root.parent == Path("/tmp").resolve()
     expected_digest = hashlib.sha256(ref.render().encode("utf-8")).hexdigest()[:8]
-    assert second.toolang_root.name == f"toolang-researcher-{expected_digest}"
-    assert not second.toolang_root.is_relative_to(toolang_root)
-    assert second.kind == "visiting"
-    assert second.agent_name == "researcher"
+    assert second.root.name == f"toolang-researcher-{expected_digest}"
+    assert not second.root.is_relative_to(toolang_root)
+    assert second.placement == "visiting"
+    assert second.name == "researcher"
     assert second_program == first_program
     assert second_program.read_text(encoding="utf-8") == "agent old-name\n"
     assert fetches == [ref]
-    assert (
-        agents.preferred_runtime_port(second.toolang_root, second.agent_name) == 45678
-    )
+    assert agents.preferred_runtime_port(second) == 45678
 
 
-def test_visiting_root_ignores_local_toolang_root(tmp_path: Path) -> None:
+def test_visiting_layout_depends_only_on_remote_source(tmp_path: Path) -> None:
     ref = agents.HttpAgentRef(url="https://toolang.ai/demo/researcher.too")
 
-    assert agents.visiting_root(tmp_path / "one", ref) == agents.visiting_root(
-        tmp_path / "two", ref
+    first = AgentLayout.visiting(
+        ref.render(),
+        ref.default_name(),
     )
+    second = AgentLayout.visiting(ref.render(), ref.default_name())
+
+    assert first == second
+    assert not first.root.is_relative_to(tmp_path)
 
 
 def test_visiting_run_target_reuses_shorthand_cache_without_resolving(
@@ -1735,10 +1747,8 @@ def test_visiting_run_target_reuses_shorthand_cache_without_resolving(
     toolang_root = tmp_path / "toolang"
     selector_text = f"briceyan/{uuid4().hex}"
     agent_name = selector_text.split("/", 1)[1]
-    run_root = agents.visiting_source_root(
-        toolang_root, source=selector_text, agent_name=agent_name
-    )
-    program_path = run_root / "agents" / agent_name / "agent.too"
+    visiting = AgentLayout.visiting(selector_text, agent_name)
+    program_path = visiting.program
     program_path.parent.mkdir(parents=True, exist_ok=True)
     program_path.write_text(f"agent {agent_name}\n", encoding="utf-8")
     monkeypatch.setattr(
@@ -1749,10 +1759,9 @@ def test_visiting_run_target_reuses_shorthand_cache_without_resolving(
         ),
     )
 
-    with agents.resolved_run_target(toolang_root, selector_text) as target:
-        assert target.toolang_root == run_root
-        assert target.agent_name == agent_name
-        assert target.kind == "visiting"
+    target = agents.resolve_run_layout(toolang_root, selector_text)
+    assert target == visiting
+    assert target.placement == "visiting"
 
 
 def test_visiting_run_target_refetches_stale_program_cache(
@@ -1772,16 +1781,14 @@ def test_visiting_run_target_refetches_stale_program_cache(
     monkeypatch.setattr(agents, "VISITING_PROGRAM_CACHE_TTL_SEC", 60)
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
-    with agents.resolved_run_target(toolang_root, ref.render()) as first:
-        program_path = first.toolang_root / "agents" / first.agent_name / "agent.too"
+    first = agents.resolve_run_layout(toolang_root, ref.render())
+    program_path = first.program
 
     stale_time = time.time() - 120
     os.utime(program_path, (stale_time, stale_time))
 
-    with agents.resolved_run_target(toolang_root, ref.render()) as second:
-        refreshed_program = (
-            second.toolang_root / "agents" / second.agent_name / "agent.too"
-        )
+    second = agents.resolve_run_layout(toolang_root, ref.render())
+    refreshed_program = second.program
 
     assert refreshed_program == program_path
     assert refreshed_program.read_text(encoding="utf-8") == "agent newer-name\n"
@@ -1794,12 +1801,11 @@ def test_roaming_materialize_links_source_and_toolang_config(tmp_path: Path) -> 
         '[models]\ndefault = "test/model"\n', encoding="utf-8"
     )
 
-    toolang_root, agent_name = agents.materialize_roaming_program(program_path)
+    layout = agents.materialize_roaming_program(program_path)
 
-    assert agent_name == "demo"
-    agent_home = toolang_root / "agents" / "demo"
-    materialized_program = agent_home / "agent.too"
-    materialized_config = agent_home / "config.toml"
+    assert layout.name == "demo"
+    materialized_program = layout.program
+    materialized_config = layout.config
     assert materialized_program.is_symlink()
     assert materialized_config.is_symlink()
     assert (
@@ -1818,8 +1824,8 @@ def test_roaming_materialize_removes_stale_config_symlink(tmp_path: Path) -> Non
     config_path = tmp_path / "toolang.toml"
     config_path.write_text('[models]\ndefault = "test/model"\n', encoding="utf-8")
 
-    toolang_root, _agent_name = agents.materialize_roaming_program(program_path)
-    config_link = toolang_root / "agents" / "demo" / "config.toml"
+    layout = agents.materialize_roaming_program(program_path)
+    config_link = layout.config
     assert config_link.is_symlink()
 
     config_path.unlink()
@@ -1972,8 +1978,7 @@ agic(_: Part[], tone?, retries?: Number, dry_run?: Boolean):
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_kind: str,
         executable_name: str | None,
         input_text: str | None,
@@ -1986,10 +1991,10 @@ agic(_: Part[], tone?, retries?: Number, dry_run?: Boolean):
         wait: bool = False,
         **selectors,
     ):
-        outcome = _fake_invoke_record(toolang_root, agent_name)
+        outcome = _fake_invoke_record(layout.root, layout.name)
         del environ, reply
-        captured["toolang_root"] = toolang_root
-        captured["agent_name"] = agent_name
+        captured["toolang_root"] = layout.root
+        captured["agent_name"] = layout.name
         captured["executable_name"] = executable_name
         captured["executable_kind"] = executable_kind
         captured["input_text"] = input_text
@@ -2121,8 +2126,7 @@ def test_roaming_hosted_invoke_starts_session_api_with_execution_selectors(
     reply = invoke_rendering.ScriptProgressSink(executable_name="default", render=False)
 
     result = cli_invoke._invoke_hosted(
-        toolang_root=tmp_path,
-        agent_name="demo",
+        layout=AgentLayout.resident(tmp_path, "demo"),
         request=request,
         metadata={"invoke_params": {}},
         environ={"OPENAI_API_KEY": "secret"},
@@ -2154,8 +2158,7 @@ agic(_: Part[]):
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_kind: str,
         executable_name: str | None,
         input_text: str | None,
@@ -2169,8 +2172,8 @@ agic(_: Part[]):
         wait: bool = False,
         **selectors,
     ):
-        outcome = _fake_invoke_record(toolang_root, agent_name)
-        del toolang_root, agent_name, executable_name, input_text, models
+        outcome = _fake_invoke_record(layout.root, layout.name)
+        del layout, executable_name, input_text, models
         del metadata, environ, reply, log_spec, agent_state
         captured["tools"] = tools
 
@@ -2210,8 +2213,7 @@ agic(_: Part[]):
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
@@ -2224,8 +2226,8 @@ agic(_: Part[]):
         wait: bool = False,
         **selectors,
     ):
-        outcome = _fake_invoke_record(toolang_root, agent_name)
-        del toolang_root, agent_name, executable_name, input_text, models
+        outcome = _fake_invoke_record(layout.root, layout.name)
+        del layout, executable_name, input_text, models
         del metadata, environ, reply, log_spec, agent_state
         captured["caps"] = caps
 
@@ -2265,8 +2267,7 @@ agic:
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
@@ -2278,10 +2279,9 @@ agic:
         wait: bool = False,
         **selectors,
     ):
-        outcome = _fake_invoke_record(toolang_root, agent_name)
+        outcome = _fake_invoke_record(layout.root, layout.name)
         del (
-            toolang_root,
-            agent_name,
+            layout,
             executable_name,
             input_text,
             models,
@@ -2320,8 +2320,7 @@ agic:
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
@@ -2333,10 +2332,9 @@ agic:
         wait: bool = False,
         **selectors,
     ):
-        outcome = _fake_invoke_record(toolang_root, agent_name)
+        outcome = _fake_invoke_record(layout.root, layout.name)
         del (
-            toolang_root,
-            agent_name,
+            layout,
             executable_name,
             input_text,
             models,
@@ -2373,18 +2371,16 @@ agic:
     captured: dict[str, object] = {}
     real_prepare_agent = cli_invoke.agent_up.prepare_agent
 
-    def fake_prepare_agent(*, toolang_root: Path, agent_name: str, progress=None):
+    def fake_prepare_agent(*, layout: AgentLayout, progress=None):
         captured["prepare_progress"] = progress
         return real_prepare_agent(
-            toolang_root=toolang_root,
-            agent_name=agent_name,
+            layout=layout,
             progress=progress,
         )
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
@@ -2396,10 +2392,9 @@ agic:
         wait: bool = False,
         **selectors,
     ):
-        outcome = _fake_invoke_record(toolang_root, agent_name)
+        outcome = _fake_invoke_record(layout.root, layout.name)
         del (
-            toolang_root,
-            agent_name,
+            layout,
             executable_name,
             input_text,
             models,
@@ -2437,18 +2432,16 @@ agic:
     captured: dict[str, object] = {}
     real_prepare_agent = cli_invoke.agent_up.prepare_agent
 
-    def fake_prepare_agent(*, toolang_root: Path, agent_name: str, progress=None):
+    def fake_prepare_agent(*, layout: AgentLayout, progress=None):
         captured["prepare_progress"] = progress
         return real_prepare_agent(
-            toolang_root=toolang_root,
-            agent_name=agent_name,
+            layout=layout,
             progress=progress,
         )
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
@@ -2460,10 +2453,9 @@ agic:
         wait: bool = False,
         **selectors,
     ):
-        outcome = _fake_invoke_record(toolang_root, agent_name)
+        outcome = _fake_invoke_record(layout.root, layout.name)
         del (
-            toolang_root,
-            agent_name,
+            layout,
             executable_name,
             input_text,
             models,
@@ -2502,8 +2494,7 @@ agic:
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
@@ -2516,8 +2507,7 @@ agic:
         **selectors,
     ):
         del (
-            toolang_root,
-            agent_name,
+            layout,
             executable_name,
             input_text,
             models,
@@ -2549,7 +2539,7 @@ agic:
     assert output.err.splitlines() == [
         "toolang interrupted",
         "Run: run_test",
-        f"Log: {agents.agent_script_run_log_path(program_path.parent / '.toolang', 'demo', executable_name='default', run_id='run_test')}",
+        f"Log: {AgentLayout.roaming(program_path).run_log('default', 'run_test')}",
     ]
     assert "Traceback" not in output.err
 
@@ -2651,8 +2641,7 @@ flow review(_: Text):
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_kind: str,
         executable_name: str | None,
         input_text: str | None,
@@ -2665,10 +2654,9 @@ flow review(_: Text):
         wait: bool = False,
         **selectors,
     ):
-        outcome = _fake_invoke_record(toolang_root, agent_name)
+        outcome = _fake_invoke_record(layout.root, layout.name)
         del (
-            toolang_root,
-            agent_name,
+            layout,
             models,
             environ,
             reply,
@@ -2715,8 +2703,7 @@ agic:
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
@@ -2728,10 +2715,9 @@ agic:
         wait: bool = False,
         **selectors,
     ):
-        outcome = _fake_invoke_record(toolang_root, agent_name)
+        outcome = _fake_invoke_record(layout.root, layout.name)
         del (
-            toolang_root,
-            agent_name,
+            layout,
             executable_name,
             models,
             environ,
@@ -2783,8 +2769,7 @@ agic(_: Part[], tone?):
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
@@ -2796,10 +2781,9 @@ agic(_: Part[], tone?):
         wait: bool = False,
         **selectors,
     ):
-        outcome = _fake_invoke_record(toolang_root, agent_name)
+        outcome = _fake_invoke_record(layout.root, layout.name)
         del (
-            toolang_root,
-            agent_name,
+            layout,
             executable_name,
             models,
             environ,
@@ -2846,8 +2830,7 @@ agic(_: Part[]):
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
@@ -2859,10 +2842,9 @@ agic(_: Part[]):
         wait: bool = False,
         **selectors,
     ):
-        outcome = _fake_invoke_record(toolang_root, agent_name)
+        outcome = _fake_invoke_record(layout.root, layout.name)
         del (
-            toolang_root,
-            agent_name,
+            layout,
             executable_name,
             models,
             environ,
@@ -2911,8 +2893,7 @@ agic(_: Part[]):
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
@@ -2924,10 +2905,9 @@ agic(_: Part[]):
         wait: bool = False,
         **selectors,
     ):
-        outcome = _fake_invoke_record(toolang_root, agent_name)
+        outcome = _fake_invoke_record(layout.root, layout.name)
         del (
-            toolang_root,
-            agent_name,
+            layout,
             executable_name,
             models,
             environ,
@@ -2973,8 +2953,7 @@ agic(_: Part[]):
 
     def fake_invoke(
         *,
-        toolang_root: Path,
-        agent_name: str,
+        layout: AgentLayout,
         executable_name: str | None,
         input_text: str | None,
         models: tuple[str, ...],
@@ -2986,10 +2965,9 @@ agic(_: Part[]):
         wait: bool = False,
         **selectors,
     ):
-        outcome = _fake_invoke_record(toolang_root, agent_name)
+        outcome = _fake_invoke_record(layout.root, layout.name)
         del (
-            toolang_root,
-            agent_name,
+            layout,
             executable_name,
             models,
             environ,
@@ -3052,7 +3030,7 @@ def test_cli_start_rejects_missing_agent(tmp_path: Path, monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "Agent missing not found" in result.stderr
-    assert not agents.agent_home(toolang_root, "missing").exists()
+    assert not _layout(toolang_root, "missing").home.exists()
 
 
 def test_cli_remove_deletes_stopped_agent(tmp_path: Path) -> None:
@@ -3074,8 +3052,7 @@ def test_cli_remove_rejects_active_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
@@ -3136,8 +3113,7 @@ def test_cli_list_shows_agent_status_and_webui_url(tmp_path: Path) -> None:
     _agents(toolang_root).create("alice")
     _agents(toolang_root).create("bob")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
@@ -3174,8 +3150,7 @@ def test_cli_list_shows_managed_sandbox_selector(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-08T10:00:00Z",
         pid=None,
@@ -3206,8 +3181,7 @@ def test_cli_list_uses_ui_base_url_from_root_config(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
@@ -3233,8 +3207,7 @@ def test_cli_list_reads_web_config_without_validating_experiments_caps(
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
@@ -3271,7 +3244,7 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
         lambda: datetime(2026, 4, 8, 12, 0, 0, tzinfo=timezone.utc),
     )
     monkeypatch.setattr(
-        plugin_commands,
+        setup_watcher_module,
         "load_model_providers",
         lambda *_args: {
             "openai": _FakeModelProvider(
@@ -3356,15 +3329,14 @@ def test_cli_info_shows_agent_details(tmp_path: Path, monkeypatch) -> None:
         )
     )
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
         status="running",
         message="ready",
     )
-    status = agents.AgentProcess(toolang_root, "alice").status(ui_base_url="")
+    status = agents.AgentProcess(_layout(toolang_root)).status(ui_base_url="")
     assert status is not None
 
     result = runner.invoke(
@@ -3508,7 +3480,7 @@ def test_cli_info_reads_cap_counts_from_prepared_generation(
             "---\n"
         ),
     )
-    agent_up.prepare_agent(toolang_root=toolang_root, agent_name="alice")
+    agent_up.prepare_agent(layout=_layout(toolang_root))
 
     def fail_list_entries(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("info should use prepared generations for cap counts")
@@ -3546,9 +3518,9 @@ def test_cli_info_republishes_missing_prepared_current(
         name="hello",
         text="---\ndescription: Say hello.\n---\n# Hello\n",
     )
-    agent_up.prepare_agent(toolang_root=toolang_root, agent_name="alice")
-    current_path = prepared_current_path(toolang_root, "alice")
-    version = load_current_version(toolang_root, "alice")
+    agent_up.prepare_agent(layout=_layout(toolang_root))
+    current_path = prepared_current_path(_layout(toolang_root), "home")
+    version = load_current_version(_layout(toolang_root), "home")
     current_path.unlink()
 
     def fail_list_entries(*_args: object, **_kwargs: object) -> None:
@@ -3566,7 +3538,7 @@ def test_cli_info_republishes_missing_prepared_current(
 
     assert result.exit_code == 0
     assert "1 skill" in result.stdout
-    assert load_current_version(toolang_root, "alice") == version
+    assert load_current_version(_layout(toolang_root), "home") == version
     assert "Prepared 1 cap" in result.stderr
 
 
@@ -3574,14 +3546,13 @@ def test_cli_info_for_stopped_agent_shows_created_only(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
         status="running",
     )
-    agents.stop_runtime_state(toolang_root, "alice")
+    agents.stop_runtime_state(_layout(toolang_root))
 
     result = runner.invoke(
         cli.app,
@@ -3617,8 +3588,7 @@ def test_cli_info_for_running_docker_sandbox_shows_container_pid(
         lambda _name: ("abcdef1234567890fedcba", 4321),
     )
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=None,
@@ -3656,7 +3626,7 @@ def test_cli_info_prefers_runtime_models_for_active_agent(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        plugin_commands,
+        setup_watcher_module,
         "load_model_providers",
         lambda *_args: {
             "anthropic": _FakeModelProvider(
@@ -3689,8 +3659,7 @@ def test_cli_info_prefers_runtime_models_for_active_agent(
     )
     monkeypatch.setattr(plugin_commands, "load_tool_plugins", lambda *, config=None: {})
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
@@ -3995,7 +3964,7 @@ def test_cli_tool_list_reports_no_matched_tools_for_empty_filter(monkeypatch) ->
 
 def test_cli_model_list_shows_discovered_models(monkeypatch) -> None:
     monkeypatch.setattr(
-        plugin_commands,
+        setup_watcher_module,
         "load_model_providers",
         lambda *_args: {
             "openai": _FakeModelProvider(
@@ -4058,7 +4027,7 @@ def test_cli_model_list_shows_discovered_models(monkeypatch) -> None:
 
 def test_cli_model_providers_orders_config_fields(monkeypatch) -> None:
     monkeypatch.setattr(
-        plugin_commands,
+        setup_watcher_module,
         "load_model_providers",
         lambda *_args: {
             "openai": _FakeModelProvider(
@@ -4094,7 +4063,7 @@ def test_cli_model_providers_orders_config_fields(monkeypatch) -> None:
 
 def test_cli_model_providers_marks_missing_env_and_offline_url(monkeypatch) -> None:
     monkeypatch.setattr(
-        plugin_commands,
+        setup_watcher_module,
         "load_model_providers",
         lambda *_args: {
             "google": _FakeModelProvider(
@@ -4125,7 +4094,7 @@ def test_cli_model_providers_marks_missing_env_and_offline_url(monkeypatch) -> N
 
 def test_cli_model_list_filters_by_model_selector(monkeypatch) -> None:
     monkeypatch.setattr(
-        plugin_commands,
+        setup_watcher_module,
         "load_model_providers",
         lambda *_args: {
             "openai": _FakeModelProvider(
@@ -4172,7 +4141,7 @@ def test_cli_model_list_filters_by_model_selector(monkeypatch) -> None:
 
 def test_cli_model_list_reports_no_matched_models_for_empty_filter(monkeypatch) -> None:
     monkeypatch.setattr(
-        plugin_commands,
+        setup_watcher_module,
         "load_model_providers",
         lambda *_args: {
             "openai": _FakeModelProvider(
@@ -4205,7 +4174,7 @@ def test_cli_model_list_reports_no_matched_models_for_empty_filter(monkeypatch) 
 
 def test_cli_model_list_filters_by_capability_selector(monkeypatch) -> None:
     monkeypatch.setattr(
-        plugin_commands,
+        setup_watcher_module,
         "load_model_providers",
         lambda *_args: {
             "openrouter": _FakeModelProvider(
@@ -4250,7 +4219,7 @@ def test_cli_model_list_filters_by_capability_selector(monkeypatch) -> None:
 
 def test_cli_model_list_supports_filter_short_option(monkeypatch) -> None:
     monkeypatch.setattr(
-        plugin_commands,
+        setup_watcher_module,
         "load_model_providers",
         lambda *_args: {
             "openrouter": _FakeModelProvider(
@@ -4308,8 +4277,8 @@ def test_cli_run_hands_to_agent_up(tmp_path: Path, monkeypatch) -> None:
         wait: bool = False,
     ) -> int:
         del progress, agent_state
-        captured["toolang_root"] = startup.toolang_root
-        captured["agent_name"] = startup.agent_name
+        captured["toolang_root"] = startup.layout.root
+        captured["agent_name"] = startup.layout.name
         captured["host"] = startup.host
         captured["endpoint_host"] = startup.endpoint_host
         captured["port"] = startup.port
@@ -4405,10 +4374,7 @@ def test_cli_run_reuses_agent_state_for_foreground_runtime(
 ) -> None:
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
-    agent_state = agent_up.prepare_agent(
-        toolang_root=toolang_root,
-        agent_name="alice",
-    )
+    agent_state = agent_up.prepare_agent(layout=_layout(toolang_root))
     captured: dict[str, object] = {}
     prepare_calls = 0
 
@@ -4460,8 +4426,8 @@ def test_cli_run_resolves_port_when_unspecified(tmp_path: Path, monkeypatch) -> 
         wait: bool = False,
     ) -> int:
         del progress, agent_state
-        captured["toolang_root"] = startup.toolang_root
-        captured["agent_name"] = startup.agent_name
+        captured["toolang_root"] = startup.layout.root
+        captured["agent_name"] = startup.layout.name
         captured["host"] = startup.host
         captured["endpoint_host"] = startup.endpoint_host
         captured["port"] = startup.port
@@ -4791,8 +4757,7 @@ def test_cli_start_spawns_background_run_and_reports_status(
         stdout.write(b"launcher\n")
         stdout.flush()
         agents.write_runtime_state(
-            toolang_root,
-            "alice",
+            _layout(toolang_root),
             endpoint="http://localhost:8765",
             started_at="2026-04-07T11:00:01Z",
             pid=os.getpid(),
@@ -4841,10 +4806,7 @@ def test_cli_start_spawns_background_run_and_reports_status(
     assert captured["cwd"] == str(Path.cwd())
     assert captured["start_new_session"] is True
     assert captured["close_fds"] is True
-    assert (
-        agents.agent_runtime_log_path(toolang_root, "alice").read_text(encoding="utf-8")
-        == "launcher\n"
-    )
+    assert _layout(toolang_root).runtime_log.read_text(encoding="utf-8") == "launcher\n"
 
 
 def test_cli_start_propagates_py_log_to_agent_process(
@@ -4878,8 +4840,7 @@ def test_cli_start_propagates_py_log_to_agent_process(
         captured["start_new_session"] = start_new_session
         captured["close_fds"] = close_fds
         agents.write_runtime_state(
-            toolang_root,
-            "alice",
+            _layout(toolang_root),
             endpoint="http://127.0.0.1:8765",
             started_at="2026-04-07T11:00:01Z",
             pid=os.getpid(),
@@ -4920,8 +4881,7 @@ def test_cli_start_rejects_active_agent(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=os.getpid(),
@@ -4945,8 +4905,7 @@ def test_cli_start_allows_restart_after_stale_preparing_state(
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-07T11:00:00Z",
         pid=None,
@@ -4979,8 +4938,7 @@ def test_cli_start_allows_restart_after_stale_preparing_state(
     ):
         del command, stdin, stdout, stderr, env, cwd, start_new_session, close_fds
         agents.write_runtime_state(
-            toolang_root,
-            "alice",
+            _layout(toolang_root),
             endpoint="http://127.0.0.1:8765",
             started_at="2026-04-07T11:00:01Z",
             pid=os.getpid(),
@@ -5026,8 +4984,7 @@ def test_cli_start_includes_model_selectors_in_background_command(
         del stdin, stderr, env, cwd, start_new_session, close_fds
         captured["command"] = command
         agents.write_runtime_state(
-            toolang_root,
-            "alice",
+            _layout(toolang_root),
             endpoint="http://127.0.0.1:8765",
             started_at="2026-04-07T11:00:01Z",
             pid=os.getpid(),
@@ -5085,8 +5042,7 @@ def test_cli_start_includes_tool_selectors_in_background_command(
         del stdin, stderr, env, cwd, start_new_session, close_fds
         captured["command"] = command
         agents.write_runtime_state(
-            toolang_root,
-            "alice",
+            _layout(toolang_root),
             endpoint="http://127.0.0.1:8765",
             started_at="2026-04-07T11:00:01Z",
             pid=os.getpid(),
@@ -5204,8 +5160,7 @@ def test_cli_start_preserves_host_endpoint_host_and_sandbox_in_background_comman
         del stdin, stderr, env, cwd, start_new_session, close_fds
         captured["command"] = list(command)
         agents.write_runtime_state(
-            toolang_root,
-            "alice",
+            _layout(toolang_root),
             endpoint="http://agent.example.com:8765",
             started_at="2026-04-07T11:00:01Z",
             pid=os.getpid(),
@@ -5249,8 +5204,7 @@ def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) ->
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:63295",
         started_at="2026-04-09T10:00:00Z",
         pid=None,
@@ -5279,8 +5233,7 @@ def test_cli_start_reuses_preferred_runtime_port(tmp_path: Path, monkeypatch) ->
         del stdin, stderr, env, cwd, start_new_session, close_fds
         captured["command"] = command
         agents.write_runtime_state(
-            toolang_root,
-            "alice",
+            _layout(toolang_root),
             endpoint="http://127.0.0.1:63295",
             started_at="2026-04-09T10:00:01Z",
             pid=os.getpid(),
@@ -5361,8 +5314,7 @@ def test_cli_stop_stops_sandboxed_agent(tmp_path: Path, monkeypatch) -> None:
     toolang_root = tmp_path / "toolang"
     _agents(toolang_root).create("alice")
     agents.write_runtime_state(
-        toolang_root,
-        "alice",
+        _layout(toolang_root),
         endpoint="http://127.0.0.1:8765",
         started_at="2026-04-08T10:00:00Z",
         pid=None,
@@ -5440,7 +5392,7 @@ def test_cli_cap_remote_add_list_remove_round_trip(tmp_path: Path, monkeypatch) 
     )
     from toolang.state.cache import load_home_prepared
 
-    prepared = load_home_prepared(toolang_root, "alice")
+    prepared = load_home_prepared(_layout(toolang_root))
     assert (
         prepared.version_dir / "files" / "wired" / "skills" / "reviewer" / "SKILL.md"
     ).read_text(encoding="utf-8") == "---\ndescription: Review code\n---\n# Reviewer\n"
@@ -5919,7 +5871,7 @@ def test_cli_cap_new_save_does_not_resolve_program_remote_uses(
         "_fetch_github_directory",
         lambda ref: {"SKILL.md": b"---\ndescription: PDF\n---\n# PDF\n"},
     )
-    agent_up.prepare_agent(toolang_root=toolang_root, agent_name="alice")
+    agent_up.prepare_agent(layout=_layout(toolang_root))
 
     monkeypatch.setattr(cli.click, "edit", lambda *_args, **_kwargs: "Saved psyche.\n")
     monkeypatch.setattr(
@@ -6307,7 +6259,7 @@ def test_cli_global_cap_change_does_not_create_agent_execution_store(
     )
 
     assert result.exit_code == 0
-    assert not agent_run_store_path(toolang_root, "default").exists()
+    assert not AgentLayout.resident(toolang_root, "default").run_store.exists()
 
 
 def test_cli_task_requires_agent_prefix(tmp_path: Path) -> None:
@@ -7365,7 +7317,7 @@ def test_cli_threads_lists_offline_runs_when_agent_is_not_running(
     tmp_path: Path,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    store = RunStore(agent_run_store_path(toolang_root, "alice"))
+    store = RunStore(AgentLayout.resident(toolang_root, "alice").run_store)
     try:
         run = project_run_start(
             store,
@@ -7429,7 +7381,7 @@ def test_cli_runs_falls_back_to_offline_store_when_api_is_unavailable(
     monkeypatch,
 ) -> None:
     toolang_root = tmp_path / "toolang"
-    store = RunStore(agent_run_store_path(toolang_root, "alice"))
+    store = RunStore(AgentLayout.resident(toolang_root, "alice").run_store)
     try:
         run = project_run_start(
             store,
@@ -8062,10 +8014,10 @@ def test_cli_chat_without_runtime_uses_process_local_executor_for_none_hosting(
 def test_process_local_chat_session_closes_real_state_watcher(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     _agents(root).create("alice")
-    state = agent_up.prepare_agent(toolang_root=root, agent_name="alice")
+    layout = _layout(root)
+    state = agent_up.prepare_agent(layout=layout)
     session = chat_commands.LocalChatSession(
-        root,
-        "alice",
+        layout,
         environ={"OPENAI_API_KEY": "secret"},
         agent_state=state,
     )

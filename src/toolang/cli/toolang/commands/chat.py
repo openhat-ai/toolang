@@ -17,6 +17,7 @@ import typer
 from toolang.up import process as agents
 from toolang.up import server as agent_up
 from toolang.base.types.sandbox import SandboxSelector
+from toolang.common.layout import AgentLayout
 from toolang.common.errors import ToolangError
 from toolang.execution.stream import trace_event_data
 from toolang.state.state import split_cap_selectors
@@ -458,7 +459,8 @@ def _chat_runtime(ctx: typer.Context, *, sandbox: str | None) -> Iterator[ChatCl
 
     root = context_root(ctx)
     name = require_prefix_agent(ctx)
-    existing = agents.AgentProcess(root, name).status(ui_base_url=ui_base_url())
+    layout = AgentLayout.resident(root, name)
+    existing = agents.AgentProcess(layout).status(ui_base_url=ui_base_url())
     if (
         existing is not None
         and existing.status == "running"
@@ -473,9 +475,9 @@ def _chat_runtime(ctx: typer.Context, *, sandbox: str | None) -> Iterator[ChatCl
 
     if existing is not None and existing.status in {"running", "preparing", "starting"}:
         raise click.ClickException(runtime_commands.active_agent_error(existing))
-    environ = load_runtime_environ(root, name, base_environ=os.environ)
+    environ = load_runtime_environ(layout, base_environ=os.environ)
     environ["TOOLANG_ROOT"] = str(root)
-    agent_state = agent_up.prepare_agent(toolang_root=root, agent_name=name)
+    agent_state = agent_up.prepare_agent(layout=layout)
     agent_hosting = agent_up.resolve_agent_hosting(
         agent_state,
         sandbox=sandbox,
@@ -483,8 +485,7 @@ def _chat_runtime(ctx: typer.Context, *, sandbox: str | None) -> Iterator[ChatCl
     )
     if agent_hosting.selector.driver == "none":
         local = LocalChatSession(
-            root,
-            name,
+            layout,
             environ=environ,
             agent_state=agent_state,
         )
@@ -494,10 +495,9 @@ def _chat_runtime(ctx: typer.Context, *, sandbox: str | None) -> Iterator[ChatCl
             local.close()
         return
 
-    target = agents.MaterializedRunTarget(root, name, "resident")
     launch = runtime_commands.resolve_startup(
         ctx,
-        target,
+        layout,
         sandbox=agent_hosting.selector.render(),
         models=None,
         tools=None,
@@ -513,8 +513,7 @@ def _chat_runtime(ctx: typer.Context, *, sandbox: str | None) -> Iterator[ChatCl
     if launch.log_plan.path is None:
         raise click.ClickException("agent log path was not resolved")
     with owned_runtime_client(
-        root=root,
-        name=name,
+        layout=layout,
         startup=launch.startup,
         environ=launch.environ,
         log_path=launch.log_plan.path,
@@ -544,7 +543,7 @@ def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | Non
     if not agent:
         return None
     return ChatInputHistoryStore(
-        agents.agent_room(root, agent) / "chat-input-history.jsonl"
+        AgentLayout.resident(root, agent).runtime / "chat-input-history.jsonl"
     )
 
 
@@ -553,7 +552,7 @@ def _chat_home_label(ctx: typer.Context) -> str:
         agent_name = context_agent(ctx)
         if agent_name is None:
             return "agent home"
-        return str(agents.agent_home(context_root(ctx), agent_name))
+        return str(AgentLayout.resident(context_root(ctx), agent_name).home)
     except Exception:
         return "agent home"
 

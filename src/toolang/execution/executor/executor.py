@@ -199,7 +199,7 @@ class RunExecutor:
             self._active[bound.run_id] = active
         self._tasks[task] = (bound.run_id, active)
         task.add_done_callback(self._task_done)
-        self._ensure_monitor(bound.setup.name)
+        self._ensure_monitor(bound.setup.layout.name)
         return RunHandle(bound.run_id, self, task)
 
     async def _execute_owned(
@@ -586,6 +586,7 @@ class _Execution:
     ) -> None:
         self.executor = executor
         self.setup = root.setup
+        self.layout = root.setup.layout
         config_layers = (root.state.root_config, root.state.home_config)
         self.model_aliases = parse_model_aliases(config_layers)
         self.default_models = parse_default_models(config_layers)

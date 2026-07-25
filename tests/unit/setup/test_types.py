@@ -8,6 +8,7 @@ import pytest
 
 import toolang.setup as setup_package
 from toolang.base.types.model import ModelInfo
+from toolang.common.layout import AgentLayout
 from toolang.setup import AgentSetup
 
 
@@ -15,9 +16,9 @@ def test_setup_facade_exposes_snapshots_without_cache_details() -> None:
     assert setup_package.__all__ == [
         "AgentSetup",
         "SetupWatcher",
-        "prepare_agent_setup",
     ]
     assert not hasattr(setup_package, "ModelListCache")
+    assert not hasattr(setup_package, "prepare_agent_setup")
 
 
 def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:
@@ -27,8 +28,7 @@ def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:
     environ = {"OPENAI_API_KEY": "secret"}
 
     setup = AgentSetup(
-        name="alice",
-        home=Path("/agents/alice"),
+        layout=AgentLayout.resident(Path("/toolang"), "alice"),
         providers=providers,
         adapters=adapters,
         models=(),
@@ -51,8 +51,7 @@ def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:
 def test_agent_setup_rejects_models_without_installed_provider() -> None:
     with pytest.raises(ValueError, match="unknown providers: missing"):
         AgentSetup(
-            name="alice",
-            home=Path("/agents/alice"),
+            layout=AgentLayout.resident(Path("/toolang"), "alice"),
             providers={},
             adapters={},
             models=(
@@ -74,8 +73,7 @@ def test_agent_setup_rejects_mismatched_provider_mapping_key() -> None:
         match="provider mapping key 'alias' does not match 'actual'",
     ):
         AgentSetup(
-            name="alice",
-            home=Path("/agents/alice"),
+            layout=AgentLayout.resident(Path("/toolang"), "alice"),
             providers={
                 "alias": cast(Any, SimpleNamespace(name="actual")),
             },
@@ -96,8 +94,7 @@ def test_agent_setup_rejects_duplicate_model_identity() -> None:
 
     with pytest.raises(ValueError, match="unique by provider and ref"):
         AgentSetup(
-            name="alice",
-            home=Path("/agents/alice"),
+            layout=AgentLayout.resident(Path("/toolang"), "alice"),
             providers={
                 "openai": cast(Any, SimpleNamespace(name="openai")),
             },

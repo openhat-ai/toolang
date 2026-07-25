@@ -74,9 +74,7 @@ class Scheduler:
                 now=current,
             ):
                 if (
-                    self.executor.store.get_thread(
-                        thread_id=claimed.job.thread_id
-                    )
+                    self.executor.store.get_thread(thread_id=claimed.job.thread_id)
                     is None
                 ):
                     self.executor.store.create_thread(
@@ -85,9 +83,7 @@ class Scheduler:
                         context={"job_id": claimed.job.job_id},
                     )
                 runnable = (
-                    kind
-                    if state.program.find_agic(kind) is not None
-                    else "default"
+                    kind if state.program.find_agic(kind) is not None else "default"
                 )
                 handle = self.executor.start(
                     RunSpec(

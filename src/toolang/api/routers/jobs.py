@@ -113,11 +113,12 @@ def archive_task(context: ApiContextDep, task_id: str) -> JobDetail:
 
 @router.post("/tasks/{task_id}/reopen", summary="Reopen Task", response_model=JobDetail)
 def reopen_task(context: ApiContextDep, task_id: str) -> JobDetail:
-    store = open_job_store(context.root, context.name)
+    store = open_job_store(context.layout)
     try:
         store.reopen_task(
             jobs=AgentJobs.load(
-                context.root, context.name, context.state_watcher.current().program
+                context.layout,
+                context.state_watcher.current().program,
             ),
             task_id=task_id,
         )
@@ -132,11 +133,12 @@ def reopen_task(context: ApiContextDep, task_id: str) -> JobDetail:
 
 @router.post("/tasks/{task_id}/cancel", summary="Cancel Task", response_model=JobDetail)
 async def cancel_task(context: ApiContextDep, task_id: str) -> JobDetail:
-    store = open_job_store(context.root, context.name)
+    store = open_job_store(context.layout)
     try:
         store.reconcile(
             jobs=AgentJobs.load(
-                context.root, context.name, context.state_watcher.current().program
+                context.layout,
+                context.state_watcher.current().program,
             ),
             kind="task",
         )
@@ -178,11 +180,12 @@ def create_chore(
     response_model=RunCommandResult,
 )
 async def run_chore(context: ApiContextDep, chore_id: str) -> RunCommandResult:
-    store = open_job_store(context.root, context.name)
+    store = open_job_store(context.layout)
     try:
         claimed = store.claim_chore_manual(
             jobs=AgentJobs.load(
-                context.root, context.name, context.state_watcher.current().program
+                context.layout,
+                context.state_watcher.current().program,
             ),
             chore_id=chore_id,
             run_id=allocate_run_id(context.executor.id_state_path),
@@ -221,11 +224,12 @@ async def run_chore(context: ApiContextDep, chore_id: str) -> RunCommandResult:
     "/chores/{chore_id}/cancel", summary="Cancel Chore", response_model=JobDetail
 )
 async def cancel_chore(context: ApiContextDep, chore_id: str) -> JobDetail:
-    store = open_job_store(context.root, context.name)
+    store = open_job_store(context.layout)
     try:
         store.reconcile(
             jobs=AgentJobs.load(
-                context.root, context.name, context.state_watcher.current().program
+                context.layout,
+                context.state_watcher.current().program,
             ),
             kind="chore",
         )
@@ -406,11 +410,12 @@ def chore_detail(context: ApiContextDep, chore_id: str) -> JobDetail:
 
 
 def _reconcile_jobs(context, *, kind: JobKind) -> None:
-    store = open_job_store(context.root, context.name)
+    store = open_job_store(context.layout)
     try:
         store.reconcile(
             jobs=AgentJobs.load(
-                context.root, context.name, context.state_watcher.current().program
+                context.layout,
+                context.state_watcher.current().program,
             ),
             kind=kind,
         )
@@ -426,9 +431,7 @@ def _job_path(job: JobFile) -> Path:
 
 def _job_inspection(context) -> JobInspection:
     return JobInspection.load(
-        root=context.root,
-        agent_name=context.name,
-        home=context.home,
+        layout=context.layout,
         program=context.state_watcher.current().program,
         runs=context.executor.store.list_runs(limit=None),
     )
@@ -520,7 +523,7 @@ def _task_document_from_create(context, payload: TaskCreateRequest) -> JobFile:
     try:
         return new_job_file(
             kind="task",
-            job_id=allocate_authored_job_id(context.root, context.name),
+            job_id=allocate_authored_job_id(context.layout),
             title=payload.title,
             body=payload.body,
         )
@@ -532,7 +535,7 @@ def _chore_document_from_create(context, payload: ChoreCreateRequest) -> JobFile
     try:
         return new_job_file(
             kind="chore",
-            job_id=allocate_authored_job_id(context.root, context.name),
+            job_id=allocate_authored_job_id(context.layout),
             title=payload.title,
             body=payload.body,
             schedule=payload.schedule,

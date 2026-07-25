@@ -14,6 +14,7 @@ from typing import cast
 from dateutil.rrule import rrulestr
 
 from toolang.catalog.types import JobKind
+from toolang.common.layout import AgentLayout
 from ..execution.types import RunStatus
 from .records import JobRecord
 from .types import JobStatus, JobTrigger
@@ -569,16 +570,16 @@ class JobStore:
                 self._conn.commit()
 
 
-def jobs_db_path(toolang_root: Path, agent_name: str) -> Path:
+def jobs_db_path(layout: AgentLayout) -> Path:
     """Return the scheduler job database path."""
 
-    return toolang_root / "agents" / agent_name / ".runtime" / "jobs.db"
+    return layout.job_store
 
 
-def open_job_store(toolang_root: Path, agent_name: str) -> JobStore:
+def open_job_store(layout: AgentLayout) -> JobStore:
     """Open the scheduler job store for one agent."""
 
-    return JobStore(jobs_db_path(toolang_root, agent_name))
+    return JobStore(jobs_db_path(layout))
 
 
 def _next_scheduled_at(

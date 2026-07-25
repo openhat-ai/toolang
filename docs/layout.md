@@ -24,9 +24,10 @@ ${TOOLANG_ROOT}/
   skills/
   services/
   prompts/
-  .prepared/
-  .runtime/
+  .setup/
     models/
+  .state/
+  .runtime/
   .sandbox/
   agents/
     <agent>/
@@ -39,7 +40,8 @@ ${TOOLANG_ROOT}/
       tasks/
       chores/
       archive/
-      .prepared/
+      .setup/
+      .state/
       .runtime/
 ```
 
@@ -74,8 +76,37 @@ Key paths:
 | `chores/` | Ready chore documents |
 | `drafts/` | Draft task and chore documents |
 | `archive/` | Retired task and chore documents |
-| `.prepared/` | Immutable prepared generations |
+| `.setup/` | Rebuildable installed-environment caches |
+| `.state/` | Immutable prepared state generations |
 | `.runtime/` | Live runtime state |
+
+
+## Agent Placement
+
+`AgentLayout` is the immutable process-owned description of one materialized
+agent. It records the current placement and derives every root, home, setup,
+state, and runtime path from that identity.
+
+| Placement | Root calculation |
+| --- | --- |
+| `resident` | The explicit Toolang root |
+| `visiting` | `/tmp/toolang-<agent>-<source-hash:8>/` |
+| `roaming` | `<source-directory>/.toolang/` |
+
+All three placements use the same layout below their calculated root:
+`agents/<agent>/` is the agent home, rebuildable setup and prepared state use
+`.setup/` and `.state/`, and durable operational data uses `.runtime/`.
+
+
+## Setup Cache
+
+Rebuildable environment discovery data lives under:
+
+- `${TOOLANG_ROOT}/.setup/`
+
+| Path | Purpose |
+| --- | --- |
+| `models/` | Last-good provider model lists shared across agents and processes |
 
 
 ## Runtime Room
@@ -83,10 +114,6 @@ Key paths:
 Runtime data shared by every local agent process lives under:
 
 - `${TOOLANG_ROOT}/.runtime/`
-
-| Path | Purpose |
-| --- | --- |
-| `models/` | Last-good provider model lists shared across agents and processes |
 
 Each agent runtime stores operational state under:
 
@@ -115,8 +142,8 @@ Prepared directories:
 
 | Scope | Directory |
 | --- | --- |
-| Global | `${TOOLANG_ROOT}/.prepared/` |
-| Per-agent | `${TOOLANG_ROOT}/agents/<agent>/.prepared/` |
+| Global | `${TOOLANG_ROOT}/.state/` |
+| Per-agent | `${TOOLANG_ROOT}/agents/<agent>/.state/` |
 
 Each prepared directory stores a current-version pointer, a per-scope writer
 lock, and immutable generation directories. See

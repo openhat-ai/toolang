@@ -19,6 +19,7 @@ from typing import Self
 import pytest
 
 from toolang.common.ids import IdIssuer
+from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
@@ -102,8 +103,7 @@ class _LiveExecution:
             providers = {provider_hint: providers[provider_hint]}
         envs = dict(os.environ)
         setup = AgentSetup(
-            name="alice",
-            home=home,
+            layout=AgentLayout.resident(root, "alice"),
             providers=providers,
             adapters=load_model_adapters(),
             models=tuple(

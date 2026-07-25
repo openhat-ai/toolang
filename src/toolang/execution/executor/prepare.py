@@ -47,9 +47,7 @@ _LOGGER = logging.getLogger("toolang.run")
 _TEXT_HISTORY_MESSAGE_LIMIT = 32
 _DEFAULT_INSTRUCT_TEMPLATE = prompts.load("instruct.default.md")
 _DEFAULT_CONTEXT_TEMPLATE = prompts.load("context.default.md")
-_PRIMARY_REFERENCE_RE = re.compile(
-    r"{{\s*(?:[#^/]\s*)?_(?:\.[A-Za-z_][\w-]*)*\s*}}"
-)
+_PRIMARY_REFERENCE_RE = re.compile(r"{{\s*(?:[#^/]\s*)?_(?:\.[A-Za-z_][\w-]*)*\s*}}")
 _RUNTIME_DEFAULT_AGIC = AgicDecl(
     name="default",
     input=Parameter(name="_", type_name="Part[]", span=Span(line=1)),
@@ -90,8 +88,7 @@ def prepare_agic(
     )
     model = resolve_model(
         context,
-        selector=run.model
-        or (model_selectors[0] if model_selectors else None),
+        selector=run.model or (model_selectors[0] if model_selectors else None),
         allowed_selectors=model_selectors,
     )
     tools = _select_tools(dict(run.setup.tools), _directives(agic, "tools"))
@@ -109,10 +106,7 @@ def prepare_agic(
             default_variables["_"] = coerce_input(
                 percept,
                 agic.input.type_name or "Part[]",
-                structs={
-                    item.name: item
-                    for item in run.state.program.structs
-                },
+                structs={item.name: item for item in run.state.program.structs},
             )
         variables = default_variables
     body_variables = _body_variables(agic, variables)
@@ -437,14 +431,9 @@ def _body_variables(
 
 def _body_types(agic: AgicDecl) -> dict[str, str]:
     return {
-        **(
-            {"_": agic.input.type_name or "Part[]"}
-            if agic.input is not None
-            else {}
-        ),
+        **({"_": agic.input.type_name or "Part[]"} if agic.input is not None else {}),
         **{
-            parameter.name: parameter.type_name or "Part[]"
-            for parameter in agic.params
+            parameter.name: parameter.type_name or "Part[]" for parameter in agic.params
         },
     }
 
@@ -458,7 +447,10 @@ def _runtime_context(
             "thread_id": run.thread,
             "program_source": run.state.program_source,
         },
-        "agent": {"name": run.setup.name, "home": str(run.setup.home)},
+        "agent": {
+            "name": run.setup.layout.name,
+            "home": str(run.setup.layout.home),
+        },
         "runnable": {
             "kind": agic.kind,
             "name": agic.name,
@@ -488,12 +480,12 @@ def _cap_context(context: _Execution, entry: PreparedCap) -> dict[str, object]:
         "name": entry.name,
         "kind": entry.kind,
         "path": entry.path,
-        "ref": cap_store.entry_ref(entry, agent_name=context.setup.name),
+        "ref": cap_store.entry_ref(entry, agent_name=context.layout.name),
         "description": str(description) if description is not None else None,
         "content": entry.read_content() or None if entry.kind == "psyche" else None,
         "metadata": mutable_data(entry.meta),
         "metadata_items": _metadata_items(entry.meta),
-        "scope": cap_store.entry_scope(entry, agent_name=context.setup.name),
+        "scope": cap_store.entry_scope(entry, agent_name=context.layout.name),
         "origin": cap_store.entry_origin(entry),
         "form": cap_store.entry_form(entry),
     }

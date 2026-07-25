@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,3 +64,4 @@ class ToolContext:
     room: Path
     wd: Path
     services: tuple[ToolService, ...] = ()
+    placement: Literal["resident", "visiting", "roaming"] = "resident"

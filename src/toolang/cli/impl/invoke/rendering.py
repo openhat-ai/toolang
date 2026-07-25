@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
 import sys
 from typing import cast
 
@@ -13,7 +12,7 @@ from rich.live import Live
 from rich.text import Text
 import typer
 
-from toolang.up import process as agents
+from toolang.common.layout import AgentLayout
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.execution.events import RunEnd, RunStarting, StepBegin, StepEnd, TraceEvent
 from toolang.execution.records import trace_index, trace_run
@@ -26,8 +25,7 @@ from toolang.cli.common.output import executable_label
 def emit_outcome(
     outcome: RunRecord,
     *,
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     executable_name: str | None,
 ) -> int:
     if outcome.status != "finished":
@@ -36,16 +34,11 @@ def emit_outcome(
         if _is_model_selection_error(error):
             return 1
         typer.echo(f"Run: {outcome.run_id}", err=True)
-        log_path = agents.agent_script_run_log_path(
-            toolang_root,
-            agent_name,
-            executable_name=executable_name,
-            run_id=outcome.run_id,
-        )
+        log_path = layout.run_log(executable_name, outcome.run_id)
         if log_path.exists():
             typer.echo(f"Log: {log_path}", err=True)
         return 1
-    store = RunStore(agents.agent_run_store_path(toolang_root, agent_name))
+    store = RunStore(layout.run_store)
     try:
         output = store.run_output_text(run_id=outcome.run_id)
     finally:
@@ -72,8 +65,7 @@ def progress_sink(
 def emit_interrupt(
     *,
     script_progress: "ScriptProgressSink | None",
-    toolang_root: Path | None,
-    agent_name: str | None,
+    layout: AgentLayout | None,
     executable_name: str | None,
     environ: dict[str, str] | None,
 ) -> None:
@@ -81,12 +73,13 @@ def emit_interrupt(
     run_id = script_progress.run_id if script_progress is not None else None
     if run_id:
         typer.echo(f"Run: {run_id}", err=True)
-    if not run_id or toolang_root is None or agent_name is None:
+    if not run_id or layout is None:
         return
     if environ is None or not environ.get(PY_LOG_ENV_VAR, "").strip():
         return
     typer.echo(
-        f"Log: {agents.agent_script_run_log_path(toolang_root, agent_name, executable_name=executable_name, run_id=run_id)}",
+        "Log: "
+        f"{layout.run_log(executable_name, run_id)}",
         err=True,
     )
 

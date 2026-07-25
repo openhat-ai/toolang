@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 from typing import cast
 
+from toolang.common.layout import AgentLayout
+
 from ..common.progress import ProgressSink
 from ..lang.ast import Program, to_data
 from .state import AgentState, compose_agent_state
@@ -47,8 +49,7 @@ logger = logging.getLogger("toolang.prepare")
 
 
 def prepare_agent_state(
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     toolang_version: str,
     force: bool = False,
@@ -57,8 +58,7 @@ def prepare_agent_state(
     """Prepare and compose the immutable runtime state for one agent."""
 
     root, home = prepare_root_home(
-        toolang_root,
-        agent_name,
+        layout,
         toolang_version=toolang_version,
         force=force,
         progress=progress,
@@ -66,7 +66,7 @@ def prepare_agent_state(
     return compose_prepared_state(
         root,
         home,
-        program_source=str(Path("agents") / agent_name / "agent.too"),
+        program_source=str(layout.program.relative_to(layout.root)),
     )
 
 
@@ -93,8 +93,7 @@ def compose_prepared_state(
 
 
 def refresh_agent_state(
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     toolang_version: str,
     progress: ProgressSink | None = None,
@@ -102,8 +101,7 @@ def refresh_agent_state(
     """Explicitly refresh remote resolutions and prepare one agent state."""
 
     return prepare_agent_state(
-        toolang_root,
-        agent_name,
+        layout,
         toolang_version=toolang_version,
         force=True,
         progress=progress,
@@ -111,8 +109,7 @@ def refresh_agent_state(
 
 
 def prepare_root_home(
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     toolang_version: str,
     force: bool = False,
@@ -120,17 +117,16 @@ def prepare_root_home(
 ) -> tuple[RootPrepared, HomePrepared]:
     """Prepare and load the shared root and one agent home."""
 
-    _require_root(toolang_root)
-    _require_agent_home(toolang_root, agent_name)
+    _require_root(layout)
+    _require_agent_home(layout)
     root = prepare_root(
-        toolang_root,
+        layout,
         toolang_version=toolang_version,
         force=force,
         progress=progress,
     )
     home = prepare_home(
-        toolang_root,
-        agent_name,
+        layout,
         toolang_version=toolang_version,
         force=force,
         progress=progress,
@@ -139,7 +135,7 @@ def prepare_root_home(
 
 
 def prepare_root(
-    toolang_root: Path,
+    layout: AgentLayout,
     *,
     toolang_version: str,
     force: bool = False,
@@ -147,39 +143,37 @@ def prepare_root(
 ) -> RootPrepared:
     """Build or reuse the root prepared cache shared by every agent."""
 
-    _require_root(toolang_root)
-    source = scan_root_source(toolang_root)
+    _require_root(layout)
+    source = scan_root_source(layout.root)
     current = _matching_root(
-        toolang_root,
+        layout,
         source=source,
         force=force,
     )
     if current is not None:
         return current
-    with prepare_lock(toolang_root):
-        source = scan_root_source(toolang_root)
+    with prepare_lock(layout, "root"):
+        source = scan_root_source(layout.root)
         current = _matching_root(
-            toolang_root,
+            layout,
             source=source,
             force=force,
         )
         if current is not None:
             return current
         _build_prepared(
-            toolang_root,
-            None,
+            layout,
             scope="root",
             visibility="shared",
             toolang_version=toolang_version,
             reuse_remote=not force,
             progress=progress,
         )
-        return load_root_prepared(toolang_root)
+        return load_root_prepared(layout)
 
 
 def prepare_home(
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     toolang_version: str,
     force: bool = False,
@@ -187,40 +181,37 @@ def prepare_home(
 ) -> HomePrepared:
     """Build or reuse one agent-home prepared cache."""
 
-    _require_agent_home(toolang_root, agent_name)
-    source = scan_home_source(toolang_root, agent_name)
+    _require_agent_home(layout)
+    source = scan_home_source(layout.root, layout.name)
     current = _matching_home(
-        toolang_root,
-        agent_name,
+        layout,
         source=source,
         force=force,
     )
     if current is not None:
         return current
-    with prepare_lock(toolang_root, agent_name):
-        source = scan_home_source(toolang_root, agent_name)
+    with prepare_lock(layout, "home"):
+        source = scan_home_source(layout.root, layout.name)
         current = _matching_home(
-            toolang_root,
-            agent_name,
+            layout,
             source=source,
             force=force,
         )
         if current is not None:
             return current
         _build_prepared(
-            toolang_root,
-            agent_name,
+            layout,
             scope="home",
             visibility="private",
             toolang_version=toolang_version,
             reuse_remote=not force,
             progress=progress,
         )
-        return load_home_prepared(toolang_root, agent_name)
+        return load_home_prepared(layout)
 
 
 def _matching_root(
-    toolang_root: Path,
+    layout: AgentLayout,
     *,
     source: Source,
     force: bool,
@@ -228,18 +219,17 @@ def _matching_root(
     if force:
         return None
     try:
-        version = load_current_version(toolang_root)
-        version_dir = prepared_version_dir(toolang_root, version)
+        version = load_current_version(layout, "root")
+        version_dir = prepared_version_dir(layout, "root", version)
         if load_version_source(version_dir) != source:
             return None
-        return load_root_prepared(toolang_root, version)
+        return load_root_prepared(layout, version)
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
 
 
 def _matching_home(
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     source: Source,
     force: bool,
@@ -247,18 +237,17 @@ def _matching_home(
     if force:
         return None
     try:
-        version = load_current_version(toolang_root, agent_name)
-        version_dir = prepared_version_dir(toolang_root, version, agent_name)
+        version = load_current_version(layout, "home")
+        version_dir = prepared_version_dir(layout, "home", version)
         if load_version_source(version_dir) != source:
             return None
-        return load_home_prepared(toolang_root, agent_name, version)
+        return load_home_prepared(layout, version)
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
 
 
 def _build_prepared(
-    toolang_root: Path,
-    agent_name: str | None,
+    layout: AgentLayout,
     *,
     scope: PreparedScope,
     visibility: PreparedVisibility,
@@ -267,16 +256,15 @@ def _build_prepared(
     progress: ProgressSink | None,
 ) -> bytes:
     for _ in range(_MAX_SOURCE_SNAPSHOT_ATTEMPTS):
-        source = _scan_scope_source(toolang_root, agent_name, scope=scope)
+        source = _scan_scope_source(layout, scope=scope)
         authored = (
-            read_root_source(toolang_root)
+            read_root_source(layout.root)
             if scope == "root"
-            else read_authored_source(toolang_root, _required_agent_name(agent_name))
+            else read_authored_source(layout.root, layout.name)
         )
         previous_entries = (
             _previous_prepared_caps(
-                toolang_root,
-                agent_name=agent_name,
+                layout,
                 scope=scope,
             )
             if reuse_remote
@@ -315,11 +303,10 @@ def _build_prepared(
             scope=scope,
             toolang_version=toolang_version,
         )
-        if source != _scan_scope_source(toolang_root, agent_name, scope=scope):
+        if source != _scan_scope_source(layout, scope=scope):
             continue
         version = write_prepared(
-            toolang_root=toolang_root,
-            agent_name=agent_name,
+            layout=layout,
             scope=scope,
             source=source,
             resolutions=resolutions,
@@ -327,54 +314,45 @@ def _build_prepared(
             files=files,
         )
         publish_current(
-            toolang_root,
+            layout,
+            scope,
             version,
-            agent_name,
         )
         return version
     raise RuntimeError(f"{scope} source changed repeatedly while preparing")
 
 
 def _previous_prepared_caps(
-    toolang_root: Path,
+    layout: AgentLayout,
     *,
-    agent_name: str | None,
     scope: PreparedScope,
 ) -> tuple[PreparedCap, ...]:
     try:
         if scope == "root":
-            return load_root_prepared(toolang_root).caps
-        return load_home_prepared(toolang_root, _required_agent_name(agent_name)).caps
+            return load_root_prepared(layout).caps
+        return load_home_prepared(layout).caps
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return ()
 
 
 def _scan_scope_source(
-    toolang_root: Path,
-    agent_name: str | None,
+    layout: AgentLayout,
     *,
     scope: PreparedScope,
 ) -> Source:
     if scope == "root":
-        return scan_root_source(toolang_root)
-    return scan_home_source(toolang_root, _required_agent_name(agent_name))
+        return scan_root_source(layout.root)
+    return scan_home_source(layout.root, layout.name)
 
 
-def _required_agent_name(agent_name: str | None) -> str:
-    if agent_name is None:
-        raise ValueError("home preparation requires an agent name")
-    return agent_name
+def _require_root(layout: AgentLayout) -> None:
+    if not layout.root.is_dir():
+        raise FileNotFoundError(f"Toolang root not found: {layout.root}")
 
 
-def _require_root(toolang_root: Path) -> None:
-    if not toolang_root.is_dir():
-        raise FileNotFoundError(f"Toolang root not found: {toolang_root}")
-
-
-def _require_agent_home(toolang_root: Path, agent_name: str) -> None:
-    home = toolang_root / "agents" / agent_name
-    if not home.is_dir():
-        raise FileNotFoundError(f"agent home not found: {home}")
+def _require_agent_home(layout: AgentLayout) -> None:
+    if not layout.home.is_dir():
+        raise FileNotFoundError(f"agent home not found: {layout.home}")
 
 
 def _snapshot_files(

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from toolang.base.types.message import Message, TextPart
 from toolang.common.errors import ToolangError
+from toolang.common.layout import AgentLayout
 from toolang.lang.ast import AgicDecl
 from toolang.lang.input import coerce_output
 
@@ -36,7 +36,7 @@ class _AgicState:
     """Mutable state shared by one agic's model and tool steps."""
 
     prepared: PreparedAgic
-    home: Path
+    layout: AgentLayout
     emit: EventEmitter
     pending_inputs: Callable[[], tuple[RunControlRecord, ...]]
     before_call: Callable[[], None]
@@ -80,7 +80,7 @@ async def execute(
     )
     state = _AgicState(
         prepared,
-        home=execution.setup.home,
+        layout=execution.layout,
         emit=execution.emit,
         pending_inputs=lambda: execution.steer_controls_for_call(binding.run_id),
         before_call=lambda: execution.raise_if_stopping(binding.run_id, call=True),

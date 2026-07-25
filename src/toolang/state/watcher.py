@@ -9,6 +9,8 @@ from pathlib import Path
 
 from watchfiles import Change, awatch
 
+from toolang.common.layout import AgentLayout
+
 from .state import AgentState
 from .cache import (
     load_current_version,
@@ -31,14 +33,12 @@ class StateWatcher:
 
     def __init__(
         self,
-        root: Path,
-        name: str,
+        layout: AgentLayout,
         state: AgentState,
         *,
         transform: Callable[[AgentState], AgentState] | None = None,
     ) -> None:
-        self.root = root
-        self.name = name
+        self.layout = layout
         self._state = state
         self._toolang_version = state.toolang_version
         self._transform = transform or (lambda value: value)
@@ -49,8 +49,7 @@ class StateWatcher:
     def refresh(self) -> AgentState:
         self._state = self._transform(
             prepare_agent_state(
-                self.root,
-                self.name,
+                self.layout,
                 toolang_version=self._toolang_version,
             )
         )
@@ -65,14 +64,14 @@ class StateWatcher:
     ) -> AsyncIterator[AgentState]:
         logger.debug(
             "watch.started root=%s agent=%s interval_ms=%s debounce_ms=%s",
-            self.root,
-            self.name,
+            self.layout.root,
+            self.layout.name,
             int(interval_ms),
             int(debounce_ms),
         )
         timeout_ms = max(int(interval_ms), 50)
         async for changes in awatch(
-            self.root,
+            self.layout.root,
             debounce=max(int(debounce_ms), 50),
             step=timeout_ms,
             rust_timeout=timeout_ms,
@@ -84,10 +83,8 @@ class StateWatcher:
                 for kind, path in changes
                 if kind in _RELEVANT_CHANGES
                 and (
-                    is_source_path(self.root, self.name, Path(path))
-                    or _is_prepared_current_path(
-                        self.root, self.name, Path(path)
-                    )
+                    is_source_path(self.layout.root, self.layout.name, Path(path))
+                    or _is_prepared_current_path(self.layout, Path(path))
                 )
             }
             if changes and not paths:
@@ -118,19 +115,22 @@ class StateWatcher:
     def _needs_refresh(self) -> bool:
         try:
             return (
-                load_current_version(self.root) != self._state.root_version
-                or load_current_version(self.root, self.name)
-                != self._state.home_version
-                or scan_root_source(self.root)
-                != load_version_source(
-                    prepared_version_dir(self.root, self._state.root_version)
-                )
-                or scan_home_source(self.root, self.name)
+                load_current_version(self.layout, "root") != self._state.root_version
+                or load_current_version(self.layout, "home") != self._state.home_version
+                or scan_root_source(self.layout.root)
                 != load_version_source(
                     prepared_version_dir(
-                        self.root,
+                        self.layout,
+                        "root",
+                        self._state.root_version,
+                    )
+                )
+                or scan_home_source(self.layout.root, self.layout.name)
+                != load_version_source(
+                    prepared_version_dir(
+                        self.layout,
+                        "home",
                         self._state.home_version,
-                        self.name,
                     )
                 )
             )
@@ -138,9 +138,9 @@ class StateWatcher:
             return True
 
 
-def _is_prepared_current_path(root: Path, name: str, path: Path) -> bool:
+def _is_prepared_current_path(layout: AgentLayout, path: Path) -> bool:
     candidate = path.resolve(strict=False)
     return candidate in {
-        prepared_current_path(root).resolve(strict=False),
-        prepared_current_path(root, name).resolve(strict=False),
+        prepared_current_path(layout, "root").resolve(strict=False),
+        prepared_current_path(layout, "home").resolve(strict=False),
     }

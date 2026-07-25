@@ -64,7 +64,7 @@ def put_file_cap(
     )
     _wrap_user_error(catalog.upsert, cap)
     entry = _find_authored_entry(context, visibility=visibility, kind=kind, name=name)
-    return CapDetail.from_cap(entry, agent_name=context.name)
+    return CapDetail.from_cap(entry, agent_name=context.layout.name)
 
 
 @router.put("/prompts/{name}/wired", summary="Wire Prompt", response_model=CapDetail)
@@ -91,7 +91,7 @@ def put_wired_cap(
     cap = cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
     _wrap_user_error(catalog.upsert, cap)
     entry = _find_authored_entry(context, visibility=visibility, kind=kind, name=name)
-    return CapDetail.from_cap(entry, agent_name=context.name)
+    return CapDetail.from_cap(entry, agent_name=context.layout.name)
 
 
 @router.delete(
@@ -185,20 +185,24 @@ def caps_summary(context: ApiContextDep) -> dict[str, object]:
     entries = context.state_watcher.current().caps
     collections = {
         "psyches": _CAP_INFOS.dump_python(
-            _cap_infos(entries, agent_name=context.name, kind="psyche"), mode="json"
+            _cap_infos(entries, agent_name=context.layout.name, kind="psyche"),
+            mode="json",
         ),
         "skills": _CAP_INFOS.dump_python(
-            _cap_infos(entries, agent_name=context.name, kind="skill"), mode="json"
+            _cap_infos(entries, agent_name=context.layout.name, kind="skill"),
+            mode="json",
         ),
         "services": _CAP_INFOS.dump_python(
-            _cap_infos(entries, agent_name=context.name, kind="service"), mode="json"
+            _cap_infos(entries, agent_name=context.layout.name, kind="service"),
+            mode="json",
         ),
         "prompts": _CAP_INFOS.dump_python(
-            _cap_infos(entries, agent_name=context.name, kind="prompt"), mode="json"
+            _cap_infos(entries, agent_name=context.layout.name, kind="prompt"),
+            mode="json",
         ),
     }
     return {
-        "agent": context.name,
+        "agent": context.layout.name,
         **collections,
         "counts": {key: len(value) for key, value in collections.items()},
     }
@@ -213,7 +217,7 @@ def cap_list(context: ApiContextDep, request: Request) -> list[CapInfo]:
     return list(
         _cap_infos(
             context.state_watcher.current().caps,
-            agent_name=context.name,
+            agent_name=context.layout.name,
             kind=kind,
         )
     )
@@ -266,7 +270,7 @@ def cap_detail(context: ApiContextDep, request: Request, name: str) -> CapDetail
     )
     if entry is None:
         raise HTTPException(status_code=404, detail=f"{kind} not found: {name}")
-    return CapDetail.from_cap(entry, agent_name=context.name)
+    return CapDetail.from_cap(entry, agent_name=context.layout.name)
 
 
 def _collection_kind(collection: str) -> CapKind:
@@ -313,8 +317,8 @@ def _find_authored_entry(
     name: str,
 ) -> PreparedCap:
     for entry in cap_state.list_entries(
-        context.root,
-        context.name,
+        context.layout.root,
+        context.layout.name,
         visibility=visibility,
         kinds={kind},
     ):

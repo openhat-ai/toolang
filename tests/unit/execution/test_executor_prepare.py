@@ -21,6 +21,7 @@ from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.ids import IdIssuer
+from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer, StepBegin
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor.common import BoundRun, Local, output_parts
@@ -122,8 +123,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     adapter = _Adapter()
     tool = _Tool()
     setup = AgentSetup(
-        home=home,
-        name="alice",
+        layout=AgentLayout.resident(root, "alice"),
         providers={provider.name: provider},
         adapters={adapter.name: adapter},
         models=(),
@@ -205,12 +205,10 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
 
 def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
-    home = root / "agents" / "alice"
     provider = _Provider()
     adapter = _Adapter()
     setup = AgentSetup(
-        home=home,
-        name="alice",
+        layout=AgentLayout.resident(root, "alice"),
         providers={provider.name: provider},
         adapters={adapter.name: adapter},
         models=(),
@@ -301,8 +299,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     adapter = _Adapter(Message(role="assistant", parts=(audio,)))
     tool = _Tool()
     setup = AgentSetup(
-        home=home,
-        name="alice",
+        layout=AgentLayout.resident(root, "alice"),
         providers={provider.name: provider},
         adapters={adapter.name: adapter},
         models=(),

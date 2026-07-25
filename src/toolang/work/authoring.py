@@ -2,45 +2,41 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import frontmatter
 
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE, JobKind, JobStage
 from toolang.common.ids import LOCAL_ID_FAMILY, allocate_id
+from toolang.common.layout import AgentLayout
 
 
 def allocate_authored_job_id(
-    root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     catalog: AuthoredJobs | None = None,
 ) -> str:
     """Allocate one id that is unique across all authored job kinds and stages."""
 
-    effective_catalog = catalog or AuthoredJobs(root / "agents" / agent_name)
+    effective_catalog = catalog or AuthoredJobs(layout.home)
     with effective_catalog.write_lock():
         return allocate_id(
-            root / "agents" / agent_name / ".runtime" / "ids.json",
+            layout.id_state,
             family=LOCAL_ID_FAMILY,
             exists=effective_catalog.contains_id,
         ).value
 
 
 def assign_missing_authored_job_ids(
-    root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     catalog: AuthoredJobs | None = None,
 ) -> tuple[JobFile, ...]:
     """Assign and persist ids missing from manually authored job files."""
 
-    effective_catalog = catalog or AuthoredJobs(root / "agents" / agent_name)
+    effective_catalog = catalog or AuthoredJobs(layout.home)
     return effective_catalog.assign_missing_ids(
         lambda: allocate_authored_job_id(
-            root,
-            agent_name,
+            layout,
             catalog=effective_catalog,
         )
     )

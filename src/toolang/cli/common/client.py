@@ -17,6 +17,7 @@ import click
 import typer
 
 from toolang.up import process as agents
+from toolang.common.layout import AgentLayout
 from toolang.base.types.message import Message
 from ...execution.events import RunEnd, RunStarting, TraceEvent, trace_event_from_data
 from ...execution.records import InputRef, RunRecord
@@ -230,8 +231,7 @@ class RuntimeClient:
 @contextmanager
 def owned_runtime_client(
     *,
-    root: Path,
-    name: str,
+    layout: AgentLayout,
     startup: StartupSpec,
     environ: Mapping[str, str],
     log_path: Path,
@@ -241,7 +241,7 @@ def owned_runtime_client(
 
     from toolang.up import server as agent_up
 
-    process = agents.AgentProcess(root, name)
+    process = agents.AgentProcess(layout)
     try:
         status = process.start(
             (
@@ -258,7 +258,9 @@ def owned_runtime_client(
         if status.status != "running":
             raise click.ClickException(f"agent API failed to start: {log_path}")
         if status.endpoint is None:
-            raise click.ClickException(f"agent API did not publish an endpoint: {name}")
+            raise click.ClickException(
+                f"agent API did not publish an endpoint: {layout.name}"
+            )
         yield RuntimeClient(status.endpoint)
     finally:
         with suppress(FileNotFoundError):
@@ -276,7 +278,9 @@ def running_runtime_client(ctx: typer.Context) -> RuntimeClient | None:
     """Return a client only when the selected agent has a running HTTP runtime."""
 
     agent = require_prefix_agent(ctx)
-    status = agents.AgentProcess(context_root(ctx), agent).status(
+    status = agents.AgentProcess(
+        AgentLayout.resident(context_root(ctx), agent)
+    ).status(
         ui_base_url=ui_base_url()
     )
     if status is None or status.status != "running" or status.endpoint is None:

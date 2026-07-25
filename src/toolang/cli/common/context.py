@@ -14,6 +14,7 @@ from dotenv import dotenv_values
 
 from ...common.errors import ToolangError
 from ...common.config import resolve_ui_base_url
+from ...common.layout import AgentLayout
 from ..config import load_config
 from ...catalog.errors import CatalogError
 
@@ -45,6 +46,12 @@ def require_prefix_agent(ctx: typer.Context) -> str:
     raise typer.Exit()
 
 
+def context_layout(ctx: typer.Context) -> AgentLayout:
+    """Return the resident layout selected by the current CLI context."""
+
+    return AgentLayout.resident(context_root(ctx), require_prefix_agent(ctx))
+
+
 def require_runtime_agent(ctx: typer.Context, agent: str | None) -> str:
     if agent:
         return agent
@@ -70,29 +77,15 @@ def ui_base_url(*, environ: Mapping[str, str] | None = None) -> str:
     return resolve_ui_base_url(config, environ=values)
 
 
-def runtime_environ(
-    ctx: typer.Context,
-    agent_name: str,
-    *,
-    root: Path | None = None,
-) -> dict[str, str]:
-    return load_runtime_environ(
-        root or context_root(ctx),
-        agent_name,
-        base_environ=os.environ,
-    )
-
-
 def load_runtime_environ(
-    root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     base_environ: Mapping[str, str],
 ) -> dict[str, str]:
     """Load root and agent dotenv defaults below explicit process values."""
 
-    merged = _load_dotenv(root / ".env")
-    merged.update(_load_dotenv(root / "agents" / agent_name / ".env"))
+    merged = _load_dotenv(layout.root_env)
+    merged.update(_load_dotenv(layout.env))
     merged.update(base_environ)
     return merged
 

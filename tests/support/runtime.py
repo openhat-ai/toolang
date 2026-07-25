@@ -13,7 +13,7 @@ from toolang.state.state import PreparedCap, PreparedVisibility, list_entries
 def snapshot_context(context: ApiContext) -> dict[str, object]:
     """Return one internal runtime snapshot for integration assertions."""
 
-    durable = read_authored_source(context.root, context.name)
+    durable = read_authored_source(context.layout.root, context.layout.name)
     agent_state = context.state_watcher.current()
     runs = context.executor.store.list_runs(limit=None)
     operational_facts: dict[str, object] = {
@@ -80,7 +80,7 @@ def _authored_entries(
     if visibility not in {"shared", "private"}:
         raise ValueError(f"unsupported visibility: {visibility}")
     return list_entries(
-        context.root,
-        context.name,
+        context.layout.root,
+        context.layout.name,
         visibility=cast(PreparedVisibility, visibility),
     )

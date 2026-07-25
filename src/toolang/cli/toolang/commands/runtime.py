@@ -11,6 +11,7 @@ from typing import Annotated, TYPE_CHECKING
 import click
 import typer
 
+from toolang.common.layout import AgentLayout
 from toolang.up import process as agents
 from toolang.state.state import split_cap_selectors
 from toolang.plugin.models.resolution import split_model_selectors
@@ -24,7 +25,7 @@ from ....up.logging import (
 from ...common.context import (
     context_root,
     require_runtime_agent,
-    runtime_environ,
+    load_runtime_environ,
     ui_base_url,
     user_call,
 )
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeStartup:
-    target: agents.MaterializedRunTarget
+    target: AgentLayout
     startup: agent_up.StartupSpec
     environ: dict[str, str]
     log_plan: LoggingPlan
@@ -70,26 +71,25 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
 
     try:
         options = _parse_roaming_file_options(args)
-        root, name = agents.materialize_roaming_program(source)
-        existing = agents.AgentProcess(root, name).status(ui_base_url=ui_base_url())
+        layout = agents.materialize_roaming_program(source)
+        existing = agents.AgentProcess(layout).status(ui_base_url=ui_base_url())
         if existing is not None and existing.status in {
             "running",
             "preparing",
             "starting",
         }:
             raise click.ClickException(active_agent_error(existing))
-        environ = load_runtime_environ(root, name, base_environ=os.environ)
-        environ["TOOLANG_ROOT"] = str(root)
+        environ = load_runtime_environ(layout, base_environ=os.environ)
+        environ["TOOLANG_ROOT"] = str(layout.root)
         log_plan = resolve_agent_logging(
             mode="run",
             environ=environ,
-            agent_log_path=agents.agent_runtime_log_path(root, name),
+            agent_log_path=layout.runtime_log,
         )
         configure_logging_plan(log_plan)
         startup = user_call(
             up.resolve_startup,
-            toolang_root=root,
-            agent_name=name,
+            layout=layout,
             host=options.host,
             endpoint_host=options.endpoint_host,
             port=options.port,
@@ -103,7 +103,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
             temporary_port=options.port is None,
             environ=log_plan.environ,
         )
-        state = user_call(up.prepare_agent, toolang_root=root, agent_name=name)
+        state = user_call(up.prepare_agent, layout=layout)
         return user_call(
             up.start_runtime,
             startup,
@@ -266,37 +266,39 @@ def run(
     progress = make_cli_progress()
     finished = False
     try:
-        with agents.resolved_run_target(
-            context_root(ctx), selector, progress=as_progress_sink(progress)
-        ) as target:
-            launch = resolve_startup(
-                ctx,
-                target,
-                sandbox=sandbox,
-                models=models,
-                tools=tools,
-                caps=caps,
-                inboxes=inboxes,
-                port=port,
-                host=host,
-                endpoint_host=endpoint_host,
-                dev=dev,
-                background=False,
-                progress=progress,
+        target = agents.resolve_run_layout(
+            context_root(ctx),
+            selector,
+            progress=as_progress_sink(progress),
+        )
+        launch = resolve_startup(
+            ctx,
+            target,
+            sandbox=sandbox,
+            models=models,
+            tools=tools,
+            caps=caps,
+            inboxes=inboxes,
+            port=port,
+            host=host,
+            endpoint_host=endpoint_host,
+            dev=dev,
+            background=False,
+            progress=progress,
+        )
+        progress.finish(details=False)
+        finished = True
+        raise typer.Exit(
+            user_call(
+                up.start_runtime,
+                launch.startup,
+                environ=launch.environ,
+                sandbox_child=sandbox_child,
+                progress=None,
+                agent_state=launch.agent_state,
+                wait=not background_hosting,
             )
-            progress.finish(details=False)
-            finished = True
-            raise typer.Exit(
-                user_call(
-                    up.start_runtime,
-                    launch.startup,
-                    environ=launch.environ,
-                    sandbox_child=sandbox_child,
-                    progress=None,
-                    agent_state=launch.agent_state,
-                    wait=not background_hosting,
-                )
-            )
+        )
     except KeyboardInterrupt:
         if not finished:
             progress.interrupt()
@@ -370,24 +372,26 @@ def start(
         )
     progress = make_cli_progress()
     try:
-        with agents.resolved_run_target(
-            context_root(ctx), selector, progress=as_progress_sink(progress)
-        ) as target:
-            launch = resolve_startup(
-                ctx,
-                target,
-                sandbox=sandbox,
-                models=models,
-                tools=tools,
-                caps=caps,
-                inboxes=inboxes,
-                port=port,
-                host=host,
-                endpoint_host=endpoint_host,
-                dev=dev,
-                background=True,
-                progress=progress,
-            )
+        target = agents.resolve_run_layout(
+            context_root(ctx),
+            selector,
+            progress=as_progress_sink(progress),
+        )
+        launch = resolve_startup(
+            ctx,
+            target,
+            sandbox=sandbox,
+            models=models,
+            tools=tools,
+            caps=caps,
+            inboxes=inboxes,
+            port=port,
+            host=host,
+            endpoint_host=endpoint_host,
+            dev=dev,
+            background=True,
+            progress=progress,
+        )
     except KeyboardInterrupt:
         progress.interrupt()
         raise typer.Exit(130) from None
@@ -406,9 +410,7 @@ def start(
         *up.build_run_argv(launch.startup, background_hosting=True),
     ]
     try:
-        status = agents.AgentProcess(
-            launch.target.toolang_root, launch.target.agent_name
-        ).start(
+        status = agents.AgentProcess(launch.target).start(
             command,
             environ=launch.environ,
             cwd=Path.cwd(),
@@ -417,18 +419,18 @@ def start(
         )
     except RuntimeError as exc:
         raise click.ClickException(
-            f"Agent {launch.target.agent_name} failed to start: {log_path}"
+            f"Agent {launch.target.name} failed to start: {log_path}"
         ) from exc
     except TimeoutError as exc:
         raise click.ClickException(
-            f"Agent {launch.target.agent_name} start timed out: {log_path}"
+            f"Agent {launch.target.name} start timed out: {log_path}"
         ) from exc
     if status.status == "failed":
         raise click.ClickException(
-            f"Agent {launch.target.agent_name} failed to start: {log_path}"
+            f"Agent {launch.target.name} failed to start: {log_path}"
         )
     typer.echo(
-        f"Started agent {launch.target.agent_name}: "
+        f"Started agent {launch.target.name}: "
         f"{status.webui_url or status.api_url or status.endpoint or '-'}"
     )
 
@@ -443,7 +445,7 @@ def stop(
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)
     root = context_root(ctx)
-    process = agents.AgentProcess(root, agent_name)
+    process = agents.AgentProcess(AgentLayout.resident(root, agent_name))
     runtime_state = process.state()
     runtime_pids = () if runtime_state is not None else process.pids()
     if runtime_state is None and not runtime_pids:
@@ -474,7 +476,7 @@ def stop(
 
 def resolve_startup(
     ctx: typer.Context,
-    target: agents.MaterializedRunTarget,
+    target: AgentLayout,
     *,
     sandbox: str | None,
     models: list[str] | None,
@@ -491,31 +493,29 @@ def resolve_startup(
     from toolang.up import server as up
     from ...common.progress import as_progress_sink
 
-    root, agent = target.toolang_root, target.agent_name
-    if target.kind == "resident" and not agents.agent_home(root, agent).is_dir():
+    root, agent = target.root, target.name
+    if target.placement == "resident" and not target.home.is_dir():
         raise click.ClickException(f"Agent {agent} not found")
-    existing = agents.AgentProcess(root, agent).status(ui_base_url=ui_base_url())
+    existing = agents.AgentProcess(target).status(ui_base_url=ui_base_url())
     if existing is not None and existing.status in {"running", "preparing", "starting"}:
         raise click.ClickException(active_agent_error(existing))
-    environ = runtime_environ(ctx, agent, root=root)
+    environ = load_runtime_environ(target, base_environ=os.environ)
     environ["TOOLANG_ROOT"] = str(root)
     log_plan = resolve_agent_logging(
         mode="start" if background else "run",
         environ=environ,
-        agent_log_path=agents.agent_runtime_log_path(root, agent),
+        agent_log_path=target.runtime_log,
     )
     if not background:
         configure_logging_plan(log_plan)
     agent_state = user_call(
         up.prepare_agent,
-        toolang_root=root,
-        agent_name=agent,
+        layout=target,
         progress=as_progress_sink(progress),
     )
     startup = user_call(
         up.resolve_startup,
-        toolang_root=root,
-        agent_name=agent,
+        layout=target,
         host=host,
         endpoint_host=endpoint_host,
         port=port,
@@ -526,7 +526,7 @@ def resolve_startup(
         file_inboxes=inboxes,
         dev=dev,
         log_spec=log_plan.spec,
-        temporary_port=target.kind == "visiting" and port is None,
+        temporary_port=target.placement == "visiting" and port is None,
         environ=log_plan.environ,
         agent_state=agent_state,
     )

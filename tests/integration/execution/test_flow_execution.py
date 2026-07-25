@@ -14,6 +14,7 @@ from toolang.base.types.message import ImagePart, Message, TextPart
 from toolang.base.types.run import ModelCall
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
+from toolang.common.layout import AgentLayout
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
@@ -102,8 +103,7 @@ def _state(*flows: FlowDecl) -> Any:
 
 def _setup() -> AgentSetup:
     return AgentSetup(
-        home=Path("/agent/alice"),
-        name="alice",
+        layout=AgentLayout.resident(Path("/"), "alice"),
         providers={},
         adapters={},
         models=(),

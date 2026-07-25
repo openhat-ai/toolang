@@ -12,6 +12,7 @@ from toolang.base.protocols.channel import AgentChannel
 from toolang.base.types.channel import ChannelContext, ChannelState, InboundDelivery
 from toolang.base.types.message import Message
 from toolang.base.utils.channels import bind_delivery
+from toolang.common.layout import AgentLayout
 from toolang.execution.executor import Executor
 from toolang.execution.records import RunRecord
 from toolang.execution.reply import build_channel_reply_sink
@@ -25,8 +26,7 @@ logger = logging.getLogger("toolang.poll")
 
 def spawn(
     *,
-    name: str,
-    home: Path,
+    layout: AgentLayout,
     bindings: Mapping[str, ChannelBinding],
     plugins: Mapping[str, AgentChannel],
     executor: Executor,
@@ -38,8 +38,7 @@ def spawn(
 
     return asyncio.create_task(
         run(
-            name=name,
-            home=home,
+            layout=layout,
             bindings=bindings,
             plugins=plugins,
             executor=executor,
@@ -52,8 +51,7 @@ def spawn(
 
 async def run(
     *,
-    name: str,
-    home: Path,
+    layout: AgentLayout,
     bindings: Mapping[str, ChannelBinding],
     plugins: Mapping[str, AgentChannel],
     executor: Executor,
@@ -66,8 +64,8 @@ async def run(
     active: set[asyncio.Task[RunRecord]] = set()
     logger.debug(
         "poll.started root=%s agent=%s interval_ms=%s bindings=%s",
-        home.parent.parent,
-        name,
+        layout.root,
+        layout.name,
         int(interval_ms),
         ",".join(sorted(bindings)) or "-",
     )
@@ -75,8 +73,7 @@ async def run(
         while True:
             for binding_name in sorted(bindings):
                 tasks = await _poll_binding(
-                    name=name,
-                    home=home,
+                    layout=layout,
                     binding_name=binding_name,
                     plugins=plugins,
                     executor=executor,
@@ -102,8 +99,7 @@ async def run(
 
 async def _poll_binding(
     *,
-    name: str,
-    home: Path,
+    layout: AgentLayout,
     binding_name: str,
     plugins: Mapping[str, AgentChannel],
     executor: Executor,
@@ -112,7 +108,7 @@ async def _poll_binding(
     plugin = plugins.get(binding_name)
     if plugin is None:
         return ()
-    bound_context = channel_context(home, binding_name)
+    bound_context = channel_context(layout, binding_name)
     state_path = bound_context.room / "state.json"
     state = _load_state(state_path)
     try:
@@ -120,7 +116,7 @@ async def _poll_binding(
     except Exception as exc:
         logger.warning(
             "poll failed agent=%s binding=%s error=%s",
-            name,
+            layout.name,
             binding_name,
             exc,
         )
@@ -130,7 +126,7 @@ async def _poll_binding(
         return ()
     logger.debug(
         "poll.received agent=%s binding=%s deliveries=%s cursor=%s",
-        name,
+        layout.name,
         binding_name,
         len(result.deliveries),
         result.next_state.cursor or "-",
@@ -140,7 +136,7 @@ async def _poll_binding(
             executor=executor,
             get_agent_state=get_agent_state,
             plugins=plugins,
-            home=home,
+            layout=layout,
             binding_name=binding_name,
             delivery=delivery,
         )
@@ -157,10 +153,10 @@ def _load_state(path: Path) -> ChannelState:
     return ChannelState.from_data(payload)
 
 
-def channel_context(home: Path, binding_name: str) -> ChannelContext:
+def channel_context(layout: AgentLayout, binding_name: str) -> ChannelContext:
     return ChannelContext(
-        home=home,
-        room=home / ".runtime" / "channels" / binding_name,
+        home=layout.home,
+        room=layout.channel_room(binding_name),
     )
 
 
@@ -169,7 +165,7 @@ def start_delivery(
     executor: Executor,
     get_agent_state: Callable[[], AgentState],
     plugins: Mapping[str, AgentChannel],
-    home: Path,
+    layout: AgentLayout,
     binding_name: str,
     delivery: InboundDelivery,
 ) -> asyncio.Task[RunRecord]:
@@ -186,7 +182,7 @@ def start_delivery(
             get_agent_state(),
             reply=build_channel_reply_sink(
                 plugin=plugins.get(binding_name),
-                channel_context=channel_context(home, binding_name),
+                channel_context=channel_context(layout, binding_name),
                 binding_name=binding_name,
                 target=bound.reply_target,
             ),

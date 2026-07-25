@@ -16,7 +16,7 @@ from toolang.base.types.message import (
     Message,
     TextPart,
 )
-from toolang.up import process as agents
+from toolang.common.layout import AgentLayout
 from toolang.execution.types import RunStatus
 from .records import FileRequestRecord
 from .types import FileRequestStatus, FileSnapshot
@@ -182,7 +182,9 @@ class FileRequestStore:
             ).fetchone()
             self._conn.commit()
         if updated is None:
-            raise RuntimeError(f"file request not found after run binding: {request_id}")
+            raise RuntimeError(
+                f"file request not found after run binding: {request_id}"
+            )
         return _record_from_row(updated)
 
     def finish_run(
@@ -279,16 +281,16 @@ class FileRequestStore:
         )
 
 
-def files_db_path(toolang_root: Path, agent_name: str) -> Path:
+def files_db_path(layout: AgentLayout) -> Path:
     """Return the file request database path."""
 
-    return agents.agent_room(toolang_root, agent_name) / "files.db"
+    return layout.file_store
 
 
-def open_file_request_store(toolang_root: Path, agent_name: str) -> FileRequestStore:
+def open_file_request_store(layout: AgentLayout) -> FileRequestStore:
     """Open the file request store for one agent."""
 
-    return FileRequestStore(files_db_path(toolang_root, agent_name))
+    return FileRequestStore(files_db_path(layout))
 
 
 def fingerprint_file(path: Path) -> str:

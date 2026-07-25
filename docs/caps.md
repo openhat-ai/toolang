@@ -155,16 +155,16 @@ Private local caps:
 
 ## Prepared Cap Paths
 
-Prepared materialized caps live inside immutable `.prepared` versions:
+Prepared materialized caps live inside immutable `.state` versions:
 
 - `inline` caps are materialized under `files/inline`
 - `ref` caps are materialized under `files/cited`
 - `wired` caps are materialized under `files/wired`
 - authored caps are copied under `files/authored`
 
-Root versions live under `${TOOLANG_ROOT}/.prepared/versions/<version>`.
+Root versions live under `${TOOLANG_ROOT}/.state/versions/<version>`.
 Agent-specific versions live under
-`${TOOLANG_ROOT}/agents/<agent>/.prepared/versions/<version>`. See
+`${TOOLANG_ROOT}/agents/<agent>/.state/versions/<version>`. See
 [prepared-state.md](./prepared-state.md) for the complete layout and versioning
 rules.
 

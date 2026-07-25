@@ -50,6 +50,7 @@ from toolang.plugin.config import (
 )
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.config import resolve_ui_base_url
+from toolang.common.layout import AgentLayout
 from toolang.common.ids import allocate_run_id
 from toolang.up.config import resolve_cors_allowed_origins
 from toolang.execution.executor import Executor
@@ -61,7 +62,6 @@ from toolang.execution.store import RunStore
 from toolang.setup import (
     AgentSetup,
     SetupWatcher,
-    prepare_agent_setup,
 )
 from toolang.work.scheduler import DEFAULT_INTERVAL_MS as DEFAULT_SCHEDULER_INTERVAL_MS
 from toolang.work.scheduler import Scheduler
@@ -81,14 +81,11 @@ from toolang.state import watcher as state_watcher
 from toolang.plugin.models.config import (
     parse_default_models,
     parse_model_aliases,
-    parse_model_provider_configs,
 )
-from toolang.plugin.models.loading import load_model_adapters, load_model_providers
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.channels.loading import create_channel_plugin
 from toolang.plugin.sandboxes.loading import create_sandbox_plugin
 from toolang.plugin.tools.loading import (
-    load_runtime_tools,
     select_tools,
     validate_tool_selectors,
 )
@@ -121,8 +118,7 @@ class AgentHosting:
 class StartupSpec:
     """One fully resolved agent startup request."""
 
-    toolang_root: Path
-    agent_name: str
+    layout: AgentLayout
     host: str
     endpoint_host: str
     port: int
@@ -165,10 +161,10 @@ def up(
 ) -> int:
     """Start one agent runtime."""
 
+    layout = AgentLayout.resident(toolang_root, agent_name)
     spec = resolve_startup(
         host=host,
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        layout=layout,
         endpoint_host=endpoint_host,
         port=port,
         sandbox=sandbox,
@@ -206,8 +202,7 @@ def start_runtime(
             plugin=spec.hosting.plugin,
             selector=spec.hosting.selector,
             sandbox_config=spec.hosting.config,
-            toolang_root=spec.toolang_root,
-            agent_name=spec.agent_name,
+            layout=spec.layout,
             host=spec.host,
             endpoint_host=spec.endpoint_host,
             port=spec.port,
@@ -220,8 +215,7 @@ def start_runtime(
             wait=wait,
         )
     return _up_local(
-        toolang_root=spec.toolang_root,
-        agent_name=spec.agent_name,
+        layout=spec.layout,
         host=spec.host,
         endpoint_host=spec.endpoint_host,
         port=spec.port,
@@ -253,8 +247,7 @@ def _restore_termination_signal_defaults() -> None:
 
 def invoke(
     *,
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     executable_kind: ExecutableKind = "agic",
     executable_name: str | None = None,
     input_text: str | None = None,
@@ -273,11 +266,10 @@ def invoke(
     if log_spec is not None:
         invoke_environ[PY_LOG_ENV_VAR] = log_spec
     state = agent_state or prepare_agent(
-        toolang_root=toolang_root, agent_name=agent_name
+        layout=layout,
     )
     executor, _setup_watcher, watcher = assemble_execution(
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        layout=layout,
         environ=invoke_environ,
         model_selectors=_normalize_model_selectors(models),
         tool_selectors=_normalize_tool_selectors(tools),
@@ -288,12 +280,7 @@ def invoke(
     log_plan = resolve_agent_logging(
         mode="invoke",
         environ=invoke_environ,
-        run_log_path=agents.agent_script_run_log_path(
-            toolang_root,
-            agent_name,
-            executable_name=executable_name,
-            run_id=run_id,
-        ),
+        run_log_path=layout.run_log(executable_name, run_id),
     )
     if log_plan.destination != "none":
         configure_logging_plan(log_plan)
@@ -321,16 +308,14 @@ def invoke(
 
 def prepare_agent(
     *,
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     force: bool = False,
     progress: ProgressSink | None = None,
 ) -> AgentState:
     """Prepare one agent for either long-lived startup or one-shot execution."""
 
     return prepare_agent_state(
-        toolang_root,
-        agent_name,
+        layout,
         toolang_version=package_version("toolang"),
         force=force,
         progress=progress,
@@ -339,8 +324,7 @@ def prepare_agent(
 
 def resolve_startup(
     *,
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     host: str = "127.0.0.1",
     endpoint_host: str | None = None,
     port: int | None = None,
@@ -361,13 +345,11 @@ def resolve_startup(
     resolved_port = resolve_runtime_port(
         host=host,
         explicit_port=port,
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        layout=layout,
         temporary=temporary_port,
     )
     state = agent_state or prepare_agent(
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        layout=layout,
     )
     hosting = resolve_agent_hosting(
         state,
@@ -380,10 +362,9 @@ def resolve_startup(
     cap_selectors = _normalize_cap_selectors(caps)
     resolved_file_inboxes = _normalize_file_inboxes(file_inboxes)
     if resolved_file_inboxes:
-        _validate_file_agic(toolang_root=toolang_root, agent_name=agent_name)
+        _validate_file_agic(layout)
     return StartupSpec(
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        layout=layout,
         host=host,
         endpoint_host=endpoint_host,
         port=resolved_port,
@@ -458,8 +439,15 @@ def _normalize_file_inboxes(file_inboxes: Sequence[Path] | None) -> tuple[Path, 
     return tuple(inboxes)
 
 
-def _validate_file_agic(*, toolang_root: Path, agent_name: str) -> None:
-    program = read_authored_source(toolang_root, agent_name).load_program().parse()
+def _validate_file_agic(layout: AgentLayout) -> None:
+    program = (
+        read_authored_source(
+            layout.root,
+            layout.name,
+        )
+        .load_program()
+        .parse()
+    )
     agic = program.find_agic("file")
     if agic is None:
         raise ValueError("file agic not found")
@@ -478,81 +466,39 @@ def _config_layers(
 
 
 def load_model_aliases(
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     agent_state: AgentState | None = None,
 ) -> dict[str, ModelAlias]:
     """Load model aliases at the agent composition boundary."""
 
     state = agent_state or prepare_agent(
-        toolang_root=toolang_root, agent_name=agent_name
+        layout=layout,
     )
     return parse_model_aliases(_config_layers(state))
 
 
 def load_default_models(
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     agent_state: AgentState | None = None,
 ) -> tuple[str, ...]:
     """Load default model selectors at the agent composition boundary."""
 
     state = agent_state or prepare_agent(
-        toolang_root=toolang_root, agent_name=agent_name
+        layout=layout,
     )
     return parse_default_models(_config_layers(state))
 
 
-def _load_model_providers(
-    toolang_root: Path,
-    agent_name: str,
+def _create_setup_watcher(
     *,
-    agent_state: AgentState | None = None,
-) -> dict[str, ModelProvider]:
-    state = agent_state or prepare_agent(
-        toolang_root=toolang_root, agent_name=agent_name
-    )
-    config_layers = _config_layers(state)
-    return load_model_providers(parse_model_provider_configs(config_layers))
-
-
-def _prepare_installed_setup(
-    *,
-    toolang_root: Path,
-    agent_name: str,
-    state: AgentState,
-    environ: Mapping[str, str],
-    tool_selectors: Sequence[str] | None = None,
+    layout: AgentLayout,
     refresh_models: bool = False,
-) -> AgentSetup:
-    providers = _load_model_providers(
-        toolang_root,
-        agent_name,
-        agent_state=state,
-    )
-    tools = load_runtime_tools(
-        plugin_config=merge_named_configs(
-            _config_layers(state),
-            section="tools",
-            environ=environ,
-        ),
-    )
-    selected_tools = select_tools(tools, tool_selectors)
-    validate_tool_selectors(tools, tool_selectors)
-    return asyncio.run(
-        prepare_agent_setup(
-            toolang_root=toolang_root,
-            name=agent_name,
-            home=agents.agent_home(toolang_root, agent_name),
-            providers=providers,
-            adapters=load_model_adapters(),
-            tools=selected_tools,
-            envs=environ,
-            refresh_models=refresh_models,
-        )
-    )
+) -> SetupWatcher:
+    watcher = SetupWatcher(layout)
+    asyncio.run(watcher.refresh(force=refresh_models))
+    return watcher
 
 
 def build_run_argv(
@@ -574,9 +520,9 @@ def build_run_argv(
     command.extend(
         [
             "--root",
-            str(root or spec.toolang_root),
+            str(root or spec.layout.root),
             "run",
-            spec.agent_name,
+            spec.layout.name,
             "--host",
             host or spec.host,
             "--endpoint-host",
@@ -617,8 +563,7 @@ def _default_endpoint_host(host: str) -> str:
 
 def _up_local(
     *,
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     host: str,
     endpoint_host: str,
     port: int,
@@ -638,8 +583,7 @@ def _up_local(
         if interval_ms <= 0:
             raise ValueError(f"trigger interval must be positive: {name}")
     prepared_state = agent_state or prepare_agent(
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        layout=layout,
         progress=progress,
     )
     cors_allowed_origins = resolve_cors_allowed_origins(
@@ -648,8 +592,7 @@ def _up_local(
     )
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     executor, setup_watcher, watcher = assemble_execution(
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        layout=layout,
         environ=environ,
         model_selectors=model_selectors,
         tool_selectors=tool_selectors,
@@ -658,7 +601,16 @@ def _up_local(
         agent_state=prepared_state,
     )
     state = watcher.current()
-    setup = setup_watcher.current()
+    home = layout.home
+
+    def current_setup() -> AgentSetup:
+        setup = setup_watcher.current()
+        return replace(
+            setup,
+            tools=select_tools(dict(setup.tools), tool_selectors),
+        )
+
+    setup = current_setup()
     _log_state_loaded(
         setup,
         state,
@@ -678,17 +630,15 @@ def _up_local(
         for name, binding in channel_bindings.items()
     }
     context = ApiContext(
-        root=toolang_root,
-        name=agent_name,
-        home=setup.home,
+        layout=layout,
         executor=executor,
         setup_watcher=setup_watcher,
         state_watcher=watcher,
-        authored_jobs=AuthoredJobs(setup.home),
-        private_authored_caps=AuthoredCaps(setup.home),
-        shared_authored_caps=AuthoredCaps(toolang_root),
-        private_wired_caps=WiredCaps(setup.home / "config.toml"),
-        shared_wired_caps=WiredCaps(toolang_root / "config.toml"),
+        authored_jobs=AuthoredJobs(home),
+        private_authored_caps=AuthoredCaps(home),
+        shared_authored_caps=AuthoredCaps(layout.root),
+        private_wired_caps=WiredCaps(home / "config.toml"),
+        shared_wired_caps=WiredCaps(layout.root_config),
         host=host,
         port=port,
         cors_allowed_origins=cors_allowed_origins,
@@ -702,19 +652,18 @@ def _up_local(
         try:
             if not sandbox_child:
                 agents.write_runtime_state(
-                    toolang_root,
-                    agent_name,
+                    layout,
                     endpoint=endpoint,
                     started_at=started_at,
                     pid=os.getpid(),
                     models=model_selectors,
                 )
-            job_store = open_job_store(toolang_root, agent_name)
-            job_watcher = JobWatcher(toolang_root, agent_name)
+            job_store = open_job_store(layout)
+            job_watcher = JobWatcher(layout)
             scheduler = Scheduler(
                 job_store=job_store,
                 executor=executor,
-                get_agent_setup=setup_watcher.current,
+                get_agent_setup=current_setup,
                 get_home_jobs=job_watcher.current,
                 get_agent_state=watcher.current,
                 kinds=("task", "chore"),
@@ -725,8 +674,7 @@ def _up_local(
                     job_watcher.start(stop_signal=stop_signal),
                     scheduler.start(stop_signal=stop_signal),
                     poll.spawn(
-                        name=agent_name,
-                        home=setup.home,
+                        layout=layout,
                         bindings=channel_bindings,
                         plugins=channel_plugins,
                         executor=executor,
@@ -755,10 +703,9 @@ def _up_local(
             if file_inboxes:
                 bg_tasks.append(
                     files.spawn(
-                        root=toolang_root,
-                        name=agent_name,
+                        layout=layout,
                         executor=executor,
-                        get_agent_setup=setup_watcher.current,
+                        get_agent_setup=current_setup,
                         get_agent_state=watcher.current,
                         inboxes=file_inboxes,
                         interval_ms=DEFAULT_TRIGGER_INTERVAL_MS["file"],
@@ -771,8 +718,7 @@ def _up_local(
         finally:
             if not sandbox_child:
                 agents.stop_runtime_state(
-                    toolang_root,
-                    agent_name,
+                    layout,
                     expected_pid=os.getpid(),
                     expected_started_at=started_at,
                 )
@@ -801,7 +747,7 @@ def _up_local(
         shutdown_signal=shutdown_signal,
         on_starting=lambda: logger.info(
             "Agent starting root=%s",
-            toolang_root,
+            layout.root,
             extra={"color_message": "Agent starting root=\x1b[1m%s\x1b[0m"},
         ),
         on_running=lambda: logger.info(
@@ -856,9 +802,7 @@ def _model_count(
     )
     try:
         if selectors:
-            return len(
-                select_model_selectors(context, activation_selectors=selectors)
-            )
+            return len(select_model_selectors(context, activation_selectors=selectors))
         return len(select_model_selectors(context))
     except Exception:
         return len(selectors)
@@ -974,8 +918,7 @@ async def _finish_runtime_tasks(
 
 def assemble_execution(
     *,
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     environ: Mapping[str, str],
     model_selectors: Sequence[str] = (),
     tool_selectors: Sequence[str] | None = None,
@@ -986,20 +929,24 @@ def assemble_execution(
     """Assemble one executor and its versioned agent state."""
     if agent_state is None:
         agent_state = prepare_agent(
-            toolang_root=toolang_root, agent_name=agent_name, progress=progress
+            layout=layout,
+            progress=progress,
         )
     state = agent_state
     normalized_model_selectors = _normalize_model_selectors(model_selectors)
     normalized_tool_selectors = _normalize_tool_selectors(tool_selectors)
     normalized_cap_selectors = _normalize_cap_selectors(cap_selectors)
-    model_aliases = load_model_aliases(toolang_root, agent_name, agent_state=state)
-    default_models = load_default_models(toolang_root, agent_name, agent_state=state)
-    setup = _prepare_installed_setup(
-        toolang_root=toolang_root,
-        agent_name=agent_name,
-        state=state,
-        environ=environ,
-        tool_selectors=normalized_tool_selectors,
+    model_aliases = load_model_aliases(layout, agent_state=state)
+    default_models = load_default_models(layout, agent_state=state)
+    installed = _create_setup_watcher(
+        layout=layout,
+    )
+    setup = installed.current()
+    available_tools = dict(setup.tools)
+    validate_tool_selectors(available_tools, normalized_tool_selectors)
+    setup = replace(
+        setup,
+        tools=select_tools(available_tools, normalized_tool_selectors),
     )
     _validate_model_selectors(
         _StartupModelSelection(
@@ -1011,17 +958,25 @@ def assemble_execution(
         ),
         normalized_model_selectors,
     )
-    _validate_cap_selectors(state, normalized_cap_selectors, agent_name=agent_name)
-    state = _select_agent_caps(state, normalized_cap_selectors, agent_name=agent_name)
+    _validate_cap_selectors(
+        state,
+        normalized_cap_selectors,
+        agent_name=layout.name,
+    )
+    state = _select_agent_caps(
+        state,
+        normalized_cap_selectors,
+        agent_name=layout.name,
+    )
     default_model_selector = (
         normalized_model_selectors[0] if normalized_model_selectors else None
     )
-    store = RunStore(agents.agent_run_store_path(toolang_root, agent_name))
+    store = RunStore(layout.run_store)
     executor = Executor(
-        root=toolang_root,
-        name=agent_name,
-        home=agents.agent_home(toolang_root, agent_name),
-        id_state_path=agents.agent_id_state_path(toolang_root, agent_name),
+        root=layout.root,
+        name=layout.name,
+        home=layout.home,
+        id_state_path=layout.id_state,
         setup=setup,
         store=store,
         model_aliases=model_aliases,
@@ -1031,17 +986,13 @@ def assemble_execution(
         allowed_model_selectors=normalized_model_selectors,
     )
     watcher = state_watcher.StateWatcher(
-        toolang_root,
-        agent_name,
+        layout,
         state,
         transform=lambda value: _select_agent_caps(
-            value, normalized_cap_selectors, agent_name=agent_name
+            value,
+            normalized_cap_selectors,
+            agent_name=layout.name,
         ),
-    )
-    installed = SetupWatcher(
-        setup,
-        toolang_root=toolang_root,
-        get_envs=lambda: environ,
     )
     return executor, installed, watcher
 
@@ -1067,8 +1018,7 @@ def _up_managed_sandbox(
     plugin: AgentSandbox,
     selector: SandboxSelector,
     sandbox_config: Mapping[str, object],
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     host: str,
     endpoint_host: str,
     port: int,
@@ -1084,8 +1034,7 @@ def _up_managed_sandbox(
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     initial_sandbox_state = SandboxState(selector=selector).to_data()
     startup = StartupSpec(
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        layout=layout,
         host=host,
         endpoint_host=endpoint_host,
         port=port,
@@ -1101,8 +1050,7 @@ def _up_managed_sandbox(
         file_inboxes=file_inboxes,
     )
     agents.write_runtime_state(
-        toolang_root,
-        agent_name,
+        layout,
         endpoint=endpoint,
         started_at=started_at,
         pid=os.getpid(),
@@ -1121,14 +1069,14 @@ def _up_managed_sandbox(
         )
     else:
         sandbox_root = Path("/root/.toolang")
-    sandbox_home = sandbox_root / "agents" / agent_name
+    sandbox_home = sandbox_root / "agents" / layout.name
     request = SandboxStartRequest(
         selector=selector,
-        local_root=toolang_root,
-        local_home=agents.agent_home(toolang_root, agent_name),
+        local_root=layout.root,
+        local_home=layout.home,
         sandbox_root=sandbox_root,
         sandbox_home=sandbox_home,
-        agent_name=agent_name,
+        agent_name=layout.name,
         bind_host=host,
         endpoint_host=endpoint_host,
         port=port,
@@ -1144,7 +1092,7 @@ def _up_managed_sandbox(
             ),
         ),
         env_vars=dict(environ),
-        mounts=prepare_root_mounts(toolang_root, sandbox_root),
+        mounts=prepare_root_mounts(layout.root, sandbox_root),
         local_dev_artifact=dev_artifact,
     )
     plan = None
@@ -1152,8 +1100,7 @@ def _up_managed_sandbox(
     try:
         plan = plugin.prepare(request)
         agents.write_runtime_state(
-            toolang_root,
-            agent_name,
+            layout,
             endpoint=endpoint,
             started_at=started_at,
             pid=os.getpid(),
@@ -1186,7 +1133,7 @@ def _up_managed_sandbox(
             except Exception:
                 logger.exception(
                     "Failed to clean up sandbox after startup error agent=%s sandbox=%s",
-                    agent_name,
+                    layout.name,
                     selector.render(),
                 )
         failed_endpoint = (
@@ -1202,8 +1149,7 @@ def _up_managed_sandbox(
             )
         )
         agents.write_runtime_state(
-            toolang_root,
-            agent_name,
+            layout,
             endpoint=failed_endpoint,
             started_at=started_at,
             pid=os.getpid(),
@@ -1214,8 +1160,7 @@ def _up_managed_sandbox(
         )
         raise
     agents.write_runtime_state(
-        toolang_root,
-        agent_name,
+        layout,
         endpoint=start.endpoint or endpoint,
         started_at=started_at,
         pid=None,
@@ -1225,7 +1170,7 @@ def _up_managed_sandbox(
     )
     logger.info(
         "Sandbox ready agent=%s sandbox=%s endpoint=%s",
-        agent_name,
+        layout.name,
         selector.render(),
         start.endpoint or endpoint,
     )
@@ -1237,8 +1182,7 @@ def _up_managed_sandbox(
         finally:
             plugin.stop(start.state)
             agents.stop_runtime_state(
-                toolang_root,
-                agent_name,
+                layout,
                 expected_started_at=started_at,
             )
         return result
@@ -1370,13 +1314,12 @@ def _validate_cap_selectors(
 def _pick_runtime_port(
     host: str,
     *,
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     preferred_port: int | None = None,
 ) -> int:
     tried = agents.assigned_runtime_ports(
-        toolang_root,
-        exclude_agent=agent_name,
+        layout.root,
+        exclude_agent=layout.name,
     )
     if preferred_port is not None:
         tried.add(preferred_port)
@@ -1395,13 +1338,12 @@ def resolve_runtime_port(
     *,
     host: str,
     explicit_port: int | None,
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     temporary: bool = False,
 ) -> int:
     if explicit_port is not None:
         return explicit_port
-    preferred_port = agents.preferred_runtime_port(toolang_root, agent_name)
+    preferred_port = agents.preferred_runtime_port(layout)
     if preferred_port is not None:
         if _port_is_available(host, preferred_port):
             return preferred_port
@@ -1409,8 +1351,7 @@ def resolve_runtime_port(
         return _pick_temporary_runtime_port(host)
     return _pick_runtime_port(
         host,
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        layout=layout,
         preferred_port=preferred_port,
     )
 

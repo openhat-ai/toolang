@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
-from pathlib import Path
 import threading
 from typing import Annotated, Any, cast
 
@@ -18,6 +17,7 @@ from toolang.catalog.cap import AuthoredCaps
 from toolang.catalog.config import WiredCaps
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.catalog.job import AuthoredJobs
+from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunStarting, TraceEvent
 from toolang.execution.executor import Executor
 from toolang.execution.records import CommandRecord, RunRecord
@@ -48,9 +48,7 @@ OPENAPI_TAGS = [
 class ApiContext:
     """Process-local dependencies owned by one FastAPI application."""
 
-    root: Path
-    name: str
-    home: Path
+    layout: AgentLayout
     executor: Executor
     setup_watcher: SetupWatcher
     state_watcher: StateWatcher

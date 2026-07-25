@@ -230,8 +230,10 @@ check; it is not part of the public manager API.
 ## State Capture
 
 `RunSpec` carries one explicit immutable `AgentState` and
-`toolang.setup.AgentSetup`. `AgentSetup` supplies the agent home and installed
-runtime implementations. Its primary input is one protocol-level `Percept`;
+`toolang.setup.AgentSetup`. `AgentSetup` supplies the immutable `AgentLayout`
+and root-scoped installed runtime implementations. Execution uses that layout
+directly for the agent identity, home, and runtime rooms. Its primary input is
+one protocol-level `Percept`;
 after runnable resolution, input coercion exposes that value as `Part[]` or
 another explicitly declared primary type. Output coercion validates the final
 run value against the runnable's declared output type. Child runs inherit setup

@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass
-from pathlib import Path
 import threading
 from typing import Any
 from uuid import uuid4
@@ -14,6 +13,7 @@ from uuid import uuid4
 from toolang.base.types.message import Message
 from toolang.common.errors import ToolangError
 from toolang.common.ids import allocate_run_id, allocate_thread_id
+from toolang.common.layout import AgentLayout
 from toolang.execution.executor.prepare import (
     effective_agics,
     effective_origin_model_selectors,
@@ -40,8 +40,7 @@ class LocalChatSession:
 
     def __init__(
         self,
-        root: Path,
-        name: str,
+        layout: AgentLayout,
         *,
         environ: Mapping[str, str],
         agent_state: AgentState,
@@ -51,8 +50,7 @@ class LocalChatSession:
     ) -> None:
         self.executor, self.setup_watcher, self.state_watcher = (
             agent_up.assemble_execution(
-                toolang_root=root,
-                agent_name=name,
+                layout=layout,
                 environ=environ,
                 model_selectors=models,
                 tool_selectors=tools,

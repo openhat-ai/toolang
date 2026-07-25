@@ -119,7 +119,8 @@
   `MessagePart`, and `Message` values and the shared Toolang error type.
 - `toolang.common` owns package-neutral filesystem, immutable-container, and
   text-template helpers, progress events, selectors, Toolang-owned id allocation,
-  and shared GitHub source-reference parsing and rendering.
+  shared GitHub source-reference parsing and rendering, and the immutable
+  `AgentLayout` that derives placement-specific agent paths.
   `toolang.common.errors` is a compatibility export of the error type owned by
   `toolang.base`.
 - `toolang.lang` owns `.too` parsing, authored source semantics, source
@@ -148,13 +149,14 @@
   snapshots, effective cap projection and materialization, immutable
   root/home/agent state, and source-state watching.
 - `toolang.setup` owns immutable installed runtime setup snapshots, provider
-  model discovery, and the multi-process-safe model-list cache under
-  `${TOOLANG_ROOT}/.runtime/models/`. `AgentSetup` carries `providers`,
-  `adapters`, `models`, `tools`, and `envs`; execution consumes this snapshot
-  without provider discovery or cache access. The cache is an internal setup
-  implementation detail; callers prepare or refresh a setup and read
-  `AgentSetup.models`. `SetupWatcher` receives environment values through an
-  explicit caller callback and publishes new snapshots for later runs.
+  and provider discovery. `SetupWatcher` receives one `AgentLayout`, loads
+  root-scoped model and tool configuration, snapshots root dotenv plus process
+  environment values, and keeps the multi-process-safe model-list cache under
+  `${TOOLANG_ROOT}/.setup/models/`. Agent-home setup overrides are not yet
+  supported. `AgentSetup` carries that same layout plus `providers`, `adapters`,
+  `models`, `tools`, and `envs`; execution uses the layout directly. It
+  consumes the setup snapshot without provider discovery or cache access.
+  `refresh()` is the only snapshot-construction path.
 - `toolang.state.schemas` owns caller-facing capability protocol types;
   its schema types construct themselves from prepared capability state;
   `toolang.state.types` owns capability-state vocabulary.
@@ -223,10 +225,11 @@
   `jobs`, `runs`, and `threads`), not by read/write mode or OpenAPI tag. API
   routes call owning catalog, execution, and inspection objects instead of
   implementing persistence or projection algorithms.
-- `toolang.cli` owns CLI orchestration, process environment resolution, dotenv
-  loading, and process-level Web and logging call sites. Immutable root and home
-  config layers are carried by `AgentState`; plugin packages own pure parsing of
-  their explicit config sections.
+- `toolang.cli` owns CLI orchestration, command-specific environment
+  resolution, and process-level Web and logging call sites. `SetupWatcher` owns
+  the root-scoped setup environment snapshot. Immutable root and home config
+  layers are carried by `AgentState`; plugin packages own pure parsing of their
+  explicit config sections.
 
 
 ## Agent Identity
@@ -242,8 +245,8 @@
 
 ## CLI Responsibilities
 
-- The CLI is responsible for reading `TOOLANG_ROOT` and any other environment
-  variables.
+- The CLI is responsible for resolving `TOOLANG_ROOT` and command-specific
+  environment variables. `SetupWatcher` reads root setup environment values.
 - The CLI is responsible for resolving channel config environment references
   such as `token_env` before constructing long-lived runtime inputs.
 - The CLI resolves `agent_ref` values into explicit runtime inputs before
@@ -274,6 +277,8 @@
   thread-control indexes are allocated and inserted in one SQLite transaction
   so all durable identities remain safe across local processes.
 - Synced state should be reusable without reparsing unchanged source files.
+- Rebuildable setup discovery is stored under `.setup/`, immutable prepared
+  state under `.state/`, and non-rebuildable operational data under `.runtime/`.
 
 
 ## Principles Borrowed From Takoagent

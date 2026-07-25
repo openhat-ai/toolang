@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
+from toolang.common.layout import AgentLayout
 from toolang.up import process as agents
 from toolang.common.github import GitHubRef
 
@@ -60,9 +64,7 @@ def test_agent_shorthand_falls_back_to_main_when_branch_probe_fails(
 
     monkeypatch.setattr(agents, "_github_agent_ref_exists", fake_exists)
 
-    ref = agents.resolve_agent_selector_ref(
-        agents.parse_agent_selector("briceyan/dev")
-    )
+    ref = agents.resolve_agent_selector_ref(agents.parse_agent_selector("briceyan/dev"))
 
     assert ref.render() == "github://briceyan/agents/dev.too@main"
     assert probes == [
@@ -88,3 +90,49 @@ def test_github_agent_fetch_uses_raw_url(monkeypatch: pytest.MonkeyPatch) -> Non
     assert captured["url"] == (
         "https://raw.githubusercontent.com/briceyan/agents/main/dev.too"
     )
+
+
+def test_resolve_resident_layout_does_not_materialize_files(tmp_path: Path) -> None:
+    layout = agents.resolve_run_layout(tmp_path / "toolang", "alice")
+
+    assert layout == AgentLayout.resident(tmp_path / "toolang", "alice")
+    assert layout.placement == "resident"
+    assert not layout.home.exists()
+
+
+def test_resolve_visiting_layout_materializes_and_reuses_program(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = f"https://agents.example{tmp_path}/researcher.too"
+    fetches: list[str] = []
+
+    def fake_fetch(ref: agents.AgentRef, *, progress=None) -> str:
+        del progress
+        fetches.append(ref.render())
+        return "agent researcher\n"
+
+    monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
+
+    first = agents.resolve_run_layout(tmp_path, source)
+    second = agents.resolve_run_layout(tmp_path / "other", source)
+
+    assert first is not second
+    assert first == second == AgentLayout.visiting(source, "researcher")
+    assert first.program.read_text(encoding="utf-8") == "agent researcher\n"
+    assert fetches == [source]
+
+
+def test_materialize_roaming_program_links_source_and_config(tmp_path: Path) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text("agent demo\n", encoding="utf-8")
+    config = tmp_path / "toolang.toml"
+    config.write_text("[models]\n", encoding="utf-8")
+
+    layout = agents.materialize_roaming_program(source)
+
+    assert layout == AgentLayout.roaming(source)
+    assert layout.program.is_symlink()
+    assert layout.config.is_symlink()
+    assert (layout.program.parent / os.readlink(layout.program)).resolve() == source
+    assert (layout.config.parent / os.readlink(layout.config)).resolve() == config

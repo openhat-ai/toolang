@@ -52,8 +52,7 @@ class ModelListRecord:
             generation=generation,
             fetched_at=float(fetched_at),
             models=tuple(
-                ModelInfo.from_data(cast(Mapping[str, object], item))
-                for item in models
+                ModelInfo.from_data(cast(Mapping[str, object], item)) for item in models
             ),
         )
 

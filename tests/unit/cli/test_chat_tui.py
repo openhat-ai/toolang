@@ -17,8 +17,17 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
-from toolang.cli.impl.chat import blocks, events, local, rendering, slashes, tui, widgets
+from toolang.cli.impl.chat import (
+    blocks,
+    events,
+    local,
+    rendering,
+    slashes,
+    tui,
+    widgets,
+)
 from toolang.cli.impl.chat.events import ChatUIEvent
+from toolang.common.layout import AgentLayout
 from toolang.execution.events import (
     PartDelta,
     RunBegin,
@@ -87,8 +96,7 @@ def test_local_chat_session_runs_stop_and_steer_on_one_event_loop(
         lambda **_kwargs: (executor, FakeWatcher()),
     )
     session = local.LocalChatSession(
-        tmp_path,
-        "alice",
+        AgentLayout.resident(tmp_path, "alice"),
         environ={},
         agent_state=cast(Any, SimpleNamespace()),
     )
@@ -221,7 +229,9 @@ def test_chat_tool_step_uses_dim_dot_marker_and_summary() -> None:
         for segment in rendering.render_segments(block.render(), width=80)
         if segment.text.strip()
     ]
-    running_marker = next(segment for segment in running_segments if segment.text == "•")
+    running_marker = next(
+        segment for segment in running_segments if segment.text == "•"
+    )
 
     assert running_marker.style is not None
     assert running_marker.style.dim
@@ -244,17 +254,13 @@ def test_chat_flow_step_blocks_render_flow_operation_summary() -> None:
         "FlowStepBlock",
         "RunStopBlock",
     ]
-    assert "... running map summarize" in _render_text(
-        app.live_blocks[0].render()
-    )
+    assert "... running map summarize" in _render_text(app.live_blocks[0].render())
 
     events.handle_trace_event(_flow_step_end(), app)
 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
     assert [block.type for block in app.finalized] == ["FlowStepBlock"]
-    assert "... ran map summarize" in _render_text(
-        app.finalized[0].render()
-    )
+    assert "... ran map summarize" in _render_text(app.finalized[0].render())
 
 
 def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
@@ -262,9 +268,13 @@ def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
 
     events.handle_trace_event(_run_begin(executable_kind="flow"), app)
     events.handle_trace_event(_child_run_step_begin(), app)
-    events.handle_trace_event(_run_begin(run_id="run_child", parent_run_id="run_1"), app)
+    events.handle_trace_event(
+        _run_begin(run_id="run_child", parent_run_id="run_1"), app
+    )
     events.handle_trace_event(_model_step_begin(run_id="run_child"), app)
-    events.handle_trace_event(_model_step_end(run_id="run_child", output="child done"), app)
+    events.handle_trace_event(
+        _model_step_end(run_id="run_child", output="child done"), app
+    )
     events.handle_trace_event(_run_end(run_id="run_child", status="finished"), app)
 
     assert app.active_run == "run_1"
@@ -499,7 +509,9 @@ def test_chat_model_list_lines_render_as_columns() -> None:
             },
         ],
     }
-    block = blocks.SlashBlock("/model", ["Available Models", *slashes._chat_model_list_lines(payload)])
+    block = blocks.SlashBlock(
+        "/model", ["Available Models", *slashes._chat_model_list_lines(payload)]
+    )
     rendered = _render_text(block.render(), width=120)
     model_lines = [line for line in rendered.splitlines() if "deepseek/" in line]
     rendered_lines = rendered.splitlines()
@@ -517,9 +529,7 @@ def test_chat_model_list_lines_render_as_columns() -> None:
 def test_chat_status_bar_uses_right_aligned_shortcut_hints(
     monkeypatch: Any,
 ) -> None:
-    monkeypatch.setattr(
-        widgets.StatusBar, "_terminal_width", staticmethod(lambda: 80)
-    )
+    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 80))
     text = "".join(
         fragment for _style, fragment in widgets.StatusBar("runtime model")._render()
     )
@@ -531,9 +541,7 @@ def test_chat_status_bar_uses_right_aligned_shortcut_hints(
 
 
 def test_chat_status_bar_error_uses_full_width_error_line(monkeypatch: Any) -> None:
-    monkeypatch.setattr(
-        widgets.StatusBar, "_terminal_width", staticmethod(lambda: 40)
-    )
+    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 40))
     status = widgets.StatusBar("runtime model")
     status.set_error("No active run to steer.")
 
@@ -738,7 +746,10 @@ def _model_step_end(
         kind="model",
         status="finished",
         output=(TextPart(text=output),),
-        noted={"model_ref": "test/model", "usage": {"input_tokens": 1, "output_tokens": 1}},
+        noted={
+            "model_ref": "test/model",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        },
         started_at="2026-01-01T00:00:01Z",
         finished_at=finished_at,
     )
@@ -775,9 +786,7 @@ def _flow_step_end(*, step_index: int = 1) -> StepEnd:
     )
 
 
-def _child_run_step_begin(
-    *, step_index: int = 2, step: str | None = None
-) -> StepBegin:
+def _child_run_step_begin(*, step_index: int = 2, step: str | None = None) -> StepBegin:
     return StepBegin(
         step=step or f"run_1/{step_index}",
         kind="run",
@@ -790,9 +799,7 @@ def _child_run_step_begin(
     )
 
 
-def _child_run_step_end(
-    *, step_index: int = 2, step: str | None = None
-) -> StepEnd:
+def _child_run_step_end(*, step_index: int = 2, step: str | None = None) -> StepEnd:
     return StepEnd(
         step=step or f"run_1/{step_index}",
         kind="run",

@@ -6,14 +6,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from toolang.base.protocols.model import ModelAdapter
+from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.setup import (
-    AgentSetup,
-    SetupWatcher,
-    prepare_agent_setup,
-)
-from toolang.setup.models import ModelListCache, model_cache_dir
+from toolang.common.layout import AgentLayout
+from toolang.plugin.models.config import ModelProviderConfig
+from toolang.setup import AgentSetup, SetupWatcher
+import toolang.setup.watcher as watcher_module
+from toolang.setup.models import ModelListCache
 
 
 @dataclass
@@ -51,27 +53,141 @@ def _model(name: str) -> ModelInfo:
     )
 
 
-def test_prepare_agent_setup_captures_discovered_models(tmp_path: Path) -> None:
-    provider = _Provider((_model("one"),))
+def _adapter() -> ModelAdapter:
+    return cast(ModelAdapter, cast(Any, object()))
 
-    setup = asyncio.run(
-        prepare_agent_setup(
-            toolang_root=tmp_path,
-            name="alice",
-            home=tmp_path / "agents" / "alice",
-            providers={"test": provider},
-            adapters={"default": cast(ModelAdapter, cast(Any, object()))},
-            tools={},
-            envs={"TEST_API_KEY": "secret"},
-        )
+
+def _watcher(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    provider: _Provider,
+    envs: Mapping[str, str],
+    *,
+    adapters: Mapping[str, ModelAdapter] | None = None,
+) -> SetupWatcher:
+    monkeypatch.setattr(
+        watcher_module,
+        "load_setup_config",
+        lambda _root: {},
     )
+    monkeypatch.setattr(
+        watcher_module,
+        "load_setup_envs",
+        lambda _root: dict(envs),
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "load_model_providers",
+        lambda _configs: {"test": provider},
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "load_model_adapters",
+        lambda: dict(adapters) if adapters is not None else {"default": _adapter()},
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "load_runtime_tools",
+        lambda *, plugin_config: {},
+    )
+    return SetupWatcher(AgentLayout.resident(tmp_path, "alice"))
+
+
+def test_setup_watcher_current_requires_initial_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    watcher = _watcher(
+        monkeypatch,
+        tmp_path,
+        _Provider((_model("one"),)),
+        {"TEST_API_KEY": "secret"},
+    )
+
+    with pytest.raises(RuntimeError, match="has not been refreshed"):
+        watcher.current()
+
+
+def test_setup_watcher_refresh_captures_discovered_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider((_model("one"),))
+    watcher = _watcher(
+        monkeypatch,
+        tmp_path,
+        provider,
+        {"TEST_API_KEY": "secret"},
+    )
+    setup = asyncio.run(watcher.refresh())
 
     assert setup.models == (_model("one"),)
     assert setup.envs == {"TEST_API_KEY": "secret"}
 
 
-def test_prepare_agent_setup_excludes_models_without_installed_adapter(
+def test_setup_watcher_loads_root_scoped_plugins(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider((_model("one"),))
+    adapter = _adapter()
+    tool = cast(AgentTool, cast(Any, object()))
+    loaded_tool_configs: list[Mapping[str, Mapping[str, object]]] = []
+    monkeypatch.setattr(
+        watcher_module,
+        "load_setup_config",
+        lambda _root: {
+            "models": {
+                "providers": {"test": {"endpoint": "https://models.example.test/v1"}}
+            },
+            "tools": {"shell": {"token_env": "TOOL_TOKEN"}},
+        },
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "load_setup_envs",
+        lambda _root: {
+            "TEST_API_KEY": "secret",
+            "TOOL_TOKEN": "tool-secret",
+        },
+    )
+
+    def load_providers(
+        configs: Mapping[str, ModelProviderConfig],
+    ) -> dict[str, _Provider]:
+        assert configs["test"].endpoint == "https://models.example.test/v1"
+        return {"test": provider}
+
+    def load_tools(
+        *,
+        plugin_config: Mapping[str, Mapping[str, object]],
+    ) -> dict[str, AgentTool]:
+        loaded_tool_configs.append(plugin_config)
+        return {"shell": tool}
+
+    monkeypatch.setattr(watcher_module, "load_model_providers", load_providers)
+    monkeypatch.setattr(
+        watcher_module,
+        "load_model_adapters",
+        lambda: {"default": adapter},
+    )
+    monkeypatch.setattr(watcher_module, "load_runtime_tools", load_tools)
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    watcher = SetupWatcher(layout)
+    setup = asyncio.run(watcher.refresh())
+
+    assert watcher.layout is layout
+    assert setup.layout is layout
+    assert setup.providers == {"test": provider}
+    assert setup.adapters == {"default": adapter}
+    assert setup.tools == {"shell": tool}
+    assert loaded_tool_configs == [{"shell": {"token": "tool-secret"}}]
+
+
+def test_setup_watcher_refresh_excludes_models_without_installed_adapter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     default = _model("default")
     unsupported = ModelInfo(
@@ -82,59 +198,47 @@ def test_prepare_agent_setup_excludes_models_without_installed_adapter(
         adapter="unsupported",
     )
     provider = _Provider((default, unsupported))
-
-    setup = asyncio.run(
-        prepare_agent_setup(
-            toolang_root=tmp_path,
-            name="alice",
-            home=tmp_path / "agents" / "alice",
-            providers={"test": provider},
-            adapters={"default": cast(ModelAdapter, cast(Any, object()))},
-            tools={},
-            envs={"TEST_API_KEY": "secret"},
-        )
+    watcher = _watcher(
+        monkeypatch,
+        tmp_path,
+        provider,
+        {"TEST_API_KEY": "secret"},
     )
+    setup = asyncio.run(watcher.refresh())
 
     assert setup.models == (default,)
 
 
-def test_prepare_agent_setup_reuses_internal_shared_cache(tmp_path: Path) -> None:
+def test_setup_watcher_refresh_reuses_internal_shared_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     provider = _Provider((_model("one"),))
 
-    async def prepare() -> AgentSetup:
-        return await prepare_agent_setup(
-            toolang_root=tmp_path,
-            name="alice",
-            home=tmp_path / "agents" / "alice",
-            providers={"test": provider},
-            adapters={"default": cast(ModelAdapter, cast(Any, object()))},
-            tools={},
-            envs={"TEST_API_KEY": "secret"},
-        )
+    async def refresh() -> AgentSetup:
+        return await _watcher(
+            monkeypatch,
+            tmp_path,
+            provider,
+            {"TEST_API_KEY": "secret"},
+        ).refresh()
 
-    first = asyncio.run(prepare())
-    second = asyncio.run(prepare())
+    first = asyncio.run(refresh())
+    second = asyncio.run(refresh())
 
     assert first.models == second.models == (_model("one"),)
     assert provider.calls == 1
 
 
-def test_setup_watcher_observes_external_cache_refresh(tmp_path: Path) -> None:
+def test_setup_watcher_observes_external_cache_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     provider = _Provider((_model("one"),))
     envs = {"TEST_API_KEY": "secret"}
-    cache = ModelListCache(model_cache_dir(tmp_path))
-    initial = asyncio.run(
-        prepare_agent_setup(
-            toolang_root=tmp_path,
-            name="alice",
-            home=tmp_path / "agents" / "alice",
-            providers={"test": provider},
-            adapters={"default": cast(ModelAdapter, cast(Any, object()))},
-            tools={},
-            envs=envs,
-        )
-    )
-    watcher = SetupWatcher(initial, toolang_root=tmp_path, get_envs=lambda: envs)
+    cache = ModelListCache(AgentLayout.resident(tmp_path, "alice").model_cache)
+    watcher = _watcher(monkeypatch, tmp_path, provider, envs)
+    asyncio.run(watcher.refresh())
     provider.models = (_model("two"),)
     asyncio.run(cache.get(provider, envs=envs, refresh=True))
 
@@ -143,25 +247,14 @@ def test_setup_watcher_observes_external_cache_refresh(tmp_path: Path) -> None:
     assert current.models == (_model("two"),)
 
 
-def test_setup_watcher_force_refreshes_without_exposing_cache(tmp_path: Path) -> None:
+def test_setup_watcher_force_refreshes_without_exposing_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     provider = _Provider((_model("one"),))
     envs = {"TEST_API_KEY": "secret"}
-    initial = asyncio.run(
-        prepare_agent_setup(
-            toolang_root=tmp_path,
-            name="alice",
-            home=tmp_path / "agents" / "alice",
-            providers={"test": provider},
-            adapters={"default": cast(ModelAdapter, cast(Any, object()))},
-            tools={},
-            envs=envs,
-        )
-    )
-    watcher = SetupWatcher(
-        initial,
-        toolang_root=tmp_path,
-        get_envs=lambda: envs,
-    )
+    watcher = _watcher(monkeypatch, tmp_path, provider, envs)
+    asyncio.run(watcher.refresh())
 
     refreshed = asyncio.run(watcher.refresh(force=True))
 
@@ -169,19 +262,14 @@ def test_setup_watcher_force_refreshes_without_exposing_cache(tmp_path: Path) ->
     assert provider.calls == 2
 
 
-def test_setup_watcher_rebuilds_snapshot_when_envs_change(tmp_path: Path) -> None:
+def test_setup_watcher_rebuilds_snapshot_when_envs_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     provider = _Provider((_model("one"),))
     envs = {"TEST_API_KEY": "first"}
-    initial = AgentSetup(
-        name="alice",
-        home=tmp_path / "agents" / "alice",
-        providers={"test": provider},
-        adapters={},
-        models=(_model("one"),),
-        tools={},
-        envs=envs,
-    )
-    watcher = SetupWatcher(initial, toolang_root=tmp_path, get_envs=lambda: envs)
+    watcher = _watcher(monkeypatch, tmp_path, provider, envs)
+    asyncio.run(watcher.refresh())
     envs["TEST_API_KEY"] = "second"
 
     current = asyncio.run(watcher.refresh())
@@ -189,7 +277,10 @@ def test_setup_watcher_rebuilds_snapshot_when_envs_change(tmp_path: Path) -> Non
     assert current.envs == {"TEST_API_KEY": "second"}
 
 
-def test_setup_watcher_publishes_changed_snapshot(tmp_path: Path) -> None:
+def test_setup_watcher_publishes_changed_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def exercise() -> tuple[AgentSetup, AgentSetup]:
         async def next_setup(watcher: SetupWatcher, stop: asyncio.Event) -> AgentSetup:
             return await anext(
@@ -201,20 +292,8 @@ def test_setup_watcher_publishes_changed_snapshot(tmp_path: Path) -> None:
 
         provider = _Provider((_model("one"),))
         envs = {"TEST_API_KEY": "first"}
-        initial = await prepare_agent_setup(
-            toolang_root=tmp_path,
-            name="alice",
-            home=tmp_path / "agents" / "alice",
-            providers={"test": provider},
-            adapters={"default": cast(ModelAdapter, cast(Any, object()))},
-            tools={},
-            envs=envs,
-        )
-        watcher = SetupWatcher(
-            initial,
-            toolang_root=tmp_path,
-            get_envs=lambda: envs,
-        )
+        watcher = _watcher(monkeypatch, tmp_path, provider, envs)
+        await watcher.refresh()
         stop_signal = asyncio.Event()
         next_update = asyncio.create_task(next_setup(watcher, stop_signal))
         envs["TEST_API_KEY"] = "second"
@@ -228,24 +307,14 @@ def test_setup_watcher_publishes_changed_snapshot(tmp_path: Path) -> None:
     assert current is updated
 
 
-def test_setup_watcher_run_stops_without_a_change(tmp_path: Path) -> None:
+def test_setup_watcher_run_stops_without_a_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def exercise() -> AgentSetup:
         provider = _Provider((_model("one"),))
         envs = {"TEST_API_KEY": "secret"}
-        initial = await prepare_agent_setup(
-            toolang_root=tmp_path,
-            name="alice",
-            home=tmp_path / "agents" / "alice",
-            providers={"test": provider},
-            adapters={"default": cast(ModelAdapter, cast(Any, object()))},
-            tools={},
-            envs=envs,
-        )
-        watcher = SetupWatcher(
-            initial,
-            toolang_root=tmp_path,
-            get_envs=lambda: envs,
-        )
+        watcher = _watcher(monkeypatch, tmp_path, provider, envs)
         stop_signal = asyncio.Event()
         running = asyncio.create_task(
             watcher.run(

@@ -14,6 +14,7 @@ import typer
 
 from toolang.catalog.job import AuthoredJobs
 from toolang.catalog.agent import LocalAgents
+from toolang.common.layout import AgentLayout
 from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.state.state import PreparedCap
@@ -79,7 +80,7 @@ def clone_agent(
             shutil.copytree(
                 source_home,
                 home,
-                ignore=shutil.ignore_patterns(".caps", ".prepared", ".runtime"),
+                ignore=shutil.ignore_patterns(".caps", ".state", ".runtime"),
             )
         else:
             ref = agents.resolve_agent_selector_ref(selector)
@@ -100,7 +101,8 @@ def remove_agent(
     agent: Annotated[str, typer.Argument(help="Agent name")],
 ) -> None:
     root = context_root(ctx)
-    process = agents.AgentProcess(root, agent)
+    layout = AgentLayout.resident(root, agent)
+    process = agents.AgentProcess(layout)
     status = process.status(ui_base_url=ui_base_url())
     if status is not None and status.status in {"running", "preparing", "starting"}:
         raise click.ClickException(active_agent_error(status))
@@ -110,7 +112,7 @@ def remove_agent(
         LocalAgents(root / "agents").remove(agent)
     except FileNotFoundError as exc:
         raise click.ClickException(f"Agent {agent} not found") from exc
-    agents.remove_sandbox_stage(root, agent)
+    agents.remove_sandbox_stage(layout)
     typer.echo(f"Removed agent {agent}")
 
 
@@ -141,12 +143,13 @@ def info_agent(
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)
     root = context_root(ctx)
-    process = agents.AgentProcess(root, agent_name)
+    layout = AgentLayout.resident(root, agent_name)
+    process = agents.AgentProcess(layout)
     status = user_call(process.status, ui_base_url=ui_base_url())
     if status is None:
         raise click.ClickException(f"Agent {agent_name} not found")
     runtime_state = process.state() or {}
-    created_at = created_time(agents.agent_home(root, agent_name))
+    created_at = created_time(layout.home)
     started_at = runtime_value(runtime_state.get("started_at"))
     updated_at = runtime_value(runtime_state.get("updated_at"))
     status_value = status.status
@@ -155,15 +158,14 @@ def info_agent(
         if online is not None:
             status_value = f"{status.status} ({online})"
     rows = [
-        ("Home", str(agents.agent_home(root, agent_name))),
-        ("Caps", _caps_summary(root, agent_name)),
-        ("Jobs", _jobs_summary(root, agent_name)),
+        ("Home", str(layout.home)),
+        ("Caps", _caps_summary(layout)),
+        ("Jobs", _jobs_summary(layout)),
         ("Tools", _tools_summary(root, agent_name)),
         (
             "Models",
             _models_summary(
-                root,
-                agent_name,
+                layout,
                 runtime_state=runtime_state,
                 running=status.status != "stopped",
             ),
@@ -193,10 +195,10 @@ def info_agent(
     echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
 
 
-def _caps_summary(root: Path, agent: str) -> str:
-    counts = _prepared_cap_counts(root, agent)
+def _caps_summary(layout: AgentLayout) -> str:
+    counts = _prepared_cap_counts(layout)
     if counts is None:
-        counts = _prepare_cap_counts(root, agent)
+        counts = _prepare_cap_counts(layout)
     singular = {
         "psyches": "psyche",
         "skills": "skill",
@@ -209,13 +211,13 @@ def _caps_summary(root: Path, agent: str) -> str:
     )
 
 
-def _prepared_cap_counts(root: Path, agent: str) -> dict[str, int] | None:
+def _prepared_cap_counts(layout: AgentLayout) -> dict[str, int] | None:
     from toolang.state.state import effective_caps
     from toolang.state.cache import load_home_prepared, load_root_prepared
 
     try:
-        root_prepared = load_root_prepared(root)
-        home_prepared = load_home_prepared(root, agent)
+        root_prepared = load_root_prepared(layout)
+        home_prepared = load_home_prepared(layout)
     except (FileNotFoundError, OSError, TypeError, ValueError, KeyError):
         return None
     return _cap_counts(effective_caps(root_prepared.caps, home_prepared.caps))
@@ -230,15 +232,14 @@ def _cap_counts(entries: Sequence[PreparedCap]) -> dict[str, int]:
     return counts
 
 
-def _prepare_cap_counts(root: Path, agent: str) -> dict[str, int]:
+def _prepare_cap_counts(layout: AgentLayout) -> dict[str, int]:
     from toolang.up import server as up
 
     progress = make_cli_progress(show_materialize_summary=True)
     try:
         state = user_call(
             up.prepare_agent,
-            toolang_root=root,
-            agent_name=agent,
+            layout=layout,
             progress=as_progress_sink(progress),
         )
         progress.set_prepare_total(len(state.caps))
@@ -247,8 +248,8 @@ def _prepare_cap_counts(root: Path, agent: str) -> dict[str, int]:
         progress.finish(details=False)
 
 
-def _jobs_summary(root: Path, agent: str) -> str:
-    catalog = AuthoredJobs(agents.agent_home(root, agent))
+def _jobs_summary(layout: AgentLayout) -> str:
+    catalog = AuthoredJobs(layout.home)
     chore_count = len(catalog.list(kind="chore"))
     task_count = len(catalog.list(kind="task"))
     return (
@@ -258,8 +259,7 @@ def _jobs_summary(root: Path, agent: str) -> str:
 
 
 def _models_summary(
-    root: Path,
-    agent: str,
+    layout: AgentLayout,
     *,
     runtime_state: dict[str, object],
     running: bool,
@@ -275,11 +275,13 @@ def _models_summary(
             if isinstance(item, str) and (value := item.strip())
         )
     if not selectors:
-        selectors = up.load_default_models(root, agent)
+        selectors = up.load_default_models(
+            layout,
+        )
     rows = plugin.model_rows(
-        root,
+        layout.root,
         dict(os.environ),
-        agent_name=agent,
+        agent_name=layout.name,
         model_selectors=selectors,
     )
     provider_count = len({provider for _model, provider, _detail in rows})

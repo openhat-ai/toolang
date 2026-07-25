@@ -8,6 +8,7 @@ from typing import Protocol
 
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.types import JobKind, JobStage
+from toolang.common.layout import AgentLayout
 from toolang.lang.ast import Program
 
 from .authoring import assign_missing_authored_job_ids
@@ -48,21 +49,20 @@ class JobInspection:
     def load(
         cls,
         *,
-        root: Path,
-        agent_name: str,
-        home: Path,
+        layout: AgentLayout,
         program: Program,
         runs: Iterable[JobRun],
     ) -> JobInspection:
         """Load one consistent inspection snapshot from the owning stores."""
 
-        catalog = AuthoredJobs(home)
-        assign_missing_authored_job_ids(root, agent_name, catalog=catalog)
-        job_store = open_job_store(root, agent_name)
+        catalog = AuthoredJobs(layout.home)
+        assign_missing_authored_job_ids(
+            layout,
+            catalog=catalog,
+        )
+        job_store = open_job_store(layout)
         try:
-            records = job_store.reconcile(
-                jobs=AgentJobs.load(root, agent_name, program)
-            )
+            records = job_store.reconcile(jobs=AgentJobs.load(layout, program))
         finally:
             job_store.close()
         latest_runs: dict[str, JobRun] = {}
@@ -72,7 +72,7 @@ class JobInspection:
                 latest_runs[run.thread] = run
         return cls(
             catalog=catalog,
-            home=home,
+            home=layout.home,
             records={(record.kind, record.job_id): record for record in records},
             latest_runs=latest_runs,
         )

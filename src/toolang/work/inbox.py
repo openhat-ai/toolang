@@ -10,6 +10,7 @@ from pathlib import Path
 from collections.abc import Callable
 
 from toolang.base.types.message import Message
+from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
 from toolang.state.state import AgentState
@@ -33,8 +34,7 @@ class FileSubmission:
 
 def spawn(
     *,
-    root: Path,
-    name: str,
+    layout: AgentLayout,
     executor: RunExecutor,
     get_agent_setup: Callable[[], AgentSetup],
     get_agent_state: Callable[[], AgentState],
@@ -47,8 +47,7 @@ def spawn(
 
     return asyncio.create_task(
         run(
-            root=root,
-            name=name,
+            layout=layout,
             executor=executor,
             get_agent_setup=get_agent_setup,
             get_agent_state=get_agent_state,
@@ -62,8 +61,7 @@ def spawn(
 
 async def run(
     *,
-    root: Path,
-    name: str,
+    layout: AgentLayout,
     executor: RunExecutor,
     get_agent_setup: Callable[[], AgentSetup],
     get_agent_state: Callable[[], AgentState],
@@ -77,13 +75,13 @@ async def run(
     interval_timeout = interval_ms / 1000
     logger.debug(
         "files.started root=%s agent=%s interval_ms=%s inboxes=%s",
-        root,
-        name,
+        layout.root,
+        layout.name,
         int(interval_ms),
         ",".join(str(path) for path in inboxes) or "-",
     )
     active: dict[str, asyncio.Task[RunRecord]] = {}
-    store = files.open_file_request_store(root, name)
+    store = files.open_file_request_store(layout)
     try:
         while True:
             now = datetime.now(timezone.utc)
@@ -96,9 +94,7 @@ async def run(
                 store, inboxes=inboxes, stable_ms=stable_ms, now=now
             ):
                 if (
-                    executor.store.get_thread(
-                        thread_id=submission.record.thread_id
-                    )
+                    executor.store.get_thread(thread_id=submission.record.thread_id)
                     is None
                 ):
                     executor.store.create_thread(

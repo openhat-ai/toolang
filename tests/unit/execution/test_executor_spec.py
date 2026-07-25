@@ -4,13 +4,13 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 from toolang.execution.executor import RunSpec
+from toolang.common.layout import AgentLayout
 from toolang.setup import AgentSetup
 
 
 def _setup() -> AgentSetup:
     return AgentSetup(
-        home=Path("/agent/alice"),
-        name="alice",
+        layout=AgentLayout.resident(Path("/"), "alice"),
         providers={},
         adapters={},
         models=(),

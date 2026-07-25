@@ -76,21 +76,24 @@ Toolang uses model infos for:
 `AgentSetup.models` tuple is an immutable availability snapshot; model
 selection during execution never calls a provider or reads a cache.
 
-Provider lists are cached under `${TOOLANG_ROOT}/.runtime/models/`. Cache
+Provider lists are cached under `${TOOLANG_ROOT}/.setup/models/`. Cache
 entries are keyed by provider configuration and a non-reversible digest of
 required environment values. Writes use provider-specific inter-process locks
 and atomic replacement. A successful refresh advances the entry generation.
 Remote providers may fall back to the last good list when refresh fails; local
 providers do not report a stale list as current availability. This cache is a
-`toolang.setup` implementation detail: callers prepare or refresh an
-`AgentSetup` and consume its `models` snapshot instead of constructing or
-querying the cache directly.
+`toolang.setup` implementation detail. `SetupWatcher` owns setup loading and
+constructs snapshots only through `refresh()`; callers consume the resulting
+`AgentSetup.models` instead of constructing or querying the cache directly.
 
-`SetupWatcher` receives an explicit environment callback from its process
-owner. It periodically rebuilds the snapshot, so environment changes, local
-provider availability, and cache generations written by another process become
-visible to newly accepted runs. Existing runs retain the setup snapshot they
-started with.
+`SetupWatcher(layout)` receives the process-owned immutable `AgentLayout`. It
+reads provider and tool configuration from the root `config.toml`, overlays
+the process environment on the root `.env`, loads the installed providers,
+adapters, and tools, and periodically rebuilds the snapshot. The resulting
+`AgentSetup` retains the same layout object. Agent-home setup overrides are deferred.
+Environment changes, local provider availability, and cache generations written
+by another process become visible to newly accepted runs. Existing runs retain
+the setup snapshot they started with.
 
 
 ## Model Config

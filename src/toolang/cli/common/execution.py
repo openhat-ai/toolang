@@ -14,8 +14,7 @@ from toolang.execution.history import RunHistory
 from toolang.execution.schemas import RunDetail, RunInfo, ThreadDetail, ThreadInfo
 from toolang.execution.store import RunStore
 from toolang.execution.types import RunStatus
-from toolang.up.process import agent_run_store_path
-from .context import context_root, require_prefix_agent
+from .context import context_layout
 
 
 RemoteGet = Callable[[typer.Context, str], object]
@@ -35,7 +34,7 @@ class LocalExecutionClient:
 
     @classmethod
     def open(cls, ctx: typer.Context) -> LocalExecutionClient | None:
-        path = agent_run_store_path(context_root(ctx), require_prefix_agent(ctx))
+        path = context_layout(ctx).run_store
         return cls(RunStore(path)) if path.exists() else None
 
     def close(self) -> None:
