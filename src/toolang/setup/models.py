@@ -24,7 +24,7 @@ from .records import ModelListRecord
 
 REMOTE_MODEL_LIST_TTL_SEC = 24 * 60 * 60
 LOCAL_MODEL_LIST_TTL_SEC = 5.0
-_LOGGER = logging.getLogger("toolang.setup")
+_LOGGER = logging.getLogger(__name__)
 
 
 class ModelListCache:

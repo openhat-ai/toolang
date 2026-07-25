@@ -14,6 +14,7 @@ import typer
 from typer import rich_utils
 from typer.core import TyperGroup
 
+from ...common.layout import AgentLayout
 from ...up.logging import configure_logging
 from ..caps import commands as cap_commands
 from ..common.context import CliContext, resolve_root
@@ -28,14 +29,19 @@ from ..common.routing import (
 )
 from . import routing
 from .commands import agent as agent_commands
-from .commands import chat as chat_commands
+from .commands import chat_entry as chat_commands
 from .commands import plugin as plugin_commands
 from .commands import program as program_commands
 from .commands import runtime as runtime_commands
+from .commands import script as script_commands
 from .commands import job as job_commands
+from .commands import thread as thread_commands
 
 _PREFIX_AGENT: ContextVar[str | None] = ContextVar(
     "toolang_cli_prefix_agent", default=None
+)
+_SELECTED_LAYOUT: ContextVar[AgentLayout | None] = ContextVar(
+    "toolang_cli_selected_layout", default=None
 )
 AGENT_COMMAND_PANEL = "Agent Commands"
 THREAD_COMMAND_PANEL = "Thread Commands"
@@ -150,7 +156,11 @@ def callback(
         configure_logging(spec=None, environ=os.environ)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    ctx.obj = CliContext(root=resolve_root(toolang_root), agent=_PREFIX_AGENT.get())
+    ctx.obj = CliContext(
+        root=resolve_root(toolang_root),
+        agent=_PREFIX_AGENT.get(),
+        layout=_SELECTED_LAYOUT.get(),
+    )
 
 
 @app.command("hidden", help="Show hidden commands.", hidden=True)
@@ -292,48 +302,48 @@ app.command(
     help="List threads.",
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
-)(chat_commands.threads_command)
+)(thread_commands.threads_command)
 app.command(
     "runs",
     help="List runs.",
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
-)(chat_commands.runs_command)
+)(thread_commands.runs_command)
 app.command(
     "inspect",
     help="Inspect a thread or run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
-)(chat_commands.inspect_command)
+)(thread_commands.inspect_command)
 app.command(
     "steer",
     help="Steer an active run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
-)(chat_commands.steer_command)
+)(thread_commands.steer_command)
 app.command(
     "cancel",
     help="Cancel an active run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
-)(chat_commands.cancel_command)
+)(thread_commands.cancel_command)
 app.command(
     "rewind",
     help="Rewind a thread to an earlier point.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
-)(chat_commands.rewind_command)
+)(thread_commands.rewind_command)
 app.command(
     "fork",
     help="Fork a thread from a branch point.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
-)(chat_commands.fork_command)
+)(thread_commands.fork_command)
 
 app.add_typer(
     plugin_commands.model_app,
@@ -404,6 +414,13 @@ app.command(
     hidden=True,
     no_args_is_help=True,
 )(program_commands.parse_program)
+app.command(
+    "script",
+    help="Show local Toolang script usage.",
+    hidden=True,
+    cls=script_commands.ScriptHelpCommand,
+    context_settings={"allow_interspersed_args": False},
+)(script_commands.script_command)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -412,11 +429,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     routed = routing.dispatch_roaming(
         raw_args,
         prog_name=prog_name,
-        run_app=lambda args, agent: _run_app(
+        run_app=lambda args, layout: _run_app(
             args,
-            agent,
+            layout.name,
             prog_name=prog_name,
             catch_system_exit=True,
+            layout=layout,
         ),
     )
     if routed is not None:
@@ -431,8 +449,10 @@ def _run_app(
     *,
     prog_name: str,
     catch_system_exit: bool = False,
+    layout: AgentLayout | None = None,
 ) -> int:
-    token = _PREFIX_AGENT.set(prefix_agent)
+    agent_token = _PREFIX_AGENT.set(prefix_agent)
+    layout_token = _SELECTED_LAYOUT.set(layout)
     try:
         app(
             args=args,
@@ -449,7 +469,8 @@ def _run_app(
         typer.echo(f"toolang error: {exc}", err=True)
         return 1
     finally:
-        _PREFIX_AGENT.reset(token)
+        _SELECTED_LAYOUT.reset(layout_token)
+        _PREFIX_AGENT.reset(agent_token)
     return 0
 
 

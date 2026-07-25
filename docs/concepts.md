@@ -95,7 +95,7 @@ numeric port from the caller's perspective.
 
 Foreground CLI sessions do not use the agent API as their execution client.
 With `none`, chat launches a dedicated process that assembles the core objects
-and calls `RunExecutor` directly, while one-shot invoke may execute in the
+and calls `RunExecutor` directly, while a one-shot script run may execute in the
 invoking process. Managed drivers place execution inside the selected host and
 transport native events through process/channel orchestration. Starting a
 persistent agent API remains a separate operation.

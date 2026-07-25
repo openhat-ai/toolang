@@ -101,8 +101,7 @@ RUNTIME_SHUTDOWN_TASK_TIMEOUT_SEC = 1.0
 UVICORN_GRACEFUL_SHUTDOWN_SEC = 1
 AUTO_RUNTIME_PORT_MIN = 7001
 AUTO_RUNTIME_PORT_MAX = 7999
-logger = logging.getLogger("toolang.runtime")
-state_logger = logging.getLogger("toolang.state")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,7 +277,7 @@ def invoke(
     )
     run_id = allocate_run_id(executor.id_state_path)
     log_plan = resolve_agent_logging(
-        mode="invoke",
+        mode="script",
         environ=invoke_environ,
         run_log_path=layout.run_log(executable_name, run_id),
     )
@@ -776,7 +775,7 @@ def _log_state_loaded(
     *,
     model_selectors: Sequence[str] = (),
 ) -> None:
-    state_logger.info(
+    logger.info(
         "Agent loaded state=%s models=%s tools=%s psyches=%s skills=%s services=%s",
         _short_fingerprint(state.fingerprint),
         _model_count(setup, state, selectors=model_selectors),

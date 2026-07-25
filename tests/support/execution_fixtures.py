@@ -24,7 +24,7 @@ from toolang.execution.records import (
     trace_run,
 )
 from toolang.common.time import utc_now
-from toolang.execution.executor.persist import PersistSink
+from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     ControlTiming,
@@ -36,13 +36,13 @@ from toolang.execution.types import (
 
 
 def persist_event(store: RunStore, event: RunEvent) -> None:
-    """Persist one trace event through the store's canonical sink."""
+    """Persist one trace event through the executor's internal projector."""
 
-    sink = getattr(store, "_test_persist_sink", None)
+    sink = getattr(store, "_test_event_projector", None)
     if sink is None:
-        sink = PersistSink(store)
-        setattr(store, "_test_persist_sink", sink)
-    cast(PersistSink, sink).on_event(event)
+        sink = _PersistSink(store)
+        setattr(store, "_test_event_projector", sink)
+    cast(_PersistSink, sink).on_event(event)
 
 
 def project_run_start(

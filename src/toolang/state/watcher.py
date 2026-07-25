@@ -24,7 +24,7 @@ from toolang.state.source import is_source_path
 
 DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_DEBOUNCE_MS = 500.0
-logger = logging.getLogger("toolang.watch")
+logger = logging.getLogger(__name__)
 _RELEVANT_CHANGES = {Change.added, Change.modified, Change.deleted}
 
 

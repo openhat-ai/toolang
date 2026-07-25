@@ -1,4 +1,4 @@
-"""Mandatory run-event persistence."""
+"""Private run-event persistence for RunExecutor."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from ..records import trace_index, trace_parent
 from ..store import RunStore
 
 
-class PersistSink:
-    """Project ordered run events into durable run and step records."""
+class _PersistSink:
+    """Project ordered run events for one RunExecutor."""
 
     def __init__(self, store: RunStore) -> None:
         self._store = store

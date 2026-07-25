@@ -28,7 +28,8 @@ ThreadPeerType = Literal["user", "agent"]
 
 
 class ThreadPrefix(StrEnum):
-    """Canonical prefixes for locally issued interactive thread ids."""
+    """Canonical prefixes for locally issued thread ids."""
 
+    SCRIPT = "script"
     WEB = "web"
     TERM = "term"

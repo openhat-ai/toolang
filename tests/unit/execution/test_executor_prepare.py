@@ -25,7 +25,7 @@ from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer, StepBegin
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.executor.common import BoundRun, Local, output_parts
-from toolang.execution.executor.persist import PersistSink
+from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.prepare import prepare_agic
 from toolang.execution.history import RunHistory
 from toolang.execution.schemas import RunDetail
@@ -116,6 +116,13 @@ def test_multimodal_list_shape_has_replayable_step_output() -> None:
     )
 
 
+def test_empty_structured_list_is_not_treated_as_an_empty_percept() -> None:
+    assert output_parts(Local(value=[], shape="item", type_name="Text[]")) == (
+        TextPart("[]"),
+    )
+    assert output_parts(Local(value=(), shape="item", type_name="Part[]")) == ()
+
+
 def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     home = root / "agents" / "alice"
@@ -201,6 +208,82 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         "previous",
         prepared.prompt_context + "\n\nAnswer: hello; focus=events",
     ]
+
+
+def test_prepare_agic_includes_declared_output_contract(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    provider = _Provider()
+    adapter = _Adapter()
+    setup = AgentSetup(
+        layout=AgentLayout.resident(root, "alice"),
+        providers={provider.name: provider},
+        adapters={adapter.name: adapter},
+        models=(),
+        tools={},
+        envs={},
+    )
+    agic = AgicDecl(
+        name="queries",
+        input=Parameter(name="_", type_name="Text", span=Span(1)),
+        output="Text[]",
+        messages=(
+            AstMessage(
+                role="user",
+                content="Expand {{_}}.",
+                explicit=True,
+                span=Span(1),
+            ),
+        ),
+        span=Span(1),
+    )
+    program = Program(agics=(agic,), span=Span(1))
+    state = cast(
+        Any,
+        SimpleNamespace(
+            program=program,
+            program_source="agents/alice/agent.too",
+            caps=(),
+            fingerprint="state-1",
+        ),
+    )
+    run = BoundRun(
+        run_id="run_1",
+        root_run_id="run_1",
+        thread="term_1",
+        input=Message.user("topic"),
+        args={},
+        model=None,
+        state=state,
+        setup=setup,
+        created_at="2026-01-01T00:00:00Z",
+    )
+    context = cast(
+        Any,
+        SimpleNamespace(
+            setup=setup,
+            store=_History(),
+            model_aliases={
+                "default": ModelAlias(
+                    name="default",
+                    ref="test/model",
+                    provider="test",
+                    model="model",
+                    adapter="test",
+                )
+            },
+            default_models=("default",),
+            providers=setup.providers,
+            models=setup.models,
+            envs=setup.envs,
+            layout=setup.layout,
+        ),
+    )
+
+    prepared = prepare_agic(context, run, agic)
+
+    assert "<output-contract>" in prepared.instructions
+    assert "type: Text[]" in prepared.instructions
+    assert "Use raw JSON for Json, array, and struct values." in prepared.instructions
 
 
 def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None:
@@ -410,7 +493,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
             payload["steps"][0]["given"]["call"],
         )
         assert ModelCall.from_data(serialized_call) == adapter.requests[0]
-        PersistSink(store).on_event(begin)
+        _PersistSink(store).on_event(begin)
         connection = sqlite3.connect(store.db_path)
         try:
             assert connection.execute(

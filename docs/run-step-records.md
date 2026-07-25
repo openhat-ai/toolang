@@ -181,7 +181,7 @@ ThreadManager operations     -> RunStore -> ThreadControlRecord
 Run and step facts are event projection:
 
 ```text
-runtime -> RunEvent -> PersistSink -> RunRecord / StepRecord
+runtime -> RunEvent -> RunExecutor persistence -> RunRecord / StepRecord
 ```
 
 For model steps, `given` references the normalized `ModelCall`:
@@ -206,7 +206,7 @@ RunEnd.input    -> finish stop control
 RunEnd          -> fail remaining pending controls
 ```
 
-`PersistSink` owns no control transitions.
+The executor's private event projector owns no control transitions.
 
 
 ## Idempotency And Concurrency

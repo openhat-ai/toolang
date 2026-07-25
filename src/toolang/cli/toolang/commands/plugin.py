@@ -3,20 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
-import os
-from pathlib import Path
+from collections.abc import Mapping, Sequence
 from typing import Annotated
 
 import typer
 
-from ...common.context import resolve_root
+from ...common.context import context_agent, context_root
 from ...common.output import echo_table
 from toolang.cli.config import load_config_layers
 from toolang.common.layout import AgentLayout
+from toolang.setup import AgentSetup, SetupWatcher
 from toolang.plugin.loading import list_plugin_infos
-from toolang.plugin.tools.loading import load_tool_plugins
-from toolang.setup import SetupWatcher
 
 model_app = typer.Typer(
     help="Inspect available models.",
@@ -53,6 +50,7 @@ sandbox_app = typer.Typer(
 
 @model_app.command("list", help="List available models.")
 def list_models(
+    ctx: typer.Context,
     filter_: Annotated[
         list[str] | None,
         typer.Option(
@@ -70,12 +68,17 @@ def list_models(
     from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE
     from toolang.plugin.models.resolution import split_model_selectors
 
-    environ = dict(os.environ)
-    root = resolve_root(None)
+    layout = _layout(ctx)
+    config_layers = load_config_layers(layout.root, _configured_agent(ctx))
+    setup = _setup(layout, force=refresh)
     selectors = split_model_selectors(tuple(filter_ or ()))
-    rows = model_rows(root, environ, model_selectors=selectors, refresh=refresh)
+    rows = model_rows(
+        setup,
+        config_layers=config_layers,
+        model_selectors=selectors,
+    )
     if not rows:
-        if selectors and model_rows(root, environ, refresh=refresh):
+        if selectors and model_rows(setup, config_layers=config_layers):
             typer.echo("No matched models.")
             typer.echo("Try: toolang model list --filter <selector>")
             typer.echo("Alias: toolang model list --select <selector>")
@@ -92,9 +95,12 @@ def list_models(
 
 
 @model_app.command("providers", help="Show configured model providers.")
-def list_model_providers() -> None:
-    environ = dict(os.environ)
-    rows = model_provider_rows(resolve_root(None), environ)
+def list_model_providers(ctx: typer.Context) -> None:
+    layout = _layout(ctx)
+    rows = model_provider_rows(
+        _setup(layout),
+        config_layers=load_config_layers(layout.root, _configured_agent(ctx)),
+    )
     if not rows:
         typer.echo("No model providers found.")
         return
@@ -102,14 +108,14 @@ def list_model_providers() -> None:
 
 
 @model_app.command("adapters", help="List available model API adapters.")
-def list_model_adapters() -> None:
-    from toolang.plugin.models.views import available_model_adapters
-
-    echo_table(("ADAPTER",), [(name,) for name in available_model_adapters()])
+def list_model_adapters(ctx: typer.Context) -> None:
+    setup = _setup(_layout(ctx))
+    echo_table(("ADAPTER",), [(name,) for name in sorted(setup.adapters)])
 
 
 @tool_app.command("list", help="List available tools.")
 def list_tools(
+    ctx: typer.Context,
     filter_: Annotated[
         list[str] | None,
         typer.Option(
@@ -122,12 +128,11 @@ def list_tools(
 ) -> None:
     from toolang.plugin.tools.registry import split_tool_selectors
 
-    environ = dict(os.environ)
-    root = resolve_root(None)
+    setup = _setup(_layout(ctx))
     selectors = split_tool_selectors(tuple(filter_ or ()))
-    rows = tool_rows(root, environ, tool_selectors=selectors)
+    rows = tool_rows(setup, tool_selectors=selectors)
     if not rows:
-        if selectors and tool_rows(root, environ):
+        if selectors and tool_rows(setup):
             typer.echo("No matched tools.")
             typer.echo("Try: toolang tool list --filter <selector>")
             typer.echo("Alias: toolang tool list --select <selector>")
@@ -162,22 +167,16 @@ def list_sandboxes() -> None:
 
 
 def model_rows(
-    root: Path,
-    environ: dict[str, str],
+    setup: AgentSetup,
     *,
-    agent_name: str = "",
+    config_layers: Sequence[Mapping[str, object]],
     model_selectors: Sequence[str] = (),
-    refresh: bool = False,
 ) -> list[tuple[str, str, str]]:
-    del environ
     from toolang.plugin.models.config import (
         parse_model_aliases,
     )
     from toolang.plugin.models.views import model_list_rows
 
-    config_layers = load_config_layers(root, agent_name)
-    watcher = SetupWatcher(AgentLayout.resident(root, agent_name or "default"))
-    setup = asyncio.run(watcher.refresh(force=refresh))
     return model_list_rows(
         providers=setup.providers,
         models=setup.models,
@@ -188,20 +187,17 @@ def model_rows(
 
 
 def model_provider_rows(
-    root: Path,
-    environ: dict[str, str],
+    setup: AgentSetup,
+    *,
+    config_layers: Sequence[Mapping[str, object]],
 ) -> list[tuple[str, str, str]]:
-    del environ
     from toolang.plugin.models.config import (
         parse_model_aliases,
         parse_model_provider_configs,
     )
     from toolang.plugin.models.views import model_provider_rows as build_rows
 
-    config_layers = load_config_layers(root)
     provider_configs = parse_model_provider_configs(config_layers)
-    watcher = SetupWatcher(AgentLayout.resident(root, "default"))
-    setup = asyncio.run(watcher.refresh())
     return build_rows(
         providers=setup.providers,
         models=setup.models,
@@ -212,25 +208,32 @@ def model_provider_rows(
 
 
 def tool_rows(
-    root: Path,
-    environ: dict[str, str],
+    setup: AgentSetup,
     *,
-    agent_name: str = "",
     tool_selectors: Sequence[str] = (),
 ) -> list[tuple[str, str, str]]:
-    from toolang.plugin.config import merge_named_configs
     from toolang.plugin.tools.views import tool_list_rows
 
-    config = merge_named_configs(
-        load_config_layers(root, agent_name),
-        section="tools",
-        environ=environ,
-    )
     return tool_list_rows(
-        tools=load_tool_plugins(config=config),
+        tools=setup.tools,
         plugin_sources=plugin_sources("toolang.tool"),
         selectors=tool_selectors,
     )
+
+
+def _setup(layout: AgentLayout, *, force: bool = False) -> AgentSetup:
+    return asyncio.run(SetupWatcher(layout).refresh(force=force))
+
+
+def _layout(ctx: typer.Context) -> AgentLayout:
+    return AgentLayout.resident(
+        context_root(ctx),
+        context_agent(ctx) or "default",
+    )
+
+
+def _configured_agent(ctx: typer.Context) -> str:
+    return context_agent(ctx) or ""
 
 
 def plugin_info_rows(group: str) -> list[tuple[str, str]]:

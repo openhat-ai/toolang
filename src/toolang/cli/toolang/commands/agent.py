@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from datetime import UTC, datetime
-import os
 from pathlib import Path
 import shutil
-from typing import Annotated
+from typing import Annotated, cast
 
 import click
 import typer
@@ -17,7 +17,9 @@ from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout
 from toolang.up import process as agents
 from toolang.catalog import templates
-from toolang.state.state import PreparedCap
+from toolang.setup import AgentSetup, SetupWatcher
+from toolang.state.prepare import prepare_agent_state
+from toolang.state.state import AgentState, PreparedCap
 from ...common.context import (
     context_root,
     require_runtime_agent,
@@ -34,6 +36,7 @@ from ...common.output import (
     runtime_value,
 )
 from ...common.progress import as_progress_sink, make_cli_progress
+from ...common.version import toolang_version
 from . import plugin
 
 
@@ -149,6 +152,8 @@ def info_agent(
     if status is None:
         raise click.ClickException(f"Agent {agent_name} not found")
     runtime_state = process.state() or {}
+    state = _prepare_state(layout)
+    setup = asyncio.run(SetupWatcher(layout).refresh())
     created_at = created_time(layout.home)
     started_at = runtime_value(runtime_state.get("started_at"))
     updated_at = runtime_value(runtime_state.get("updated_at"))
@@ -159,13 +164,14 @@ def info_agent(
             status_value = f"{status.status} ({online})"
     rows = [
         ("Home", str(layout.home)),
-        ("Caps", _caps_summary(layout)),
+        ("Caps", _caps_summary(state)),
         ("Jobs", _jobs_summary(layout)),
-        ("Tools", _tools_summary(root, agent_name)),
+        ("Tools", _tools_summary(setup)),
         (
             "Models",
             _models_summary(
-                layout,
+                state,
+                setup,
                 runtime_state=runtime_state,
                 running=status.status != "stopped",
             ),
@@ -195,10 +201,8 @@ def info_agent(
     echo_pairs_table(rows, avatar=agent_avatar(), title=agent_name.upper())
 
 
-def _caps_summary(layout: AgentLayout) -> str:
-    counts = _prepared_cap_counts(layout)
-    if counts is None:
-        counts = _prepare_cap_counts(layout)
+def _caps_summary(state: AgentState) -> str:
+    counts = _cap_counts(state.caps)
     singular = {
         "psyches": "psyche",
         "skills": "skill",
@@ -211,18 +215,6 @@ def _caps_summary(layout: AgentLayout) -> str:
     )
 
 
-def _prepared_cap_counts(layout: AgentLayout) -> dict[str, int] | None:
-    from toolang.state.state import effective_caps
-    from toolang.state.cache import load_home_prepared, load_root_prepared
-
-    try:
-        root_prepared = load_root_prepared(layout)
-        home_prepared = load_home_prepared(layout)
-    except (FileNotFoundError, OSError, TypeError, ValueError, KeyError):
-        return None
-    return _cap_counts(effective_caps(root_prepared.caps, home_prepared.caps))
-
-
 def _cap_counts(entries: Sequence[PreparedCap]) -> dict[str, int]:
     counts = {"psyches": 0, "skills": 0, "services": 0, "prompts": 0}
     for entry in entries:
@@ -232,18 +224,18 @@ def _cap_counts(entries: Sequence[PreparedCap]) -> dict[str, int]:
     return counts
 
 
-def _prepare_cap_counts(layout: AgentLayout) -> dict[str, int]:
-    from toolang.up import server as up
-
+def _prepare_state(layout: AgentLayout) -> AgentState:
     progress = make_cli_progress(show_materialize_summary=True)
     try:
-        state = user_call(
-            up.prepare_agent,
-            layout=layout,
-            progress=as_progress_sink(progress),
+        return cast(
+            AgentState,
+            user_call(
+                prepare_agent_state,
+                layout,
+                toolang_version=toolang_version(),
+                progress=as_progress_sink(progress),
+            ),
         )
-        progress.set_prepare_total(len(state.caps))
-        return _cap_counts(state.caps)
     finally:
         progress.finish(details=False)
 
@@ -259,12 +251,13 @@ def _jobs_summary(layout: AgentLayout) -> str:
 
 
 def _models_summary(
-    layout: AgentLayout,
+    state: AgentState,
+    setup: AgentSetup,
     *,
     runtime_state: dict[str, object],
     running: bool,
 ) -> str:
-    from toolang.up import server as up
+    from toolang.plugin.models.config import parse_default_models
 
     selectors: Sequence[str] = ()
     raw_models = runtime_state.get("models")
@@ -275,13 +268,12 @@ def _models_summary(
             if isinstance(item, str) and (value := item.strip())
         )
     if not selectors:
-        selectors = up.load_default_models(
-            layout,
+        selectors = parse_default_models(
+            (state.root_config, state.home_config),
         )
     rows = plugin.model_rows(
-        layout.root,
-        dict(os.environ),
-        agent_name=layout.name,
+        setup,
+        config_layers=(state.root_config, state.home_config),
         model_selectors=selectors,
     )
     provider_count = len({provider for _model, provider, _detail in rows})
@@ -291,8 +283,8 @@ def _models_summary(
     )
 
 
-def _tools_summary(root: Path, agent: str) -> str:
-    rows = plugin.tool_rows(root, dict(os.environ), agent_name=agent)
+def _tools_summary(setup: AgentSetup) -> str:
+    rows = plugin.tool_rows(setup)
     set_count = len({namespace for namespace, _tool, _description in rows})
     return (
         f"{len(rows)} {'tool' if len(rows) == 1 else 'tools'}, "

@@ -3,10 +3,10 @@
 # Manual checks for one agic-level model choice.
 #
 # Success:
-#   toolang examples/invoke.fixed-model.too gpt_only "Rewrite this sentence." --model openai/gpt-5@openrouter
+#   toolang examples/script.fixed-model.too gpt_only "Rewrite this sentence." --model openai/gpt-5@openrouter
 #
 # Expected failure because the agic only allows openai/gpt-5:
-#   toolang examples/invoke.fixed-model.too gpt_only "Rewrite this sentence." --model anthropic/claude-sonnet-4.5@openrouter
+#   toolang examples/script.fixed-model.too gpt_only "Rewrite this sentence." --model anthropic/claude-sonnet-4.5@openrouter
 
 with skill briceyan/review
 

@@ -345,12 +345,18 @@ def program_structs(binding: BoundRun) -> dict[str, StructDecl]:
 def output_parts(local: Local) -> tuple[MessagePart, ...]:
     if local.shape == "none":
         return ()
-    if local.shape == "item" and (percept := value_percept(local.value)) is not None:
+    if local.shape == "item" and (
+        percept := value_percept(local.value, type_name=local.type_name)
+    ) is not None:
         return tuple(percept)
     return (TextPart(text=value_text(local.value)),)
 
 
-def value_percept(value: object) -> Percept | None:
+def value_percept(
+    value: object,
+    *,
+    type_name: str | None = None,
+) -> Percept | None:
     """Return a canonical percept when one value already represents content."""
 
     if isinstance(value, Message):
@@ -360,11 +366,14 @@ def value_percept(value: object) -> Percept | None:
             raise ToolangError(str(exc)) from exc
     if isinstance(value, (TextPart, ImagePart, AudioPart, DocumentPart)):
         return (value,)
-    if isinstance(value, tuple | list) and all(
-        isinstance(part, (TextPart, ImagePart, AudioPart, DocumentPart))
-        for part in value
-    ):
-        return cast(Percept, tuple(value))
+    if isinstance(value, tuple | list):
+        if not value:
+            return () if type_name == "Part[]" else None
+        if all(
+            isinstance(part, (TextPart, ImagePart, AudioPart, DocumentPart))
+            for part in value
+        ):
+            return cast(Percept, tuple(value))
     return None
 
 

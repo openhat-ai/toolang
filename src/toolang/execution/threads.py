@@ -24,7 +24,7 @@ from .records import (
 from .store import RunStore
 from .types import ThreadPrefix
 
-_LOGGER = logging.getLogger("toolang.thread")
+_LOGGER = logging.getLogger(__name__)
 
 
 class ThreadManager:
@@ -48,14 +48,14 @@ class ThreadManager:
         request_id: str | None = None,
         peer: ThreadPeer | None = None,
     ) -> str:
-        """Create an empty chat thread and return its id."""
+        """Create an empty thread and return its id."""
 
         canonical_prefix = ThreadPrefix(prefix)
         thread_id = self.ids.issue_thread(canonical_prefix.value)
         created_at = utc_now()
         thread, control = self.store.create_thread(
             thread_id=thread_id,
-            origin="chat",
+            origin="script" if canonical_prefix is ThreadPrefix.SCRIPT else "chat",
             peer=peer,
             request_id=request_id,
             context={"prefix": canonical_prefix.value},

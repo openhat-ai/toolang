@@ -200,8 +200,8 @@ public status.
 Runtime emits only canonical `RunEvent` values. `RunExecutor` handles each one
 in this order:
 
-1. in one transaction, call `PersistSink.on_event(event)` and update referenced
-   control statuses;
+1. in one transaction, project the event into the `RunStore` and update
+   referenced control statuses;
 2. update the in-memory control cache;
 3. maintain the local active-run index;
 4. await the optional `RunTracer.on_event()`.
@@ -228,10 +228,11 @@ runtime marks that control `finished` and marks all other pending controls
 
 ## Persistence
 
-`RunExecutor` always constructs `PersistSink(store)`. History is required for
-later model calls, so persistence is not a pluggable executor capability.
+`RunExecutor` always constructs its private event projector. History is
+required for later model calls, so persistence is not a pluggable executor
+capability.
 
-`PersistSink` projects only run and step facts. It does not accept controls,
+The private projector handles only run and step facts. It does not accept controls,
 change control statuses, store live events, or translate events into API/CLI
 protocols. It persists event payloads directly and owns no parallel local or
 output projection state.

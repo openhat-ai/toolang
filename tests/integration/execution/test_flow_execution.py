@@ -31,7 +31,7 @@ from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.runs import agic as agic_run
 from toolang.execution.history import RunHistory
 from toolang.execution.records import OutputRef, RunControlRef, ThreadControlRef
-from toolang.execution.executor.persist import PersistSink
+from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
@@ -784,7 +784,9 @@ def test_run_control_acceptance_rejects_invalid_runtime_values(tmp_path: Path) -
     store.close()
 
 
-def test_persist_sink_does_not_update_control_status(tmp_path: Path) -> None:
+def test_internal_event_projection_does_not_update_control_status(
+    tmp_path: Path,
+) -> None:
     store = RunStore(tmp_path / "runs.db")
     store.create_thread(thread_id="term_test")
     store.accept_start(
@@ -796,7 +798,7 @@ def test_persist_sink_does_not_update_control_status(tmp_path: Path) -> None:
         request_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
-    sink = PersistSink(store)
+    sink = _PersistSink(store)
 
     sink.on_event(
         RunBegin(
@@ -892,7 +894,7 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
         request_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
-    sink = PersistSink(store)
+    sink = _PersistSink(store)
     sink.on_event(
         RunBegin(
             run=anchor_id,
@@ -947,7 +949,7 @@ def test_thread_fork_rejects_duplicate_request_without_starting_runs(
         request_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
-    sink = PersistSink(store)
+    sink = _PersistSink(store)
     sink.on_event(
         RunBegin(
             run="run_anchor",
@@ -996,7 +998,7 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
     store = executor.store
     manager = ThreadManager(store, executor.ids)
     created = manager.create(prefix=ThreadPrefix.TERM)
-    sink = PersistSink(store)
+    sink = _PersistSink(store)
     timestamp = "2026-01-01T00:00:00Z"
     for run_id in ("run_before", "run_anchor", "run_after"):
         store.accept_start(
@@ -1035,7 +1037,7 @@ def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
     store = executor.store
     manager = ThreadManager(store, executor.ids)
     source = manager.create(prefix=ThreadPrefix.TERM)
-    sink = PersistSink(store)
+    sink = _PersistSink(store)
     for run_id in ("run_a", "run_b"):
         store.accept_start(
             run_id=run_id,
@@ -1077,7 +1079,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     store = executor.store
     manager = ThreadManager(store, executor.ids)
     source = manager.create(prefix=ThreadPrefix.TERM)
-    sink = PersistSink(store)
+    sink = _PersistSink(store)
     for run_id, parent in (("run_root", None), ("run_child", "run_root/0")):
         store.accept_start(
             run_id=run_id,
@@ -1385,7 +1387,7 @@ def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> Non
         request_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
-    sink = PersistSink(store)
+    sink = _PersistSink(store)
     sink.on_event(
         RunBegin(
             run="run_thread_anchor",
@@ -1417,7 +1419,9 @@ def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> Non
     reopened.close()
 
 
-def test_persist_sink_projects_run_and_step_records(tmp_path: Path) -> None:
+def test_private_event_projector_persists_run_and_step_records(
+    tmp_path: Path,
+) -> None:
     store = RunStore(tmp_path / "runs.db")
     store.create_thread(thread_id="term_test")
     store.accept_start(
@@ -1429,7 +1433,7 @@ def test_persist_sink_projects_run_and_step_records(tmp_path: Path) -> None:
         request_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
-    sink = PersistSink(store)
+    sink = _PersistSink(store)
     sink.on_event(
         RunBegin(
             run="run_test",
@@ -1556,7 +1560,7 @@ def test_run_store_migrates_step_and_model_text_names_in_place(
         request_id=None,
         created_at="2026-01-01T00:00:00Z",
     )
-    sink = PersistSink(store)
+    sink = _PersistSink(store)
     sink.on_event(
         StepBegin(
             step="run_test/0",
@@ -1617,7 +1621,7 @@ def test_run_store_migrates_v16_model_texts_in_place(tmp_path: Path) -> None:
 def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     store.create_thread(thread_id="term_test")
-    sink = PersistSink(store)
+    sink = _PersistSink(store)
     for run_id, text in (("run_%", "literal"), ("run_ax", "other")):
         store.accept_start(
             run_id=run_id,

@@ -22,7 +22,7 @@ from toolang.catalog import cap as caps
 from toolang.catalog import config as caps_config
 from toolang.catalog.types import CapKind
 from toolang.state import state as cap_state
-from toolang.base.types.message import Message, TextPart
+from toolang.base.types.message import Message
 from toolang.base.types.model import ModelInfo
 from toolang.base.types.sandbox import SandboxSelector
 from toolang.base.types.tool import ToolContext, ToolDefinition
@@ -33,9 +33,8 @@ import toolang.cli.toolang.commands.agent as agent_commands
 import toolang.cli.toolang.commands.chat as chat_commands
 import toolang.cli.toolang.commands.plugin as plugin_commands
 import toolang.cli.toolang.commands.runtime as runtime_commands
+import toolang.cli.toolang.commands.script as script_commands
 import toolang.cli.toolang.commands.thread as inspect_cli
-import toolang.cli.impl.invoke.runner as cli_invoke
-import toolang.cli.impl.invoke.rendering as invoke_rendering
 import toolang.cli.common.version as cli_version
 import toolang.cli.caps.main as caps_cli
 import toolang.setup.watcher as setup_watcher_module
@@ -44,8 +43,6 @@ import toolang.cli.common.output as cli_output
 from toolang.cli.common.progress import CliProgress
 from toolang.up.logging import DEFAULT_AGENT_LOG_SPEC
 from toolang.common.env_logger import PY_LOG_ENV_VAR
-from toolang.execution.events import RunEnd, RunStarting, StepEnd, StepBegin
-from toolang.execution.records import InputRef, OutputRef, RunRecord
 from toolang.common.events import ProgressEvent
 from toolang.plugin.loading import PluginInfo
 from toolang.catalog.job import AuthoredJobs, JobFile
@@ -55,7 +52,6 @@ from toolang.up import server as agent_up
 from tests.support.execution_fixtures import (
     project_run_end,
     project_run_start,
-    project_step,
 )
 from tests.support.catalog import FixtureLocalAgents
 from wcwidth import wcswidth
@@ -105,39 +101,6 @@ def _wired_caps(
 ) -> caps_config.WiredCaps:
     directory = root if visibility == "shared" else root / "agents" / agent
     return caps_config.WiredCaps(directory / "config.toml")
-
-
-def _fake_invoke_record(
-    toolang_root: Path,
-    agent_name: str,
-) -> RunRecord:
-    store = RunStore(AgentLayout.resident(toolang_root, agent_name).run_store)
-    try:
-        run = project_run_start(
-            store,
-            run_id="run_test",
-            thread_id="script_test",
-            origin="script",
-            input=Message.user("test"),
-        )
-        project_step(
-            store,
-            run_id=run.id,
-            step_index=0,
-            kind="model",
-            status="finished",
-            input=(InputRef(cmd=0),),
-            output=(TextPart(text="done"),),
-            started_at=run.started_at,
-            finished_at=run.started_at,
-        )
-        return project_run_end(
-            store,
-            run_id=run.id,
-            output=OutputRef(step=f"{run.id}/0"),
-        )
-    finally:
-        store.close()
 
 
 def _invoke_app(
@@ -312,7 +275,7 @@ def test_cli_main_intercepts_local_too_program_before_typer(
         captured["prog_name"] = prog_name
         return 0
 
-    monkeypatch.setattr(cli_invoke, "handle_roaming_invoke", fake_handle)
+    monkeypatch.setattr(script_commands, "dispatch", fake_handle)
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
 
     result = cli.main([str(program_path), "--help"])
@@ -349,24 +312,25 @@ def test_cli_main_runs_roaming_file_runtime_for_script_inbox(
     assert captured["args"] == ["--inbox", str(inbox)]
 
 
-def test_cli_main_routes_roaming_thread_commands_to_materialized_agent(
+def test_cli_main_binds_roaming_history_to_materialized_layout(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     program_path = tmp_path / "demo.too"
     program_path.write_text("agic:\n  Reply directly.\n", encoding="utf-8")
-    toolang_root = tmp_path / ".toolang"
+    layout = AgentLayout.roaming(program_path)
     captured: dict[str, object] = {}
 
-    def fake_materialize(path: Path) -> tuple[Path, str]:
+    def fake_materialize(path: Path) -> AgentLayout:
         captured["source"] = path
-        return toolang_root, "demo"
+        return layout
 
     def fake_app(*, args, prog_name: str, standalone_mode: bool) -> None:
         captured["args"] = args
         captured["prog_name"] = prog_name
         captured["standalone_mode"] = standalone_mode
         captured["prefix_agent"] = cli._PREFIX_AGENT.get()
+        captured["layout"] = cli._SELECTED_LAYOUT.get()
 
     monkeypatch.setattr(
         app_routing.agents, "materialize_roaming_program", fake_materialize
@@ -379,12 +343,14 @@ def test_cli_main_routes_roaming_thread_commands_to_materialized_agent(
     assert result == 0
     assert captured == {
         "source": program_path.resolve(),
-        "args": ["--root", str(toolang_root), "threads"],
+        "args": ["threads"],
         "prog_name": "toolang",
         "standalone_mode": True,
         "prefix_agent": "demo",
+        "layout": layout,
     }
     assert cli._PREFIX_AGENT.get() is None
+    assert cli._SELECTED_LAYOUT.get() is None
 
 
 def test_cli_main_roaming_threads_can_read_offline_materialized_store(
@@ -421,7 +387,7 @@ def test_cli_main_roaming_threads_can_read_offline_materialized_store(
     assert "roaming input" in output.out
 
 
-def test_cli_main_keeps_roaming_agic_invoke_when_agic_is_present(
+def test_cli_main_routes_named_runnable_to_script_command(
     monkeypatch, tmp_path: Path
 ) -> None:
     program_path = tmp_path / "demo.too"
@@ -443,7 +409,7 @@ def test_cli_main_keeps_roaming_agic_invoke_when_agic_is_present(
         raise AssertionError("file runtime should not be used")
 
     monkeypatch.setattr(runtime_commands, "run_roaming_file", fail_file_runtime)
-    monkeypatch.setattr(cli_invoke, "handle_roaming_invoke", fake_handle)
+    monkeypatch.setattr(script_commands, "dispatch", fake_handle)
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
 
     result = cli.main([str(program_path), "file", "--inbox", str(inbox)])
@@ -454,7 +420,7 @@ def test_cli_main_keeps_roaming_agic_invoke_when_agic_is_present(
     assert captured["prog_name"] == "toolang"
 
 
-def test_cli_main_does_not_preconfigure_roaming_invoke_from_py_log(
+def test_cli_main_does_not_preconfigure_script_run_from_py_log(
     monkeypatch, tmp_path: Path
 ) -> None:
     program_path = tmp_path / "demo.too"
@@ -472,9 +438,9 @@ def test_cli_main_does_not_preconfigure_roaming_invoke_from_py_log(
         return 0
 
     monkeypatch.setattr(app_routing, "configure_logging", fake_configure_logging)
-    monkeypatch.setattr(cli_invoke, "handle_roaming_invoke", fake_handle)
+    monkeypatch.setattr(script_commands, "dispatch", fake_handle)
     monkeypatch.setattr(cli.sys, "argv", ["toolang"])
-    monkeypatch.setenv(PY_LOG_ENV_VAR, "toolang.run=debug")
+    monkeypatch.setenv(PY_LOG_ENV_VAR, "toolang.execution=debug")
 
     result = cli.main([str(program_path), "--help"])
 
@@ -630,13 +596,13 @@ def test_cli_callback_configures_logging_for_standard_commands_from_py_log(
     result = runner.invoke(
         cli.app,
         ["--root", str(toolang_root), "list"],
-        env={PY_LOG_ENV_VAR: "toolang.run=debug"},
+        env={PY_LOG_ENV_VAR: "toolang.execution=debug"},
     )
 
     assert result.exit_code == 0
     assert len(calls) == 1
     assert calls[0][0] is None
-    assert calls[0][1][PY_LOG_ENV_VAR] == "toolang.run=debug"
+    assert calls[0][1][PY_LOG_ENV_VAR] == "toolang.execution=debug"
 
 
 def test_cli_new_supports_template_alias(tmp_path: Path) -> None:
@@ -1833,1167 +1799,6 @@ def test_roaming_materialize_removes_stale_config_symlink(tmp_path: Path) -> Non
 
     assert not config_link.exists()
     assert not config_link.is_symlink()
-
-
-def test_cli_roaming_program_help_lists_available_targets(
-    capsys, tmp_path: Path
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic:
-  Reply directly.
-
-agic summarize(_: Part[], style?):
-  Summarize the current workspace in a concise style.
-
-flow review(_: Text):
-  map: Review one item.
-""".strip(),
-    )
-
-    original_argv = list(cli.sys.argv)
-    cli.sys.argv = ["toolang"]
-    try:
-        result = cli.main([str(program_path), "--help"])
-    finally:
-        cli.sys.argv = original_argv
-    captured = capsys.readouterr()
-
-    assert result == 0
-    assert "Usage: toolang" in captured.out
-    assert "SCRIPT TARGET [OPTIONS] [PARAMS] [INPUT]..." in captured.out
-    assert "Invoke an agic or flow from a Toolang script." in captured.out
-    assert "Script:" in captured.out
-    assert "* SCRIPT" not in captured.out
-    assert program_path.name in captured.out
-    assert "Options" in captured.out
-    assert "--models" in captured.out
-    assert "Limit available models. Pass CSV or repeat." in captured.out
-    assert "--tools" in captured.out
-    assert "Allow selected tools. Pass CSV or repeat." in captured.out
-    assert "--caps" in captured.out
-    assert "Allow selected caps. Pass CSV or repeat." in captured.out
-    assert "--sandbox" in captured.out
-    assert "Execute in this sandbox." in captured.out
-    assert (
-        captured.out.index("--models")
-        < captured.out.index("--tools")
-        < captured.out.index("--caps")
-    )
-    assert "--quiet" in captured.out
-    assert "Params" in captured.out
-    assert "NAME=VALUE" in captured.out
-    assert "Input" in captured.out
-    assert "@PATH" in captured.out
-    assert "@PATH.md" not in captured.out
-    assert "@PATH.png" not in captured.out
-    assert "@PATH.mp3" not in captured.out
-    assert "Modality is inferred from the extension." in captured.out
-    assert "Multimodal message input" not in captured.out
-    assert "Targets" in captured.out
-    assert "default" in captured.out
-    assert "summarize" in captured.out
-    assert "review" in captured.out
-    assert (
-        captured.out.index("Options")
-        < captured.out.index("Targets")
-        < captured.out.index("Params")
-        < captured.out.index("Input")
-    )
-
-
-def test_cli_roaming_agic_help_is_dynamic(capsys, tmp_path: Path) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic summarize(_: Part[], style?, audience?):
-  Summarize the current workspace in a concise style.
-""".strip(),
-    )
-
-    original_argv = list(cli.sys.argv)
-    cli.sys.argv = ["toolang"]
-    try:
-        result = cli.main([str(program_path), "summarize", "--help"])
-    finally:
-        cli.sys.argv = original_argv
-    captured = capsys.readouterr()
-
-    assert result == 0
-    assert "Usage: toolang" in captured.out
-    assert "SCRIPT TARGET" in captured.out
-    assert "Summarize the current workspace in a concise style." in captured.out
-    assert "Script:" in captured.out
-    assert program_path.name in captured.out
-    assert "Agic:  summarize" in captured.out
-    assert "* TARGET" not in captured.out
-    assert "summarize" in captured.out
-    assert "[OPTIONS]" in captured.out
-    assert "[PARAMS]" in captured.out
-    assert "style=TEXT" in captured.out
-    assert "audience=TEXT" in captured.out
-    assert "[INPUT]..." in captured.out
-    assert "--models" in captured.out
-    assert "Limit available models. Pass CSV or repeat." in captured.out
-    assert "--tools" in captured.out
-    assert "Allow selected tools. Pass CSV or repeat." in captured.out
-    assert "--caps" in captured.out
-    assert "Allow selected caps. Pass CSV or repeat." in captured.out
-    assert (
-        captured.out.index("--models")
-        < captured.out.index("--tools")
-        < captured.out.index("--caps")
-    )
-    assert "--quiet" in captured.out
-    assert "Params" in captured.out
-    assert "Input" in captured.out
-    assert "Multimodal message input" not in captured.out
-    assert "@PATH" in captured.out
-    assert "@PATH.md" not in captured.out
-    assert "@PATH.png" not in captured.out
-    assert "@PATH.mp3" not in captured.out
-    assert "Modality is inferred from the extension." in captured.out
-    assert "Agics" not in captured.out
-    assert (
-        captured.out.index("Options")
-        < captured.out.index("Params")
-        < captured.out.index("Input")
-    )
-
-
-def test_cli_roaming_invoke_passes_default_agic_params_and_parts(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic(_: Part[], tone?, retries?: Number, dry_run?: Boolean):
-  Rewrite the input using the provided controls.
-""".strip(),
-    )
-    attachment = tmp_path / "image.png"
-    attachment.write_bytes(b"png")
-    captured: dict[str, object] = {}
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_kind: str,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        outcome = _fake_invoke_record(layout.root, layout.name)
-        del environ, reply
-        captured["toolang_root"] = layout.root
-        captured["agent_name"] = layout.name
-        captured["executable_name"] = executable_name
-        captured["executable_kind"] = executable_kind
-        captured["input_text"] = input_text
-        captured["models"] = models
-        captured["metadata"] = dict(metadata or {})
-        captured["log_spec"] = log_spec
-        captured["agent_state"] = agent_state
-
-        return outcome
-
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-
-    result = cli.main(
-        [
-            str(program_path),
-            "--models",
-            "gpt-5",
-            "default",
-            "rewrite this",
-            f"@{attachment}",
-            "tone=concise",
-            "retries=3",
-            "dry_run=true",
-            "--models",
-            "o3",
-        ]
-    )
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert output.out.strip() == "done"
-    assert captured["agent_name"] == "demo"
-    assert captured["toolang_root"] == program_path.parent / ".toolang"
-    assert captured["executable_name"] == "default"
-    assert captured["models"] == ("gpt-5", "o3")
-    assert captured["log_spec"] is None
-    assert captured["agent_state"] is not None
-    assert "rewrite this" in cast(str, captured["input_text"])
-    assert str(attachment.resolve()) in cast(str, captured["input_text"])
-    assert captured["metadata"] == {
-        "invoke_params": {
-            "tone": "concise",
-            "retries": 3,
-            "dry_run": True,
-        },
-        "invoke_parts": [
-            {"type": "text", "text": "rewrite this"},
-            {"type": "image", "path": str(attachment.resolve())},
-        ],
-    }
-
-
-def test_cli_roaming_invoke_routes_sandboxed_execution_through_hosting(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic(_: Text):
-  Reply directly.
-""".strip(),
-    )
-    captured: dict[str, object] = {}
-
-    def fail_direct_invoke(**_kwargs):
-        raise AssertionError("sandboxed invocation must not execute on the CLI host")
-
-    def fake_hosted_invoke(**kwargs):
-        captured.update(kwargs)
-        return _fake_invoke_record(kwargs["toolang_root"], kwargs["agent_name"])
-
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fail_direct_invoke)
-    monkeypatch.setattr(cli_invoke, "_invoke_hosted", fake_hosted_invoke)
-
-    result = cli.main(
-        [str(program_path), "default", "hello", "--sandbox", "docker:python"]
-    )
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert output.out.strip() == "done"
-    request = cast(Any, captured["request"])
-    assert request.sandbox == "docker:python"
-
-
-def test_roaming_hosted_invoke_starts_session_api_with_execution_selectors(
-    tmp_path: Path, monkeypatch
-) -> None:
-    captured: dict[str, object] = {}
-    request = cli_invoke.RoamingInvokeRequest(
-        executable_name="default",
-        executable_kind="agic",
-        verbosity=0,
-        input_text="hello",
-        models=("openai/gpt-5",),
-        tools=("shell/*",),
-        caps=("skill/reviewer",),
-        sandbox="docker:python",
-        invoke_params={},
-        invoke_parts=[{"type": "text", "text": "hello"}],
-    )
-
-    monkeypatch.setattr(agents.AgentProcess, "status", lambda *_args, **_kwargs: None)
-
-    def fake_resolve_startup(**kwargs):
-        captured["startup"] = kwargs
-        return SimpleNamespace(sandbox_plugin=object())
-
-    class FakeClient:
-        def invoke(self, payload, *, on_event=None):
-            captured["payload"] = payload
-            captured["on_event"] = on_event
-            return RunRecord(
-                id="run_1",
-                parent=None,
-                thread="script_1",
-                input=InputRef(),
-                output=None,
-                status="finished",
-            )
-
-    @contextmanager
-    def fake_owned_runtime_client(**kwargs):
-        captured["owned"] = kwargs
-        yield FakeClient()
-
-    monkeypatch.setattr(cli_invoke.agent_up, "resolve_startup", fake_resolve_startup)
-    monkeypatch.setattr(cli_invoke, "owned_runtime_client", fake_owned_runtime_client)
-    reply = invoke_rendering.ScriptProgressSink(executable_name="default", render=False)
-
-    result = cli_invoke._invoke_hosted(
-        layout=AgentLayout.resident(tmp_path, "demo"),
-        request=request,
-        metadata={"invoke_params": {}},
-        environ={"OPENAI_API_KEY": "secret"},
-        state=cast(Any, object()),
-        reply=reply,
-    )
-
-    startup = cast(dict[str, object], captured["startup"])
-    assert result.run_id == "run_1"
-    assert startup["sandbox"] == "docker:python"
-    assert startup["models"] == ("openai/gpt-5",)
-    assert startup["tools"] == ("shell/*",)
-    assert startup["caps"] == ("skill/reviewer",)
-    assert cast(dict[str, object], captured["payload"])["input"] == "hello"
-    assert cast(dict[str, object], captured["owned"])["root"] == tmp_path
-
-
-def test_cli_roaming_invoke_passes_explicit_tool_selectors(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic(_: Part[]):
-  Reply directly.
-""".strip(),
-    )
-    captured: dict[str, object] = {}
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_kind: str,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        tools: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        outcome = _fake_invoke_record(layout.root, layout.name)
-        del layout, executable_name, input_text, models
-        del metadata, environ, reply, log_spec, agent_state
-        captured["tools"] = tools
-
-        return outcome
-
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-
-    result = cli.main(
-        [
-            str(program_path),
-            "--tools",
-            "filesystem,shell",
-            "default",
-            "hello",
-            "--tools",
-            "service_use",
-        ]
-    )
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert output.out.strip() == "done"
-    assert captured["tools"] == ("filesystem", "shell", "service_use")
-
-
-def test_cli_roaming_invoke_passes_explicit_cap_selectors(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic(_: Part[]):
-  Reply directly.
-""".strip(),
-    )
-    captured: dict[str, object] = {}
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        caps: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        outcome = _fake_invoke_record(layout.root, layout.name)
-        del layout, executable_name, input_text, models
-        del metadata, environ, reply, log_spec, agent_state
-        captured["caps"] = caps
-
-        return outcome
-
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-
-    result = cli.main(
-        [
-            str(program_path),
-            "--caps",
-            "skill/reviewer,service/*[home]",
-            "default",
-            "hello",
-            "--caps",
-            "[here]",
-        ]
-    )
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert output.out.strip() == "done"
-    assert captured["caps"] == ("skill/reviewer", "service/*[home]", "[here]")
-
-
-def test_cli_roaming_invoke_quiet_after_agic_suppresses_progress_output(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic:
-  Reply directly.
-""".strip(),
-    )
-    captured: dict[str, object] = {}
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        outcome = _fake_invoke_record(layout.root, layout.name)
-        del (
-            layout,
-            executable_name,
-            input_text,
-            models,
-            metadata,
-            environ,
-            log_spec,
-            agent_state,
-        )
-        captured["reply"] = reply
-
-        return outcome
-
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-    monkeypatch.setattr(cli_invoke.sys.stderr, "isatty", lambda: True)
-
-    result = cli.main([str(program_path), "default", "--quiet", "hello"])
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert output.out.strip() == "done"
-    assert output.err == ""
-    assert captured["reply"] is not None
-
-
-def test_cli_roaming_invoke_uses_progress_sink_for_tty_stderr(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic:
-  Reply directly.
-""".strip(),
-    )
-    captured: dict[str, object] = {}
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        outcome = _fake_invoke_record(layout.root, layout.name)
-        del (
-            layout,
-            executable_name,
-            input_text,
-            models,
-            metadata,
-            environ,
-            log_spec,
-            agent_state,
-        )
-        captured["reply"] = reply
-
-        return outcome
-
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-    monkeypatch.setattr(cli_invoke.sys.stderr, "isatty", lambda: True)
-
-    result = cli.main([str(program_path), "default", "hello"])
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert output.out.strip() == "done"
-    assert captured["reply"] is not None
-
-
-def test_cli_roaming_invoke_passes_prepare_progress_for_tty_stderr(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic:
-  Reply directly.
-""".strip(),
-    )
-    captured: dict[str, object] = {}
-    real_prepare_agent = cli_invoke.agent_up.prepare_agent
-
-    def fake_prepare_agent(*, layout: AgentLayout, progress=None):
-        captured["prepare_progress"] = progress
-        return real_prepare_agent(
-            layout=layout,
-            progress=progress,
-        )
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        outcome = _fake_invoke_record(layout.root, layout.name)
-        del (
-            layout,
-            executable_name,
-            input_text,
-            models,
-            metadata,
-            environ,
-            reply,
-            log_spec,
-            agent_state,
-        )
-
-        return outcome
-
-    monkeypatch.setattr(cli_invoke.agent_up, "prepare_agent", fake_prepare_agent)
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-    monkeypatch.setattr(cli_invoke.sys.stderr, "isatty", lambda: True)
-
-    result = cli.main([str(program_path), "default", "hello"])
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert output.out.strip() == "done"
-    assert captured["prepare_progress"] is not None
-
-
-def test_cli_roaming_invoke_suppresses_prepare_progress_when_quiet(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic:
-  Reply directly.
-""".strip(),
-    )
-    captured: dict[str, object] = {}
-    real_prepare_agent = cli_invoke.agent_up.prepare_agent
-
-    def fake_prepare_agent(*, layout: AgentLayout, progress=None):
-        captured["prepare_progress"] = progress
-        return real_prepare_agent(
-            layout=layout,
-            progress=progress,
-        )
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        outcome = _fake_invoke_record(layout.root, layout.name)
-        del (
-            layout,
-            executable_name,
-            input_text,
-            models,
-            metadata,
-            environ,
-            reply,
-            log_spec,
-            agent_state,
-        )
-
-        return outcome
-
-    monkeypatch.setattr(cli_invoke.agent_up, "prepare_agent", fake_prepare_agent)
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-    monkeypatch.setattr(cli_invoke.sys.stderr, "isatty", lambda: True)
-
-    result = cli.main([str(program_path), "default", "hello", "-q"])
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert output.out.strip() == "done"
-    assert output.err == ""
-    assert captured["prepare_progress"] is None
-
-
-def test_cli_roaming_invoke_handles_keyboard_interrupt_without_traceback(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic:
-  Reply directly.
-""".strip(),
-    )
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        del (
-            layout,
-            executable_name,
-            input_text,
-            models,
-            metadata,
-            environ,
-            log_spec,
-            agent_state,
-        )
-        reply.on_event(
-            RunStarting(
-                run="run_test",
-                cmd=0,
-                parent=None,
-                thread="script_test",
-                input=Message.user("hello"),
-                context={"origin": "script"},
-                created_at="2026-05-21T00:00:00Z",
-            )
-        )
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-    monkeypatch.setenv(PY_LOG_ENV_VAR, "toolang.run=debug")
-
-    result = cli.main([str(program_path), "default", "hello"])
-    output = capsys.readouterr()
-
-    assert result == 130
-    assert output.err.splitlines() == [
-        "toolang interrupted",
-        "Run: run_test",
-        f"Log: {AgentLayout.roaming(program_path).run_log('default', 'run_test')}",
-    ]
-    assert "Traceback" not in output.err
-
-
-def test_cli_roaming_invoke_reports_missing_models_without_run_id(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic:
-  Reply directly.
-""".strip(),
-    )
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:9")
-
-    result = cli.main([str(program_path), "default", "hello"])
-    output = capsys.readouterr()
-
-    assert result == 1
-    assert "toolang error: No available models." in output.err
-    assert "toolang model providers" in output.err
-    assert "Run: run_" not in output.err
-
-
-def test_cli_roaming_invoke_requires_explicit_target_name(
-    tmp_path: Path, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic:
-  Reply directly.
-""".strip(),
-    )
-    result = cli.main([str(program_path)])
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert "SCRIPT TARGET [OPTIONS] [PARAMS] [INPUT]..." in output.out
-    assert "Targets" in output.out
-
-
-def test_cli_roaming_invoke_requires_part_for_message_input(
-    tmp_path: Path, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic summarize(_: Part[]):
-  Summarize the current workspace in a concise style.
-""".strip(),
-    )
-
-    result = cli.main([str(program_path), "summarize"])
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert "Usage:" in output.out
-    assert "SCRIPT TARGET [OPTIONS] [INPUT]..." in output.out
-    assert "Summarize the current workspace in a concise style." in output.out
-    assert "Agic:  summarize" in output.out
-    assert output.err == ""
-
-
-def test_cli_roaming_invoke_rejects_unknown_target_name(tmp_path: Path, capsys) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic:
-  Reply directly.
-""".strip(),
-    )
-
-    result = cli.main([str(program_path), "summarize"])
-    output = capsys.readouterr()
-
-    assert result == 1
-    assert "unknown target: summarize" in output.err
-
-
-def test_cli_roaming_invoke_passes_flow_executable_kind(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-flow review(_: Text):
-  map: Normalize the item.
-""".strip(),
-    )
-    captured: dict[str, object] = {}
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_kind: str,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        outcome = _fake_invoke_record(layout.root, layout.name)
-        del (
-            layout,
-            models,
-            environ,
-            reply,
-            log_spec,
-            agent_state,
-        )
-        captured["executable_kind"] = executable_kind
-        captured["executable_name"] = executable_name
-        captured["input_text"] = input_text
-        captured["metadata"] = dict(metadata or {})
-
-        return outcome
-
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-
-    result = cli.main([str(program_path), "review", "one", "two"])
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert output.out.strip() == "done"
-    assert captured["executable_name"] == "review"
-    assert captured["executable_kind"] == "flow"
-    assert captured["input_text"] == "one\n\ntwo"
-    assert captured["metadata"] == {
-        "invoke_params": {},
-        "invoke_parts": [
-            {"type": "text", "text": "one"},
-            {"type": "text", "text": "two"},
-        ],
-    }
-
-
-def test_cli_roaming_invoke_supports_end_of_options_separator(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic:
-  Reply directly.
-""".strip(),
-    )
-    captured: dict[str, object] = {}
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        outcome = _fake_invoke_record(layout.root, layout.name)
-        del (
-            layout,
-            executable_name,
-            models,
-            environ,
-            reply,
-            log_spec,
-            agent_state,
-        )
-        captured["input_text"] = input_text
-        captured["metadata"] = dict(metadata or {})
-
-        return outcome
-
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-
-    result = cli.main(
-        [
-            str(program_path),
-            "default",
-            "--",
-            "--leading-text",
-            "@@literal-at",
-        ]
-    )
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert output.out.strip() == "done"
-    assert captured["input_text"] == "--leading-text\n\n@literal-at"
-    assert captured["metadata"] == {
-        "invoke_params": {},
-        "invoke_parts": [
-            {"type": "text", "text": "--leading-text"},
-            {"type": "text", "text": "@literal-at"},
-        ],
-    }
-
-
-def test_cli_roaming_invoke_treats_unknown_name_equals_value_as_message_part(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic(_: Part[], tone?):
-  Reply directly.
-""".strip(),
-    )
-    captured: dict[str, object] = {}
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        outcome = _fake_invoke_record(layout.root, layout.name)
-        del (
-            layout,
-            executable_name,
-            models,
-            environ,
-            reply,
-            log_spec,
-            agent_state,
-        )
-        captured["input_text"] = input_text
-        captured["metadata"] = dict(metadata or {})
-
-        return outcome
-
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-
-    result = cli.main([str(program_path), "default", "style=concise", "tone=direct"])
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert output.out.strip() == "done"
-    assert captured["input_text"] == "style=concise"
-    assert captured["metadata"] == {
-        "invoke_params": {
-            "tone": "direct",
-        },
-        "invoke_parts": [
-            {"type": "text", "text": "style=concise"},
-        ],
-    }
-
-
-def test_cli_roaming_invoke_reads_md_path_as_text_part(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic(_: Part[]):
-  Reply directly.
-""".strip(),
-    )
-    note = tmp_path / "note.md"
-    note.write_text("# Title\n\nBody text.\n", encoding="utf-8")
-    captured: dict[str, object] = {}
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        outcome = _fake_invoke_record(layout.root, layout.name)
-        del (
-            layout,
-            executable_name,
-            models,
-            environ,
-            reply,
-            log_spec,
-            agent_state,
-        )
-        captured["input_text"] = input_text
-        captured["metadata"] = dict(metadata or {})
-
-        return outcome
-
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-
-    result = cli.main([str(program_path), "default", f"@{note}"])
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert output.out.strip() == "done"
-    assert captured["input_text"] == "# Title\n\nBody text.\n"
-    assert captured["metadata"] == {
-        "invoke_params": {},
-        "invoke_parts": [
-            {
-                "type": "text",
-                "text": "# Title\n\nBody text.\n",
-                "path": str(note.resolve()),
-            },
-        ],
-    }
-
-
-def test_cli_roaming_invoke_reads_mdx_path_as_text_part(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic(_: Part[]):
-  Reply directly.
-""".strip(),
-    )
-    note = tmp_path / "note.mdx"
-    note.write_text("# Title\n\n<Callout>Body text.</Callout>\n", encoding="utf-8")
-    captured: dict[str, object] = {}
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        outcome = _fake_invoke_record(layout.root, layout.name)
-        del (
-            layout,
-            executable_name,
-            models,
-            environ,
-            reply,
-            log_spec,
-            agent_state,
-        )
-        captured["input_text"] = input_text
-        captured["metadata"] = dict(metadata or {})
-
-        return outcome
-
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-
-    result = cli.main([str(program_path), "default", f"@{note}"])
-    output = capsys.readouterr()
-
-    text = "# Title\n\n<Callout>Body text.</Callout>\n"
-    assert result == 0
-    assert output.out.strip() == "done"
-    assert captured["input_text"] == text
-    assert captured["metadata"] == {
-        "invoke_params": {},
-        "invoke_parts": [
-            {"type": "text", "text": text, "path": str(note.resolve())},
-        ],
-    }
-
-
-def test_cli_roaming_invoke_passes_video_path_part(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    program_path = _write_roaming_program(
-        tmp_path,
-        """
-agic(_: Part[]):
-  Reply directly.
-""".strip(),
-    )
-    video = tmp_path / "clip.mp4"
-    video.write_bytes(b"mp4")
-    captured: dict[str, object] = {}
-
-    def fake_invoke(
-        *,
-        layout: AgentLayout,
-        executable_name: str | None,
-        input_text: str | None,
-        models: tuple[str, ...],
-        metadata: dict[str, object] | None,
-        environ: dict[str, str],
-        reply,
-        log_spec: str | None = None,
-        agent_state=None,
-        wait: bool = False,
-        **selectors,
-    ):
-        outcome = _fake_invoke_record(layout.root, layout.name)
-        del (
-            layout,
-            executable_name,
-            models,
-            environ,
-            reply,
-            log_spec,
-            agent_state,
-        )
-        captured["input_text"] = input_text
-        captured["metadata"] = dict(metadata or {})
-
-        return outcome
-
-    monkeypatch.setattr(cli_invoke.agent_up, "invoke", fake_invoke)
-
-    result = cli.main([str(program_path), "default", f"@{video}"])
-    output = capsys.readouterr()
-
-    assert result == 0
-    assert output.out.strip() == "done"
-    assert captured["input_text"] == f"Attached video: {video.resolve()}"
-    assert captured["metadata"] == {
-        "invoke_params": {},
-        "invoke_parts": [
-            {"type": "video", "path": str(video.resolve())},
-        ],
-    }
 
 
 def test_cli_start_rejects_remote_selector(tmp_path: Path) -> None:
@@ -4644,13 +3449,13 @@ def test_cli_run_uses_py_log_spec(tmp_path: Path, monkeypatch) -> None:
     result = runner.invoke(
         cli.app,
         ["--root", str(toolang_root), "run", "alice"],
-        env={PY_LOG_ENV_VAR: "toolang.run=debug"},
+        env={PY_LOG_ENV_VAR: "toolang.execution=debug"},
     )
 
     assert result.exit_code == 0
-    assert captured["log_spec"] == "toolang.run=debug"
+    assert captured["log_spec"] == "toolang.execution=debug"
     assert (
-        cast(dict[str, str], captured["environ"])[PY_LOG_ENV_VAR] == "toolang.run=debug"
+        cast(dict[str, str], captured["environ"])[PY_LOG_ENV_VAR] == "toolang.execution=debug"
     )
 
 
@@ -4859,7 +3664,7 @@ def test_cli_start_propagates_py_log_to_agent_process(
             "--sandbox",
             "none",
         ],
-        env={PY_LOG_ENV_VAR: "toolang.run=debug,httpx=off", "OPENAI_API_KEY": "secret"},
+        env={PY_LOG_ENV_VAR: "toolang.execution=debug,httpx=off", "OPENAI_API_KEY": "secret"},
     )
 
     assert result.exit_code == 0
@@ -4873,7 +3678,7 @@ def test_cli_start_propagates_py_log_to_agent_process(
     ]
     assert (
         cast(dict[str, str], captured["env"])[PY_LOG_ENV_VAR]
-        == "toolang.run=debug,httpx=off"
+        == "toolang.execution=debug,httpx=off"
     )
 
 
@@ -8995,198 +7800,6 @@ def test_cli_inspect_thread_lists_top_level_runs_only(monkeypatch) -> None:
     assert "run_child agic:expand_queries" not in result.stdout
     assert "\n✓ 1" not in result.stdout
     assert "\nsteps:" not in result.stdout
-
-
-def test_script_progress_defaults_to_stage_summary() -> None:
-    sink = invoke_rendering.ScriptProgressSink(executable_name="research", render=False)
-
-    sink.on_event(
-        RunStarting(
-            run="run_parent",
-            cmd=0,
-            parent=None,
-            thread="script_1",
-            input=Message.user("query"),
-            created_at="2026-01-01T00:00:00Z",
-            context={
-                "origin": "script",
-                "root": "run_parent",
-                "executable": {"kind": "flow", "name": "research"},
-                "call": "top",
-            },
-        )
-    )
-    sink.on_event(
-        StepBegin(
-            step="run_parent/0",
-            kind="par",
-            input=(),
-            started_at="2026-01-01T00:00:01Z",
-            given={
-                "statement": "map",
-                "runnable": "search_web",
-                "par": 2,
-            },
-        )
-    )
-    sink.on_event(
-        RunStarting(
-            run="run_child",
-            cmd=0,
-            parent="run_parent/0",
-            thread="script_1",
-            input=Message.user("query"),
-            created_at="2026-01-01T00:00:01Z",
-            context={
-                "origin": "script",
-                "root": "run_parent",
-                "executable": {"kind": "agic", "name": "search_web"},
-                "call": "run",
-                "placement": {"item": 0, "items": 3, "lane": 0, "lanes": 2},
-            },
-        )
-    )
-    sink.on_event(
-        RunEnd(
-            run="run_child",
-            status="finished",
-            finished_at="2026-01-01T00:00:02Z",
-        )
-    )
-    sink.on_event(
-        StepEnd(
-            step="run_parent/0",
-            kind="par",
-            status="finished",
-            output=(),
-            noted={
-                "statement": "map",
-                "runnable": "search_web",
-                "par": 2,
-                "shape": "list",
-                "items": 3,
-            },
-            started_at="2026-01-01T00:00:02Z",
-            finished_at="2026-01-01T00:00:03Z",
-        )
-    )
-    sink.on_event(
-        RunEnd(
-            run="run_parent",
-            status="finished",
-            finished_at="2026-01-01T00:00:03Z",
-        )
-    )
-
-    assert sink._title == "Running flow:research: run_parent"
-    lines = sink._render_lines()
-    assert len(lines) == 3
-    assert lines[1].startswith("[1] map search_web")
-    assert "3 items" in lines[1]
-    assert "2 lanes" in lines[1]
-    assert lines[2] == "Done · 1 stages · 1 calls · 0 failed"
-    assert "run_child" not in "\n".join(lines)
-
-
-def test_script_progress_expands_lanes_with_verbosity() -> None:
-    sink = invoke_rendering.ScriptProgressSink(
-        executable_name="research", render=False, verbosity=2
-    )
-    sink.on_event(
-        RunStarting(
-            run="run_parent",
-            cmd=0,
-            parent=None,
-            thread="script_1",
-            input=Message.user("query"),
-            created_at="2026-01-01T00:00:00Z",
-            context={
-                "origin": "script",
-                "executable": {"kind": "flow", "name": "research"},
-            },
-        )
-    )
-    sink.on_event(
-        StepBegin(
-            step="run_parent/0",
-            kind="par",
-            input=(),
-            given={
-                "statement": "storm",
-                "count": 2,
-                "runnable": "search_web",
-                "par": 2,
-            },
-            started_at="2026-01-01T00:00:01Z",
-        )
-    )
-    for run_id, item_index in (("run_second", 1), ("run_first", 0)):
-        sink.on_event(
-            RunStarting(
-                run=run_id,
-                cmd=0,
-                parent="run_parent/0",
-                thread="script_1",
-                input=Message.user("query"),
-                created_at="2026-01-01T00:00:01Z",
-                context={
-                    "origin": "script",
-                    "root": "run_parent",
-                    "executable": {"kind": "agic", "name": "search_web"},
-                    "call": "run",
-                    "placement": {
-                        "item": item_index,
-                        "items": 2,
-                        "lane": item_index,
-                        "lanes": 2,
-                    },
-                },
-            )
-        )
-
-    lines = sink._render_lines()
-    assert lines[0] == "Running flow:research: run_parent"
-    assert any("lane 1/2" in line for line in lines)
-    assert any("lane 2/2" in line for line in lines)
-    assert "\n".join(lines).index("item 1/2") < "\n".join(lines).index("item 2/2")
-    assert "batch" not in "\n".join(lines)
-
-
-def test_script_progress_keeps_final_frame_visible(monkeypatch) -> None:
-    live_kwargs: dict[str, object] = {}
-
-    class FakeLive:
-        def __init__(self, _text: object, **kwargs: object) -> None:
-            live_kwargs.update(kwargs)
-
-        def start(self, *, refresh: bool = False) -> None:
-            del refresh
-
-        def update(self, _text: object, *, refresh: bool = False) -> None:
-            del refresh
-
-        def stop(self) -> None:
-            pass
-
-    monkeypatch.setattr(invoke_rendering, "Live", FakeLive)
-    sink = invoke_rendering.ScriptProgressSink(executable_name="research", render=True)
-
-    sink.on_event(
-        RunStarting(
-            run="run_parent",
-            cmd=0,
-            parent=None,
-            thread="script_1",
-            input=Message.user("query"),
-            created_at="2026-01-01T00:00:00Z",
-            context={
-                "origin": "script",
-                "executable": {"kind": "flow", "name": "research"},
-            },
-        )
-    )
-
-    assert live_kwargs["transient"] is False
 
 
 def test_cli_inspect_no_longer_accepts_steps_view() -> None:

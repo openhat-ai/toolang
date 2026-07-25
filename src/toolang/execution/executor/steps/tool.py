@@ -23,7 +23,7 @@ from ..diagnostics import log_tool_call_input, log_tool_call_output
 if TYPE_CHECKING:
     from ..runs.agic import _AgicState
 
-_LOGGER = logging.getLogger("toolang.run")
+_LOGGER = logging.getLogger(__name__)
 
 
 async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:

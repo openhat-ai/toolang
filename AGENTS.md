@@ -164,15 +164,16 @@
   response projection, execution storage, and agent-specific built-in tools.
 - `RunExecutor` owns run acceptance, control, and execution. It receives the
   process-owned `RunStore` and `IdIssuer`, constructs its mandatory internal
-  `PersistSink`, and may receive one optional `RunTracer` per `start()`.
+  run-event projector, and may receive one optional `RunTracer` per `start()`.
   `ThreadManager` shares the same store and issuer without depending on the
   executor. Persistence and control-status updates complete before the tracer
   observes an event. `RunTracer.on_event()` is async, serialized by the
   executor, and always awaited on the owner event loop.
 - `toolang.execution.executor` contains `RunExecutor`, `RunSpec`, `RunHandle`,
-  its mandatory `PersistSink`, shared run values, model-input preparation, and
-  bounded diagnostics. Durable records, events, storage, inspection, schemas,
-  and thread management remain at the `toolang.execution` package level.
+  its private run-event persistence, shared run values, model-input preparation,
+  and bounded diagnostics. Durable records, events, storage, inspection,
+  schemas, and thread management remain at the `toolang.execution` package
+  level.
 - `RunSpec` carries the captured `AgentSetup` and `AgentState`, existing thread
   id, unique runnable name, canonical primary `Percept` input, optional model
   choice, and optional runnable `args`. Runnable declarations call their formal
@@ -211,8 +212,10 @@
   its schema types construct themselves from durable records, while
   `toolang.execution.history.RunHistory` provides the four store-backed read
   operations `list_threads()`, `get_thread()`, `list_runs()`, and `get_run()`. API
-  code only serializes these schemas; CLI code reads them through the shared
-  remote-or-local execution adapter and only renders them.
+  code only serializes these schemas. CLI thread and run commands open the
+  selected agent's `RunStore` directly, read through `RunHistory`, and submit
+  controls through `RunExecutor` or `ThreadManager`; they do not require an
+  agent HTTP server.
   `toolang.execution.types` owns shared execution lifecycle and run-control
   vocabulary.
 - `toolang.plugin` owns generic entry point discovery, pure plugin configuration
@@ -253,6 +256,23 @@
   calling lower-level modules.
 - The CLI should orchestrate work, but not absorb all parsing, file-shape, or
   storage logic.
+- A one-shot `SCRIPT RUNNABLE` command constructs `RunSpec` and calls
+  `RunExecutor.start()` directly in the CLI process, creating a fresh
+  `script_*` thread. Script, task, chore, and chat are execution origins, not
+  separate execution abstractions. The script command does not use the HTTP API
+  or sandbox hosting. Stdout is reserved for the final result, a shared CLI
+  `RunTracer` writes concise progress to stderr, and `PY_LOG` diagnostics go to
+  the per-run log file.
+- A roaming `.too` source path may select `threads`, `runs`, or `inspect`.
+  Routing binds its exact `AgentLayout` into `CliContext`; it must not rewrite
+  the roaming target into a resident `--root` and agent-name pair. Other
+  roaming management commands remain unsupported for now. Visiting selectors
+  gain these three read-only commands only when runtime target resolution is
+  unified.
+- Define module loggers with `logging.getLogger(__name__)` so logger names
+  always match their package and module paths. Configure logging with package
+  prefixes such as `toolang.execution`, `toolang.execution.executor`,
+  `toolang.execution.threads`, and `toolang.plugin.models.adapters`.
 
 
 ## Files And Storage
@@ -264,10 +284,10 @@
   thread, run, and step truth. Do not add a separate durable chat-store layer.
 - Persist run controls directly through `RunExecutor` and `RunStore`; runtime
   owns their application status. Persist run and step facts by sending
-  `RunEvent` values through the executor's mandatory internal `PersistSink`.
+  `RunEvent` values through the executor's private event projector.
 - Run events are the complete source of durable run and step facts.
-  `PersistSink` stores their references and output edges directly and never
-  synthesizes steps or reconstructs runtime locals.
+  The executor's private projector stores their references and output edges
+  directly and never synthesizes steps or reconstructs runtime locals.
 - Model steps persist a non-secret effective target snapshot and references
   that rebuild the normalized `ModelCall` accepted by `ModelAdapter`.
   Instructions, canonical messages, and toolsets are content-addressed in

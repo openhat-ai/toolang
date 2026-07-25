@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Barrier
 from typing import Any, cast
 
 import pytest
 
 import toolang.cli.toolang.main as cli
-from toolang.cli.toolang.routing import normalize
+from toolang.common.layout import AgentLayout
+from toolang.cli.toolang.commands import script
+from toolang.cli.toolang.routing import dispatch_roaming, normalize
 from toolang.cli.common.routing import extract_root_args
 
 
@@ -53,3 +56,111 @@ def test_cli_prefix_agent_context_is_isolated_between_threads(
     assert [result.result() for result in results] == [0, 0]
     assert set(seen) == {"alice", "bob"}
     assert cli._PREFIX_AGENT.get() is None
+
+
+def test_cli_routes_local_script_to_script_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_dispatch(
+        global_args: list[str],
+        argv: list[str],
+        *,
+        prog_name: str,
+    ) -> int:
+        captured.update(
+            global_args=global_args,
+            argv=argv,
+            prog_name=prog_name,
+        )
+        return 7
+
+    monkeypatch.setattr(script, "dispatch", fake_dispatch)
+
+    result = dispatch_roaming(
+        [str(source), "demo", "--help"],
+        prog_name="too",
+        run_app=lambda *_args: pytest.fail("Typer app should not run"),
+    )
+
+    assert result == 7
+    assert captured == {
+        "global_args": [],
+        "argv": [str(source), "demo", "--help"],
+        "prog_name": "too",
+    }
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        ["threads"],
+        ["runs", "--thread", "script_1"],
+        ["inspect", "run_1"],
+    ),
+)
+def test_cli_routes_roaming_history_to_its_exact_layout(
+    tmp_path: Path,
+    arguments: list[str],
+) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_run_app(args: list[str], layout: AgentLayout) -> int:
+        captured.update(args=args, layout=layout)
+        return 9
+
+    result = dispatch_roaming(
+        [str(source), *arguments],
+        prog_name="too",
+        run_app=fake_run_app,
+    )
+
+    assert result == 9
+    assert captured == {
+        "args": arguments,
+        "layout": AgentLayout.roaming(source),
+    }
+
+
+def test_cli_does_not_route_roaming_run_controls_as_history_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text("agic demo:\n  Reply directly.\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_dispatch(
+        global_args: list[str],
+        argv: list[str],
+        *,
+        prog_name: str,
+    ) -> int:
+        captured.update(
+            global_args=global_args,
+            argv=argv,
+            prog_name=prog_name,
+        )
+        return 11
+
+    monkeypatch.setattr(script, "dispatch", fake_dispatch)
+
+    result = dispatch_roaming(
+        [str(source), "steer", "run_1", "change direction"],
+        prog_name="too",
+        run_app=lambda *_args: pytest.fail("history command should not run"),
+    )
+
+    assert result == 11
+    assert captured["argv"] == [
+        str(source),
+        "steer",
+        "run_1",
+        "change direction",
+    ]

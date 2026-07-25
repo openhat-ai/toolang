@@ -30,6 +30,7 @@ Top-level commands are:
 - `fork`
 - `threads`
 - `runs`
+- `inspect`
 - `model`
 - `run`
 - `start`
@@ -84,10 +85,9 @@ Typical usage:
 ```bash
 toolang new alice
 toolang list
-PY_LOG=toolang.run=info toolang ./examples/invoke-playground.too summarize "Summarize this workspace"
-toolang ./examples/invoke-playground.too --help
-toolang ./examples/invoke-playground.too summarize "Summarize this workspace"
-toolang ./examples/invoke-playground.too summarize "Summarize this workspace" --sandbox docker
+PY_LOG=toolang.execution=info toolang ./examples/script-playground.too summarize "Summarize this workspace"
+toolang ./examples/script-playground.too --help
+toolang ./examples/script-playground.too summarize "Summarize this workspace"
 toolang ./examples/file-agent.too --inbox ./inbox
 toolang run alice
 toolang run alice --sandbox docker
@@ -103,12 +103,20 @@ toolang alice chat term_3nprht9x
 toolang alice chat --sandbox docker
 toolang alice threads
 toolang alice runs --thread term_3nprht9x
+toolang alice inspect run_ppkp9e94
 toolang alice steer run_ppkp9e94 "Use the smaller patch"
 toolang alice cancel term_3nprht9x
-toolang alice rewind run_ppkp9e94 "Try again from here"
-toolang alice fork run_ppkp9e94 "Explore a different approach"
+toolang alice rewind run_ppkp9e94
+toolang alice fork run_ppkp9e94
 toolang model list
 ```
+
+Thread and run listing, inspection, steering, cancellation, rewind, and fork
+open the selected agent's durable execution store directly. They do not start
+or call the agent HTTP server. A run id selects its owning thread; a thread id
+selects its active run for steering or cancellation and its latest terminal run
+for rewind or fork. Fork retains the anchor run, while rewind removes it and the
+following visible suffix.
 
 
 ## Agent Selectors
@@ -145,14 +153,13 @@ Foreground runtime port selection depends on the agent mode:
 | --- | --- | --- |
 | Resident | Local managed name such as `alice` | Reuse the agent's last port when available, otherwise choose from `7001-7999` |
 | Visiting | Remote selector such as `brice/alice` or `https://toolang.ai/alice.too` | Reuse the visiting root's last port when available, otherwise choose an OS temporary port |
-| Roaming invoke with `--sandbox none` | Local `.too` path with an agic or flow name | No HTTP runtime port; the executable is invoked directly |
-| Sandboxed roaming invoke | Local `.too` path with an agic or flow name and a managed `--sandbox` | No HTTP runtime port; use a dedicated execution process inside the selected host |
+| Script run | Local `.too` path with an agic or flow name | No HTTP runtime port; the executable runs directly in the CLI process |
 | Roaming file runtime | Local `.too` path with `--inbox` and no agic name | Choose an OS temporary port |
 
 
-## Invoke Surface
+## Script Run Surface
 
-Roaming invoke uses one local `.too` source path directly:
+A script run uses one local `.too` source path directly:
 
 ```bash
 toolang SCRIPT RUNNABLE [OPTIONS] [ARGS] [INPUT]...
@@ -161,44 +168,62 @@ toolang SCRIPT RUNNABLE [OPTIONS] [ARGS] [INPUT]...
 Arguments:
 
 - `SCRIPT` is the local Toolang script or agent file
-- `RUNNABLE` is the uniquely named agic or flow to invoke
+- `RUNNABLE` is the uniquely named public agic or flow to run
 - `ARGS` provide named runnable parameters, written as `NAME=VALUE`
 - `INPUT` values form a `ContentBody` perceived as the canonical primary
   `Percept`
 
 Behavior:
 
-- one local `.too` path enters roaming invoke mode
+- a local `.too` path enters script-run mode
+- the hidden `toolang script` command displays the generic path-based usage;
+  it is not a prefix and does not accept a script path
+- default agics and generated internal agics are not exposed as script commands
+- runnable command descriptions come only from their authored `doc`
 - stdout is reserved for the final runnable result
 - progress messages are written to stderr only when stderr is a TTY
 - `-q` or `--quiet` suppresses progress messages
-- `--sandbox SELECTOR` hosts execution in the selected sandbox; `none` keeps
-  direct execution in the current CLI process
-- managed sandbox execution returns native run events through its process
-  channel rather than an HTTP streaming endpoint
-- `PY_LOG=toolang.run=info toolang a.too summarize ...` writes runtime logs
+- `-v` or `--verbose` shows execution boundaries even when stderr is not a TTY
+- `--model SELECTOR` chooses one model for the run
+- execution happens directly in the current CLI process; script run does not
+  currently accept `--sandbox`
+- `PY_LOG=toolang.execution=info toolang a.too summarize ...` writes runtime logs
   under `.toolang/agents/<agent>/.runtime/logs/<runnable>/<run_id>.log`
 - `PY_LOG=debug toolang a.too summarize ...` also writes lower-level provider
   and HTTP logs to that run log file
-- `toolang a.too --help` lists invokable runnables
+- `toolang a.too --help` lists public runnables
 - `toolang a.too summarize --help` prints runnable-specific dynamic usage
-- `toolang a.too` shows usage instead of invoking a default runnable
-- roaming invoke exposes the agent's effective tools, subject to runnable
+- `toolang a.too` shows usage instead of running a default agic
+- script run exposes the agent's effective tools, subject to runnable
   directives
 - `NAME=VALUE` supplies one named argument and is coerced using its declared
   parameter type
 - `INPUT` rules:
+  - adjacent ordinary shell words are joined with spaces into one text item
   - `TEXT` adds one text part; use `@@TEXT` for literal text beginning with `@`
   - `@PATH` adds one path-based percept part; text-like paths become text parts
   - image extensions such as `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, and `.svg` infer image parts
-  - audio extensions such as `.mp3`, `.wav`, `.m4a`, `.aac`, `.ogg`, and `.flac` infer audio parts
+  - `.mp3` and `.wav` infer audio parts
   - supported document extensions infer document parts
   - unsupported video, archive, executable, and binary formats are rejected
+  - omitting input reads non-interactive stdin; `-` explicitly selects stdin
 - `--` ends option parsing so later arguments stay `INPUT` values
 - `--option` is reserved for Toolang runtime options
 - `PY_LOG` uses env_logger-style directive formatting and does not affect stdout
 - key execution events are recorded in `runs.db` for script runs just like chat,
   task, and chore runs
+
+The same roaming source path selects its durable execution history:
+
+```bash
+toolang SCRIPT threads
+toolang SCRIPT runs [--thread THREAD]
+toolang SCRIPT inspect TARGET
+```
+
+These are the only agent-management commands currently routed for roaming
+sources. Visiting selectors will gain the same three read-only commands when
+their `run`, `start`, and `stop` target resolution is unified.
 
 ## File Request Runtime
 
@@ -266,7 +291,7 @@ Agent entrypoints also share one logging policy resolver:
 | --- | --- |
 | `toolang run` | `stderr` |
 | `toolang start` | `agent_log` under the agent `.runtime` directory |
-| local `.too` invoke | `run_log` under the agent `.runtime` directory when `PY_LOG` is set, otherwise `none` |
+| local `.too` script run | `run_log` under the agent `.runtime` directory when `PY_LOG` is set, otherwise `none` |
 
 When `toolang start` runs without `--port`, Toolang first tries the agent's last
 runtime port. If that port is not reusable, Toolang scans its auto-assigned
@@ -338,7 +363,7 @@ Core endpoints are grouped as:
 Non-interactive execution uses `POST /api/v1/runs/stream`. It accepts an agic
 or flow's unique `runnable` name, primary input, optional model, and optional
 declared arguments, and returns the canonical trace event stream for HTTP
-clients. CLI invoke and TUI execution do not consume this endpoint.
+clients. CLI script runs and TUI execution do not consume this endpoint.
 
 
 ## Agent Endpoints

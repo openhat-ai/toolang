@@ -1997,7 +1997,10 @@ def test_responses_adapter_logs_api_request_and_response_at_debug(
         messages=[Message.user("hello")],
     )
 
-    with caplog.at_level(logging.DEBUG, logger="toolang.model.adapter"):
+    with caplog.at_level(
+        logging.DEBUG,
+        logger="toolang.plugin.models.adapters.responses",
+    ):
         result = asyncio.run(
             responses_models.invoke_response(target, request, stateful=True)
         )
@@ -2049,9 +2052,9 @@ def test_agic_logs_model_and_tool_io_at_debug(caplog) -> None:
         ],
     )
 
-    with (
-        caplog.at_level(logging.DEBUG, logger="toolang.model"),
-        caplog.at_level(logging.DEBUG, logger="toolang.tool"),
+    with caplog.at_level(
+        logging.DEBUG,
+        logger="toolang.execution.executor.diagnostics",
     ):
         result = _run_agic(
             _prepared_agic(

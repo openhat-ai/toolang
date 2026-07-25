@@ -1,6 +1,6 @@
 #!/usr/bin/env toolang
 
-# This file is designed for `toolang invoke` experiments.
+# This file is designed for local script-run experiments.
 # It keeps the capabilities minimal and focuses on different agic shapes.
 
 struct Summary:

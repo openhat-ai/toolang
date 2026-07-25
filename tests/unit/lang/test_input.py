@@ -87,6 +87,31 @@ def test_input_coercion_preserves_parts_and_parses_declared_values() -> None:
     assert coerce_output((1, 2), "Number[]") == (1, 2)
 
 
+def test_output_coercion_accepts_one_explicit_json_fence() -> None:
+    value = Message.assistant(
+        "Here is the requested value:\n\n"
+        "```json\n"
+        '["one", "two"]\n'
+        "```"
+    )
+
+    assert coerce_output(value, "Text[]") == ["one", "two"]
+
+
+def test_output_coercion_does_not_guess_unfenced_or_ambiguous_json() -> None:
+    with pytest.raises(ToolangError, match="output is not valid Text\\[\\]"):
+        coerce_output(Message.assistant('Result: ["one", "two"]'), "Text[]")
+
+    with pytest.raises(ToolangError, match="output is not valid Text\\[\\]"):
+        coerce_output(
+            Message.assistant(
+                '```json\n["one"]\n```\n'
+                '```json\n["two"]\n```'
+            ),
+            "Text[]",
+        )
+
+
 def test_struct_coercion_validates_fields() -> None:
     review = StructDecl(
         name="Review",

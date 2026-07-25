@@ -1,10 +1,10 @@
 #!/usr/bin/env toolang
 
-# Manual check for simulating a short thread in one `toolang invoke` call.
+# Manual check for simulating a short thread in one script run.
 # `recall = none` keeps stored thread history out of the model input, so the
 # explicit user/assistant/user blocks below are the only conversation history.
 #
-#   toolang examples/invoke.simulated-history.none.too followup "What is my name?"
+#   toolang examples/script.simulated-history.none.too followup "What is my name?"
 
 agic followup(_: Part[]):
   recall = none

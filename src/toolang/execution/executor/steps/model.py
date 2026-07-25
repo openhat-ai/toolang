@@ -43,7 +43,7 @@ from ..diagnostics import log_model_request, log_model_result, log_model_target
 if TYPE_CHECKING:
     from ..runs.agic import _AgicState
 
-_LOGGER = logging.getLogger("toolang.run")
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)

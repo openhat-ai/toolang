@@ -19,6 +19,7 @@ from toolang.up import server as agent_up
 from toolang.base.types.sandbox import SandboxSelector
 from toolang.common.layout import AgentLayout
 from toolang.common.errors import ToolangError
+from toolang.execution.history import RunHistory
 from toolang.execution.stream import trace_event_data
 from toolang.state.state import split_cap_selectors
 from toolang.plugin.models.resolution import split_model_selectors
@@ -44,9 +45,7 @@ from ...common.context import (
     require_prefix_agent,
     ui_base_url,
 )
-from ...common.execution import execution_get
-from ...common.output import echo_table
-from . import thread as _inspect_cli
+from ...common.execution import open_execution
 
 
 def chat_command(
@@ -131,191 +130,6 @@ def attach_command(
     _open_thread_ui(ctx, _target_thread_id(ctx, thread))
 
 
-def threads_command(
-    ctx: typer.Context,
-    origin: Annotated[
-        str | None, typer.Option("--origin", help="Filter by origin.")
-    ] = None,
-    channel: Annotated[
-        str | None, typer.Option("--channel", help="Filter by channel.")
-    ] = None,
-    status: Annotated[
-        str | None, typer.Option("--status", help="Filter by thread status.")
-    ] = None,
-) -> None:
-    query = _query_params(origin=origin, channel=channel, status=status)
-    path = "/api/v1/threads" if not query else f"/api/v1/threads?{query}"
-    result = execution_get(ctx, path, remote_get=runtime_get)
-    rows = [
-        (
-            str(item.get("id", "")),
-            _truncate_table_text(item.get("title"), width=48),
-            str(item.get("run_count", "")),
-            str(item.get("status", "")),
-            str(item.get("updated_at", "")),
-        )
-        for item in result.get("items", [])
-        if isinstance(item, dict)
-    ]
-    echo_table(("THREAD", "TITLE", "RUNS", "STATUS", "UPDATED"), rows)
-
-
-def runs_command(
-    ctx: typer.Context,
-    thread: Annotated[
-        str | None, typer.Option("--thread", help="Filter by thread id.")
-    ] = None,
-    status: Annotated[
-        str | None, typer.Option("--status", help="Filter by run status.")
-    ] = None,
-) -> None:
-    query: list[tuple[str, str]] = []
-    if thread is not None:
-        query.append(("thread_id", thread))
-    if status is not None:
-        query.append(("status", _api_run_status(status)))
-    path = "/api/v1/runs" if not query else f"/api/v1/runs?{urlencode(query)}"
-    result = execution_get(ctx, path, remote_get=runtime_get)
-    if thread is not None:
-        rows = [
-            (
-                str(item.get("id", "")),
-                _truncate_table_text(
-                    item.get("summary") or item.get("input_text"), width=48
-                ),
-                _display_run_status(item.get("status")),
-                str(item.get("created_at", "")),
-            )
-            for item in result.get("items", [])
-            if isinstance(item, dict)
-        ]
-        echo_table(("RUN", "TITLE", "STATUS", "CREATED"), rows)
-    else:
-        rows = [
-            (
-                str(item.get("thread_id", "")),
-                str(item.get("id", "")),
-                _truncate_table_text(
-                    item.get("summary") or item.get("input_text"), width=48
-                ),
-                _display_run_status(item.get("status")),
-                str(item.get("created_at", "")),
-            )
-            for item in result.get("items", [])
-            if isinstance(item, dict)
-        ]
-        echo_table(("THREAD", "RUN", "TITLE", "STATUS", "CREATED"), rows)
-
-
-def inspect_command(
-    ctx: typer.Context,
-    target: Annotated[
-        str, typer.Argument(help="Thread id, run id, or run step path to inspect.")
-    ],
-    limit: Annotated[
-        int, typer.Option("--limit", help="Maximum thread runs to read.")
-    ] = 100,
-    json_view: Annotated[
-        bool, typer.Option("--json", help="Render preprocessed inspect data as JSON.")
-    ] = False,
-) -> None:
-    _inspect_cli.inspect_command(ctx, target, limit=limit, json_view=json_view)
-
-
-def steer_command(
-    ctx: typer.Context,
-    run: str = typer.Argument(
-        ..., help="Run id to steer. Thread id means its active run."
-    ),
-    message: str = typer.Argument(..., help="Instruction to steer the run."),
-) -> None:
-    run_id = _target_run_id(ctx, run)
-    runtime_post(
-        ctx,
-        f"/api/v1/runs/{run_id}/steer",
-        payload={"message": message_payload(message)},
-    )
-    typer.echo(f"steered {run_id}")
-
-
-def cancel_command(
-    ctx: typer.Context,
-    run: str = typer.Argument(
-        ..., help="Run id to cancel. Thread id means its active run."
-    ),
-) -> None:
-    run_id = _target_run_id(ctx, run)
-    runtime_post(ctx, f"/api/v1/runs/{run_id}/cancel", payload={})
-    typer.echo(f"canceled {run_id}")
-
-
-def rewind_command(
-    ctx: typer.Context,
-    point: str = typer.Argument(
-        ...,
-        help="Run id to rewind before. Thread id means rewind before its latest run.",
-    ),
-    chat: Annotated[
-        bool, typer.Option("--chat", help="Open chat on the rewound thread.")
-    ] = False,
-) -> None:
-    run_id = _target_latest_run_id(ctx, point)
-    thread_id = _target_thread_id(ctx, point)
-    if thread_id is None:
-        raise click.ClickException(f"thread not found for run: {run_id}")
-    result = runtime_post(
-        ctx,
-        f"/api/v1/threads/{thread_id}/rewind",
-        payload={"run_id": run_id},
-    )
-    result_thread_id = _result_thread_id(result)
-    typer.echo(f"rewound {result_thread_id or thread_id} before {run_id}")
-    if chat:
-        _open_thread_ui(
-            ctx,
-            result_thread_id or _target_thread_id(ctx, point),
-        )
-
-
-def fork_command(
-    ctx: typer.Context,
-    point: str = typer.Argument(
-        ...,
-        help="Run id to fork before. Thread id means fork after its latest run.",
-    ),
-    chat: Annotated[
-        bool, typer.Option("--chat", help="Open chat on the forked thread.")
-    ] = False,
-) -> None:
-    run_id, include_anchor = _fork_anchor_run(ctx, point)
-    thread_id = _target_thread_id(ctx, point)
-    if thread_id is None:
-        raise click.ClickException(f"thread not found for run: {run_id}")
-    payload: dict[str, object] = {"run_id": run_id}
-    if include_anchor:
-        payload["include_anchor"] = True
-    result = runtime_post(
-        ctx,
-        f"/api/v1/threads/{thread_id}/fork",
-        payload=payload,
-    )
-    boundary = "through" if include_anchor else "before"
-    result_thread_id = _result_thread_id(result)
-    typer.echo(f"forked {result_thread_id or '-'} {boundary} {run_id}")
-    if chat:
-        if result_thread_id is not None:
-            _open_thread_ui(ctx, result_thread_id)
-
-
-def _truncate_table_text(value: object, *, width: int) -> str:
-    text = " ".join(str(value or "").split())
-    if len(text) <= width:
-        return text
-    if width <= 3:
-        return text[:width]
-    return f"{text[: width - 3].rstrip()}..."
-
-
 def _mapping(value: object) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
 
@@ -398,21 +212,6 @@ def _chat_selector_payload(
     if flow is not None:
         payload["flow"] = flow
     return payload
-
-
-def _query_params(**items: str | None) -> str:
-    return urlencode(
-        [(key, value) for key, value in items.items() if value is not None]
-    )
-
-
-def _api_run_status(status: str) -> str:
-    return "finished" if status == "succeeded" else status
-
-
-def _display_run_status(status: object) -> str:
-    text = str(status or "")
-    return "succeeded" if text == "finished" else text
 
 
 def _open_thread_ui(
@@ -1035,44 +834,11 @@ def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
     if target is None:
         return None
     if target.startswith("run_"):
-        detail = execution_get(ctx, f"/api/v1/runs/{target}", remote_get=runtime_get)
-        info = detail.get("info")
-        if isinstance(info, dict) and isinstance(info.get("thread_id"), str):
-            return str(info["thread_id"])
-        thread_id = detail.get("thread_id")
-        if isinstance(thread_id, str):
-            return thread_id
-        raise click.ClickException(f"run has no thread: {target}")
+        with open_execution(ctx, required=True) as resources:
+            if resources is None:  # pragma: no cover
+                raise RuntimeError("execution resources were not opened")
+            run = RunHistory(resources.store).get_run(target)
+        if run is None:
+            raise click.ClickException(f"run not found: {target}")
+        return run.thread_id
     return target
-
-
-def _target_run_id(ctx: typer.Context, target: str) -> str:
-    if target.startswith("run_"):
-        return target
-    detail = execution_get(ctx, f"/api/v1/threads/{target}", remote_get=runtime_get)
-    info = detail.get("info")
-    if not isinstance(info, dict):
-        raise click.ClickException(f"thread not found: {target}")
-    active = info.get("active_run")
-    if not isinstance(active, dict) or not isinstance(active.get("id"), str):
-        raise click.ClickException(f"thread has no active run: {target}")
-    return str(active["id"])
-
-
-def _target_latest_run_id(ctx: typer.Context, target: str) -> str:
-    if target.startswith("run_"):
-        return target
-    detail = execution_get(ctx, f"/api/v1/threads/{target}", remote_get=runtime_get)
-    info = detail.get("info")
-    if not isinstance(info, dict):
-        raise click.ClickException(f"thread not found: {target}")
-    latest = info.get("latest_run")
-    if not isinstance(latest, dict) or not isinstance(latest.get("id"), str):
-        raise click.ClickException(f"thread has no runs: {target}")
-    return str(latest["id"])
-
-
-def _fork_anchor_run(ctx: typer.Context, target: str) -> tuple[str, bool]:
-    if target.startswith("run_"):
-        return target, False
-    return _target_latest_run_id(ctx, target), True

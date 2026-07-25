@@ -45,7 +45,7 @@ from .source import Source, scan_home_source, scan_root_source
 
 _PREPARED_SCHEMA = 1
 _MAX_SOURCE_SNAPSHOT_ATTEMPTS = 3
-logger = logging.getLogger("toolang.prepare")
+logger = logging.getLogger(__name__)
 
 
 def prepare_agent_state(

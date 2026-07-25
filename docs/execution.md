@@ -105,7 +105,7 @@ across run and thread controls or pass `None`.
 
 ## Mandatory Persistence And Tracing
 
-`RunExecutor` constructs one internal `PersistSink` from its `RunStore`.
+`RunExecutor` constructs one private event projector from its `RunStore`.
 Persistence cannot be replaced or disabled by callers.
 
 For every `RunEvent`, ordering is:
@@ -117,14 +117,14 @@ runtime produces event
   -> optional RunTracer observes the event
 ```
 
-`PersistSink` never creates or updates run controls. Tracer failures are logged
-and isolated from execution. One tracer observes the complete run tree started
-by its `start()` call, including child runs, steps, parts, and terminal events.
-Each event already contains its complete durable references and output edge;
-`PersistSink` does not reconstruct runtime locals or infer alternate output.
-`RunTracer.on_event()` is asynchronous. The executor serializes tracer calls
-and awaits each one on the owner event loop, so tracers never need to infer
-which worker thread emitted an event.
+The private projector never creates or updates run controls. Tracer failures
+are logged and isolated from execution. One tracer observes the complete run
+tree started by its `start()` call, including child runs, steps, parts, and
+terminal events. Each event already contains its complete durable references
+and output edge; the private projector does not reconstruct runtime locals or
+infer alternate output. `RunTracer.on_event()` is asynchronous. The executor
+serializes tracer calls and awaits each one on the owner event loop, so tracers
+never need to infer which worker thread emitted an event.
 
 
 ## Run Events

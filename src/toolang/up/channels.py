@@ -21,7 +21,7 @@ from toolang.plugin.config import ChannelBinding
 from toolang.state.state import AgentState
 
 DEFAULT_INTERVAL_MS = 300.0
-logger = logging.getLogger("toolang.poll")
+logger = logging.getLogger(__name__)
 
 
 def spawn(

@@ -19,8 +19,6 @@ import typer
 from toolang.up import process as agents
 from toolang.common.layout import AgentLayout
 from toolang.base.types.message import Message
-from ...execution.events import RunEnd, RunStarting, TraceEvent, trace_event_from_data
-from ...execution.records import InputRef, RunRecord
 from .context import context_root, require_prefix_agent, ui_base_url
 from .errors import RuntimeClientError
 
@@ -125,47 +123,12 @@ class RuntimeClient:
             raise RuntimeClientError("runtime did not return a thread id")
         return thread_id
 
-    def invoke(
-        self,
-        payload: Mapping[str, object],
-        *,
-        on_event: Callable[[TraceEvent], None] | None = None,
-    ) -> RunRecord:
-        """Execute one non-interactive run and consume its trace stream."""
-
-        started: RunStarting | None = None
-        ended: RunEnd | None = None
-        for event_data in self.events("/api/v1/runs/stream", payload=payload):
-            event = trace_event_from_data(event_data)
-            if isinstance(event, RunStarting) and started is None:
-                started = event
-            if isinstance(event, RunEnd) and (
-                started is None or event.run == started.run
-            ):
-                ended = event
-            if on_event is not None:
-                on_event(event)
-        if ended is None:
-            raise RuntimeClientError("runtime run stream ended without a final event")
-        return RunRecord(
-            id=ended.run,
-            parent=started.parent if started is not None else None,
-            thread=started.thread if started is not None else "",
-            input=ended.input or InputRef(),
-            output=ended.output,
-            context=dict(started.context) if started is not None else {},
-            status=ended.status,
-            error=ended.error,
-            created_at=started.created_at if started is not None else "",
-            finished_at=ended.finished_at,
-        )
-
     def start_run(
         self,
         thread_id: str,
         message: str,
         selects: Mapping[str, object],
-        on_event: Callable[[TraceEvent], None],
+        on_event: Callable[[dict[str, Any]], None],
         on_error: Callable[[str], None],
     ) -> None:
         try:
@@ -178,7 +141,7 @@ class RuntimeClient:
                     "message": message_payload(message),
                     **selects,
                 },
-                on_event=lambda event: on_event(trace_event_from_data(event)),
+                on_event=on_event,
             )
         except Exception as exc:
             on_error(_error_message(exc))
@@ -186,7 +149,7 @@ class RuntimeClient:
     def stop_run(
         self,
         run_id: str,
-        on_event: Callable[[TraceEvent], None],
+        on_event: Callable[[dict[str, Any]], None],
         on_error: Callable[[str], None],
     ) -> None:
         try:
@@ -203,7 +166,7 @@ class RuntimeClient:
         self,
         run_id: str,
         message: str,
-        on_event: Callable[[TraceEvent], None],
+        on_event: Callable[[dict[str, Any]], None],
         on_error: Callable[[str], None],
     ) -> None:
         try:
@@ -352,14 +315,14 @@ def _json_value(payload: bytes) -> Any:
     return value
 
 
-def _command_trace_event(payload: object) -> TraceEvent | None:
+def _command_trace_event(payload: object) -> dict[str, Any] | None:
     if not isinstance(payload, Mapping):
         return None
     event_payload = cast(Mapping[str, object], payload)
     event_type = event_payload.get("type")
     if not isinstance(event_type, str):
         return None
-    return trace_event_from_data({"type": event_type, "payload": event_payload})
+    return {"type": event_type, "payload": dict(event_payload)}
 
 
 def _http_error(exc: HTTPError) -> RuntimeClientError:

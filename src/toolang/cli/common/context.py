@@ -23,6 +23,7 @@ from ...catalog.errors import CatalogError
 class CliContext:
     root: Path
     agent: str | None = None
+    layout: AgentLayout | None = None
 
 
 def cli_context(ctx: typer.Context) -> CliContext:
@@ -47,9 +48,12 @@ def require_prefix_agent(ctx: typer.Context) -> str:
 
 
 def context_layout(ctx: typer.Context) -> AgentLayout:
-    """Return the resident layout selected by the current CLI context."""
+    """Return the explicitly selected layout or one resident layout."""
 
-    return AgentLayout.resident(context_root(ctx), require_prefix_agent(ctx))
+    state = cli_context(ctx)
+    if state.layout is not None:
+        return state.layout
+    return AgentLayout.resident(state.root, require_prefix_agent(ctx))
 
 
 def require_runtime_agent(ctx: typer.Context, agent: str | None) -> str:

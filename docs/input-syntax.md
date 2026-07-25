@@ -408,6 +408,11 @@ For an agic, output coercion applies to terminal assistant content. For a flow,
 it applies to the final primary local. The coerced result becomes `_` for its
 caller.
 
+Structured output accepts either raw JSON or exactly one Markdown code block
+explicitly labeled `json`. Surrounding prose is ignored only for that single
+explicit block; output coercion does not search arbitrary text for JSON or
+choose among multiple blocks.
+
 `Message` is not a Toolang input or output type. Language `Part` and `Part[]`
 outputs remain `PerceptPart` and `Percept` values internally. CLI and protocol
 callers serialize the coerced value for their own external boundary.

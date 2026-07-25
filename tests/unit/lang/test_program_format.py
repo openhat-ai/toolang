@@ -583,7 +583,7 @@ def test_repo_programs_format_idempotently_without_semantic_changes() -> None:
         *(
             path
             for path in sorted((PROJECT_ROOT / "examples").glob("*.too"))
-            if path.name != "invoke-playground.too"
+            if path.name != "script-playground.too"
         ),
     ]
 

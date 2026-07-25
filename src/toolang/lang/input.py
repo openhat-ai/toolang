@@ -29,6 +29,10 @@ IncludeResolver = Callable[[str], PerceptPart]
 _PROMPT_CALL_RE = re.compile(r"^/([A-Za-z_][\w-]*)(?:\s+(.*))?$")
 _SLOT_RE = re.compile(r"\ue000(\d+)\ue001")
 _FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+_JSON_OUTPUT_FENCE_RE = re.compile(
+    r"```[ \t]*json[ \t]*\r?\n(?P<value>.*?)\r?\n?```",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def perceive_input(
@@ -579,9 +583,20 @@ def _parse_text_json(
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
+        error = exc
+        if boundary == "output":
+            blocks = tuple(
+                match.group("value")
+                for match in _JSON_OUTPUT_FENCE_RE.finditer(text)
+            )
+            if len(blocks) == 1:
+                try:
+                    return json.loads(blocks[0])
+                except json.JSONDecodeError as fenced_exc:
+                    error = fenced_exc
         raise ToolangError(
-            f"{boundary} is not valid {type_name}: {exc.msg}"
-        ) from exc
+            f"{boundary} is not valid {type_name}: {error.msg}"
+        ) from error
 
 
 def _require_percept(value: object) -> Percept:

@@ -8,17 +8,16 @@ import logging
 from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall, ToolCallResult
 
-_MODEL_LOGGER = logging.getLogger("toolang.model")
-_TOOL_LOGGER = logging.getLogger("toolang.tool")
+_LOGGER = logging.getLogger(__name__)
 _PREVIEW_LIMIT = 2_000
 
 
 def log_model_target(
     model: ModelTarget, *, thread_id: str, run_id: str, step_index: int
 ) -> None:
-    if not _MODEL_LOGGER.isEnabledFor(logging.DEBUG):
+    if not _LOGGER.isEnabledFor(logging.DEBUG):
         return
-    _MODEL_LOGGER.debug(
+    _LOGGER.debug(
         "model.target thread=%s run=%s step=%s ref=%s provider=%s model=%s adapter=%s%s",
         thread_id,
         run_id,
@@ -34,9 +33,9 @@ def log_model_target(
 def log_model_request(
     request: ModelCall, *, thread_id: str, run_id: str, step_index: int
 ) -> None:
-    if not _MODEL_LOGGER.isEnabledFor(logging.DEBUG):
+    if not _LOGGER.isEnabledFor(logging.DEBUG):
         return
-    _MODEL_LOGGER.debug(
+    _LOGGER.debug(
         "model.request thread=%s run=%s step=%s instructions=%s messages=%s tools=%s state=%s",
         thread_id,
         run_id,
@@ -51,7 +50,7 @@ def log_model_request(
 def log_model_result(
     result: ModelCallResult, *, thread_id: str, run_id: str, step_index: int
 ) -> None:
-    if not _MODEL_LOGGER.isEnabledFor(logging.DEBUG):
+    if not _LOGGER.isEnabledFor(logging.DEBUG):
         return
     usage = (
         {
@@ -61,7 +60,7 @@ def log_model_result(
         if result.usage is not None
         else None
     )
-    _MODEL_LOGGER.debug(
+    _LOGGER.debug(
         "model.result thread=%s run=%s step=%s message=%s tool_calls=%s usage=%s state=%s",
         thread_id,
         run_id,
@@ -91,9 +90,9 @@ def log_tool_call_input(
     step_index: int,
     plugin_name: str,
 ) -> None:
-    if not _TOOL_LOGGER.isEnabledFor(logging.DEBUG):
+    if not _LOGGER.isEnabledFor(logging.DEBUG):
         return
-    _TOOL_LOGGER.debug(
+    _LOGGER.debug(
         "tool.request thread=%s run=%s step=%s plugin=%s tool=%s call=%s arguments=%s",
         thread_id,
         run_id,
@@ -113,9 +112,9 @@ def log_tool_call_output(
     step_index: int,
     plugin_name: str,
 ) -> None:
-    if not _TOOL_LOGGER.isEnabledFor(logging.DEBUG):
+    if not _LOGGER.isEnabledFor(logging.DEBUG):
         return
-    _TOOL_LOGGER.debug(
+    _LOGGER.debug(
         "tool.result thread=%s run=%s step=%s plugin=%s tool=%s call=%s output=%s error=%s",
         thread_id,
         run_id,

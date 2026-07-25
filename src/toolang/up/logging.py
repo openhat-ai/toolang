@@ -22,14 +22,14 @@ from toolang.common.env_logger import (
 )
 
 DEFAULT_LOG_LEVEL = "ERROR"
-DEFAULT_AGENT_LOG_SPEC = "error,toolang.runtime=info,toolang.state=info,toolang.run=info,httpx=off,httpcore=off"
+DEFAULT_AGENT_LOG_SPEC = "error,toolang.up.server=info,toolang.state=info,toolang.execution=info,httpx=off,httpcore=off"
 DEFAULT_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 DEFAULT_LOG_FORMAT = "%(asctime)s %(levelprefix)s [%(name)s] %(message)s"
 DEFAULT_ACCESS_LOG_FORMAT = (
     '%(asctime)s %(levelprefix)s [%(name)s] %(client_addr)s - "%(request_line)s" %(status_code)s'
 )
 _TELEGRAM_BOT_URL_PATTERN = re.compile(r"(https://api\.telegram\.org/bot)[^/]+")
-LogMode = Literal["run", "start", "invoke"]
+LogMode = Literal["run", "start", "script"]
 LogDestination = Literal["stderr", "agent_log", "run_log", "none"]
 
 
@@ -221,7 +221,7 @@ def resolve_agent_logging(
         return LoggingPlan(spec=spec, destination="agent_log", path=agent_log_path, environ=resolved_environ)
     if spec:
         if run_log_path is None:
-            raise ValueError("run_log path is required for invoke logging")
+            raise ValueError("run_log path is required for script logging")
         return LoggingPlan(spec=spec, destination="run_log", path=run_log_path, environ=resolved_environ)
     resolved_environ.pop(PY_LOG_ENV_VAR, None)
     return LoggingPlan(spec=None, destination="none", path=None, environ=resolved_environ)
@@ -231,6 +231,7 @@ def configure_logging_plan(plan: LoggingPlan) -> None:
     """Install logging for one resolved logging plan in the current process."""
 
     if plan.destination == "none":
+        configure_logging(spec="off", environ={})
         return
     log_path = plan.path if plan.destination in {"agent_log", "run_log"} else None
     configure_logging(spec=plan.spec, environ=plan.environ, log_path=log_path)

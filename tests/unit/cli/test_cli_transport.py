@@ -96,50 +96,6 @@ def test_runtime_client_events_honors_stop_and_ignores_invalid_data(
     assert list(RuntimeClient("http://runtime").events("/events", stop=stop)) == []
 
 
-def test_runtime_client_invoke_returns_record_and_forwards_trace_events(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events = [
-        {
-            "type": "run_starting",
-            "payload": {
-                "run": "run_1",
-                "cmd": 0,
-                "parent": None,
-                "thread": "script_1",
-                "input": {"role": "user", "parts": [{"type": "text", "text": "hello"}]},
-                "context": {"origin": "script"},
-                "created_at": "2026-01-01T00:00:00Z",
-            },
-        },
-        {
-            "type": "run_end",
-            "payload": {
-                "run": "run_1",
-                "status": "finished",
-                "input": {"cmd": 0},
-                "output": {"step": "run_1/1"},
-                "finished_at": "2026-01-01T00:00:01Z",
-            },
-        },
-    ]
-    monkeypatch.setattr(
-        RuntimeClient,
-        "events",
-        lambda *_args, **_kwargs: iter(events),
-    )
-    forwarded = []
-
-    record = RuntimeClient("http://runtime").invoke(
-        {"executable_name": "demo"}, on_event=forwarded.append
-    )
-
-    assert record.run_id == "run_1"
-    assert record.status == "finished"
-    assert record.output is not None and record.output.step == "run_1/1"
-    assert [event.type for event in forwarded] == ["run_starting", "run_end"]
-
-
 def test_owned_runtime_client_cleans_up_failed_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

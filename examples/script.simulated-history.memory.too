@@ -4,7 +4,7 @@
 # retrieval. `recall = memory` still keeps stored thread history out of the
 # model input, so the explicit message blocks below are the conversation replay.
 #
-#   toolang examples/invoke.simulated-history.memory.too followup "What did I ask you to remember?"
+#   toolang examples/script.simulated-history.memory.too followup "What did I ask you to remember?"
 
 agic followup(_: Part[]):
   recall = memory

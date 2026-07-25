@@ -36,7 +36,7 @@ from toolang.base.types.run import (
 )
 from toolang.base.types.tool import ToolDefinition
 
-_ADAPTER_LOGGER = logging.getLogger("toolang.model.adapter")
+_ADAPTER_LOGGER = logging.getLogger(__name__)
 _LOG_PREVIEW_LIMIT = 4_000
 _STATEFUL_PROVIDERS = frozenset({"openai"})
 _AUDIO_MODEL_PREFIXES: tuple[str, ...] = (

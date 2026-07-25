@@ -9,19 +9,17 @@ from typing import Any
 
 import httpx
 
-from toolang.common.errors import ToolangError
-from toolang.common.layout import AgentLayout
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.common.time import utc_now
-from toolang.execution.store import RunStore
-from toolang.execution.executor.persist import PersistSink
-from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
-from toolang.execution.records import RunControlRef, OutputRef, ThreadPeer, ThreadRecord
+from toolang.common.errors import ToolangError
 from toolang.common.ids import LOCAL_ID_FAMILY, RUN_ID_FAMILY, allocate_id
+from toolang.common.layout import AgentLayout
+from toolang.common.time import utc_now
+from toolang.execution.records import RunControlRef, OutputRef, ThreadPeer, ThreadRecord
+from toolang.execution.store import RunStore
 
 DEFAULT_TIMEOUT_SEC = 60
 DEFAULT_MAX_RESPONSE_CHARS = 20_000
@@ -363,7 +361,24 @@ def _record_local_a2a_exchange(
             ),
         },
     }
-    sink = PersistSink(store)
+    model = {
+        "ref": f"agent_chat/{peer}",
+        "provider": "agent_chat",
+        "name": peer,
+        "model": peer,
+        "adapter": "chat",
+        "base_url": None,
+        "scope": None,
+        "tags": [],
+        "options": {},
+        "tools": False,
+        "streaming": False,
+    }
+    call = ModelCall(
+        instructions="",
+        messages=[input_message],
+    )
+    finished_at = utc_now()
     store.accept_start(
         run_id=run_id,
         parent=None,
@@ -373,63 +388,45 @@ def _record_local_a2a_exchange(
         request_id=None,
         created_at=started_at,
     )
-    sink.on_event(
-        RunBegin(
-            run=run_id,
-            input=RunControlRef(index=0),
+    with store.write_transaction():
+        store.begin_run(
+            run_id=run_id,
             context=run_context,
             started_at=started_at,
         )
-    )
-    store.finish_run_controls(run_id=run_id, indexes=(0,), finished_at=started_at)
-    sink.on_event(
-        StepBegin(
-            step=f"{run_id}/0",
+        store.finish_run_controls(
+            run_id=run_id,
+            indexes=(0,),
+            finished_at=started_at,
+        )
+        given = store.capture_model_call(target=model, call=call)
+        store.begin_step(
+            parent=run_id,
+            index=0,
             kind="model",
             input=(RunControlRef(index=0),),
-            given={
-                "model": {
-                    "ref": f"agent_chat/{peer}",
-                    "provider": "agent_chat",
-                    "name": peer,
-                    "model": peer,
-                    "adapter": "chat",
-                    "base_url": None,
-                    "scope": None,
-                    "tags": [],
-                    "options": {},
-                    "tools": False,
-                    "streaming": False,
-                },
-                "call": ModelCall(
-                    instructions="",
-                    messages=[input_message],
-                ).to_data(),
-            },
+            given=given,
             started_at=started_at,
         )
-    )
-    finished_at = utc_now()
-    sink.on_event(
-        StepEnd(
-            step=f"{run_id}/0",
+        store.finish_step(
+            parent=run_id,
+            index=0,
             kind="model",
             status="finished",
             output=(TextPart(text=assistant_text),),
             noted={
                 "usage": {"input_tokens": 0, "output_tokens": 0},
             },
+            error=None,
             finished_at=finished_at,
         )
-    )
-    sink.on_event(
-        RunEnd(
-            run=run_id,
+        store.finish_run(
+            run_id=run_id,
             status="finished",
             output=OutputRef(step=f"{run_id}/0"),
+            error=None,
             finished_at=finished_at,
         )
-    )
     return run_id
 
 

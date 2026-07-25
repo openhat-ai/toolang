@@ -260,7 +260,7 @@ The public execution concepts are:
 - `ThreadManager`: synchronous thread creation, rewind, and fork orchestration
 - `RunEvent`: the complete ordered execution event stream
 - `RunStore`: thread controls, run controls, runs, steps, and transcript messages
-- `PersistSink`: mandatory internal run/step projection into `RunStore`
+- private run-event projection: mandatory run/step persistence into `RunStore`
 - `RunTracer`: optional per-start observation of live run events
 
 `RunExecutor.start()` receives one `RunSpec` carrying explicit immutable
@@ -300,7 +300,7 @@ execution/
     ├── common.py           # bound runs, locals, and shared execution helpers
     ├── prepare.py          # agic resolution and complete model-input preparation
     ├── diagnostics.py      # bounded model and tool diagnostics
-    ├── persist.py          # mandatory internal PersistSink
+    ├── _persist.py         # private run-event projection
     ├── runs/               # agic and flow run bodies
     ├── steps/              # event-owning run, model, tool, and system steps
     ├── stmts/              # lowered flow-statement semantics
@@ -338,12 +338,7 @@ toolang/cli/
 │   ├── main.py
 │   ├── __main__.py         # thin python -m adapter
 │   └── commands.py
-├── impl/                   # command implementations, never CLI entry points
-│   ├── invoke/
-│   │   ├── runner.py
-│   │   ├── request.py
-│   │   ├── help.py
-│   │   └── rendering.py
+├── impl/                   # interactive implementations, never CLI entry points
 │   └── chat/               # prompt-toolkit TUI
 └── common/                 # infrastructure shared by two or more CLI areas
     ├── context.py
@@ -359,8 +354,8 @@ Responsibilities are:
   and final CLI error handling
 - `toolang.commands`: Typer parameters, calls to concept objects, and
   presentation
-- `impl.invoke`: local script invocation, executable argument coercion,
-  generated help, and trace progress
+- `toolang.commands.script`: local script command, executable argument
+  coercion, generated Typer help, and direct `RunExecutor.start()` orchestration
 - `impl.chat`: interactive TUI state, mutable blocks, widgets, and slash
   commands
 - `caps`: one cap command implementation reused by `too` and the standalone
@@ -386,12 +381,10 @@ caps = "toolang.cli.caps.main:main"
 The CLI dependency direction is:
 
 ```text
-cli.common <- cli.impl.invoke
 cli.common <- cli.impl.chat
 cli.common <- cli.caps
 cli.common <- cli.toolang
 
-cli.toolang.commands.runtime -> cli.impl.invoke
 cli.toolang.commands.chat    -> cli.impl.chat
 cli.toolang                  -> cli.caps.commands
 ```
@@ -472,7 +465,7 @@ concepts:
 - `toolang.lang` becomes the canonical language package and the
   `toolang.program` facade is removed
 - `toolang.cli.toolang` and `toolang.cli.caps` are the two executable CLI
-  packages; chat and invoke live under `toolang.cli.impl`
+  packages; only interactive chat remains under `toolang.cli.impl`
 - duplicate cap command registration and forwarding modules are removed
 
 No compatibility wrappers should remain once all in-repository callers use the

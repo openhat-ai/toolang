@@ -30,6 +30,7 @@ Examples:
 - `chore_xy1234ab`
 - `web_def456gh`
 - `term_jk789mnp`
+- `script_pqr234st`
 - `tg_123456789`
 
 The parser splits on the first `_`; the trailing id may contain additional

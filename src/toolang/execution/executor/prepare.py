@@ -43,7 +43,7 @@ from .common import BoundRun, value_percept
 if TYPE_CHECKING:
     from .executor import _Execution
 
-_LOGGER = logging.getLogger("toolang.run")
+_LOGGER = logging.getLogger(__name__)
 _TEXT_HISTORY_MESSAGE_LIMIT = 32
 _DEFAULT_INSTRUCT_TEMPLATE = prompts.load("instruct.default.md")
 _DEFAULT_CONTEXT_TEMPLATE = prompts.load("context.default.md")

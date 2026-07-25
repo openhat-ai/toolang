@@ -73,8 +73,8 @@ The proposed full identities are:
 - chore thread: `chore_<id>`
 - web chat thread: `web_<id>`
 - terminal and TUI chat thread: `term_<id>`
+- one-shot script invocation thread: `script_<id>`
 - file request thread: `file_<full-path-sha256-prefix>`
-- script/invoke agic thread: `agic_<agic-name>`
 - Telegram thread: `tg_<external_id>`
 - run id: `run_<id>`
 
@@ -82,9 +82,9 @@ For task and chore ids, the bare `<id>` stays stable even when the authored file
 is renamed, moved, archived, or restored.
 
 File request threads use the first 12 hex chars of the SHA-256 of the absolute
-source path, so new file fingerprints at the same path share a thread.
-Script/invoke runs are stable for the invoked agic name; the default agic uses
-`agic_default`.
+source path, so new file fingerprints at the same path share a thread. Each
+one-shot script invocation receives a fresh `script_<id>` thread so its history
+and result remain independently inspectable.
 
 
 ## Reversible Obfuscation

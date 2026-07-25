@@ -95,7 +95,7 @@ from toolang.execution.executor.invocation import AgicInvocation
 from toolang.execution.executor.binding import bind_run_request as bind_request
 from toolang.execution.executor import Executor
 from toolang.execution.executor.request import RunRequest
-from toolang.execution.executor.persist import PersistSink
+from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.reply import SseReplySink
 from toolang.setup import AgentSetup, SetupWatcher
@@ -687,9 +687,11 @@ def test_run_events_api_returns_resource_scoped_events(tmp_path: Path) -> None:
     assert response["items"][0]["cursor"] == 3
 
 
-def test_persist_sink_projects_run_truth_and_events(tmp_path: Path) -> None:
+def test_internal_event_projection_projects_run_truth_and_events(
+    tmp_path: Path,
+) -> None:
     store = RunStore(tmp_path / "runs.db")
-    sink = PersistSink(store)
+    sink = _PersistSink(store)
 
     sink.on_event(
         RunStarting(
@@ -2962,7 +2964,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(
 
     monkeypatch.setattr("toolang.up.server._run_uvicorn_app", fake_run_uvicorn_app)
     monkeypatch.setattr("toolang.up.server.configure_logging", lambda **_kwargs: None)
-    caplog.set_level(logging.INFO, logger="toolang.runtime")
+    caplog.set_level(logging.INFO, logger="toolang.up.server")
 
     result = run_experiments_up(
         toolang_root=toolang_root,
@@ -2976,7 +2978,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(
     messages = [
         record.getMessage()
         for record in caplog.records
-        if record.name == "toolang.runtime"
+        if record.name == "toolang.up.server"
     ]
     assert len(messages) == 4
     assert messages[0] == f"Agent starting root={toolang_root}"
@@ -2986,7 +2988,7 @@ def test_up_logs_runtime_urls_after_start_and_stop(
     color_messages = [
         record.__dict__.get("color_message")
         for record in caplog.records
-        if record.name == "toolang.runtime"
+        if record.name == "toolang.up.server"
     ]
     assert color_messages[0] == ("Agent starting root=\x1b[1m%s\x1b[0m")
     assert color_messages[1] == "Agent started webui=\x1b[1m%s\x1b[0m"
@@ -3049,7 +3051,7 @@ def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> No
         agent_name="alice",
     )
 
-    caplog.set_level(logging.INFO, logger="toolang.state")
+    caplog.set_level(logging.INFO, logger="toolang.up.server")
     setup = context.setup_watcher.current()
     state = context.state_watcher.current()
     up_module._log_state_loaded(setup, state)
@@ -3057,7 +3059,7 @@ def test_state_loaded_log_counts_selectable_models(tmp_path: Path, caplog) -> No
     messages = [
         record.getMessage()
         for record in caplog.records
-        if record.name == "toolang.state"
+        if record.name == "toolang.up.server"
     ]
     assert messages == [
         (
@@ -3183,10 +3185,10 @@ def test_watch_reload_preserves_tool_and_cap_selectors(tmp_path: Path) -> None:
     ]
 
 
-def test_trigger_logger_names_are_flat() -> None:
-    assert state_watcher.logger.name == "toolang.watch"
-    assert state_prepare.logger.name == "toolang.prepare"
-    assert poll.logger.name == "toolang.poll"
+def test_logger_names_match_module_paths() -> None:
+    assert state_watcher.logger.name == "toolang.state.watcher"
+    assert state_prepare.logger.name == "toolang.state.prepare"
+    assert poll.logger.name == "toolang.up.channels"
 
 
 def test_up_reuses_previous_agent_port_when_unspecified(
@@ -5979,7 +5981,7 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
         ),
     )
 
-    with caplog.at_level(logging.DEBUG, logger="toolang.run"):
+    with caplog.at_level(logging.DEBUG, logger="toolang.execution"):
         bundle = AgicInvocation.from_bound_run(context.executor, bound)
 
     set_math = cast(dict[str, object], bundle.debug["set_math"])
@@ -6020,7 +6022,9 @@ def test_assemble_run_input_logs_activation_set_math(tmp_path: Path, caplog) -> 
     ]
 
     messages = [
-        record.getMessage() for record in caplog.records if record.name == "toolang.run"
+        record.getMessage()
+        for record in caplog.records
+        if record.name.startswith("toolang.execution.")
     ]
     detail_line = next(
         message for message in messages if message.startswith("run.activation ")
@@ -6302,11 +6306,13 @@ def test_run_input_debug_logs_computed_prompt_bundle(tmp_path: Path, caplog) -> 
         RunRequest(group="chat", origin="chat", input="hi"),
     )
 
-    with caplog.at_level(logging.DEBUG, logger="toolang.run"):
+    with caplog.at_level(logging.DEBUG, logger="toolang.execution"):
         AgicInvocation.from_bound_run(context.executor, bound)
 
     messages = [
-        record.getMessage() for record in caplog.records if record.name == "toolang.run"
+        record.getMessage()
+        for record in caplog.records
+        if record.name.startswith("toolang.execution.")
     ]
     assert any(message.startswith("prompt.assembled thread=") for message in messages)
     assert any(message.startswith("prompt.tools thread=") for message in messages)
@@ -6612,7 +6618,7 @@ def test_execute_run_pre_start_failure_persists_failed_accepted_run(
     context.executor.model_environ = {}
     context.executor.model_environ = {}
 
-    with caplog.at_level(logging.ERROR, logger="toolang.run"):
+    with caplog.at_level(logging.ERROR, logger="toolang.execution"):
         outcome = asyncio.run(
             context.executor.run(
                 RunRequest(group="chat", origin="chat", input="hello"),
@@ -6632,7 +6638,7 @@ def test_execute_run_pre_start_failure_persists_failed_accepted_run(
         (step.index, step.kind, step.status)
         for step in context.executor.store.list_steps(run_id=runs[0].id)
     ] == [(0, "system", "failed")]
-    assert "persist sink event handling failed" not in caplog.text
+    assert "run event persistence failed" not in caplog.text
 
 
 def test_script_executor_logs_lifecycle(tmp_path: Path, caplog) -> None:
@@ -6647,7 +6653,7 @@ def test_script_executor_logs_lifecycle(tmp_path: Path, caplog) -> None:
     )
 
     with (
-        caplog.at_level(logging.INFO, logger="toolang.run"),
+        caplog.at_level(logging.INFO, logger="toolang.execution"),
         _patched_executor_execution(),
     ):
         outcome = asyncio.run(
@@ -6658,7 +6664,9 @@ def test_script_executor_logs_lifecycle(tmp_path: Path, caplog) -> None:
         )
 
     messages = [
-        record.getMessage() for record in caplog.records if record.name == "toolang.run"
+        record.getMessage()
+        for record in caplog.records
+        if record.name.startswith("toolang.execution.")
     ]
     assert outcome.status == "finished"
     assert messages[0].startswith("Thread created id=script_")

@@ -57,7 +57,13 @@ async def execute(
 
     invoke = {name: local.value for name, local in locals.items() if name != "_"}
     primary = locals.get("_", Local())
-    primary_parts = value_percept(primary.value) if primary.shape != "none" else ()
+    primary_parts = (
+        value_percept(primary.value, type_name=primary.type_name)
+        if primary.shape == "item"
+        else None
+    )
+    if primary.shape == "none":
+        primary_parts = ()
     bound = replace(
         binding,
         input=Message(

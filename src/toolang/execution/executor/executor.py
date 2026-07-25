@@ -51,9 +51,9 @@ from .common import (
     value_text,
 )
 from .prepare import effective_agics
-from .persist import PersistSink
+from ._persist import _PersistSink
 
-_LOGGER = logging.getLogger("toolang.run")
+_LOGGER = logging.getLogger(__name__)
 _CONTROL_POLL_INTERVAL = 0.05
 
 
@@ -154,7 +154,7 @@ class RunExecutor:
     def __init__(self, store: RunStore, ids: IdIssuer) -> None:
         self.store = store
         self.ids = ids
-        self._persist = PersistSink(self.store)
+        self._persist = _PersistSink(self.store)
         self._control_poll_interval = _CONTROL_POLL_INTERVAL
         self._active: dict[str, _ActiveRun] = {}
         self._tasks: dict[asyncio.Task[RunRecord], tuple[str, _ActiveRun]] = {}
@@ -940,7 +940,13 @@ def _child_binding(
         percept: Percept = ()
     else:
         primary = locals.get("_", Local())
-        percept = value_percept(primary.value) if primary.shape != "none" else ()
+        percept = (
+            value_percept(primary.value, type_name=primary.type_name)
+            if primary.shape == "item"
+            else None
+        )
+        if primary.shape == "none":
+            percept = ()
         if percept is None:
             percept = (TextPart(value_text(primary.value)),)
     parameters = {parameter.name for parameter in executable.params}

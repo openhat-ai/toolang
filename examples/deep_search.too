@@ -1,9 +1,9 @@
-agic expand_queries(_: Part[]):
+agic expand_queries(_: Part[]) -> Text[]:
   Research question:
   {{ _ }}
 
   Turn this research question into 6 diverse web search queries.
-  Return one query per line. No bullets, no numbering.
+  Return a JSON array containing exactly 6 query strings.
 
 agic search_web(_: Part[]):
   tools = web_search/*
@@ -41,7 +41,7 @@ agic synthesize_report(_: Part[]):
 
 flow research(_: Text):
   ## Expand the research question into diverse search queries
-  run expand_queries
+  scatter 6 expand_queries
   ## Search the web for each query
   map search_web par 4
   ## Keep evidence bundles that answer the research task
@@ -51,11 +51,11 @@ flow research(_: Text):
   ## Extract source-backed findings from each evidence bundle
   map extract_findings par 4
   ## Synthesize the final research brief
-  run synthesize_report
+  gather synthesize_report
 
-agic is_relevant(_: Part[]):
+agic is_relevant(_: Part[]) -> Boolean:
   Evidence bundle:
   {{ _ }}
 
   Decide whether this evidence bundle contains concrete information about agent workflow implementations.
-  Return only "keep" or "drop".
+  Return only true or false.

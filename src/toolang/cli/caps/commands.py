@@ -16,10 +16,12 @@ from ...catalog import templates
 from ...catalog.errors import CatalogConflictError
 from ...common.errors import ToolangError
 from ...common.github import parse_github_ref
+from ...common.layout import AgentLayout
 from toolang.catalog import cap as cap_store
 from toolang.catalog import config as cap_config
 from toolang.catalog.types import CAP_KINDS, CapKind
 from toolang.state import state as cap_state
+from toolang.state.prepare import prepare_agent_state
 from ..common.context import context_agent, context_root, user_call
 from ..common.output import echo_block, echo_table
 from ..common.routing import (
@@ -27,6 +29,7 @@ from ..common.routing import (
     OptionalPrefixAgentListCommand,
     OptionalPrefixAgentTemplateCommand,
 )
+from ..common.version import toolang_version
 
 if TYPE_CHECKING:
     from toolang.state.state import AgentState
@@ -601,7 +604,6 @@ def _all_cap_entries(
     kinds: set[EntryKind],
 ) -> tuple[PreparedCap, ...]:
     if prepare and (toolang_root / "agents" / agent_name / "agent.too").is_file():
-        from toolang.up.server import prepare_agent
         from ..common.progress import as_progress_sink, make_cli_progress
 
         progress = make_cli_progress(
@@ -610,9 +612,9 @@ def _all_cap_entries(
         )
         try:
             state = user_call(
-                prepare_agent,
-                toolang_root=toolang_root,
-                agent_name=agent_name,
+                prepare_agent_state,
+                AgentLayout.resident(toolang_root, agent_name),
+                toolang_version=toolang_version(),
                 progress=as_progress_sink(progress),
             )
             entries = _prepared_cap_entries(state, visibility=visibility, kinds=kinds)
@@ -725,13 +727,12 @@ def _refresh_agent_state(
     progress_total: int,
     progress: CliProgress | None = None,
 ) -> None:
-    from toolang.up.server import prepare_agent
     from ..common.progress import as_progress_sink
 
     user_call(
-        prepare_agent,
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        prepare_agent_state,
+        AgentLayout.resident(toolang_root, agent_name),
+        toolang_version=toolang_version(),
         progress=as_progress_sink(progress),
     )
     if progress is not None:

@@ -288,6 +288,64 @@ flow mapped(_: Text) -> Text[]:
     asyncio.run(scenario())
 
 
+def test_deep_search_example_uses_explicit_flow_reshaping(
+    tmp_path: Path,
+) -> None:
+    source = (
+        Path(__file__).parents[3] / "examples" / "deep_search.too"
+    ).read_text(encoding="utf-8")
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=source,
+        responses=[
+            ModelCallResult(
+                message=Message.assistant(
+                    '["query 1","query 2","query 3","query 4","query 5","query 6"]'
+                )
+            ),
+            *[
+                ModelCallResult(message=Message.assistant("evidence"))
+                for _ in range(6)
+            ],
+            *[
+                ModelCallResult(message=Message.assistant("false"))
+                for _ in range(6)
+            ],
+            ModelCallResult(message=Message.assistant("report")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="research",
+                    input=perceive_input("agent framework/sdk"),
+                )
+            )
+
+            assert root.status == "finished", root.error
+            assert harness.store.run_output_text(run_id=root.id) == "report"
+            assert _root_step_kinds(harness, root.id) == [
+                "run",
+                "par",
+                "par",
+                "par",
+                "par",
+                "run",
+            ]
+            assert len(harness.adapter.invocations) == 14
+            final_message = harness.adapter.invocations[-1].call.messages[-1]
+            assert any(
+                isinstance(part, TextPart) and "Findings:\n[]" in part.text
+                for part in final_message.parts
+            )
+
+    asyncio.run(scenario())
+
+
 def test_storm_honors_parallel_limit_and_preserves_result_order(
     tmp_path: Path,
 ) -> None:

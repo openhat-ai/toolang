@@ -6,12 +6,15 @@ import re
 import sys
 from typing import cast
 
+import toolang.up.logging as up_logging
 from toolang.up.logging import (
     DEFAULT_AGENT_LOG_SPEC,
     HttpxLogFilter,
+    LoggingPlan,
     MessageRegexFilter,
     build_uvicorn_log_config,
     configure_logging,
+    configure_logging_plan,
     resolve_agent_logging,
 )
 from toolang.common.env_logger import OFF_LOG_LEVEL, PY_LOG_ENV_VAR, parse_log_level, parse_log_spec, resolve_log_spec
@@ -96,13 +99,13 @@ def test_parse_log_level_accepts_warn_alias() -> None:
 
 def test_parse_log_spec_supports_directives_and_regex() -> None:
     spec = parse_log_spec(
-        "info,toolang.run=debug,httpx=off/hello",
+        "info,toolang.execution=debug,httpx=off/hello",
         default_root_level=logging.INFO,
     )
 
     assert spec.root_level == logging.INFO
     assert spec.logger_levels == {
-        "toolang.run": logging.DEBUG,
+        "toolang.execution": logging.DEBUG,
         "httpx": OFF_LOG_LEVEL,
     }
     assert spec.handler_level == logging.DEBUG
@@ -124,7 +127,7 @@ def test_resolve_log_spec_uses_py_log_when_cli_missing() -> None:
 def test_message_regex_filter_matches_formatted_message() -> None:
     filter_obj = MessageRegexFilter(re.compile("200 OK"))
     record = logging.LogRecord(
-        name="toolang.run",
+        name="toolang.execution",
         level=logging.INFO,
         pathname=__file__,
         lineno=1,
@@ -144,7 +147,7 @@ def test_configure_logging_installs_resolved_config(monkeypatch) -> None:
 
     monkeypatch.setattr(logging.config, "dictConfig", fake_dict_config)
 
-    configure_logging(spec="toolang.run=debug", environ={})
+    configure_logging(spec="toolang.execution=debug", environ={})
 
     config = cast(dict[str, object], captured["config"])
     handlers = cast(dict[str, dict[str, object]], config["handlers"])
@@ -176,7 +179,7 @@ def test_configure_logging_disables_colors_for_file_logs(monkeypatch, tmp_path) 
 
     monkeypatch.setattr(logging.config, "dictConfig", fake_dict_config)
 
-    configure_logging(spec="toolang.run=debug", environ={}, log_path=tmp_path / "agent.log")
+    configure_logging(spec="toolang.execution=debug", environ={}, log_path=tmp_path / "agent.log")
 
     config = cast(dict[str, object], captured["config"])
     formatters = cast(dict[str, dict[str, object]], config["formatters"])
@@ -200,13 +203,19 @@ def test_resolve_agent_logging_defaults_run_and_start_to_agent_spec(tmp_path) ->
     assert start_plan.environ[PY_LOG_ENV_VAR] == DEFAULT_AGENT_LOG_SPEC
 
 
-def test_resolve_agent_logging_uses_run_log_only_when_invoke_py_log_is_set(tmp_path) -> None:
+def test_resolve_agent_logging_uses_run_log_only_when_script_py_log_is_set(
+    tmp_path,
+) -> None:
     run_log_path = tmp_path / "run.log"
 
-    quiet_plan = resolve_agent_logging(mode="invoke", environ={}, run_log_path=run_log_path)
+    quiet_plan = resolve_agent_logging(
+        mode="script",
+        environ={},
+        run_log_path=run_log_path,
+    )
     verbose_plan = resolve_agent_logging(
-        mode="invoke",
-        environ={PY_LOG_ENV_VAR: "toolang.run=debug"},
+        mode="script",
+        environ={PY_LOG_ENV_VAR: "toolang.execution=debug"},
         run_log_path=run_log_path,
     )
 
@@ -216,5 +225,27 @@ def test_resolve_agent_logging_uses_run_log_only_when_invoke_py_log_is_set(tmp_p
     assert PY_LOG_ENV_VAR not in quiet_plan.environ
     assert verbose_plan.destination == "run_log"
     assert verbose_plan.path == run_log_path
-    assert verbose_plan.spec == "toolang.run=debug"
-    assert verbose_plan.environ[PY_LOG_ENV_VAR] == "toolang.run=debug"
+    assert verbose_plan.spec == "toolang.execution=debug"
+    assert verbose_plan.environ[PY_LOG_ENV_VAR] == "toolang.execution=debug"
+
+
+def test_configure_logging_plan_disables_diagnostics_for_quiet_script(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_configure_logging(*, spec, environ, log_path=None) -> None:
+        captured.update(spec=spec, environ=dict(environ), log_path=log_path)
+
+    monkeypatch.setattr(up_logging, "configure_logging", fake_configure_logging)
+
+    configure_logging_plan(
+        LoggingPlan(
+            spec=None,
+            destination="none",
+            path=None,
+            environ={},
+        )
+    )
+
+    assert captured == {"spec": "off", "environ": {}, "log_path": None}

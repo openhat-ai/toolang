@@ -21,7 +21,7 @@ from toolang.work.types import FileSnapshot
 
 DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_STABLE_MS = 500.0
-logger = logging.getLogger("toolang.files")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
