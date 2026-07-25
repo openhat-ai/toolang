@@ -1,4 +1,4 @@
-"""Rich rendering helpers for chat UI blocks."""
+"""Rich rendering helpers for terminal chat blocks."""
 
 from __future__ import annotations
 

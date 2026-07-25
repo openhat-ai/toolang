@@ -1,8 +1,4 @@
-"""Deferred chat command entry points.
-
-Chat execution is intentionally loaded only when invoked so the remaining CLI
-can use execution storage directly while the TUI is migrated separately.
-"""
+"""Terminal chat command entry points."""
 
 from __future__ import annotations
 
@@ -42,11 +38,11 @@ def chat_command(
         str | None,
         typer.Option(
             "--sandbox",
-            help="Execute the session in this sandbox when no API is running.",
+            help="Execute the session in this sandbox.",
         ),
     ] = None,
 ) -> None:
-    from .chat import chat_command as run
+    from .main import chat_command as run
 
     run(
         ctx,
@@ -68,7 +64,7 @@ def send_command(
         str | None, typer.Option("--model", help="Model selector.")
     ] = None,
 ) -> None:
-    from .chat import send_command as run
+    from .main import send_command as run
 
     run(ctx, thread=thread, message=message, model=model)
 
@@ -77,6 +73,6 @@ def attach_command(
     ctx: typer.Context,
     thread: Annotated[str, typer.Argument(help="Thread id.")],
 ) -> None:
-    from .chat import attach_command as run
+    from .main import attach_command as run
 
     run(ctx, thread=thread)

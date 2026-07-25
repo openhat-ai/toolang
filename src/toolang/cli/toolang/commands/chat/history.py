@@ -1,4 +1,4 @@
-"""Persistent input history for the terminal chat UI."""
+"""Persistent terminal chat input history."""
 
 from __future__ import annotations
 

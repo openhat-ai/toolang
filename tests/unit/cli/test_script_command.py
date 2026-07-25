@@ -232,9 +232,11 @@ def test_script_hides_default_and_generated_agics(
 agic:
   Default behavior.
 
+## Run the visible command.
 agic visible:
   Visible behavior.
 
+## Run the pipeline.
 flow pipeline:
   run:
     Inline behavior.
@@ -252,7 +254,9 @@ flow pipeline:
 
     assert result == 0
     assert "visible" in output.out
+    assert "Run the visible command." in output.out
     assert "pipeline" in output.out
+    assert "Run the pipeline." in output.out
     assert "default" not in output.out
     assert "<agic:" not in output.out
 

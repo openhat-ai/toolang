@@ -5,8 +5,8 @@ from typing import Any
 
 import pytest
 
-from toolang.cli.impl.chat import slashes
-from toolang.cli.common.errors import RuntimeClientError
+from toolang.common.errors import ToolangError
+from toolang.cli.toolang.commands.chat import slashes
 
 
 class _Client:
@@ -157,7 +157,7 @@ def test_slash_queue_edits_and_steers_numbered_items() -> None:
 
 def test_slash_client_errors_are_reported_in_status() -> None:
     app = _App()
-    app.client.error = RuntimeClientError("runtime request failed: unavailable")
+    app.client.error = ToolangError("unavailable")
 
     result = slashes.handle(app, "/model")
 

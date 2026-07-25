@@ -1,4 +1,4 @@
-"""Prompt-toolkit widgets for the chat TUI."""
+"""Prompt-toolkit widgets for terminal chat."""
 
 from __future__ import annotations
 

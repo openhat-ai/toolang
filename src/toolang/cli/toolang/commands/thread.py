@@ -564,7 +564,7 @@ def _anchor(history: RunHistory, target: str) -> tuple[str, str]:
 
 
 def _open_chat(ctx: typer.Context, thread_id: str) -> None:
-    from .chat_entry import chat_command
+    from .chat import chat_command
 
     chat_command(ctx, thread=thread_id)
 

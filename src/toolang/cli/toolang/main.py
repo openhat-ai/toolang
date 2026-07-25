@@ -29,7 +29,7 @@ from ..common.routing import (
 )
 from . import routing
 from .commands import agent as agent_commands
-from .commands import chat_entry as chat_commands
+from .commands import chat as chat_commands
 from .commands import plugin as plugin_commands
 from .commands import program as program_commands
 from .commands import runtime as runtime_commands

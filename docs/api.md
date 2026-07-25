@@ -543,6 +543,8 @@ a thread id, it continues that thread. The TUI runs in its own process, assemble
 the same core objects, calls `RunExecutor` directly, and observes native
 `RunEvent` values through a `RunTracer`. It does not depend on the chat or run
 SSE endpoints. Starting an agent HTTP server remains a separate CLI operation.
+Direct chat currently accepts only the `none` sandbox selector; placing the TUI
+process inside a hosted sandbox is a separate follow-up.
 Job thread ids are inspectable and controllable through thread and run commands,
 but `chat` does not implicitly reopen tasks or create manual chore runs.
 

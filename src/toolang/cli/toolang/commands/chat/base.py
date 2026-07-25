@@ -1,4 +1,4 @@
-"""Shared chat interfaces and value types."""
+"""Shared terminal chat interfaces and value types."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 import json
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from toolang.execution.events import TraceEvent
+from toolang.execution.events import RunEvent
 
 if TYPE_CHECKING:
     from .blocks import MutableBlock
@@ -25,14 +25,13 @@ class ChatClient(Protocol):
         thread_id: str,
         message: str,
         selects: Mapping[str, object],
-        on_event: Callable[[TraceEvent], None],
+        on_event: Callable[[RunEvent], None],
         on_error: Callable[[str], None],
     ) -> None: ...
 
     def stop_run(
         self,
         run_id: str,
-        on_event: Callable[[TraceEvent], None],
         on_error: Callable[[str], None],
     ) -> None: ...
 
@@ -40,7 +39,6 @@ class ChatClient(Protocol):
         self,
         run_id: str,
         message: str,
-        on_event: Callable[[TraceEvent], None],
         on_error: Callable[[str], None],
     ) -> None: ...
 
@@ -93,8 +91,6 @@ def chat_status_label(selects: Mapping[str, object]) -> str:
 
 def friendly_error(message: str) -> str:
     text = message.strip()
-    if text.startswith("runtime request failed:"):
-        text = text.removeprefix("runtime request failed:").strip()
     extracted = _extract_error_message(text)
     if extracted:
         return extracted

@@ -356,8 +356,8 @@ Responsibilities are:
   presentation
 - `toolang.commands.script`: local script command, executable argument
   coercion, generated Typer help, and direct `RunExecutor.start()` orchestration
-- `impl.chat`: interactive TUI state, mutable blocks, widgets, and slash
-  commands
+- `toolang.commands.chat`: process-local chat orchestration, interactive TUI
+  state, mutable blocks, widgets, and slash commands
 - `caps`: one cap command implementation reused by `too` and the standalone
   `caps` entry point
 - `common`: only code used by at least two first-level CLI areas
@@ -381,17 +381,18 @@ caps = "toolang.cli.caps.main:main"
 The CLI dependency direction is:
 
 ```text
-cli.common <- cli.impl.chat
 cli.common <- cli.caps
 cli.common <- cli.toolang
 
-cli.toolang.commands.chat    -> cli.impl.chat
+cli.toolang.commands.chat    -> cli.common
 cli.toolang                  -> cli.caps.commands
 ```
 
-`impl`, `caps`, and `common` never import `toolang`. The existing generic CLI
-`utils.py` is removed as its routing, output, context, and owner-specific
-functions move to their named modules.
+There is no separate implementation package. Command-specific implementation
+stays with its command package, while shared CLI behavior belongs in
+`cli.common`.
+The existing generic CLI `utils.py` is removed as its routing, output, context,
+and owner-specific functions move to their named modules.
 
 
 ## Process Assembly
@@ -465,7 +466,8 @@ concepts:
 - `toolang.lang` becomes the canonical language package and the
   `toolang.program` facade is removed
 - `toolang.cli.toolang` and `toolang.cli.caps` are the two executable CLI
-  packages; only interactive chat remains under `toolang.cli.impl`
+  packages; interactive chat lives under
+  `toolang.cli.toolang.commands.chat`
 - duplicate cap command registration and forwarding modules are removed
 
 No compatibility wrappers should remain once all in-repository callers use the

@@ -281,22 +281,19 @@ def _signature_argument(parameter: Parameter) -> TyperArgument:
         type=str,
         required=not parameter.optional,
         metavar=f"{parameter.name}={parameter.type_name or 'Part[]'}",
-        help=parameter.doc.strip() if parameter.doc else None,
+        help=None,
         expose_value=False,
     )
 
 
 def _input_argument(parameter: Parameter) -> TyperArgument:
     type_name = parameter.type_name or "Part[]"
-    help_text = parameter.doc.strip() if parameter.doc else (
-        f"Primary {type_name} input. Repeat content items or omit to read stdin."
-    )
     return _HelpArgument(
         param_decls=["input"],
         type=str,
         required=not parameter.optional,
         metavar="INPUT...",
-        help=help_text,
+        help=f"Primary {type_name} input. Repeat content items or omit to read stdin.",
         expose_value=False,
     )
 

@@ -27,6 +27,49 @@ Top-level agics and flows share one executable namespace. Their authored names
 must be unique across both declaration kinds.
 
 
+## Documentation Comments
+
+`##!` documents the complete program. Program documentation comments must be
+unindented, may appear anywhere between top-level declarations, and are joined
+in source order:
+
+```too
+##! Research assistant.
+agic search:
+  Search for relevant sources.
+
+##! Produces a source-backed report.
+flow research:
+  run search
+```
+
+`##` documents the immediately following semantic node at the same indentation
+level. Consecutive `##` lines form one newline-separated document:
+
+```too
+## Search the web.
+## Return source-backed evidence.
+agic search:
+  ## The model request body.
+  Find relevant sources.
+
+flow research:
+  ## Run two searches.
+  repeat 2:
+    ## Run one search.
+    run search
+```
+
+At the program level, `##` may document any declaration. Inside a struct it may
+document a field, inside an agic it may document a message, and inside a flow
+or nested flow block it may document a statement.
+
+A blank line, an ordinary `#` comment, another syntax item, or the end of the
+current scope ends attachment. Documentation comments never skip an
+intervening directive or setting. Parameters and directives do not currently
+accept documentation comments.
+
+
 ## External Caps
 
 `with` adds one external cap reference to the authored program:

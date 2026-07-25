@@ -1,4 +1,4 @@
-"""Slash commands for the chat TUI."""
+"""Slash commands for terminal chat."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import click
 
 from toolang.common.errors import ToolangError
 from toolang.plugin.models.resolution import split_model_selectors
-from toolang.cli.common.errors import RuntimeClientError
 from .base import AppContext, as_text, friendly_error
 
 SlashOutput = str | Sequence[str] | None
@@ -50,7 +49,7 @@ def handle(app: AppContext, message: str) -> SlashResult:
 
     try:
         output = slash.run(app, command, argument)
-    except (RuntimeClientError, ToolangError, ValueError) as exc:
+    except (ToolangError, ValueError) as exc:
         app.set_status_error(friendly_error(str(exc)))
         return SlashResult(True)
     except click.ClickException as exc:
