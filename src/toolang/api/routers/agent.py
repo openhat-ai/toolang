@@ -5,12 +5,11 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 
-from toolang.api.app import AgentCoreDep
+from toolang.api.app import AgentCoreDep, CeilingSpecDep
 from toolang.common.errors import ToolangError
 from toolang.execution.executor.prepare import effective_agics
 from toolang.execution.schemas import ThreadInfo
-from toolang.plugin.models.config import parse_default_models, parse_model_aliases
-from toolang.plugin.models.resolution import selectable_model_targets
+from toolang.execution.executor.ceiling import agent_model_targets
 from toolang.up import AgentCore, process as agents
 
 
@@ -33,24 +32,18 @@ def profile(core: AgentCoreDep) -> dict[str, object]:
 
 
 @router.get("/models", summary="List Agent Models")
-def models(core: AgentCoreDep) -> dict[str, object]:
+def models(
+    core: AgentCoreDep,
+    ceiling: CeilingSpecDep,
+) -> dict[str, object]:
     try:
         setup = core.setup.current()
         state = core.state.current()
-        layers = (state.root_config, state.home_config)
-        aliases = parse_model_aliases(layers)
-        selectors = parse_default_models(layers)
-        targets = selectable_model_targets(
-            providers=setup.providers,
-            models=setup.models,
-            aliases=aliases,
-            envs=setup.envs,
-            selectors=selectors or None,
-        )
+        default, targets = agent_model_targets(setup, state, ceiling)
     except ToolangError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {
-        "default": selectors[0] if selectors else None,
+        "default": default,
         "items": [
             _model_item(selector=selector, target=target)
             for selector, target in targets

@@ -396,9 +396,9 @@ def test_chat_model_label_uses_default_or_selected_model() -> None:
         ],
     }
 
-    assert slashes.chat_model_label(payload, {}) == "openai/gpt-5"
+    assert slashes.chat_model_label(payload, {}) == "auto"
     assert (
-        slashes.chat_model_label(payload, {"models": ["openai/o3[openai]"]})
+        slashes.chat_model_label(payload, {"model": "openai/o3[openai]"})
         == "openai/o3"
     )
 
@@ -484,7 +484,9 @@ def test_chat_tui_status_bar_uses_resolved_model_and_clears_error_on_input() -> 
         client=FakeClient(),
     )
 
-    assert app.status_bar.status_label == "openai/gpt-5"
+    assert app.status_bar.status_label == "auto"
+    app.handle_run_event(_model_step_begin(model="deepseek/deepseek-chat"))
+    assert app.status_bar.status_label == "deepseek/deepseek-chat"
 
     app.status_bar.set_error("Model selector matched no models")
     assert app.status_bar.error_message
@@ -624,11 +626,17 @@ def _run_end(
     )
 
 
-def _model_step_begin(*, run_id: str = "run_1", step_index: int = 1) -> StepBegin:
+def _model_step_begin(
+    *,
+    run_id: str = "run_1",
+    step_index: int = 1,
+    model: str | None = None,
+) -> StepBegin:
     return StepBegin(
         step=f"{run_id}/{step_index}",
         kind="model",
         input=(),
+        given={"model": {"ref": model}} if model is not None else {},
         started_at="2026-01-01T00:00:01Z",
     )
 

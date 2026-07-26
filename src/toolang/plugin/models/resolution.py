@@ -107,27 +107,27 @@ def resolve_model(
 def select_model_selectors(
     context: SupportsModelSelection,
     *,
-    agic_selectors: Sequence[str] = (),
-    activation_selectors: Sequence[str] = (),
+    directive_selectors: Sequence[str] = (),
+    allowed_selectors: Sequence[str] = (),
     default_selector: str | None = None,
 ) -> tuple[str, ...]:
     """Return the effective ordered model selectors for one run."""
 
-    agic_candidates = _resolve_selector_targets(
-        agic_selectors,
+    directive_candidates = _resolve_selector_targets(
+        directive_selectors,
         providers=context.providers,
         models=context.models,
         aliases=context.model_aliases,
         envs=context.envs,
     )
-    activation_candidates = _resolve_selector_targets(
-        activation_selectors,
+    allowed_candidates = _resolve_selector_targets(
+        allowed_selectors,
         providers=context.providers,
         models=context.models,
         aliases=context.model_aliases,
         envs=context.envs,
     )
-    if agic_selectors and not agic_candidates:
+    if directive_selectors and not directive_candidates:
         raise ToolangError(
             _empty_model_selection_message(
                 providers=context.providers,
@@ -136,7 +136,7 @@ def select_model_selectors(
                 envs=context.envs,
             )
         )
-    if activation_selectors and not activation_candidates:
+    if allowed_selectors and not allowed_candidates:
         raise ToolangError(
             _empty_model_selection_message(
                 providers=context.providers,
@@ -145,22 +145,24 @@ def select_model_selectors(
                 envs=context.envs,
             )
         )
-    if agic_candidates and activation_candidates:
-        agic_identities = {_target_identity(candidate.target) for candidate in agic_candidates}
+    if directive_candidates and allowed_candidates:
+        directive_identities = {
+            _target_identity(candidate.target) for candidate in directive_candidates
+        }
         selected = tuple(
             candidate.selector
-            for candidate in activation_candidates
-            if _target_identity(candidate.target) in agic_identities
+            for candidate in allowed_candidates
+            if _target_identity(candidate.target) in directive_identities
         )
         if selected:
             return selected
         raise ToolangError(NO_MATCHED_MODELS_MESSAGE)
 
-    if activation_candidates:
-        return _dedupe(candidate.selector for candidate in activation_candidates)
+    if allowed_candidates:
+        return _dedupe(candidate.selector for candidate in allowed_candidates)
 
-    if agic_candidates:
-        return _dedupe(candidate.selector for candidate in agic_candidates)
+    if directive_candidates:
+        return _dedupe(candidate.selector for candidate in directive_candidates)
 
     available = _discover_available_candidates(
         providers=context.providers,
@@ -638,7 +640,8 @@ def _require_allowed(
         return
     allowed_text = ", ".join(f"{item.ref}[{item.provider}]" for item in allowed)
     raise ToolangError(
-        f"model selector is not allowed for this activation: {selector} (allowed: {allowed_text})"
+        f"model selector is outside the current ceiling: {selector} "
+        f"(allowed: {allowed_text})"
     )
 
 

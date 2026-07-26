@@ -7,7 +7,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 
 from toolang.base.types.message import TextPart
-from ..execution.executor import RunExecutor, RunSpec
+from ..execution.executor import CeilingSpec, RunExecutor, RunSpec
 from ..execution.records import RunRecord
 from ..state.state import AgentState
 from ..setup import AgentSetup
@@ -29,6 +29,7 @@ class Scheduler:
         get_agent_setup: Callable[[], AgentSetup],
         get_home_jobs: Callable[[], HomeJobs],
         get_agent_state: Callable[[], AgentState],
+        ceiling: CeilingSpec = CeilingSpec(),
         kinds: tuple[JobKind, ...] = ("task", "chore"),
         interval_ms: float = DEFAULT_INTERVAL_MS,
     ) -> None:
@@ -37,6 +38,7 @@ class Scheduler:
         self.get_agent_setup = get_agent_setup
         self.get_home_jobs = get_home_jobs
         self.get_agent_state = get_agent_state
+        self.ceiling = ceiling
         self.kinds = kinds
         self.interval = interval_ms / 1000
         self._active: dict[str, tuple[asyncio.Task[RunRecord], AgentJobs]] = {}
@@ -89,6 +91,7 @@ class Scheduler:
                     RunSpec(
                         setup=self.get_agent_setup(),
                         state=state,
+                        ceiling=self.ceiling,
                         thread=claimed.job.thread_id,
                         runnable=runnable,
                         input=(TextPart(text=claimed.definition.input),),

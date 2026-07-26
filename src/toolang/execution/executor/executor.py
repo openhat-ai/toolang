@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Generator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import logging
 import threading
 import time
@@ -50,6 +50,12 @@ from .common import (
     value_percept,
     value_text,
 )
+from .ceiling import (
+    CeilingSpec,
+    _AgentCeiling,
+    resolve_agent_ceiling,
+    resolve_run_ceiling,
+)
 from .prepare import effective_agics
 from ._persist import _PersistSink
 
@@ -84,6 +90,7 @@ class RunSpec:
     state: AgentState
     thread: str
     runnable: str
+    ceiling: CeilingSpec = field(default_factory=CeilingSpec)
     input: Percept = ()
     model: str | None = None
     args: Mapping[str, object] | None = None
@@ -177,9 +184,15 @@ class RunExecutor:
         loop = asyncio.get_running_loop()
         executable = _require_runnable(spec.state, spec.runnable)
         _validate_call(spec, executable)
+        agent_ceiling = resolve_agent_ceiling(
+            spec.setup,
+            spec.state,
+            spec.ceiling,
+        )
         bound = _bind_run(
             spec,
             run_id=run_id or self.ids.issue_run(),
+            agent_ceiling=agent_ceiling,
         )
         self.store.accept_start(
             run_id=bound.run_id,
@@ -590,6 +603,9 @@ class _Execution:
         config_layers = (root.state.root_config, root.state.home_config)
         self.model_aliases = parse_model_aliases(config_layers)
         self.default_models = parse_default_models(config_layers)
+        if root.agent_ceiling is None:
+            raise RuntimeError(f"agent ceiling missing: {root.run_id}")
+        self._agent_ceiling = root.agent_ceiling
         self._emit_trace = emit
         self._run_outputs: dict[str, StepPath] = {}
         self._last_step_index: dict[str, int] = {}
@@ -623,6 +639,20 @@ class _Execution:
         from .runs import agic as agic_run
         from .runs import flow as flow_run
 
+        ceiling = resolve_run_ceiling(
+            self,
+            executable=executable,
+            agent=self._agent_ceiling,
+            flow=binding.flow_ceiling,
+            agent_name=binding.setup.layout.name,
+        )
+        binding = replace(
+            binding,
+            ceiling=ceiling,
+            flow_ceiling=(
+                ceiling if isinstance(executable, FlowDecl) else binding.flow_ceiling
+            ),
+        )
         current = (
             dict(locals) if locals is not None else initial_locals(binding, executable)
         )
@@ -963,13 +993,22 @@ def _child_binding(
         model=parent.model,
         state=parent.state,
         setup=parent.setup,
+        ceiling_spec=parent.ceiling_spec,
+        agent_ceiling=parent.agent_ceiling,
+        ceiling=None,
+        flow_ceiling=parent.flow_ceiling,
         created_at=utc_now(),
         call="run",
         placement=dict(placement or {}),
     )
 
 
-def _bind_run(spec: RunSpec, *, run_id: str) -> BoundRun:
+def _bind_run(
+    spec: RunSpec,
+    *,
+    run_id: str,
+    agent_ceiling: _AgentCeiling,
+) -> BoundRun:
     if not spec.thread or spec.thread != spec.thread.strip():
         raise ValueError("run spec requires a canonical thread id")
     return BoundRun(
@@ -981,6 +1020,10 @@ def _bind_run(spec: RunSpec, *, run_id: str) -> BoundRun:
         model=spec.model,
         state=spec.state,
         setup=spec.setup,
+        ceiling_spec=spec.ceiling,
+        agent_ceiling=agent_ceiling,
+        ceiling=None,
+        flow_ceiling=None,
         created_at=utc_now(),
     )
 
@@ -998,6 +1041,25 @@ def _run_context(
     if binding.args:
         context["args"] = {
             name: json_value(value) for name, value in binding.args.items()
+        }
+    if any(
+        value is not None
+        for value in (
+            binding.ceiling_spec.models,
+            binding.ceiling_spec.tools,
+            binding.ceiling_spec.caps,
+        )
+    ):
+        context["ceiling"] = {
+            "models": list(binding.ceiling_spec.models)
+            if binding.ceiling_spec.models is not None
+            else None,
+            "tools": list(binding.ceiling_spec.tools)
+            if binding.ceiling_spec.tools is not None
+            else None,
+            "caps": list(binding.ceiling_spec.caps)
+            if binding.ceiling_spec.caps is not None
+            else None,
         }
     if binding.placement:
         context["placement"] = dict(binding.placement)

@@ -46,6 +46,7 @@ from toolang.setup import AgentSetup
 from ..events import RunEvent, StepBegin, StepEnd
 from ..records import OutputRef, RunControlRecord, RunControlRef, StepInputItem
 from ..types import StepKind, StepPath
+from .ceiling import CeilingSpec, _AgentCeiling, _RunCeiling
 
 Shape = Literal["none", "item", "list"]
 EventEmitter = Callable[[RunEvent], Awaitable[None]]
@@ -64,6 +65,10 @@ class BoundRun:
     state: AgentState
     setup: AgentSetup
     created_at: str
+    ceiling_spec: CeilingSpec = CeilingSpec()
+    agent_ceiling: _AgentCeiling | None = None
+    ceiling: _RunCeiling | None = None
+    flow_ceiling: _RunCeiling | None = None
     call: Literal["top", "run"] = "top"
     placement: Mapping[str, object] | None = None
 

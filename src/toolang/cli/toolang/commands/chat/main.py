@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 import sys
 
@@ -35,6 +35,7 @@ def chat_command(
     ctx: typer.Context,
     thread: str | None = None,
     models: list[str] | None = None,
+    model: str | None = None,
     tools: list[str] | None = None,
     caps: list[str] | None = None,
     agic: str | None = None,
@@ -44,6 +45,7 @@ def chat_command(
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
     selectors = _chat_selector_payload(
         models=models,
+        model=model,
         tools=tools,
         caps=caps,
         agic=agic,
@@ -68,7 +70,7 @@ def send_command(
         raise click.ClickException("thread id is required")
     selectors: dict[str, object] = {}
     if model is not None:
-        selectors["models"] = [model]
+        selectors["model"] = model
     renderer = _ScriptedRunRenderer()
     errors: list[str] = []
     with _chat_runtime(ctx, sandbox=None, selector_payload=selectors) as client:
@@ -95,6 +97,7 @@ def attach_command(
 def _chat_selector_payload(
     *,
     models: list[str] | None,
+    model: str | None = None,
     tools: list[str] | None,
     caps: list[str] | None,
     agic: str | None = None,
@@ -106,6 +109,8 @@ def _chat_selector_payload(
     model_selectors = tuple(dict.fromkeys(split_model_selectors(tuple(models or ()))))
     if model_selectors:
         payload["models"] = list(model_selectors)
+    if model is not None:
+        payload["model"] = model
     if tools is not None:
         tool_selectors = tuple(dict.fromkeys(split_tool_selectors(tuple(tools))))
         payload["tools"] = list(tool_selectors)
@@ -213,16 +218,16 @@ def _chat_interactive_prompt_toolkit(
     )
 
 
-def _chat_resolve_model_command_labels(
-    selectors: Sequence[str],
+def _chat_resolve_model_command(
+    selector: str,
     *,
     client: ChatClient,
-) -> tuple[str, ...] | None:
+) -> tuple[str, str] | None:
     try:
         payload = client.list_models()
     except (click.ClickException, ToolangError, ValueError):
         return None
-    return chat_slashes._chat_resolve_model_command_labels(payload, selectors)
+    return chat_slashes._chat_resolve_model_command(payload, selector)
 
 
 def _chat_interactive_scripted_local(
@@ -301,15 +306,16 @@ def _chat_handle_scripted_command(
         return True
     if argument:
         selectors = chat_slashes._chat_model_command_selectors(argument)
-        if not selectors:
-            typer.echo("/model requires a selector")
+        if len(selectors) != 1:
+            typer.echo("/model requires exactly one selector")
             return True
-        labels = _chat_resolve_model_command_labels(selectors, client=client)
-        if labels is None:
-            typer.echo(f"Model selector matched no models: {', '.join(selectors)}")
+        resolved = _chat_resolve_model_command(selectors[0], client=client)
+        if resolved is None:
+            typer.echo(f"Model selector must match exactly one model: {selectors[0]}")
             return True
-        selector_payload["models"] = list(selectors)
-        typer.echo(f"model: {', '.join(labels)}")
+        selector, label = resolved
+        selector_payload["model"] = selector
+        typer.echo(f"model: {label}")
         return True
     try:
         payload = client.list_models()

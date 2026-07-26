@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 import threading
 from typing import TypeGuard
 
@@ -154,6 +155,7 @@ class ChatTuiApp:
         self.run_in_flight = threading.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
+        self.actual_model: str | None = None
 
         queue_panel = widgets.QueuePanel(lambda: self.queue)
         self.status_bar = widgets.StatusBar(self._status_label())
@@ -233,9 +235,11 @@ class ChatTuiApp:
 
     def _header_model_label(self) -> str:
         try:
-            return slashes.chat_model_label(self.client.list_models(), self.selects)
+            label = slashes.chat_model_label(self.client.list_models(), self.selects)
+            return self.actual_model if label == "auto" and self.actual_model else label
         except (click.ClickException, ToolangError, ValueError):
-            return chat_status_label(self.selects)
+            label = chat_status_label(self.selects)
+            return self.actual_model if label == "auto" and self.actual_model else label
 
     def _status_label(self) -> str:
         model_label = self._header_model_label()
@@ -408,6 +412,13 @@ class ChatTuiApp:
         threading.Thread(target=consume, daemon=True).start()
 
     def handle_run_event(self, event: RunEvent) -> None:
+        if isinstance(event, StepBegin) and event.kind == "model":
+            model = event.given.get("model")
+            if isinstance(model, Mapping):
+                value = model.get("ref") or model.get("model")
+                if isinstance(value, str) and value.strip():
+                    self.actual_model = value.strip()
+                    self.status_bar.set_status(self._status_label())
         events.handle_run_event(event, self.app_context)
 
     def start_run(self, message: str) -> None:

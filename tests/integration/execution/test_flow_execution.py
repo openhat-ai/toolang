@@ -25,7 +25,8 @@ from toolang.execution.events import (
     ThreadEvent,
     ThreadListener,
 )
-from toolang.execution.executor import RunExecutor, RunSpec
+from toolang.execution.executor import CeilingSpec, RunExecutor, RunSpec
+from toolang.execution.executor.ceiling import resolve_agent_ceiling
 from toolang.execution.executor.common import BoundRun, Local
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.runs import agic as agic_run
@@ -37,6 +38,7 @@ from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.ast import (
     AgicDecl,
+    Directive,
     FlowDecl,
     LetStmt,
     Parameter,
@@ -45,6 +47,7 @@ from toolang.lang.ast import (
     Span,
 )
 from toolang.setup import AgentSetup
+from tests.support.execution_harness import RecordingTool
 
 
 class _RecordingTracer(RunTracer):
@@ -96,6 +99,7 @@ def _state(*flows: FlowDecl) -> Any:
             program_source="agents/alice/agent.too",
             root_config={},
             home_config={},
+            caps=(),
             fingerprint="state-test",
         ),
     )
@@ -273,6 +277,29 @@ def test_run_executor_rejects_lossy_input_before_acceptance(
     asyncio.run(executor.shutdown())
 
 
+def test_run_executor_rejects_invalid_ceiling_before_acceptance(
+    tmp_path: Path,
+) -> None:
+    flow = FlowDecl(name="pipeline", span=Span(line=1))
+    executor = _executor(tmp_path)
+
+    async def scenario() -> None:
+        with pytest.raises(ValueError, match="tool selector matched no tools"):
+            executor.start(
+                RunSpec(
+                    setup=_setup(),
+                    state=_state(flow),
+                    thread="term_test",
+                    runnable=flow.name,
+                    ceiling=CeilingSpec(tools=("missing/*",)),
+                )
+            )
+
+    asyncio.run(scenario())
+    assert executor.store.list_runs() == []
+    asyncio.run(executor.shutdown())
+
+
 def test_top_level_agic_has_no_containing_step_events(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -284,6 +311,7 @@ def test_top_level_agic_has_no_containing_step_events(
             program_source="agents/alice/agent.too",
             root_config={},
             home_config={},
+            caps=(),
             fingerprint="state-test",
         ),
     )
@@ -314,6 +342,7 @@ def test_runtime_emits_and_persists_system_failure_step(
             program_source="agents/alice/agent.too",
             root_config={},
             home_config={},
+            caps=(),
             fingerprint="state-test",
         ),
     )
@@ -380,6 +409,7 @@ def test_start_rejects_ambiguous_runnable_name(tmp_path: Path) -> None:
             program_source="agents/alice/agent.too",
             root_config={},
             home_config={},
+            caps=(),
             fingerprint="state-test",
         ),
     )
@@ -537,6 +567,89 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
     asyncio.run(executor.shutdown())
 
 
+def test_nested_flow_resets_ceiling_and_restores_parent_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    direct = AgicDecl(name="direct", span=Span(line=1))
+    nested = AgicDecl(name="nested", span=Span(line=1))
+    sibling = AgicDecl(name="sibling", span=Span(line=1))
+    inner = FlowDecl(
+        name="inner",
+        stmts=(RunStmt(runnable=nested.name, span=Span(line=4)),),
+        span=Span(line=3),
+    )
+    outer = FlowDecl(
+        name="outer",
+        directives=(
+            Directive(
+                name="tools",
+                operator="=",
+                values=("alpha/*",),
+                span=Span(line=6),
+            ),
+        ),
+        stmts=(
+            RunStmt(runnable=direct.name, span=Span(line=7)),
+            RunStmt(runnable=inner.name, span=Span(line=8)),
+            RunStmt(runnable=sibling.name, span=Span(line=9)),
+        ),
+        span=Span(line=5),
+    )
+    state = cast(
+        Any,
+        SimpleNamespace(
+            program=Program(
+                span=Span(line=1),
+                agics=(direct, nested, sibling),
+                flows=(outer, inner),
+            ),
+            program_source="agents/alice/agent.too",
+            root_config={},
+            home_config={},
+            caps=(),
+            fingerprint="state-test",
+        ),
+    )
+    tools = {
+        "alpha__one": RecordingTool("alpha__one", output={}),
+        "beta__two": RecordingTool("beta__two", output={}),
+    }
+    base_setup = _setup()
+    setup = AgentSetup(
+        layout=base_setup.layout,
+        providers=base_setup.providers,
+        adapters=base_setup.adapters,
+        models=base_setup.models,
+        tools=tools,
+        envs=base_setup.envs,
+    )
+    observed: list[tuple[str, tuple[str, ...]]] = []
+
+    async def execute_agic(
+        _execution: _Execution,
+        binding: BoundRun,
+        agic: AgicDecl,
+        _locals: dict[str, Local],
+    ) -> Local:
+        assert binding.ceiling is not None
+        observed.append((agic.name, tuple(binding.ceiling.tools)))
+        return Local("done", "item")
+
+    monkeypatch.setattr(agic_run, "execute", execute_agic)
+    executor = _executor(tmp_path)
+
+    record = asyncio.run(_start(executor, setup, state, outer.name))
+
+    assert record.status == "finished"
+    assert observed == [
+        ("direct", ("alpha__one",)),
+        ("nested", ("alpha__one", "beta__two")),
+        ("sibling", ("alpha__one",)),
+    ]
+    asyncio.run(executor.shutdown())
+
+
 def test_parallel_children_preserve_input_and_output_types(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -560,6 +673,7 @@ def test_parallel_children_preserve_input_and_output_types(
         model=None,
         state=state,
         setup=setup,
+        agent_ceiling=resolve_agent_ceiling(setup, state, CeilingSpec()),
         created_at="2026-01-01T00:00:00Z",
     )
 

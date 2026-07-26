@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from toolang.base.types.hosting import HostingRef
 import toolang.cli.toolang.main as cli
 from toolang.common.layout import AgentLayout
+from toolang.execution.executor import CeilingSpec
 from toolang.up import hosting
 from toolang.up.server import ServeSpec
 
@@ -47,9 +48,11 @@ def _launch_spec(
             endpoint_host=endpoint_host
             or ("localhost" if host == "127.0.0.1" else host),
             port=port or 7123,
-            model_selectors=tuple(models or ()),
-            tool_selectors=None if tools is None else tuple(tools),
-            cap_selectors=tuple(caps or ()),
+            ceiling=CeilingSpec(
+                models=tuple(models or ()) or None,
+                tools=None if tools is None else tuple(tools),
+                caps=tuple(caps or ()) or None,
+            ),
             file_inboxes=tuple(file_inboxes or ()),
             log_spec=log_spec,
         ),

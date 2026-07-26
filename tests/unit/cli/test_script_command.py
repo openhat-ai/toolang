@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 from toolang.base.types.message import ImagePart, TextPart
 from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import script
+from toolang.execution.executor import CeilingSpec
 
 
 _SOURCE = """
@@ -43,6 +44,14 @@ def test_script_binds_options_arguments_and_primary_input(
             "demo",
             "--model",
             "openai/gpt",
+            "--models",
+            "openai/*,deepseek/*",
+            "--models",
+            "openai/*",
+            "--tools",
+            "filesystem/*,shell/*",
+            "--caps",
+            "skill/reviewer,service/github",
             "-vv",
             "count=2.5",
             "enabled=true",
@@ -57,6 +66,11 @@ def test_script_binds_options_arguments_and_primary_input(
     assert captured["source_path"] == source.resolve()
     assert captured["runnable"] == "demo"
     assert captured["model"] == "openai/gpt"
+    assert captured["ceiling"] == CeilingSpec(
+        models=("openai/*", "deepseek/*"),
+        tools=("filesystem/*", "shell/*"),
+        caps=("skill/reviewer", "service/github"),
+    )
     assert captured["verbosity"] == 2
     assert captured["args"] == {"count": 2.5, "enabled": True}
     assert captured["input_value"] == (TextPart("hello world"),)

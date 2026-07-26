@@ -180,8 +180,9 @@ Subsequent turns reuse the same thread id. The client explicitly selects the
 chat/default runnable. Persisted state is read through the normal thread and run
 detail endpoints.
 
-`GET /api/v1/models` returns the current chat-selectable model selectors
-and the default selector after applying activation config and the `chat` agic.
+`GET /api/v1/models` returns model selectors inside the server's current
+`CeilingSpec` and the default selector. A run applies its selected runnable's
+`models` directive after it starts.
 
 
 ## Streaming Rule

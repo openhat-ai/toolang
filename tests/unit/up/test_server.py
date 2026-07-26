@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from toolang.common.layout import AgentLayout
+from toolang.execution.executor import CeilingSpec
 from toolang.up.server import build_serve_argv, resolve_serve
 
 
@@ -25,6 +26,11 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
         host="0.0.0.0",
     )
 
+    assert spec.ceiling == CeilingSpec(
+        models=("openai/gpt-5",),
+        tools=("shell",),
+        caps=("skill:search",),
+    )
     assert argv[:9] == (
         "--root",
         "/root/.toolang",

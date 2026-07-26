@@ -29,6 +29,7 @@ def test_run_spec_has_minimal_execution_contract() -> None:
         "state",
         "thread",
         "runnable",
+        "ceiling",
         "input",
         "model",
         "args",

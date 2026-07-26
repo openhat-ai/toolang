@@ -225,11 +225,13 @@ def test_interactive_tty_passes_the_unmodified_thread_to_the_tui(
 def test_chat_selector_payload_deduplicates_all_selector_families() -> None:
     assert chat._chat_selector_payload(
         models=["openai/gpt-5,openai/o3", "openai/gpt-5"],
+        model="openai/o3",
         tools=["filesystem,shell", "shell"],
         caps=["skill/reviewer,service/*[home]", "skill/reviewer"],
         agic="summarize",
     ) == {
         "models": ["openai/gpt-5", "openai/o3"],
+        "model": "openai/o3",
         "tools": ["filesystem", "shell"],
         "caps": ["skill/reviewer", "service/*[home]"],
         "agic": "summarize",

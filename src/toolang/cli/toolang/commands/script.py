@@ -29,16 +29,18 @@ from toolang.base.types.message import (
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor import RunExecutor, RunSpec
+from toolang.execution.executor import CeilingSpec, RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program, StructDecl
 from toolang.lang.input import coerce_input, perceive_input
+from toolang.plugin.models.resolution import split_model_selectors
+from toolang.plugin.tools.registry import split_tool_selectors
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.state import AgentState
+from toolang.state.state import AgentState, split_cap_selectors
 from toolang.up import process as agents
 from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
@@ -211,6 +213,9 @@ def _runnable_command(
     def callback(
         items: tuple[str, ...],
         model: str | None,
+        models: tuple[str, ...],
+        tools: tuple[str, ...],
+        caps: tuple[str, ...],
         quiet: bool,
         verbose: int,
     ) -> int:
@@ -226,6 +231,13 @@ def _runnable_command(
             input_value=input_value,
             args=args,
             model=model,
+            ceiling=CeilingSpec(
+                models=tuple(dict.fromkeys(split_model_selectors(models))) or None,
+                tools=(
+                    tuple(dict.fromkeys(split_tool_selectors(tools))) if tools else None
+                ),
+                caps=tuple(dict.fromkeys(split_cap_selectors(caps))) or None,
+            ),
             quiet=quiet,
             verbosity=verbose,
         )
@@ -237,6 +249,27 @@ def _runnable_command(
             type=str,
             default=None,
             help="Use this model selector for the run.",
+        ),
+        TyperOption(
+            param_decls=["--models"],
+            type=str,
+            multiple=True,
+            default=(),
+            help="Limit available models. Pass CSV or repeat.",
+        ),
+        TyperOption(
+            param_decls=["--tools"],
+            type=str,
+            multiple=True,
+            default=(),
+            help="Limit available tools. Pass CSV or repeat.",
+        ),
+        TyperOption(
+            param_decls=["--caps"],
+            type=str,
+            multiple=True,
+            default=(),
+            help="Limit available caps. Pass CSV or repeat.",
         ),
         TyperOption(
             param_decls=["--quiet", "-q"],
@@ -505,6 +538,7 @@ def _run(
     input_value: Percept,
     args: dict[str, object],
     model: str | None,
+    ceiling: CeilingSpec,
     quiet: bool,
     verbosity: int,
 ) -> int:
@@ -543,6 +577,7 @@ def _run(
                 input_value=input_value,
                 args=args,
                 model=model,
+                ceiling=ceiling,
                 quiet=quiet,
                 verbosity=verbosity,
             )
@@ -588,6 +623,7 @@ async def _execute(
     input_value: Percept,
     args: dict[str, object],
     model: str | None,
+    ceiling: CeilingSpec,
     quiet: bool,
     verbosity: int,
 ) -> RunRecord:
@@ -604,6 +640,7 @@ async def _execute(
             RunSpec(
                 setup=setup,
                 state=state,
+                ceiling=ceiling,
                 thread=thread,
                 runnable=runnable,
                 input=input_value,

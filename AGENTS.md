@@ -180,13 +180,24 @@
   and bounded diagnostics. Durable records, events, storage, inspection,
   schemas, and thread management remain at the `toolang.execution` package
   level.
-- `RunSpec` carries the captured `AgentSetup` and `AgentState`, existing thread
-  id, unique runnable name, canonical primary `Percept` input, optional model
-  choice, and optional runnable `args`. Runnable declarations call their formal
-  arguments `params`; runtime calls provide `args`. After runnable resolution,
-  the executor uses language-owned input coercion to initialize typed `_` while
-  preserving the original `Percept` in the start control. Run and request
-  identities are `start()` arguments rather than executable input.
+- `RunSpec` carries the captured `AgentSetup` and `AgentState`, immutable
+  caller-provided `CeilingSpec`, existing thread id, unique runnable name,
+  canonical primary `Percept` input, optional singular model choice, and
+  optional runnable `args`. `AgentSetup` and `AgentState` remain complete
+  snapshots; callers never replace them with ceiling-filtered copies. Runnable
+  declarations call their formal arguments `params`; runtime calls provide
+  `args`. After runnable resolution, the executor uses language-owned input
+  coercion to initialize typed `_` while preserving the original `Percept` in
+  the start control. Run and request identities are `start()` arguments rather
+  than executable input.
+- `CeilingSpec` stores the stable model/tool/cap selector lists merged by the
+  caller from config, environment, and CLI inputs. At `start()`, the executor
+  resolves it against the captured setup and state into a private
+  `_AgentCeiling`, the absolute limit for one root run tree. Every flow
+  invocation resets its private `_RunCeiling` from `_AgentCeiling`, while each
+  agic applies its directives to the nearest flow ceiling or directly to
+  `_AgentCeiling`. Flow corrections do not propagate through nested flow calls,
+  and sibling agics never mutate one another's ceiling.
 - Within `toolang.execution.executor`, `runs` owns complete agic and flow run
   bodies, `stmts` owns lowered flow-statement semantics, and `steps` owns step
   execution and event emission. Top-level runs have no synthetic containing
@@ -300,8 +311,8 @@
 - Keep file-shape logic in dedicated modules.
 - Keep path/layout logic in dedicated modules.
 - Keep runtime execution logic separate from file parsing and path resolution.
-- `runs.db` owns runtime transcript messages as well as activation,
-  thread, run, and step truth. Do not add a separate durable chat-store layer.
+- `runs.db` owns runtime transcript messages as well as thread, run, and step
+  truth. Do not add a separate durable chat-store layer.
 - Persist run controls directly through `RunExecutor` and `RunStore`; runtime
   owns their application status. Persist run and step facts by sending
   `RunEvent` values through the executor's private event projector.

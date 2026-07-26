@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 
-from toolang.api.app import AgentCoreDep, LiveEventRelayDep
+from toolang.api.app import AgentCoreDep, CeilingSpecDep, LiveEventRelayDep
 from toolang.api.common import EventSubscription, sse_stream
 from toolang.api.conversion import parse_percept, parse_user_message
 from toolang.api.schemas import (
@@ -28,6 +28,7 @@ _StartedRunStream = tuple[RunHandle, EventSubscription]
 
 async def _start_run_stream(
     core: AgentCoreDep,
+    ceiling: CeilingSpecDep,
     live: LiveEventRelayDep,
     payload: RunCreateRequest,
 ) -> AsyncIterator[_StartedRunStream]:
@@ -37,6 +38,7 @@ async def _start_run_stream(
             RunSpec(
                 setup=core.setup.current(),
                 state=core.state.current(),
+                ceiling=ceiling,
                 thread=thread_id,
                 runnable=payload.runnable,
                 input=parse_percept(payload.input),

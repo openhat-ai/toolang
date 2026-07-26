@@ -56,7 +56,7 @@ store and `IdIssuer` instances.
 Control polling currently uses an internal default and can move into executor
 options when runtime tuning becomes public.
 
-`RunSpec` contains only execution inputs selected for one invocation:
+`RunSpec` contains the immutable inputs required to start one invocation:
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -65,6 +65,7 @@ class RunSpec:
     state: AgentState
     thread: str
     runnable: str
+    ceiling: CeilingSpec = CeilingSpec()
     input: Percept = ()
     model: str | None = None
     args: Mapping[str, object] | None = None
@@ -74,7 +75,9 @@ class RunSpec:
 program. The spec does not carry an origin, executable kind, run identity,
 request identity, or arbitrary transport context. The optional singular model
 selector is the caller's per-run model choice; aliases and defaults are parsed
-from the captured state config. `input` is the primary multimodal input; `args`
+from the captured state config. `ceiling` is the caller's immutable
+selector-based specification for the complete root run tree. `input` is the
+primary multimodal input; `args`
 contains values for the runnable's declared `params`. The executor validates
 both before accepting the run and constructs the user message internally. It
 keeps the original canonical `Percept` for the start control and durable
@@ -131,6 +134,8 @@ private `_Execution` that carries the state shared by its recursive run tree.
 The implementation is divided by semantic level:
 
 - `executor.py` binds `RunSpec` to immutable execution state and durable IDs;
+- `ceiling.py` resolves the public `CeilingSpec` into private `_AgentCeiling`
+  and per-run `_RunCeiling` values;
 - `prepare.py` resolves an agic's model, tools, caps, prompt, history, and
   adapter in one pass;
 - `runs/agic.py` owns the fixed model-tool cycle for one agic;
@@ -139,10 +144,23 @@ The implementation is divided by semantic level:
 - `steps/` owns executable step boundaries and their `StepBegin`, part, and
   `StepEnd` events.
 
-Preparation produces one `PreparedAgic` consumed directly by the agic run.
+Preparation produces one private `_AgicFrame` consumed directly by the agic
+run. Adapters never observe that frame; their boundary remains one
+`ModelTarget` and one normalized `ModelCall` per model step.
 There is no loop plugin or public run-context protocol, and there are no
 separate effective-resource, invocation, model-call assembly, or tool-snapshot
 layers.
+
+`CeilingSpec` contains stable selector lists, not resolved resources. At
+`start()`, the executor resolves the spec against the captured `AgentSetup` and
+`AgentState` into `_AgentCeiling`, the absolute resource limit for a recursive
+run tree. An invalid spec is rejected before the run is durably accepted.
+Every flow invocation resets its `_RunCeiling` from
+`_AgentCeiling`, whether or not that flow declares directives. Agics derive
+their `_RunCeiling` from the nearest containing flow ceiling, or directly from
+`_AgentCeiling` at the root. Agic directives affect only that agic. A nested
+flow does not inherit its caller's flow correction; returning from it naturally
+restores the caller's immutable flow ceiling.
 
 Agic and flow bodies run natively on the owner event loop. Model adapters,
 tool invocation, step emission, and run tracing are asynchronous. A wrapper

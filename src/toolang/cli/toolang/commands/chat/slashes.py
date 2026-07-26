@@ -89,22 +89,20 @@ def _model(app: AppContext, _command: str, argument: str) -> SlashOutput:
         return None
 
     selectors = _chat_model_command_selectors(argument)
-    labels = (
-        _chat_resolve_model_command_labels(client.list_models(), selectors)
-        if selectors
-        else None
-    )
-    if labels is None:
+    if len(selectors) != 1:
+        app.set_status_error("/model requires exactly one selector.")
+        return None
+    resolved = _chat_resolve_model_command(client.list_models(), selectors[0])
+    if resolved is None:
         app.set_status_error(
-            "/model requires a selector."
-            if not selectors
-            else f"Model selector matched no models: {', '.join(selectors)}"
+            f"Model selector must match exactly one model: {selectors[0]}"
         )
         return None
 
-    selects["models"] = list(selectors)
+    selector, label = resolved
+    selects["model"] = selector
     app.refresh_status()
-    return f"model: {', '.join(labels)}"
+    return f"model: {label}"
 
 
 def _executable(app: AppContext, command: str, argument: str) -> SlashOutput:
@@ -226,51 +224,73 @@ def _chat_resolve_model_command_labels(
     models_payload: Mapping[str, Any],
     selectors: Sequence[str],
 ) -> tuple[str, ...] | None:
+    resolved = [
+        _chat_resolve_model_command(models_payload, selector) for selector in selectors
+    ]
+    if any(item is None for item in resolved):
+        return None
+    return tuple(item[1] for item in resolved if item is not None)
+
+
+def _chat_resolve_model_command(
+    models_payload: Mapping[str, Any],
+    selector: str,
+) -> tuple[str, str] | None:
     items = [
         item for item in _items(models_payload) if isinstance(item.get("selector"), str)
     ]
-    labels: list[str] = []
-    for selector in selectors:
-        target = selector.strip().removeprefix("[").removesuffix("]")
-        match = next(
-            (
-                item
-                for item in items
-                if any(
-                    value.strip().removeprefix("[").removesuffix("]") == target
-                    for value in (
-                        as_text(item.get("selector")),
-                        as_text(item.get("ref")),
-                        as_text(item.get("name")),
-                        as_text(item.get("model")),
-                        as_text(item.get("provider")),
-                    )
-                    if value is not None
-                )
-            ),
-            None,
+    target = _model_command_value(selector)
+    exact = [
+        item
+        for item in items
+        if _model_command_value(as_text(item.get("selector")) or "") == target
+    ]
+    if len(exact) == 1:
+        return _resolved_model_command(exact[0])
+    if exact:
+        return None
+    matches = [
+        item
+        for item in items
+        if any(
+            _model_command_value(value) == target
+            for value in (
+                as_text(item.get("ref")),
+                as_text(item.get("name")),
+                as_text(item.get("model")),
+                as_text(item.get("provider")),
+            )
+            if value is not None
         )
-        if match is None:
-            return None
-        labels.append(_model_label(match))
-    return tuple(labels)
+    ]
+    if len(matches) != 1:
+        return None
+    return _resolved_model_command(matches[0])
+
+
+def _resolved_model_command(match: Mapping[str, Any]) -> tuple[str, str] | None:
+    canonical = as_text(match.get("selector"))
+    if canonical is None:
+        return None
+    return canonical, _model_label(match)
+
+
+def _model_command_value(value: str) -> str:
+    text = value.strip()
+    if text.startswith("[") and text.endswith("]"):
+        return text[1:-1].strip()
+    return text
 
 
 def chat_model_label(
     models_payload: Mapping[str, Any],
     selects: Mapping[str, object],
 ) -> str:
-    models = selects.get("models")
-    if isinstance(models, Sequence) and not isinstance(models, (str, bytes, bytearray)):
-        selectors = tuple(str(item) for item in models if str(item))
-        labels = _chat_resolve_model_command_labels(models_payload, selectors)
-        return ", ".join(labels or selectors) if selectors else "runtime model"
-
-    default = as_text(models_payload.get("default"))
-    if default is None:
-        return "runtime model"
-    labels = _chat_resolve_model_command_labels(models_payload, (default,))
-    return labels[0] if labels else default
+    model = as_text(selects.get("model"))
+    if model is None:
+        return "auto"
+    labels = _chat_resolve_model_command_labels(models_payload, (model,))
+    return labels[0] if labels else model
 
 
 def _chat_set_executable_selector(

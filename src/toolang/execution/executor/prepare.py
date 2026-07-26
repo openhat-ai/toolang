@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool
@@ -32,8 +32,7 @@ from toolang.lang.ast import (
     Span,
 )
 from toolang.lang.input import coerce_input, perceive_input
-from toolang.plugin.models.resolution import resolve_model, select_model_selectors
-from toolang.plugin.tools.registry import selected_tool_names, tool_ref_for_model_tool
+from toolang.plugin.models.resolution import resolve_model
 from toolang.state import state as cap_store
 from toolang.state.state import PreparedCap
 
@@ -53,11 +52,10 @@ _RUNTIME_DEFAULT_AGIC = AgicDecl(
     input=Parameter(name="_", type_name="Part[]", span=Span(line=1)),
     span=Span(line=1),
 )
-_T = TypeVar("_T")
 
 
 @dataclass(frozen=True, slots=True)
-class PreparedAgic:
+class _AgicFrame:
     """Everything the agent loop needs after accepting one agic run."""
 
     run: BoundRun
@@ -77,25 +75,27 @@ def prepare_agic(
     agic: AgicDecl,
     *,
     variables: Mapping[str, object] | None = None,
-) -> PreparedAgic:
+) -> _AgicFrame:
     """Resolve runtime resources and render the complete model input."""
 
     args = dict(run.args)
 
-    model_selectors = _effective_model_selectors(
-        context,
-        agic=agic,
-    )
+    ceiling = run.ceiling
+    if ceiling is None:
+        raise RuntimeError(f"run ceiling missing: {run.run_id}")
+    model_selectors = ceiling.models
+    if not model_selectors:
+        raise ToolangError(f"run ceiling allows no models: {agic.name}")
     model = resolve_model(
         context,
         selector=run.model or (model_selectors[0] if model_selectors else None),
         allowed_selectors=model_selectors,
     )
-    tools = _select_tools(dict(run.setup.tools), _directives(agic, "tools"))
-    caps = tuple(run.state.caps)
-    psyches = _select_caps(_caps(caps, "psyche"), _directives(agic, "psyches"))
-    skills = _select_caps(_caps(caps, "skill"), _directives(agic, "skills"))
-    services = _select_caps(_caps(caps, "service"), _directives(agic, "services"))
+    tools = dict(ceiling.tools)
+    caps = ceiling.caps
+    psyches = tuple(item for item in caps if item.kind == "psyche")
+    skills = tuple(item for item in caps if item.kind == "skill")
+    services = tuple(item for item in caps if item.kind == "service")
 
     if variables is None:
         default_variables: dict[str, object] = dict(args)
@@ -161,7 +161,7 @@ def prepare_agic(
     adapter = run.setup.adapters.get(prepared_model.adapter)
     if adapter is None:
         raise ToolangError(f"unknown model adapter: {prepared_model.adapter}")
-    prepared = PreparedAgic(
+    prepared = _AgicFrame(
         run=run,
         agic=agic,
         model=prepared_model,
@@ -182,96 +182,8 @@ def effective_agics(program: Program) -> tuple[AgicDecl, ...]:
     return (*program.agics, _RUNTIME_DEFAULT_AGIC)
 
 
-def _effective_model_selectors(
-    context: _Execution,
-    *,
-    agic: AgicDecl,
-) -> tuple[str, ...]:
-    selected = _select_values((), _directives(agic, "models"), lambda values: values)
-    return select_model_selectors(
-        context,
-        agic_selectors=selected,
-    )
-
-
-def _select_tools(
-    tools: dict[str, AgentTool], directives: tuple[Directive, ...]
-) -> dict[str, AgentTool]:
-    refs = {name: tool_ref_for_model_tool(name, tool) for name, tool in tools.items()}
-    names = _select_values(
-        tuple(tools),
-        directives,
-        lambda values: selected_tool_names(refs, values),
-    )
-    return {name: tools[name] for name in names if name in tools}
-
-
-def _caps(entries: tuple[PreparedCap, ...], kind: str) -> tuple[PreparedCap, ...]:
-    return tuple(entry for entry in entries if entry.kind == kind)
-
-
-def _select_caps(
-    entries: tuple[PreparedCap, ...], directives: tuple[Directive, ...]
-) -> tuple[PreparedCap, ...]:
-    if not entries:
-        return ()
-    kind = entries[0].kind
-    agent_name = _entry_agent_name(entries)
-    return _select_values(
-        entries,
-        directives,
-        lambda values: cap_store.select_cap_entries(
-            entries,
-            values,
-            agent_name=agent_name,
-            implicit_kind=kind,
-        ),
-        identity=lambda entry: (entry.kind, entry.name, entry.ref),
-    )
-
-
 def _directives(agic: AgicDecl, name: str) -> tuple[Directive, ...]:
     return tuple(item for item in agic.directives if item.name == name)
-
-
-def _select_values(
-    base: tuple[_T, ...],
-    directives: tuple[Directive, ...],
-    match: Callable[[tuple[str, ...]], Sequence[_T]],
-    *,
-    identity: Callable[[_T], Hashable] = lambda item: item,
-) -> tuple[_T, ...]:
-    current: list[_T] = []
-    seen: set[Hashable] = set()
-    for item in base:
-        key = identity(item)
-        if key not in seen:
-            current.append(item)
-            seen.add(key)
-    for directive in directives:
-        matches = list(match(tuple(value for value in directive.values if value)))
-        if directive.operator == "=":
-            current = matches
-        elif directive.operator == "+=":
-            seen = {identity(item) for item in current}
-            for item in matches:
-                key = identity(item)
-                if key not in seen:
-                    current.append(item)
-                    seen.add(key)
-        elif directive.operator == "-=":
-            blocked = {identity(item) for item in matches}
-            current = [item for item in current if identity(item) not in blocked]
-    return tuple(current)
-
-
-def _entry_agent_name(entries: tuple[PreparedCap, ...]) -> str:
-    for entry in entries:
-        path = entry.path or entry.source.path
-        _prefix, separator, rest = path.partition("agents/")
-        if separator and "/" in rest:
-            return rest.split("/", 1)[0]
-    return "default"
 
 
 def _render_messages(
@@ -575,7 +487,7 @@ def _tool_services(
     return tuple(result)
 
 
-def _log_prepared(prepared: PreparedAgic) -> None:
+def _log_prepared(prepared: _AgicFrame) -> None:
     if not _LOGGER.isEnabledFor(logging.DEBUG):
         return
     run = prepared.run

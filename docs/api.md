@@ -185,6 +185,9 @@ Behavior:
 - `-q` or `--quiet` suppresses progress messages
 - `-v` or `--verbose` shows execution boundaries even when stderr is not a TTY
 - `--model SELECTOR` chooses one model for the run
+- `--models SELECTOR-LIST` defines the model allow list for the script invocation
+- `--tools SELECTOR-LIST` and `--caps SELECTOR-LIST` set the remaining
+  `CeilingSpec` selector lists
 - execution happens directly in the current CLI process; script run does not
   currently accept `--sandbox`
 - `PY_LOG=toolang.execution=info toolang a.too summarize ...` writes runtime logs
@@ -194,7 +197,8 @@ Behavior:
 - `toolang a.too --help` lists public runnables
 - `toolang a.too summarize --help` prints runnable-specific dynamic usage
 - `toolang a.too` shows usage instead of running a default agic
-- script run exposes the agent's effective tools, subject to runnable
+- script run reads the complete setup snapshot and resolves effective tools
+  inside the executor from `CeilingSpec`, captured snapshots, and runnable
   directives
 - `NAME=VALUE` supplies one named argument and is coerced using its declared
   parameter type
@@ -382,9 +386,9 @@ clients. CLI script runs and TUI execution do not consume this endpoint.
 | `steps` | Step totals grouped by `model_call`, `tool_call`, and `runtime` |
 | `tokens` | Aggregated input, output, and total token usage |
 
-`GET /api/v1/models` returns the effective selectable model selectors for chat
-runs after applying the current activation config and the `chat` agic's
-`models` directive. The response includes:
+`GET /api/v1/models` returns the selectable model routes inside the server's
+current `CeilingSpec`. Runnable `models` directives are applied when a run
+starts, not by this inspection endpoint. The response includes:
 
 - `default`
 - `items`

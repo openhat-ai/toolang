@@ -20,7 +20,7 @@ from ..common import (
     value_percept,
     value_text,
 )
-from ..prepare import PreparedAgic, prepare_agic
+from ..prepare import _AgicFrame, prepare_agic
 from ..steps import model as model_step
 from ..steps import tool as tool_step
 from ...records import RunControlRecord
@@ -35,7 +35,7 @@ _MAX_TOOL_ROUNDS = 8
 class _AgicState:
     """Mutable state shared by one agic's model and tool steps."""
 
-    prepared: PreparedAgic
+    prepared: _AgicFrame
     layout: AgentLayout
     emit: EventEmitter
     pending_inputs: Callable[[], tuple[RunControlRecord, ...]]

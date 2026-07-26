@@ -5,26 +5,25 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import threading
 from typing import Any
 from uuid import uuid4
 
 from toolang.base.types.message import Message
-from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer
-from toolang.execution.executor import RunExecutor, RunSpec
+from toolang.execution.executor import CeilingSpec, RunExecutor, RunSpec
+from toolang.execution.executor.ceiling import (
+    agent_model_targets,
+    validate_ceiling_spec,
+)
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import perceive_input
-from toolang.plugin.models.config import parse_default_models, parse_model_aliases
-from toolang.plugin.models.resolution import selectable_model_targets
-from toolang.plugin.tools.loading import select_tools, validate_tool_selectors
 from toolang.setup import SetupWatcher
-from toolang.state import state as cap_state
 from toolang.state.state import AgentState
 from toolang.state.watcher import StateWatcher
 
@@ -49,9 +48,11 @@ class LocalChatSession:
         caps: Sequence[str] = (),
     ) -> None:
         self.layout = layout
-        self.model_selectors = tuple(models)
-        self.tool_selectors = tuple(tools) if tools is not None else None
-        self.cap_selectors = tuple(caps)
+        self.ceiling = CeilingSpec(
+            models=tuple(models) or None,
+            tools=tuple(tools) if tools is not None else None,
+            caps=tuple(caps) or None,
+        )
         self.store = RunStore(layout.run_store)
         self.ids = IdIssuer(layout.id_state)
         self.threads = ThreadManager(self.store, self.ids)
@@ -75,17 +76,7 @@ class LocalChatSession:
     def list_models(self) -> Mapping[str, Any]:
         setup = self.setup_watcher.current()
         state = self.state_watcher.current()
-        layers = (state.root_config, state.home_config)
-        aliases = parse_model_aliases(layers)
-        defaults = self.model_selectors or parse_default_models(layers)
-        targets = selectable_model_targets(
-            providers=setup.providers,
-            models=setup.models,
-            aliases=aliases,
-            envs=setup.envs,
-            selectors=self.model_selectors or None,
-        )
-        default = defaults[0] if defaults else targets[0][0] if targets else None
+        default, targets = agent_model_targets(setup, state, self.ceiling)
         return {
             "default": default,
             "items": [
@@ -177,10 +168,9 @@ class LocalChatSession:
         self.store.close()
 
     async def _initialize(self) -> None:
-        await self.state_watcher.refresh()
+        state = await self.state_watcher.refresh()
         setup = await self.setup_watcher.refresh()
-        if self.tool_selectors is not None:
-            validate_tool_selectors(dict(setup.tools), self.tool_selectors)
+        validate_ceiling_spec(setup, state, self.ceiling)
         if self._stop_signal is None:
             raise RuntimeError("local chat event loop was not initialized")
         self._watch_tasks = (
@@ -203,29 +193,13 @@ class LocalChatSession:
     ) -> None:
         state = self.state_watcher.current()
         setup = self.setup_watcher.current()
-        tool_selectors = _strings(selects.get("tools"))
-        if "tools" in selects:
-            validate_tool_selectors(dict(setup.tools), tool_selectors)
-            setup = replace(
-                setup,
-                tools=select_tools(dict(setup.tools), tool_selectors),
-            )
-        elif self.tool_selectors is not None:
-            setup = replace(
-                setup,
-                tools=select_tools(dict(setup.tools), self.tool_selectors),
-            )
-        cap_selectors = _strings(selects.get("caps"))
-        if cap_selectors:
-            state = self._state_with_caps(state, cap_selectors)
-        elif self.cap_selectors:
-            state = self._state_with_caps(state, self.cap_selectors)
         runnable = _runnable(state, selects)
-        model = next(iter(_strings(selects.get("models"))), None)
+        model = _text(selects.get("model"))
         handle = self.executor.start(
             RunSpec(
                 setup=setup,
                 state=state,
+                ceiling=self.ceiling,
                 thread=thread_id,
                 runnable=runnable,
                 input=perceive_input(message, program=state.program),
@@ -235,29 +209,6 @@ class LocalChatSession:
             tracer=_CallbackTracer(on_event),
         )
         await handle
-
-    def _state_with_caps(
-        self,
-        state: AgentState,
-        selectors: Sequence[str],
-    ) -> AgentState:
-        missing = [
-            selector
-            for selector in selectors
-            if not cap_state.select_cap_entries(
-                state.caps,
-                (selector,),
-                agent_name=self.layout.name,
-            )
-        ]
-        if missing:
-            raise ToolangError(f"cap selector matched no caps: {', '.join(missing)}")
-        selected = cap_state.select_cap_entries(
-            state.caps,
-            tuple(selectors),
-            agent_name=self.layout.name,
-        )
-        return replace(state, caps=selected)
 
     async def _close(self) -> None:
         if self._stop_signal is not None:

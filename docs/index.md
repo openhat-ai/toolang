@@ -31,7 +31,7 @@ Use this directory for:
 | [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
 | [prepared-state.md](./prepared-state.md) | Immutable prepared generations, versioning, publication, and watching |
 | [caps.md](./caps.md) | Capability model, including form, scope, origin, refs, precedence, and effective-cap rules |
-| [selectors.md](./selectors.md) | Shared selector-list syntax for filters, activation flags, and agic directives |
+| [selectors.md](./selectors.md) | Shared selector-list syntax for filters, runtime allow lists, and runnable directives |
 | [tasks.md](./tasks.md) | Job model, including tasks, chores, scheduling, and thread mapping |
 | [webui-jobs.md](./webui-jobs.md) | Web UI job board integration guide |
 | [execution.md](./execution.md) | Execution boundaries, controls, threads, traces, and mandatory persistence |

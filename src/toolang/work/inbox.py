@@ -11,7 +11,7 @@ from collections.abc import Callable
 
 from toolang.base.types.message import Message
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor import RunExecutor, RunSpec
+from toolang.execution.executor import CeilingSpec, RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
@@ -38,6 +38,7 @@ def spawn(
     executor: RunExecutor,
     get_agent_setup: Callable[[], AgentSetup],
     get_agent_state: Callable[[], AgentState],
+    ceiling: CeilingSpec = CeilingSpec(),
     inboxes: tuple[Path, ...],
     interval_ms: float,
     stable_ms: float,
@@ -51,6 +52,7 @@ def spawn(
             executor=executor,
             get_agent_setup=get_agent_setup,
             get_agent_state=get_agent_state,
+            ceiling=ceiling,
             inboxes=inboxes,
             interval_ms=interval_ms,
             stable_ms=stable_ms,
@@ -65,6 +67,7 @@ async def run(
     executor: RunExecutor,
     get_agent_setup: Callable[[], AgentSetup],
     get_agent_state: Callable[[], AgentState],
+    ceiling: CeilingSpec = CeilingSpec(),
     inboxes: tuple[Path, ...],
     interval_ms: float,
     stable_ms: float,
@@ -107,6 +110,7 @@ async def run(
                     RunSpec(
                         setup=get_agent_setup(),
                         state=state,
+                        ceiling=ceiling,
                         thread=submission.record.thread_id,
                         runnable=(
                             "file"

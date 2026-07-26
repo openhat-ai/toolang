@@ -229,13 +229,14 @@ check; it is not part of the public manager API.
 
 ## State Capture
 
-`RunSpec` carries one explicit immutable `AgentState` and
-`toolang.setup.AgentSetup`. `AgentSetup` supplies the immutable `AgentLayout`
-and root-scoped installed runtime implementations. Execution uses that layout
-directly for the agent identity, home, and runtime rooms. Its primary input is
-one protocol-level `Percept`;
+`RunSpec` carries one explicit immutable `AgentState`,
+`toolang.setup.AgentSetup`, and `CeilingSpec`. `AgentSetup` supplies the
+immutable `AgentLayout` and root-scoped installed runtime implementations.
+Execution uses that layout directly for the agent identity, home, and runtime
+rooms. Its primary input is one protocol-level `Percept`;
 after runnable resolution, input coercion exposes that value as `Part[]` or
 another explicitly declared primary type. Output coercion validates the final
-run value against the runnable's declared output type. Child runs inherit setup
-and state. Source changes affect only runs accepted after the new state is
-observed.
+run value against the runnable's declared output type. Setup and state remain
+complete snapshots; the executor computes private run ceilings instead of
+receiving filtered copies. Child runs inherit setup and state. Source changes
+affect only runs accepted after the new state is observed.

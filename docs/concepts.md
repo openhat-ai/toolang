@@ -179,30 +179,30 @@ Toolang-owned run ids may also use one dedicated short generated id family. See
 [ids.md](./ids.md).
 
 
-## Activation Sets
+## Resource Ceilings
 
-Runtime resources such as tools, models, and program-scoped caps are selected
-through ordered sets.
+Runtime resources such as models, tools, and caps are selected through ordered
+sets. Config, environment, and CLI inputs contribute selector-list allow lists
+to one immutable `CeilingSpec`. The spec remains stable for the lifetime of its
+server, chat session, or script invocation.
 
-Placement provides a default resource set. CLI options may override or adjust
-that default for one activation. The result is the activation set.
+At root-run start, the executor resolves `CeilingSpec` against the captured
+`AgentSetup` and `AgentState`. The resulting agent ceiling is the absolute
+resource limit for that recursive run tree.
 
-Programs may also define inline caps or reference resources. Those items form
-a program set. Program resources are not automatically effective for every
-agic.
-
-Agic directives compute the effective set from the activation set:
+Flow and agic directives compute narrower run ceilings:
 
 ```text
-current_set = activation_set
+current_set = inherited_ceiling
 
 items += operand  => current_set = current_set union operand
 items -= operand  => current_set = current_set minus operand
 items = operand   => current_set = current_set intersect operand
 ```
 
-`+=` operands must name resources from the program set. `-=` and `=` operands
-may be arbitrary selectors, for example a selector that removes all local
+All operands are evaluated inside the inherited ceiling, so `+=` cannot grant
+resources outside the agent ceiling. `-=` and `=` operands may use arbitrary
+selectors, for example a selector that removes all local
 models. `=` is a keep-only filter, not a traditional assignment.
 
 

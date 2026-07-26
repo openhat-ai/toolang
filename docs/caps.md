@@ -205,16 +205,17 @@ as `env: API_TOKEN, ANOTHER_ENV_VAR`.
 
 ## Effective Cap Set
 
-One activation sees one effective cap set.
-
-The runtime:
+`AgentState` captures one complete effective prepared cap set. State
+preparation:
 
 1. collects root and home definitions
 2. resolves wired and ref entries
 3. materializes runtime-ready artifacts when needed
 4. selects the winning definition for each `(kind, name)`
 
-Runs inherit the effective cap set of the activation that executes them.
+At root-run start, `CeilingSpec.caps` limits that captured set to the private
+agent ceiling. Flow and agic directives may narrow it further, but cannot
+restore caps outside the agent ceiling.
 
 
 ## HTTP API

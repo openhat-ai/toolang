@@ -20,6 +20,10 @@ def chat_command(
         list[str] | None,
         typer.Option("--models", help="Limit available models. Pass CSV or repeat."),
     ] = None,
+    model: Annotated[
+        str | None,
+        typer.Option("--model", help="Select the initial model for new runs."),
+    ] = None,
     tools: Annotated[
         list[str] | None,
         typer.Option("--tools", help="Allow selected tools. Pass CSV or repeat."),
@@ -48,6 +52,7 @@ def chat_command(
         ctx,
         thread=thread,
         models=models,
+        model=model,
         tools=tools,
         caps=caps,
         agic=agic,

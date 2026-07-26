@@ -282,11 +282,14 @@ One agic run resolves exactly one model target before execution starts.
 
 Resolution proceeds in this order:
 
-1. explicit CLI selector
-2. default selector from activation config
+1. explicit `RunSpec.model`, including CLI `--model` or an HTTP request model
+2. default selector from runtime config
 3. default model route or selector from root config
 4. built-in default selector
 
-When an agic declares route-neutral refs through `models = ...` and the
-activation also provides `--models`, Toolang keeps only the intersection and
-preserves activation order.
+Every candidate must be inside the current private `_RunCeiling`. `--models`
+contributes a selector list to `CeilingSpec`; it does not select one model and
+does not alter the complete model list cached by `SetupWatcher`. At start, the
+executor resolves the spec and captured snapshots into `_AgentCeiling`. Agic
+`models` directives further intersect the nearest flow ceiling. A nested flow
+resets its ceiling from `_AgentCeiling`.

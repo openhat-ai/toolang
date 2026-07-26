@@ -26,7 +26,7 @@ from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, StepEnd
 from toolang.execution.executor.common import BoundRun
-from toolang.execution.executor.prepare import PreparedAgic
+from toolang.execution.executor.prepare import _AgicFrame
 from toolang.execution.executor.runs.agic import _AgicState, _execute
 from toolang.execution.records import RunControlRecord
 from toolang.plugin.models.discovery import missing_provider_env_vars
@@ -435,7 +435,7 @@ def test_model_resolution_rejects_selector_outside_allowed_set() -> None:
         model_environ={},
     )
 
-    with pytest.raises(ToolangError, match="not allowed for this activation"):
+    with pytest.raises(ToolangError, match="outside the current ceiling"):
         resolve_model(
             context,
             selector="o3[openrouter]",
@@ -470,7 +470,7 @@ def test_model_resolution_reports_no_matched_models_when_selector_misses() -> No
         resolve_model(context, selector="anthropic/claude-sonnet-4.5")
 
 
-def test_select_model_selectors_preserves_activation_order_for_intersection() -> None:
+def test_select_model_selectors_preserves_allowed_order_for_intersection() -> None:
     provider = _FakeModelProvider(
         name="openrouter",
         models=(
@@ -501,8 +501,8 @@ def test_select_model_selectors_preserves_activation_order_for_intersection() ->
 
     selectors = select_model_selectors(
         context,
-        agic_selectors=("openai/gpt-5", "openai/o3"),
-        activation_selectors=("openai/o3[openrouter]", "openai/gpt-5[openrouter]"),
+        directive_selectors=("openai/gpt-5", "openai/o3"),
+        allowed_selectors=("openai/o3[openrouter]", "openai/gpt-5[openrouter]"),
     )
 
     assert selectors == ("openai/o3[openrouter]", "openai/gpt-5[openrouter]")
@@ -537,14 +537,14 @@ def test_select_model_selectors_supports_name_glob_without_matching_family() -> 
         model_environ={},
     )
 
-    assert select_model_selectors(context, activation_selectors=("gpt-*",)) == (
+    assert select_model_selectors(context, allowed_selectors=("gpt-*",)) == (
         "openai/gpt-5[openrouter]",
     )
-    assert select_model_selectors(context, activation_selectors=("openai/*",)) == (
+    assert select_model_selectors(context, allowed_selectors=("openai/*",)) == (
         "openai/gpt-5[openrouter]",
     )
     with pytest.raises(ToolangError, match="No matched models."):
-        select_model_selectors(context, activation_selectors=("openai",))
+        select_model_selectors(context, allowed_selectors=("openai",))
 
 
 def test_select_model_selectors_expands_route_neutral_agic_refs_from_discovery() -> (
@@ -603,7 +603,7 @@ def test_select_model_selectors_expands_route_neutral_agic_refs_from_discovery()
 
     selectors = select_model_selectors(
         context,
-        agic_selectors=("openai/o3", "openai/gpt-5"),
+        directive_selectors=("openai/o3", "openai/gpt-5"),
     )
 
     assert selectors == (
@@ -651,7 +651,7 @@ def test_select_model_selectors_skips_providers_missing_required_env() -> None:
     )
     selectors = select_model_selectors(
         context,
-        agic_selectors=("openai/gpt-5",),
+        directive_selectors=("openai/gpt-5",),
     )
 
     assert selectors == ("openai/gpt-5[openrouter]",)
@@ -693,7 +693,7 @@ def test_select_model_selectors_prefers_exact_ref_over_version_aliases() -> None
 
     selectors = select_model_selectors(
         context,
-        agic_selectors=("openai/gpt-5",),
+        directive_selectors=("openai/gpt-5",),
     )
 
     assert selectors == ("openai/gpt-5[openrouter]",)
@@ -789,7 +789,7 @@ def test_model_resolution_only_reads_captured_model_snapshot() -> None:
 
     selectors = select_model_selectors(
         context,
-        agic_selectors=("anthropic/claude-4.5-sonnet-20250929",),
+        directive_selectors=("anthropic/claude-4.5-sonnet-20250929",),
     )
     target = resolve_model(context, selector=selectors[0])
 
@@ -836,7 +836,7 @@ def test_model_selection_filters_the_complete_captured_snapshot() -> None:
     discovery_calls = (openai.list_models_calls, openrouter.list_models_calls)
 
     selectors = select_model_selectors(
-        context, activation_selectors=("openai/gpt-5[openai]",)
+        context, allowed_selectors=("openai/gpt-5[openai]",)
     )
 
     assert selectors == ("openai/gpt-5[openai]",)
@@ -2803,13 +2803,13 @@ def test_responses_previous_response_id_replays_tool_output_without_item_id() ->
 def _prepared_agic(
     provider: _FakeModelProvider,
     model: ModelTarget,
-) -> PreparedAgic:
+) -> _AgicFrame:
     tool = _FakeTool()
     state = SimpleNamespace(
         program=Program(span=Span(1)),
         fingerprint="live-1",
     )
-    return PreparedAgic(
+    return _AgicFrame(
         run=BoundRun(
             run_id="run-1",
             root_run_id="run-1",
@@ -2851,7 +2851,7 @@ def _prepared_agic(
     )
 
 
-def _run_agic(prepared: PreparedAgic) -> Message | None:
+def _run_agic(prepared: _AgicFrame) -> Message | None:
     return asyncio.run(
         _execute(
             _AgicState(

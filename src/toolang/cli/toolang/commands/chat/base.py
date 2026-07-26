@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 import json
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -76,13 +76,8 @@ class AppContext(Protocol):
 
 
 def chat_status_label(selects: Mapping[str, object]) -> str:
-    models = selects.get("models")
-    if isinstance(models, Sequence) and not isinstance(models, (str, bytes, bytearray)):
-        model_label = (
-            ", ".join(str(item) for item in models if str(item)) or "runtime model"
-        )
-    else:
-        model_label = "runtime model"
+    model = as_text(selects.get("model"))
+    model_label = model or "auto"
     flow = as_text(selects.get("flow"))
     agic = as_text(selects.get("agic"))
     executable = f"flow:{flow}" if flow else f"agic:{agic}" if agic else ""

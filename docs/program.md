@@ -419,6 +419,12 @@ Flows use the same parameters, output declaration, directives, and executable
 namespace as agics. Statement syntax, bindings, inline agics, and result shapes
 are defined in [flow-syntax.md](./flow-syntax.md).
 
+Each flow invocation resets its resource ceiling from the `_AgentCeiling`
+resolved at root-run start. Its directives establish the ceiling used by agics
+executed in that flow. Nested flow calls reset again, even when the nested flow
+has no directives, so a flow's correction does not implicitly constrain
+another independently authored flow.
+
 Inline runnable bodies lower to generated `AgicDecl` values named
 `<agic:LINE>`. The `<...>` prefix cannot be authored as an executable name, so
 generated names cannot collide with user declarations.

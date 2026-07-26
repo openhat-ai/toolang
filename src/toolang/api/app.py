@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from toolang.api.common import LiveEventRelay
 from toolang.catalog import CapsManager, JobsManager
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
+from toolang.execution.executor import CeilingSpec
 from toolang.up import AgentCore
 
 DEFAULT_CORS_ORIGINS = (
@@ -56,10 +57,17 @@ def get_live_events(request: Request) -> LiveEventRelay:
     return cast(LiveEventRelay, request.app.state.live_events)
 
 
+def get_ceiling_spec(request: Request) -> CeilingSpec:
+    """Return the immutable ceiling specification owned by this server."""
+
+    return cast(CeilingSpec, request.app.state.ceiling_spec)
+
+
 AgentCoreDep = Annotated[AgentCore, Depends(get_agent_core)]
 CapsManagerDep = Annotated[CapsManager, Depends(get_caps_manager)]
 JobsManagerDep = Annotated[JobsManager, Depends(get_jobs_manager)]
 LiveEventRelayDep = Annotated[LiveEventRelay, Depends(get_live_events)]
+CeilingSpecDep = Annotated[CeilingSpec, Depends(get_ceiling_spec)]
 
 
 def create_app(
@@ -67,6 +75,7 @@ def create_app(
     caps: CapsManager,
     jobs: JobsManager,
     *,
+    ceiling: CeilingSpec = CeilingSpec(),
     lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
     cors_allowed_origins: Sequence[str] = DEFAULT_CORS_ORIGINS,
 ) -> FastAPI:
@@ -80,6 +89,7 @@ def create_app(
     app.state.agent_core = core
     app.state.caps_manager = caps
     app.state.jobs_manager = jobs
+    app.state.ceiling_spec = ceiling
     live_events = LiveEventRelay()
     app.state.live_events = live_events
     core.threads.listener = live_events

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
@@ -22,26 +22,22 @@ import uvicorn
 from uvicorn.main import STARTUP_FAILURE
 
 from toolang.api.app import create_app
-from toolang.base.protocols.model import ModelProvider
-from toolang.base.types.model import ModelAlias, ModelInfo
 from toolang.catalog import CapsManager, JobsManager
 from toolang.common.config import resolve_ui_base_url
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.layout import AgentLayout
-from toolang.plugin.models.config import parse_default_models, parse_model_aliases
+from toolang.execution.executor import CeilingSpec
+from toolang.execution.executor.ceiling import (
+    agent_model_targets,
+    validate_ceiling_spec,
+)
 from toolang.plugin.models.resolution import (
-    select_model_selectors,
     split_model_selectors,
 )
-from toolang.plugin.tools.loading import select_tools, validate_tool_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
 from toolang.setup import AgentSetup
 from toolang.state import watcher as state_watcher
-from toolang.state.state import (
-    AgentState,
-    select_cap_entries,
-    split_cap_selectors,
-)
+from toolang.state.state import AgentState, split_cap_selectors
 from toolang.up import process as agents
 from toolang.up.config import resolve_cors_allowed_origins
 from toolang.up.core import AgentCore
@@ -77,24 +73,13 @@ class ServeSpec:
     host: str
     endpoint_host: str
     port: int
-    model_selectors: tuple[str, ...] = ()
-    tool_selectors: tuple[str, ...] | None = None
-    cap_selectors: tuple[str, ...] = ()
+    ceiling: CeilingSpec = CeilingSpec()
     file_inboxes: tuple[Path, ...] = ()
     log_spec: str | None = None
 
     @property
     def endpoint(self) -> str:
         return f"http://{self.endpoint_host}:{self.port}"
-
-
-@dataclass(frozen=True, slots=True)
-class _ModelSelection:
-    providers: Mapping[str, ModelProvider]
-    models: tuple[ModelInfo, ...]
-    model_aliases: Mapping[str, ModelAlias]
-    default_models: tuple[str, ...]
-    envs: Mapping[str, str]
 
 
 def resolve_serve(
@@ -123,9 +108,11 @@ def resolve_serve(
             layout=layout,
             temporary=temporary_port,
         ),
-        model_selectors=_normalize_model_selectors(models),
-        tool_selectors=_normalize_tool_selectors(tools),
-        cap_selectors=_normalize_cap_selectors(caps),
+        ceiling=CeilingSpec(
+            models=_normalize_model_selectors(models) or None,
+            tools=_normalize_tool_selectors(tools),
+            caps=_normalize_cap_selectors(caps) or None,
+        ),
         file_inboxes=resolved_inboxes,
         log_spec=log_spec.strip()
         if isinstance(log_spec, str) and log_spec.strip()
@@ -153,11 +140,11 @@ def build_serve_argv(
         "--port",
         str(spec.port),
     ]
-    for selector in spec.model_selectors:
+    for selector in spec.ceiling.models or ():
         command.extend(["--models", selector])
-    for selector in spec.tool_selectors or ():
+    for selector in spec.ceiling.tools or ():
         command.extend(["--tools", selector])
-    for selector in spec.cap_selectors:
+    for selector in spec.ceiling.caps or ():
         command.extend(["--caps", selector])
     for inbox in spec.file_inboxes:
         command.extend(["--inbox", str(inbox)])
@@ -180,8 +167,9 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
     asyncio.run(core.state.refresh())
     asyncio.run(core.setup.refresh())
     state = core.state.current()
+    ceiling = spec.ceiling
     _validate_file_agic(state, enabled=bool(spec.file_inboxes))
-    _validate_runtime_selection(core, spec)
+    validate_ceiling_spec(core.setup.current(), state, ceiling)
     cors_allowed_origins = resolve_cors_allowed_origins(
         state.root_config,
         environ=environ,
@@ -189,23 +177,15 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     def current_setup() -> AgentSetup:
-        setup = core.setup.current()
-        return replace(
-            setup,
-            tools=select_tools(dict(setup.tools), spec.tool_selectors),
-        )
+        return core.setup.current()
 
     def current_state() -> AgentState:
-        return _select_agent_caps(
-            core.state.current(),
-            spec.cap_selectors,
-            agent_name=spec.layout.name,
-        )
+        return core.state.current()
 
     _log_state_loaded(
         current_setup(),
         current_state(),
-        model_selectors=spec.model_selectors,
+        ceiling=ceiling,
     )
     shutdown_signal = threading.Event()
     caps_manager = CapsManager(spec.layout)
@@ -222,7 +202,7 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
                 endpoint=spec.endpoint,
                 started_at=started_at,
                 pid=os.getpid(),
-                models=spec.model_selectors,
+                models=ceiling.models or (),
                 sandbox=environ.get("TOOLANG_SANDBOX", "none"),
             )
             job_store = open_job_store(spec.layout)
@@ -233,6 +213,7 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
                 get_agent_setup=current_setup,
                 get_home_jobs=job_watcher.current,
                 get_agent_state=current_state,
+                ceiling=ceiling,
                 kinds=("task", "chore"),
                 interval_ms=DEFAULT_TRIGGER_INTERVAL_MS["pulse"],
             )
@@ -257,6 +238,7 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
                         executor=core.executor,
                         get_agent_setup=current_setup,
                         get_agent_state=current_state,
+                        ceiling=ceiling,
                         inboxes=spec.file_inboxes,
                         interval_ms=DEFAULT_TRIGGER_INTERVAL_MS["file"],
                         stable_ms=DEFAULT_FILE_STABLE_MS,
@@ -280,6 +262,7 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
         core,
         caps_manager,
         jobs_manager,
+        ceiling=ceiling,
         lifespan=lifespan,
         cors_allowed_origins=cors_allowed_origins,
     )
@@ -311,27 +294,6 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
         on_stopped=lambda: logger.info("Agent stopped"),
     )
     return 0
-
-
-def _validate_runtime_selection(core: AgentCore, spec: ServeSpec) -> None:
-    state = core.state.current()
-    setup = core.setup.current()
-    validate_tool_selectors(dict(setup.tools), spec.tool_selectors)
-    _validate_model_selectors(
-        _ModelSelection(
-            providers=setup.providers,
-            models=setup.models,
-            model_aliases=parse_model_aliases((state.root_config, state.home_config)),
-            default_models=parse_default_models((state.root_config, state.home_config)),
-            envs=setup.envs,
-        ),
-        spec.model_selectors,
-    )
-    _validate_cap_selectors(
-        state,
-        spec.cap_selectors,
-        agent_name=spec.layout.name,
-    )
 
 
 def _validate_file_agic(state: AgentState, *, enabled: bool) -> None:
@@ -374,12 +336,12 @@ def _log_state_loaded(
     setup: AgentSetup,
     state: AgentState,
     *,
-    model_selectors: Sequence[str],
+    ceiling: CeilingSpec,
 ) -> None:
     logger.info(
         "Agent loaded state=%s models=%s tools=%s psyches=%s skills=%s services=%s",
         state.fingerprint[:12],
-        _model_count(setup, state, selectors=model_selectors),
+        _model_count(setup, state, ceiling=ceiling),
         len(setup.tools),
         _cap_count(state, "psyche"),
         _cap_count(state, "skill"),
@@ -391,26 +353,10 @@ def _model_count(
     setup: AgentSetup,
     state: AgentState,
     *,
-    selectors: Sequence[str],
+    ceiling: CeilingSpec,
 ) -> int:
-    selection = _ModelSelection(
-        providers=setup.providers,
-        models=setup.models,
-        model_aliases=parse_model_aliases((state.root_config, state.home_config)),
-        default_models=parse_default_models((state.root_config, state.home_config)),
-        envs=setup.envs,
-    )
-    try:
-        if selectors:
-            return len(
-                select_model_selectors(
-                    selection,
-                    activation_selectors=selectors,
-                )
-            )
-        return len(select_model_selectors(selection))
-    except Exception:
-        return len(selectors)
+    _default, targets = agent_model_targets(setup, state, ceiling)
+    return len(targets)
 
 
 def _cap_count(state: AgentState, kind: str) -> int:
@@ -563,59 +509,6 @@ def _normalize_cap_selectors(
 ) -> tuple[str, ...]:
     values = tuple(caps) if caps is not None else ()
     return tuple(dict.fromkeys(split_cap_selectors(values)))
-
-
-def _select_agent_caps(
-    state: AgentState,
-    selectors: Sequence[str],
-    *,
-    agent_name: str,
-) -> AgentState:
-    if not selectors:
-        return state
-    selected = select_cap_entries(
-        state.caps,
-        tuple(selectors),
-        agent_name=agent_name,
-    )
-    return replace(state, caps=selected)
-
-
-def _validate_model_selectors(
-    selection: _ModelSelection,
-    selectors: Sequence[str],
-) -> None:
-    if not selectors:
-        select_model_selectors(selection)
-        return
-    select_model_selectors(
-        selection,
-        activation_selectors=selectors,
-    )
-    for selector in selectors:
-        select_model_selectors(
-            selection,
-            activation_selectors=(selector,),
-        )
-
-
-def _validate_cap_selectors(
-    state: AgentState,
-    selectors: Sequence[str],
-    *,
-    agent_name: str,
-) -> None:
-    missing = [
-        selector
-        for selector in selectors
-        if not select_cap_entries(
-            state.caps,
-            (selector,),
-            agent_name=agent_name,
-        )
-    ]
-    if missing:
-        raise ValueError(f"cap selector matched no caps: {', '.join(missing)}")
 
 
 def _default_endpoint_host(host: str) -> str:
