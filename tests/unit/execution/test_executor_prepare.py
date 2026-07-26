@@ -31,7 +31,7 @@ from toolang.execution.history import RunHistory
 from toolang.execution.schemas import RunDetail
 from toolang.execution.store import RunStore
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
-from toolang.setup import AgentSetup
+from toolang.setup import AgentEnvironment, AgentSetup
 
 
 class _Provider:
@@ -136,6 +136,16 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         models=(),
         tools={tool.name: tool},
         envs={},
+        environment=AgentEnvironment(
+            sandbox="docker:python:3.13-slim",
+            system="Linux",
+            release="6.0",
+            machine="aarch64",
+            container=True,
+            root=Path("/root/.toolang"),
+            home=Path("/root/.toolang/agents/alice"),
+            working_directory=Path("/workspace"),
+        ),
     )
     agic = AgicDecl(
         name="chat",
@@ -203,6 +213,9 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     assert tuple(prepared.tools) == ("shell__execute",)
     assert prepared.services == ()
     assert "You are the alice Toolang agent." in prepared.instructions
+    assert "sandbox: docker:python:3.13-slim" in prepared.instructions
+    assert "system: Linux 6.0 (aarch64)" in prepared.instructions
+    assert "working_directory: /workspace" in prepared.instructions
     assert "agent_name: alice" in prepared.prompt_context
     assert [message_text(message.parts) for message in prepared.messages] == [
         "previous",

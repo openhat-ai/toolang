@@ -3,25 +3,18 @@ from __future__ import annotations
 from email.message import Message
 from io import BytesIO
 import json
-from pathlib import Path
 import threading
-from types import SimpleNamespace
 from typing import Any, cast
 from urllib.error import HTTPError
 from urllib.request import Request
 
 import pytest
-import click
-
 import toolang.cli.common.client as client_module
 from toolang.cli.common.client import (
     RuntimeClient,
     message_payload,
-    owned_runtime_client,
 )
 from toolang.cli.common.errors import RuntimeClientError
-from toolang.common.layout import AgentLayout
-from toolang.up import process as agents
 
 
 def test_runtime_client_get_accepts_json_values(
@@ -94,79 +87,6 @@ def test_runtime_client_events_honors_stop_and_ignores_invalid_data(
     )
 
     assert list(RuntimeClient("http://runtime").events("/events", stop=stop)) == []
-
-
-def test_owned_runtime_client_cleans_up_failed_start(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stopped: dict[str, object] = {}
-    sandbox_plugin = object()
-    startup = SimpleNamespace(hosting=SimpleNamespace(plugin=sandbox_plugin))
-    monkeypatch.setattr(
-        "toolang.up.server.build_run_argv",
-        lambda *_args, **_kwargs: ("run", "alice"),
-    )
-    monkeypatch.setattr(
-        agents.AgentProcess,
-        "start",
-        lambda *_args, **_kwargs: agents.AgentStatus(
-            name="alice",
-            status="failed",
-            endpoint="http://localhost:7001",
-            api_url=None,
-            webui_url=None,
-            sandbox="docker",
-        ),
-    )
-    monkeypatch.setattr(
-        agents.AgentProcess,
-        "stop",
-        lambda _self, **kwargs: stopped.update(kwargs) or True,
-    )
-
-    with pytest.raises(click.ClickException, match="agent API failed to start"):
-        with owned_runtime_client(
-            layout=AgentLayout.resident(tmp_path, "alice"),
-            startup=cast(Any, startup),
-            environ={},
-            log_path=tmp_path / "agent.log",
-        ):
-            raise AssertionError("failed runtime must not be yielded")
-
-    assert stopped == {"sandbox_plugin": sandbox_plugin, "force": True}
-
-
-def test_owned_runtime_client_cleans_up_when_start_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    stopped: dict[str, object] = {}
-    sandbox_plugin = object()
-    startup = SimpleNamespace(hosting=SimpleNamespace(plugin=sandbox_plugin))
-    monkeypatch.setattr(
-        "toolang.up.server.build_run_argv",
-        lambda *_args, **_kwargs: ("run", "alice"),
-    )
-    monkeypatch.setattr(
-        agents.AgentProcess,
-        "start",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("timed out")),
-    )
-    monkeypatch.setattr(
-        agents.AgentProcess,
-        "stop",
-        lambda _self, **kwargs: stopped.update(kwargs) or True,
-    )
-
-    with pytest.raises(TimeoutError, match="timed out"):
-        with owned_runtime_client(
-            layout=AgentLayout.resident(tmp_path, "alice"),
-            startup=cast(Any, startup),
-            environ={},
-            log_path=tmp_path / "agent.log",
-        ):
-            raise AssertionError("failed runtime must not be yielded")
-
-    assert stopped == {"sandbox_plugin": sandbox_plugin, "force": True}
 
 
 def test_runtime_client_extracts_http_error_detail(

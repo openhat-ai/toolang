@@ -1,196 +1,118 @@
-"""Formal chat API routes."""
+"""Chat submission routes."""
 
-from typing import Literal
+from typing import cast
 
 from fastapi import APIRouter, HTTPException
 
-from toolang.api.app import ApiContext, ApiContextDep
+from toolang.api.app import AgentCoreDep
 from toolang.api.conversion import parse_user_message
-from toolang.api.schemas import (
-    ChatRequest,
-    ChatResult,
-)
-from toolang.base.types.message import Message
-from toolang.common.ids import allocate_run_id
-from toolang.execution.history import RunHistory
+from toolang.api.schemas import ChatRequest, ChatResult
+from toolang.base.types.message import Message, Percept
+from toolang.execution.executor import RunSpec
 from toolang.execution.records import ThreadPeer
-from toolang.execution.records import RunRecord
-from toolang.execution.threads import ThreadManager
-from toolang.execution.reply import BufferedReplySink, SseReplySink, TraceReplySink
-from toolang.execution.executor.request import RunRequest
-from ..common import ShutdownAwareStreamingResponse, guarded_stream
-from .threads import parse_thread_peer, thread_info
+from toolang.execution.types import ThreadPrefix
+from toolang.up import AgentCore
 
+from .threads import parse_thread_peer, thread_info
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 @router.post("", summary="Submit Chat", response_model=ChatResult)
-async def submit_chat(context: ApiContextDep, payload: ChatRequest) -> ChatResult:
-    thread_id = _chat_thread_id_or_404(context, payload)
-    result, reply = await _submit_chat_run(context, payload, thread_id=thread_id)
-    history = RunHistory(context.executor.store)
-    detail = history.get_run(result.id)
+async def submit_chat(core: AgentCoreDep, payload: ChatRequest) -> ChatResult:
+    thread_id = _chat_thread_id_or_404(core, payload)
+    user_message = parse_user_message(payload.message)
+    handle = core.executor.start(
+        RunSpec(
+            setup=core.setup.current(),
+            state=core.state.current(),
+            thread=thread_id,
+            runnable=_runnable(core, payload),
+            input=cast(Percept, user_message.parts),
+            model=payload.model,
+        ),
+        request_id=payload.request_id,
+    )
+    record = await handle
+    detail = core.history.get_run(record.id)
     if detail is None:
-        if result.status == "failed" and result.error:
-            raise HTTPException(status_code=500, detail=result.error)
         raise HTTPException(
             status_code=500,
-            detail=f"run not found after completion: {result.id}",
+            detail=f"run not found after completion: {record.id}",
         )
-    if detail.input is None:
-        raise HTTPException(
-            status_code=500, detail=f"missing chat input for run {result.id}"
-        )
-    user_message = detail.input
-    fallback_output = context.executor.store.run_output(run_id=result.id)
-    fallback_assistant = (
-        Message(role="assistant", parts=fallback_output) if fallback_output else None
-    )
-    assistant_message = (
-        reply.assistant
-        if reply.assistant is not None
-        else fallback_assistant
-        if fallback_assistant is not None
-        else None
-    )
-    if assistant_message is None:
+    output = core.store.run_output(run_id=record.id)
+    if not output:
+        detail_message = detail.error or f"incomplete chat transcript: {record.id}"
+        raise HTTPException(status_code=500, detail=detail_message)
+    try:
+        assistant = Message(role="assistant", parts=output)
+    except ValueError as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"incomplete chat transcript for run {result.id}",
-        )
+            detail=f"chat output is not an assistant message: {record.id}",
+        ) from exc
     return ChatResult(
-        thread=thread_info(context, result.thread),
+        thread=thread_info(core, thread_id),
         run=detail,
         message=user_message,
-        assistant=assistant_message,
+        assistant=assistant,
     )
 
 
 @router.post("/stream", summary="Submit Chat Stream")
-async def submit_chat_stream(
-    context: ApiContextDep,
-    payload: ChatRequest,
-) -> ShutdownAwareStreamingResponse:
-    thread_id = _chat_thread_id_or_404(context, payload)
-    return ShutdownAwareStreamingResponse(
-        guarded_stream(_stream_chat_run(context, payload, thread_id=thread_id)),
-        shutdown_signal=context.shutdown_signal,
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-            "x-vercel-ai-ui-message-stream": "v1",
-        },
+async def submit_chat_stream(core: AgentCoreDep, payload: ChatRequest) -> None:
+    del core, payload
+    raise HTTPException(
+        status_code=501,
+        detail="chat streaming is being migrated to the canonical run event protocol",
     )
 
 
-async def _submit_chat_run(
-    context: ApiContext,
-    payload: ChatRequest,
-    *,
-    thread_id: str,
-) -> tuple[RunRecord, BufferedReplySink]:
-    reply = BufferedReplySink()
-    run_id = allocate_run_id(context.executor.id_state_path)
-
-    record = await context.executor.run(
-        _chat_run_request(payload, thread_id=thread_id, run_id=run_id),
-        context.state_watcher.current(),
-        reply=reply,
-    )
-    return record, reply
-
-
-async def _stream_chat_run(
-    context: ApiContext,
-    payload: ChatRequest,
-    *,
-    thread_id: str,
-):
-    reply = (
-        TraceReplySink()
-        if payload.client == "tui"
-        else SseReplySink(thread_id=thread_id)
-    )
-    run_id = allocate_run_id(context.executor.id_state_path)
-    context.spawn_run(
-        _chat_run_request(payload, thread_id=thread_id, run_id=run_id),
-        reply=reply,
-    )
-    async for chunk in reply.stream():
-        yield chunk
-
-
-def _chat_run_request(
-    payload: ChatRequest,
-    *,
-    thread_id: str,
-    run_id: str,
-) -> RunRequest:
-    return RunRequest(
-        origin="chat",
-        input=_chat_user_message(payload),
-        run_id=run_id,
-        thread_id=thread_id,
-        model_selector=payload.model,
-        executable_kind=_executable_kind(payload),
-        executable_name=_executable_name(payload),
-        request_id=payload.request_id,
-    )
-
-
-def _chat_thread_id_or_404(context: ApiContext, payload: ChatRequest) -> str:
+def _chat_thread_id_or_404(core: AgentCore, payload: ChatRequest) -> str:
     if payload.thread is None:
-        result = ThreadManager(context.executor).create(
-            kind=payload.client,
+        return core.threads.create(
+            prefix=_thread_prefix(payload.client),
             peer=_request_peer(payload),
         )
-        return result.thread.thread_id
-    thread = context.executor.store.get_thread(thread_id=payload.thread)
-    if thread is None:
+    thread = core.store.get_thread(thread_id=payload.thread)
+    if thread is None or thread.origin != "chat":
         raise HTTPException(
-            status_code=404, detail=f"chat thread not found: {payload.thread}"
-        )
-    if thread.origin != "chat":
-        raise HTTPException(
-            status_code=404, detail=f"chat thread not found: {payload.thread}"
+            status_code=404,
+            detail=f"chat thread not found: {payload.thread}",
         )
     peer = _request_peer(payload)
-    if peer is not None:
-        if thread.peer != peer:
-            raise HTTPException(
-                status_code=409, detail=f"chat thread peer mismatch: {payload.thread}"
-            )
+    if peer is not None and thread.peer != peer:
+        raise HTTPException(
+            status_code=409,
+            detail=f"chat thread peer mismatch: {payload.thread}",
+        )
     return payload.thread
-
-
-def _chat_user_message(payload: ChatRequest) -> Message:
-    return parse_user_message(payload.message)
 
 
 def _request_peer(payload: ChatRequest) -> ThreadPeer | None:
     return parse_thread_peer(payload.peer)
 
 
-def _executable_kind(payload: ChatRequest) -> Literal["agic", "flow"]:
-    if (
-        _text_or_none(payload.agic) is not None
-        and _text_or_none(payload.flow) is not None
-    ):
+def _runnable(core: AgentCore, payload: ChatRequest) -> str:
+    agic = _text_or_none(payload.agic)
+    flow = _text_or_none(payload.flow)
+    if agic is not None and flow is not None:
         raise HTTPException(
-            status_code=422, detail="chat request cannot specify both agic and flow"
+            status_code=422,
+            detail="chat request cannot specify both agic and flow",
         )
-    if _text_or_none(payload.flow) is not None:
-        return "flow"
-    if _text_or_none(payload.agic) is not None:
-        return "agic"
-    return "agic"
+    if flow is not None:
+        return flow
+    if agic is not None:
+        return agic
+    program = core.state.current().program
+    return "chat" if program.find_agic("chat") is not None else "default"
 
 
-def _executable_name(payload: ChatRequest) -> str | None:
-    return _text_or_none(payload.flow) or _text_or_none(payload.agic)
+def _thread_prefix(client: str) -> ThreadPrefix:
+    if client == "web":
+        return ThreadPrefix.WEB
+    return ThreadPrefix.TERM
 
 
 def _text_or_none(value: object) -> str | None:

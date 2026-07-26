@@ -3,9 +3,18 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from toolang.common.layout import AgentLayout
-from toolang.state.prepare import prepare_agent_state
 from toolang.state import watcher as state_watcher
+
+
+def test_current_requires_initial_refresh(tmp_path: Path) -> None:
+    layout = AgentLayout.resident(tmp_path / "toolang", "alice")
+    watcher = state_watcher.StateWatcher(layout)
+
+    with pytest.raises(RuntimeError, match="has not been refreshed"):
+        watcher.current()
 
 
 def test_timeout_check_recovers_change_before_watch_registration(
@@ -19,11 +28,8 @@ def test_timeout_check_recovers_change_before_watch_registration(
         program = home / "agent.too"
         program.write_text("agent alice\n", encoding="utf-8")
         layout = AgentLayout.resident(toolang_root, "alice")
-        initial = prepare_agent_state(
-            layout,
-            toolang_version="0.2.7",
-        )
-        watcher = state_watcher.StateWatcher(layout, initial)
+        watcher = state_watcher.StateWatcher(layout)
+        initial = await watcher.refresh()
         program.write_text(
             "agent alice\n\nagic chat:\n  Registered late.\n",
             encoding="utf-8",
@@ -52,23 +58,18 @@ def test_timeout_check_skips_full_prepare_when_metadata_is_current(
         home.mkdir(parents=True)
         (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
         layout = AgentLayout.resident(toolang_root, "alice")
-        initial = prepare_agent_state(
-            layout,
-            toolang_version="0.2.7",
-        )
-        watcher = state_watcher.StateWatcher(layout, initial)
+        watcher = state_watcher.StateWatcher(layout)
+        await watcher.refresh()
 
         async def one_timeout(*_args, **_kwargs):
             yield set()
 
         monkeypatch.setattr(state_watcher, "awatch", one_timeout)
-        monkeypatch.setattr(
-            watcher,
-            "refresh",
-            lambda: (_ for _ in ()).throw(
-                AssertionError("unchanged timeout must not load full prepared state")
-            ),
-        )
+        async def fail_refresh(*, force: bool = False):
+            del force
+            raise AssertionError("unchanged timeout must not load full prepared state")
+
+        monkeypatch.setattr(watcher, "refresh", fail_refresh)
 
         observed = [
             state async for state in watcher.updates(stop_signal=asyncio.Event())

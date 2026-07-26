@@ -77,28 +77,26 @@ runtime assembly. It does not define the semantic shape of one run.
 Agent hosting describes where and how the agent API process is launched after
 an agent target has been materialized. It is separate from source placement.
 
-Current hosting drivers are:
+The public CLI calls these choices sandboxes. Internally, each sandbox plugin
+implements the `Hosting` lifecycle. Current implementations are:
 
 | Driver | Meaning |
 | --- | --- |
-| `none` | Run the API process on the current host |
-| `docker` | Run the API process in a container with the same root and home mounted into it |
+| `none` | Launch `too serve` as a local child process |
+| `docker` | Launch a container whose primary workload is `too serve` |
 
-Future drivers may use a cloud host or combine a host API process with
-restricted tool execution. The CLI resolves `--sandbox` into hosting inputs;
-`RunExecutor` receives an `AgentSetup` and an immutable `AgentState` and does not
-know where its process is hosted.
+Selectors use `name[:spec]`. Generic orchestration selects the plugin by name
+and passes the remaining spec unchanged to that implementation. Future drivers
+may use a cloud host. `RunExecutor` receives an `AgentSetup` and an immutable
+`AgentState` and does not know where its process is hosted.
 
-The materialized root and home remain the authoritative data in every hosting
-driver. A hosted process exposes the same agent API on the same selected
-numeric port from the caller's perspective.
+`HostingState` persists only the control-side workload reference required by a
+later `stop` command. AgentServer status and execution data remain separate.
+The materialized root and home remain authoritative in every environment.
 
-Foreground CLI sessions do not use the agent API as their execution client.
-With `none`, chat launches a dedicated process that assembles the core objects
-and calls `RunExecutor` directly, while a one-shot script run may execute in the
-invoking process. Managed drivers place execution inside the selected host and
-transport native events through process/channel orchestration. Starting a
-persistent agent API remains a separate operation.
+Both `run` and `start` launch the same AgentServer entrypoint. `run` waits for
+the hosted workload and releases it on exit; `start` returns after readiness.
+One-shot scripts and the chat TUI continue to use the execution core directly.
 
 
 ## Caps

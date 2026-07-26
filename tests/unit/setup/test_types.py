@@ -9,11 +9,12 @@ import pytest
 import toolang.setup as setup_package
 from toolang.base.types.model import ModelInfo
 from toolang.common.layout import AgentLayout
-from toolang.setup import AgentSetup
+from toolang.setup import AgentEnvironment, AgentSetup
 
 
 def test_setup_facade_exposes_snapshots_without_cache_details() -> None:
     assert setup_package.__all__ == [
+        "AgentEnvironment",
         "AgentSetup",
         "SetupWatcher",
     ]
@@ -46,6 +47,24 @@ def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:
     assert setup.envs == {"OPENAI_API_KEY": "secret"}
     with pytest.raises(TypeError):
         cast(dict[str, object], setup.tools)["other"] = object()
+
+
+def test_agent_environment_captures_safe_hosting_context(
+    tmp_path: Path,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+
+    environment = AgentEnvironment.capture(
+        layout,
+        envs={"TOOLANG_SANDBOX": "docker:python:3.13-slim"},
+    )
+
+    assert environment.sandbox == "docker:python:3.13-slim"
+    assert environment.container is True
+    assert environment.root == layout.root
+    assert environment.home == layout.home
+    assert environment.system
+    assert environment.machine
 
 
 def test_agent_setup_rejects_models_without_installed_provider() -> None:

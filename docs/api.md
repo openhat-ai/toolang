@@ -266,24 +266,21 @@ Behavior:
 | `toolang clone` | Clones one local agent, or fetches one remote agent program into a new local managed agent |
 | `toolang start` | Starts one local managed agent only. Remote selectors must be cloned first |
 
-`toolang run` and `toolang start` share the same startup preparation path after
-selector handling. Both resolve the runnable target, reject already-active
-runtimes, build a `StartupSpec`, prepare the agent state, and then launch from
-that resolved startup checkpoint. `run` starts the resolved runtime in the
-foreground. `start` serializes the same resolved startup into the hidden
-background `toolang run` command. The hosting shell resolves `--sandbox`; the
-API process inside the selected host always runs the same server core and the
-executor does not branch on its host.
+`toolang run` and `toolang start` resolve the same `LaunchSpec` and call the
+same hosting lifecycle. A hidden `toolang serve` command is the only
+AgentServer process entrypoint. The hosting implementation launches that
+entrypoint locally, in Docker, or in another environment; the server and
+executor do not branch on hosting.
 
 When `--sandbox` is omitted, resident run/start commands use the effective
 root/home `[sandbox]` binding, falling back to `none` when no binding exists.
 An explicit selector, including `--sandbox none`, overrides that binding.
 
-For host hosting, `run` keeps the API process in the current foreground process
-and `start` launches a detached process. For managed hosting such as Docker,
-both commands launch the same foreground API process inside the managed host;
-`run` waits for that host and stops it on exit, while `start` returns after the
-API is ready.
+For every hosting implementation, AgentServer is the environment's primary
+foreground workload. `run` waits for that workload and releases it on exit,
+while `start` returns after the health endpoint is ready. `stop` reloads the
+persisted `HostingState`, stops the primary workload, and releases its hosting
+resources.
 
 Agent entrypoints also share one logging policy resolver:
 

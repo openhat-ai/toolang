@@ -10,14 +10,12 @@ import click
 import typer
 
 from toolang.base.types.message import TextDelta, TextPart, message_text
-from toolang.base.types.sandbox import SandboxSelector
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.history import RunHistory
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
-from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import split_cap_selectors
 
 from toolang.cli.common.context import (
@@ -26,8 +24,6 @@ from toolang.cli.common.context import (
     require_prefix_agent,
 )
 from toolang.cli.common.execution import open_execution
-from toolang.cli.common.version import toolang_version
-
 from . import slashes as chat_slashes
 from .base import ChatClient, friendly_error as chat_friendly_error
 from .history import ChatInputHistoryStore
@@ -160,25 +156,16 @@ def _chat_runtime(
 ) -> Iterator[ChatClient]:
     """Own one process-local execution session for this chat command."""
 
-    if sandbox is not None and SandboxSelector.parse(sandbox).driver != "none":
+    if sandbox is not None and sandbox.partition(":")[0].strip() != "none":
         raise click.ClickException(
             "direct chat execution currently supports only the none sandbox"
         )
     layout = AgentLayout.resident(context_root(ctx), require_prefix_agent(ctx))
-    state = prepare_agent_state(
-        layout,
-        toolang_version=toolang_version(),
-    )
     selectors = selector_payload or {}
     local = LocalChatSession(
         layout,
-        agent_state=state,
         models=_strings(selectors.get("models")),
-        tools=(
-            _strings(selectors.get("tools"))
-            if "tools" in selectors
-            else None
-        ),
+        tools=(_strings(selectors.get("tools")) if "tools" in selectors else None),
         caps=_strings(selectors.get("caps")),
     )
     try:

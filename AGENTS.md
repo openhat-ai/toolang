@@ -51,7 +51,7 @@
   semantics. For example, `.too` parsing and authored source edits belong to
   `toolang.lang`, not to adjacent packages that merely consume programs.
 - Prefer APIs built around concept objects over loose primitive bundles. If a
-  runtime operation naturally works on `SandboxSpec`, `SandboxState`,
+  runtime operation naturally works on `LaunchSpec`, `HostingRef`,
   `AgentRef`, or similar constructs, expose that object directly instead of
   passing separate strings, ids, and paths.
 - When a split package no longer clarifies ownership, merge it back into the
@@ -130,8 +130,10 @@
   respectively.
 - `toolang.up` owns remote agent target resolution, runtime-state files,
   managed processes, visiting and roaming materialization, sandbox filesystem
-  assembly, resolved `AgentHosting`, API process assembly, and channel
-  execution orchestration.
+  assembly, hosting lifecycle orchestration, and AgentServer assembly.
+  `HostingState` is the control-side reference to one hosted workload and is
+  separate from the server-owned runtime status. `serve()` always runs the
+  AgentServer as the environment's primary foreground workload.
 - `toolang.catalog` owns local agent-home CRUD, authored cap and job CRUD,
   wired cap references, and bundled authored-file templates. Its collections
   receive explicit directories or config-file paths and do not resolve remote
@@ -147,16 +149,20 @@
   state before constructing schemas.
 - `toolang.state` owns remote cap source resolution, durable/prepared source
   snapshots, effective cap projection and materialization, immutable
-  root/home/agent state, and source-state watching.
+  root/home/agent state, and source-state watching. `StateWatcher` receives one
+  `AgentLayout`, creates its own immutable snapshots through async `refresh()`,
+  and exposes the latest completed snapshot through `current()`; callers do not
+  inject or transform snapshots.
 - `toolang.setup` owns immutable installed runtime setup snapshots, provider
   and provider discovery. `SetupWatcher` receives one `AgentLayout`, loads
   root-scoped model and tool configuration, snapshots root dotenv plus process
   environment values, and keeps the multi-process-safe model-list cache under
   `${TOOLANG_ROOT}/.setup/models/`. Agent-home setup overrides are not yet
   supported. `AgentSetup` carries that same layout plus `providers`, `adapters`,
-  `models`, `tools`, and `envs`; execution uses the layout directly. It
-  consumes the setup snapshot without provider discovery or cache access.
-  `refresh()` is the only snapshot-construction path.
+  `models`, `tools`, `envs`, and safe `AgentEnvironment` facts captured in the
+  actual process location; execution consumes that snapshot without hosting,
+  provider-discovery, or cache access. `refresh()` is the only watcher-owned
+  snapshot-construction path.
 - `toolang.state.schemas` owns caller-facing capability protocol types;
   its schema types construct themselves from prepared capability state;
   `toolang.state.types` owns capability-state vocabulary.
@@ -222,12 +228,20 @@
   parsing, and independently reusable built-in tool, channel, sandbox,
   model-provider, and model-adapter implementations. It does not locate or read
   runtime config files and may depend only on `toolang.base` and
-  `toolang.common` among internal packages.
+  `toolang.common` among internal packages. Sandbox plugins implement the async
+  `Hosting` lifecycle. The CLI and generic orchestration split only
+  `name[:spec]`; each hosting implementation owns its spec parsing.
 - `toolang.api` owns FastAPI application assembly and HTTP route mapping.
   Route modules are grouped by public resource (`agent`, `chat`, `caps`,
   `jobs`, `runs`, and `threads`), not by read/write mode or OpenAPI tag. API
   routes call owning catalog, execution, and inspection objects instead of
-  implementing persistence or projection algorithms.
+  implementing persistence or projection algorithms. One `AgentCore`,
+  `CapsManager`, and `JobsManager` are attached to `app.state` and exposed
+  through typed dependencies; do not reintroduce an aggregate API context.
+- `toolang.up.AgentCore` owns one process-local set of shared execution,
+  history, thread, setup-watcher, and state-watcher services for an
+  `AgentLayout`. Catalog mutation remains outside it: `CapsManager` groups
+  root/home authoring and wiring, while `JobsManager` owns home job authoring.
 - `toolang.cli` owns CLI orchestration, command-specific environment
   resolution, and process-level Web and logging call sites. `SetupWatcher` owns
   the root-scoped setup environment snapshot. Immutable root and home config

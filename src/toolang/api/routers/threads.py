@@ -1,162 +1,124 @@
 """Thread inspection and management routes."""
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query
 
-from toolang.api.app import ApiContext, ApiContextDep
-from toolang.api.conversion import parse_user_message
+from toolang.api.app import AgentCoreDep
 from toolang.api.schemas import (
     ThreadCreateRequest,
     ThreadForkRequest,
     ThreadPeerPayload,
-    ThreadRewindRequest,
     ThreadResult,
+    ThreadRewindRequest,
 )
-from toolang.base.types.message import Message
-from toolang.execution.history import RunHistory
 from toolang.execution.records import ThreadPeer
-from toolang.execution.executor.request import RunRequest
-from toolang.execution.schemas import (
-    RunCommandResult,
-    RunControlInfo,
-    ThreadDetail,
-    ThreadInfo,
-)
-from toolang.execution.stream import event_data, stream_events
-from toolang.execution.thread import ThreadChange, ThreadOperations
-from ..common import ShutdownAwareStreamingResponse, event_stream_response
-
+from toolang.execution.schemas import ThreadDetail, ThreadInfo
+from toolang.execution.types import ThreadPrefix
+from toolang.up import AgentCore
 
 router = APIRouter(prefix="/threads", tags=["threads"])
 
 
 @router.post(
-    "", summary="Create Chat Thread", status_code=201, response_model=ThreadResult
+    "",
+    summary="Create Chat Thread",
+    status_code=201,
+    response_model=ThreadResult,
 )
-def create_thread(context: ApiContextDep, payload: ThreadCreateRequest) -> ThreadResult:
-    thread = ThreadOperations(context.executor).create(
-        kind=payload.client,
+def create_thread(core: AgentCoreDep, payload: ThreadCreateRequest) -> ThreadResult:
+    thread_id = core.threads.create(
+        prefix=_thread_prefix(payload.client),
         peer=parse_thread_peer(payload.peer),
     )
-    return ThreadResult(thread=thread_info(context, thread.thread_id))
+    return ThreadResult(thread=thread_info(core, thread_id))
 
 
 @router.get("", summary="List Threads", response_model=list[ThreadInfo])
 def threads(
-    context: ApiContextDep,
+    core: AgentCoreDep,
     limit: int = Query(default=50),
     origin: str | None = None,
     channel: str | None = None,
     status: str | None = None,
 ) -> list[ThreadInfo]:
-    items = RunHistory(context.executor.store).list_threads(
+    return core.history.list_threads(
         limit=limit,
         origin=origin,
         channel=channel,
         status=status,
     )
-    return items
 
 
 @router.get("/{thread_id}", summary="Get Thread", response_model=ThreadDetail)
 def thread_detail(
-    context: ApiContextDep,
+    core: AgentCoreDep,
     thread_id: str,
     limit: int = Query(default=50),
 ) -> ThreadDetail:
-    detail = RunHistory(context.executor.store).get_thread(thread_id, run_limit=limit)
+    detail = core.history.get_thread(thread_id, run_limit=limit)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"thread not found: {thread_id}")
     return detail
 
 
 @router.post(
-    "/{thread_id}/rewind", summary="Rewind Thread", response_model=ThreadResult
+    "/{thread_id}/rewind",
+    summary="Rewind Thread",
+    response_model=ThreadResult,
 )
-async def rewind_thread(
-    context: ApiContextDep, thread_id: str, payload: ThreadRewindRequest
+def rewind_thread(
+    core: AgentCoreDep,
+    thread_id: str,
+    payload: ThreadRewindRequest,
 ) -> ThreadResult:
-    _thread_anchor_or_404(context, thread_id=thread_id, run_id=payload.run_id)
-    message = (
-        parse_user_message(payload.message) if payload.message is not None else None
-    )
+    _thread_or_404(core, thread_id)
     try:
-        result = await ThreadOperations(context.executor).rewind(
+        core.threads.rewind(
+            thread_id=thread_id,
             run_id=payload.run_id,
-            message=message,
+            request_id=payload.request_id,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return await _thread_result(
-        context,
-        change=result,
-        message=message,
-        request_id=payload.request_id,
-    )
+    return ThreadResult(thread=thread_info(core, thread_id))
 
 
 @router.post("/{thread_id}/fork", summary="Fork Thread", response_model=ThreadResult)
-async def fork_thread(
-    context: ApiContextDep, thread_id: str, payload: ThreadForkRequest
+def fork_thread(
+    core: AgentCoreDep,
+    thread_id: str,
+    payload: ThreadForkRequest,
 ) -> ThreadResult:
-    _thread_anchor_or_404(context, thread_id=thread_id, run_id=payload.run_id)
-    message = (
-        parse_user_message(payload.message) if payload.message is not None else None
-    )
+    _thread_or_404(core, thread_id)
     try:
-        result = ThreadOperations(context.executor).fork(
+        forked_id = core.threads.fork(
+            thread_id=thread_id,
             run_id=payload.run_id,
-            message=message,
-            include_anchor=payload.include_anchor,
+            request_id=payload.request_id,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return await _thread_result(
-        context,
-        change=result,
-        message=message,
-        request_id=payload.request_id,
-    )
+    return ThreadResult(thread=thread_info(core, forked_id))
 
 
 @router.get("/{thread_id}/events", summary="List Thread Events")
-def thread_events(
-    context: ApiContextDep,
-    thread_id: str,
-    after: int | None = None,
-    limit: int = Query(default=100),
-) -> dict[str, object]:
-    _thread_or_404(context, thread_id)
-    events = context.executor.store.list_events(
-        domain="thread", domain_id=thread_id, after=after, limit=limit
+def thread_events(core: AgentCoreDep, thread_id: str) -> None:
+    _thread_or_404(core, thread_id)
+    raise HTTPException(
+        status_code=501,
+        detail="durable thread event cursors are not available yet",
     )
-    return {
-        "cursor": context.executor.store.latest_event_cursor(
-            domain="thread", domain_id=thread_id
-        ),
-        "items": [event_data(item) for item in events],
-    }
 
 
 @router.get("/{thread_id}/stream", summary="Stream Thread Events")
-async def thread_stream(
-    context: ApiContextDep,
-    request: Request,
-    thread_id: str,
-    after: int | None = None,
-) -> ShutdownAwareStreamingResponse:
-    _thread_or_404(context, thread_id)
-    return event_stream_response(
-        request,
-        stream_events(
-            context.executor.store,
-            domain="thread",
-            domain_id=thread_id,
-            after=after,
-        ),
+async def thread_stream(core: AgentCoreDep, thread_id: str) -> None:
+    _thread_or_404(core, thread_id)
+    raise HTTPException(
+        status_code=501,
+        detail="thread streaming is being migrated to the canonical event protocol",
     )
 
 
@@ -171,43 +133,10 @@ def parse_thread_peer(payload: ThreadPeerPayload | None) -> ThreadPeer | None:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-async def _thread_result(
-    context: ApiContext,
-    *,
-    change: ThreadChange,
-    message: Message | None,
-    request_id: str | None,
-) -> ThreadResult:
-    if change.run_id is None or message is None:
-        return ThreadResult(thread=thread_info(context, change.thread_id))
-    run, command = await context.submit_run(
-        RunRequest(
-            origin="chat",
-            input=message,
-            run_id=change.run_id,
-            thread_id=change.thread_id,
-            request_id=request_id,
-        )
-    )
-    run_detail = RunHistory(context.executor.store).get_run(run.id)
-    if run_detail is None:
-        raise HTTPException(
-            status_code=500,
-            detail=f"run not found after acceptance: {run.id}",
-        )
-    return ThreadResult(
-        thread=thread_info(context, change.thread_id),
-        run=RunCommandResult(
-            run=run_detail,
-            command=RunControlInfo.from_record(run, command),
-        ),
-    )
-
-
-def thread_info(context: ApiContext, thread_id: str) -> ThreadInfo:
+def thread_info(core: AgentCore, thread_id: str) -> ThreadInfo:
     """Return one persisted thread after a write operation."""
 
-    info = RunHistory(context.executor.store).get_thread(thread_id, run_limit=0)
+    info = core.history.get_thread(thread_id, run_limit=0)
     if info is None:
         raise HTTPException(
             status_code=500,
@@ -216,19 +145,13 @@ def thread_info(context: ApiContext, thread_id: str) -> ThreadInfo:
     return info
 
 
-def _thread_or_404(context: ApiContext, thread_id: str) -> None:
-    if context.executor.store.get_thread(thread_id=thread_id) is not None:
+def _thread_or_404(core: AgentCore, thread_id: str) -> None:
+    if core.store.get_thread(thread_id=thread_id) is not None:
         return
     raise HTTPException(status_code=404, detail=f"thread not found: {thread_id}")
 
 
-def _thread_anchor_or_404(context: ApiContext, *, thread_id: str, run_id: str) -> None:
-    _thread_or_404(context, thread_id)
-    run = context.executor.store.get_run(run_id=run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
-    if run.thread != thread_id:
-        raise HTTPException(
-            status_code=409,
-            detail=f"run {run_id} does not belong to thread {thread_id}",
-        )
+def _thread_prefix(client: str) -> ThreadPrefix:
+    if client == "web":
+        return ThreadPrefix.WEB
+    return ThreadPrefix.TERM

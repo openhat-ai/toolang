@@ -8,7 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from toolang.base.types.message import Message
 from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE
-from toolang.execution.schemas import RunInfo, ThreadInfo
+from toolang.execution.schemas import (
+    RunControlInfo,
+    RunDetail,
+    RunInfo,
+    ThreadInfo,
+)
 
 
 class ApiRequest(BaseModel):
@@ -205,6 +210,13 @@ class ThreadResult(BaseModel):
     """One HTTP thread mutation response."""
 
     thread: ThreadInfo
+
+
+class RunCommandResult(BaseModel):
+    """One accepted HTTP run control."""
+
+    run: RunDetail
+    command: RunControlInfo
 
 
 class ChatResult(BaseModel):

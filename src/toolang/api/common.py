@@ -74,7 +74,7 @@ def event_stream_response(
 
     return ShutdownAwareStreamingResponse(
         guarded_stream(stream),
-        shutdown_signal=getattr(request.app.state.context, "shutdown_signal", None),
+        shutdown_signal=getattr(request.app.state, "shutdown_signal", None),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

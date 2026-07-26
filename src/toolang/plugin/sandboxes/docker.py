@@ -1,31 +1,34 @@
-"""Docker sandbox plugin."""
+"""Hosting inside Docker."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-import shutil
 import shlex
+import shutil
 import subprocess
 from typing import Any
+from uuid import uuid4
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.sandbox import AgentSandbox
-from toolang.base.types.sandbox import (
-    SandboxMount,
-    SandboxPlan,
-    SandboxPortForward,
-    SandboxSelector,
-    SandboxStartRequest,
-    SandboxStartResult,
-    SandboxState,
+from toolang.base.protocols.hosting import Hosting
+from toolang.base.types.hosting import (
+    HostingMount,
+    HostingPlan,
+    HostingPort,
+    HostingRef,
+    HostingRequest,
 )
 
+DEFAULT_IMAGE = "python:3.13-slim"
+
+
 @dataclass(slots=True)
-class DockerSandbox:
-    """Sandbox plugin that stages and runs the agent inside Docker."""
+class DockerHosting:
+    """Stage and run the AgentServer as a Docker container's main workload."""
 
     config: dict[str, Any]
     name: str = "docker"
@@ -35,81 +38,53 @@ class DockerSandbox:
         image = str(self.config.get("image", "")).strip()
         self._default_image = image or None
 
-    def resolve_selector(
-        self,
-        raw_selector: str | None,
-        *,
-        configured_selector: SandboxSelector | None = None,
-    ) -> SandboxSelector:
-        parsed = SandboxSelector.parse(raw_selector) if raw_selector is not None else None
-        if parsed is not None and parsed.driver != self.name:
-            raise ValueError(f"sandbox selector does not match plugin {self.name}: {raw_selector}")
-        if configured_selector is not None and configured_selector.driver != self.name:
-            raise ValueError(
-                f"configured sandbox selector does not match plugin {self.name}: "
-                f"{configured_selector.render()}"
-            )
-        target = (
-            (parsed.target if parsed is not None else None)
-            or (configured_selector.target if configured_selector is not None else None)
-            or self._default_image
-            or "python:3.13-slim"
-        )
-        return SandboxSelector(driver=self.name, target=target)
-
-    def prepare(self, request: SandboxStartRequest) -> SandboxPlan:
-        image = request.selector.target
-        if not image:
-            raise ValueError("docker sandbox requires a resolved image target")
+    def prepare(self, spec: str | None, request: HostingRequest) -> HostingPlan:
+        image = _image(spec, self._default_image)
         stage_dir = request.local_root / ".sandbox" / request.agent_name
-        start_path = stage_dir / "start.json"
-        script_path = stage_dir / "start.sh"
-        runtime_sandbox_dir = request.sandbox_home / ".runtime" / "sandbox"
+        runtime_dir = request.hosted_home / ".runtime" / "sandbox"
         stage_dir.mkdir(parents=True, exist_ok=True)
 
-        sandbox_dev_artifact: Path | None = None
-        extra_mounts: list[SandboxMount] = []
+        hosted_dev_artifact: Path | None = None
+        extra_mounts: list[HostingMount] = []
         if request.local_dev_artifact is not None:
-            if request.local_dev_artifact.is_file():
-                staged_artifact_path = stage_dir / request.local_dev_artifact.name
-                if request.local_dev_artifact.resolve() != staged_artifact_path.resolve():
-                    shutil.copy2(request.local_dev_artifact, staged_artifact_path)
-                sandbox_dev_artifact = runtime_sandbox_dir / staged_artifact_path.name
-            elif _path_is_within(request.local_dev_artifact, request.local_root):
-                sandbox_dev_artifact = _translate_to_sandbox_path(
-                    request.local_dev_artifact,
+            artifact = request.local_dev_artifact
+            if artifact.is_file():
+                staged = stage_dir / artifact.name
+                if artifact.resolve() != staged.resolve():
+                    shutil.copy2(artifact, staged)
+                hosted_dev_artifact = runtime_dir / staged.name
+            elif _path_is_within(artifact, request.local_root):
+                hosted_dev_artifact = _translate_path(
+                    artifact,
                     local_root=request.local_root,
-                    sandbox_root=request.sandbox_root,
+                    hosted_root=request.hosted_root,
                 )
             else:
-                sandbox_dev_artifact = runtime_sandbox_dir / "dev"
+                hosted_dev_artifact = runtime_dir / "dev"
                 extra_mounts.append(
-                    SandboxMount(
-                        local_path=request.local_dev_artifact,
-                        sandbox_path=sandbox_dev_artifact,
+                    HostingMount(
+                        local_path=artifact,
+                        hosted_path=hosted_dev_artifact,
                         read_only=True,
                     )
                 )
 
-        start_path.write_text(
+        script_path = stage_dir / "start.sh"
+        _write_start_script(
+            script_path,
+            command=request.command,
+            hosted_dev_artifact=hosted_dev_artifact,
+        )
+        (stage_dir / "start.json").write_text(
             json.dumps(
                 {
                     "version": 1,
-                    "agent_name": request.agent_name,
+                    "agent": request.agent_name,
+                    "image": image,
                     "local_root": str(request.local_root),
-                    "local_home": str(request.local_home),
-                    "sandbox_root": str(request.sandbox_root),
-                    "sandbox_home": str(request.sandbox_home),
-                    "bind_host": request.bind_host,
-                    "endpoint_host": request.endpoint_host,
-                    "port": request.port,
+                    "hosted_root": str(request.hosted_root),
+                    "hosted_home": str(request.hosted_home),
                     "endpoint": request.endpoint,
-                    "sandbox": {
-                        "driver": request.selector.driver,
-                        "target": request.selector.target,
-                        "image": image,
-                    },
-                    "dev_artifact": str(sandbox_dev_artifact) if sandbox_dev_artifact is not None else None,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -118,107 +93,132 @@ class DockerSandbox:
             + "\n",
             encoding="utf-8",
         )
-        _write_start_script(
-            script_path,
-            run_command=request.run_command,
-            run_shell_command=request.run_shell_command,
-            sandbox_dev_artifact=sandbox_dev_artifact,
-            runtime_state_path=request.sandbox_home / ".runtime" / "status.json",
+
+        mounts = [
+            *request.mounts,
+            HostingMount(request.local_home, request.hosted_home),
+            HostingMount(stage_dir, runtime_dir),
+            *extra_mounts,
+        ]
+        container_name = (
+            f"toolang-{_container_label(request.agent_name)}-{uuid4().hex[:8]}"
         )
-
-        mounts = list(request.mounts)
-        mounts.append(SandboxMount(local_path=request.local_home, sandbox_path=request.sandbox_home))
-        mounts.append(SandboxMount(local_path=stage_dir, sandbox_path=runtime_sandbox_dir))
-        mounts.extend(extra_mounts)
-
-        container_name = f"toolang-{request.agent_name}"
-        target_exec_path = runtime_sandbox_dir / "start.sh"
-        return SandboxPlan(
-            selector=request.selector,
-            start_mode="managed",
-            sandbox_root=request.sandbox_root,
-            sandbox_home=request.sandbox_home,
-            sandbox_working_directory=request.sandbox_home,
-            run_command=("/bin/sh", "-lc", str(target_exec_path)),
+        return HostingPlan(
+            sandbox=f"{self.name}:{image}",
+            command=("/bin/sh", str(runtime_dir / "start.sh")),
+            working_directory=request.hosted_home,
+            log_path=request.log_path,
+            endpoint=request.endpoint,
+            envs={
+                **request.envs,
+                "TOOLANG_ROOT": str(request.hosted_root),
+                "TOOLANG_SANDBOX": f"{self.name}:{image}",
+            },
             mounts=tuple(mounts),
-            port_forwards=(
-                SandboxPortForward(
+            ports=(
+                HostingPort(
                     bind_host=request.bind_host,
                     local_port=request.port,
-                    sandbox_port=request.port,
+                    hosted_port=request.port,
                 ),
             ),
-            env_vars={**dict(request.env_vars), "TOOLANG_ROOT": str(request.sandbox_root)},
-            sandbox_dev_artifact=sandbox_dev_artifact,
-            state=SandboxState(
-                selector=request.selector,
-                runtime_id=container_name,
-                meta={
-                    "image": image,
-                    "stage_dir": str(stage_dir),
-                    "start_path": str(start_path),
-                    "script_path": str(script_path),
-                    "endpoint": request.endpoint,
-                },
-            ),
+            meta={
+                "container_name": container_name,
+                "image": image,
+                "stage_dir": str(stage_dir),
+            },
         )
 
-    def start(self, plan: SandboxPlan) -> SandboxStartResult:
-        if plan.state is None or not plan.state.runtime_id:
-            raise ValueError("docker sandbox start requires runtime state")
-        if not plan.run_command:
-            raise ValueError("docker sandbox start requires run_command")
-        if len(plan.port_forwards) != 1:
-            raise ValueError("docker sandbox start requires exactly one port forward")
-        image = str(plan.state.meta.get("image", "")).strip()
-        if not image:
-            raise ValueError("docker sandbox start requires resolved image")
-        port_forward = plan.port_forwards[0]
-        docker_remove_container(plan.state.runtime_id)
+    async def launch(self, plan: HostingPlan) -> HostingRef:
+        container_name = _plan_text(plan, "container_name")
+        image = _plan_text(plan, "image")
+        if len(plan.ports) != 1:
+            raise ValueError("docker hosting requires exactly one published port")
+        port = plan.ports[0]
         try:
-            container_id = docker_run_detached(
+            container_id = await asyncio.to_thread(
+                docker_run_detached,
                 image=image,
-                container_name=plan.state.runtime_id,
-                workdir=str(plan.sandbox_working_directory),
-                command=list(plan.run_command),
+                container_name=container_name,
+                workdir=str(plan.working_directory),
+                command=list(plan.command),
                 mounts=plan.mounts,
-                bind_host=port_forward.bind_host,
-                published_port=port_forward.local_port,
-                env_values=plan.env_vars,
+                bind_host=port.bind_host,
+                published_port=port.local_port,
+                hosted_port=port.hosted_port,
+                env_values=plan.envs,
             )
         except RuntimeError as exc:
             raise ToolangError(f"Could not start docker sandbox: {exc}") from exc
-        return SandboxStartResult(
-            state=plan.state,
-            endpoint=plan.state.meta.get("endpoint") if plan.state is not None else None,
-            meta={"container_id": container_id},
+        return HostingRef(
+            runtime_id=container_name,
+            endpoint=plan.endpoint,
+            meta={
+                "container_id": container_id,
+                "image": image,
+                "stage_dir": _plan_text(plan, "stage_dir"),
+            },
         )
 
-    def alive(self, state: SandboxState) -> bool:
-        if not state.runtime_id:
-            return False
-        return docker_container_running(state.runtime_id)
+    async def running(self, ref: HostingRef) -> bool:
+        return await asyncio.to_thread(docker_container_running, ref.runtime_id)
 
-    def stop(self, state: SandboxState, *, force: bool = False) -> None:
-        del force
-        if state.runtime_id:
-            docker_remove_container(state.runtime_id)
+    async def wait(self, ref: HostingRef) -> int:
+        return await asyncio.to_thread(docker_wait_container, ref.runtime_id)
+
+    async def stop(self, ref: HostingRef, *, force: bool = False) -> None:
+        await asyncio.to_thread(
+            docker_stop_container,
+            ref.runtime_id,
+            force=force,
+        )
+
+    async def release(self, ref: HostingRef) -> None:
+        await asyncio.to_thread(docker_remove_container, ref.runtime_id)
+        stage_dir = ref.meta.get("stage_dir")
+        if isinstance(stage_dir, str) and stage_dir:
+            await asyncio.to_thread(shutil.rmtree, stage_dir, True)
 
 
-def create_sandbox(config: Mapping[str, Any]) -> AgentSandbox:
-    """Create the built-in Docker sandbox plugin."""
+def create_hosting(config: Mapping[str, Any]) -> Hosting:
+    """Create built-in Docker hosting."""
 
-    return DockerSandbox(dict(config))
+    return DockerHosting(dict(config))
+
+
+def _image(spec: str | None, configured: str | None) -> str:
+    if spec is not None:
+        image = spec.strip()
+        if not image:
+            raise ValueError("docker sandbox spec cannot be empty")
+        return image
+    return configured or DEFAULT_IMAGE
+
+
+def _container_label(value: str) -> str:
+    label = "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "-" for char in value
+    ).strip("-_.")
+    return label or "agent"
+
+
+def _plan_text(plan: HostingPlan, key: str) -> str:
+    value = plan.meta.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"docker hosting plan is missing {key}")
+    return value
 
 
 def _write_start_script(
     path: Path,
     *,
-    run_command: tuple[str, ...],
-    run_shell_command: str | None,
-    sandbox_dev_artifact: Path | None,
-    runtime_state_path: Path,
+    command: tuple[str, ...],
+    hosted_dev_artifact: Path | None,
 ) -> None:
+    if not command:
+        raise ValueError("docker hosting requires a command")
+    source = str(hosted_dev_artifact) if hosted_dev_artifact is not None else "toolang"
+    tool_command = command if command[0] in {"too", "toolang"} else ("too", *command)
     lines = [
         "#!/bin/sh",
         "set -eu",
@@ -232,73 +232,15 @@ def _write_start_script(
         '  "$PYTHON_BIN" -m ensurepip --upgrade >/dev/null 2>&1 || true',
         '  "$PYTHON_BIN" -m pip install --disable-pip-version-check --user -U uv >/dev/null 2>&1 || true',
         "  have uv && return 0",
-        "  if have pip; then",
-        '    pip install --disable-pip-version-check --user -U uv >/dev/null 2>&1 || pip install --disable-pip-version-check --user uv',
-        "    have uv && return 0",
-        "  fi",
-        "  if have curl; then",
-        '    curl -LsSf https://astral.sh/uv/install.sh | sh',
-        "    have uv && return 0",
-        "  fi",
-        "  if have wget; then",
-        '    wget -qO- https://astral.sh/uv/install.sh | sh',
-        "    have uv && return 0",
-        "  fi",
-        '  echo "uv not available; need uv, python with pip, curl, or wget" >&2',
-        "  exit 127",
+        "  if have curl; then curl -LsSf https://astral.sh/uv/install.sh | sh; fi",
+        "  have uv || { echo 'uv not available' >&2; exit 127; }",
         "}",
-        f"RUNTIME_STATE_PATH={shlex.quote(str(runtime_state_path))}",
-        "write_runtime_status() {",
-        '  [ -n "$PYTHON_BIN" ] || return 0',
-        '  STATUS="${1:-}"',
-        '  MESSAGE="${2:-}"',
-        '  "$PYTHON_BIN" - "$RUNTIME_STATE_PATH" "$STATUS" "$MESSAGE" <<\'PY\'',
-        "from __future__ import annotations",
-        "import json",
-        "from pathlib import Path",
-        "import sys",
-        "import time",
-        "path = Path(sys.argv[1])",
-        'status = sys.argv[2] or None',
-        'message = sys.argv[3] or None',
-        "data: dict[str, object] = {}",
-        "if path.exists():",
-        "    try:",
-        "        loaded = json.loads(path.read_text(encoding='utf-8'))",
-        "    except Exception:",
-        "        loaded = {}",
-        "    if isinstance(loaded, dict):",
-        "        data = {str(key): value for key, value in loaded.items()}",
-        "if status is not None:",
-        "    data['status'] = status",
-        "data['message'] = message",
-        "data['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())",
-        "path.parent.mkdir(parents=True, exist_ok=True)",
-        "path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + '\\n', encoding='utf-8')",
-        "PY",
-        "}",
-        "trap 'write_runtime_status failed \"sandbox start failed\"' EXIT",
-        "write_runtime_status starting bootstrapping",
+        "ensure_uv",
+        "exec uv tool run --from "
+        + shlex.quote(source)
+        + " "
+        + shlex.join(tool_command),
     ]
-    if run_command:
-        source = str(sandbox_dev_artifact) if sandbox_dev_artifact is not None else "toolang"
-        tool_command = (
-            run_command
-            if run_command[0] in {"too", "toolang"}
-            else ("too", *run_command)
-        )
-        lines.append("ensure_uv")
-        lines.append("write_runtime_status starting launching")
-        lines.append(
-            "exec uv tool run --from "
-            + shlex.quote(source)
-            + " "
-            + shlex.join(tool_command)
-        )
-    elif run_shell_command is not None:
-        lines.append(run_shell_command)
-    else:
-        raise ValueError("docker sandbox start script requires run_command or run_shell_command")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     path.chmod(0o755)
 
@@ -311,73 +253,50 @@ def _path_is_within(path: Path, root: Path) -> bool:
     return True
 
 
-def _translate_to_sandbox_path(path: Path, *, local_root: Path, sandbox_root: Path) -> Path:
-    relative = path.resolve().relative_to(local_root.resolve())
-    return sandbox_root / relative
+def _translate_path(path: Path, *, local_root: Path, hosted_root: Path) -> Path:
+    return hosted_root / path.resolve().relative_to(local_root.resolve())
 
 
 def docker_container_running(container_name: str) -> bool:
-    try:
-        result = subprocess.run(
-            [
-                "docker",
-                "inspect",
-                "--format",
-                "{{.State.Running}}",
-                container_name,
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError:
-        return False
-    if result.returncode != 0:
-        return False
-    return result.stdout.strip() == "true"
+    result = _docker(
+        "inspect",
+        "--format",
+        "{{.State.Running}}",
+        container_name,
+        check=False,
+    )
+    return (
+        result is not None
+        and result.returncode == 0
+        and result.stdout.strip() == "true"
+    )
 
 
-def docker_container_identity(container_name: str) -> tuple[str, int] | None:
-    try:
-        result = subprocess.run(
-            [
-                "docker",
-                "inspect",
-                "--format",
-                "{{.Id}} {{.State.Pid}}",
-                container_name,
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError:
-        return None
+def docker_wait_container(container_name: str) -> int:
+    result = _docker("wait", container_name, check=False)
+    if result is None:
+        raise RuntimeError("docker command not found")
     if result.returncode != 0:
-        return None
-    parts = result.stdout.strip().split()
-    if len(parts) != 2:
-        return None
-    container_id, pid_text = parts
+        raise RuntimeError(result.stderr.strip() or "docker wait failed")
     try:
-        pid = int(pid_text)
-    except ValueError:
-        return None
-    if not container_id or pid <= 0:
-        return None
-    return container_id, pid
+        return int(result.stdout.strip())
+    except ValueError as exc:
+        raise RuntimeError("docker wait returned an invalid exit code") from exc
+
+
+def docker_stop_container(container_name: str, *, force: bool) -> None:
+    command = "kill" if force else "stop"
+    result = _docker(command, container_name, check=False)
+    if result is None:
+        raise RuntimeError("docker command not found")
+    if result.returncode != 0:
+        detail = result.stderr.strip()
+        if "No such container" not in detail:
+            raise RuntimeError(detail or f"docker {command} failed")
 
 
 def docker_remove_container(container_name: str) -> None:
-    try:
-        subprocess.run(
-            ["docker", "rm", "--force", container_name],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError:
-        return
+    _docker("rm", "--force", container_name, check=False)
 
 
 def docker_run_detached(
@@ -386,9 +305,10 @@ def docker_run_detached(
     container_name: str,
     workdir: str,
     command: list[str],
-    mounts: tuple[SandboxMount, ...],
+    mounts: tuple[HostingMount, ...],
     bind_host: str,
     published_port: int,
+    hosted_port: int,
     env_values: Mapping[str, str],
 ) -> str:
     args = [
@@ -400,27 +320,38 @@ def docker_run_detached(
         "--workdir",
         workdir,
         "--publish",
-        f"{bind_host}:{published_port}:{published_port}",
+        f"{bind_host}:{published_port}:{hosted_port}",
     ]
     for mount in mounts:
         suffix = ":ro" if mount.read_only else ""
-        args.extend(["--volume", f"{mount.local_path}:{mount.sandbox_path}{suffix}"])
+        args.extend(["--volume", f"{mount.local_path}:{mount.hosted_path}{suffix}"])
     for name, value in env_values.items():
         args.extend(["--env", f"{name}={value}"])
     args.append(image)
     args.extend(command)
     try:
-        result = subprocess.run(
-            args,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        result = subprocess.run(args, check=False, capture_output=True, text=True)
     except FileNotFoundError as exc:
         raise RuntimeError("docker command not found") from exc
     if result.returncode != 0:
-        stderr = result.stderr.strip()
-        stdout = result.stdout.strip()
-        detail = stderr or stdout or f"docker exited with code {result.returncode}"
-        raise RuntimeError(detail)
+        raise RuntimeError(
+            result.stderr.strip()
+            or result.stdout.strip()
+            or f"docker exited with code {result.returncode}"
+        )
     return result.stdout.strip()
+
+
+def _docker(
+    *args: str,
+    check: bool,
+) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            ("docker", *args),
+            check=check,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return None

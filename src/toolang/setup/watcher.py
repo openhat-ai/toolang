@@ -15,7 +15,7 @@ from toolang.plugin.tools.loading import load_runtime_tools
 
 from .config import load_setup_config, load_setup_envs
 from .models import ModelListCache, discover_models
-from .types import AgentSetup
+from .types import AgentEnvironment, AgentSetup
 
 DEFAULT_INTERVAL_MS = 1_000.0
 
@@ -76,6 +76,10 @@ class SetupWatcher:
                 ),
                 tools=self._tools,
                 envs=envs,
+                environment=AgentEnvironment.capture(
+                    self.layout,
+                    envs=envs,
+                ),
             )
             self._config = config
             return self._setup

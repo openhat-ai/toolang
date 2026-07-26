@@ -1,160 +1,119 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, cast
 
-from toolang.base.protocols.sandbox import AgentSandbox
-from toolang.base.types.sandbox import (
-    SandboxMount,
-    SandboxSelector,
-    SandboxStartRequest,
-)
+import pytest
+
+from toolang.base.protocols.hosting import Hosting
+from toolang.base.types.hosting import HostingMount, HostingRequest
 from toolang.plugin.config import parse_sandbox_binding
-from toolang.plugin.sandboxes.loading import create_sandbox_plugin
+from toolang.plugin.sandboxes.loading import load_hosting
 
 
-def test_create_none_sandbox_plugin_prepares_direct_plan(tmp_path: Path) -> None:
-    plugin = create_sandbox_plugin("none", config={})
-
-    assert isinstance(plugin, AgentSandbox)
-    plan = plugin.prepare(
-        SandboxStartRequest(
-            selector=SandboxSelector(driver="none"),
-            local_root=tmp_path / "root",
-            local_home=tmp_path / "root" / "agents" / "alice",
-            sandbox_root=tmp_path / "root",
-            sandbox_home=tmp_path / "root" / "agents" / "alice",
-            agent_name="alice",
-            bind_host="127.0.0.1",
-            endpoint_host="127.0.0.1",
-            port=8000,
-            endpoint="http://127.0.0.1:8000",
-            run_command=("too", "run", "alice"),
-            env_vars={"TOOLANG_ROOT": str(tmp_path / "root")},
-        )
+def _request(root: Path, *, dev: Path | None = None) -> HostingRequest:
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True, exist_ok=True)
+    return HostingRequest(
+        local_root=root,
+        local_home=home,
+        hosted_root=Path("/root/.toolang"),
+        hosted_home=Path("/root/.toolang/agents/alice"),
+        agent_name="alice",
+        bind_host="127.0.0.1",
+        endpoint_host="localhost",
+        port=8123,
+        endpoint="http://localhost:8123",
+        command=("too", "serve", "alice", "--port", "8123"),
+        working_directory=home,
+        log_path=home / ".runtime" / "agent.log",
+        envs={"EXAMPLE": "value"},
+        mounts=(
+            HostingMount(
+                local_path=root / "shared",
+                hosted_path=Path("/root/.toolang/shared"),
+            ),
+        ),
+        local_dev_artifact=dev,
     )
 
-    assert plan.start_mode == "direct"
-    assert plan.selector.driver == "none"
-    assert plan.run_command == ("too", "run", "alice")
-    start = plugin.start(plan)
-    assert start.state.selector.driver == "none"
-    assert plugin.alive(start.state) is True
+
+def test_none_hosting_parses_own_spec_and_prepares_local_process(
+    tmp_path: Path,
+) -> None:
+    hosting = load_hosting("none", config={})
+
+    assert isinstance(hosting, Hosting)
+    plan = hosting.prepare(None, _request(tmp_path))
+
+    assert plan.sandbox == "none"
+    assert plan.command[-4:] == ("serve", "alice", "--port", "8123")
+    assert plan.working_directory == tmp_path / "agents" / "alice"
+    with pytest.raises(ValueError, match="does not accept"):
+        hosting.prepare("", _request(tmp_path))
 
 
-def test_create_docker_sandbox_plugin_prepares_and_starts(monkeypatch, tmp_path: Path) -> None:
+def test_docker_hosting_prepares_and_launches(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     calls: dict[str, object] = {}
 
-    def fake_remove(container_name: str) -> None:
-        calls["removed"] = container_name
-
-    def fake_run_detached(**kwargs) -> str:
+    def fake_run_detached(**kwargs: object) -> str:
         calls["run"] = kwargs
         return "container-123"
 
-    monkeypatch.setattr("toolang.plugin.sandboxes.docker.docker_remove_container", fake_remove)
-    monkeypatch.setattr("toolang.plugin.sandboxes.docker.docker_run_detached", fake_run_detached)
-    monkeypatch.setattr("toolang.plugin.sandboxes.docker.docker_container_running", lambda name: name == "toolang-alice")
-
-    root = tmp_path / "root"
-    home = root / "agents" / "alice"
-    home.mkdir(parents=True, exist_ok=True)
-    dev_artifact = root / "dist" / "toolang-0.1.0-py3-none-any.whl"
-    dev_artifact.parent.mkdir(parents=True, exist_ok=True)
-    dev_artifact.write_bytes(b"wheel")
-    shared_dir = root / "shared"
-    shared_dir.mkdir()
-    plugin = create_sandbox_plugin("docker", config={})
-
-    plan = plugin.prepare(
-        SandboxStartRequest(
-            selector=SandboxSelector(driver="docker", target="python:3.13-slim"),
-            local_root=root,
-            local_home=home,
-            sandbox_root=Path("/root/.toolang"),
-            sandbox_home=Path("/root/.toolang/agents/alice"),
-            agent_name="alice",
-            bind_host="127.0.0.1",
-            endpoint_host="127.0.0.1",
-            port=8123,
-            endpoint="http://127.0.0.1:8123",
-            run_command=("too", "run", "alice", "--port", "8123"),
-            env_vars={"TOOLANG_ROOT": str(root)},
-            mounts=(
-                SandboxMount(
-                    local_path=shared_dir,
-                    sandbox_path=Path("/root/.toolang/shared"),
-                ),
-            ),
-            local_dev_artifact=dev_artifact,
-        )
+    monkeypatch.setattr(
+        "toolang.plugin.sandboxes.docker.docker_run_detached",
+        fake_run_detached,
     )
-
-    assert plan.start_mode == "managed"
-    assert plan.selector.driver == "docker"
-    assert plan.selector.target == "python:3.13-slim"
-    assert plan.state is not None
-    assert plan.state.runtime_id == "toolang-alice"
-    assert plan.sandbox_root == Path("/root/.toolang")
-    assert plan.sandbox_home == Path("/root/.toolang/agents/alice")
-    mounted_pairs = {(item.local_path, item.sandbox_path) for item in plan.mounts}
-    assert (root, Path("/root/.toolang")) not in mounted_pairs
-    assert (shared_dir, Path("/root/.toolang/shared")) in mounted_pairs
-    assert (home, Path("/root/.toolang/agents/alice")) in mounted_pairs
-    assert any(
-        item.sandbox_path == Path("/root/.toolang/agents/alice/.runtime/sandbox")
-        for item in plan.mounts
+    monkeypatch.setattr(
+        "toolang.plugin.sandboxes.docker.docker_container_running",
+        lambda name: name.startswith("toolang-alice-"),
     )
-    assert (root / ".sandbox" / "alice" / "start.json").is_file()
-    assert (root / ".sandbox" / "alice" / "start.sh").is_file()
-    script_text = (root / ".sandbox" / "alice" / "start.sh").read_text(encoding="utf-8")
-    assert 'PYTHON_BIN=""' in script_text
-    assert "ensure_uv" in script_text
-    assert "uv tool run --from" in script_text
-    assert " too run alice --port 8123" in script_text
-    assert plan.sandbox_dev_artifact == Path("/root/.toolang/agents/alice/.runtime/sandbox") / dev_artifact.name
+    dev = tmp_path / "dist" / "toolang.whl"
+    dev.parent.mkdir(parents=True)
+    dev.write_bytes(b"wheel")
+    (tmp_path / "shared").mkdir()
+    hosting = load_hosting("docker", config={})
 
-    start = plugin.start(plan)
+    plan = hosting.prepare("python:3.13-slim", _request(tmp_path, dev=dev))
 
-    assert start.state.runtime_id == "toolang-alice"
-    assert start.endpoint == "http://127.0.0.1:8123"
-    assert calls["removed"] == "toolang-alice"
+    assert plan.sandbox == "docker:python:3.13-slim"
+    assert plan.working_directory == Path("/root/.toolang/agents/alice")
+    container_name = cast(str, plan.meta["container_name"])
+    assert container_name.startswith("toolang-alice-")
+    mounted = {(item.local_path, item.hosted_path) for item in plan.mounts}
+    assert (tmp_path / "shared", Path("/root/.toolang/shared")) in mounted
+    assert (
+        tmp_path / "agents" / "alice",
+        Path("/root/.toolang/agents/alice"),
+    ) in mounted
+    script = tmp_path / ".sandbox" / "alice" / "start.sh"
+    assert script.is_file()
+    assert " too serve alice --port 8123" in script.read_text(encoding="utf-8")
+
+    ref = asyncio.run(hosting.launch(plan))
+
+    assert ref.runtime_id == container_name
+    assert ref.endpoint == "http://localhost:8123"
+    assert asyncio.run(hosting.running(ref)) is True
     run_call = cast(dict[str, Any], calls["run"])
     assert run_call["image"] == "python:3.13-slim"
-    assert run_call["bind_host"] == "127.0.0.1"
     assert run_call["published_port"] == 8123
-    assert run_call["env_values"]["TOOLANG_ROOT"] == "/root/.toolang"
-    assert plugin.alive(start.state) is True
+    assert run_call["hosted_port"] == 8123
 
 
-def test_create_docker_sandbox_plugin_prefixes_too_for_uv_tool_run(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    home = root / "agents" / "alice"
-    home.mkdir(parents=True, exist_ok=True)
-    plugin = create_sandbox_plugin("docker", config={})
+def test_docker_hosting_uses_configured_default_image(tmp_path: Path) -> None:
+    hosting = load_hosting("docker", config={"image": "python:3.14"})
 
-    plugin.prepare(
-        SandboxStartRequest(
-            selector=SandboxSelector(driver="docker", target="python:3.13-slim"),
-            local_root=root,
-            local_home=home,
-            sandbox_root=Path("/root/.toolang"),
-            sandbox_home=Path("/root/.toolang/agents/alice"),
-            agent_name="alice",
-            bind_host="127.0.0.1",
-            endpoint_host="127.0.0.1",
-            port=8123,
-            endpoint="http://127.0.0.1:8123",
-            run_command=("--root", "/root/.toolang", "run", "alice", "--port", "8123"),
-            env_vars={"TOOLANG_ROOT": str(root)},
-        )
-    )
+    plan = hosting.prepare(None, _request(tmp_path))
 
-    script_text = (root / ".sandbox" / "alice" / "start.sh").read_text(encoding="utf-8")
-    assert "uv tool run --from toolang too --root /root/.toolang run alice --port 8123" in script_text
+    assert plan.sandbox == "docker:python:3.14"
 
 
-def test_parse_sandbox_binding_builds_plugin_specific_config() -> None:
+def test_parse_sandbox_binding_keeps_plugin_owned_spec() -> None:
     binding = parse_sandbox_binding(
         {
             "driver": "docker",
@@ -167,8 +126,8 @@ def test_parse_sandbox_binding_builds_plugin_specific_config() -> None:
     )
 
     assert binding is not None
-    assert binding.selector.driver == "docker"
-    assert binding.selector.target == "python:3.13"
+    assert binding.name == "docker"
+    assert binding.spec == "python:3.13"
     assert binding.config == {
         "image": "python:3.13-slim",
         "token": "secret",

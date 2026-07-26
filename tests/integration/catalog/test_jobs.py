@@ -133,20 +133,19 @@ def test_job_store_claims_once_across_connections(tmp_path: Path) -> None:
     claims = []
     lock = threading.Lock()
 
-    def claim(store: JobStore, run_id: str) -> None:
+    def claim(store: JobStore) -> None:
         barrier.wait()
         claimed = store.claim_due(
             jobs=jobs,
             kind="task",
-            run_id=run_id,
             now=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
         with lock:
             claims.append(claimed)
 
     threads = [
-        threading.Thread(target=claim, args=(store, f"run-{index}"))
-        for index, store in enumerate(stores)
+        threading.Thread(target=claim, args=(store,))
+        for store in stores
     ]
     for thread in threads:
         thread.start()

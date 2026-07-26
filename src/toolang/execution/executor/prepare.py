@@ -441,7 +441,7 @@ def _body_types(agic: AgicDecl) -> dict[str, str]:
 def _runtime_context(
     context: _Execution, *, run: BoundRun, agic: AgicDecl
 ) -> dict[str, object]:
-    return {
+    runtime: dict[str, object] = {
         "run": {
             "id": run.run_id,
             "thread_id": run.thread,
@@ -457,6 +457,19 @@ def _runtime_context(
             "output": agic.output,
         },
     }
+    environment = run.setup.environment
+    if environment is not None:
+        runtime["environment"] = {
+            "sandbox": environment.sandbox,
+            "system": environment.system,
+            "release": environment.release,
+            "machine": environment.machine,
+            "container": environment.container,
+            "root": str(environment.root),
+            "home": str(environment.home),
+            "working_directory": str(environment.working_directory),
+        }
+    return runtime
 
 
 def _model_context(model: ModelTarget) -> dict[str, object]:

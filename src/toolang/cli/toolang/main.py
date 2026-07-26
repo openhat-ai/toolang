@@ -421,6 +421,12 @@ app.command(
     cls=script_commands.ScriptHelpCommand,
     context_settings={"allow_interspersed_args": False},
 )(script_commands.script_command)
+app.command(
+    "serve",
+    help="Run an AgentServer process.",
+    hidden=True,
+    no_args_is_help=True,
+)(runtime_commands.serve)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

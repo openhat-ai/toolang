@@ -44,7 +44,6 @@ class LocalChatSession:
         self,
         layout: AgentLayout,
         *,
-        agent_state: AgentState,
         models: Sequence[str] = (),
         tools: Sequence[str] | None = None,
         caps: Sequence[str] = (),
@@ -58,11 +57,7 @@ class LocalChatSession:
         self.threads = ThreadManager(self.store, self.ids)
         self.executor = RunExecutor(self.store, self.ids)
         self.setup_watcher = SetupWatcher(layout)
-        self.state_watcher = StateWatcher(
-            layout,
-            self._select_caps(agent_state),
-            transform=self._select_caps,
-        )
+        self.state_watcher = StateWatcher(layout)
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
         self._stop_signal: asyncio.Event | None = None
@@ -182,6 +177,7 @@ class LocalChatSession:
         self.store.close()
 
     async def _initialize(self) -> None:
+        await self.state_watcher.refresh()
         setup = await self.setup_watcher.refresh()
         if self.tool_selectors is not None:
             validate_tool_selectors(dict(setup.tools), self.tool_selectors)
@@ -222,6 +218,8 @@ class LocalChatSession:
         cap_selectors = _strings(selects.get("caps"))
         if cap_selectors:
             state = self._state_with_caps(state, cap_selectors)
+        elif self.cap_selectors:
+            state = self._state_with_caps(state, self.cap_selectors)
         runnable = _runnable(state, selects)
         model = next(iter(_strings(selects.get("models"))), None)
         handle = self.executor.start(
@@ -237,11 +235,6 @@ class LocalChatSession:
             tracer=_CallbackTracer(on_event),
         )
         await handle
-
-    def _select_caps(self, state: AgentState) -> AgentState:
-        if not self.cap_selectors:
-            return state
-        return self._state_with_caps(state, self.cap_selectors)
 
     def _state_with_caps(
         self,

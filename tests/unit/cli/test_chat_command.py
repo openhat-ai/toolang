@@ -241,7 +241,6 @@ def test_chat_runtime_builds_process_local_execution_resources(
     monkeypatch: Any,
 ) -> None:
     captured: dict[str, object] = {}
-    state = object()
 
     class Session(_Client):
         def __init__(self, layout: object, **kwargs: object) -> None:
@@ -254,11 +253,6 @@ def test_chat_runtime_builds_process_local_execution_resources(
 
     monkeypatch.setattr(chat, "context_root", lambda _ctx: tmp_path)
     monkeypatch.setattr(chat, "require_prefix_agent", lambda _ctx: "alice")
-    monkeypatch.setattr(
-        chat,
-        "prepare_agent_state",
-        lambda *_args, **_kwargs: state,
-    )
     monkeypatch.setattr(chat, "LocalChatSession", Session)
 
     with chat._chat_runtime(
@@ -276,7 +270,6 @@ def test_chat_runtime_builds_process_local_execution_resources(
     assert getattr(layout, "root") == tmp_path
     assert getattr(layout, "name") == "alice"
     assert captured["kwargs"] == {
-        "agent_state": state,
         "models": ("test/model",),
         "tools": ("shell/*",),
         "caps": ("skill/reviewer",),

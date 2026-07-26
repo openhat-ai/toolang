@@ -182,6 +182,9 @@ def test_setup_watcher_loads_root_scoped_plugins(
     assert setup.providers == {"test": provider}
     assert setup.adapters == {"default": adapter}
     assert setup.tools == {"shell": tool}
+    assert setup.environment is not None
+    assert setup.environment.sandbox == "none"
+    assert setup.environment.root == layout.root
     assert loaded_tool_configs == [{"shell": {"token": "tool-secret"}}]
 
 

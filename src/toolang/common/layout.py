@@ -114,6 +114,10 @@ class AgentLayout:
         return self.runtime / "status.json"
 
     @property
+    def hosting_state(self) -> Path:
+        return self.runtime / "hosting.json"
+
+    @property
     def run_store(self) -> Path:
         return self.runtime / "runs.db"
 

@@ -46,10 +46,14 @@ agic chat(_: Part[]) -> Part[]:
             await stop_signal.wait()
 
     class StateWatcher:
-        def __init__(self, _layout: object, state: object, **_kwargs: object) -> None:
-            self.state = state
+        def __init__(self, _layout: object) -> None:
+            self.state = harness.state
 
         def current(self):
+            return self.state
+
+        async def refresh(self, *, force: bool = False):
+            del force
             return self.state
 
         async def run(self, *, stop_signal: asyncio.Event) -> None:
@@ -60,7 +64,6 @@ agic chat(_: Part[]) -> Part[]:
 
     session = local.LocalChatSession(
         harness.setup.layout,
-        agent_state=harness.state,
     )
     events: list[RunEvent] = []
     event_threads: list[int] = []
@@ -130,10 +133,14 @@ def test_chat_session_does_not_create_a_thread_on_open(
             await stop_signal.wait()
 
     class StateWatcher:
-        def __init__(self, _layout: object, state: object, **_kwargs: object) -> None:
-            self.state = state
+        def __init__(self, _layout: object) -> None:
+            self.state = harness.state
 
         def current(self):
+            return self.state
+
+        async def refresh(self, *, force: bool = False):
+            del force
             return self.state
 
         async def run(self, *, stop_signal: asyncio.Event) -> None:
@@ -144,7 +151,6 @@ def test_chat_session_does_not_create_a_thread_on_open(
 
     session = local.LocalChatSession(
         harness.setup.layout,
-        agent_state=harness.state,
     )
     try:
         assert session.store.list_threads() == []

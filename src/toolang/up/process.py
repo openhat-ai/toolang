@@ -2,30 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from functools import lru_cache
 import json
 import os
 from pathlib import Path
 import shlex
-import signal
 import shutil
 import subprocess
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Literal
 
-from toolang.base.protocols.sandbox import AgentSandbox
-from toolang.base.types.sandbox import SandboxState
 from toolang.common.github import (
     GitHubRef,
     github_raw_url,
     parse_github_file_url,
     parse_github_ref,
 )
+from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.layout import AgentLayout
 from ..common.progress import ProgressSink, emit_progress
 
@@ -223,7 +222,7 @@ class AgentStatus:
 
 
 class AgentProcess:
-    """Start, inspect, and stop one resident agent process."""
+    """Inspect one resident AgentServer process."""
 
     def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout
@@ -238,19 +237,19 @@ class AgentProcess:
         raw_endpoint = runtime_state.get("endpoint") if runtime_state else None
         raw_status = runtime_state.get("status") if runtime_state else None
         pid = runtime_state.get("pid") if runtime_state else None
-        sandbox = runtime_state.get("sandbox") if runtime_state else None
+        sandbox = _runtime_sandbox_label(runtime_state)
         endpoint = (
             raw_endpoint
             if isinstance(raw_endpoint, str) and raw_endpoint.strip()
             else None
         )
-        pid_alive = isinstance(pid, int) and _pid_alive(pid)
+        pid_alive = isinstance(pid, int) and sandbox == "none" and _pid_alive(pid)
         scan = runtime_state is not None and raw_status == "stopped" and not pid_alive
         process_alive = pid_alive or bool(self.pids() if scan else ())
         status = _runtime_status_label(
             raw_status,
             pid_alive=process_alive,
-            sandbox_alive=_sandbox_alive(sandbox),
+            sandbox_alive=_hosting_running(self.layout),
         )
         active = status in {"running", "preparing", "starting"}
         return AgentStatus(
@@ -277,129 +276,11 @@ class AgentProcess:
         )
         return tuple(status for status in statuses if status is not None)
 
-    def start(
-        self,
-        command: Sequence[str],
-        *,
-        environ: Mapping[str, str],
-        cwd: Path,
-        log_path: Path,
-        ui_base_url: str,
-        timeout_sec: float = 30.0,
-    ) -> AgentStatus:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        launched_at = time.time()
-        with log_path.open("ab") as stream:
-            process = subprocess.Popen(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=stream,
-                stderr=stream,
-                env=dict(environ),
-                cwd=str(cwd),
-                start_new_session=True,
-                close_fds=True,
-            )
-        deadline = time.monotonic() + timeout_sec
-        state_path = self.layout.runtime_status
-        while time.monotonic() < deadline:
-            if (
-                state_path.is_file()
-                and state_path.stat().st_mtime >= launched_at - 0.01
-            ):
-                status = self.status(ui_base_url=ui_base_url)
-                if status is not None and status.status in {"running", "failed"}:
-                    return status
-            if process.poll() is not None:
-                break
-            time.sleep(0.1)
-        if state_path.is_file() and state_path.stat().st_mtime >= launched_at - 0.01:
-            status = self.status(ui_base_url=ui_base_url)
-            if status is not None:
-                return status
-        if process.poll() is not None:
-            raise RuntimeError(f"agent failed to start: {log_path}")
-        raise TimeoutError(f"agent start timed out: {log_path}")
-
-    def stop(
-        self,
-        *,
-        sandbox_plugin: AgentSandbox | None = None,
-        force: bool = False,
-    ) -> bool:
-        runtime_state = self.state()
-        pid = runtime_state.get("pid") if runtime_state is not None else None
-        pid_alive = isinstance(pid, int) and _pid_alive(pid)
-        runtime_pids = () if pid_alive else self.pids()
-        if runtime_state is None and not runtime_pids:
-            raise FileNotFoundError(
-                f"runtime state not found: {self.layout.runtime_status}"
-            )
-
-        sandbox = runtime_state.get("sandbox") if runtime_state is not None else None
-        started_at = (
-            runtime_state.get("started_at") if runtime_state is not None else None
-        )
-        stopped = False
-        if isinstance(sandbox, dict):
-            if sandbox_plugin is None:
-                raise ValueError("sandbox plugin is required to stop a sandboxed agent")
-            sandbox_state = SandboxState.from_data(sandbox)
-            if sandbox_state.runtime_id:
-                sandbox_plugin.stop(sandbox_state, force=force)
-                stopped = True
-        failed_pids: list[int] = []
-        if pid_alive and isinstance(pid, int):
-            if _stop_pid(pid, force=force):
-                stopped = True
-            else:
-                failed_pids.append(pid)
-        for runtime_pid in runtime_pids:
-            if runtime_pid == pid:
-                continue
-            if _stop_pid(runtime_pid, force=force):
-                stopped = True
-            else:
-                failed_pids.append(runtime_pid)
-        if failed_pids:
-            pid_text = ", ".join(str(item) for item in sorted(set(failed_pids)))
-            raise ValueError(
-                f"agent did not stop: {self.layout.name} (pid {pid_text}); "
-                "retry with --force"
-            )
-        if runtime_state is not None:
-            stop_runtime_state(
-                self.layout,
-                expected_pid=pid if isinstance(pid, int) else None,
-                expected_started_at=(
-                    started_at if isinstance(started_at, str) else None
-                ),
-            )
-        return stopped
-
     def pids(self) -> tuple[int, ...]:
         return _agent_runtime_process_pids(self.layout)
 
 
 VISITING_PROGRAM_CACHE_TTL_SEC = 3600
-
-
-def docker_container_identity(container_name: str) -> tuple[str, int] | None:
-    """Return Docker container identity details."""
-
-    from toolang.plugin.sandboxes.docker import (
-        docker_container_identity as resolve_identity,
-    )
-
-    return resolve_identity(container_name)
-
-
-def docker_container_running(container_name: str) -> bool:
-    """Return whether a Docker container is running."""
-
-    from toolang.plugin.sandboxes.docker import docker_container_running as is_running
-
-    return is_running(container_name)
 
 
 def remove_sandbox_stage(layout: AgentLayout) -> None:
@@ -616,7 +497,7 @@ def write_runtime_state(
     endpoint: str,
     started_at: str,
     pid: int | None,
-    sandbox: dict[str, object] | None = None,
+    sandbox: str = "none",
     models: Sequence[str] | None = None,
     status: str = "running",
     message: str | None = None,
@@ -650,21 +531,25 @@ def stop_runtime_state(
     """Mark one runtime state as stopped while keeping the last endpoint."""
 
     path = layout.runtime_status
-    runtime_state = _load_runtime_state(path)
-    if runtime_state is None:
-        return False
-    if expected_pid is not None and runtime_state.get("pid") != expected_pid:
-        return False
-    if (
-        expected_started_at is not None
-        and runtime_state.get("started_at") != expected_started_at
-    ):
-        return False
-    runtime_state["status"] = "stopped"
-    runtime_state["pid"] = None
-    runtime_state["message"] = None
-    runtime_state["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    _save_runtime_state(path, runtime_state)
+    with file_write_lock(path.with_suffix(".lock")):
+        runtime_state = _load_runtime_state(path)
+        if runtime_state is None:
+            return False
+        if expected_pid is not None and runtime_state.get("pid") != expected_pid:
+            return False
+        if (
+            expected_started_at is not None
+            and runtime_state.get("started_at") != expected_started_at
+        ):
+            return False
+        runtime_state["status"] = "stopped"
+        runtime_state["pid"] = None
+        runtime_state["message"] = None
+        runtime_state["updated_at"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(),
+        )
+        _save_runtime_state(path, runtime_state)
     return True
 
 
@@ -711,48 +596,21 @@ def _runtime_state_port(runtime_state: dict[str, object] | None) -> int | None:
         return None
 
 
-def update_runtime_state(
-    layout: AgentLayout,
+def runtime_pid_label(
+    runtime_state: dict[str, object] | None,
     *,
-    status: str | None = None,
-    message: str | None = None,
-) -> Path | None:
-    """Update one existing runtime state with lightweight status fields."""
-
-    path = layout.runtime_status
-    runtime_state = _load_runtime_state(path)
-    if runtime_state is None:
-        return None
-    if status is not None:
-        runtime_state["status"] = status
-    runtime_state["message"] = message
-    runtime_state["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    _save_runtime_state(path, runtime_state)
-    return path
-
-
-def runtime_pid_label(runtime_state: dict[str, object] | None) -> str | None:
+    layout: AgentLayout | None = None,
+) -> str | None:
     """Return one human-readable process label for runtime info output."""
 
     if runtime_state is None:
         return None
-    sandbox = runtime_state.get("sandbox")
-    if isinstance(sandbox, dict):
-        sandbox_data = {str(key): value for key, value in sandbox.items()}
-        runtime_id = sandbox_data.get("runtime_id")
-        selector = sandbox_data.get("selector")
-        if isinstance(selector, dict):
-            selector_data = {str(key): value for key, value in selector.items()}
-            driver = selector_data.get("driver")
-            if (
-                driver == "docker"
-                and isinstance(runtime_id, str)
-                and runtime_id.strip()
-            ):
-                identity = docker_container_identity(runtime_id)
-                if identity is not None:
-                    container_id, pid = identity
-                    return f"{container_id[:12]}:{pid}"
+    if layout is not None:
+        from toolang.up.hosting import HostingState
+
+        state = HostingState.load(layout.hosting_state)
+        if state is not None:
+            return state.ref.runtime_id
     pid = runtime_state.get("pid")
     if isinstance(pid, int) and pid > 0:
         return str(pid)
@@ -816,10 +674,9 @@ def _load_runtime_state(path: Path) -> dict[str, object] | None:
 
 
 def _save_runtime_state(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    atomic_write_text(
+        path,
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
     )
 
 
@@ -843,17 +700,8 @@ def _runtime_sandbox_label(runtime_state: dict[str, object] | None) -> str | Non
     if runtime_state is None:
         return None
     sandbox = runtime_state.get("sandbox")
-    if isinstance(sandbox, dict):
-        sandbox_data = {str(key): value for key, value in sandbox.items()}
-        selector = sandbox_data.get("selector")
-        if isinstance(selector, dict):
-            selector_data = {str(key): value for key, value in selector.items()}
-            driver = selector_data.get("driver")
-            target = selector_data.get("target")
-            if isinstance(driver, str) and driver.strip():
-                if isinstance(target, str) and target.strip():
-                    return f"{driver.strip()}:{target.strip()}"
-                return driver.strip()
+    if isinstance(sandbox, str) and sandbox.strip():
+        return sandbox.strip()
     return "none"
 
 
@@ -874,7 +722,7 @@ def _runtime_command_matches(command: str, *, root: str, agent_name: str) -> boo
         return True
 
     for index, token in enumerate(tokens[:-1]):
-        if token == "run" and tokens[index + 1] == agent_name:
+        if token == "serve" and tokens[index + 1] == agent_name:
             return True
     return False
 
@@ -903,51 +751,21 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _stop_pid(pid: int, *, force: bool) -> bool:
+def _hosting_running(layout: AgentLayout) -> bool:
+    from toolang.up.hosting import HostingState
+    from toolang.plugin.sandboxes.loading import load_hosting
+
     try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return True
-    except PermissionError as exc:
-        raise ValueError(f"permission denied while stopping pid {pid}") from exc
-
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline:
-        if not _pid_alive(pid):
-            return True
-        time.sleep(0.05)
-    if not _pid_alive(pid):
-        return True
-    if not force:
+        state = HostingState.load(layout.hosting_state)
+    except ValueError:
         return False
-    kill_signal = getattr(signal, "SIGKILL", signal.SIGTERM)
+    if state is None:
+        return False
+    name, _, _ = state.sandbox.partition(":")
     try:
-        os.kill(pid, kill_signal)
-    except ProcessLookupError:
-        return True
-    except PermissionError as exc:
-        raise ValueError(f"permission denied while force-stopping pid {pid}") from exc
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline:
-        if not _pid_alive(pid):
-            return True
-        time.sleep(0.05)
-    return not _pid_alive(pid)
-
-
-def _sandbox_alive(payload: object) -> bool:
-    if not isinstance(payload, dict):
+        return asyncio.run(load_hosting(name, config={}).running(state.ref))
+    except (OSError, RuntimeError, ValueError):
         return False
-    data = {str(key): value for key, value in payload.items()}
-    runtime_id = data.get("runtime_id")
-    selector = data.get("selector")
-    if not isinstance(selector, dict):
-        return False
-    selector_data = {str(key): value for key, value in selector.items()}
-    driver = selector_data.get("driver")
-    if driver == "docker" and isinstance(runtime_id, str) and runtime_id.strip():
-        return docker_container_running(runtime_id)
-    return False
 
 
 def _webui_url(endpoint: str | None, *, ui_base_url: str) -> str | None:

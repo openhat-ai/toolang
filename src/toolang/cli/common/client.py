@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager, suppress
 import json
-from pathlib import Path
-import sys
 import threading
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from uuid import uuid4
@@ -21,9 +18,6 @@ from toolang.common.layout import AgentLayout
 from toolang.base.types.message import Message
 from .context import context_root, require_prefix_agent, ui_base_url
 from .errors import RuntimeClientError
-
-if TYPE_CHECKING:
-    from toolang.up.server import StartupSpec
 
 
 class RuntimeClient:
@@ -191,45 +185,6 @@ class RuntimeClient:
         )
 
 
-@contextmanager
-def owned_runtime_client(
-    *,
-    layout: AgentLayout,
-    startup: StartupSpec,
-    environ: Mapping[str, str],
-    log_path: Path,
-    cwd: Path | None = None,
-) -> Iterator[RuntimeClient]:
-    """Start and own one session-scoped agent API."""
-
-    from toolang.up import server as agent_up
-
-    process = agents.AgentProcess(layout)
-    try:
-        status = process.start(
-            (
-                sys.executable,
-                "-m",
-                "toolang.cli.toolang",
-                *agent_up.build_run_argv(startup, background_hosting=True),
-            ),
-            environ=environ,
-            cwd=cwd or Path.cwd(),
-            log_path=log_path,
-            ui_base_url=ui_base_url(),
-        )
-        if status.status != "running":
-            raise click.ClickException(f"agent API failed to start: {log_path}")
-        if status.endpoint is None:
-            raise click.ClickException(
-                f"agent API did not publish an endpoint: {layout.name}"
-            )
-        yield RuntimeClient(status.endpoint)
-    finally:
-        with suppress(FileNotFoundError):
-            process.stop(sandbox_plugin=startup.hosting.plugin, force=True)
-
-
 def runtime_client(ctx: typer.Context) -> RuntimeClient:
     client = running_runtime_client(ctx)
     if client is None:
@@ -241,9 +196,7 @@ def running_runtime_client(ctx: typer.Context) -> RuntimeClient | None:
     """Return a client only when the selected agent has a running HTTP runtime."""
 
     agent = require_prefix_agent(ctx)
-    status = agents.AgentProcess(
-        AgentLayout.resident(context_root(ctx), agent)
-    ).status(
+    status = agents.AgentProcess(AgentLayout.resident(context_root(ctx), agent)).status(
         ui_base_url=ui_base_url()
     )
     if status is None or status.status != "running" or status.endpoint is None:

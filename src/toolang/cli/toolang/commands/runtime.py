@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import os
 from pathlib import Path
-import sys
 from typing import Annotated, TYPE_CHECKING
 
 import click
@@ -15,7 +15,6 @@ from toolang.common.layout import AgentLayout
 from toolang.up import process as agents
 from toolang.state.state import split_cap_selectors
 from toolang.plugin.models.resolution import split_model_selectors
-from toolang.plugin.sandboxes.loading import create_sandbox_plugin
 from toolang.plugin.tools.registry import split_tool_selectors
 from ....up.logging import (
     LoggingPlan,
@@ -32,18 +31,16 @@ from ...common.context import (
 from ...common.output import active_agent_error
 
 if TYPE_CHECKING:
-    from toolang.up import server as agent_up
-    from ....state.state import AgentState
+    from toolang.up.hosting import LaunchSpec
     from ...common.progress import CliProgress
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeStartup:
     target: AgentLayout
-    startup: agent_up.StartupSpec
+    startup: LaunchSpec
     environ: dict[str, str]
     log_plan: LoggingPlan
-    agent_state: AgentState
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +63,7 @@ def is_roaming_file_request(args: list[str]) -> bool:
 
 
 def run_roaming_file(source: Path, args: list[str]) -> int:
-    from toolang.up import server as up
+    from toolang.up import hosting
     from ...common.context import load_runtime_environ
 
     try:
@@ -88,33 +85,31 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
         )
         configure_logging_plan(log_plan)
         startup = user_call(
-            up.resolve_startup,
-            layout=layout,
-            host=options.host,
-            endpoint_host=options.endpoint_host,
-            port=options.port,
-            sandbox=options.sandbox,
-            models=options.models,
-            tools=options.tools,
-            caps=options.caps,
-            file_inboxes=options.inboxes,
-            dev=options.dev,
-            log_spec=log_plan.spec,
-            temporary_port=options.port is None,
-            environ=log_plan.environ,
+            asyncio.run,
+            hosting.resolve_launch(
+                layout=layout,
+                host=options.host,
+                endpoint_host=options.endpoint_host,
+                port=options.port,
+                sandbox=options.sandbox,
+                models=options.models,
+                tools=options.tools,
+                caps=options.caps,
+                file_inboxes=options.inboxes,
+                dev=options.dev,
+                log_spec=log_plan.spec,
+                temporary_port=options.port is None,
+                environ=log_plan.environ,
+            ),
         )
-        state = user_call(up.prepare_agent, layout=layout)
-        return user_call(
-            up.start_runtime,
-            startup,
-            environ=log_plan.environ,
-            agent_state=state,
-        )
+        return user_call(asyncio.run, hosting.run(startup))
     except KeyboardInterrupt:
         return 130
     except (
         FileExistsError,
         FileNotFoundError,
+        OSError,
+        RuntimeError,
         ValueError,
         click.ClickException,
     ) as exc:
@@ -252,14 +247,8 @@ def run(
         str | None,
         typer.Option("--endpoint-host", help="Endpoint host name.", hidden=True),
     ] = None,
-    sandbox_child: Annotated[
-        bool, typer.Option("--sandbox-child", hidden=True)
-    ] = False,
-    background_hosting: Annotated[
-        bool, typer.Option("--background-hosting", hidden=True)
-    ] = False,
 ) -> None:
-    from toolang.up import server as up
+    from toolang.up import hosting
     from ...common.progress import as_progress_sink, make_cli_progress
 
     selector = require_runtime_agent(ctx, agent)
@@ -288,16 +277,9 @@ def run(
         )
         progress.finish(details=False)
         finished = True
-        raise typer.Exit(
-            user_call(
-                up.start_runtime,
-                launch.startup,
-                environ=launch.environ,
-                sandbox_child=sandbox_child,
-                progress=None,
-                agent_state=launch.agent_state,
-                wait=not background_hosting,
-            )
+        exit_code = user_call(
+            asyncio.run,
+            hosting.run(launch.startup),
         )
     except KeyboardInterrupt:
         if not finished:
@@ -306,6 +288,8 @@ def run(
     except (
         FileExistsError,
         FileNotFoundError,
+        OSError,
+        RuntimeError,
         ValueError,
         click.ClickException,
     ) as exc:
@@ -314,6 +298,7 @@ def run(
         if isinstance(exc, click.ClickException):
             raise
         raise click.ClickException(str(exc)) from exc
+    raise typer.Exit(exit_code)
 
 
 def start(
@@ -362,7 +347,7 @@ def start(
         typer.Option("--endpoint-host", help="Endpoint host name.", hidden=True),
     ] = None,
 ) -> None:
-    from toolang.up import server as up
+    from toolang.up import hosting
     from ...common.progress import as_progress_sink, make_cli_progress
 
     selector = require_runtime_agent(ctx, agent)
@@ -400,39 +385,17 @@ def start(
         raise
 
     progress.finish(details=False)
-    if launch.log_plan.path is None:
-        raise click.ClickException("agent log path was not resolved")
-    log_path = launch.log_plan.path
-    command = [
-        sys.executable,
-        "-m",
-        "toolang.cli.toolang",
-        *up.build_run_argv(launch.startup, background_hosting=True),
-    ]
     try:
-        status = agents.AgentProcess(launch.target).start(
-            command,
-            environ=launch.environ,
-            cwd=Path.cwd(),
-            log_path=log_path,
-            ui_base_url=ui_base_url(),
-        )
-    except RuntimeError as exc:
-        raise click.ClickException(
-            f"Agent {launch.target.name} failed to start: {log_path}"
-        ) from exc
+        handle = user_call(asyncio.run, hosting.launch(launch.startup))
     except TimeoutError as exc:
         raise click.ClickException(
-            f"Agent {launch.target.name} start timed out: {log_path}"
+            f"Agent {launch.target.name} start timed out: {launch.target.runtime_log}"
         ) from exc
-    if status.status == "failed":
+    except (RuntimeError, OSError) as exc:
         raise click.ClickException(
-            f"Agent {launch.target.name} failed to start: {log_path}"
-        )
-    typer.echo(
-        f"Started agent {launch.target.name}: "
-        f"{status.webui_url or status.api_url or status.endpoint or '-'}"
-    )
+            f"Agent {launch.target.name} failed to start: {launch.target.runtime_log}"
+        ) from exc
+    typer.echo(f"Started agent {launch.target.name}: {handle.state.ref.endpoint}")
 
 
 def stop(
@@ -443,35 +406,70 @@ def stop(
         typer.Option(help="Force-stop when graceful shutdown does not complete."),
     ] = False,
 ) -> None:
+    from toolang.up import hosting
+
     agent_name = require_runtime_agent(ctx, agent)
     root = context_root(ctx)
-    process = agents.AgentProcess(AgentLayout.resident(root, agent_name))
-    runtime_state = process.state()
-    runtime_pids = () if runtime_state is not None else process.pids()
-    if runtime_state is None and not runtime_pids:
-        raise click.ClickException(f"Agent {agent_name} not running")
-
-    sandbox_plugin = None
-    sandbox = runtime_state.get("sandbox") if runtime_state is not None else None
-    if isinstance(sandbox, dict):
-        selector = {str(key): value for key, value in sandbox.items()}.get("selector")
-        if not isinstance(selector, dict):
-            raise click.ClickException(f"Sandbox state is invalid for agent: {agent}")
-        driver = {str(key): value for key, value in selector.items()}.get("driver")
-        if not isinstance(driver, str) or not driver.strip():
-            raise click.ClickException(
-                f"Sandbox driver is missing for agent: {agent_name}"
-            )
-        sandbox_plugin = create_sandbox_plugin(driver.strip(), config={})
-
+    layout = AgentLayout.resident(root, agent_name)
     stopped = user_call(
-        process.stop,
-        sandbox_plugin=sandbox_plugin,
-        force=force,
+        asyncio.run,
+        hosting.stop(layout, force=force),
     )
-    typer.echo(
-        f"Stopped agent {agent_name}" if stopped else f"Agent {agent_name} not running"
+    if not stopped:
+        raise click.ClickException(f"Agent {agent_name} not running")
+    typer.echo(f"Stopped agent {agent_name}")
+
+
+def serve(
+    ctx: typer.Context,
+    agent: Annotated[str, typer.Argument(help="Agent name.")],
+    host: Annotated[str, typer.Option(help="API bind host.")] = "127.0.0.1",
+    endpoint_host: Annotated[
+        str | None,
+        typer.Option("--endpoint-host", help="Externally visible endpoint host."),
+    ] = None,
+    port: Annotated[int, typer.Option(help="API bind port.")] = 7001,
+    models: Annotated[
+        list[str] | None,
+        typer.Option("--models", help="Limit available models. Pass CSV or repeat."),
+    ] = None,
+    tools: Annotated[
+        list[str] | None,
+        typer.Option("--tools", help="Allow selected tools. Pass CSV or repeat."),
+    ] = None,
+    caps: Annotated[
+        list[str] | None,
+        typer.Option("--caps", help="Allow selected caps. Pass CSV or repeat."),
+    ] = None,
+    inboxes: Annotated[
+        list[Path] | None,
+        typer.Option("--inbox", help="Watch a file inbox. Repeat to watch more."),
+    ] = None,
+    log_spec: Annotated[
+        str | None,
+        typer.Option("--log", help="Python logging specification."),
+    ] = None,
+) -> None:
+    """Run the internal AgentServer entrypoint."""
+
+    from toolang.up.server import resolve_serve, serve as serve_agent
+
+    layout = AgentLayout.resident(context_root(ctx), agent)
+    environ = load_runtime_environ(layout, base_environ=os.environ)
+    environ["TOOLANG_ROOT"] = str(layout.root)
+    spec = user_call(
+        resolve_serve,
+        layout=layout,
+        host=host,
+        endpoint_host=endpoint_host,
+        port=port,
+        models=models,
+        tools=tools,
+        caps=caps,
+        file_inboxes=inboxes,
+        log_spec=log_spec,
     )
+    raise typer.Exit(user_call(serve_agent, spec, environ=environ))
 
 
 def resolve_startup(
@@ -490,10 +488,10 @@ def resolve_startup(
     background: bool,
     progress: CliProgress | None,
 ) -> RuntimeStartup:
-    from toolang.up import server as up
-    from ...common.progress import as_progress_sink
+    from toolang.up import hosting
 
     root, agent = target.root, target.name
+    del progress
     if target.placement == "resident" and not target.home.is_dir():
         raise click.ClickException(f"Agent {agent} not found")
     existing = agents.AgentProcess(target).status(ui_base_url=ui_base_url())
@@ -508,26 +506,22 @@ def resolve_startup(
     )
     if not background:
         configure_logging_plan(log_plan)
-    agent_state = user_call(
-        up.prepare_agent,
-        layout=target,
-        progress=as_progress_sink(progress),
-    )
     startup = user_call(
-        up.resolve_startup,
-        layout=target,
-        host=host,
-        endpoint_host=endpoint_host,
-        port=port,
-        sandbox=sandbox,
-        models=models,
-        tools=tools,
-        caps=caps,
-        file_inboxes=inboxes,
-        dev=dev,
-        log_spec=log_plan.spec,
-        temporary_port=target.placement == "visiting" and port is None,
-        environ=log_plan.environ,
-        agent_state=agent_state,
+        asyncio.run,
+        hosting.resolve_launch(
+            layout=target,
+            host=host,
+            endpoint_host=endpoint_host,
+            port=port,
+            sandbox=sandbox,
+            models=models,
+            tools=tools,
+            caps=caps,
+            file_inboxes=inboxes,
+            dev=dev,
+            log_spec=log_plan.spec,
+            temporary_port=target.placement == "visiting" and port is None,
+            environ=log_plan.environ,
+        ),
     )
-    return RuntimeStartup(target, startup, log_plan.environ, log_plan, agent_state)
+    return RuntimeStartup(target, startup, log_plan.environ, log_plan)

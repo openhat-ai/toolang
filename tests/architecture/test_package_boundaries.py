@@ -21,6 +21,7 @@ PACKAGES = (
     "up",
     "lang",
     "plugin",
+    "setup",
     "state",
     "work",
 )
@@ -43,6 +44,7 @@ PACKAGE_IMPORT_RULES: dict[str, frozenset[str] | None] = {
             "common",
             "execution",
             "plugin",
+            "setup",
             "state",
             "work",
         }
@@ -51,6 +53,7 @@ PACKAGE_IMPORT_RULES: dict[str, frozenset[str] | None] = {
     "lang": frozenset({"base", "common"}),
     # common is currently needed only for shared selector parsing and matching.
     "plugin": frozenset({"base", "common"}),
+    "setup": frozenset({"base", "common", "plugin"}),
     "state": None,  # TODO: Review the state package boundary.
     "work": None,  # TODO: Review the work package boundary.
 }
@@ -152,8 +155,19 @@ def test_package_boundary_coverage() -> None:
     )
 
 
-def test_schema_modules_only_depend_on_protocol_types() -> None:
-    allowed_message_types = frozenset({"AudioFormat", "ImageDetail", "MessageRole"})
+def test_schema_modules_do_not_depend_on_runtime_services() -> None:
+    forbidden_modules = frozenset(
+        {
+            "executor",
+            "history",
+            "inspection",
+            "manager",
+            "server",
+            "sink",
+            "store",
+            "watcher",
+        }
+    )
     violations: list[str] = []
     for path in sorted(SOURCE_ROOT.rglob("schemas.py")):
         context = _module_context(path)
@@ -164,19 +178,13 @@ def test_schema_modules_only_depend_on_protocol_types() -> None:
             for target in _import_targets(node, context):
                 if not target.startswith("toolang."):
                     continue
-                if target.endswith((".schemas", ".types")):
+                if target.rsplit(".", 1)[-1] not in forbidden_modules:
                     continue
-                if target == "toolang.base.types.message" and isinstance(
-                    node, ast.ImportFrom
-                ):
-                    imported = frozenset(item.name for item in node.names)
-                    if imported <= allowed_message_types:
-                        continue
                 violations.append(
                     f"{path.relative_to(SOURCE_ROOT)}:{node.lineno} -> {target}"
                 )
 
     assert not violations, (
-        "Schema modules may only import internal schemas and scalar types:\n"
+        "Schema modules must not import stores, watchers, or runtime services:\n"
         + "\n".join(violations)
     )

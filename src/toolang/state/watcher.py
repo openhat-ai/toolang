@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
+from importlib.metadata import version as package_version
 import logging
 from pathlib import Path
 
@@ -31,29 +32,30 @@ _RELEVANT_CHANGES = {Change.added, Change.modified, Change.deleted}
 class StateWatcher:
     """Publish new immutable agent state when authored files change."""
 
-    def __init__(
-        self,
-        layout: AgentLayout,
-        state: AgentState,
-        *,
-        transform: Callable[[AgentState], AgentState] | None = None,
-    ) -> None:
+    def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout
-        self._state = state
-        self._toolang_version = state.toolang_version
-        self._transform = transform or (lambda value: value)
+        self._state: AgentState | None = None
+        self._toolang_version = package_version("toolang")
+        self._refresh_lock = asyncio.Lock()
 
     def current(self) -> AgentState:
+        """Return the latest immutable state snapshot."""
+
+        if self._state is None:
+            raise RuntimeError("state watcher has not been refreshed")
         return self._state
 
-    def refresh(self) -> AgentState:
-        self._state = self._transform(
-            prepare_agent_state(
+    async def refresh(self, *, force: bool = False) -> AgentState:
+        """Prepare a fresh state snapshot, optionally refreshing remote sources."""
+
+        async with self._refresh_lock:
+            self._state = await asyncio.to_thread(
+                prepare_agent_state,
                 self.layout,
                 toolang_version=self._toolang_version,
+                force=force,
             )
-        )
-        return self._state
+            return self._state
 
     async def updates(
         self,
@@ -62,6 +64,8 @@ class StateWatcher:
         interval_ms: float = DEFAULT_INTERVAL_MS,
         debounce_ms: float = DEFAULT_DEBOUNCE_MS,
     ) -> AsyncIterator[AgentState]:
+        if self._state is None:
+            await self.refresh()
         logger.debug(
             "watch.started root=%s agent=%s interval_ms=%s debounce_ms=%s",
             self.layout.root,
@@ -91,8 +95,8 @@ class StateWatcher:
                 continue
             if not changes and not self._needs_refresh():
                 continue
-            previous = self._state.fingerprint
-            state = self.refresh()
+            previous = self.current().fingerprint
+            state = await self.refresh()
             if state.fingerprint != previous:
                 yield state
 
@@ -113,16 +117,19 @@ class StateWatcher:
             pass
 
     def _needs_refresh(self) -> bool:
+        if self._state is None:
+            return True
+        state = self._state
         try:
             return (
-                load_current_version(self.layout, "root") != self._state.root_version
-                or load_current_version(self.layout, "home") != self._state.home_version
+                load_current_version(self.layout, "root") != state.root_version
+                or load_current_version(self.layout, "home") != state.home_version
                 or scan_root_source(self.layout.root)
                 != load_version_source(
                     prepared_version_dir(
                         self.layout,
                         "root",
-                        self._state.root_version,
+                        state.root_version,
                     )
                 )
                 or scan_home_source(self.layout.root, self.layout.name)
@@ -130,7 +137,7 @@ class StateWatcher:
                     prepared_version_dir(
                         self.layout,
                         "home",
-                        self._state.home_version,
+                        state.home_version,
                     )
                 )
             )

@@ -6,8 +6,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import TypeAdapter
 
-from toolang.api.app import ApiContextDep
+from toolang.api.app import AgentCoreDep, CapsManagerDep
 from toolang.api.schemas import PutCapRequest, WiredCapRequest
+from toolang.up import AgentCore
 from toolang.catalog import cap as caps, templates
 from toolang.catalog import config as cap_config
 from toolang.catalog.types import CapKind
@@ -43,7 +44,8 @@ router = APIRouter(tags=["caps"])
     "/psyches/{name}/file", summary="Upsert File Psyche", response_model=CapDetail
 )
 def put_file_cap(
-    context: ApiContextDep,
+    core: AgentCoreDep,
+    manager: CapsManagerDep,
     request: Request,
     name: str,
     payload: PutCapRequest,
@@ -54,7 +56,7 @@ def put_file_cap(
         raise HTTPException(status_code=400, detail="missing cap content")
 
     catalog = _authored_caps(
-        context.private_authored_caps, context.shared_authored_caps, visibility
+        manager.home_authoring, manager.root_authoring, visibility
     )
     cap = _wrap_user_error(
         caps.CapFile.parse,
@@ -63,8 +65,10 @@ def put_file_cap(
         name=name,
     )
     _wrap_user_error(catalog.upsert, cap)
-    entry = _find_authored_entry(context, visibility=visibility, kind=kind, name=name)
-    return CapDetail.from_cap(entry, agent_name=context.layout.name)
+    entry = _find_authored_entry(
+        core, visibility=visibility, kind=kind, name=name
+    )
+    return CapDetail.from_cap(entry, agent_name=core.layout.name)
 
 
 @router.put("/prompts/{name}/wired", summary="Wire Prompt", response_model=CapDetail)
@@ -72,7 +76,8 @@ def put_file_cap(
 @router.put("/skills/{name}/wired", summary="Wire Skill", response_model=CapDetail)
 @router.put("/psyches/{name}/wired", summary="Wire Psyche", response_model=CapDetail)
 def put_wired_cap(
-    context: ApiContextDep,
+    core: AgentCoreDep,
+    manager: CapsManagerDep,
     request: Request,
     name: str,
     payload: WiredCapRequest,
@@ -86,12 +91,14 @@ def put_wired_cap(
             detail=f"Wired {kind} ref {payload.ref!r} does not match requested name {name!r}.",
         )
     catalog = _wired_caps(
-        context.private_wired_caps, context.shared_wired_caps, visibility
+        manager.home_wiring, manager.root_wiring, visibility
     )
     cap = cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
     _wrap_user_error(catalog.upsert, cap)
-    entry = _find_authored_entry(context, visibility=visibility, kind=kind, name=name)
-    return CapDetail.from_cap(entry, agent_name=context.layout.name)
+    entry = _find_authored_entry(
+        core, visibility=visibility, kind=kind, name=name
+    )
+    return CapDetail.from_cap(entry, agent_name=core.layout.name)
 
 
 @router.delete(
@@ -119,7 +126,7 @@ def put_wired_cap(
     response_class=Response,
 )
 def delete_file_cap(
-    context: ApiContextDep,
+    manager: CapsManagerDep,
     request: Request,
     name: str,
     visibility: ApiVisibility = Query(default="private"),
@@ -128,8 +135,8 @@ def delete_file_cap(
     requested_visibility = visibility
     _wrap_user_error(
         _authored_caps(
-            context.private_authored_caps,
-            context.shared_authored_caps,
+            manager.home_authoring,
+            manager.root_authoring,
             requested_visibility,
         ).remove,
         kind,
@@ -162,7 +169,7 @@ def delete_file_cap(
     response_class=Response,
 )
 def delete_wired_cap(
-    context: ApiContextDep,
+    manager: CapsManagerDep,
     request: Request,
     name: str,
     visibility: ApiVisibility = Query(default="private"),
@@ -171,8 +178,8 @@ def delete_wired_cap(
     requested_visibility = visibility
     _wrap_user_error(
         _wired_caps(
-            context.private_wired_caps,
-            context.shared_wired_caps,
+            manager.home_wiring,
+            manager.root_wiring,
             requested_visibility,
         ).remove,
         kind,
@@ -181,28 +188,28 @@ def delete_wired_cap(
 
 
 @router.get("/caps", summary="Get Caps Summary")
-def caps_summary(context: ApiContextDep) -> dict[str, object]:
-    entries = context.state_watcher.current().caps
+def caps_summary(core: AgentCoreDep) -> dict[str, object]:
+    entries = core.state.current().caps
     collections = {
         "psyches": _CAP_INFOS.dump_python(
-            _cap_infos(entries, agent_name=context.layout.name, kind="psyche"),
+            _cap_infos(entries, agent_name=core.layout.name, kind="psyche"),
             mode="json",
         ),
         "skills": _CAP_INFOS.dump_python(
-            _cap_infos(entries, agent_name=context.layout.name, kind="skill"),
+            _cap_infos(entries, agent_name=core.layout.name, kind="skill"),
             mode="json",
         ),
         "services": _CAP_INFOS.dump_python(
-            _cap_infos(entries, agent_name=context.layout.name, kind="service"),
+            _cap_infos(entries, agent_name=core.layout.name, kind="service"),
             mode="json",
         ),
         "prompts": _CAP_INFOS.dump_python(
-            _cap_infos(entries, agent_name=context.layout.name, kind="prompt"),
+            _cap_infos(entries, agent_name=core.layout.name, kind="prompt"),
             mode="json",
         ),
     }
     return {
-        "agent": context.layout.name,
+        "agent": core.layout.name,
         **collections,
         "counts": {key: len(value) for key, value in collections.items()},
     }
@@ -212,12 +219,12 @@ def caps_summary(context: ApiContextDep) -> dict[str, object]:
 @router.get("/services", summary="List Services", response_model=list[CapInfo])
 @router.get("/skills", summary="List Skills", response_model=list[CapInfo])
 @router.get("/psyches", summary="List Psyches", response_model=list[CapInfo])
-def cap_list(context: ApiContextDep, request: Request) -> list[CapInfo]:
+def cap_list(core: AgentCoreDep, request: Request) -> list[CapInfo]:
     kind = _collection_kind(str(request.url.path).rsplit("/", 1)[-1])
     return list(
         _cap_infos(
-            context.state_watcher.current().caps,
-            agent_name=context.layout.name,
+            core.state.current().caps,
+            agent_name=core.layout.name,
             kind=kind,
         )
     )
@@ -227,10 +234,7 @@ def cap_list(context: ApiContextDep, request: Request) -> list[CapInfo]:
 @router.get("/services/templates", summary="List Service Templates")
 @router.get("/skills/templates", summary="List Skill Templates")
 @router.get("/psyches/templates", summary="List Psyche Templates")
-def cap_template_list(
-    context: ApiContextDep, request: Request
-) -> list[dict[str, object]]:
-    del context
+def cap_template_list(request: Request) -> list[dict[str, object]]:
     collection = str(request.url.path).split("/")[3]
     kind = _collection_kind(collection)
     return [_template_summary(item) for item in templates.list_templates(kind)]
@@ -241,9 +245,8 @@ def cap_template_list(
 @router.get("/skills/templates/{template_name}", summary="Get Skill Template")
 @router.get("/psyches/templates/{template_name}", summary="Get Psyche Template")
 def cap_template_detail(
-    context: ApiContextDep, request: Request, template_name: str
+    request: Request, template_name: str
 ) -> dict[str, object]:
-    del context
     collection = str(request.url.path).split("/")[3]
     kind = _collection_kind(collection)
     try:
@@ -257,20 +260,20 @@ def cap_template_detail(
 @router.get("/services/{name}", summary="Get Service", response_model=CapDetail)
 @router.get("/skills/{name}", summary="Get Skill", response_model=CapDetail)
 @router.get("/psyches/{name}", summary="Get Psyche", response_model=CapDetail)
-def cap_detail(context: ApiContextDep, request: Request, name: str) -> CapDetail:
+def cap_detail(core: AgentCoreDep, request: Request, name: str) -> CapDetail:
     collection = str(request.url.path).split("/")[3]
     kind = _collection_kind(collection)
     entry = next(
         (
             entry
-            for entry in context.state_watcher.current().caps
+            for entry in core.state.current().caps
             if entry.kind == kind and entry.name == name
         ),
         None,
     )
     if entry is None:
         raise HTTPException(status_code=404, detail=f"{kind} not found: {name}")
-    return CapDetail.from_cap(entry, agent_name=context.layout.name)
+    return CapDetail.from_cap(entry, agent_name=core.layout.name)
 
 
 def _collection_kind(collection: str) -> CapKind:
@@ -310,15 +313,15 @@ def _collection_from_path(path: str) -> str:
 
 
 def _find_authored_entry(
-    context,
+    core: AgentCore,
     *,
     visibility: PreparedVisibility,
     kind: CapKind,
     name: str,
 ) -> PreparedCap:
     for entry in cap_state.list_entries(
-        context.layout.root,
-        context.layout.name,
+        core.layout.root,
+        core.layout.name,
         visibility=visibility,
         kinds={kind},
     ):

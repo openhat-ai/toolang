@@ -4,12 +4,49 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
+import platform
 from types import MappingProxyType
 
 from toolang.base.protocols.model import ModelAdapter, ModelProvider
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelInfo
 from toolang.common.layout import AgentLayout
+
+
+@dataclass(frozen=True, slots=True)
+class AgentEnvironment:
+    """Safe process-environment facts captured where the agent actually runs."""
+
+    sandbox: str
+    system: str
+    release: str
+    machine: str
+    container: bool
+    root: Path
+    home: Path
+    working_directory: Path
+
+    @classmethod
+    def capture(
+        cls,
+        layout: AgentLayout,
+        *,
+        envs: Mapping[str, str],
+    ) -> AgentEnvironment:
+        """Capture non-secret environment facts from explicit setup inputs."""
+
+        sandbox = envs.get("TOOLANG_SANDBOX", "none").strip() or "none"
+        return cls(
+            sandbox=sandbox,
+            system=platform.system(),
+            release=platform.release(),
+            machine=platform.machine(),
+            container=sandbox.partition(":")[0] == "docker",
+            root=layout.root,
+            home=layout.home,
+            working_directory=Path.cwd().resolve(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +59,7 @@ class AgentSetup:
     models: tuple[ModelInfo, ...]
     tools: Mapping[str, AgentTool]
     envs: Mapping[str, str]
+    environment: AgentEnvironment | None = None
 
     def __post_init__(self) -> None:
         providers = dict(self.providers)
