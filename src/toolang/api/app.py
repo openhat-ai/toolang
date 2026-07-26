@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from toolang.api.common import LiveEventRelay
 from toolang.catalog import CapsManager, JobsManager
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.up import AgentCore
@@ -24,7 +25,6 @@ OPENAPI_TAGS = [
         "name": "agent",
         "description": "Agent profile, health, and operational update endpoints.",
     },
-    {"name": "chat", "description": "Chat submission and streaming endpoints."},
     {"name": "caps", "description": "Capability inspection and mutation endpoints."},
     {"name": "jobs", "description": "Task and chore management endpoints."},
     {"name": "runs", "description": "Run execution and inspection endpoints."},
@@ -50,9 +50,16 @@ def get_jobs_manager(request: Request) -> JobsManager:
     return cast(JobsManager, request.app.state.jobs_manager)
 
 
+def get_live_events(request: Request) -> LiveEventRelay:
+    """Return the process-local live event relay."""
+
+    return cast(LiveEventRelay, request.app.state.live_events)
+
+
 AgentCoreDep = Annotated[AgentCore, Depends(get_agent_core)]
 CapsManagerDep = Annotated[CapsManager, Depends(get_caps_manager)]
 JobsManagerDep = Annotated[JobsManager, Depends(get_jobs_manager)]
+LiveEventRelayDep = Annotated[LiveEventRelay, Depends(get_live_events)]
 
 
 def create_app(
@@ -73,6 +80,9 @@ def create_app(
     app.state.agent_core = core
     app.state.caps_manager = caps
     app.state.jobs_manager = jobs
+    live_events = LiveEventRelay()
+    app.state.live_events = live_events
+    core.threads.listener = live_events
 
     @app.exception_handler(CatalogNotFoundError)
     async def catalog_not_found(

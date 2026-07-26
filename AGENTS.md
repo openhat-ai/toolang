@@ -232,12 +232,18 @@
   `Hosting` lifecycle. The CLI and generic orchestration split only
   `name[:spec]`; each hosting implementation owns its spec parsing.
 - `toolang.api` owns FastAPI application assembly and HTTP route mapping.
-  Route modules are grouped by public resource (`agent`, `chat`, `caps`,
-  `jobs`, `runs`, and `threads`), not by read/write mode or OpenAPI tag. API
+  Route modules are grouped by public resource (`agent`, `caps`, `jobs`,
+  `runs`, and `threads`), not by read/write mode or OpenAPI tag. API
   routes call owning catalog, execution, and inspection objects instead of
   implementing persistence or projection algorithms. One `AgentCore`,
   `CapsManager`, and `JobsManager` are attached to `app.state` and exposed
   through typed dependencies; do not reintroduce an aggregate API context.
+  Its process-local `LiveEventRelay` fans native run and thread events out to
+  SSE subscribers without persisting an event log or defining a second
+  transport event type. The SSE `event` field is the native event type and
+  `data` is its serialized payload; transport keep-alives are comments. Run
+  streams accept only root run ids and include the complete recursive run tree;
+  child runs remain available through durable run inspection.
 - `toolang.up.AgentCore` owns one process-local set of shared execution,
   history, thread, setup-watcher, and state-watcher services for an
   `AgentLayout`. Catalog mutation remains outside it: `CapsManager` groups

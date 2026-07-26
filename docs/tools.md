@@ -12,38 +12,11 @@ so blocking tool implementations do not stall the run event loop.
 
 Current built-in tools are:
 
-- `agent_chat`
 - `filesystem`
 - `shell`
 - `web_search`
 - `service_use`
 - `agent_state`
-
-
-## Agent Chat
-
-`agent_chat` lets one agent ask configured peer Toolang agents through their
-local chat API.
-
-It provides:
-
-- `peers`
-- `send`
-
-Peer endpoints are configured explicitly:
-
-```toml
-[tools.agent_chat]
-peers = [
-  { name = "bob", endpoint = "http://127.0.0.1:7002" },
-]
-```
-
-`send` creates or reuses one local child agent-to-agent thread for the current
-chat thread, passes that local thread id to the peer through the chat request
-`peer` field, and records the peer thread id returned by the remote agent. Pass
-`stream = true` to call the peer agent's streaming chat endpoint and aggregate
-the streamed text deltas into the local child thread transcript.
 
 
 ## Filesystem

@@ -335,14 +335,14 @@ include richer discovery details such as:
 
 Each running agent exposes one local FastAPI server.
 
-The process assembles one `RunExecutor`, one `StateWatcher`, and five catalog
-instances for the application lifetime: one `AuthoredJobs`, private and shared
-`AuthoredCaps`, and private and shared `WiredCaps`. These objects are
-fields of one `ApiContext` stored on `app.state`. One request dependency returns
-that context, and route functions use its fields directly. Application-wide
-FastAPI dependencies are reserved for side-effect-only concerns such as
-authentication or common validation. FastAPI lifespan owns required startup and
-shutdown; module globals, `ContextVar`, and router-factory closures do not carry
+The process keeps one `AgentCore`, `CapsManager`, and `JobsManager` for the
+application lifetime. `AgentCore` owns the process-local executor, history,
+thread manager, setup watcher, and state watcher. These owners are stored on
+`app.state` and exposed through small typed request dependencies. The API also
+owns one process-local `LiveEventRelay` for live SSE subscribers.
+Application-wide FastAPI dependencies are reserved for side-effect-only
+concerns such as authentication or common validation. FastAPI lifespan owns
+required startup and shutdown; module globals and `ContextVar` do not carry
 application state.
 
 `RunExecutor.start()` returns a `RunHandle`; the application retains handles
@@ -351,7 +351,6 @@ only when its own protocol needs additional lifecycle bookkeeping.
 Core endpoints are grouped as:
 
 - `agent`
-- `chat`
 - `caps`
 - `jobs`
 - `runs`
@@ -482,27 +481,21 @@ agent's authored caps. Read payloads expose runtime `form`, `scope`, and
 `SCOPE`.
 
 
-## Chat Endpoints
+## Chat Client Orchestration
 
-- `POST /api/v1/chat`
-- `POST /api/v1/chat/stream`
+The HTTP API has no separate chat submission endpoint. A chat client creates a
+thread when needed and then starts each turn through the canonical run stream:
 
-Chat request body uses:
+1. `POST /api/v1/threads` with the client and optional peer descriptor.
+2. `POST /api/v1/runs/stream` with the returned thread id, runnable, input,
+   optional model, and optional runnable arguments.
 
-- `thread`
-- `client`: `web` or `term`; defaults to `web` and controls the prefix for
-  newly allocated chat thread ids
-- `peer` optional thread peer descriptor
-  - `type`: `user` or `agent`; defaults to `user`
-  - `name`: peer name; defaults to `user`
-  - `thread`: peer-local thread id; defaults to `null`
-- `message`
-  - `role`: must be `user`
-  - `parts`
-- `model` optional selected model selector for this run
-- `runnable` optional executable name; omission uses the chat/default runnable
+An existing chat thread can be passed directly to `POST /api/v1/runs/stream`;
+the client does not create another thread for every turn. The client selects
+the chat/default runnable explicitly rather than relying on a chat-only API
+default.
 
-`message.parts` accepts canonical message parts such as:
+Run `input` accepts canonical percept parts such as:
 
 - `text`
 - `image`
@@ -525,21 +518,17 @@ For multipart payload details:
   be a full `data:...;base64,...` URL
 - `file_id` references a document already uploaded to the selected provider
 
-`POST /api/v1/chat` returns one completed `ChatResult` containing `thread`,
-`run`, `message`, and `assistant` projections.
-
-`POST /api/v1/chat/stream` returns one SSE stream that follows an AI SDK UI
-message stream subset. This endpoint is an adapter for chat UI clients. The
-canonical progress protocol is exposed through the live run and thread
-streams.
+`POST /api/v1/runs/stream` returns the canonical `RunEvent` SSE protocol. A
+WebUI that needs another protocol adapts these events client-side; the API does
+not maintain a second chat event vocabulary.
 
 The CLI command for interactive chat is
 `toolang <agent> chat [thread] [--sandbox <selector>]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
 a thread id, it continues that thread. The TUI runs in its own process, assembles
 the same core objects, calls `RunExecutor` directly, and observes native
-`RunEvent` values through a `RunTracer`. It does not depend on the chat or run
-SSE endpoints. Starting an agent HTTP server remains a separate CLI operation.
+`RunEvent` values through a `RunTracer`. It does not depend on the HTTP run
+stream. Starting an agent HTTP server remains a separate CLI operation.
 Direct chat currently accepts only the `none` sandbox selector; placing the TUI
 process inside a hosted sandbox is a separate follow-up.
 Job thread ids are inspectable and controllable through thread and run commands,
@@ -711,10 +700,31 @@ chore start returns its `RunInfo`. Thread create and fork return the created
 thread; rewind returns the updated existing thread representation. None of
 these thread operations starts a follow-up run.
 
+`POST /api/v1/runs/stream` accepts:
+
+- `thread`: required existing thread id
+- `request_id`: optional globally unique idempotency key
+- `runnable`: required unique agic or flow name
+- `input`: canonical percept-part array
+- `model`: optional model selector
+- `args`: optional runnable argument mapping
+
+Clients create a thread explicitly with `POST /api/v1/threads` before the first
+run. The thread request accepts `web`, `term`, `tui`, `chat`, or `script` as its
+client placement; `script` creates a `script_*` thread.
+
 Run and thread streams expose only live events; Toolang does not persist an
-exact event log or provide a historical `/events` collection. A reconnecting
-client first reads run or thread detail from durable records, then observes new
-events from the live stream.
+exact event log or provide a historical `/events` collection.
+`GET /api/v1/runs/{run_id}/stream` accepts only a root run id and carries the
+complete recursive run tree. Child runs remain individually inspectable through
+their run-detail endpoint. A child-run stream request returns `409` and
+identifies the root run to subscribe to.
+
+A reconnecting client establishes and buffers the live stream before reading
+run or thread detail from durable records. It then uses the durable detail as
+its baseline and applies buffered and subsequent events idempotently. Streams
+do not emit SSE ids and ignore `Last-Event-ID`, because the server cannot replay
+a precise historical cursor.
 
 Streams use SSE framing directly: the SSE `event` field is the canonical event
 type, and `data` is that event's serialized payload. The API does not wrap a
@@ -729,6 +739,10 @@ Canonical run progress event names are:
 - `part_end`
 - `step_end`
 - `run_end`
+
+Every payload retains its canonical `type` discriminator. A `part_begin`
+payload uses `part_type` for the message-part kind so it does not collide with
+the event discriminator.
 
 Run control acceptance and status are durable `RunControlRecord` truth, not
 synthetic stream events. A thread stream may additionally carry

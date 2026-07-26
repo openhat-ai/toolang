@@ -15,8 +15,8 @@ Chat uses the same runtime units as the rest of Toolang:
 | `run` | One handling attempt inside that thread |
 | `step` | One execution unit inside the run |
 
-One chat submission creates one start control, one run, and one thread when no
-thread id is supplied.
+One chat submission creates one start control and one run in an existing
+thread. A client creates the thread explicitly before the first submission.
 
 Thread ids use one underscore-delimited normalized form:
 
@@ -167,37 +167,18 @@ rewound or forked. Job execution commands expose explicit job semantics such as
 
 ## Chat API
 
-Buffered chat:
+The HTTP API models chat as thread management plus normal run execution. It
+does not expose a separate `/chat` resource.
 
-- `GET /api/v1/models`
-- `POST /api/v1/chat`
+A client starts a new conversation by calling:
 
-request body:
+1. `POST /api/v1/threads` with `client` and an optional peer.
+2. `POST /api/v1/runs/stream` with the returned thread id, runnable, percept
+   input, optional model, and optional runnable arguments.
 
-- `thread`
-- `client`: `web` or `term`; defaults to `web`. TUI and local chat clients use
-  `term`.
-- `peer` optional; defaults to the user peer
-- `message`
-  - `role`: must be `user`
-  - `parts`
-- `model` optional selected model selector
-- `runnable` optional executable name; omission uses the chat/default runnable
-
-returns:
-
-- `thread`
-- `run`
-- `message`
-- `assistant`
-
-`thread` is `ThreadInfo`; `run` is `RunInfo`.
-
-Streaming chat:
-
-- `POST /api/v1/chat/stream`
-
-returns an SSE stream for the same run.
+Subsequent turns reuse the same thread id. The client explicitly selects the
+chat/default runnable. Persisted state is read through the normal thread and run
+detail endpoints.
 
 `GET /api/v1/models` returns the current chat-selectable model selectors
 and the default selector after applying activation config and the `chat` agic.
@@ -205,15 +186,14 @@ and the default selector after applying activation config and the `chat` agic.
 
 ## Streaming Rule
 
-The stream is the primary real-time output surface for a live chat exchange.
+The canonical root-run stream is the primary real-time output surface for a
+live chat exchange. It includes events from the complete recursive run tree.
+Runtime surfaces should treat the canonical thread and root-run event streams
+as the source of progress truth. A web client adapts native `RunEvent` values
+into any UI-specific protocol locally.
 
-Runtime surfaces should treat the canonical thread and run event streams as the
-source of progress truth. The chat SSE endpoint exposes an AI SDK UI message
-stream adapter for web clients that use AI SDK Elements; it is not the canonical
-execution protocol.
-
-The TUI does not consume that HTTP adapter. Its process calls `RunExecutor`
-directly and renders native `RunEvent` values received through a `RunTracer`.
+The TUI does not consume the HTTP API. Its process calls `RunExecutor` directly
+and renders native `RunEvent` values received through a `RunTracer`.
 
 UIs should keep exactly one active mutable block for the visible run. Finalized
 blocks can move into scrollback immediately instead of waiting for the whole run

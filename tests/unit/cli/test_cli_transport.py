@@ -10,10 +10,7 @@ from urllib.request import Request
 
 import pytest
 import toolang.cli.common.client as client_module
-from toolang.cli.common.client import (
-    RuntimeClient,
-    message_payload,
-)
+from toolang.cli.common.client import RuntimeClient
 from toolang.cli.common.errors import RuntimeClientError
 
 
@@ -108,10 +105,3 @@ def test_runtime_client_extracts_http_error_detail(
         match="runtime request failed: 404 run not found",
     ):
         RuntimeClient("http://runtime").get("/missing")
-
-
-def test_message_payload_uses_canonical_message_shape() -> None:
-    assert message_payload("hello") == {
-        "role": "user",
-        "parts": [{"type": "text", "text": "hello"}],
-    }

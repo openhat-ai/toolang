@@ -27,7 +27,7 @@ dependencies = [
     "dataclasses-json>=0.6,<1.0",
     "python-dateutil>=2.9,<3",
     "ddgs>=9.13.0",
-    "fastapi>=0.116,<1",
+    "fastapi>=0.135,<1",
     "fastmcp>=3.0,<4.0",
     "humanize>=4.12,<5",
     "httpx>=0.28.1",
@@ -61,7 +61,6 @@ too = "toolang.cli.toolang.main:main"
 caps = "toolang.cli.caps.main:main"
 
 [project.entry-points."toolang.tool"]
-agent_chat = "toolang.execution.tools.agent_chat:create_tool_set"
 filesystem = "toolang.plugin.tools.filesystem:create_tool_set"
 service_use = "toolang.plugin.tools.service_use:create_tool_set"
 shell = "toolang.plugin.tools.shell:create_tool_set"

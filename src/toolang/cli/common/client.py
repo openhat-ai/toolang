@@ -8,14 +8,12 @@ import threading
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from uuid import uuid4
 
 import click
 import typer
 
 from toolang.up import process as agents
 from toolang.common.layout import AgentLayout
-from toolang.base.types.message import Message
 from .context import context_root, require_prefix_agent, ui_base_url
 from .errors import RuntimeClientError
 
@@ -109,73 +107,6 @@ class RuntimeClient:
     def list_executables(self, kind: str) -> Mapping[str, Any]:
         return self.get(f"/api/v1/{kind}s")
 
-    def create_thread(self) -> str:
-        result = self.post("/api/v1/threads", payload={"client": "tui"})
-        thread = result.get("thread")
-        thread_id = thread.get("id") if isinstance(thread, Mapping) else None
-        if not isinstance(thread_id, str):
-            raise RuntimeClientError("runtime did not return a thread id")
-        return thread_id
-
-    def start_run(
-        self,
-        thread_id: str,
-        message: str,
-        selects: Mapping[str, object],
-        on_event: Callable[[dict[str, Any]], None],
-        on_error: Callable[[str], None],
-    ) -> None:
-        try:
-            self.consume(
-                "/api/v1/chat/stream",
-                payload={
-                    "thread": thread_id,
-                    "client": "tui",
-                    "request_id": f"term_{uuid4().hex}",
-                    "message": message_payload(message),
-                    **selects,
-                },
-                on_event=on_event,
-            )
-        except Exception as exc:
-            on_error(_error_message(exc))
-
-    def stop_run(
-        self,
-        run_id: str,
-        on_event: Callable[[dict[str, Any]], None],
-        on_error: Callable[[str], None],
-    ) -> None:
-        try:
-            result = self.post(
-                f"/api/v1/runs/{run_id}/cancel",
-                payload={"request_id": f"req_{uuid4().hex}"},
-            )
-            if event := _command_trace_event(result.get("input")):
-                on_event(event)
-        except Exception as exc:
-            on_error(_error_message(exc))
-
-    def steer_run(
-        self,
-        run_id: str,
-        message: str,
-        on_event: Callable[[dict[str, Any]], None],
-        on_error: Callable[[str], None],
-    ) -> None:
-        try:
-            result = self.post(
-                f"/api/v1/runs/{run_id}/steer",
-                payload={
-                    "request_id": f"req_{uuid4().hex}",
-                    "message": message_payload(message),
-                },
-            )
-            if event := _command_trace_event(result.get("input")):
-                on_event(event)
-        except Exception as exc:
-            on_error(_error_message(exc))
-
     def _request(self, path: str, payload: Mapping[str, object]) -> Request:
         return Request(
             f"{self.endpoint}{path}",
@@ -218,10 +149,6 @@ def runtime_post(
         return runtime_client(ctx).post(path, payload=payload)
     except RuntimeClientError as exc:
         raise click.ClickException(str(exc)) from exc
-
-
-def message_payload(text: str) -> dict[str, object]:
-    return Message.user(text).to_data()
 
 
 def _sse_events(
@@ -268,16 +195,6 @@ def _json_value(payload: bytes) -> Any:
     return value
 
 
-def _command_trace_event(payload: object) -> dict[str, Any] | None:
-    if not isinstance(payload, Mapping):
-        return None
-    event_payload = cast(Mapping[str, object], payload)
-    event_type = event_payload.get("type")
-    if not isinstance(event_type, str):
-        return None
-    return {"type": event_type, "payload": dict(event_payload)}
-
-
 def _http_error(exc: HTTPError) -> RuntimeClientError:
     body = exc.read().decode("utf-8", errors="replace").strip()
     detail = body or str(exc.reason)
@@ -291,11 +208,3 @@ def _http_error(exc: HTTPError) -> RuntimeClientError:
             if isinstance(value, str):
                 detail = value
     return RuntimeClientError(f"runtime request failed: {exc.code} {detail}")
-
-
-def _error_message(exc: Exception) -> str:
-    return (
-        str(exc)
-        if isinstance(exc, RuntimeClientError)
-        else f"{type(exc).__name__}: {exc}"
-    )

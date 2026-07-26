@@ -1,84 +1,233 @@
-"""Shared helpers for agent HTTP components."""
+"""Live event relay and canonical SSE helpers."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, Callable
+from dataclasses import asdict, dataclass
 import threading
-from typing import Any, cast
+from typing import Any, Literal
 
 from fastapi import Request
-from fastapi.responses import StreamingResponse
-from starlette.types import Receive, Scope, Send
+from fastapi.sse import ServerSentEvent
 
-DISCONNECT_POLL_SEC = 0.1
+from toolang.execution.events import (
+    PartBegin,
+    RunBegin,
+    RunEnd,
+    RunEvent,
+    RunTracer,
+    ThreadEvent,
+    ThreadForked,
+    ThreadListener,
+)
+
+KEEP_ALIVE_SEC = 15.0
+LiveEvent = RunEvent | ThreadEvent
+LiveEventKind = Literal["run", "thread"]
 
 
-class ShutdownAwareStreamingResponse(StreamingResponse):
-    """One streaming response that exits promptly after runtime shutdown starts."""
+@dataclass(frozen=True, slots=True)
+class _Subscriber:
+    loop: asyncio.AbstractEventLoop
+    queue: asyncio.Queue[LiveEvent]
+
+
+class EventSubscription:
+    """One immediately registered live event subscription."""
 
     def __init__(
         self,
-        *args,
-        shutdown_signal: threading.Event | None = None,
-        disconnect_poll_sec: float = DISCONNECT_POLL_SEC,
-        **kwargs,
+        relay: LiveEventRelay,
+        *,
+        kind: LiveEventKind,
+        key: str,
     ) -> None:
-        super().__init__(*args, **kwargs)
-        self._shutdown_signal = shutdown_signal
-        self._disconnect_poll_sec = disconnect_poll_sec
+        self._relay = relay
+        self._kind = kind
+        self._key = key
+        self._subscriber = _Subscriber(
+            loop=asyncio.get_running_loop(),
+            queue=asyncio.Queue(),
+        )
+        self._closed = False
+        relay._add(kind, key, self._subscriber)
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+    async def receive(self, *, timeout: float) -> LiveEvent | None:
+        """Return the next event, or None when the keep-alive interval elapses."""
+
         try:
-            await super().__call__(scope, receive, send)
-        except asyncio.CancelledError:
-            if self._shutdown_signal is not None and self._shutdown_signal.is_set():
-                return
-            raise
+            return await asyncio.wait_for(
+                self._subscriber.queue.get(),
+                timeout=timeout,
+            )
+        except TimeoutError:
+            return None
 
-    async def listen_for_disconnect(self, receive: Receive) -> None:
-        if self._shutdown_signal is None:
-            await super().listen_for_disconnect(receive)
+    @property
+    def empty(self) -> bool:
+        return self._subscriber.queue.empty()
+
+    def close(self) -> None:
+        if self._closed:
             return
-        while True:
-            if self._shutdown_signal.is_set():
+        self._closed = True
+        self._relay._remove(self._kind, self._key, self._subscriber)
+
+
+class LiveEventRelay(ThreadListener):
+    """Fan out process-local run and thread events to API subscribers."""
+
+    def __init__(self) -> None:
+        self._runs: dict[str, set[_Subscriber]] = {}
+        self._threads: dict[str, set[_Subscriber]] = {}
+        self._lock = threading.Lock()
+
+    def trace(self, *, thread_id: str) -> RunTracer:
+        """Create one tracer that publishes a newly started run tree."""
+
+        return _RelayRunTracer(self, thread_id=thread_id)
+
+    def subscribe_run(self, run_id: str) -> EventSubscription:
+        return EventSubscription(self, kind="run", key=run_id)
+
+    def subscribe_thread(self, thread_id: str) -> EventSubscription:
+        return EventSubscription(self, kind="thread", key=thread_id)
+
+    def on_event(self, event: ThreadEvent) -> None:
+        """Publish one committed thread mutation from any caller thread."""
+
+        thread_ids = {event.thread}
+        if isinstance(event, ThreadForked):
+            thread_ids.add(event.source_thread)
+        self._publish(self._threads, thread_ids, event)
+
+    def publish_run(
+        self,
+        event: RunEvent,
+        *,
+        root_run_id: str,
+        thread_id: str,
+    ) -> None:
+        self._publish(self._runs, {root_run_id}, event)
+        self._publish(self._threads, {thread_id}, event)
+
+    def _add(
+        self,
+        kind: LiveEventKind,
+        key: str,
+        subscriber: _Subscriber,
+    ) -> None:
+        collection = self._runs if kind == "run" else self._threads
+        with self._lock:
+            collection.setdefault(key, set()).add(subscriber)
+
+    def _remove(
+        self,
+        kind: LiveEventKind,
+        key: str,
+        subscriber: _Subscriber,
+    ) -> None:
+        collection = self._runs if kind == "run" else self._threads
+        with self._lock:
+            subscribers = collection.get(key)
+            if subscribers is None:
                 return
-            try:
-                message = await asyncio.wait_for(
-                    receive(), timeout=self._disconnect_poll_sec
-                )
-            except asyncio.TimeoutError:
+            subscribers.discard(subscriber)
+            if not subscribers:
+                collection.pop(key, None)
+
+    def _publish(
+        self,
+        collection: dict[str, set[_Subscriber]],
+        keys: set[str],
+        event: LiveEvent,
+    ) -> None:
+        with self._lock:
+            subscribers = {
+                subscriber
+                for key in keys
+                for subscriber in collection.get(key, ())
+            }
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+        for subscriber in subscribers:
+            if subscriber.loop is current_loop:
+                subscriber.queue.put_nowait(event)
                 continue
-            if message["type"] == "http.disconnect":
-                return
+            try:
+                subscriber.loop.call_soon_threadsafe(
+                    subscriber.queue.put_nowait,
+                    event,
+                )
+            except RuntimeError:
+                continue
 
 
-async def guarded_stream(stream: AsyncIterator[str]) -> AsyncIterator[str]:
-    """Close one asynchronous stream cleanly after cancellation."""
+class _RelayRunTracer(RunTracer):
+    def __init__(self, relay: LiveEventRelay, *, thread_id: str) -> None:
+        self._relay = relay
+        self._thread_id = thread_id
+        self._root_run_id: str | None = None
+
+    async def on_event(self, event: RunEvent) -> None:
+        if self._root_run_id is None:
+            if not isinstance(event, RunBegin):
+                raise RuntimeError("run trace must begin with run_begin")
+            self._root_run_id = event.run
+        self._relay.publish_run(
+            event,
+            root_run_id=self._root_run_id,
+            thread_id=self._thread_id,
+        )
+
+
+async def sse_stream(
+    request: Request,
+    subscription: EventSubscription,
+    *,
+    terminal_run_id: str | None = None,
+    stopped: Callable[[], bool] | None = None,
+) -> AsyncGenerator[ServerSentEvent, None]:
+    """Yield canonical live events and transport-only keep-alive comments."""
 
     try:
-        async for chunk in stream:
-            yield chunk
-    except asyncio.CancelledError:
-        return
+        while True:
+            if _shutdown_started(request):
+                return
+            if (
+                stopped is not None
+                and subscription.empty
+                and await asyncio.to_thread(stopped)
+            ):
+                return
+            event = await subscription.receive(timeout=KEEP_ALIVE_SEC)
+            if event is None:
+                yield ServerSentEvent(comment="keep-alive")
+                continue
+            yield ServerSentEvent(
+                event=event.type,
+                data=_event_data(event),
+            )
+            if (
+                terminal_run_id is not None
+                and isinstance(event, RunEnd)
+                and event.run == terminal_run_id
+            ):
+                return
     finally:
-        aclose = getattr(stream, "aclose", None)
-        if callable(aclose):
-            await cast(Any, aclose)()
+        subscription.close()
 
 
-def event_stream_response(
-    request: Request, stream: AsyncIterator[str]
-) -> ShutdownAwareStreamingResponse:
-    """Return one shutdown-aware SSE response."""
+def _event_data(event: LiveEvent) -> dict[str, Any]:
+    data = asdict(event)
+    if isinstance(event, PartBegin):
+        data["part_type"] = data.pop("type_")
+    return data
 
-    return ShutdownAwareStreamingResponse(
-        guarded_stream(stream),
-        shutdown_signal=getattr(request.app.state, "shutdown_signal", None),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+
+def _shutdown_started(request: Request) -> bool:
+    signal = getattr(request.app.state, "shutdown_signal", None)
+    return bool(signal is not None and signal.is_set())

@@ -1781,7 +1781,7 @@ dev = [
 requires-dist = [
     { name = "dataclasses-json", specifier = ">=0.6,<1.0" },
     { name = "ddgs", specifier = ">=9.13.0" },
-    { name = "fastapi", specifier = ">=0.116,<1" },
+    { name = "fastapi", specifier = ">=0.135,<1" },
     { name = "fastmcp", specifier = ">=3.0,<4.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "humanize", specifier = ">=4.12,<5" },

@@ -1,8 +1,13 @@
 """Thread inspection and management routes."""
 
-from fastapi import APIRouter, HTTPException, Query
+from collections.abc import AsyncIterator
+from typing import Annotated
 
-from toolang.api.app import AgentCoreDep
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.sse import EventSourceResponse, ServerSentEvent
+
+from toolang.api.app import AgentCoreDep, LiveEventRelayDep
+from toolang.api.common import EventSubscription, sse_stream
 from toolang.api.schemas import (
     ThreadCreateRequest,
     ThreadForkRequest,
@@ -18,9 +23,22 @@ from toolang.up import AgentCore
 router = APIRouter(prefix="/threads", tags=["threads"])
 
 
+async def _subscribe_thread(
+    core: AgentCoreDep,
+    live: LiveEventRelayDep,
+    thread_id: str,
+) -> AsyncIterator[EventSubscription]:
+    _thread_or_404(core, thread_id)
+    subscription = live.subscribe_thread(thread_id)
+    try:
+        yield subscription
+    finally:
+        subscription.close()
+
+
 @router.post(
     "",
-    summary="Create Chat Thread",
+    summary="Create Thread",
     status_code=201,
     response_model=ThreadResult,
 )
@@ -104,22 +122,18 @@ def fork_thread(
     return ThreadResult(thread=thread_info(core, forked_id))
 
 
-@router.get("/{thread_id}/events", summary="List Thread Events")
-def thread_events(core: AgentCoreDep, thread_id: str) -> None:
-    _thread_or_404(core, thread_id)
-    raise HTTPException(
-        status_code=501,
-        detail="durable thread event cursors are not available yet",
-    )
-
-
-@router.get("/{thread_id}/stream", summary="Stream Thread Events")
-async def thread_stream(core: AgentCoreDep, thread_id: str) -> None:
-    _thread_or_404(core, thread_id)
-    raise HTTPException(
-        status_code=501,
-        detail="thread streaming is being migrated to the canonical event protocol",
-    )
+@router.get(
+    "/{thread_id}/stream",
+    summary="Stream Thread Events",
+    response_class=EventSourceResponse,
+)
+async def thread_stream(
+    request: Request,
+    thread_id: str,
+    subscription: Annotated[EventSubscription, Depends(_subscribe_thread)],
+) -> AsyncIterator[ServerSentEvent]:
+    async for event in sse_stream(request, subscription):
+        yield event
 
 
 def parse_thread_peer(payload: ThreadPeerPayload | None) -> ThreadPeer | None:
@@ -154,4 +168,6 @@ def _thread_or_404(core: AgentCore, thread_id: str) -> None:
 def _thread_prefix(client: str) -> ThreadPrefix:
     if client == "web":
         return ThreadPrefix.WEB
+    if client == "script":
+        return ThreadPrefix.SCRIPT
     return ThreadPrefix.TERM

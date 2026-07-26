@@ -1,21 +1,79 @@
-"""Run inspection and control routes."""
+"""Run execution, inspection, control, and live event routes."""
 
-from fastapi import APIRouter, HTTPException, Query
+from collections.abc import AsyncIterator
+from typing import Annotated
 
-from toolang.api.app import AgentCoreDep
-from toolang.api.conversion import parse_user_message
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.sse import EventSourceResponse, ServerSentEvent
+
+from toolang.api.app import AgentCoreDep, LiveEventRelayDep
+from toolang.api.common import EventSubscription, sse_stream
+from toolang.api.conversion import parse_percept, parse_user_message
 from toolang.api.schemas import (
     RunCancelRequest,
     RunCommandResult,
     RunCreateRequest,
     RunSteerRequest,
 )
+from toolang.common.errors import ToolangError
+from toolang.execution.executor import RunHandle, RunSpec
 from toolang.execution.records import RunRecord
 from toolang.execution.schemas import RunControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
+_StartedRunStream = tuple[RunHandle, EventSubscription]
+
+
+async def _start_run_stream(
+    core: AgentCoreDep,
+    live: LiveEventRelayDep,
+    payload: RunCreateRequest,
+) -> AsyncIterator[_StartedRunStream]:
+    thread_id = _run_thread(core, payload)
+    try:
+        handle = core.executor.start(
+            RunSpec(
+                setup=core.setup.current(),
+                state=core.state.current(),
+                thread=thread_id,
+                runnable=payload.runnable,
+                input=parse_percept(payload.input),
+                model=payload.model,
+                args=payload.args,
+            ),
+            request_id=payload.request_id,
+            tracer=live.trace(thread_id=thread_id),
+        )
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    subscription = live.subscribe_run(handle.run_id)
+    try:
+        yield handle, subscription
+    finally:
+        subscription.close()
+
+
+async def _subscribe_root_run(
+    core: AgentCoreDep,
+    live: LiveEventRelayDep,
+    run_id: str,
+) -> AsyncIterator[EventSubscription]:
+    run = _run_or_404(core, run_id)
+    if run.parent is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"run stream requires a root run: {run_id}; "
+                f"subscribe to {run.root_run_id}"
+            ),
+        )
+    subscription = live.subscribe_run(run_id)
+    try:
+        yield subscription
+    finally:
+        subscription.close()
 
 
 @router.get("", summary="List Runs", response_model=list[RunInfo])
@@ -32,16 +90,24 @@ def runs(
     )
 
 
-@router.post("/stream", summary="Execute Run Stream")
+@router.post(
+    "/stream",
+    summary="Execute Run Stream",
+    response_class=EventSourceResponse,
+)
 async def execute_run_stream(
     core: AgentCoreDep,
-    payload: RunCreateRequest,
-) -> None:
-    del core, payload
-    raise HTTPException(
-        status_code=501,
-        detail="run streaming is being migrated to the canonical run event protocol",
-    )
+    request: Request,
+    started: Annotated[_StartedRunStream, Depends(_start_run_stream)],
+) -> AsyncIterator[ServerSentEvent]:
+    handle, subscription = started
+    async for event in sse_stream(
+        request,
+        subscription,
+        terminal_run_id=handle.run_id,
+        stopped=lambda: _run_terminal(core, handle.run_id),
+    ):
+        yield event
 
 
 @router.get("/{run_id}", summary="Get Run", response_model=RunDetail)
@@ -52,22 +118,24 @@ def run_detail(core: AgentCoreDep, run_id: str) -> RunDetail:
     return detail
 
 
-@router.get("/{run_id}/events", summary="List Run Events")
-def run_events(core: AgentCoreDep, run_id: str) -> None:
-    _run_or_404(core, run_id)
-    raise HTTPException(
-        status_code=501,
-        detail="durable run event cursors are not available yet",
-    )
-
-
-@router.get("/{run_id}/stream", summary="Stream Run Events")
-async def run_stream(core: AgentCoreDep, run_id: str) -> None:
-    _run_or_404(core, run_id)
-    raise HTTPException(
-        status_code=501,
-        detail="run streaming is being migrated to the canonical run event protocol",
-    )
+@router.get(
+    "/{run_id}/stream",
+    summary="Stream Run Events",
+    response_class=EventSourceResponse,
+)
+async def run_stream(
+    core: AgentCoreDep,
+    request: Request,
+    run_id: str,
+    subscription: Annotated[EventSubscription, Depends(_subscribe_root_run)],
+) -> AsyncIterator[ServerSentEvent]:
+    async for event in sse_stream(
+        request,
+        subscription,
+        terminal_run_id=run_id,
+        stopped=lambda: _run_terminal(core, run_id),
+    ):
+        yield event
 
 
 @router.post(
@@ -137,3 +205,17 @@ def _control_result(core: AgentCore, run_id: str, control) -> RunCommandResult:
         run=detail,
         command=RunControlInfo.from_record(run, control),
     )
+
+
+def _run_thread(core: AgentCore, payload: RunCreateRequest) -> str:
+    if core.store.get_thread(thread_id=payload.thread) is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"thread not found: {payload.thread}",
+        )
+    return payload.thread
+
+
+def _run_terminal(core: AgentCore, run_id: str) -> bool:
+    run = core.store.get_run(run_id=run_id)
+    return run is None or run.status not in {"pending", "running"}
