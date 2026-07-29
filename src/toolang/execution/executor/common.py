@@ -70,6 +70,7 @@ class BoundRun:
     ceiling: _RunCeiling | None = None
     flow_ceiling: _RunCeiling | None = None
     call: Literal["top", "run"] = "top"
+    parent: StepPath | None = None
     placement: Mapping[str, object] | None = None
 
 
@@ -288,6 +289,8 @@ def statement_context(statement: FlowStmt) -> dict[str, object]:
     """Return durable statement metadata for one step."""
 
     context: dict[str, object] = {"statement": statement.kind}
+    if statement.doc:
+        context["doc"] = statement.doc
     for name in (
         "runnable",
         "agent",

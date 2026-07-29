@@ -660,6 +660,7 @@ class _Execution:
             RunBegin(
                 run=binding.run_id,
                 input=RunControlRef(index=0),
+                parent=binding.parent,
                 context=_run_context(binding, executable),
                 started_at=utc_now(),
             )
@@ -730,7 +731,14 @@ class _Execution:
         """Accept and execute one recursive child agic or flow run."""
 
         executable = _require_runnable(parent.state, name)
-        binding = _child_binding(self, parent, executable, locals, placement)
+        binding = _child_binding(
+            self,
+            parent,
+            executable,
+            locals,
+            parent_step=step,
+            placement=placement,
+        )
         _validate_inputs(
             state=binding.state,
             executable=executable,
@@ -964,6 +972,8 @@ def _child_binding(
     parent: BoundRun,
     executable: AgicDecl | FlowDecl,
     locals: Mapping[str, Local],
+    *,
+    parent_step: StepPath,
     placement: Mapping[str, object] | None,
 ) -> BoundRun:
     if executable.input is None:
@@ -999,6 +1009,7 @@ def _child_binding(
         flow_ceiling=parent.flow_ceiling,
         created_at=utc_now(),
         call="run",
+        parent=parent_step,
         placement=dict(placement or {}),
     )
 

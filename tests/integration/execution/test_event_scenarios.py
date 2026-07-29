@@ -150,6 +150,7 @@ agic worker(_: Text) -> Text:
   user: {{_}}
 
 flow parallel(_: Text) -> Text[]:
+  ## Run workers in parallel.
   storm 3 worker par 3
 """,
         responses=[
@@ -197,18 +198,23 @@ flow parallel(_: Text) -> Text[]:
                     and event.step == root_step
                 )
             )
+            parent_event = tracer.events[parent_begin]
+            assert isinstance(parent_event, StepBegin)
+            assert parent_event.given["doc"] == "Run workers in parallel."
             for child in children:
-                begin = [
-                    index
-                    for index, event in enumerate(tracer.events)
+                begin_event = next(
+                    event
+                    for event in tracer.events
                     if isinstance(event, RunBegin) and event.run == child.id
-                ]
+                )
+                begin = [tracer.events.index(begin_event)]
                 end = [
                     index
                     for index, event in enumerate(tracer.events)
                     if isinstance(event, RunEnd) and event.run == child.id
                 ]
                 assert len(begin) == len(end) == 1
+                assert begin_event.parent == child.parent == root_step
                 assert parent_begin < begin[0] < end[0] < parent_end
             assert sum(
                 isinstance(event, RunBegin) for event in tracer.events

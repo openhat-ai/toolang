@@ -165,6 +165,11 @@ A script run uses one local `.too` source path directly:
 toolang SCRIPT RUNNABLE [OPTIONS] [ARGS] [INPUT]...
 ```
 
+Script progress, inspection output, and chat TUI activity use the shared
+execution presentation language defined in
+[execution-presentation.md](./execution-presentation.md). Script mode retains
+its stdout/stderr contract; it does not use the TUI renderer.
+
 Arguments:
 
 - `SCRIPT` is the local Toolang script or agent file

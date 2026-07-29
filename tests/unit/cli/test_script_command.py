@@ -9,6 +9,7 @@ from toolang.base.types.message import ImagePart, TextPart
 from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import script
 from toolang.execution.executor import CeilingSpec
+from toolang.execution.records import RunControlRef, RunRecord
 
 
 _SOURCE = """
@@ -331,3 +332,27 @@ def test_script_rejects_stdin_marker_mixed_with_input(
 
     assert result == 2
     assert "stdin marker '-' must be the only primary input" in output.err
+
+
+def test_script_does_not_repeat_a_failure_reported_by_the_tracer(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    result = script._emit_result(
+        RunRecord(
+            id="run_failed",
+            parent=None,
+            thread="script_thread",
+            input=RunControlRef(),
+            output=None,
+            status="failed",
+            error="output is not valid Number",
+        ),
+        store_path=tmp_path / "runs.db",
+        log_path=None,
+        error_reported=True,
+    )
+    output = capsys.readouterr()
+
+    assert result == 1
+    assert output.err == "Run: run_failed\n"

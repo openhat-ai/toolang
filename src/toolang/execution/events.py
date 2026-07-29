@@ -24,6 +24,7 @@ class RunBegin:
 
     run: str
     input: RunControlRef
+    parent: StepPath | None = None
     context: dict[str, Any] = field(default_factory=dict)
     started_at: str = ""
     type: str = "run_begin"

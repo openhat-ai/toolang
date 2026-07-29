@@ -196,10 +196,13 @@ into any UI-specific protocol locally.
 The TUI does not consume the HTTP API. Its process calls `RunExecutor` directly
 and renders native `RunEvent` values received through a `RunTracer`.
 
-UIs should keep exactly one active mutable block for the visible run. Finalized
-blocks can move into scrollback immediately instead of waiting for the whole run
-to finish. Parallel tool calls, agic calls, or flow lanes are rendered inside
-the current mutable block.
+The chat TUI keeps only live mutable blocks in its live area. Stable blocks
+move into terminal scrollback progressively instead of waiting for the whole
+run to finish. Parallel tool calls, agic calls, and flow lanes are summarized by
+their owning visible operation rather than finalized in completion order. See
+[execution-presentation.md](./execution-presentation.md) for the shared display
+language and the TUI's existing control-bar, streaming, alignment, and
+scrollback constraints.
 
 Thread and run detail endpoints are inspection surfaces used to:
 

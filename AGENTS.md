@@ -102,6 +102,9 @@
 - `docs/run-step-records.md` defines durable execution records and their source
   run events.
 - `docs/chat.md` defines thread, run, and message projections.
+- `docs/execution-presentation.md` defines the shared inspect, script, and chat
+  TUI language for statuses, run and step labels, streaming, progressive
+  finalization, and scrollback.
 - `docs/models.md` defines model selectors, profiles, and built-in model
   integrations.
 - `docs/tools.md` defines built-in tool families.

@@ -38,6 +38,7 @@ Use this directory for:
 | [executor.md](./executor.md) | RunExecutor acceptance, execution, control polling, and tracing |
 | [run-step-records.md](./run-step-records.md) | Durable run, step, thread, and control records plus source events |
 | [chat.md](./chat.md) | Chat and transcript model, including thread, run, message, and stream behavior |
+| [execution-presentation.md](./execution-presentation.md) | Shared inspect, script, and chat TUI presentation language for runs, steps, streaming, and scrollback |
 | [models.md](./models.md) | Model integrations, including selectors, providers, routes, and built-in model providers |
 | [tools.md](./tools.md) | Tool runtime, including built-in tools and service-cap integration |
 | [plugins.md](./plugins.md) | Plugin model, including shared contracts, plugin families, and loading |

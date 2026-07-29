@@ -29,7 +29,7 @@ from toolang.base.types.message import (
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor import CeilingSpec, RunExecutor, RunSpec
+from toolang.execution.executor import CeilingSpec, RunExecutor, RunHandle, RunSpec
 from toolang.execution.records import RunRecord
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
@@ -585,7 +585,19 @@ def _run(
     except KeyboardInterrupt:
         if progress is not None:
             progress.interrupt()
-        typer.echo("toolang interrupted", err=True)
+        interruption_reported = False
+        if (
+            store is not None
+            and run_id is not None
+            and not quiet
+            and (sys.stderr.isatty() or verbosity > 0)
+        ):
+            record = store.get_run(run_id=run_id)
+            interruption_reported = (
+                record is not None and record.status == "canceled"
+            )
+        if not interruption_reported:
+            typer.echo("toolang interrupted", err=True)
         if run_id is not None:
             typer.echo(f"Run: {run_id}", err=True)
         if log_path is not None and log_path.exists():
@@ -609,6 +621,9 @@ def _run(
         result,
         store_path=layout.run_store,
         log_path=log_path,
+        error_reported=(
+            not quiet and (sys.stderr.isatty() or verbosity > 0)
+        ),
     )
 
 
@@ -635,23 +650,46 @@ async def _execute(
         if not quiet and (sys.stderr.isatty() or verbosity > 0)
         else None
     )
+    handle = executor.start(
+        RunSpec(
+            setup=setup,
+            state=state,
+            ceiling=ceiling,
+            thread=thread,
+            runnable=runnable,
+            input=input_value,
+            model=model,
+            args=args or None,
+        ),
+        run_id=run_id,
+        tracer=tracer,
+    )
     try:
-        return await executor.start(
-            RunSpec(
-                setup=setup,
-                state=state,
-                ceiling=ceiling,
-                thread=thread,
-                runnable=runnable,
-                input=input_value,
-                model=model,
-                args=args or None,
-            ),
-            run_id=run_id,
-            tracer=tracer,
-        )
+        return await _await_script_run(handle)
     finally:
-        await executor.shutdown()
+        try:
+            await executor.shutdown()
+        finally:
+            if tracer is not None:
+                tracer.close()
+
+
+async def _await_script_run(handle: RunHandle) -> RunRecord:
+    """Stop an owned one-shot run when its script caller is interrupted."""
+
+    try:
+        return await handle
+    except asyncio.CancelledError:
+        if not handle.task.done():
+            try:
+                handle.stop(reason="script interrupted")
+            except ValueError:
+                record = handle.executor.store.get_run(run_id=handle.run_id)
+                if record is None or record.status in {"pending", "running"}:
+                    raise
+            if not handle.task.done():
+                await asyncio.shield(handle.task)
+        raise
 
 
 def _emit_result(
@@ -659,9 +697,11 @@ def _emit_result(
     *,
     store_path: Path,
     log_path: Path | None,
+    error_reported: bool = False,
 ) -> int:
     if result.status != "finished":
-        _error(result.error or f"run {result.status}")
+        if not error_reported:
+            _error(result.error or f"run {result.status}")
         typer.echo(f"Run: {result.id}", err=True)
         if log_path is not None and log_path.exists():
             typer.echo(f"Log: {log_path}", err=True)
