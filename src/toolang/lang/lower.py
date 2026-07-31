@@ -469,7 +469,20 @@ class _Lowerer:
         if node.type == "gather_statement":
             return ast.GatherStmt(runnable=self._runnable(node), span=span, doc=doc)
         if node.type == "settle_statement":
-            return ast.SettleStmt(runnable=self._runnable(node), span=span, doc=doc)
+            return ast.SettleStmt(
+                runnable=self._runnable(
+                    node,
+                    generated_params=(
+                        ast.Parameter(
+                            name="item",
+                            type_name="Part[]",
+                            span=span,
+                        ),
+                    ),
+                ),
+                span=span,
+                doc=doc,
+            )
         if node.type == "map_statement":
             return ast.MapStmt(
                 runnable=self._runnable(node), par=self._par(node), span=span, doc=doc
@@ -486,7 +499,11 @@ class _Lowerer:
                     else None
                 ),
                 count=self._required_int(position, "count") if position else None,
-                predicate=None if position else self._runnable(node, output="Boolean"),
+                predicate=(
+                    None
+                    if position
+                    else self._runnable(node, output="Boolean", evaluator=True)
+                ),
                 par=self._par(node),
                 span=span,
                 doc=doc,
@@ -494,7 +511,7 @@ class _Lowerer:
         if node.type == "rank_statement":
             selection = self._child_of_type(node, "rank_selection_clause")
             return ast.RankStmt(
-                scorer=self._runnable(node, output="Number"),
+                scorer=self._runnable(node, output="Number", evaluator=True),
                 limit=cast(
                     ast.Limit, self._required_text(selection, "selection").strip()
                 )
@@ -520,6 +537,7 @@ class _Lowerer:
                     agic,
                     body=self._block_text(self._required(agic, "body")),
                     output="Boolean",
+                    evaluator=True,
                 )
             return ast.RepeatStmt(
                 count=self._optional_int(node.child_by_field_name("count")),
@@ -532,7 +550,14 @@ class _Lowerer:
             f"Unsupported flow statement {node.type!r} at line {self._line(node)}."
         )
 
-    def _runnable(self, node: CstNode, *, output: str | None = None) -> str:
+    def _runnable(
+        self,
+        node: CstNode,
+        *,
+        output: str | None = None,
+        generated_params: tuple[ast.Parameter, ...] = (),
+        evaluator: bool = False,
+    ) -> str:
         if runnable := node.child_by_field_name("runnable"):
             return self._text(runnable).strip()
         agic = node.child_by_field_name("agic")
@@ -543,15 +568,45 @@ class _Lowerer:
             agic,
             body=self._block_text(self._required(agic, "body")),
             output=output or declared_output,
+            params=generated_params,
+            evaluator=evaluator,
         )
 
-    def _generated_agic(self, node: CstNode, *, body: str, output: str | None) -> str:
+    def _generated_agic(
+        self,
+        node: CstNode,
+        *,
+        body: str,
+        output: str | None,
+        params: tuple[ast.Parameter, ...] = (),
+        evaluator: bool = False,
+    ) -> str:
         name = self._generated_name("agic", node)
+        directives = (
+            (
+                ast.Directive(
+                    name="recall",
+                    operator="=",
+                    values=("none",),
+                    span=self._span(node),
+                ),
+                ast.Directive(
+                    name="tools",
+                    operator="=",
+                    values=("none",),
+                    span=self._span(node),
+                ),
+            )
+            if evaluator
+            else ()
+        )
         self.agics.append(
             ast.AgicDecl(
                 name=name,
                 input=self._default_input(node),
+                params=params,
                 output=output,
+                directives=directives,
                 messages=(
                     ast.Message(role="user", content=body, span=self._span(node)),
                 ),

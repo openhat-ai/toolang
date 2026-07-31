@@ -143,9 +143,14 @@ def test_shell_tool_runs_one_command(tmp_path: Path) -> None:
 def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:
     tool = create_web_search_tool({}).tools()["search"]
 
-    monkeypatch.setattr(
-        "toolang.plugin.tools.web_search._search_text",
-        lambda query, *, max_results: [
+    async def search(
+        query: str,
+        *,
+        max_results: int,
+        timeout: int,
+    ) -> list[dict[str, str]]:
+        del query, max_results, timeout
+        return [
             {
                 "title": "Example",
                 "href": "https://example.com/post",
@@ -156,7 +161,11 @@ def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:
                 "href": "https://other.com/post",
                 "body": "other body",
             },
-        ],
+        ]
+
+    monkeypatch.setattr(
+        "toolang.plugin.tools.web_search._run_search",
+        search,
     )
 
     result = _invoke(
@@ -173,6 +182,66 @@ def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:
             "snippet": "example body",
         }
     ]
+
+
+def test_web_search_worker_is_process_isolated_and_cancellable(
+    monkeypatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    async def run_sync(func, *args, cancellable=False):
+        observed["func"] = func
+        observed["args"] = args
+        observed["cancellable"] = cancellable
+        return []
+
+    monkeypatch.setattr(
+        "toolang.plugin.tools.web_search.to_process.run_sync",
+        run_sync,
+    )
+
+    from toolang.plugin.tools.web_search import _run_search, _search_text
+
+    result = asyncio.run(
+        _run_search("toolang", max_results=15, timeout=5)
+    )
+
+    assert result == []
+    assert observed == {
+        "func": _search_text,
+        "args": ("toolang", 15, 5),
+        "cancellable": True,
+    }
+
+
+def test_web_search_enforces_an_outer_timeout(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plugin = create_web_search_tool({"timeout": 1})
+    tool = plugin.tools()["search"]
+
+    async def stalled(
+        query: str,
+        *,
+        max_results: int,
+        timeout: int,
+    ) -> list[dict[str, Any]]:
+        del query, max_results, timeout
+        await asyncio.sleep(30)
+        return []
+
+    monkeypatch.setattr(
+        "toolang.plugin.tools.web_search._run_search",
+        stalled,
+    )
+
+    with pytest.raises(ToolangError, match="web search timed out after 1s"):
+        _invoke(
+            tool,
+            {"query": "toolang"},
+            _tool_context(tmp_path, "web_search"),
+        )
 
 
 def test_service_use_tool_definition_uses_object_input_schema() -> None:

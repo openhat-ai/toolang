@@ -66,6 +66,8 @@ def test_script_binds_options_arguments_and_primary_input(
     assert result == 0
     assert captured["source_path"] == source.resolve()
     assert captured["runnable"] == "demo"
+    assert captured["runnable_kind"] == "agic"
+    assert captured["runnable_doc"] == "Run the documented demo."
     assert captured["model"] == "openai/gpt"
     assert captured["ceiling"] == CeilingSpec(
         models=("openai/*", "deepseek/*"),

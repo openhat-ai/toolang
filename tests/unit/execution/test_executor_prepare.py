@@ -203,6 +203,8 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
             },
             default_models=("default",),
             envs=setup.envs,
+            date="2026-01-01",
+            timezone="UTC",
         ),
     )
 
@@ -218,6 +220,8 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     assert "sandbox: docker:python:3.13-slim" in prepared.instructions
     assert "system: Linux 6.0 (aarch64)" in prepared.instructions
     assert "working_directory: /workspace" in prepared.instructions
+    assert "date: 2026-01-01" in prepared.prompt_context
+    assert "timezone: UTC" in prepared.prompt_context
     assert "agent_name: alice" in prepared.prompt_context
     assert [message_text(message.parts) for message in prepared.messages] == [
         "previous",
@@ -292,6 +296,8 @@ def test_prepare_agic_includes_declared_output_contract(tmp_path: Path) -> None:
             models=setup.models,
             envs=setup.envs,
             layout=setup.layout,
+            date="2026-01-01",
+            timezone="UTC",
         ),
     )
 
@@ -299,6 +305,10 @@ def test_prepare_agic_includes_declared_output_contract(tmp_path: Path) -> None:
 
     assert "<output-contract>" in prepared.instructions
     assert "type: Text[]" in prepared.instructions
+    assert "For Number, return exactly one JSON number such as 7.5." in (
+        prepared.instructions
+    )
+    assert "For Boolean, return exactly true or false." in prepared.instructions
     assert "Use raw JSON for Json, array, and struct values." in prepared.instructions
 
 
@@ -373,6 +383,8 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
             providers=setup.providers,
             models=setup.models,
             envs=setup.envs,
+            date="2026-01-01",
+            timezone="UTC",
         ),
     )
 
@@ -475,9 +487,10 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert steps[0].output == (audio,)
         assert store.run_output(run_id=record.id) == (audio,)
         assert len(adapter.requests) == 1
-        assert message_text(adapter.requests[0].messages[-1].parts).endswith(
-            "Answer: hello; focus=events"
-        )
+        request_text = message_text(adapter.requests[0].messages[-1].parts)
+        assert f"date: {record.created_at.partition('T')[0]}" in request_text
+        assert "timezone: UTC" in request_text
+        assert request_text.endswith("Answer: hello; focus=events")
         assert image in adapter.requests[0].messages[-1].parts
         assert store.rebuild_model_call(steps[0]) == adapter.requests[0]
         begin = next(event for event in tracer.events if isinstance(event, StepBegin))

@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from toolang.common.errors import ToolangError
 from toolang.lang.ast import ScatterStmt
 
 from ...records import RunControlRecord, StepPath
@@ -28,10 +27,6 @@ async def execute(
 ) -> Local:
     def transform(result: Local) -> Local:
         values = result_list(result, operation="scatter")
-        if len(values) != statement.count:
-            raise ToolangError(
-                f"scatter expected {statement.count} items, got {len(values)}"
-            )
         item_type = (
             result.type_name[:-2]
             if result.type_name is not None and result.type_name.endswith("[]")

@@ -44,8 +44,8 @@ from toolang.state.state import AgentState, split_cap_selectors
 from toolang.up import process as agents
 from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
-from ...common.execution import ConsoleRunTracer
 from ...common.progress import as_progress_sink, make_cli_progress
+from ...common.script_progress import ConsoleRunTracer
 from ...common.version import toolang_version
 
 Runnable = AgicDecl | FlowDecl
@@ -228,6 +228,8 @@ def _runnable_command(
         return _run(
             source_path,
             runnable=runnable.name,
+            runnable_kind=runnable.kind,
+            runnable_doc=runnable.doc,
             input_value=input_value,
             args=args,
             model=model,
@@ -535,6 +537,8 @@ def _run(
     source_path: Path,
     *,
     runnable: str,
+    runnable_kind: str,
+    runnable_doc: str | None,
     input_value: Percept,
     args: dict[str, object],
     model: str | None,
@@ -574,6 +578,8 @@ def _run(
                 ids=ids,
                 run_id=run_id,
                 runnable=runnable,
+                runnable_kind=runnable_kind,
+                runnable_doc=runnable_doc,
                 input_value=input_value,
                 args=args,
                 model=model,
@@ -635,6 +641,8 @@ async def _execute(
     ids: IdIssuer,
     run_id: str,
     runnable: str,
+    runnable_kind: str,
+    runnable_doc: str | None,
     input_value: Percept,
     args: dict[str, object],
     model: str | None,
@@ -646,7 +654,15 @@ async def _execute(
     thread = ThreadManager(store, ids).create(prefix=ThreadPrefix.SCRIPT)
     executor = RunExecutor(store, ids)
     tracer = (
-        ConsoleRunTracer(run_id=run_id, verbosity=verbosity)
+        ConsoleRunTracer(
+            run_id=run_id,
+            verbosity=verbosity,
+            runnable_kind=runnable_kind,
+            runnable_name=runnable,
+            runnable_doc=runnable_doc,
+            input_value=input_value,
+            args=args,
+        )
         if not quiet and (sys.stderr.isatty() or verbosity > 0)
         else None
     )

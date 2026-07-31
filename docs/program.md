@@ -353,6 +353,19 @@ instruct strict:
   Run the {{runnable.name}} runnable in strict mode.
 ```
 
+The executor supplies `date` and `timezone` as flat runtime variables to both
+context and instruct templates:
+
+```too
+context:
+  Current date: {{date}}
+  Timezone: {{timezone}}
+```
+
+`date` is the UTC calendar date on which the root run was accepted, and
+`timezone` is `UTC`. Both remain fixed for the complete recursive run tree so
+child runs and later model calls observe the same temporal context.
+
 An agic may select one of each:
 
 ```too

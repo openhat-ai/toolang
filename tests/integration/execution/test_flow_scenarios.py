@@ -15,10 +15,11 @@ from tests.support.execution_assertions import (
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
+    RecordingTool,
     RecordingRunTracer,
     ScriptedModelTurn,
 )
-from toolang.base.types.message import Message, TextPart
+from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult
 from toolang.execution.events import RunBegin, RunEnd
 from toolang.execution.types import ThreadPrefix
@@ -304,12 +305,24 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
                 )
             ),
             *[
-                ModelCallResult(message=Message.assistant("evidence"))
-                for _ in range(6)
+                ModelCallResult(message=Message.assistant(f"evidence {index}"))
+                for index in range(6)
             ],
             *[
-                ModelCallResult(message=Message.assistant("false"))
-                for _ in range(6)
+                ModelCallResult(
+                    message=Message.assistant(
+                        "true" if index % 2 == 0 else "false"
+                    )
+                )
+                for index in range(6)
+            ],
+            *[
+                ModelCallResult(message=Message.assistant(score))
+                for score in ("3", "1", "2")
+            ],
+            *[
+                ModelCallResult(message=Message.assistant(f"finding {index}"))
+                for index in range(3)
             ],
             ModelCallResult(message=Message.assistant("report")),
         ],
@@ -329,6 +342,7 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
             assert root.status == "finished", root.error
             assert harness.store.run_output_text(run_id=root.id) == "report"
             assert _root_step_kinds(harness, root.id) == [
+                "system",
                 "run",
                 "par",
                 "par",
@@ -336,12 +350,94 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
                 "par",
                 "run",
             ]
-            assert len(harness.adapter.invocations) == 14
+            root_steps = [
+                step
+                for step in harness.store.list_steps(run_id=root.id)
+                if step.parent == root.id
+            ]
+            assert root_steps[3].noted["items"] == 3
+            assert root_steps[4].noted["items"] == 3
+            assert len(harness.adapter.invocations) == 20
+            predicate_messages = [
+                message_text(invocation.call.messages[-1].parts)
+                for invocation in harness.adapter.invocations[7:13]
+            ]
+            assert all(
+                len(invocation.call.messages) == 1
+                for invocation in harness.adapter.invocations[7:13]
+            )
+            assert all(
+                "Research question:\nagent framework/sdk" in message
+                for message in predicate_messages
+            )
             final_message = harness.adapter.invocations[-1].call.messages[-1]
             assert any(
-                isinstance(part, TextPart) and "Findings:\n[]" in part.text
+                isinstance(part, TextPart)
+                and "Research question:\nagent framework/sdk" in part.text
+                and "Findings:" in part.text
                 for part in final_message.parts
             )
+
+    asyncio.run(scenario())
+
+
+def test_inline_rank_scorer_has_no_recalled_history_or_tools(
+    tmp_path: Path,
+) -> None:
+    tool = RecordingTool("test__side_effect", output={"ok": True})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic remember(_: Text) -> Text:
+  recall = none
+  context: none
+  user: {{_}}
+
+agic split(_: Text) -> Text[]:
+  recall = none
+  context: none
+  user: {{_}}
+
+flow select(_: Text) -> Text[]:
+  scatter 1 split
+  rank top 1: Return a numeric relevance score from 0 to 10.
+""",
+        tools={tool.name: tool},
+        responses=[
+            ModelCallResult(message=Message.assistant("history marker")),
+            ModelCallResult(message=Message.assistant('["candidate"]')),
+            ModelCallResult(message=Message.assistant("10")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            remembered = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="remember",
+                    input=perceive_input("remember this"),
+                )
+            )
+            selected = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="select",
+                    input=perceive_input("candidate"),
+                )
+            )
+
+            assert remembered.status == "finished"
+            assert selected.status == "finished", selected.error
+            assert _output_value(harness, selected.id) == ["candidate"]
+            score_call = harness.adapter.invocations[-1].call
+            assert score_call.tools == ()
+            assert all(
+                "history marker" not in message_text(message.parts)
+                for message in score_call.messages
+            )
+            assert tool.calls == []
 
     asyncio.run(scenario())
 
@@ -470,11 +566,11 @@ agic split(_: Text) -> Text[]:
   instruct: none
   user: {{_}}
 
-agic fold(_: Text, accumulator?: Text) -> Text:
+agic fold(_: Part[], item: Text) -> Text:
   recall = none
   context: none
   instruct: none
-  user: {{accumulator}}{{_}}
+  user: {{_}}{{item}}
 
 flow folded(_: Text) -> Text:
   scatter 3 split
@@ -509,6 +605,70 @@ flow folded(_: Text) -> Text:
                 Message.user("a"),
                 Message.user("ab"),
                 Message.user("abc"),
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_inline_settle_receives_empty_accumulator_and_zero_based_items(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic split(_: Text) -> Text[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow folded(_: Text) -> Text:
+  scatter 3 split
+  settle -> Text:
+    {{_}}{{item}}
+""",
+        responses=[
+            ModelCallResult(message=Message.assistant('["a","b","c"]')),
+            ModelCallResult(message=Message.assistant("a")),
+            ModelCallResult(message=Message.assistant("ab")),
+            ModelCallResult(message=Message.assistant("abc")),
+        ],
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="folded",
+                    input=perceive_input("fold"),
+                ),
+                tracer=tracer,
+            )
+
+            assert root.status == "finished"
+            assert harness.store.run_output_text(run_id=root.id) == "abc"
+            assert [
+                message_text(invocation.call.messages[-1].parts).rsplit("\n", 1)[-1]
+                for invocation in harness.adapter.invocations[1:]
+            ] == [
+                "a",
+                "ab",
+                "abc",
+            ]
+            placements = [
+                event.context["placement"]
+                for event in tracer.events
+                if isinstance(event, RunBegin)
+                and event.parent is not None
+                and "loop" in event.context.get("placement", {})
+            ]
+            assert placements == [
+                {"item": 0, "items": 3, "loop": 0},
+                {"item": 1, "items": 3, "loop": 1},
+                {"item": 2, "items": 3, "loop": 2},
             ]
 
     asyncio.run(scenario())
@@ -841,7 +1001,7 @@ flow invalid(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-def test_scatter_count_mismatch_fails_the_parent_run_step(
+def test_scatter_uses_the_returned_list_length_instead_of_authored_count(
     tmp_path: Path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -872,16 +1032,17 @@ flow scattered(_: Text) -> Text[]:
                 )
             )
 
-            assert root.status == "failed"
-            assert root.error == "scatter expected 3 items, got 2"
+            assert root.status == "finished"
+            assert _output_value(harness, root.id) == ["a", "b"]
             root_steps = [
                 step
                 for step in harness.store.list_steps(run_id=root.id)
                 if step.parent == root.id
             ]
             assert [(step.kind, step.status) for step in root_steps] == [
-                ("run", "failed")
+                ("run", "finished")
             ]
+            assert root_steps[0].noted["items"] == 2
             child = next(
                 run
                 for run in harness.store.list_runs(

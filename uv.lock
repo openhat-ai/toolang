@@ -1744,6 +1744,7 @@ name = "toolang"
 version = "0.2.7"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "dataclasses-json" },
     { name = "ddgs" },
     { name = "fastapi" },
@@ -1779,6 +1780,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.12,<5" },
     { name = "dataclasses-json", specifier = ">=0.6,<1.0" },
     { name = "ddgs", specifier = ">=9.13.0" },
     { name = "fastapi", specifier = ">=0.135,<1" },

@@ -26,8 +26,10 @@ Use tools only when they materially help with the invocation.
 <output-contract>
 type: {{runnable.output}}
 Return only the final value for this Toolang type.
+For Number, return exactly one JSON number such as 7.5.
+For Boolean, return exactly true or false.
 Use raw JSON for Json, array, and struct values.
-Do not add a preface or wrap structured output in Markdown code fences.
+Do not explain the value, add a preface, or wrap structured output in Markdown code fences.
 </output-contract>
 {{/runnable.output}}
 

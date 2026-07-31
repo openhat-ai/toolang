@@ -354,6 +354,8 @@ def _runtime_context(
     context: _Execution, *, run: BoundRun, agic: AgicDecl
 ) -> dict[str, object]:
     runtime: dict[str, object] = {
+        "date": context.date,
+        "timezone": context.timezone,
         "run": {
             "id": run.run_id,
             "thread_id": run.thread,

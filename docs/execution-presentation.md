@@ -1,997 +1,856 @@
-# Execution Presentation Language
+# Execution Presentation
 
-This document defines the shared presentation language for durable execution
-inspection, one-shot script runs, and the interactive chat TUI.
+This document defines the target presentation language for Toolang execution.
+It is intended for review before the script renderer is finalized and before
+inspection and chat adopt the same vocabulary.
 
-It does not define another execution model or another event protocol.
-`RunDetail` remains the source for completed inspection, and native `RunEvent`
-values remain the source for live script and TUI rendering.
-
-
-## Goals
-
-Execution presentation should be:
-
-- concise enough to follow during a long run;
-- descriptive enough to identify the runnable, flow statement, model, tool, or
-  failing item involved;
-- consistent across inspection, scripts, and chat;
-- stable in terminal scrollback;
-- useful in both interactive terminals and redirected command output;
-- faithful to the recursive run tree without exposing every internal detail by
-  default.
-
-The surfaces share vocabulary, labels, summaries, status marks, and failure
-language. They do not share one renderer:
-
-- inspection renders a completed snapshot and never renders deltas;
-- script mode renders a linear live trace to stderr and the run result to
-  stdout;
-- the chat TUI renders colored mutable blocks, consumes deltas, and
-  progressively finalizes stable blocks into terminal scrollback.
+It defines presentation only. It does not add execution concepts, records, or
+events. Inspection reads durable schemas. Live script and chat renderers
+consume ordered native `RunEvent` values.
 
 
-## Sources Of Truth
+## Surfaces
 
-| Surface | Source | Live deltas |
-| --- | --- | --- |
-| `threads` and `runs` | `ThreadInfo` and `RunInfo` | no |
-| `inspect` | `ThreadDetail`, `RunDetail`, and `StepData` | no |
-| script invocation | ordered native `RunEvent` values | yes |
-| chat TUI | ordered native `RunEvent` values | yes |
-| restored chat history | durable thread and run detail | no |
+The three surfaces share words and formatting, but not one renderer:
 
-Presentation code must not introduce display-specific execution events or query
-SQLite on the live event path. A live renderer may retain bounded presentation
-state needed to reconcile part deltas with `PartEnd`, `StepEnd`, and `RunEnd`.
+- **script** renders live progress to stderr and the final value to stdout;
+- **inspection** renders durable state without reconstructing deltas;
+- **chat TUI** keeps mutable activity in a bounded live area and progressively
+  moves stable content into scrollback.
 
-
-### Required Execution Facts
-
-Presentation depends only on execution facts that are also meaningful outside
-the CLI:
-
-- `RunBegin.parent` identifies the calling step for a child run and is `None`
-  for a root run, matching durable `RunRecord.parent`;
-- `RunBegin.context` identifies the root run, runnable, call kind, and parallel
-  position when applicable;
-- flow `StepBegin.given` contains statement kind, authored doc, source line,
-  binding, runnable or predicate, and parallel position when applicable;
-- model `StepBegin.given` contains the effective non-secret model target;
-- tool `StepBegin.given` contains the stable tool and plugin names;
-- `StepEnd.noted` contains stable shape, item count, usage, and other
-  step-specific facts;
-- `RunEnd.output` identifies the root run result.
-
-`RunBegin.parent` and statement doc are execution metadata, not presentation
-instructions. They let every tracer reconstruct the same recursive run tree
-and semantic operation without querying the store. The remaining choices about
-visibility, wording, color, truncation, and finalization stay in the caller.
+The current implementation work applies this design to script mode first.
+Inspection and chat keep their existing implementation until changed
+explicitly.
 
 
-## Presentation Vocabulary
+## Visibility
 
-The presentation layer uses these terms consistently:
+Examples use these review annotations. They are not printed:
 
-| Term | Meaning |
+| Annotation | Visible at |
 | --- | --- |
-| run result | the value referenced by the root `RunEnd.output` |
-| activity | user-visible progress such as a flow statement, model call, or tool call |
-| live block | a mutable TUI block that still expects updates |
-| finalization | removing a stable block from the live area and writing its final form to scrollback |
-| scrollback entry | immutable terminal output produced by finalization or history restoration |
-| pending response | streamed model content that may become the chat run result |
-| diagnostic | one user-facing explanation of a failure |
-| semantic label | the authored or derived operation name shown before implementation details |
-| fact | compact secondary data such as item count, usage, duration, or source line |
-
-The following distinctions are intentional:
-
-- `finished` is an internal durable execution status;
-- `succeeded` is its user-facing presentation;
-- `finalize` is a TUI presentation action;
-- `settle` is reserved for the Toolang flow statement and is not a synonym for
-  block completion;
-- `control` means a run control such as start or steer;
-- `command` is reserved for CLI, slash, and shell commands.
-
-`output` continues to name step and event data. `result` names the root value
-presented to a caller. An assistant response is the chat rendering of a run
-result; not every model output is an assistant response.
-
-
-## Shared Status Language
-
-Internal execution keeps the durable status name `finished`. User-facing CLI
-surfaces render that status as `succeeded`.
-
-| Internal status | Display status | Mark | Meaning |
-| --- | --- | --- | --- |
-| pending | pending | `·` | accepted but not running |
-| running | running | `…` | currently active |
-| finished | succeeded | `✓` | completed successfully |
-| failed | failed | `✗` | terminated with an error |
-| canceled | canceled | `−` | stopped by control or shutdown |
-
-`→` marks a transition that has just started. It is useful in a linear live
-script trace. A mutable TUI block normally uses `…` while it remains active and
-replaces it with its terminal mark before finalization.
-
-Marks, words, and color agree. Color adds emphasis but never carries status by
-itself.
-
-
-## Shared Labels
-
-### Runs
-
-A run label contains its executable kind and unique runnable name:
-
-```text
-agic:search_web
-flow:research
-```
-
-When identity is important, the run id precedes the executable label:
-
-```text
-run_8te228b5  flow:research
-```
-
-Root run ids are shown:
-
-- on every inspection detail;
-- in verbose script output;
-- on every script failure;
-- in the chat start control bar after `RunBegin`;
-- on chat failures and cancellations.
-
-Successful, compact chat activity does not need to repeat the run id on every
-line.
-
-
-### Flow Steps
-
-Flow steps use authored semantics rather than their execution mechanism.
-
-The primary label is selected in this order:
-
-1. the statement's authored doc comment;
-2. a concise label derived from the statement;
-3. the step kind as a final fallback.
-
-For example:
-
-```too
-## Rank the remaining evidence by relevance
-rank top 8: Return only a numeric score.
-```
-
-is presented as:
-
-```text
-Rank the remaining evidence by relevance
-rank top 8 · line 51
-```
-
-The underlying step kind may be `par`, but `par` is an execution mechanism and
-is not the primary user-facing label.
-
-Authored docs used as labels are stored with the step's other statement
-metadata so live and persisted presentation produce the same text.
-
-
-### Model Steps
-
-A model label uses the canonical selected model ref when available:
-
-```text
-model deepseek/deepseek-chat
-model openai/gpt-5
-```
-
-Useful terminal facts include:
-
-```text
-15.8k/394 tokens
-4.1s
-3 tool requests
-```
-
-Provider, adapter, base URL, prompt hashes, and normalized call internals are
-inspection data. They are not part of the default step label.
-
-
-### Tool Steps
-
-A tool label uses the most specific stable tool name available:
-
-```text
-tool web_search.search
-tool shell
-```
-
-Completion may add a compact result:
-
-```text
-5 results
-exit 0
-820ms
-```
-
-Arguments and complete tool output belong in verbose diagnostics or JSON.
-Secret-bearing input must never be rendered merely because verbosity is high.
-
-
-### Parallel Items And Lanes
-
-Parallel work uses one-based human-facing positions:
-
-```text
-item 3/5
-lane 2/4
-completed 4/6
-```
-
-Durable indexes and step paths remain zero-based. Human-facing item positions
-do not replace durable identities.
-
-The number of lanes is bounded while the number of items may be large. A live
-parallel operation therefore shows one aggregate progress line plus the
-current item assigned to each active lane:
-
-```text
-… Search the web · 42/100 · L1→43 L2→40 L3→41 L4→42
-```
-
-Successful item completions update that line and are never appended as
-individual progress lines, including at high verbosity. A failed item may be
-expanded with its item position, child run identity, and bounded diagnostics.
-
-
-### Time And Counts
-
-Facts are separated with a centered dot:
-
-```text
-6/6 items · 18 tool calls · 21.7s
-15.8k/394 tokens · 4.1s
-```
-
-Preferred duration forms are:
-
-```text
-420ms
-4.2s
-1m 08s
-```
-
-Counts use exact integers. Token counts may use compact thousands only in
-human-facing output; JSON retains exact values.
-
-
-## Run Presentation
-
-### Agic Runs
-
-An agic is presented as a model-tool loop.
-
-Default presentation emphasizes:
-
-- the selected agic;
-- tool activity;
-- the current pending response;
-- the assistant response;
-- failures.
-
-Successful internal model calls need not remain visible after they have only
-requested tools. The model step that supplies the root run result becomes the
-assistant response.
-
-Example live activity:
-
-```text
-… model deepseek/deepseek-chat
-→ tool web_search.search
-✓ tool web_search.search · 5 results · 820ms
-… model deepseek/deepseek-chat
-```
-
-Example terminal summary:
-
-```text
-✓ agic:search_web · 2 model calls · 3 tools · 3.4k/620 tokens · 6.8s
-```
-
-
-### Flow Runs
-
-A flow is presented as an ordered sequence of authored statements. Top-level
-statement order is the main visual structure. Script progress folds successful
-child runs into the statement that invoked them, even at maximum verbosity.
-Inspection may expand the durable child-run tree when explicitly requested.
-
-Example:
-
-```text
-  ✓ step 0 · Expand the research question · 6 items · 4.2s
-  ✓ step 1 · Search the web · 6/6 items · 21.7s
-  ✓ step 2 · Keep relevant evidence · kept 5/6 · 8.1s
-  ✗ step 3 · Rank evidence · item 3/5 · line 51
-```
-
-Successful parallel children are summarized by their parent statement.
-Failures expand the relevant child:
-
-```text
-  ✗ step 3 · Rank evidence · item 3/5
-    └─ ✗ run run_pa74s6cc · inline agic
-        ├─ ✓ step 0 · model deepseek/deepseek-chat
-        └─ ✗ step 1 · output coercion
-```
-
-Completion order may update live progress, but finalized presentation uses
-source order and item order.
-
-
-## Step Presentation
-
-Run and step boundaries are explicit rather than inferred from identifiers or
-color:
-
-```text
-→ run run_8te228b5 · flow:research
-  ✓ step 0 · Expand research queries · 6 items
-  … step 1 · Search the web · 4/6
-✓ run completed · 28.1s
-```
-
-Root runs are not steps. A run line always contains the word `run`; an
-execution step always contains `step` plus its root-relative path. Root steps
-are indented under their run. Nested root-run steps use paths such as
-`step 2/0`; folded child-run steps are shown only by explicit inspection.
-
-`StepKind` is deliberately smaller than the set of flow statements. Display
-uses statement metadata to recover user intent.
-
-| Step kind | Default presentation | Typical stable facts |
+| `[0+]` | default, `-v`, and `-vv` |
+| `[1+]` | `-v` and `-vv` |
+| `[2]` | `-vv` only |
+| `[live]` | mutable terminal content, replaced rather than appended |
+| `[always]` | every non-quiet level, especially failures |
+
+Script channel behavior is:
+
+| Level | stderr | stdout |
 | --- | --- | --- |
-| `run` | invoked runnable or statement label | runnable, output shape, item count |
-| `agent` | target agent and runnable | agent, runnable, remote result |
-| `human` | requested human input | prompt summary, response state |
-| `model` | selected model | streamed text, tool requests, usage, duration |
-| `tool` | tool name | compact result, exit status, duration |
-| `par` | authored parallel statement | completed/total, concurrency, failed item |
-| `loop` | authored loop statement | iteration, limit, stop condition |
-| `system` | meaningful runtime operation | binding, coercion, runtime failure |
+| `-q` | nothing | nothing |
+| default | minimal progress, failures, root summary with run ID | final value |
+| `-v` | descriptions, useful previews, stable work summaries | final value |
+| `-vv` | input, control/step IDs, step facts, and locals updates | final value |
+
+At `-q`, only the process exit status communicates the outcome. Verbosity
+never exposes secrets or unbounded request data.
 
 
-### `run`
+## Vocabulary
 
-`run` wraps a child agic or flow. The runnable name is more useful than the
-generic kind:
+### Run
 
-```text
-… expand_queries
-✓ expand_queries · 6 items
-```
-
-For `scatter` and `gather`, the statement label remains primary:
+A run executes one named agic or flow. A caller starts a root run. A flow
+statement or agic loop may start child runs.
 
 ```text
-✓ scatter 6 expand_queries · 6 items
-✓ gather synthesize_report
+run_abc123
 ```
 
+### Step
 
-### `agent`
-
-`agent` represents a cross-agent invocation such as `seek`. Presentation
-identifies both target agent and runnable:
+A step is one durable execution operation. Its full `StepPath` is:
 
 ```text
-… seek researcher/search
-✓ seek researcher/search · 2.4s
+run_id[/step_index/...]
 ```
-
-Transport details are hidden unless needed for a failure.
-
-
-### `human`
-
-`human` represents a human checkpoint such as `ask`:
-
-```text
-… waiting for input
-✓ received human input
-```
-
-The input surface owns the actual prompt interaction. Inspection reports the
-step result without pretending that a historical run is still waiting.
-
-
-### `model`
-
-Live script and chat surfaces consume model part events. Inspection uses only
-the completed output and noted usage.
-
-Default completed forms include:
-
-```text
-✓ model deepseek/deepseek-chat · 2.1k/180 tokens · 2.7s
-✓ model deepseek/deepseek-chat · requested web_search.search ×3
-```
-
-Reasoning is transient by default. It may be shown while live or summarized as
-elapsed thinking, but it does not become assistant transcript unless the
-canonical output defines it as user-visible content.
-
-
-### `tool`
-
-Tool execution is visible while active and finalizes as a compact line:
-
-```text
-… tool web_search.search
-✓ tool web_search.search · 5 results · 820ms
-```
-
-A failed tool retains a bounded useful excerpt:
-
-```text
-✗ tool shell · exit 1
-  pytest: 2 failed, 38 passed
-```
-
-
-### `par`
-
-`par` is normally rendered as its authored `storm`, `map`, `keep`, `drop`, or
-`rank` statement. Live output shows aggregate progress:
-
-```text
-… Search the web · 4/6
-```
-
-Final output shows one stable summary:
-
-```text
-✓ Search the web · 6/6 · par 4 · 21.7s
-```
-
-Individual successful children are shown only in sufficiently detailed
-inspection or verbose script output. A failed child is always identifiable.
-
-
-### `loop`
-
-`loop` is rendered as its authored `repeat` or `settle` statement:
-
-```text
-… repeat · iteration 3
-✓ repeat · 4 iterations
-```
-
-Nested steps remain under the loop. Finalized summaries do not repeat every
-successful iteration unless the user requests detailed inspection.
-
-
-### `system`
-
-Successful internal system work is quiet unless it represents an authored
-operation such as `let` or local filtering.
-
-A runtime-generated failure system step is durable trace truth, but default
-presentation folds it into the owning step's diagnostic. It must not print the
-same error a second time.
 
 Examples:
 
 ```text
-✓ let query
-✗ output coercion · expected Number
+run_abc123/2
+run_abc123/2/0
 ```
 
+Whenever output shows a StepPath, it shows the complete path so it can be
+copied into an inspection command.
 
-## Flow Statement Presentation
+### Control
 
-| Statement | Primary summary |
+A run control is identified by its run ID and durable zero-based control
+index. Presentation uses `@` so it cannot be confused with a StepPath:
+
+```text
+run_abc123@0    # start control
+run_abc123@1    # first later steer or stop control
+run_abc123/0    # first step, not a control
+```
+
+The compact forms are:
+
+```text
+RUN_ID@CONTROL_INDEX
+RUN_ID/STEP_INDEX[/CHILD_STEP_INDEX...]
+```
+
+### Flow Statement
+
+A flow statement is an authored operation such as `run`, `scatter`, `map`, or
+`rank`. It is not a separate durable record.
+
+A statement may contain three phases:
+
+1. run child work or perform a local operation;
+2. validate, reshape, filter, rank, or otherwise transform the result;
+3. save or discard the successful result.
+
+The renderer derives this structure from existing step events and statement
+facts. It does not invent statement events.
+
+
+## Shared Formatting
+
+### Status
+
+Durable `finished` is presented as `succeeded`.
+
+| Internal | Display |
 | --- | --- |
-| `run NAME` | `Run NAME` |
-| `seek AGENT/NAME` | `Seek AGENT/NAME` |
-| `ask` | authored doc or `Request human input` |
-| `scatter N NAME` | `Scatter with NAME` plus produced item count |
-| `storm N NAME par P` | `Generate with NAME` plus completed count |
-| `gather NAME` | `Gather with NAME` |
-| `settle NAME` | `Settle with NAME` plus iteration count |
-| `map NAME par P` | `Map with NAME` plus completed count |
-| `keep ...` | `Keep matching items` plus kept/input count |
-| `drop ...` | `Drop matching items` plus retained/input count |
-| `rank ...` | `Rank items` plus selection and failed item |
-| `repeat ...` | `Repeat` plus iteration count and stop condition |
-| `let NAME` | `Set NAME` |
+| `running` | `running` |
+| `finished` | `succeeded` |
+| `failed` | `failed` |
+| `canceled` | `canceled` |
 
-An authored doc replaces these generated primary summaries. The exact
-statement remains available as secondary detail.
-
-
-## Thread And Run Lists
-
-`threads` and `runs` are index surfaces. They remain tables rather than traces.
-
-Thread columns:
+Active agic work and successful output use `·`:
 
 ```text
-THREAD  TITLE  RUNS  STATUS  UPDATED
+· thinking…
+· executing web_search.search…
 ```
 
-Run columns:
+Failure uses `!`. The error occupies the normal output position, followed by a
+facts line:
 
 ```text
-THREAD  RUN  TITLE  STATUS  CREATED
+! run_abc123/2 failed: output is not valid Number
+  · 3.1s
 ```
 
-When filtered to one thread, `THREAD` is omitted. Status words use the shared
-display mapping. Titles prefer a meaningful result summary and fall back to
-input text.
+Root results use an unmarked frame containing the root run ID:
+
+```text
+--- run_abc123 succeeded ---
+1 item returned
+8.2s · 4.6k/63 tokens · 1 model call
+----------------------------
+```
+
+### Shape
+
+Shape is distinct from the value it contains:
+
+```text
+1 item
+0-item list
+1-item list
+8-item list
+```
+
+`1 item` never describes a one-element flow list.
+
+### Facts
+
+Facts are separated by centered dots:
+
+```text
+8.2s · 18 runs · 64.2k/720 tokens · 18 model calls
+```
+
+Token usage is `INPUT/OUTPUT tokens`:
+
+```text
+4.6k/63 tokens
+34k/1.5m tokens
+```
+
+Durations use compact units:
+
+```text
+12ms
+1.8s
+1m 08s
+```
+
+### Progress Style
+
+Progress is dim by default so final stdout remains visually primary. This is a
+progress style, not a blanket stderr style:
+
+- active mutable work uses normal brightness;
+- failure uses normal-brightness red;
+- cancellation uses normal-brightness yellow;
+- completed progress, metadata, statistics, and frames are dim.
+
+When stderr is not a TTY, the renderer emits no color, cursor movement, or
+partial delta lines. Stable boundaries remain newline-delimited.
+
+
+## Alignment
+
+Root output has no left margin:
+
+- agic activity uses `·` in the root marker column;
+- flow statements use a bracketed zero-based step index in the root marker
+  column;
+- content starts after its marker;
+- wrapped lines stay aligned with that content;
+- the root summary reserves the marker column without displaying a marker.
+
+```text
+· Alpha beta gamma delta epsilon zeta
+  eta theta iota kappa.
+  run_abc123/0 · 1.8s · deepseek/deepseek-chat · 3.4k/86 tokens
+
+--- run_abc123 succeeded ---
+1 item returned
+1.8s · 3.4k/86 tokens · 1 model call
+----------------------------
+```
+
+Nested content adds one two-space level:
+
+```text
+[1] map search_web · par 4
+  · A long result starts here and continues after wrapping
+    at the same content boundary.
+```
+
+Parallel lane rows are truncated instead of wrapped so their columns remain
+stable.
+
+
+## Root Run Block
+
+Every root run follows this structure:
+
+```text
+Run RUNTYPE NAME                                  [0+]
+DESCRIPTION                                       [1+]
+
+> INPUT                                           [2]
+  ARG=VALUE ...                                   [2]
+  RUN_ID@CONTROL_INDEX                            [2]
+
+ACTIVITY
+
+--- RUN_ID STATUS ---                             [0+]
+RESULT SHAPE OR ERROR                             [0+]
+AGGREGATE FACTS                                   [0+]
+---------------                                   [0+]
+```
+
+Rules:
+
+- runnable name and description form one left-aligned paragraph;
+- a blank line separates that paragraph from the input paragraph;
+- the input block has a trailing blank line when visible;
+- activity has a trailing blank line before the root summary;
+- omitted optional blocks do not leave extra blank lines;
+- the input paragraph identifies its accepted start control;
+- the frame title contains the root run ID and status;
+- child run IDs come from descendant StepPaths or failure boundaries rather
+  than being repeated on work lines;
+- opening and closing frame lines have equal width.
+
+
+## Agic Runs
+
+An agic is a model-tool loop. Activity starts with what is happening rather
+than the implementation kind.
+
+### Model
+
+Before output:
+
+```text
+· thinking…                                                   [live]
+```
+
+When deltas arrive, they replace the same live line:
+
+```text
+· Sunlight is scattered by molecules in the atmosphere…      [live]
+```
+
+Useful final text may remain at `-v`. At default verbosity, an optional
+successful preview may disappear because the canonical value is written to
+stdout.
+
+At `-vv`, the completed model step adds one metadata line:
+
+```text
+· Sunlight is scattered by molecules in the atmosphere.
+  run_abc123/0 · 1.8s · deepseek/deepseek-chat · 3.4k/86 tokens
+```
+
+The order is:
+
+```text
+STEP_PATH · DURATION · MODEL · TOKENS
+```
+
+There is no separate `model succeeded` line.
+
+### Tool
+
+```text
+· executing web_search.search…                               [live]
+· web_search.search: 5 results                               [1+]
+  run_abc123/1 · 820ms · exit 0                              [2]
+```
+
+The same two-line structure presents failure. The error replaces successful
+output in the primary content position, and facts remain below it:
+
+```text
+! web_search.search: provider returned status 429
+  run_abc123/1 · 820ms · exit 429
+```
+
+Tool failure is visible at every non-quiet level. There is no second tool
+summary repeating the same tool name, error, or duration.
+
+### Complete Agic
+
+```text
+Run agic expand_queries
+Expand one topic into several research queries.               [1+]
+
+> agent framework                                             [2]
+  count=6                                                     [2]
+  run_queries123@0                                            [2]
+
+· ["agent framework architecture", "multi-agent SDK", ...]    [1+]
+  run_queries123/0 · 2.0s · deepseek/deepseek-chat · 4.6k/44 tokens
+
+--- run_queries123 succeeded ---
+1 item returned
+2.0s · 4.6k/44 tokens · 1 model call
+--------------------------------
+```
+
+The model metadata line is visible only at `-vv`.
+
+
+## Flow Runs
+
+A flow presents statements in source order. A statement header starts with its
+durable zero-based step index:
+
+```text
+[1] map search_web · par 4                                   [0+]
+  Search the web for each query.                             [1+]
+```
+
+The bracketed index and final StepPath segment are identical. Records, events,
+inspection, and model-visible diagnostics therefore use one zero-based index
+without presentation-only conversion. A statement header never repeats its
+source line or complete StepPath. Failures and model/tool facts may still show
+complete paths when they identify the affected operation.
+
+Event placement indexes are displayed without conversion:
+
+- `item`, `lane`, and `loop` are zero-based positions;
+- `items`, `lanes`, `completed`, and `active` are cardinal counts.
+
+For example, four lanes are identified as `0` through `3`, while the work line
+still says `4 lanes`.
+
+Generated and internal agics do not appear as root commands, but a statement
+may identify the runnable it invokes.
+
+
+## Statement Work And Child Runs
+
+Work uses concise imperative sentences:
+
+```text
+Run agic expand_queries
+Run flow review
+Run agic search_web in parallel (18 items, 4 lanes)
+Run agic generator in parallel (6 times, 4 lanes)
+Run agic reducer sequentially (6 items, 6 calls)
+```
+
+The sentence distinguishes one invocation, parallel independent invocations,
+and sequential invocations that carry state forward. Parentheses contain only
+execution facts: `N items` describes per-item work, while `N times` describes
+repeated generation from the same input.
+
+If a parallel statement receives an empty list, no child `RunBegin` exists.
+The statement block still emits its work sentence when `StepEnd` supplies the
+zero-item result:
+
+```text
+[3] rank <agic:L51> · top 8
+  Run agic <agic:L51> in parallel (0 items)
+```
+
+An inline agic uses its source reference instead of an unstable generated
+name:
+
+```text
+Run agic <agic:L35>
+```
+
+A successful child run does not get a frame or a redundant completion line.
+Its descendant StepPaths identify the child run, its model and tool facts
+describe the work, and the parent statement describes the semantic result. A
+child failure shows its ID and one diagnostic.
+
+
+## Saving Results
+
+Saving is the final successful statement phase. Exactly one phrase is used:
+
+```text
+Save result to _
+Save result to NAME
+Discard result
+```
+
+The save or discard action and its semantic result are one block, visible
+together at `-vv`:
+
+```text
+Save result to findings
+· 8-item list · selected top 8 of 18 items
+```
+
+If execution, validation, transformation, or coercion fails, saving does not
+occur and no saving line is printed. Failure already implies that locals were
+not updated.
+
+
+## Statement Result Phrases
+
+The leading shape describes the value that would be saved or discarded. For a
+list, the first number is its final length.
+
+| Statement | Semantic result |
+| --- | --- |
+| `run` | `1 item · returned by one run` |
+| `scatter N` | `N-item list · scattered from 1 item` |
+| `storm N` | `N-item list · produced by N runs` |
+| `gather` | `1 item · gathered from an N-item list` |
+| `settle` | `1 item · settled from an N-item list` |
+| `map` | `N-item list · mapped from an N-item list` |
+| `keep first N` | `N-item list · kept first N of M items` |
+| `keep last N` | `N-item list · kept last N of M items` |
+| predicate `keep` | `N-item list · kept N of M items` |
+| `drop first N` | `N-item list · dropped first N of M items` |
+| `drop last N` | `N-item list · dropped last N of M items` |
+| predicate `drop` | `N-item list · dropped M-N of M items` |
+| `rank` | `N-item list · ranked N items` |
+| `rank top N` | `N-item list · selected top N of M items` |
+| `rank bottom N` | `N-item list · selected bottom N of M items` |
+| `repeat` | `1 item · completed N iterations` |
+| `let` | `1 item · perceived from authored content` |
+
+
+## Transparent `run`
+
+A `run` statement contains one child run and no additional transformation, so
+the two boundaries are compressed:
+
+```text
+[3] run review
+  Review and improve the report.                              [1+]
+
+  Run flow review                                            [0+]
+  · reviewing weak sections…                                [live]
+    run_review1/0 · 4.4s · deepseek/deepseek-chat            [2]
+
+  Save result to report                                     [2]
+  · 1 item · returned by one run                             [2]
+```
+
+There is no child-run success line or statement result frame.
+
+
+## Scatter
+
+`scatter` runs one child, then validates and reshapes its result:
+
+```text
+[0] scatter 6 expand_queries
+  Expand the topic into six research queries.                 [1+]
+
+  Run agic expand_queries                                    [0+]
+  · ["agent architecture", "agent tools", ...]               [1+]
+    run_queries1/0 · 2.0s · deepseek/deepseek-chat · 4.6k/63 tokens
+
+  Save result to _                                           [2]
+  · 6-item list · scattered from 1 item                      [2]
+```
+
+The child model metadata line is visible only at `-vv`.
+
+The child may fail to return an array:
+
+```text
+[0] scatter 6 expand_queries
+  Run agic expand_queries
+  ! run_research1/0 failed: scatter requires a list result
+    · 1.7s
+```
+
+No binding follows this failure.
+
+
+## Parallel Statements
+
+The lane count is bounded while the item count may be large. Parallel work
+owns one mutable block rather than one scrollback line per item:
+
+```text
+[2] rank relevance · top 8 · par 4
+  Rank findings by relevance.                                [1+]
+
+  Run agic relevance in parallel (18 items, 4 lanes)          [0+]
+  5 completed · 4 active · 1 failed · 3.1s                  [live]
+  0 │ item 5 | thinking…                                     [live]
+  1 │ item 6 | executing knowledge.search…                   [live]
+  2 │ item 7 | score 0.82                                    [live]
+  3 │ item 8 | composing score…                              [live]
+```
+
+Lane syntax is:
+
+```text
+LANE │ item POSITION | ACTIVITY
+```
+
+The progress line does not repeat the total already present in the statement
+and work lines. Each lane replaces its previous item. Successful child runs
+update the aggregate and never create individual scrollback entries.
+
+When work completes, the live lane area disappears and a stable work summary
+remains at `-v` and above:
+
+```text
+  · 18 runs succeeded · 9.4s · 64.2k/720 tokens · 18 model calls
+```
+
+At `-vv`, the subsequent locals update is a separate block:
+
+```text
+  Save result to findings
+  · 8-item list · selected top 8 of 18 items
+```
+
+A failure retains one useful failing item:
+
+```text
+[2] rank relevance · top 8 · par 4
+  Run agic relevance in parallel (18 items, 4 lanes)
+  ! run_research1/2 failed: item 5: output is not valid Number
+    · 3.1s · 5 completed · 1 failed
+```
+
+
+## Repeat
+
+`repeat` keeps only its most recent iteration in the live area:
+
+```text
+[3] repeat 5
+  iteration 2 · 5 total                                      [live]
+  · revising report…                                         [live]
+```
+
+For an `until` clause, condition evaluation is separate live activity:
+
+```text
+  evaluate until                                              [live]
+  · false                                                     [1+]
+```
+
+Starting another iteration replaces the preceding live block. Completed
+iterations update aggregate state but do not accumulate in scrollback.
+
+At `-vv`, the final result is:
+
+```text
+  Save result to _
+  · 1 item · completed 4 iterations
+```
+
+If an iteration fails, later iterations and saving do not occur.
+
+
+## Settle
+
+`settle` is a left fold. It transforms an `N-item list` into one item through
+sequential reducer runs.
+
+The current syntax has no explicit initial-value clause. Its implicit initial
+value is empty content. The reducer uses Toolang's primary input/output
+convention:
+
+```too
+agic reducer(_: Part[], item: Item) -> Part[]:
+  ...
+```
+
+For every reducer run:
+
+- `_` is the accumulated value and the child run's primary input;
+- `item` is the current source-list item, passed as a runnable argument;
+- the child run output becomes `_` for the next call.
+
+Conceptually:
+
+```text
+_ = reducer(_, item)
+```
+
+```text
+_ = empty
+_ = reducer(_, a)
+_ = reducer(_, b)
+_ = reducer(_, c)
+```
+
+Therefore:
+
+- an `N-item list` starts `N` reducer runs;
+- the first reducer run receives `item=0` and empty `_`;
+- an empty list returns the empty implicit initial value;
+- the reducer primary-input type must accept that empty value;
+- item and accumulator types may differ after the first call.
+
+Event placement preserves source and call indexes separately:
+
+- `item` is the zero-based source-list index;
+- `loop` is the zero-based reducer-call index.
+
+The first reducer run has `item=0` and `loop=0`. With the current contract,
+the two indexes remain equal.
+
+Named and inline settle forms use the existing syntax:
+
+```too
+settle reducer
+
+settle -> Part[]:
+  Accumulated:
+  {{_}}
+
+  Current item:
+  {{item}}
+```
+
+Lowering gives an inline settle agic an implicit `item: Part[]` parameter. It
+does not add an initial-value node to the grammar or AST.
+
+Only the current iteration remains live:
+
+```text
+[4] settle reducer
+  Run agic reducer sequentially (6 items, 6 calls)
+  3 calls completed · item 3 active · 4.2s                    [live]
+  · thinking…                                                 [live]
+```
+
+The renderer does not query persisted child inputs to reconstruct `_` or
+`item`. It presents their zero-based position and the native live call events.
+
+At `-vv`, completion adds:
+
+```text
+  Save result to report
+  · 1 item · settled from a 6-item list
+```
+
+An explicit authored initial value remains a future language feature. It will
+be designed with the settle syntax and AST rather than inferred by execution.
+
+
+## Failures
+
+One diagnostic is printed at the most useful visible boundary. It identifies,
+when available:
+
+- authored statement and complete StepPath;
+- failed item and child run;
+- expected type or shape;
+- bounded received value;
+- actionable provider or tool cause.
+
+```text
+[2] rank relevance · top 8 · par 4
+  ! run_research1/2 failed: item 5: output is not valid Number
+    · 3.1s · 5 completed · 1 failed · 18.2k/210 tokens
+
+--- run_research1 failed ---
+3.1s · 5 completed · 1 failed · 18.2k/210 tokens
+----------------------------
+```
+
+If no visible operation already owns the diagnostic, the root frame displays
+it once. Full exception chains belong in the per-run log.
+
+Canonical partial progress is:
+
+```text
+storm       5 of 6 runs completed before failure
+map         5 of 18 items mapped before failure
+keep/drop   5 of 18 predicates evaluated before failure
+rank        5 of 18 items scored before failure
+settle      5 of 6 items settled before failure
+repeat      2 iterations completed before failure
+```
+
+Failed statements never display `Save result` or `Discard result`.
+
+
+## Cancellation
+
+A canceled run has no stdout value:
+
+```text
+--- run_abc123 canceled ---
+interrupted by user
+4.1s · 2 completed · 1 active
+---------------------------
+```
+
+The first interrupt requests cancellation and keeps the owner event loop alive
+for cleanup and terminal events. A later interrupt may force termination. A
+mutable parallel block must never swallow interrupts.
+
+
+## Root Summary
+
+The root summary is the only routine summary visible at every non-quiet level:
+
+```text
+--- run_abc123 succeeded ---
+1 item returned
+51s · 80.8k/1.2k tokens · 5 model calls · 12 tool calls
+----------------------------
+```
+
+Agic step metadata and flow locals updates are optional `-vv` details.
+Stable parallel work summaries remain visible at `-v`. The root frame:
+
+- contains the root run ID before the status;
+- aligns with the owning run;
+- has no extra status marker;
+- uses equal-width opening and closing lines.
 
 
 ## Inspection
 
-Inspection presents completed durable truth. It never animates, displays a
-spinner, or reconstructs historical deltas.
+Inspection presents durable state and never reconstructs historical deltas. It
+may expand records that script folds.
+
+It reuses:
+
+- status words;
+- exact Run IDs and StepPaths;
+- shape language;
+- statement names and authored docs;
+- duration and usage formatting;
+- the same selected failure cause.
+
+It does not use live markers, lane rows, or root summary frames.
 
 
-### Thread Inspection
+## Chat TUI
 
-Thread inspection shows:
+The chat TUI keeps its established framework:
 
-- thread identity, status, origin, and run count;
-- root runs in visible thread order;
-- each run's mark, id, executable, elapsed time, and summary.
-
-Child runs are omitted from the top-level list and remain available through
-run inspection.
-
-
-### Run Inspection
-
-Run inspection uses stable sections:
-
-```text
-# run
-# input
-# result
-# steps
-# failure
-```
-
-Empty sections are omitted. `failure` is distinct from a successful `result`.
-
-Example:
-
-```text
-# run
-✗ run_8te228b5  flow:research · 42.8s
-  thread script_g0k8vm63 · origin script
-
-# input
-agent framework
-
-# steps
-✓ step 0 · Expand research queries · 6 items
-✓ step 1 · Search the web · 6/6
-✓ step 2 · Keep relevant evidence · kept 5/6
-✗ step 3 · Rank evidence · item 3/5 · line 51
-
-# failure
-Expected Number, but item 3/5 returned explanatory text.
-Child run: run_pa74s6cc
-```
-
-
-### Step Inspection
-
-The default step view translates `given` and `noted` into named facts:
-
-```text
-# step
-✗ run_8te228b5:3  rank top 8 · line 51
-
-Input       step run_8te228b5:2
-Items       5
-Concurrency 5
-Scorer      inline agic at line 51
-Binding     _
-Failure     item 3/5 returned invalid Number
-```
-
-`--json` remains the complete protocol view for raw `given`, `noted`, input,
-output, model-call data, and durable identities.
-
-
-### Child Run Identity
-
-The displayed tree must not invent ambiguous flattened paths for parallel
-children. A child run boundary includes its real run id:
-
-```text
-✗ step 3 · Rank evidence
-  ├─ ✓ item 1/5 · run_6390e3nf
-  ├─ ✓ item 2/5 · run_v9assth7
-  └─ ✗ item 3/5 · run_pa74s6cc
-      ├─ ✓ step run_pa74s6cc:0 · model deepseek/deepseek-chat
-      └─ ✗ step run_pa74s6cc:1 · output coercion
-```
-
-The corresponding precise inspection target is:
-
-```bash
-too SCRIPT inspect run_pa74s6cc:0
-```
-
-
-## Script Presentation
-
-Script mode preserves a strict output-channel contract:
-
-- stdout contains only the runnable's run result;
-- stderr contains progress, transient delta previews, and diagnostics;
-- `--quiet` suppresses progress without suppressing the result;
-- logging remains separate from presentation.
-
-This keeps pipelines safe:
-
-```bash
-too report.too research "agent frameworks" > report.md
-```
-
-
-### Interactive Terminal
-
-When stderr is a TTY, a live delta preview may update in place. Intermediate
-child model text is never copied to stdout.
-
-Example:
-
-```text
-→ run run_8te228b5 · flow:research
-  ✓ step 0 · Expand research queries · 6 items
-  … step 1 · Search the web · 4/6 · L1→5 L2→6 L3→3 L4→4
-```
-
-When the live operation completes, its transient preview is replaced by a
-stable summary. The canonical run result is written to stdout after execution.
-
-
-### Non-Interactive Output
-
-When stderr is not a TTY:
-
-- default script execution does not emit delta fragments;
-- verbose execution emits stable newline-delimited boundaries;
-- terminal cursor movement and live rewriting are disabled;
-- stdout retains the same run-result contract.
-
-
-### Verbosity
-
-| Level | Script stderr |
-| --- | --- |
-| default | direct semantic steps, aggregate progress, and failures |
-| `-v` | statement details, source locations, duration, shape, and item counts |
-| `-vv` | nested root-run steps and failed child-run identity |
-| `-vvv` | bounded non-secret model and failed-child output previews |
-
-Failures always include enough context to identify the source step and child
-run, even without verbosity. Verbosity never enumerates successful flow child
-runs or their internal model and tool steps.
-
-
-## Chat TUI Presentation
-
-The existing TUI implementation framework is a design constraint, not a
-migration target.
-
-It retains:
-
-- non-full-screen `prompt_toolkit` operation;
+- non-full-screen `prompt_toolkit`;
 - real terminal scrollback;
-- the dynamic live-block area above the queue and prompt;
-- mutable blocks that update and finalize progressively;
-- wide start and steer control bars;
-- run id insertion into the start control bar after `RunBegin`;
-- aligned control-bar padding and activity markers;
-- Rich Markdown output and colored status;
-- the current queue, prompt, and status-bar organization.
+- prominent full-width start and steer control bars;
+- run ID insertion into the start control after acceptance;
+- aligned control padding and activity markers;
+- a bounded mutable live area;
+- progressive finalization;
+- Rich Markdown assistant output.
 
-Presentation unification changes wording and data use without replacing this
-layout or block lifecycle.
+Stable content moves into scrollback as soon as its ordering and value are
+known:
 
-
-### Start And Steer Controls
-
-Start and steer are visually prominent controls, not ordinary activity lines.
-
-The start bar contains the submitted input and initially displays `starting`.
-After `RunBegin`, it displays the root run id and moves into scrollback:
-
-```text
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-> agent framework
-  run_8te228b5
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-A steer uses its distinct control-bar color and remains live while pending:
-
-```text
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-+ Focus on implementation details
-  pending for next step
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-When a `StepBegin.input` shows that the steer was applied, the bar finalizes.
-Its footer may identify the application boundary. Control bars retain their
-existing padding and alignment with following activity markers.
-
-
-### Progressive Finalization
-
-The live area contains only live presentation blocks. A block moves into
-scrollback as soon as its content and ordering are stable.
-
-| Item | Safe finalization boundary |
+| Content | Finalization boundary |
 | --- | --- |
 | start control | root `RunBegin` |
 | steer control | consuming `StepBegin` or terminal `RunEnd` |
-| top-level flow statement | its `StepEnd` |
-| tool activity | its `StepEnd` |
-| parallel children | owning parent `StepEnd`, as one aggregate |
-| internal model tool request | model `StepEnd` once classified |
+| tool activity | tool `StepEnd` |
+| parallel lanes | parent `StepEnd`, as one aggregate |
+| flow statement | outer `StepEnd` |
 | pending response | root `RunEnd.output` confirms it |
-| failure diagnostic | owning visible `StepEnd` |
-| cancellation | root `RunEnd` |
+| failure or cancellation | root `RunEnd` |
 
-Top-level flow statements execute in source order, so each completed statement
-can finalize immediately. Parallel child completion order updates the current
-parent block but does not append child lines to scrollback in completion order.
+Parallel presentation uses space proportional to active lanes, not item count.
+Scrollback excludes stale `thinking…` lines, token deltas, historical lane
+assignments, repeated successful internal output, and duplicate errors.
 
-
-### Live-Area Bound
-
-The number of visible live blocks should track active execution depth, not the
-total number of events or parallel children.
-
-A large parallel statement normally needs:
-
-```text
-… Search the web · 42/100 · L1→43 L2→40 L3→41 L4→42
-```
-
-It does not need one visible block per child. The presentation state retains
-only aggregate counters, the current item per active lane, aggregate usage,
-and bounded failure details. Terminal child state is discarded after it is
-incorporated into its parent.
-
-
-### Part Streaming
-
-Part identity is `(step, part index)`.
-
-The TUI handles the complete lifecycle:
-
-```text
-PartBegin -> create or reset the typed live part
-PartDelta -> update that part
-PartEnd   -> reconcile with the canonical MessagePart
-StepEnd   -> reconcile the complete ordered output
-RunEnd    -> confirm the root result and terminal status
-```
-
-Text deltas update the Markdown pending response. Reasoning remains
-transient or compact. Tool-call deltas update the active request description.
-Image, audio, and document parts use stable attachment summaries until a richer
-terminal representation exists.
-
-The canonical part or step output wins over accumulated deltas. This prevents
-duplicate text and handles adapters that omit, combine, or correct delta
-fragments.
-
-
-### Model Classification
-
-Not every model output is an assistant transcript message.
-
-- A model output containing tool calls finalizes as internal activity.
-- A completed model text remains one pending response when it may
-  become the root result.
-- A subsequent tool or execution step can demote that response to internal
-  activity.
-- `RunEnd.output` promotes the confirmed root result to permanent assistant
-  scrollback.
-- Child model output used only by a flow remains under the owning flow
-  statement.
-
-At most one pending response should remain visible for the active
-conversational branch.
-
-
-### Scrollback
-
-Scrollback is a readable transcript, not a copy of the event stream.
-
-It contains:
-
-- finalized start and steer control bars;
-- compact finalized activity;
-- final assistant content;
-- one useful failure diagnostic;
-- cancellation boundaries.
-
-It excludes:
-
-- token-by-token deltas;
-- spinners and `thinking...`;
-- transient parallel completion order;
-- complete successful internal model output;
-- duplicated step and run errors;
-- secret-bearing model or tool request data.
-
-An agic turn normally retains compact tool activity and its answer. A flow turn
-may retain one line per top-level statement while folding successful child
-runs into those lines.
-
-
-### Restored History
-
-Opening an existing thread reconstructs the same finalized scrollback from
-durable thread and run detail. It does not replay historical deltas.
-
-The reconstructed order is:
-
-1. start input;
-2. applied steer controls at their consuming boundaries;
-3. finalized visible activity in logical step order;
-4. assistant response or failure;
-5. cancellation when applicable.
-
-No separate durable chat-history store is introduced.
-
-
-### Alignment And Color
-
-The current control-bar dimensions, padding, and marker alignment are retained.
-Activity wording must fit the established marker column rather than moving that
-column.
-
-Color remains TUI-specific:
-
-- control bars keep their prominent backgrounds;
-- active work is subdued but visible;
-- success is low emphasis;
-- failure and cancellation are distinct;
-- streamed assistant text remains the visual focus.
-
-Colors may be tuned as a palette, but presentation must remain understandable
-without color.
-
-
-## Failure Presentation
-
-A failure is rendered once at the most useful visible boundary.
-
-The preferred structure is:
-
-```text
-✗ Rank the remaining evidence by relevance
-  item 3/5 · line 51 · run_pa74s6cc
-
-  Expected: Number
-  Received:
-    "A relevance score of 10 requires...
-     ...
-     Score: 8"
-```
-
-Failure presentation should identify, when available:
-
-- the semantic operation;
-- source line;
-- parallel item;
-- child run id;
-- expected type or contract;
-- bounded actual output;
-- the underlying provider or tool error when it is actionable.
-
-A runtime-generated system failure step and its containing run failure do not
-repeat the same message. Full exception chains belong in diagnostic logs.
-
-
-## Multimodal Presentation
-
-Text is rendered directly. Other canonical parts use compact stable labels:
-
-```text
-[image] diagram.png
-[audio] response.wav · transcript available
-[document] design.pdf
-[tool call] web_search.search
-[tool result] web_search.search · 5 results
-```
-
-Inspection JSON retains the complete protocol shape. Script stdout serializes
-the run result according to its output type. The chat TUI keeps
-attachments in transcript order and may add richer rendering without changing
-the shared label.
+Restored history is constructed from durable thread and run detail; it does
+not replay historical deltas.
 
 
 ## Implementation Boundary
 
-Shared CLI presentation code may own pure helpers for:
+`toolang.execution` supplies execution truth. Caller packages own terminal
+width, wrapping, styling, verbosity, live replacement, scrollback, and
+stdout/stderr policy.
 
-- display status and marks;
-- runnable and statement labels;
-- item, usage, duration, and output summaries;
-- safe truncation;
-- failure selection and deduplication.
+A renderer may derive:
 
-Inspection, script, and TUI retain separate renderers. In particular, the TUI
-continues to own its existing mutable block classes, control bars, colors,
-padding, live-area layout, and scrollback writes.
+- recursive ownership from `RunBegin.parent`;
+- runnable identity and placement from run context;
+- statement kind, binding, source, and operands from `StepBegin.given`;
+- output shape, count, usage, and results from `StepEnd`;
+- aggregates from ordered descendant events.
 
-`toolang.execution` supplies execution truth only. Presentation concerns such
-as terminal width, Rich styles, verbosity, scrollback, and stdout/stderr never
-enter the executor.
-
-
-### Intended TUI Naming
-
-Implementation names should describe the visual or execution concept rather
-than the event that happens to update it:
-
-| Intended name | Responsibility |
-| --- | --- |
-| `MutableBlock` | common live-block update and rendering contract |
-| `StartControlBlock` | submitted start input and accepted root run id |
-| `SteerControlBlock` | pending and applied steer control |
-| `RunStatusBlock` | running, canceling, canceled, or failed root-run boundary |
-| `FlowStepBlock` | one visible authored flow operation |
-| `RunStepBlock` | one `run` step that invokes a child runnable |
-| `ModelStepBlock` | model part streaming and completed model output |
-| `ToolStepBlock` | active and completed tool execution |
-| `GenericStepBlock` | fallback for a step without a specialized block |
-| `BlockKey` | live-block identity |
-| `BlockFamily` | `control`, `step`, or `run` |
-
-`RunStatusBlock` must not be named as a stop action: it is created while a run
-is active and also represents failure and cancellation. `RunStepBlock` uses
-the canonical step kind; the fact that its invoked run is a child is already
-expressed by the run tree. A fallback block is `GenericStepBlock`, not a
-default execution behavior.
-
-The plain, non-TUI chat renderer should be named for its medium, such as
-`PlainChatRenderer`, rather than `ScriptedRunRenderer`; script invocation and
-plain chat are separate caller surfaces.
+If an exact fact is absent, the renderer omits it. It must not query SQLite on
+the event path, guess from source text, invent display events, or modify
+executor/event contracts solely for presentation.
 
 
-## Acceptance Rules
+## Review Checklist
 
-Presentation changes should verify:
-
-- the same status and semantic label appear across inspect, script, and TUI;
-- successful flow steps appear in source order;
-- parallel completion order does not reorder scrollback;
-- child run identities remain unambiguous;
-- a delta-streamed message appears exactly once after final reconciliation;
-- non-TTY script stdout contains only the run result;
-- script failures identify the failing semantic step;
-- parallel progress uses one aggregate line and bounded lane slots rather than
-  one line per item;
-- the TUI live area does not grow with completed parallel children;
-- start and steer control bars retain their dimensions, run-id behavior,
-  padding, and marker alignment;
-- one failure is not repeated by its step, system failure, and root run;
-- restored chat history has the same finalized semantic content as the original
-  scrollback.
+- `-q` emits no stderr or stdout.
+- Default shows minimal progress, failures, root summary, and final stdout.
+- `-v` adds descriptions, useful previews, and stable work summaries.
+- `-vv` adds input, IDs, step facts, and locals updates.
+- Runnable descriptions align with the runnable header, with a blank line
+  before input.
+- `RUN_ID@INDEX` denotes a run control; `RUN_ID/INDEX` denotes a StepPath.
+- Control, step, event, record, and displayed statement indexes are zero-based.
+- A statement's bracketed index equals the final segment of its StepPath.
+- Event `item`, `lane`, and `loop` positions are displayed as zero-based values
+  without adding one; plural totals and progress values remain counts.
+- Root output has no left margin; nested content adds two spaces.
+- Wrapped text aligns with its semantic content boundary.
+- Root summary frames contain the root run ID before status.
+- Model and tool steps do not repeat metadata in separate success lines.
+- Errors use `!`; their following facts use the same layout as successful
+  output.
+- Successful child runs do not add completion summaries.
+- Flow locals updates, including their result details, are hidden below
+  `-vv`.
+- Parallel output is bounded by lane count.
+- Repeat and settle retain only their latest live iteration.
+- Settle uses `_` as its accumulated primary input/output and `item` as the
+  current source-list item.
+- `1 item` and `1-item list` are never interchangeable.
+- Failed work never claims that a result was saved or discarded.
+- One failure diagnostic is displayed.
+- Inspection remains snapshot-oriented.
+- The chat TUI retains its layout and progressively finalizes stable content.

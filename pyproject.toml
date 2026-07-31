@@ -24,6 +24,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "anyio>=4.12,<5",
     "dataclasses-json>=0.6,<1.0",
     "python-dateutil>=2.9,<3",
     "ddgs>=9.13.0",

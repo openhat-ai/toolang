@@ -1,12 +1,16 @@
 agic expand_queries(_: Part[]) -> Text[]:
+  recall = none
+  tools = none
+
   Research question:
   {{ _ }}
 
   Turn this research question into 6 diverse web search queries.
   Return a JSON array containing exactly 6 query strings.
 
-## hello world
+## Search the web for one query and return a compact evidence bundle.
 agic search_web(_: Part[]):
+  recall = none
   tools = web_search/*
 
   Query:
@@ -20,6 +24,9 @@ agic search_web(_: Part[]):
   - one sentence on why it matters
 
 agic extract_findings(_: Part[]):
+  recall = none
+  tools = none
+
   Evidence bundle:
   {{ _ }}
 
@@ -27,7 +34,13 @@ agic extract_findings(_: Part[]):
   Prefer source-backed claims.
   Return concise bullets with URLs preserved.
 
-agic synthesize_report(_: Part[]):
+agic synthesize_report(_: Part[], topic: Part[]):
+  recall = none
+  tools = none
+
+  Research question:
+  {{topic}}
+
   Findings:
   {{ _ }}
 
@@ -41,6 +54,9 @@ agic synthesize_report(_: Part[]):
   - Next search directions
 
 flow research(_: Text):
+  let topic:
+    {{_}}
+
   ## Expand the research question into diverse search queries
   scatter 6 expand_queries
   ## Search the web for each query
@@ -48,15 +64,33 @@ flow research(_: Text):
   ## Keep evidence bundles that answer the research task
   keep is_relevant
   ## Rank the remaining evidence by relevance
-  rank top 8: Return a numeric relevance score from 0 to 10. Higher is better.
+  rank relevance top 8
   ## Extract source-backed findings from each evidence bundle
   map extract_findings par 4
   ## Synthesize the final research brief
   gather synthesize_report
 
-agic is_relevant(_: Part[]) -> Boolean:
+agic is_relevant(_: Part[], topic: Part[]) -> Boolean:
+  recall = none
+  tools = none
+
+  Research question:
+  {{topic}}
+
   Evidence bundle:
   {{ _ }}
 
-  Decide whether this evidence bundle contains concrete information about agent workflow implementations.
+  Decide whether this evidence bundle contains concrete, source-backed information that helps answer the research question.
   Return only true or false.
+
+agic relevance(_: Part[], topic: Part[]) -> Number:
+  recall = none
+  tools = none
+
+  Research question:
+  {{topic}}
+
+  Evidence bundle:
+  {{_}}
+
+  Return a numeric relevance score from 0 to 10. Higher is better.

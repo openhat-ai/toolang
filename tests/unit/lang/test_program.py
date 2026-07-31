@@ -8,7 +8,7 @@ import pytest
 from tests import FIXTURES_ROOT, PROJECT_ROOT
 from toolang.common.errors import ToolangError
 from toolang.lang import Program, to_data
-from toolang.lang.ast import LetStmt, RepeatStmt
+from toolang.lang.ast import LetStmt, RepeatStmt, SettleStmt
 from toolang.base.types.message import TextPart
 from toolang.lang.input import perceive_input
 from toolang.state.source import read_authored_source
@@ -194,6 +194,59 @@ flow pipeline:
     assert repeat.count == 2
     assert [statement.kind for statement in repeat.stmts] == ["run"]
     assert repeat.until is not None
+
+
+def test_inline_settle_exposes_the_current_item() -> None:
+    program = Program.from_source(
+        """
+flow summarize(_: Text[]) -> Text:
+  settle -> Text:
+    {{_}}{{item}}
+"""
+    )
+
+    statement = program.flows[0].stmts[0]
+    assert isinstance(statement, SettleStmt)
+    generated = next(agic for agic in program.agics if agic.name == statement.runnable)
+    assert generated.input is not None
+    assert generated.input.type_name == "Part[]"
+    assert [(param.name, param.type_name) for param in generated.params] == [
+        ("item", "Part[]")
+    ]
+
+
+def test_inline_flow_evaluators_disable_recall_and_tools() -> None:
+    program = Program.from_source(
+        """
+agic action:
+  pass
+
+flow evaluate:
+  keep: Return true when the item is useful.
+  rank: Return a relevance score.
+  repeat 2:
+    run action
+    until: Return true when complete.
+"""
+    )
+
+    generated = [
+        agic for agic in program.agics if agic.name.startswith("<agic:")
+    ]
+
+    assert sorted(agic.output for agic in generated if agic.output) == [
+        "Boolean",
+        "Boolean",
+        "Number",
+    ]
+    for agic in generated:
+        assert [
+            (directive.name, directive.operator, directive.values)
+            for directive in agic.directives
+        ] == [
+            ("recall", "=", ("none",)),
+            ("tools", "=", ("none",)),
+        ]
 
 
 def test_inline_prompting_is_flattened_and_referenced() -> None:

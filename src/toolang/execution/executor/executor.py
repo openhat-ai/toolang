@@ -20,7 +20,7 @@ from toolang.base.types.message import (
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
-from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt
+from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt, Parameter
 from toolang.lang.input import coerce_input, validate_value
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 from toolang.state.state import AgentState
@@ -606,6 +606,8 @@ class _Execution:
         if root.agent_ceiling is None:
             raise RuntimeError(f"agent ceiling missing: {root.run_id}")
         self._agent_ceiling = root.agent_ceiling
+        self.date = root.created_at.partition("T")[0]
+        self.timezone = "UTC"
         self._emit_trace = emit
         self._run_outputs: dict[str, StepPath] = {}
         self._last_step_index: dict[str, int] = {}
@@ -989,14 +991,14 @@ def _child_binding(
             percept = ()
         if percept is None:
             percept = (TextPart(value_text(primary.value)),)
-    parameters = {parameter.name for parameter in executable.params}
+    parameters = {parameter.name: parameter for parameter in executable.params}
     return BoundRun(
         run_id=context.executor.ids.issue_run(),
         root_run_id=parent.root_run_id,
         thread=parent.thread,
         input=Message(role="user", parts=percept),
         args={
-            name: local.value
+            name: _argument_value(local, parameters[name])
             for name, local in locals.items()
             if name in parameters and local.shape != "none"
         },
@@ -1012,6 +1014,17 @@ def _child_binding(
         parent=parent_step,
         placement=dict(placement or {}),
     )
+
+
+def _argument_value(local: Local, parameter: Parameter) -> object:
+    """Represent one child argument according to its declared value type."""
+
+    if (parameter.type_name or "Part[]") != "Part[]":
+        return local.value
+    percept = value_percept(local.value, type_name=local.type_name)
+    if percept is not None:
+        return percept
+    return (TextPart(value_text(local.value)),)
 
 
 def _bind_run(

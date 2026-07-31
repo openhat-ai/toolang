@@ -122,7 +122,7 @@ repeat:
 run      run a named agic or flow, or an inline agic
 seek     seek another agent's help with a named runnable or inline request
 ask      ask the human owner for input, judgment, or confirmation
-scatter  scatter the current item into up to N items in one run
+scatter  scatter the current item into a list in one run
 storm    storm N independent results from the current item
 gather   gather the current list into one item in one run
 settle   settle the current list into one item through sequential runs
@@ -148,6 +148,9 @@ repeat   repeat a statement block, bounded by N or until
   with language type `Part[]`, without starting a child run.
 - Inline `keep`, `drop`, and `until` bodies return `Boolean`.
 - A `SCORER` or inline `rank` body returns `Number`.
+- Generated inline `keep`, `drop`, `rank`, and `until` evaluators do not
+  recall thread history or receive tools. Use a named agic when evaluation
+  intentionally needs either resource.
 - `repeat` is control flow. Its result is the last executed child result.
 
 
@@ -159,10 +162,14 @@ repeat   repeat a statement block, bounded by N or until
 - `seek AGENT RUNNABLE` resolves in the target agent's program. Inline `seek`
   sends its body to the target agent.
 - `scatter` and `gather` each start one child run, then reshape its result.
+- The current `scatter N` surface retains `N`, but execution uses the returned
+  array length and neither validates nor truncates it.
 - `storm` starts `N` independent child runs and preserves result order.
 - `map`, filter-based `keep/drop`, and `rank` start one child run per item.
-- `settle` starts one child run per item in sequence and carries its
-  accumulator forward.
+- `settle` starts one child run per item in sequence. The first run receives
+  empty primary input `_` and source item `0` as argument `item`; each output
+  becomes `_` for the next run. Inline settle agics receive an implicit
+  `item: Part[]` parameter.
 - Positional `keep/drop` do not start child runs.
 
 
