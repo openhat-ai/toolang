@@ -711,6 +711,80 @@ def test_parallel_children_preserve_input_and_output_types(
     asyncio.run(executor.shutdown())
 
 
+def test_parallel_children_reuse_the_lane_that_finished(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = FlowDecl(name="child", output="Number", span=Span(line=1))
+    parent = FlowDecl(name="parent", span=Span(line=2))
+    executor = _executor(tmp_path)
+    setup = _setup()
+    state = _state(parent, child)
+    binding = BoundRun(
+        run_id="run_root",
+        root_run_id="run_root",
+        thread="term_test",
+        input=Message.user("input"),
+        args={},
+        model=None,
+        state=state,
+        setup=setup,
+        agent_ceiling=resolve_agent_ceiling(setup, state, CeilingSpec()),
+        created_at="2026-01-01T00:00:00Z",
+    )
+
+    async def emit(_event: RunEvent) -> None:
+        return None
+
+    execution = _Execution(executor, root=binding, emit=emit)
+    started: asyncio.Queue[int] = asyncio.Queue()
+    gates = [asyncio.Event() for _index in range(5)]
+    placements: dict[int, dict[str, object]] = {}
+
+    async def execute_child(
+        _parent: BoundRun,
+        child_locals: dict[str, Local],
+        _step: str,
+        _name: str,
+        placement: dict[str, object] | None,
+    ) -> Local:
+        item = cast(int, child_locals["_"].value)
+        assert placement is not None
+        placements[item] = placement
+        started.put_nowait(item)
+        await gates[item].wait()
+        return Local(item, "item", type_name="Number")
+
+    monkeypatch.setattr(execution, "execute_child", execute_child)
+
+    async def scenario() -> Local:
+        task = asyncio.create_task(
+            execution.parallel_children(
+                binding,
+                {"_": Local(list(range(5)), "list", type_name="Number")},
+                "run_root/0",
+                child.name,
+                list(range(5)),
+                limit=4,
+            )
+        )
+        try:
+            first = {await asyncio.wait_for(started.get(), timeout=1) for _ in range(4)}
+            assert first == {0, 1, 2, 3}
+            gates[2].set()
+            assert await asyncio.wait_for(started.get(), timeout=1) == 4
+            assert placements[4]["lane"] == placements[2]["lane"]
+        finally:
+            for gate in gates:
+                gate.set()
+        return await task
+
+    assert asyncio.run(scenario()) == Local(
+        list(range(5)), "list", type_name="Number"
+    )
+    asyncio.run(executor.shutdown())
+
+
 def test_flow_step_events_carry_complete_input_references(tmp_path: Path) -> None:
     child = FlowDecl(
         name="child",
@@ -737,6 +811,10 @@ def test_flow_step_events_carry_complete_input_references(tmp_path: Path) -> Non
     assert [step.input for step in steps] == [
         (RunControlRef(),),
         (OutputRef(step=f"{root.id}/0"),),
+    ]
+    assert [step.given["source"] for step in steps] == [
+        {"line": 4, "head": "run child"},
+        {"line": 5, "head": "run child"},
     ]
     asyncio.run(executor.shutdown())
 

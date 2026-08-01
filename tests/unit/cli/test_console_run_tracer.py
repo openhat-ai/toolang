@@ -137,13 +137,11 @@ def test_model_preview_and_facts_follow_verbosity() -> None:
     detailed = _render(events, verbosity=1)
     complete = _render(events, verbosity=2)
 
-    assert "A concise answer." not in default
+    assert "· A concise answer." in default
     assert "· A concise answer." in detailed
+    assert "run_one/0" not in default
     assert "run_one/0" not in detailed
-    assert (
-        "run_one/0 · 1.5s · deepseek/deepseek-chat · 34k/1.5m tokens"
-        in complete
-    )
+    assert "run_one/0 · 1.5s · deepseek/deepseek-chat · 34k/1.5m tokens" in complete
     assert complete.splitlines()[-4:] == [
         "--- run_one succeeded ---",
         "1 item returned",
@@ -178,15 +176,34 @@ def test_step_output_wraps_at_the_content_boundary() -> None:
     )
 
     content = [
-        line
-        for line in output.splitlines()
-        if "Alpha" in line or "eta theta" in line
+        line for line in output.splitlines() if "Alpha" in line or "eta theta" in line
     ]
     assert content == [
         "· Alpha beta gamma delta epsilon zeta",
         "  eta theta iota kappa.",
     ]
     assert all(len(line) <= 40 for line in content)
+
+
+def test_default_keeps_a_model_step_without_text_output() -> None:
+    output = _render(
+        [
+            _agic_begin(),
+            StepBegin(
+                step="run_one/0",
+                kind="model",
+                given={"model": {"ref": "deepseek/deepseek-chat"}},
+            ),
+            StepEnd(
+                step="run_one/0",
+                kind="model",
+                status="finished",
+            ),
+            RunEnd(run="run_one", status="finished"),
+        ]
+    )
+
+    assert "· model completed" in output
 
 
 def test_tool_failure_uses_output_then_facts_and_is_not_repeated() -> None:
@@ -229,34 +246,35 @@ def test_tool_failure_uses_output_then_facts_and_is_not_repeated() -> None:
 
 
 def test_tool_success_uses_result_then_complete_facts() -> None:
-    output = _render(
-        [
-            _agic_begin(),
-            StepBegin(
-                step="run_one/0",
-                kind="tool",
-                given={"tool": "shell.execute"},
-                started_at="2026-07-26T01:00:00Z",
-            ),
-            StepEnd(
-                step="run_one/0",
-                kind="tool",
-                status="finished",
-                output=(
-                    ToolResultPart(
-                        tool_call_id="call_1",
-                        tool_name="shell.execute",
-                        tool_family="shell",
-                        output={"exit_code": 0},
-                    ),
+    events: list[RunEvent] = [
+        _agic_begin(),
+        StepBegin(
+            step="run_one/0",
+            kind="tool",
+            given={"tool": "shell.execute"},
+            started_at="2026-07-26T01:00:00Z",
+        ),
+        StepEnd(
+            step="run_one/0",
+            kind="tool",
+            status="finished",
+            output=(
+                ToolResultPart(
+                    tool_call_id="call_1",
+                    tool_name="shell.execute",
+                    tool_family="shell",
+                    output={"exit_code": 0},
                 ),
-                finished_at="2026-07-26T01:00:00.050Z",
             ),
-            RunEnd(run="run_one", status="finished"),
-        ],
-        verbosity=2,
-    )
+            finished_at="2026-07-26T01:00:00.050Z",
+        ),
+        RunEnd(run="run_one", status="finished"),
+    ]
+    default = _render(events)
+    output = _render(events, verbosity=2)
 
+    assert "· shell.execute: exit 0" in default
+    assert "run_one/0" not in default
     assert "· shell.execute: exit 0" in output
     assert "  run_one/0 · 50ms · exit 0" in output
 
@@ -311,7 +329,7 @@ def test_flow_statement_uses_zero_based_index_and_natural_work_sentence() -> Non
                     "runnable": "review",
                     "binding": "report",
                     "doc": "Review the draft.",
-                    "source": {"line": 40},
+                    "source": {"line": 40, "head": "let report = run review"},
                 },
             ),
             RunBegin(
@@ -337,14 +355,13 @@ def test_flow_statement_uses_zero_based_index_and_natural_work_sentence() -> Non
         verbosity=2,
     )
 
-    assert "[0] run review" in output
-    assert "[0] run review ·" not in output
+    assert "[0] let report = run review" in output
     assert "line 40" not in output
     assert "  Review the draft." in output
     assert "  Run agic review" in output
-    assert "run_review succeeded" not in output
-    assert "  Save result to report" in output
-    assert "  · 1 item · returned by one run" in output
+    assert "  ↳ run_review succeeded" in output
+    assert "Save result" not in output
+    assert "returned by one run" not in output
 
 
 def test_scatter_keeps_work_and_semantic_result_separate() -> None:
@@ -359,6 +376,7 @@ def test_scatter_keeps_work_and_semantic_result_separate() -> None:
                     "count": 6,
                     "runnable": "expand_queries",
                     "binding": "_",
+                    "source": {"head": "scatter 6 expand_queries"},
                 },
                 started_at="2026-07-26T01:00:00Z",
             ),
@@ -366,9 +384,7 @@ def test_scatter_keeps_work_and_semantic_result_separate() -> None:
                 run="run_queries",
                 parent="run_one/0",
                 input=RunControlRef(),
-                context={
-                    "runnable": {"kind": "agic", "name": "expand_queries"}
-                },
+                context={"runnable": {"kind": "agic", "name": "expand_queries"}},
             ),
             RunEnd(run="run_queries", status="finished"),
             StepEnd(
@@ -389,10 +405,111 @@ def test_scatter_keeps_work_and_semantic_result_separate() -> None:
     )
 
     assert "  Run agic expand_queries" in output
-    assert "  Save result to _" in output
-    assert "  · 6-item list · scattered from 1 item" in output
+    assert "Save result" not in output
+    assert "  ↳ run_queries succeeded" in output
+    assert "  ↳ 6-item list saved to _ · scattered from 1 item" in output
     assert "~~~" not in output
     assert "= " not in output
+
+
+def test_statement_spacing_is_compact_at_every_verbosity() -> None:
+    events: list[RunEvent] = [
+        _flow_begin(),
+        StepBegin(
+            step="run_one/0",
+            kind="system",
+            given={
+                "statement": "let",
+                "binding": "project",
+                "source": {"head": "let project"},
+            },
+        ),
+        StepEnd(
+            step="run_one/0",
+            kind="system",
+            status="finished",
+            output=(TextPart("project"),),
+            noted={"shape": "item"},
+        ),
+        StepBegin(
+            step="run_one/1",
+            kind="run",
+            given={
+                "statement": "scatter",
+                "count": 2,
+                "runnable": "decompose",
+                "binding": "_",
+                "source": {"head": "scatter 2 decompose"},
+            },
+        ),
+        RunBegin(
+            run="run_decompose",
+            parent="run_one/1",
+            input=RunControlRef(),
+            context={"runnable": {"kind": "agic", "name": "decompose"}},
+        ),
+        RunEnd(run="run_decompose", status="finished"),
+        StepEnd(
+            step="run_one/1",
+            kind="run",
+            status="finished",
+            noted={"shape": "list", "items": 2},
+        ),
+        RunEnd(run="run_one", status="finished"),
+    ]
+
+    default = _render(events)
+    complete = _render(events, verbosity=2)
+
+    assert "[0] let project\n\n[1] scatter 2 decompose" in default
+    assert (
+        "[1] scatter 2 decompose\n"
+        "  Run agic decompose\n"
+        "  ↳ 2-item list saved to _ · scattered from 1 item"
+    ) in default
+    assert (
+        "[0] let project\n"
+        "  ↳ 1 item saved to project · perceived from authored content\n\n"
+        "[1] scatter 2 decompose"
+    ) in complete
+    assert (
+        "  Run agic decompose\n"
+        "  ↳ run_decompose succeeded\n"
+        "  ↳ 2-item list saved to _ · scattered from 1 item"
+    ) in complete
+
+
+def test_run_failure_keeps_source_header_before_child_acceptance() -> None:
+    output = _render(
+        [
+            _flow_begin(),
+            StepBegin(
+                step="run_one/0",
+                kind="run",
+                given={
+                    "statement": "run",
+                    "runnable": "apply_review",
+                    "binding": "_",
+                    "source": {"head": "run apply_review"},
+                },
+            ),
+            StepEnd(
+                step="run_one/0",
+                kind="run",
+                status="failed",
+                error="missing arguments for apply_review: item",
+            ),
+            RunEnd(
+                run="run_one",
+                status="failed",
+                error="missing arguments for apply_review: item",
+            ),
+        ]
+    )
+
+    assert "[0] run apply_review" in output
+    assert "  Run agic apply_review" not in output
+    assert output.count("missing arguments for apply_review: item") == 1
 
 
 def test_scatter_transform_failure_has_one_actionable_boundary() -> None:
@@ -407,6 +524,7 @@ def test_scatter_transform_failure_has_one_actionable_boundary() -> None:
                     "count": 6,
                     "runnable": "expand_queries",
                     "binding": "_",
+                    "source": {"head": "scatter 6 expand_queries"},
                 },
                 started_at="2026-07-26T01:00:00Z",
             ),
@@ -414,9 +532,7 @@ def test_scatter_transform_failure_has_one_actionable_boundary() -> None:
                 run="run_queries",
                 parent="run_one/0",
                 input=RunControlRef(),
-                context={
-                    "runnable": {"kind": "agic", "name": "expand_queries"}
-                },
+                context={"runnable": {"kind": "agic", "name": "expand_queries"}},
             ),
             RunEnd(run="run_queries", status="finished"),
             StepEnd(
@@ -454,6 +570,9 @@ def test_parallel_block_is_bounded_and_uses_zero_based_positions() -> None:
                     "count": 8,
                     "par": 2,
                     "binding": "findings",
+                    "source": {
+                        "head": "let findings = rank relevance top 8 par 2"
+                    },
                 },
                 started_at="2026-07-26T01:00:00Z",
             ),
@@ -487,13 +606,59 @@ def test_parallel_block_is_bounded_and_uses_zero_based_positions() -> None:
     )
 
     assert "Run agic relevance in parallel (18 items, 2 lanes)" in output
-    assert "0 completed · 2 active · 0 failed" in output
+    assert "· 2 active" in output
     assert "0 │ item 0 | 0.82" in output
     assert "1 │ item 1 | starting…" in output
     assert output.count("Run agic relevance in parallel") == 1
 
 
-def test_parallel_failure_reports_counts_without_binding() -> None:
+def test_parallel_live_block_keeps_the_final_item_after_lane_reuse() -> None:
+    events: list[RunEvent] = [
+        _flow_begin(started_at="2026-07-26T01:00:00Z"),
+        StepBegin(
+            step="run_one/2",
+            kind="par",
+            given={
+                "statement": "map",
+                "runnable": "worker",
+                "par": 4,
+                "binding": "_",
+                "source": {"head": "map worker par 4"},
+            },
+            started_at="2026-07-26T01:00:00Z",
+        ),
+        *(
+            _parallel_run_begin(
+                f"run_{item}",
+                item=item,
+                lane=item,
+                items=5,
+                lanes=4,
+                runnable="worker",
+            )
+            for item in range(4)
+        ),
+        RunEnd(run="run_2", status="finished"),
+        _parallel_run_begin(
+            "run_4",
+            item=4,
+            lane=2,
+            items=5,
+            lanes=4,
+            runnable="worker",
+        ),
+        RunEnd(run="run_0", status="finished"),
+        RunEnd(run="run_1", status="finished"),
+        RunEnd(run="run_3", status="finished"),
+    ]
+
+    output = _render(events, tty=True)
+
+    assert "· 4 runs succeeded · 1 active" in output
+    assert "2 │ item 4 | starting…" in output
+
+
+def test_parallel_failure_reports_counts_without_a_statement_result() -> None:
     output = _render(
         [
             _flow_begin(started_at="2026-07-26T01:00:00Z"),
@@ -507,6 +672,9 @@ def test_parallel_failure_reports_counts_without_binding() -> None:
                     "count": 8,
                     "par": 4,
                     "binding": "findings",
+                    "source": {
+                        "head": "let findings = rank relevance top 8 par 4"
+                    },
                 },
                 started_at="2026-07-26T01:00:00Z",
             ),
@@ -534,10 +702,70 @@ def test_parallel_failure_reports_counts_without_binding() -> None:
         ]
     )
 
-    assert "! run_one/2 failed: output is not valid Number" in output
-    assert "2.0s · 1 completed · 1 failed" in output
+    assert "! run_one/2 failed: item 5: output is not valid Number" in output
+    assert "· 1 run succeeded · 1 failed · 2.0s" in output
     assert output.count("output is not valid Number") == 1
-    assert "Save result to findings" not in output
+    assert "[2] let findings = rank relevance top 8 par 4" in output
+    assert "↳ top" not in output
+
+
+def test_parallel_child_failure_is_reported_once_at_the_statement_boundary() -> None:
+    output = _render(
+        [
+            _flow_begin(),
+            StepBegin(
+                step="run_one/0",
+                kind="par",
+                given={
+                    "statement": "map",
+                    "runnable": "search",
+                    "par": 2,
+                    "binding": "_",
+                    "source": {"head": "map search par 2"},
+                },
+            ),
+            _parallel_run_begin(
+                "run_search",
+                item=2,
+                lane=0,
+                items=4,
+                lanes=2,
+                runnable="search",
+                parent="run_one/0",
+            ),
+            StepBegin(
+                step="run_search/0",
+                kind="model",
+                given={"model": {"ref": "deepseek/deepseek-chat"}},
+            ),
+            StepEnd(
+                step="run_search/0",
+                kind="model",
+                status="failed",
+                error="provider returned status 429",
+            ),
+            RunEnd(
+                run="run_search",
+                status="failed",
+                error="provider returned status 429",
+            ),
+            StepEnd(
+                step="run_one/0",
+                kind="par",
+                status="failed",
+                error="provider returned status 429",
+            ),
+            RunEnd(
+                run="run_one",
+                status="failed",
+                error="provider returned status 429",
+            ),
+        ]
+    )
+
+    assert "! run_one/0 failed: item 2: provider returned status 429" in output
+    assert output.count("provider returned status 429") == 1
+    assert "! deepseek/deepseek-chat" not in output
 
 
 def test_verbose_parallel_block_leaves_a_stable_work_summary() -> None:
@@ -552,6 +780,7 @@ def test_verbose_parallel_block_leaves_a_stable_work_summary() -> None:
                     "runnable": "search_web",
                     "par": 4,
                     "binding": "_",
+                    "source": {"head": "map search_web par 4"},
                 },
             ),
             *[
@@ -601,6 +830,7 @@ def test_one_item_and_one_item_list_are_distinct() -> None:
                     "statement": "map",
                     "runnable": "normalize",
                     "binding": "normalized",
+                    "source": {"head": "let normalized = map normalize"},
                 },
             ),
             _parallel_run_begin(
@@ -626,6 +856,7 @@ def test_one_item_and_one_item_list_are_distinct() -> None:
                     "statement": "gather",
                     "runnable": "synthesize",
                     "binding": "report",
+                    "source": {"head": "let report = gather synthesize"},
                 },
             ),
             RunBegin(
@@ -651,8 +882,8 @@ def test_one_item_and_one_item_list_are_distinct() -> None:
         verbosity=2,
     )
 
-    assert "· 1-item list · mapped from a 1-item list" in output
-    assert "· 1 item · gathered from a list" in output
+    assert "↳ 1-item list saved to normalized · mapped from 1 item" in output
+    assert "↳ 1 item saved to report · gathered from a list" in output
 
 
 def test_empty_parallel_statements_keep_work_and_actual_result_counts() -> None:
@@ -666,6 +897,7 @@ def test_empty_parallel_statements_keep_work_and_actual_result_counts() -> None:
                     "statement": "keep",
                     "predicate": "is_relevant",
                     "binding": "_",
+                    "source": {"head": "keep is_relevant"},
                 },
             ),
             *[
@@ -699,6 +931,7 @@ def test_empty_parallel_statements_keep_work_and_actual_result_counts() -> None:
                     "limit": "top",
                     "count": 8,
                     "binding": "_",
+                    "source": {"head": "rank top 8"},
                 },
             ),
             StepEnd(
@@ -715,6 +948,7 @@ def test_empty_parallel_statements_keep_work_and_actual_result_counts() -> None:
                     "runnable": "extract_findings",
                     "par": 4,
                     "binding": "_",
+                    "source": {"head": "map extract_findings par 4"},
                 },
             ),
             StepEnd(
@@ -732,14 +966,14 @@ def test_empty_parallel_statements_keep_work_and_actual_result_counts() -> None:
         verbosity=2,
     )
 
-    assert output.count("  Save result to _") == 3
-    assert "· 0-item list · kept 0 of 6 items" in output
+    assert "Save result" not in output
+    assert "↳ 0-item list saved to _ · 0/6 items kept" in output
     assert "  · 6 runs succeeded" in output
     assert "  Run agic <agic:L51> in parallel (0 items)" in output
     assert output.count("  · 0 runs · empty input list") == 2
-    assert "· 0-item list · selected top 0 of 0 items" in output
-    assert "  Run extract_findings in parallel (0 items, 4 lanes)" in output
-    assert "· 0-item list · mapped from a 0-item list" in output
+    assert "↳ 0-item list saved to _ · top 0/0 items selected" in output
+    assert "  Run agic extract_findings in parallel (0 items, 4 lanes)" in output
+    assert "↳ 0-item list saved to _ · mapped from 0 items" in output
 
 
 def test_default_flow_keeps_headers_and_work_lines_compact() -> None:
@@ -754,15 +988,14 @@ def test_default_flow_keeps_headers_and_work_lines_compact() -> None:
                     "count": 6,
                     "runnable": "expand_queries",
                     "binding": "_",
+                    "source": {"head": "scatter 6 expand_queries"},
                 },
             ),
             RunBegin(
                 run="run_expand",
                 parent="run_one/0",
                 input=RunControlRef(),
-                context={
-                    "runnable": {"kind": "agic", "name": "expand_queries"}
-                },
+                context={"runnable": {"kind": "agic", "name": "expand_queries"}},
             ),
             RunEnd(run="run_expand", status="finished"),
             StepEnd(
@@ -780,6 +1013,7 @@ def test_default_flow_keeps_headers_and_work_lines_compact() -> None:
                     "limit": "top",
                     "count": 8,
                     "binding": "_",
+                    "source": {"head": "rank top 8"},
                 },
             ),
             StepEnd(
@@ -798,9 +1032,11 @@ def test_default_flow_keeps_headers_and_work_lines_compact() -> None:
 
     lines = output.splitlines()
     scatter = lines.index("[0] scatter 6 expand_queries")
-    rank = lines.index("[1] rank <agic:L51> · top 8")
+    rank = lines.index("[1] rank top 8")
     assert lines[scatter + 1] == "  Run agic expand_queries"
     assert lines[rank + 1] == "  Run agic <agic:L51> in parallel (0 items)"
+    assert "  ↳ 6-item list saved to _ · scattered from 1 item" in lines
+    assert "  ↳ 0-item list saved to _ · top 0/0 items selected" in lines
 
 
 def test_settle_block_shows_one_sequential_work_line_and_latest_item() -> None:
@@ -814,6 +1050,7 @@ def test_settle_block_shows_one_sequential_work_line_and_latest_item() -> None:
                     "statement": "settle",
                     "runnable": "reducer",
                     "binding": "_",
+                    "source": {"head": "settle reducer"},
                 },
                 started_at="2026-07-26T01:00:00Z",
             ),
@@ -850,13 +1087,44 @@ def test_settle_block_shows_one_sequential_work_line_and_latest_item() -> None:
                 output=OutputRef(step="run_one/4"),
             ),
         ],
+        verbosity=2,
         tty=True,
     )
 
-    assert "Run agic reducer sequentially (2 items, 2 calls)" in output
-    assert "1 call completed · item 1 active" in output
-    assert "· merged" in output
+    assert "Run agic reducer sequentially (2 items)" in output
+    assert "· 1 run succeeded · 1 active" in output
+    assert "│ item 1 | merged" in output
     assert output.count("Run agic reducer sequentially") == 1
+    assert "  ↳ 1 item saved to _ · reduced from 2 items" in output
+
+
+def test_discard_binding_uses_source_syntax_and_result_wording() -> None:
+    output = _render(
+        [
+            _flow_begin(),
+            StepBegin(
+                step="run_one/0",
+                kind="human",
+                given={
+                    "statement": "ask",
+                    "binding": None,
+                    "source": {"head": "let ask"},
+                },
+            ),
+            StepEnd(
+                step="run_one/0",
+                kind="human",
+                status="finished",
+                output=(TextPart("temporary"),),
+                noted={"shape": "item"},
+            ),
+            RunEnd(run="run_one", status="finished"),
+        ],
+        verbosity=2,
+    )
+
+    assert "[0] let ask" in output
+    assert "  ↳ 1 item discarded · produced" in output
 
 
 def test_repeat_block_keeps_nested_iterations_in_the_live_area() -> None:
@@ -870,6 +1138,7 @@ def test_repeat_block_keeps_nested_iterations_in_the_live_area() -> None:
                     "statement": "repeat",
                     "count": 2,
                     "binding": "_",
+                    "source": {"head": "repeat 2"},
                 },
             ),
             StepBegin(
@@ -880,6 +1149,7 @@ def test_repeat_block_keeps_nested_iterations_in_the_live_area() -> None:
                     "runnable": "revise",
                     "binding": "_",
                     "placement": {"loop": 0},
+                    "source": {"head": "run revise"},
                 },
             ),
             RunBegin(
@@ -932,8 +1202,9 @@ def test_repeat_block_keeps_nested_iterations_in_the_live_area() -> None:
     )
 
     assert output.count("[3] repeat 2") == 1
-    assert "[0] run revise" not in output
-    assert "iteration 0 · 2 total" in output
+    assert "=== iteration 0 ===" in output
+    assert "[0] run revise" in output
+    assert "Run agic revise" in output
     assert "· revising" in output
 
 
@@ -944,7 +1215,12 @@ def test_hidden_repeat_step_does_not_consume_its_parent_diagnostic() -> None:
             StepBegin(
                 step="run_one/3",
                 kind="loop",
-                given={"statement": "repeat", "count": 2, "binding": "_"},
+                given={
+                    "statement": "repeat",
+                    "count": 2,
+                    "binding": "_",
+                    "source": {"head": "repeat 2"},
+                },
             ),
             StepBegin(
                 step="run_one/3/0",
@@ -955,6 +1231,7 @@ def test_hidden_repeat_step_does_not_consume_its_parent_diagnostic() -> None:
                     "runnable": "expand",
                     "binding": "_",
                     "placement": {"loop": 0},
+                    "source": {"head": "scatter 2 expand"},
                 },
             ),
             StepEnd(
@@ -980,6 +1257,251 @@ def test_hidden_repeat_step_does_not_consume_its_parent_diagnostic() -> None:
 
     assert "! run_one/3 failed: scatter requires a list result" in output
     assert output.count("scatter requires a list result") == 1
+
+
+def test_complete_repeat_trace_resets_ordinals_and_renders_until_decisions() -> None:
+    events: list[RunEvent] = [
+        _flow_begin(started_at="2026-07-26T01:00:00Z"),
+        StepBegin(
+            step="run_one/2",
+            kind="loop",
+            given={
+                "statement": "repeat",
+                "count": 3,
+                "binding": "_",
+                "source": {"head": "repeat 3"},
+            },
+            started_at="2026-07-26T01:00:00Z",
+        ),
+    ]
+    for iteration, decision in enumerate(("false", "true")):
+        body_step = f"run_one/2/{iteration}"
+        body_run = f"run_review{iteration}"
+        events.extend(
+            [
+                StepBegin(
+                    step=body_step,
+                    kind="run",
+                    given={
+                        "statement": "run",
+                        "runnable": "review",
+                        "binding": "review",
+                        "placement": {"loop": iteration},
+                        "source": {"head": "let review = run review"},
+                    },
+                ),
+                RunBegin(
+                    run=body_run,
+                    parent=body_step,
+                    input=RunControlRef(),
+                    context={
+                        "runnable": {"kind": "agic", "name": "review"},
+                        "placement": {"loop": iteration},
+                    },
+                ),
+                StepBegin(
+                    step=f"{body_run}/0",
+                    kind="model",
+                    given={"model": {"ref": "deepseek/deepseek-chat"}},
+                ),
+                StepEnd(
+                    step=f"{body_run}/0",
+                    kind="model",
+                    status="finished",
+                    output=(TextPart(f"review {iteration}"),),
+                ),
+                RunEnd(
+                    run=body_run,
+                    status="finished",
+                    output=OutputRef(step=f"{body_run}/0"),
+                ),
+                StepEnd(
+                    step=body_step,
+                    kind="run",
+                    status="finished",
+                    output=(TextPart(f"review {iteration}"),),
+                    noted={"shape": "item"},
+                ),
+            ]
+        )
+        until_run = f"run_until{iteration}"
+        events.extend(
+            [
+                RunBegin(
+                    run=until_run,
+                    parent="run_one/2",
+                    input=RunControlRef(),
+                    context={
+                        "runnable": {"kind": "agic", "name": "<agic:42>"},
+                        "placement": {"loop": iteration, "role": "until"},
+                    },
+                ),
+                StepBegin(
+                    step=f"{until_run}/0",
+                    kind="model",
+                    given={"model": {"ref": "deepseek/deepseek-chat"}},
+                ),
+                StepEnd(
+                    step=f"{until_run}/0",
+                    kind="model",
+                    status="finished",
+                    output=(TextPart(decision),),
+                ),
+                RunEnd(
+                    run=until_run,
+                    status="finished",
+                    output=OutputRef(step=f"{until_run}/0"),
+                ),
+            ]
+        )
+    events.extend(
+        [
+            StepEnd(
+                step="run_one/2",
+                kind="loop",
+                status="finished",
+                output=(TextPart("review 1"),),
+                noted={"shape": "item"},
+            ),
+            RunEnd(
+                run="run_one",
+                status="finished",
+                output=OutputRef(step="run_one/2"),
+            ),
+        ]
+    )
+
+    output = _render(events, verbosity=2)
+
+    assert output.count("=== iteration 0 ===") == 1
+    assert output.count("=== iteration 1 ===") == 1
+    assert output.count("[0] let review = run review") == 2
+    assert output.count("    Run agic review") == 2
+    assert output.count("[?] until") == 2
+    assert "    ↳ run_until0 succeeded" in output
+    assert "    ↳ continue" in output
+    assert "    ↳ stop repeating" in output
+    assert "  ↳ stopped after 2 iterations" in output
+
+
+def test_until_boolean_failure_has_no_control_decision() -> None:
+    output = _render(
+        [
+            _flow_begin(),
+            StepBegin(
+                step="run_one/0",
+                kind="loop",
+                given={
+                    "statement": "repeat",
+                    "count": 2,
+                    "binding": "_",
+                    "source": {"head": "repeat 2"},
+                },
+            ),
+            RunBegin(
+                run="run_until",
+                parent="run_one/0",
+                input=RunControlRef(),
+                context={
+                    "runnable": {"kind": "agic", "name": "<agic:42>"},
+                    "placement": {"loop": 0, "role": "until"},
+                },
+            ),
+            StepBegin(
+                step="run_until/0",
+                kind="model",
+                given={"model": {"ref": "deepseek/deepseek-chat"}},
+            ),
+            StepEnd(
+                step="run_until/0",
+                kind="model",
+                status="finished",
+                output=(TextPart("yes"),),
+            ),
+            RunEnd(
+                run="run_until",
+                status="finished",
+                output=OutputRef(step="run_until/0"),
+            ),
+            StepEnd(
+                step="run_one/0",
+                kind="loop",
+                status="failed",
+                error="until requires a Boolean result",
+            ),
+            RunEnd(
+                run="run_one",
+                status="failed",
+                error="until requires a Boolean result",
+            ),
+        ],
+        verbosity=2,
+    )
+
+    assert "    ↳ run_until succeeded" in output
+    assert "! run_one/0 failed: until requires a Boolean result" in output
+    assert "↳ continue" not in output
+    assert "↳ stop repeating" not in output
+
+
+def test_failed_until_run_uses_a_red_compact_summary_without_a_decision() -> None:
+    output = _render(
+        [
+            _flow_begin(),
+            StepBegin(
+                step="run_one/0",
+                kind="loop",
+                given={
+                    "statement": "repeat",
+                    "count": 2,
+                    "binding": "_",
+                    "source": {"head": "repeat 2"},
+                },
+            ),
+            RunBegin(
+                run="run_until",
+                parent="run_one/0",
+                input=RunControlRef(),
+                context={
+                    "runnable": {"kind": "agic", "name": "<agic:42>"},
+                    "placement": {"loop": 0, "role": "until"},
+                },
+            ),
+            StepBegin(
+                step="run_until/0",
+                kind="model",
+                given={"model": {"ref": "deepseek/deepseek-chat"}},
+            ),
+            StepEnd(
+                step="run_until/0",
+                kind="model",
+                status="failed",
+                error="provider returned status 429",
+            ),
+            RunEnd(
+                run="run_until",
+                status="failed",
+                error="provider returned status 429",
+            ),
+            StepEnd(
+                step="run_one/0",
+                kind="loop",
+                status="failed",
+                error="provider returned status 429",
+            ),
+            RunEnd(
+                run="run_one",
+                status="failed",
+                error="provider returned status 429",
+            ),
+        ],
+        tty=True,
+    )
+
+    assert output.count("provider returned status 429") == 1
+    assert "\x1b[31m    ↳ run_until failed\x1b[0m" in output
+    assert "↳ continue" not in output
+    assert "↳ stop repeating" not in output
 
 
 def _agic_begin(*, started_at: str = "") -> RunBegin:

@@ -105,6 +105,8 @@
 - `docs/execution-presentation.md` defines the shared inspect, script, and chat
   TUI language for statuses, run and step labels, streaming, progressive
   finalization, and scrollback.
+- `docs/execution-transcript.md` defines the compact linear execution grammar,
+  block ownership, verbosity, flattened repeat context, and bounded batch work.
 - `docs/models.md` defines model selectors, profiles, and built-in model
   integrations.
 - `docs/tools.md` defines built-in tool families.

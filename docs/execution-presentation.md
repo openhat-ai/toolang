@@ -4,6 +4,10 @@ This document defines the target presentation language for Toolang execution.
 It is intended for review before the script renderer is finalized and before
 inspection and chat adopt the same vocabulary.
 
+The concise normative block grammar is defined in
+[execution-transcript.md](./execution-transcript.md). Where examples in this
+broader design record differ, the transcript grammar takes precedence.
+
 It defines presentation only. It does not add execution concepts, records, or
 events. Inspection reads durable schemas. Live script and chat renderers
 consume ordered native `RunEvent` values.
@@ -40,9 +44,9 @@ Script channel behavior is:
 | Level | stderr | stdout |
 | --- | --- | --- |
 | `-q` | nothing | nothing |
-| default | minimal progress, failures, root summary with run ID | final value |
-| `-v` | descriptions, useful previews, stable work summaries | final value |
-| `-vv` | input, control/step IDs, step facts, and locals updates | final value |
+| default | headers, stable run-step output, meaningful results, failures, and root summary | final value |
+| `-v` | descriptions and stable batched-work summaries | final value |
+| `-vv` | input, IDs, step facts, predictable results, and repeat sections | final value |
 
 At `-q`, only the process exit status communicates the outcome. Verbosity
 never exposes secrets or unbounded request data.
@@ -123,6 +127,16 @@ Durable `finished` is presented as `succeeded`.
 | `failed` | `failed` |
 | `canceled` | `canceled` |
 
+`marker` is the canonical term for a leading structural glyph. Markers express
+ownership; color expresses status:
+
+| Marker | Meaning |
+| --- | --- |
+| `·` | successful or active run-internal output, or batch work summary |
+| `!` | step, transformation, or control diagnostic |
+| `↳` | compact child-run summary, statement result, or control decision |
+| none | continuation facts, headers, and the root run summary frame |
+
 Active agic work and successful output use `·`:
 
 ```text
@@ -130,13 +144,17 @@ Active agic work and successful output use `·`:
 · executing web_search.search…
 ```
 
-Failure uses `!`. The error occupies the normal output position, followed by a
-facts line:
+Failure uses `!`. The error occupies the normal output position, followed by
+the same facts layout as successful output:
 
 ```text
-! run_abc123/2 failed: output is not valid Number
-  · 3.1s
+! web_search.search: provider returned status 429
+  run_abc123/2 · 820ms · exit 429
 ```
+
+Failed diagnostics and failed `↳` summaries are red. Canceled summaries are
+yellow. Successful completion is dim, with an optional green status word.
+Facts are dim. Root frames have no marker.
 
 Root results use an unmarked frame containing the root run ID:
 
@@ -202,7 +220,7 @@ partial delta lines. Stable boundaries remain newline-delimited.
 Root output has no left margin:
 
 - agic activity uses `·` in the root marker column;
-- flow statements use a bracketed zero-based step index in the root marker
+- flow statements use a bracketed zero-based ordinal in the root marker
   column;
 - content starts after its marker;
 - wrapped lines stay aligned with that content;
@@ -222,7 +240,7 @@ Root output has no left margin:
 Nested content adds one two-space level:
 
 ```text
-[1] map search_web · par 4
+[1] map search_web par 4
   · A long result starts here and continues after wrapping
     at the same content boundary.
 ```
@@ -284,9 +302,9 @@ When deltas arrive, they replace the same live line:
 · Sunlight is scattered by molecules in the atmosphere…      [live]
 ```
 
-Useful final text may remain at `-v`. At default verbosity, an optional
-successful preview may disappear because the canonical value is written to
-stdout.
+Successful final text remains in scrollback at every non-quiet level. The
+canonical, untruncated root value is still written to stdout, while progress
+uses a bounded preview.
 
 At `-vv`, the completed model step adds one metadata line:
 
@@ -307,7 +325,7 @@ There is no separate `model succeeded` line.
 
 ```text
 · executing web_search.search…                               [live]
-· web_search.search: 5 results                               [1+]
+· web_search.search: 5 results                               [0+]
   run_abc123/1 · 820ms · exit 0                              [2]
 ```
 
@@ -332,7 +350,7 @@ Expand one topic into several research queries.               [1+]
   count=6                                                     [2]
   run_queries123@0                                            [2]
 
-· ["agent framework architecture", "multi-agent SDK", ...]    [1+]
+· ["agent framework architecture", "multi-agent SDK", ...]    [0+]
   run_queries123/0 · 2.0s · deepseek/deepseek-chat · 4.6k/44 tokens
 
 --- run_queries123 succeeded ---
@@ -347,18 +365,18 @@ The model metadata line is visible only at `-vv`.
 ## Flow Runs
 
 A flow presents statements in source order. A statement header starts with its
-durable zero-based step index:
+zero-based ordinal in the currently visible statement list:
 
 ```text
-[1] map search_web · par 4                                   [0+]
+[1] map search_web par 4                                     [0+]
   Search the web for each query.                             [1+]
 ```
 
-The bracketed index and final StepPath segment are identical. Records, events,
-inspection, and model-visible diagnostics therefore use one zero-based index
-without presentation-only conversion. A statement header never repeats its
-source line or complete StepPath. Failures and model/tool facts may still show
-complete paths when they identify the affected operation.
+For top-level statements, the bracketed ordinal currently equals the final
+`StepPath` segment. Inside `repeat`, the body restarts at `[0]` for every
+iteration, so its ordinal is scoped presentation rather than durable identity.
+Failures and step facts use complete paths when they must identify a persisted
+operation.
 
 Event placement indexes are displayed without conversion:
 
@@ -381,7 +399,7 @@ Run agic expand_queries
 Run flow review
 Run agic search_web in parallel (18 items, 4 lanes)
 Run agic generator in parallel (6 times, 4 lanes)
-Run agic reducer sequentially (6 items, 6 calls)
+Run agic reducer sequentially (6 items)
 ```
 
 The sentence distinguishes one invocation, parallel independent invocations,
@@ -394,7 +412,7 @@ The statement block still emits its work sentence when `StepEnd` supplies the
 zero-item result:
 
 ```text
-[3] rank <agic:L51> · top 8
+[3] rank top 8
   Run agic <agic:L51> in parallel (0 items)
 ```
 
@@ -405,79 +423,79 @@ name:
 Run agic <agic:L35>
 ```
 
-A successful child run does not get a frame or a redundant completion line.
-Its descendant StepPaths identify the child run, its model and tool facts
-describe the work, and the parent statement describes the semantic result. A
-child failure shows its ID and one diagnostic.
+A successful child run does not get a frame. A visible nested run may close
+with one compact summary; batched success does not accumulate one line per
+item. Descendant StepPaths identify the work, and a child failure shows its ID
+and one diagnostic.
 
 
-## Saving Results
+## Statement Headers And Binding
 
-Saving is the final successful statement phase. Exactly one phrase is used:
-
-```text
-Save result to _
-Save result to NAME
-Discard result
-```
-
-The save or discard action and its semantic result are one block, visible
-together at `-vv`:
+A statement header is a compact source rendering: it retains `.too` operand
+order and binding syntax, drops the body and colon, and hides generated inline
+agic names. Binding therefore needs no presentation-only suffix:
 
 ```text
-Save result to findings
-· 8-item list · selected top 8 of 18 items
+[0] map search_web par 4
+[1] let findings = map search_web par 4
+[2] let map search_web par 4
 ```
 
-If execution, validation, transformation, or coercion fails, saving does not
-occur and no saving line is printed. Failure already implies that locals were
-not updated.
+The three heads save to `_`, save to `findings`, and discard, respectively. A
+failed statement never applies its binding, so no additional `unchanged` line
+is needed. `repeat` is control flow and has no result binding.
 
 
 ## Statement Result Phrases
 
-The leading shape describes the value that would be saved or discarded. For a
-list, the first number is its final length.
+Each phrase begins with the final shape and destination, then uses `·` to
+separate the transformation. The destination is `saved to _`, `saved to NAME`,
+or `discarded`. For a list, the first number is the final length. In the table,
+`K` is the result length, `M` is the input length, and `N` is an authored count.
 
-| Statement | Semantic result |
-| --- | --- |
-| `run` | `1 item · returned by one run` |
-| `scatter N` | `N-item list · scattered from 1 item` |
-| `storm N` | `N-item list · produced by N runs` |
-| `gather` | `1 item · gathered from an N-item list` |
-| `settle` | `1 item · settled from an N-item list` |
-| `map` | `N-item list · mapped from an N-item list` |
-| `keep first N` | `N-item list · kept first N of M items` |
-| `keep last N` | `N-item list · kept last N of M items` |
-| predicate `keep` | `N-item list · kept N of M items` |
-| `drop first N` | `N-item list · dropped first N of M items` |
-| `drop last N` | `N-item list · dropped last N of M items` |
-| predicate `drop` | `N-item list · dropped M-N of M items` |
-| `rank` | `N-item list · ranked N items` |
-| `rank top N` | `N-item list · selected top N of M items` |
-| `rank bottom N` | `N-item list · selected bottom N of M items` |
-| `repeat` | `1 item · completed N iterations` |
-| `let` | `1 item · perceived from authored content` |
+| Statement | Transformation after shape and destination | Visibility |
+| --- | --- | --- |
+| direct `run` | represented by its compact child-run summary | `[2]` |
+| `scatter N` | `scattered from 1 item` | `[0+]` |
+| `storm N` | `produced by N runs` | `[2]` |
+| `gather` | `gathered from M items` | `[2]` |
+| `settle` | `reduced from M items` | `[2]` |
+| `map` | `mapped from M items` | `[2]` |
+| `keep first N` | `K/M items kept from the start` | `[0+]` |
+| `keep last N` | `K/M items kept from the end` | `[0+]` |
+| predicate `keep` | `K/M items kept` | `[0+]` |
+| `drop first N` | `K/M items retained after dropping from the start` | `[0+]` |
+| `drop last N` | `K/M items retained after dropping from the end` | `[0+]` |
+| predicate `drop` | `K/M items retained` | `[0+]` |
+| `rank` | `ranked` | `[2]` |
+| `rank top N` | `top K/M items selected` | `[0+]` |
+| `rank bottom N` | `bottom K/M items selected` | `[0+]` |
+| authored `let` | `perceived from authored content` | `[2]` |
+
+Meaningful results depend on runtime selection or cardinality and remain
+visible by default. Predictable results merely confirm the statement contract
+and appear only at `-vv`. Failed statements have no result. `repeat` has no
+statement result; its `until` clause may emit a control decision instead.
 
 
-## Transparent `run`
+## Direct `run`
 
-A `run` statement contains one child run and no additional transformation, so
-the two boundaries are compressed:
+A `run` statement retains both boundaries: its source-like statement header
+shows authored intent and binding, while its work header shows the resolved
+runnable kind:
 
 ```text
-[3] run review
+[3] let report = run review
   Review and improve the report.                              [1+]
 
-  Run flow review                                            [0+]
+  Run flow review                                             [0+]
   · reviewing weak sections…                                [live]
     run_review1/0 · 4.4s · deepseek/deepseek-chat            [2]
-
-  Save result to report                                     [2]
-  · 1 item · returned by one run                             [2]
+  ↳ run_review1 succeeded · 4.4s                             [2]
 ```
 
-There is no child-run success line or statement result frame.
+The compact child-run summary closes the work. A separate statement result
+would repeat the same value, so direct `run` does not add one.
 
 
 ## Scatter
@@ -489,11 +507,10 @@ There is no child-run success line or statement result frame.
   Expand the topic into six research queries.                 [1+]
 
   Run agic expand_queries                                    [0+]
-  · ["agent architecture", "agent tools", ...]               [1+]
+  · ["agent architecture", "agent tools", ...]               [0+]
     run_queries1/0 · 2.0s · deepseek/deepseek-chat · 4.6k/63 tokens
-
-  Save result to _                                           [2]
-  · 6-item list · scattered from 1 item                      [2]
+  ↳ run_queries1 succeeded · 2.0s                            [2]
+  ↳ 6-item list saved to _ · scattered from 1 item             [0+]
 ```
 
 The child model metadata line is visible only at `-vv`.
@@ -516,11 +533,11 @@ The lane count is bounded while the item count may be large. Parallel work
 owns one mutable block rather than one scrollback line per item:
 
 ```text
-[2] rank relevance · top 8 · par 4
+[2] let findings = rank relevance top 8 par 4
   Rank findings by relevance.                                [1+]
 
   Run agic relevance in parallel (18 items, 4 lanes)          [0+]
-  5 completed · 4 active · 1 failed · 3.1s                  [live]
+  · 5 runs succeeded · 4 active · 1 failed · 3.1s           [live]
   0 │ item 5 | thinking…                                     [live]
   1 │ item 6 | executing knowledge.search…                   [live]
   2 │ item 7 | score 0.82                                    [live]
@@ -534,8 +551,15 @@ LANE │ item POSITION | ACTIVITY
 ```
 
 The progress line does not repeat the total already present in the statement
-and work lines. Each lane replaces its previous item. Successful child runs
-update the aggregate and never create individual scrollback entries.
+and work lines. Batch states consistently use `N runs succeeded`, `N active`,
+and `N failed` in that order, omit zero groups, and retain the leading `·` as
+live progress becomes the final aggregate. Each lane replaces its previous
+item. Successful child runs update the aggregate and never create individual
+scrollback entries.
+
+A lane is a reusable concurrency slot, not an item-derived label. The next
+waiting item acquires a lane only after its previous run has ended; cleanup is
+guarded by run identity so an older completion cannot erase the new owner.
 
 When work completes, the live lane area disappears and a stable work summary
 remains at `-v` and above:
@@ -544,51 +568,101 @@ remains at `-v` and above:
   · 18 runs succeeded · 9.4s · 64.2k/720 tokens · 18 model calls
 ```
 
-At `-vv`, the subsequent locals update is a separate block:
+The meaningful semantic result remains at every non-quiet level and is also
+self-contained when copied without its statement header:
 
 ```text
-  Save result to findings
-  · 8-item list · selected top 8 of 18 items
+  ↳ 8-item list saved to findings · top 8/18 items selected
 ```
 
 A failure retains one useful failing item:
 
 ```text
-[2] rank relevance · top 8 · par 4
+[2] rank relevance top 8 par 4
   Run agic relevance in parallel (18 items, 4 lanes)
   ! run_research1/2 failed: item 5: output is not valid Number
-    · 3.1s · 5 completed · 1 failed
+    · 5 runs succeeded · 1 failed · 3.1s
 ```
 
 
 ## Repeat
 
-`repeat` keeps only its most recent iteration in the live area:
+`repeat` is control flow. It produces no result, accepts no binding, and lets
+its body statements update the current locals through their own bindings. It
+keeps only its most recent iteration in the live area. Retained `-vv` sections
+flatten the loop context into a three-equals heading; the heading is display
+context and creates no durable identity:
+
+The retained `-vv` form is:
 
 ```text
-[3] repeat 5
-  iteration 2 · 5 total                                      [live]
-  · revising report…                                         [live]
+[2] repeat 3
+  Carry each revised draft into the next review cycle.
+
+  === iteration 0 ===
+
+  [0] let review = run review
+    Run agic review
+    · Review identified unclear ownership...
+      run_review0/0 · 2.1s · deepseek/deepseek-chat
+    ↳ run_review0 succeeded · 2.1s
+
+  [1] run revise
+    Run agic revise
+    · Revised proposal...
+      run_revise0/0 · 4.3s · deepseek/deepseek-chat
+    ↳ run_revise0 succeeded · 4.3s
+
+  [?] until
+    Run agic <agic:L42>
+
+    · false
+      run_until0/0 · 620ms · deepseek/deepseek-chat
+    ↳ run_until0 succeeded · 620ms
+
+    ↳ continue
 ```
 
-For an `until` clause, condition evaluation is separate live activity:
+The section scopes `[0]` and `[1]` to one iteration; the ordinals restart in
+the next section and are not aliases for durable StepPaths. `[?]` is a sibling
+clause marker that does not consume an ordinal. Its evaluator is shown as a
+normal nested run. One `↳` closes that run, then a blank line separates the
+control decision `↳ continue` or `↳ stop repeating`.
+
+Below `-vv`, the next iteration replaces the preceding live section. A
+fixed-count repeat needs no completion result because successful completion
+already proves the count. Early exit is meaningful and remains visible:
 
 ```text
-  evaluate until                                              [live]
-  · false                                                     [1+]
+  ↳ stopped after 2 iterations                               [0+]
 ```
 
-Starting another iteration replaces the preceding live block. Completed
-iterations update aggregate state but do not accumulate in scrollback.
-
-At `-vv`, the final result is:
+If an iteration body fails, later body statements, `until`, and later
+iterations do not occur. If the `until` evaluator run fails, repeat and the
+enclosing flow fail; the transcript shows the diagnostic and a red compact run
+summary, but no control decision:
 
 ```text
-  Save result to _
-  · 1 item · completed 4 iterations
+  [?] until
+    Run agic <agic:L42>
+    ! model request failed: provider returned status 429
+      run_until1/0 · 820ms
+    ↳ run_until1 failed · 820ms
 ```
 
-If an iteration fails, later iterations and saving do not occur.
+An evaluator run may succeed while its output still fails Boolean coercion.
+In that case its successful run summary remains valid, followed by the owning
+control diagnostic; failure is never interpreted as `false`:
+
+```text
+    · "yes"
+      run_until1/0 · 580ms · deepseek/deepseek-chat
+    ↳ run_until1 succeeded · 580ms
+
+    ! until requires Boolean; got Text
+```
+
+Zero iterations leave locals unchanged.
 
 
 ## Settle
@@ -656,24 +730,29 @@ settle -> Part[]:
 Lowering gives an inline settle agic an implicit `item: Part[]` parameter. It
 does not add an initial-value node to the grammar or AST.
 
-Only the current iteration remains live:
+Settle uses the same bounded batch-work language as `map`, `keep`, and `rank`,
+with one active slot rather than multiple lanes:
 
 ```text
-[4] settle reducer
-  Run agic reducer sequentially (6 items, 6 calls)
-  3 calls completed · item 3 active · 4.2s                    [live]
-  · thinking…                                                 [live]
+[4] let report = settle reducer
+  Run agic reducer sequentially (6 items)
+  · 3 runs succeeded · 1 active · 4.2s                       [live]
+  │ item 3 | thinking…                                        [live]
 ```
 
-The renderer does not query persisted child inputs to reconstruct `_` or
-`item`. It presents their zero-based position and the native live call events.
+`-vv` keeps the same compact row. It does not create an item section or expand
+the child run, matching `map`, `keep`, and `rank`.
 
-At `-vv`, completion adds:
+Completion leaves the aggregate work and semantic result:
 
 ```text
-  Save result to report
-  · 1 item · settled from a 6-item list
+  · 6 runs succeeded · 12.4s · 18.2k/940 tokens
+  ↳ 1 item saved to report · reduced from 6 items             [2]
 ```
+
+The source-like header and visible result both identify the outer binding.
+Child output becoming the next accumulator is settle's internal dataflow, not
+another binding.
 
 An explicit authored initial value remains a future language feature. It will
 be designed with the settle syntax and AST rather than inferred by execution.
@@ -691,12 +770,12 @@ when available:
 - actionable provider or tool cause.
 
 ```text
-[2] rank relevance · top 8 · par 4
+[2] rank relevance top 8 par 4
   ! run_research1/2 failed: item 5: output is not valid Number
-    · 3.1s · 5 completed · 1 failed · 18.2k/210 tokens
+    · 5 runs succeeded · 1 failed · 3.1s · 18.2k/210 tokens
 
 --- run_research1 failed ---
-3.1s · 5 completed · 1 failed · 18.2k/210 tokens
+5 runs succeeded · 1 failed · 3.1s · 18.2k/210 tokens
 ----------------------------
 ```
 
@@ -714,7 +793,7 @@ settle      5 of 6 items settled before failure
 repeat      2 iterations completed before failure
 ```
 
-Failed statements never display `Save result` or `Discard result`.
+Failed value statements never apply their declared binding.
 
 
 ## Cancellation
@@ -744,7 +823,7 @@ The root summary is the only routine summary visible at every non-quiet level:
 ----------------------------
 ```
 
-Agic step metadata and flow locals updates are optional `-vv` details.
+Agic step metadata and repeat sections are optional `-vv` details.
 Stable parallel work summaries remain visible at `-v`. The root frame:
 
 - contains the root run ID before the status;
@@ -826,27 +905,41 @@ executor/event contracts solely for presentation.
 ## Review Checklist
 
 - `-q` emits no stderr or stdout.
-- Default shows minimal progress, failures, root summary, and final stdout.
+- Default shows headers, meaningful statement or control results, failures,
+  root summary, and final stdout.
 - `-v` adds descriptions, useful previews, and stable work summaries.
-- `-vv` adds input, IDs, step facts, and locals updates.
+- `-vv` adds input, IDs, step facts, predictable statement results, and
+  retained repeat sections.
 - Runnable descriptions align with the runnable header, with a blank line
   before input.
 - `RUN_ID@INDEX` denotes a run control; `RUN_ID/INDEX` denotes a StepPath.
 - Control, step, event, record, and displayed statement indexes are zero-based.
-- A statement's bracketed index equals the final segment of its StepPath.
+- A top-level statement's bracketed ordinal equals the final segment of its
+  current StepPath. Repeat-body ordinals restart at `[0]` per iteration and are
+  not durable identities.
 - Event `item`, `lane`, and `loop` positions are displayed as zero-based values
   without adding one; plural totals and progress values remain counts.
 - Root output has no left margin; nested content adds two spaces.
 - Wrapped text aligns with its semantic content boundary.
 - Root summary frames contain the root run ID before status.
 - Model and tool steps do not repeat metadata in separate success lines.
+- `marker` is the presentation term; `·` marks run work, `!` marks a
+  diagnostic, and `↳` closes a child run, statement result, or control
+  decision.
 - Errors use `!`; their following facts use the same layout as successful
-  output.
-- Successful child runs do not add completion summaries.
-- Flow locals updates, including their result details, are hidden below
-  `-vv`.
+  output. Failed diagnostics and failed `↳` summaries are red.
+- Batched child runs do not accumulate stable per-item summaries; a visible
+  nested run may close with one compact summary.
+- Non-default value bindings appear on statement headers; default `_` bindings
+  are omitted.
 - Parallel output is bounded by lane count.
-- Repeat and settle retain only their latest live iteration.
+- Repeat has no value or binding; its body statements update current locals.
+- Repeat sections use `=== iteration N ===`; body ordinals restart at `[0]`,
+  and `[?]` identifies `until` without consuming an ordinal.
+- A failed `until` evaluator or failed Boolean coercion fails repeat and emits
+  no `continue` or `stop repeating` decision.
+- Settle uses one bounded sequential active slot and never accumulates item
+  sections in scrollback.
 - Settle uses `_` as its accumulated primary input/output and `item` as the
   current source-list item.
 - `1 item` and `1-item list` are never interchangeable.

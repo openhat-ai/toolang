@@ -40,6 +40,7 @@ from toolang.lang.ast import (
     StructDecl,
 )
 from toolang.lang.input import coerce_input, validate_value
+from toolang.lang.format import format_statement_head
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 
@@ -117,7 +118,10 @@ async def execute_step(
                 **statement_context(statement),
                 "binding": statement.binding,
                 "placement": dict(placement or {}),
-                "source": {"line": statement.span.line},
+                "source": {
+                    "line": statement.span.line,
+                    "head": format_statement_head(statement),
+                },
             },
             started_at=started_at,
         )

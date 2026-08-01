@@ -776,12 +776,15 @@ class _Execution:
         """Execute child runs concurrently and preserve their output type."""
 
         executable = _require_runnable(binding.state, runnable)
-        semaphore = asyncio.Semaphore(limit or max(len(inputs), 1))
         lanes = limit or max(len(inputs), 1)
+        available_lanes: asyncio.Queue[int] = asyncio.Queue()
+        for lane in range(lanes):
+            available_lanes.put_nowait(lane)
         input_type = locals.get("_", Local()).type_name
 
         async def execute(index: int, value: Any) -> Local:
-            async with semaphore:
+            lane = await available_lanes.get()
+            try:
                 child_locals = dict(locals)
                 child_locals["_"] = Local(value, "item", type_name=input_type)
                 return await self.execute_child(
@@ -792,10 +795,12 @@ class _Execution:
                     {
                         "item": index,
                         "items": len(inputs),
-                        "lane": index % lanes,
+                        "lane": lane,
                         "lanes": lanes,
                     },
                 )
+            finally:
+                available_lanes.put_nowait(lane)
 
         tasks = [
             asyncio.create_task(execute(index, value))

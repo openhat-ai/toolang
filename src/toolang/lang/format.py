@@ -6,6 +6,7 @@ import re
 
 from tree_sitter import Node, Tree
 
+from . import ast
 from .ast import _first_syntax_error, _parse_tree
 from .errors import ToolangFormatError
 
@@ -80,6 +81,86 @@ def format_source(source: str, *, tab_size: int = 2) -> str:
         formatted = f"{formatted}\n"
     _syntax_tree(formatted)
     return formatted
+
+
+def format_statement_head(statement: ast.FlowStmt) -> str:
+    """Return one compact source-like head for a lowered flow statement."""
+
+    if isinstance(statement, ast.LetStmt):
+        return _statement_words("let", statement.binding)
+    if isinstance(statement, ast.RunStmt):
+        head = _statement_words("run", _authored_runnable(statement.runnable))
+    elif isinstance(statement, ast.SeekStmt):
+        head = _statement_words(
+            "seek",
+            statement.agent,
+            _authored_runnable(statement.runnable),
+        )
+    elif isinstance(statement, ast.AskStmt):
+        head = "ask"
+    elif isinstance(statement, ast.ScatterStmt):
+        head = _statement_words(
+            "scatter",
+            str(statement.count),
+            _authored_runnable(statement.runnable),
+        )
+    elif isinstance(statement, ast.StormStmt):
+        head = _statement_words(
+            "storm",
+            str(statement.count),
+            _authored_runnable(statement.runnable),
+            _parallel_clause(statement.par),
+        )
+    elif isinstance(statement, ast.GatherStmt):
+        head = _statement_words("gather", _authored_runnable(statement.runnable))
+    elif isinstance(statement, ast.SettleStmt):
+        head = _statement_words("settle", _authored_runnable(statement.runnable))
+    elif isinstance(statement, ast.MapStmt):
+        head = _statement_words(
+            "map",
+            _authored_runnable(statement.runnable),
+            _parallel_clause(statement.par),
+        )
+    elif isinstance(statement, ast.KeepStmt | ast.DropStmt):
+        head = _statement_words(
+            statement.kind,
+            statement.position,
+            str(statement.count) if statement.count is not None else "",
+            _authored_runnable(statement.predicate or ""),
+            _parallel_clause(statement.par),
+        )
+    elif isinstance(statement, ast.RankStmt):
+        head = _statement_words(
+            "rank",
+            _authored_runnable(statement.scorer),
+            statement.limit,
+            str(statement.count) if statement.count is not None else "",
+            _parallel_clause(statement.par),
+        )
+    elif isinstance(statement, ast.RepeatStmt):
+        return _statement_words(
+            "repeat",
+            str(statement.count) if statement.count is not None else "",
+        )
+    else:
+        raise TypeError(f"unsupported flow statement: {type(statement).__name__}")
+    if statement.binding == "_":
+        return head
+    if statement.binding is None:
+        return f"let {head}"
+    return f"let {statement.binding} = {head}"
+
+
+def _statement_words(*values: str | None) -> str:
+    return " ".join(value for value in values if value)
+
+
+def _authored_runnable(value: str) -> str:
+    return "" if value.startswith("<agic:") else value
+
+
+def _parallel_clause(value: int | None) -> str:
+    return f"par {value}" if value is not None else ""
 
 
 def _format_source_lines(lines: list[str], *, root: Node, tab_size: int) -> list[str]:

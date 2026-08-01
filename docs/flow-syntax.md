@@ -12,6 +12,7 @@ NAME       local name
 T          Toolang type
 N          non-negative count or selection size
 P          positive concurrency limit
+VALUE_STMT a result-producing statement other than repeat
 RUNNABLE   named agic or flow
 AGENT      agent selector
 EXPANDER   one-run runnable returning a list
@@ -50,9 +51,11 @@ instead.
 flow [NAME] [(PARAMS)] [-> T]:
   STMTS
 
-STMT                    update `_`
-let NAME = STMT         update `NAME`
-let STMT                discard the result
+VALUE_STMT                    update `_`
+let NAME = VALUE_STMT         update `NAME`
+let VALUE_STMT                discard the result
+
+repeat ...                    update locals through its body
 
 let NAME: BODY          perceive a ContentBody and assign one `Percept` to `NAME`
 ```
@@ -61,9 +64,10 @@ Flow signatures use the executable parameter rules in
 [program.md](./program.md), including implicit `_ : Part[]`, explicit `()`, and
 named parameters.
 
-`_` is the primary local. A statement may read all locals, but it computes its
-result from a snapshot before the selected local is updated. Binding therefore
-remains separate from statement execution.
+`_` is the primary local. A value statement reads a locals snapshot, computes
+one result, and applies its binding only after the complete statement succeeds.
+`repeat` is different: it produces no result and accepts no `let` binding. Its
+body statements update the current flow locals normally as the loop proceeds.
 
 
 ## Statements
@@ -133,6 +137,17 @@ rank     rank items by score and optionally keep the top or bottom N
 repeat   repeat a statement block, bounded by N or until
 ```
 
+The reshape statements form two execution families:
+
+| Execution | `item -> list` | `list -> list` | `list -> item` |
+| --- | --- | --- | --- |
+| one child run | `scatter` | - | `gather` |
+| multiple child runs | `storm` | `map` | `settle` |
+
+`scatter/gather` delegate reshape to one runnable. `storm/map/settle` let the
+executor coordinate multiple child runs. All five remain value statements and
+bind their complete result once.
+
 
 ## Rules
 
@@ -151,7 +166,9 @@ repeat   repeat a statement block, bounded by N or until
 - Generated inline `keep`, `drop`, `rank`, and `until` evaluators do not
   recall thread history or receive tools. Use a named agic when evaluation
   intentionally needs either resource.
-- `repeat` is control flow. Its result is the last executed child result.
+- `repeat` is control flow, not a value statement. It has no result or binding.
+  Its body statements update the same working locals according to their own
+  bindings. Zero iterations leave locals unchanged.
 
 
 ### Runs
@@ -169,7 +186,8 @@ repeat   repeat a statement block, bounded by N or until
 - `settle` starts one child run per item in sequence. The first run receives
   empty primary input `_` and source item `0` as argument `item`; each output
   becomes `_` for the next run. Inline settle agics receive an implicit
-  `item: Part[]` parameter.
+  `item: Part[]` parameter. This accumulator is internal to settle; outer flow
+  locals receive only the final successful result through settle's binding.
 - Positional `keep/drop` do not start child runs.
 
 
@@ -183,7 +201,10 @@ repeat   repeat a statement block, bounded by N or until
 - `top N` and `bottom N` are mutually exclusive. Selected items retain ranked
   order; omitting both returns the complete ranked list.
 - Every `repeat` has `N`, `until`, or both. When both are present, the first
-  stopping condition reached ends the loop. `until` is always final.
+  stopping condition reached ends the loop. `until` is always final, reads the
+  latest locals after the iteration, and does not bind its Boolean result. A
+  failed evaluator run or failed Boolean coercion fails the repeat and its
+  enclosing flow; failure is never interpreted as `false`.
 
 The common form is:
 

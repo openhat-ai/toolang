@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from toolang.common.layout import AgentLayout
-from toolang.lang.ast import Program, to_data
+from toolang.lang.ast import Program, SettleStmt, to_data
 from toolang.state.state import CapResolution, agent_state_version
 from toolang.state.cache import (
     load_current_version,
@@ -137,7 +137,7 @@ def test_home_prepared_loads_program_without_reparsing_source(
 ) -> None:
     source_dir = tmp_path / "source"
     source_dir.mkdir()
-    source_text = "agic hello:\n  Hello.\n"
+    source_text = "agic hello:\n  Hello.\n\nflow work:\n  settle hello\n"
     (source_dir / "agent.too").write_text(source_text, encoding="utf-8")
     source = scan_source(source_dir, ("agent.too",))
     version = write_prepared(
@@ -162,7 +162,11 @@ def test_home_prepared_loads_program_without_reparsing_source(
 
     monkeypatch.setattr(Program, "from_source", classmethod(fail_parse))
 
-    assert load_home_prepared(layout).program.find_agic("hello")
+    program = load_home_prepared(layout).program
+    assert program.find_agic("hello")
+    flow = program.find_flow("work")
+    assert flow is not None
+    assert isinstance(flow.stmts[0], SettleStmt)
 
 
 def test_prepared_version_rejects_files_outside_its_files_directory(

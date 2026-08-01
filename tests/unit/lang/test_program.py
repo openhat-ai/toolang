@@ -230,9 +230,7 @@ flow evaluate:
 """
     )
 
-    generated = [
-        agic for agic in program.agics if agic.name.startswith("<agic:")
-    ]
+    generated = [agic for agic in program.agics if agic.name.startswith("<agic:")]
 
     assert sorted(agic.output for agic in generated if agic.output) == [
         "Boolean",
@@ -308,15 +306,63 @@ def test_program_data_round_trips_without_parsing_source() -> None:
     from toolang.lang.ast import program_from_data
 
     program = Program.from_source(
-        "agic hello:\n"
-        "  Hello.\n"
-        "\n"
-        "flow work:\n"
-        "  repeat 2:\n"
-        "    run hello\n"
+        "agic hello:\n  Hello.\n\nflow work:\n  repeat 2:\n    run hello\n"
     )
 
     assert program_from_data(to_data(program)) == program
+
+
+def test_program_data_round_trip_preserves_ambiguous_statement_kinds() -> None:
+    from toolang.lang.ast import program_from_data
+
+    program = Program.from_source(
+        """
+agic action:
+  pass
+
+agic predicate -> Boolean:
+  pass
+
+flow work:
+  gather action
+  settle action
+  keep predicate
+  drop predicate
+  repeat 2:
+    settle action
+    drop predicate
+"""
+    )
+
+    restored = program_from_data(to_data(program))
+
+    assert restored == program
+    assert [type(statement) for statement in restored.flows[0].stmts] == [
+        type(statement) for statement in program.flows[0].stmts
+    ]
+    restored_repeat = restored.flows[0].stmts[-1]
+    original_repeat = program.flows[0].stmts[-1]
+    assert isinstance(restored_repeat, RepeatStmt)
+    assert isinstance(original_repeat, RepeatStmt)
+    assert [type(statement) for statement in restored_repeat.stmts] == [
+        type(statement) for statement in original_repeat.stmts
+    ]
+
+
+def test_program_data_rejects_unknown_statement_kind() -> None:
+    from toolang.lang.ast import program_from_data
+
+    data = cast(
+        dict[str, Any],
+        to_data(
+            Program.from_source("agic action:\n  pass\nflow work:\n  run action\n")
+        ),
+    )
+    flows = cast(list[dict[str, Any]], data["flows"])
+    flows[0]["stmts"][0]["kind"] = "future"
+
+    with pytest.raises(ValueError, match="Input tag 'future'"):
+        program_from_data(data)
 
 
 def test_validation_runs_after_lowering() -> None:
@@ -444,9 +490,7 @@ agic:
     )
 
     assert expanded == (
-        TextPart(
-            "Review src/app.py carefully.\nonly errors\n\nAlso inspect tests."
-        ),
+        TextPart("Review src/app.py carefully.\nonly errors\n\nAlso inspect tests."),
     )
 
 

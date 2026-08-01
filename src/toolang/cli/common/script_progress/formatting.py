@@ -81,9 +81,7 @@ def compact_count(value: int) -> str:
 
 
 def token_fact(input_tokens: int, output_tokens: int) -> str:
-    return (
-        f"{compact_count(input_tokens)}/{compact_count(output_tokens)} tokens"
-    )
+    return f"{compact_count(input_tokens)}/{compact_count(output_tokens)} tokens"
 
 
 def usage_facts(noted: Mapping[str, Any]) -> list[str]:
@@ -125,9 +123,7 @@ def value_summary(value: object) -> str:
 
 
 def output_preview(event: StepEnd) -> str:
-    value = " ".join(
-        part.text for part in event.output if isinstance(part, TextPart)
-    )
+    value = " ".join(part.text for part in event.output if isinstance(part, TextPart))
     return truncate(one_line(value), 180)
 
 
@@ -187,28 +183,9 @@ def completed_step_label(begin: StepBegin, event: StepEnd) -> str:
     return f"{begin.kind} completed"
 
 
-def statement_title(given: Mapping[str, Any]) -> str:
-    statement = text(given.get("statement")) or "statement"
-    target = statement_target(given)
-    amount = integer(given.get("count"))
-    position = text(given.get("position"))
-    limit = text(given.get("limit"))
-    parallelism = integer(given.get("par"))
-    parts = [statement]
-    if statement in {"scatter", "storm", "repeat"} and amount is not None:
-        parts.append(str(amount))
-    if position:
-        parts.append(position)
-        if amount is not None:
-            parts.append(str(amount))
-    if target:
-        parts.append(target)
-    details: list[str] = []
-    if limit:
-        details.append(f"{limit} {amount}" if amount is not None else limit)
-    if parallelism is not None:
-        details.append(f"par {parallelism}")
-    return " · ".join((" ".join(parts), *details))
+def statement_head(given: Mapping[str, Any]) -> str:
+    source = mapping(given.get("source"))
+    return text(source.get("head")) or "statement"
 
 
 def statement_target(given: Mapping[str, Any]) -> str:
@@ -245,13 +222,17 @@ def shape_label(event: StepEnd) -> str:
     return ""
 
 
-def binding_action(given: Mapping[str, Any]) -> str:
-    if "binding" not in given:
-        return ""
-    binding = given.get("binding")
-    if binding is None:
-        return "Discard result"
-    return f"Save result to {binding}"
+def statement_result_level(given: Mapping[str, Any]) -> int | None:
+    """Return the minimum verbosity for one successful statement result."""
+
+    statement = text(given.get("statement"))
+    if statement in {"run", "repeat"}:
+        return None
+    if statement in {"scatter", "keep", "drop"}:
+        return 0
+    if statement == "rank" and text(given.get("limit")):
+        return 0
+    return 2
 
 
 def statement_result(
@@ -264,16 +245,16 @@ def statement_result(
     statement = text(given.get("statement"))
     items = integer(event.noted.get("items"))
     source_count = integer(given.get("count"))
-    if statement == "run":
-        effect = "returned by one run"
-    elif statement == "scatter":
+    if statement in {"run", "repeat"}:
+        return ""
+    if statement == "scatter":
         effect = "scattered from 1 item"
     elif statement == "storm":
         effect = f"produced by {source_count or items or 0} runs"
     elif statement == "gather":
         effect = _list_source("gathered from", source_items)
     elif statement == "settle":
-        effect = _list_source("settled from", source_items)
+        effect = _list_source("reduced from", source_items)
     elif statement == "map":
         effect = _list_source("mapped from", source_items)
     elif statement in {"keep", "drop"}:
@@ -288,13 +269,15 @@ def statement_result(
             selected=items,
             source_items=source_items,
         )
-    elif statement == "repeat":
-        effect = "completed repeated execution"
     elif statement == "let":
         effect = "perceived from authored content"
     else:
         effect = "produced"
-    return " · ".join(value for value in (shape, effect) if value)
+    if not shape:
+        return effect
+    binding = given.get("binding", "_")
+    result = f"{shape} discarded" if binding is None else f"{shape} saved to {binding}"
+    return " · ".join(value for value in (result, effect) if value)
 
 
 def runtime_failure(event: StepBegin) -> bool:
@@ -311,28 +294,16 @@ def _selection_result(
     position = text(given.get("position"))
     count_value = integer(given.get("count"))
     if position and count_value is not None:
-        verb = "kept" if statement == "keep" else "dropped"
+        actual = selected or 0
+        location = "start" if position == "first" else "end"
+        count_label = _fraction(actual, source_items)
         if statement == "keep":
-            actual = selected or 0
-        elif source_items is not None:
-            actual = source_items - (selected or 0)
-        else:
-            actual = count_value
-        suffix = (
-            f" of {source_items} items"
-            if source_items is not None
-            else ""
-        )
-        return f"{verb} {position} {actual}{suffix}"
+            return f"{count_label} items kept from the {location}"
+        return f"{count_label} items retained after dropping from the {location}"
     if statement == "keep":
-        return _selected_count("kept", selected, source_items)
+        return f"{_fraction(selected, source_items)} items kept"
     if statement == "drop":
-        dropped = (
-            source_items - (selected or 0)
-            if source_items is not None
-            else None
-        )
-        return _selected_count("dropped", dropped, source_items)
+        return f"{_fraction(selected, source_items)} items retained"
     return "filtered"
 
 
@@ -344,31 +315,19 @@ def _rank_result(
 ) -> str:
     limit = text(given.get("limit"))
     if limit:
-        return _selected_count(
-            f"selected {limit}",
-            selected,
-            source_items,
-        )
-    count_value = source_items if source_items is not None else selected
-    return (
-        f"ranked {count_value} items"
-        if count_value is not None
-        else "ranked"
-    )
+        return f"{limit} {_fraction(selected, source_items)} items selected"
+    return "ranked"
 
 
-def _list_source(verb: str, source_items: int | None) -> str:
-    if source_items is None:
-        return f"{verb} a list"
-    return f"{verb} a {source_items}-item list"
-
-
-def _selected_count(
+def _list_source(
     verb: str,
-    selected: int | None,
     source_items: int | None,
 ) -> str:
-    actual = selected or 0
     if source_items is None:
-        return f"{verb} {actual} items"
-    return f"{verb} {actual} of {source_items} items"
+        return f"{verb} a list"
+    return f"{verb} {count(source_items, 'item')}"
+
+
+def _fraction(selected: int | None, source_items: int | None) -> str:
+    actual = selected or 0
+    return f"{actual}/{source_items}" if source_items is not None else str(actual)

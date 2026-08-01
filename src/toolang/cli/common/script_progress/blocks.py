@@ -11,7 +11,6 @@ from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from .console import ProgressConsole, Tone
 from .formatting import (
     active_step_label,
-    binding_action,
     completed_step_label,
     count,
     elapsed,
@@ -23,10 +22,11 @@ from .formatting import (
     percept_lines,
     runnable_label,
     shape_label,
+    statement_head,
     statement_index,
     statement_result,
+    statement_result_level,
     statement_target,
-    statement_title,
     status_label,
     text,
     token_fact,
@@ -170,6 +170,25 @@ class RunBlock:
             console.wrapped(" · ".join(facts), prefix="")
         console.write("-" * len(title), tone=tone)
 
+    def render_compact(
+        self,
+        console: ProgressConsole,
+        *,
+        finished_at: str,
+    ) -> None:
+        """Close one visible child run without a nested frame."""
+
+        facts = [
+            f"{self.run_id} {status_label(self.status)}",
+            elapsed(self.started_at, finished_at),
+        ]
+        console.wrapped(
+            " · ".join(value for value in facts if value),
+            prefix=f"{' ' * self.indent}↳ ",
+            continuation=f"{' ' * (self.indent + 2)}",
+            tone=_tone(self.status),
+        )
+
 
 @dataclass(slots=True)
 class LaneBlock:
@@ -279,16 +298,13 @@ class CallBlock:
             console.wrapped(
                 " · ".join(fact for fact in facts if fact),
                 prefix=f"{' ' * (indent + 2)}",
-                tone=tone,
             )
             return
-        preview = output_preview(event)
-        if verbosity >= 1 and preview:
-            console.wrapped(
-                preview,
-                prefix=f"{' ' * indent}· ",
-                continuation=f"{' ' * (indent + 2)}",
-            )
+        console.wrapped(
+            output_preview(event) or "model completed",
+            prefix=f"{' ' * indent}· ",
+            continuation=f"{' ' * (indent + 2)}",
+        )
         if verbosity >= 2:
             console.wrapped(
                 " · ".join(fact for fact in facts if fact),
@@ -325,16 +341,14 @@ class CallBlock:
             console.wrapped(
                 " · ".join(fact for fact in facts if fact),
                 prefix=f"{' ' * (indent + 2)}",
-                tone=tone,
             )
             return
         result = tool_result(event)
-        if verbosity >= 1:
-            console.wrapped(
-                f"{tool}: {result or 'completed'}",
-                prefix=f"{' ' * indent}· ",
-                continuation=f"{' ' * (indent + 2)}",
-            )
+        console.wrapped(
+            f"{tool}: {result or 'completed'}",
+            prefix=f"{' ' * indent}· ",
+            continuation=f"{' ' * (indent + 2)}",
+        )
         if verbosity >= 2:
             console.wrapped(
                 " · ".join(fact for fact in facts if fact),
@@ -351,6 +365,7 @@ class StatementBlock:
     children: list[str] = field(default_factory=list)
     completed: int = 0
     failed: int = 0
+    failed_item: int | None = None
     total: int | None = None
     lane_count: int | None = None
     lanes: dict[int, LaneBlock] = field(default_factory=dict)
@@ -361,6 +376,14 @@ class StatementBlock:
     active_activity: str = "starting…"
     hidden: bool = False
     live_owner: str | None = None
+    ordinal: int | None = None
+    current_iteration: int | None = None
+    next_ordinal: int = 0
+    active_ordinal: int | None = None
+    active_title: str = ""
+    active_work: str = ""
+    until_decision: bool | None = None
+    header_written: bool = False
 
     @property
     def statement(self) -> str:
@@ -382,8 +405,22 @@ class StatementBlock:
     ) -> None:
         if self.hidden:
             return
+        self._render_header(console, verbosity=verbosity)
+
+    def _render_header(
+        self,
+        console: ProgressConsole,
+        *,
+        verbosity: int,
+    ) -> None:
+        if self.header_written:
+            return
+        self.header_written = True
         console.blank()
-        heading = f"[{statement_index(self.begin.step)}] {statement_title(self.begin.given)}"
+        index = self.ordinal
+        if index is None:
+            index = statement_index(self.begin.step)
+        heading = f"[{index}] {statement_head(self.begin.given)}"
         console.write(f"{' ' * self.base_indent}{heading}")
         if verbosity >= 1 and (doc := text(self.begin.given.get("doc"))):
             console.wrapped(doc, prefix=" " * self.content_indent)
@@ -404,14 +441,87 @@ class StatementBlock:
         if lanes is not None:
             self.lane_count = max(self.lane_count or 0, lanes)
 
+    def enter_iteration(
+        self,
+        console: ProgressConsole,
+        iteration: int,
+        *,
+        verbosity: int,
+    ) -> int:
+        """Enter one repeat iteration and allocate its local ordinal."""
+
+        if self.current_iteration != iteration:
+            self.current_iteration = iteration
+            self.next_ordinal = 0
+            if verbosity >= 2:
+                console.blank()
+                console.write(
+                    f"{' ' * self.content_indent}=== iteration {iteration} ==="
+                )
+                console.blank()
+        ordinal = self.next_ordinal
+        self.next_ordinal += 1
+        return ordinal
+
+    def activate_nested(self, block: StatementBlock) -> None:
+        """Show one repeat-body statement in the bounded live section."""
+
+        self.active_ordinal = block.ordinal
+        self.active_title = statement_head(block.begin.given)
+        self.active_work = ""
+        self.active_activity = ""
+
+    def render_until_begin(
+        self,
+        console: ProgressConsole,
+        run: RunBlock,
+        *,
+        verbosity: int,
+    ) -> None:
+        """Open the repeat until clause as a sibling presentation block."""
+
+        iteration = integer(run.placement.get("loop"))
+        if iteration is not None and self.current_iteration != iteration:
+            self.current_iteration = iteration
+        self.active_ordinal = None
+        self.active_title = "until"
+        self.active_work = f"Run {run.label}"
+        self.active_activity = "starting…"
+        if verbosity < 2:
+            return
+        console.blank()
+        console.write(f"{' ' * self.content_indent}[?] until")
+        console.write(f"{' ' * (self.content_indent + 2)}Run {run.label}")
+
+    def render_until_decision(
+        self,
+        console: ProgressConsole,
+        decision: bool | None,
+        *,
+        verbosity: int,
+    ) -> None:
+        """Record a successful until decision without guessing invalid output."""
+
+        self.until_decision = decision
+        if decision is None:
+            return
+        label = "stop repeating" if decision else "continue"
+        self.active_activity = f"↳ {label}"
+        if verbosity >= 2:
+            console.blank()
+            console.write(f"{' ' * (self.content_indent + 2)}↳ {label}")
+
     def child_finished(self, run: RunBlock) -> None:
         self.metrics.add(run.metrics)
         if run.status == "finished":
             self.completed += 1
         elif run.status == "failed":
             self.failed += 1
+            self.failed_item = integer(run.placement.get("item"))
         lane = integer(run.placement.get("lane"))
-        if lane is not None:
+        if lane is not None and (
+            current := self.lanes.get(lane)
+        ) is not None and current.run_id == run.run_id:
             self.lanes.pop(lane, None)
         if self.active_run == run.run_id:
             self.active_run = None
@@ -421,10 +531,14 @@ class StatementBlock:
         self,
         console: ProgressConsole,
         run: RunBlock,
+        *,
+        verbosity: int,
     ) -> None:
-        if self.work_written or self.hidden:
+        if self.work_written:
             return
         self.work_written = True
+        if self.hidden:
+            return
         console.write(f"{' ' * self.content_indent}{self.work_line(run)}")
 
     def work_line(self, run: RunBlock | None = None) -> str:
@@ -441,12 +555,12 @@ class StatementBlock:
                 details = f"{details}, {count(lanes, 'lane')}"
             return f"Run {label} in parallel ({details})"
         if self.statement == "settle":
-            return f"Run {label} sequentially ({total} items, {total} calls)"
+            return f"Run {label} sequentially ({count(total, 'item')})"
         return f"Run {label}"
 
     def _unresolved_run_label(self) -> str:
         target = statement_target(self.begin.given)
-        return f"agic {target}" if target.startswith("<agic:") else target
+        return f"agic {target}" if target else "agic"
 
     def set_activity(self, run_id: str, activity: str) -> None:
         if self.active_run == run_id:
@@ -460,42 +574,50 @@ class StatementBlock:
         duration = elapsed(self.begin.started_at, timestamp)
         if self.begin.kind == "par":
             progress = [
-                f"{self.completed} completed",
-                f"{len(self.lanes)} active",
-                f"{self.failed} failed",
+                f"{count(self.completed, 'run')} succeeded" if self.completed else "",
+                f"{len(self.lanes)} active" if self.lanes else "",
+                f"{self.failed} failed" if self.failed else "",
                 duration,
             ]
-            lines = [f"{base}{' · '.join(value for value in progress if value)}"]
+            lines = [f"{base}· {' · '.join(value for value in progress if value)}"]
             width = len(str(max((self.lane_count or 1) - 1, 0)))
             for lane_index, lane in sorted(self.lanes.items()):
                 lines.append(
-                    f"{base}{lane_index:>{width}} │ "
-                    f"item {lane.item} | {lane.activity}"
+                    f"{base}{lane_index:>{width}} │ item {lane.item} | {lane.activity}"
                 )
             return lines
         if self.statement == "settle":
-            progress = [f"{count(self.completed, 'call')} completed"]
-            if self.active_item is not None:
-                progress.append(f"item {self.active_item} active")
+            active = 1 if self.active_run is not None else 0
+            progress = [
+                f"{count(self.completed, 'run')} succeeded",
+                f"{active} active" if active else "",
+                f"{self.failed} failed" if self.failed else "",
+            ]
             if duration:
                 progress.append(duration)
-            lines = [f"{base}{' · '.join(progress)}"]
-            if self.active_run is not None:
-                lines.append(f"{base}· {self.active_activity}")
+            lines = [f"{base}· {' · '.join(value for value in progress if value)}"]
+            if self.active_run is not None and self.active_item is not None:
+                lines.append(
+                    f"{base}│ item {self.active_item} | {self.active_activity}"
+                )
             return lines
         if self.statement == "repeat":
-            total = integer(self.begin.given.get("count"))
-            progress = [
-                (
-                    f"iteration {self.active_item}"
-                    if self.active_item is not None
-                    else "starting…"
-                ),
-                f"{total} total" if total is not None else "",
+            iteration = self.current_iteration
+            lines = [
+                f"{base}=== iteration {iteration} ==="
+                if iteration is not None
+                else f"{base}=== starting ==="
             ]
-            lines = [f"{base}{' · '.join(value for value in progress if value)}"]
+            if self.active_title == "until":
+                lines.append(f"{base}[?] until")
+            elif self.active_ordinal is not None and self.active_title:
+                lines.append(f"{base}[{self.active_ordinal}] {self.active_title}")
+            nested = " " * (self.content_indent + 2)
+            if self.active_work:
+                lines.append(f"{nested}{self.active_work}")
             if self.active_activity:
-                lines.append(f"{base}· {self.active_activity}")
+                marker = "" if self.active_activity.startswith("↳ ") else "· "
+                lines.append(f"{nested}{marker}{self.active_activity}")
             return lines
         return []
 
@@ -510,34 +632,63 @@ class StatementBlock:
         console.clear_live()
         if self.hidden:
             return
+        if not self.header_written:
+            self._render_header(console, verbosity=verbosity)
         if event.status != "finished":
             if error:
                 tone = _tone(event.status)
+                detail = (
+                    f"item {self.failed_item}: {error}"
+                    if self.failed_item is not None
+                    else error
+                )
                 console.wrapped(
-                    f"{event.step} {status_label(event.status)}: {error}",
+                    f"{event.step} {status_label(event.status)}: {detail}",
                     prefix=f"{' ' * self.content_indent}! ",
                     continuation=f"{' ' * (self.content_indent + 2)}",
                     tone=tone,
                 )
                 facts = [
-                    elapsed(self.begin.started_at, event.finished_at),
-                    f"{self.completed} completed" if self.completed else "",
+                    f"{count(self.completed, 'run')} succeeded"
+                    if self.completed
+                    else "",
                     f"{self.failed} failed" if self.failed else "",
+                    elapsed(self.begin.started_at, event.finished_at),
                 ]
-                console.write(
-                    f"{' ' * (self.content_indent + 2)}· "
-                    f"{' · '.join(fact for fact in facts if fact)}",
-                    tone=tone,
-                )
+                if fact_text := " · ".join(fact for fact in facts if fact):
+                    console.wrapped(
+                        fact_text,
+                        prefix=f"{' ' * self.content_indent}· ",
+                        continuation=f"{' ' * (self.content_indent + 2)}",
+                    )
             return
         if not self.work_written and statement_target(self.begin.given):
             self.work_written = True
-            console.write(
-                f"{' ' * self.content_indent}{self.work_line()}"
+            console.write(f"{' ' * self.content_indent}{self.work_line()}")
+        if self.statement == "repeat":
+            completed_iterations = (
+                self.current_iteration + 1 if self.current_iteration is not None else 0
             )
-        if verbosity >= 1 and self.begin.kind == "par":
+            limit = integer(self.begin.given.get("count"))
+            stopped_early = self.until_decision is True and (
+                limit is None or completed_iterations < limit
+            )
+            if stopped_early:
+                console.blank()
+                console.write(
+                    f"{' ' * self.content_indent}↳ stopped after "
+                    f"{count(completed_iterations, 'iteration')}"
+                )
+            return
+        aggregate_written = (
+            verbosity >= 1
+            and self.begin.kind in {"par", "loop"}
+            and self.statement != "repeat"
+        )
+        if aggregate_written:
             self._render_parallel_result(console, event)
-        if verbosity < 2:
+        level = statement_result_level(self.begin.given)
+        if level is None or verbosity < level:
             return
         source_items = (
             self.total
@@ -553,13 +704,9 @@ class StatementBlock:
         )
         if not result:
             return
-        console.blank()
-        action = binding_action(self.begin.given)
-        if action:
-            console.write(f"{' ' * self.content_indent}{action}")
         console.wrapped(
             result,
-            prefix=f"{' ' * self.content_indent}· ",
+            prefix=f"{' ' * self.content_indent}↳ ",
             continuation=f"{' ' * (self.content_indent + 2)}",
         )
 
@@ -570,7 +717,10 @@ class StatementBlock:
     ) -> None:
         direct_runs = len(self.children)
         if direct_runs:
-            facts = [f"{count(self.completed, 'run')} succeeded"]
+            facts = [
+                f"{count(self.completed, 'run')} succeeded",
+                f"{self.failed} failed" if self.failed else "",
+            ]
             facts.extend(
                 self.metrics.facts(
                     duration=elapsed(self.begin.started_at, event.finished_at),
@@ -580,7 +730,7 @@ class StatementBlock:
         else:
             facts = ["0 runs", "empty input list"]
         console.wrapped(
-            " · ".join(facts),
+            " · ".join(fact for fact in facts if fact),
             prefix=f"{' ' * self.content_indent}· ",
             continuation=f"{' ' * (self.content_indent + 2)}",
         )
