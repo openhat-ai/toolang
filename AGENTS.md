@@ -299,7 +299,7 @@
   or sandbox hosting. Stdout is reserved for the final result, a shared CLI
   `RunTracer` writes concise progress to stderr, and `PY_LOG` diagnostics go to
   the per-run log file.
-- A roaming `.too` source path may select `threads`, `runs`, or `inspect`.
+- A roaming `.too` source path may select `chat`, `threads`, `runs`, or `inspect`.
   Routing binds its exact `AgentLayout` into `CliContext`; it must not rewrite
   the roaming target into a resident `--root` and agent-name pair. Other
   roaming management commands remain unsupported for now. Visiting selectors

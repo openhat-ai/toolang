@@ -11,18 +11,13 @@ import typer
 
 from toolang.base.types.message import TextDelta, TextPart, message_text
 from toolang.common.errors import ToolangError
-from toolang.common.layout import AgentLayout
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.history import RunHistory
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
 from toolang.state.state import split_cap_selectors
 
-from toolang.cli.common.context import (
-    context_agent,
-    context_root,
-    require_prefix_agent,
-)
+from toolang.cli.common.context import context_layout
 from toolang.cli.common.execution import open_execution
 from . import slashes as chat_slashes
 from .base import ChatClient, friendly_error as chat_friendly_error
@@ -165,7 +160,7 @@ def _chat_runtime(
         raise click.ClickException(
             "direct chat execution currently supports only the none sandbox"
         )
-    layout = AgentLayout.resident(context_root(ctx), require_prefix_agent(ctx))
+    layout = context_layout(ctx)
     selectors = selector_payload or {}
     local = LocalChatSession(
         layout,
@@ -181,23 +176,17 @@ def _chat_runtime(
 
 def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | None:
     try:
-        agent = context_agent(ctx)
-        root = context_root(ctx)
+        layout = context_layout(ctx)
     except (AttributeError, KeyError, TypeError):
         return None
-    if not agent:
-        return None
     return ChatInputHistoryStore(
-        AgentLayout.resident(root, agent).runtime / "chat-input-history.jsonl"
+        layout.runtime / "chat-input-history.jsonl"
     )
 
 
 def _chat_home_label(ctx: typer.Context) -> str:
     try:
-        agent_name = context_agent(ctx)
-        if agent_name is None:
-            return "agent home"
-        return str(AgentLayout.resident(context_root(ctx), agent_name).home)
+        return str(context_layout(ctx).home)
     except Exception:
         return "agent home"
 

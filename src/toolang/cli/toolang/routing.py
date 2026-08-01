@@ -88,7 +88,7 @@ PREFIX_AGENT_COMMANDS = frozenset(
     }
 )
 THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
-ROAMING_HISTORY_COMMANDS = frozenset({"threads", "runs", "inspect"})
+ROAMING_AGENT_COMMANDS = frozenset({"chat", "threads", "runs", "inspect"})
 
 
 def dispatch_roaming(
@@ -105,7 +105,7 @@ def dispatch_roaming(
     except ValueError as exc:
         typer.echo(f"toolang error: {exc}", err=True)
         return 1
-    if len(body) >= 2 and body[1] in ROAMING_HISTORY_COMMANDS:
+    if len(body) >= 2 and body[1] in ROAMING_AGENT_COMMANDS:
         if global_args:
             return _unsupported_global_options()
         try:

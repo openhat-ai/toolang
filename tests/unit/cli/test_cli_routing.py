@@ -10,6 +10,7 @@ import pytest
 import toolang.cli.toolang.main as cli
 from toolang.common.layout import AgentLayout
 from toolang.cli.toolang.commands import script
+from toolang.cli.toolang.commands.chat import main as chat_commands
 from toolang.cli.toolang.routing import dispatch_roaming, normalize
 from toolang.cli.common.routing import extract_root_args
 
@@ -98,12 +99,14 @@ def test_cli_routes_local_script_to_script_command(
 @pytest.mark.parametrize(
     "arguments",
     (
+        ["chat"],
+        ["chat", "term_1"],
         ["threads"],
         ["runs", "--thread", "script_1"],
         ["inspect", "run_1"],
     ),
 )
-def test_cli_routes_roaming_history_to_its_exact_layout(
+def test_cli_routes_roaming_agent_command_to_its_exact_layout(
     tmp_path: Path,
     arguments: list[str],
 ) -> None:
@@ -125,6 +128,35 @@ def test_cli_routes_roaming_history_to_its_exact_layout(
     assert captured == {
         "args": arguments,
         "layout": AgentLayout.roaming(source),
+    }
+
+
+def test_cli_opens_roaming_chat_with_its_exact_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text("agic chat:\n  Reply directly.\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    class Session:
+        def __init__(self, layout: AgentLayout, **_kwargs: object) -> None:
+            captured["layout"] = layout
+
+        def close(self) -> None:
+            captured["closed"] = True
+
+    def end_input(_prompt: str) -> str:
+        raise EOFError
+
+    monkeypatch.setattr(chat_commands, "LocalChatSession", Session)
+    monkeypatch.setattr("builtins.input", end_input)
+    monkeypatch.setattr(chat_commands.sys.stdin, "isatty", lambda: False)
+
+    assert cli.main([str(source), "chat"]) == 0
+    assert captured == {
+        "layout": AgentLayout.roaming(source),
+        "closed": True,
     }
 
 

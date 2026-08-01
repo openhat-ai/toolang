@@ -13,6 +13,7 @@ import pytest
 from toolang.base.types.message import TextPart
 from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import ChatResult
+from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEnd, RunEvent, StepEnd
 
 
@@ -256,6 +257,8 @@ def test_chat_runtime_builds_process_local_execution_resources(
     monkeypatch: Any,
 ) -> None:
     captured: dict[str, object] = {}
+    source = tmp_path / "alice.too"
+    layout = AgentLayout.roaming(source)
 
     class Session(_Client):
         def __init__(self, layout: object, **kwargs: object) -> None:
@@ -266,8 +269,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
         def close(self) -> None:
             captured["closed"] = True
 
-    monkeypatch.setattr(chat, "context_root", lambda _ctx: tmp_path)
-    monkeypatch.setattr(chat, "require_prefix_agent", lambda _ctx: "alice")
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
     monkeypatch.setattr(chat, "LocalChatSession", Session)
 
     with chat._chat_runtime(
@@ -281,15 +283,27 @@ def test_chat_runtime_builds_process_local_execution_resources(
     ) as client:
         assert isinstance(client, Session)
 
-    layout = captured["layout"]
-    assert getattr(layout, "root") == tmp_path
-    assert getattr(layout, "name") == "alice"
+    assert captured["layout"] == layout
     assert captured["kwargs"] == {
         "models": ("test/model",),
         "tools": ("shell/*",),
         "caps": ("skill/reviewer",),
     }
     assert captured["closed"] is True
+
+
+def test_chat_ui_paths_follow_the_selected_layout(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    layout = AgentLayout.roaming(tmp_path / "alice.too")
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+
+    history = chat._chat_input_history_store(object())  # type: ignore[arg-type]
+
+    assert history is not None
+    assert history.path == layout.runtime / "chat-input-history.jsonl"
+    assert chat._chat_home_label(object()) == str(layout.home)  # type: ignore[arg-type]
 
 
 def test_chat_runtime_rejects_hosted_sandboxes() -> None:
