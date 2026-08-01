@@ -234,9 +234,18 @@ toolang SCRIPT inspect TARGET
 
 These four command names immediately following a local `.too` source are
 interpreted as agent-management commands. They are the only agent-management
-commands currently routed for roaming sources. Visiting selectors will gain the
-same three read-only history commands when their `run`, `start`, and `stop`
-target resolution is unified.
+commands currently routed for roaming sources.
+
+Visiting selectors support direct chat and read-only inspection:
+
+```bash
+toolang brice/alice chat [THREAD]
+toolang brice/alice inspect TARGET
+```
+
+Visiting chat resolves and materializes the remote program using the same
+stable visiting layout as `run`. Visiting inspection only derives that layout
+and reads an existing `runs.db`; it does not resolve or fetch the remote source.
 
 ## File Request Runtime
 

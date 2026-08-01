@@ -175,6 +175,57 @@ def test_roaming_source_reads_threads_runs_and_inspection(
     assert document["step"]["output"] == [{"text": "ready", "type": "text"}]
 
 
+def test_visiting_selector_reads_inspection_without_fetching(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    selector = "brice/researcher"
+    layout = AgentLayout(
+        root=tmp_path / "visiting",
+        name="researcher",
+        placement="visiting",
+    )
+    store = RunStore(layout.run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_visiting",
+            thread_id="term_visiting",
+            origin="chat",
+            input=Message.user("Inspect visiting history"),
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="system",
+            status="finished",
+            input=(),
+            output=(TextPart(text="cached"),),
+            started_at="2026-07-25T01:00:00Z",
+            finished_at="2026-07-25T01:00:01Z",
+        )
+        project_run_end(store, run_id=run.id)
+    finally:
+        store.close()
+
+    def unexpected_fetch(*_args: object, **_kwargs: object) -> AgentLayout:
+        raise AssertionError("inspect must not fetch the visiting source")
+
+    monkeypatch.setattr(agents, "visiting_layout", lambda _selector: layout)
+    monkeypatch.setattr(agents, "resolve_visiting_layout", unexpected_fetch)
+
+    result = cli.main([selector, "inspect", "run_visiting:0", "--json"])
+    output = capsys.readouterr()
+
+    assert result == 0
+    document = json.loads(output.out)
+    assert document["kind"] == "step"
+    assert document["run"]["id"] == "run_visiting"
+    assert document["step"]["output"] == [{"text": "cached", "type": "text"}]
+
+
 def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     layout = AgentLayout.resident(root, "alice")

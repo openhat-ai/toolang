@@ -359,8 +359,42 @@ def resolve_run_layout(
     if selector.form == "name":
         return AgentLayout.resident(toolang_root, selector.name or "")
 
-    agent_name = selector.default_name()
-    layout = AgentLayout.visiting(selector.text, agent_name)
+    return _resolve_visiting_layout(selector, progress=progress)
+
+
+def visiting_layout(selector_text: str) -> AgentLayout:
+    """Derive one visiting layout without resolving or fetching its source."""
+
+    selector = parse_agent_selector(selector_text)
+    if selector.form == "name":
+        raise ValueError(f"agent selector is not remote: {selector_text}")
+    return _visiting_layout(selector)
+
+
+def resolve_visiting_layout(
+    selector_text: str,
+    *,
+    progress: ProgressSink | None = None,
+) -> AgentLayout:
+    """Resolve and materialize one remote selector as a visiting layout."""
+
+    selector = parse_agent_selector(selector_text)
+    if selector.form == "name":
+        raise ValueError(f"agent selector is not remote: {selector_text}")
+    return _resolve_visiting_layout(selector, progress=progress)
+
+
+def _visiting_layout(selector: AgentSelector) -> AgentLayout:
+    return AgentLayout.visiting(selector.text, selector.default_name())
+
+
+def _resolve_visiting_layout(
+    selector: AgentSelector,
+    *,
+    progress: ProgressSink | None,
+) -> AgentLayout:
+    layout = _visiting_layout(selector)
+
     if _visiting_program_cache_fresh(layout.program):
         return layout
     resolved_ref = resolve_agent_selector_ref(selector, progress=progress)
@@ -371,7 +405,7 @@ def resolve_run_layout(
         phase="agent.materialize",
         label="Materialize agent",
         status="running",
-        detail=agent_name,
+        detail=layout.name,
     )
     layout = materialize_visiting_program(
         resolved_ref,
@@ -384,7 +418,7 @@ def resolve_run_layout(
         phase="agent.materialize",
         label="Materialize agent",
         status="ok",
-        detail=agent_name,
+        detail=layout.name,
     )
     return layout
 
