@@ -6,7 +6,7 @@ import shutil
 import textwrap
 from typing import Literal, TextIO
 
-from .formatting import one_line, truncate
+from ..execution_progress.formatting import one_line, truncate
 
 Tone = Literal["progress", "active", "error", "warning"]
 

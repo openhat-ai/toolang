@@ -55,7 +55,7 @@ class QueuePanel:
         return ConditionalContainer(
             Window(
                 self.view,
-                height=self._rows,
+                height=self.rows,
                 wrap_lines=False,
                 always_hide_cursor=True,
                 style="class:queue",
@@ -94,7 +94,7 @@ class QueuePanel:
                 fragments.append(("", "\n"))
         return fragments
 
-    def _rows(self) -> int:
+    def rows(self) -> int:
         return 1 + min(len(self.get_items()), MAX_QUEUE_ROWS) if self.get_items() else 0
 
     @staticmethod
@@ -298,12 +298,14 @@ class PromptBox:
     def _input_rows(self) -> int:
         return min(MAX_INPUT_ROWS, max(1, self.buffer.document.line_count))
 
-    def _rows(self) -> int:
-        return self._input_rows() + 2
-
     def _height_dimension(self) -> Dimension:
-        rows = self._rows()
+        rows = self.rows()
         return Dimension(min=rows, preferred=rows, max=rows, weight=0)
+
+    def rows(self) -> int:
+        """Return the fixed number of rows currently reserved for input."""
+
+        return self._input_rows() + 2
 
 
 class StatusBar:

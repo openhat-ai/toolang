@@ -4,13 +4,24 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from toolang.base.types.message import MessagePart
 from toolang.execution.events import RunEvent
 
 if TYPE_CHECKING:
     from .blocks import MutableBlock
+    from .presenter import ChatRunPresenter
+
+
+@dataclass(frozen=True, slots=True)
+class ChatResult:
+    """One durable run result requested by the chat presentation."""
+
+    run_id: str
+    output: tuple[MessagePart, ...]
 
 
 class ChatClient(Protocol):
@@ -19,6 +30,13 @@ class ChatClient(Protocol):
     def list_executables(self, kind: str) -> Mapping[str, Any]: ...
 
     def create_thread(self) -> str: ...
+
+    def get_result(
+        self,
+        run_id: str | None,
+        *,
+        thread_id: str | None,
+    ) -> ChatResult: ...
 
     def start_run(
         self,
@@ -52,9 +70,13 @@ class AppContext(Protocol):
 
     def get_active_run(self) -> str | None: ...
 
+    def get_thread_id(self) -> str | None: ...
+
     def set_active_run(self, run_id: str | None) -> None: ...
 
     def get_live_blocks(self) -> list["MutableBlock"]: ...
+
+    def get_presenter(self) -> "ChatRunPresenter": ...
 
     def ensure_thread_id(self) -> str: ...
 
