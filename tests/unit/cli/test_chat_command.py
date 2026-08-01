@@ -12,6 +12,7 @@ import pytest
 
 from toolang.base.types.message import TextPart
 from toolang.cli.toolang.commands.chat import main as chat
+from toolang.cli.toolang.commands.chat.base import ChatResult
 from toolang.execution.events import RunEnd, RunEvent, StepEnd
 
 
@@ -30,6 +31,18 @@ class _Client:
     def create_thread(self) -> str:
         self.created += 1
         return "term_created"
+
+    def get_result(
+        self,
+        run_id: str | None,
+        *,
+        thread_id: str | None,
+    ) -> ChatResult:
+        del thread_id
+        return ChatResult(
+            run_id=run_id or "run_latest",
+            output=(TextPart("result"),),
+        )
 
     def start_run(
         self,

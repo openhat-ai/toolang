@@ -20,7 +20,7 @@ from toolang.execution.records import trace_parent, trace_run
 
 from .blocks import CallBlock, RunBlock, StatementBlock
 from .console import ProgressConsole
-from .formatting import (
+from ..execution_progress.formatting import (
     integer,
     output_preview,
     runtime_failure,
@@ -79,7 +79,8 @@ class ConsoleRunTracer(RunTracer):
         owner = self._statements.get(event.parent or "")
         until = owner is not None and self._is_until(event, owner)
         indent = owner.content_indent + (2 if until else 0) if owner is not None else 0
-        run = RunBlock.from_event(event, indent=indent)
+        run = RunBlock.from_event(event)
+        run.indent = indent
         self._runs[event.run] = run
         if event.run == self.run_id:
             run.render_header(

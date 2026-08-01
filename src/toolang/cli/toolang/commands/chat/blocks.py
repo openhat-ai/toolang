@@ -32,6 +32,27 @@ from toolang.execution.events import (
 )
 from toolang.execution.types import StepPath
 
+from toolang.cli.common.execution_progress.formatting import (
+    count,
+    elapsed,
+    model_label,
+    statement_head,
+    statement_index,
+    statement_result,
+    status_label,
+    shape_label,
+    tool_exit_code,
+    tool_label,
+    tool_result,
+    usage_facts,
+)
+from toolang.cli.common.execution_progress.state import (
+    CallState,
+    Metrics,
+    RunState,
+    StatementState,
+)
+
 from .base import as_text, friendly_error
 from .rendering import (
     bar,
@@ -45,6 +66,22 @@ from .rendering import (
 )
 
 STEER_BAR_BG = "#2f555d"
+
+
+def _terminal_diagnostic(status: str, error: str) -> str:
+    value = friendly_error(error) if error else ""
+    normalized = re.sub(r"[\s._-]+", " ", value.casefold()).strip(" .:!")
+    if status == "canceled" and normalized in {
+        "canceled",
+        "cancelled",
+        "run canceled",
+        "run cancelled",
+        "operation canceled",
+        "operation cancelled",
+        "interrupted by user",
+    }:
+        return ""
+    return value
 
 
 class MutableBlock:
@@ -137,16 +174,25 @@ class RunStopBlock(MutableBlock):
     run_id: str
     status: str
     error: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    metrics: Metrics = field(default_factory=Metrics)
+    include_child_runs: bool = False
 
     @classmethod
     def create(cls, event: RunBegin | RunEnd) -> "RunStopBlock":
         if isinstance(event, RunBegin):
-            return cls(run_id=event.run or "run", status="running")
+            return cls(
+                run_id=event.run or "run",
+                status="running",
+                started_at=event.started_at,
+            )
         run_end = event
         return cls(
             run_id=run_end.run or "run",
             status=run_end.status,
             error=friendly_error(run_end.error) if run_end.error else "",
+            finished_at=run_end.finished_at,
         )
 
     def update(self, event: RunBegin | RunEnd) -> None:
@@ -158,6 +204,16 @@ class RunStopBlock(MutableBlock):
         run_end = event
         self.status = run_end.status
         self.error = friendly_error(run_end.error) if run_end.error else self.error
+        self.finished_at = run_end.finished_at
+
+    def set_metrics(
+        self,
+        metrics: Metrics,
+        *,
+        include_child_runs: bool = False,
+    ) -> None:
+        self.metrics = metrics
+        self.include_child_runs = include_child_runs
 
     def mark_canceling(self) -> None:
         self.status = "canceling"
@@ -166,40 +222,49 @@ class RunStopBlock(MutableBlock):
     def render(self) -> RenderableType:
         run_id = self.run_id
         status = self.status
-        error = self.error
 
-        if status in {"running", "finished"}:
+        if status == "running":
             return Text("\n")
 
         if status == "canceling":
             return Text.from_markup("[dim]canceling...[/]")
 
-        if status == "canceled":
-            return Group(
-                Text.from_markup(
-                    f"[yellow]  -------- {escape(run_id)} canceled --------[/]"
-                ),
-                Text("\n"),
-            )
-
-        if status == "failed":
-            lines: list[RenderableType] = [
-                Text.from_markup(f"[red]  -------- {escape(run_id)} failed --------[/]")
-            ]
-            if error:
-                lines.extend(
-                    Text.from_markup(f"[red]  {escape(line)}[/]")
-                    for line in self._wrap_plain_lines(error)
-                )
-            lines.append(Text("\n"))
-            return Group(*lines)
-
-        return Group(
-            Text.from_markup(
-                f"[dim]  -------- {escape(run_id)} {escape(status)} --------[/]"
-            ),
-            Text("\n"),
+        label = status_label(status)
+        tone = (
+            "green"
+            if status == "finished"
+            else "red"
+            if status == "failed"
+            else "yellow"
+            if status == "canceled"
+            else "dim"
         )
+        lines: list[RenderableType] = []
+        message = _terminal_diagnostic(status, self.error)
+        if message:
+            lines.extend(
+                Text.from_markup(f"[{tone}]! {escape(line)}[/]")
+                for line in self._wrap_plain_lines(message)
+            )
+        facts = self._facts()
+        suffix = f" · {' · '.join(facts)}" if facts else ""
+        summary = Text()
+        summary.append("◆ ", style=tone)
+        summary.append(f"{run_id} ", style="dim")
+        summary.append(label, style=tone)
+        summary.append(suffix, style="dim")
+        lines.extend([Text(), summary, Text("\n")])
+        return Group(*lines)
+
+    def _facts(self) -> list[str]:
+        duration = elapsed(self.started_at, self.finished_at)
+        facts = self.metrics.facts(duration=duration, include_runs=False)
+        if self.include_child_runs:
+            facts.insert(
+                1 if duration else 0,
+                count(max(self.metrics.runs - 1, 0), "run"),
+            )
+        return facts
 
     @staticmethod
     def _wrap_plain_lines(text: str) -> list[str]:
@@ -261,20 +326,22 @@ class DefaultStepBlock(MutableBlock):
 
         if running:
             line = progress_tail(f"{marker} {self.label}")
-            return Text.from_markup(f"[dim]{escape(line)}[/]")
+            return Text.from_markup(f"[none]{escape(line)}[/]")
 
         if kind == "system":
             message = self.error or self.final_label or self.label or "runtime event"
-            return Text.from_markup(f"[magenta]{escape(f'{marker} {message}')}[/]")
+            tone = "red" if self.error else "dim"
+            prefix = "!" if self.error else marker
+            return Text.from_markup(f"[{tone}]{escape(f'{prefix} {message}')}[/]")
 
         label = kind or "step"
-        return Text.from_markup(f"[dim]{escape(f'{marker} ran {label}')}[/]")
+        if self.error:
+            return Text.from_markup(
+                f"[red]! {escape(f'{self.step} failed: {self.error}')}[/]"
+            )
+        return Text.from_markup(f"[dim]{escape(f'{marker} {label} completed')}[/]")
 
     def _marker(self) -> str:
-        if self.step_kind == "par":
-            return "..."
-        if self.step_kind == "system":
-            return "◇"
         return "·"
 
     def _final_label(self, payload: Mapping[str, Any]) -> str:
@@ -289,113 +356,243 @@ class DefaultStepBlock(MutableBlock):
 class FlowStepBlock(MutableBlock):
     """Flow operation step block."""
 
-    step: StepPath
-    step_kind: str
-    summary: str
-    status: str = "running"
-    error: str = ""
+    state: StatementState
+    display_error: str = ""
+    calls: list[CallState] = field(default_factory=list)
+    child_runs: list[RunState] = field(default_factory=list)
+
+    @property
+    def step(self) -> StepPath:
+        return self.state.begin.step
 
     @classmethod
     def create(cls, event: StepBegin) -> "FlowStepBlock":
-        summary = cls._summary(event.kind, event.given)
-        return cls(
-            step=event.step,
-            step_kind=event.kind,
-            summary=summary,
-        )
-
-    def update(self, event: StepEnd) -> None:
-        self.step = event.step
-        self.status = event.status
-        self.error = event.error or ""
-        self.summary = self._summary(event.kind, event.noted)
-
-    def render(self) -> RenderableType:
-        marker = self._marker()
-        summary = self.summary or "flow step"
-
-        if self.status == "running":
-            return Text.from_markup(
-                f"[dim]{escape(progress_tail(f'{marker} running {summary}'))}[/]"
-            )
-
-        if self.error or self.status == "failed":
-            error = f": {summarize(self.error, width=120)}" if self.error else ""
-            return Text.from_markup(
-                f"[red]{escape(f'{marker} failed {summary}{error}')}[/]"
-            )
-
-        return Text.from_markup(f"[dim]{escape(f'{marker} ran {summary}')}[/]")
-
-    def _marker(self) -> str:
-        if self.step_kind == "par":
-            return "..."
-        if self.step_kind == "loop":
-            return "-"
-        return "·"
-
-    @staticmethod
-    def _fallback_summary(step_kind: str, payload: Mapping[str, Any]) -> str:
-        return as_text(payload.get("statement")) or step_kind or "flow step"
+        return cls(state=StatementState(event))
 
     @classmethod
-    def _summary(cls, step_kind: str, payload: Mapping[str, Any]) -> str:
-        statement = cls._fallback_summary(step_kind, payload)
-        target = (
-            as_text(payload.get("runnable"))
-            or as_text(payload.get("predicate"))
-            or as_text(payload.get("scorer"))
-            or as_text(payload.get("agent"))
-        )
-        count = payload.get("count")
-        suffix = f" {count}" if isinstance(count, int) else ""
-        return f"{statement}{suffix}{f' {target}' if target else ''}"
-
-
-@dataclass(slots=True)
-class ChildRunStepBlock(MutableBlock):
-    """Child agic or flow call step block."""
-
-    step: StepPath
-    summary: str
-    status: str = "running"
-    error: str = ""
-
-    @classmethod
-    def create(cls, event: StepBegin) -> "ChildRunStepBlock":
-        return cls(
-            step=event.step,
-            summary=cls._summary(event.given),
-        )
+    def from_state(cls, state: StatementState) -> "FlowStepBlock":
+        return cls(state=state)
 
     def update(self, event: StepEnd) -> None:
-        self.step = event.step
-        self.status = event.status
-        self.error = event.error or ""
-        self.summary = self._summary(event.noted)
+        self.state.finish(event)
+        self.display_error = event.error or ""
+
+    def note_call(self, call: CallState) -> None:
+        """Retain one direct child call as detailed statement progress."""
+
+        self.calls.append(call)
+
+    def note_child_run(self, run: RunState) -> None:
+        """Retain one direct child boundary for the detailed transcript."""
+
+        self.child_runs.append(run)
 
     def render(self) -> RenderableType:
-        summary = self.summary or "child run"
-
-        if self.status == "running":
-            return Text.from_markup(
-                f"[dim]{escape(progress_tail(f'• running {summary}'))}[/]"
+        state = self.state
+        end = state.end
+        ordinal = state.ordinal
+        if ordinal is None:
+            ordinal = statement_index(state.begin.step)
+        lines: list[RenderableType] = [
+            Text.from_markup(
+                f"[dim]{escape(f'[{ordinal}] {statement_head(state.begin.given)}')}[/]"
             )
+        ]
+        has_doc = False
+        if doc := as_text(state.begin.given.get("doc")):
+            has_doc = True
+            lines.extend(
+                Text.from_markup(f"[dim]  {escape(line)}[/]")
+                for line in doc.splitlines()
+            )
+        work = state.active_work
+        if not work and end is not None and self._has_runnable_target():
+            work = state.work_line()
+        if work:
+            if has_doc:
+                lines.append(Text())
+            lines.append(Text.from_markup(f"[dim]  {escape(work)}[/]"))
+        if end is None:
+            lines.extend(self._live_lines())
+            return Group(*lines)
+        lines.extend(self._call_lines())
+        lines.extend(self._child_run_lines())
+        if end.status != "finished":
+            error = _terminal_diagnostic(
+                end.status,
+                self.display_error or end.error or "",
+            )
+            if not error and end.status == "failed":
+                error = "statement failed"
+            detail = f"{end.step} {status_label(end.status)}"
+            if error:
+                error = (
+                    f"item {state.failed_item}: {error}"
+                    if state.failed_item is not None
+                    else error
+                )
+                detail = f"{detail}: {error}"
+            tone = "yellow" if end.status == "canceled" else "red"
+            lines.append(Text.from_markup(f"[{tone}]  ! {escape(detail)}[/]"))
+            facts = self._aggregate_facts(end)
+            if facts:
+                lines.append(Text.from_markup(f"[dim]    {escape(facts)}[/]"))
+            return Group(*lines, Text("\n"))
+        if state.statement == "repeat":
+            iterations = (
+                state.current_iteration + 1
+                if state.current_iteration is not None
+                else 0
+            )
+            facts = [
+                count(iterations, "iteration"),
+                elapsed(state.begin.started_at, end.finished_at),
+            ]
+            lines.append(
+                Text.from_markup(
+                    f"[dim]  · {escape(' · '.join(fact for fact in facts if fact))}[/]"
+                )
+            )
+            if state.until_decision is True:
+                lines.append(
+                    Text.from_markup(
+                        f"[dim]  ↳ stopped after {escape(count(iterations, 'iteration'))}[/]"
+                    )
+                )
+            return Group(*lines, Text("\n"))
+        aggregate = self._aggregate_facts(end)
+        if aggregate:
+            lines.append(Text.from_markup(f"[dim]  · {escape(aggregate)}[/]"))
+        source_items = state.total if state.total is not None else len(state.children)
+        result = statement_result(
+            state.begin.given,
+            end,
+            source_items=source_items if state.batched else None,
+        )
+        if result:
+            lines.append(Text.from_markup(f"[dim]  ↳ {escape(result)}[/]"))
+        return Group(*lines, Text("\n"))
 
-        if self.error or self.status == "failed":
-            error = f": {summarize(self.error, width=120)}" if self.error else ""
-            return Text.from_markup(f"[red]{escape(f'• failed {summary}{error}')}[/]")
+    def _live_lines(self) -> list[RenderableType]:
+        state = self.state
+        if state.begin.kind == "par":
+            facts = [
+                f"{count(state.completed, 'run')} succeeded" if state.completed else "",
+                f"{len(state.lanes)} active" if state.lanes else "",
+                f"{state.failed} failed" if state.failed else "",
+            ]
+            rows: list[RenderableType] = [
+                Text.from_markup(
+                    f"[none]  · {escape(' · '.join(fact for fact in facts if fact) or 'starting…')}[/]"
+                )
+            ]
+            width = len(str(max((state.lane_count or 1) - 1, 0)))
+            for lane, item in sorted(state.lanes.items()):
+                value = f"  {lane:>{width}} │ item {item.item} | {item.activity}"
+                rows.append(Text.from_markup(f"[none]{escape(value)}[/]"))
+            return rows
+        if state.statement == "repeat":
+            iteration = state.current_iteration
+            rows: list[RenderableType] = [
+                Text.from_markup(
+                    f"[dim]  === {escape(f'iteration {iteration}' if iteration is not None else 'starting')} ===[/]"
+                )
+            ]
+            if state.active_title:
+                marker = "?" if state.active_title == "until" else state.active_ordinal
+                rows.append(
+                    Text.from_markup(
+                        f"[dim]  [{marker}] {escape(state.active_title)}[/]"
+                    )
+                )
+            if state.active_activity:
+                prefix = "" if state.active_activity.startswith("↳ ") else "· "
+                rows.append(
+                    Text.from_markup(
+                        f"[none]  {prefix}{escape(state.active_activity)}[/]"
+                    )
+                )
+            return rows
+        activity = state.active_activity or "running…"
+        prefix = "" if activity.startswith("↳ ") else "· "
+        return [Text.from_markup(f"[none]  {prefix}{escape(activity)}[/]")]
 
-        return Text.from_markup(f"[dim]{escape(f'• ran {summary}')}[/]")
+    def _call_lines(self) -> list[RenderableType]:
+        lines: list[RenderableType] = []
+        for call in self.calls:
+            end = call.end
+            if end is None or end.status != "finished":
+                continue
+            begin = call.begin
+            if begin.kind == "model":
+                label = "model completed"
+                facts = [
+                    end.step,
+                    elapsed(begin.started_at, end.finished_at),
+                    model_label(begin.given),
+                    *usage_facts(end.noted),
+                ]
+            elif begin.kind == "tool":
+                tool = tool_label(begin.given)
+                label = f"{tool}: {tool_result(end) or 'completed'}"
+                code = tool_exit_code(end)
+                facts = [
+                    end.step,
+                    elapsed(begin.started_at, end.finished_at),
+                    f"exit {code}" if code is not None else "",
+                ]
+            else:
+                label = f"{begin.kind} completed"
+                facts = [end.step, elapsed(begin.started_at, end.finished_at)]
+            lines.append(Text.from_markup(f"[dim]  · {escape(label)}[/]"))
+            fact_text = " · ".join(fact for fact in facts if fact)
+            if fact_text:
+                lines.append(Text.from_markup(f"[dim]    {escape(fact_text)}[/]"))
+        return lines
 
-    @staticmethod
-    def _summary(payload: Mapping[str, Any]) -> str:
-        statement = as_text(payload.get("statement")) or "run"
-        runnable = as_text(payload.get("runnable"))
-        placement = payload.get("placement")
-        item = placement.get("item") if isinstance(placement, Mapping) else None
-        suffix = f" item {item + 1}" if isinstance(item, int) else ""
-        return f"{statement}{f' {runnable}' if runnable else ''}{suffix}"
+    def _child_run_lines(self) -> list[RenderableType]:
+        lines: list[RenderableType] = []
+        for run in self.child_runs:
+            facts = [
+                f"{run.run_id} {status_label(run.status)}",
+                elapsed(run.started_at, run.finished_at),
+            ]
+            tone = (
+                "red"
+                if run.status == "failed"
+                else "yellow"
+                if run.status == "canceled"
+                else "dim"
+            )
+            lines.append(
+                Text.from_markup(
+                    f"[{tone}]  ↳ {escape(' · '.join(fact for fact in facts if fact))}[/]"
+                )
+            )
+        return lines
+
+    def _has_runnable_target(self) -> bool:
+        given = self.state.begin.given
+        return any(
+            as_text(given.get(key))
+            for key in ("runnable", "predicate", "scorer", "agent")
+        )
+
+    def _aggregate_facts(self, end: StepEnd) -> str:
+        state = self.state
+        if not state.batched:
+            return ""
+        if not state.children:
+            return "0 runs · empty input list"
+        facts = [
+            f"{count(state.completed, 'run')} succeeded",
+            f"{state.failed} failed" if state.failed else "",
+            *state.metrics.facts(
+                duration=elapsed(state.begin.started_at, end.finished_at),
+                include_runs=False,
+            ),
+        ]
+        return " · ".join(fact for fact in facts if fact)
 
 
 @dataclass(slots=True)
@@ -408,6 +605,10 @@ class ModelStepBlock(MutableBlock):
     output: str = ""
     tool_requests: list[str] = field(default_factory=list)
     model: str = ""
+    error: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    noted: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def create(cls, event: StepBegin) -> "ModelStepBlock":
@@ -419,6 +620,7 @@ class ModelStepBlock(MutableBlock):
             model=as_text(model_data.get("ref"))
             or as_text(model_data.get("model"))
             or "",
+            started_at=event.started_at,
         )
 
     def update(self, event: PartDelta | StepEnd) -> None:
@@ -428,12 +630,21 @@ class ModelStepBlock(MutableBlock):
             if isinstance(delta, TextDelta):
                 self.message += delta.text
         else:
-            self.status = "completed"
+            self.status = event.status
             self.output = _parts_text(event.output)
             self.tool_requests = self._tool_request_summary(event)
+            self.error = event.error or ""
+            self.finished_at = event.finished_at
+            self.noted = event.noted
+
+    def hide_internal_output(self) -> None:
+        """Keep call facts while removing an unconfirmed assistant response."""
+
+        self.message = ""
+        self.output = ""
 
     def render(self) -> RenderableType:
-        running = self.status != "completed"
+        running = self.status == "thinking"
         message = self.message
         output = self.output.strip()
         requests = "; ".join(self.tool_requests)
@@ -443,21 +654,46 @@ class ModelStepBlock(MutableBlock):
                 return self._render_markdown_output(
                     [progress_tail(" ".join(message.split()))]
                 )
-            return Text.from_markup("[cyan]•[/] [dim]thinking...[/]")
+            return Text.from_markup("[none]· thinking…[/]")
+
+        if self.status != "finished":
+            label = self.model or "model"
+            error = _terminal_diagnostic(self.status, self.error)
+            detail = (
+                "model call canceled"
+                if self.status == "canceled" and not error
+                else f"{label} {status_label(self.status)}"
+            )
+            if error:
+                detail = f"{label}: {error}"
+            tone = "yellow" if self.status == "canceled" else "red"
+            return self._with_facts(Text.from_markup(f"[{tone}]! {escape(detail)}[/]"))
 
         if output:
             output_lines = output.splitlines() or [output]
-            return self._render_markdown_output(output_lines)
+            return self._with_facts(self._render_markdown_output(output_lines))
 
         if requests:
-            return Text.from_markup(
-                f"[cyan]•[/] [none]{escape(f'requested {requests}')}[/]"
+            return self._with_facts(
+                Text.from_markup(f"[dim]· {escape(f'requested {requests}')}[/]")
             )
 
         suffix = f" ({self.model})" if self.model else ""
-        return Text.from_markup(
-            f"[cyan]•[/] [dim]{escape(f'[no text message]{suffix}')}[/]"
+        return self._with_facts(
+            Text.from_markup(f"[dim]· {escape(f'model completed{suffix}')}[/]")
         )
+
+    def _with_facts(self, output: RenderableType) -> RenderableType:
+        facts = [
+            self.step,
+            elapsed(self.started_at, self.finished_at),
+            self.model or "model",
+            *usage_facts(self.noted),
+        ]
+        fact_text = " · ".join(fact for fact in facts if fact)
+        if not fact_text:
+            return output
+        return Group(output, Text.from_markup(f"[dim]  {escape(fact_text)}[/]"))
 
     @staticmethod
     def _render_markdown_output(lines: Sequence[str]) -> RenderableType:
@@ -478,13 +714,13 @@ class ModelStepBlock(MutableBlock):
         while rows and not any(text.strip() for text, _style in rows[-1]):
             rows.pop()
         if not rows:
-            return Text.from_markup("[cyan]•[/]")
+            return Text.from_markup("[none]·[/]")
 
         rendered_rows: list[Text] = []
         for index, row in enumerate(rows):
             line = Text()
             if index == 0:
-                line.append("•", style="cyan")
+                line.append("·")
                 line.append(" ")
             else:
                 line.append("  ")
@@ -507,6 +743,67 @@ class ModelStepBlock(MutableBlock):
         return tools
 
 
+@dataclass(frozen=True, slots=True)
+class AssistantResponseBlock(MutableBlock):
+    """One root output confirmed as stable conversation content."""
+
+    text: str
+    shape: str = ""
+
+    @classmethod
+    def create(cls, event: StepEnd) -> "AssistantResponseBlock":
+        return cls(text=_parts_text(event.output), shape=shape_label(event))
+
+    @classmethod
+    def from_parts(cls, parts: Sequence[MessagePart]) -> "AssistantResponseBlock":
+        text = _parts_text(parts)
+        if not text and parts:
+            text = json.dumps(
+                [part.to_data() for part in parts],
+                ensure_ascii=False,
+                indent=2,
+            )
+        return cls(text=text)
+
+    def update(self, event: Any) -> None:
+        del event
+
+    def render(self) -> RenderableType | None:
+        if self.text:
+            return ModelStepBlock._render_markdown_output(self.text.splitlines())
+        if self.shape:
+            return Text.from_markup(f"[dim]· {escape(f'{self.shape} returned')}[/]")
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class SlashResultBlock:
+    """Render a structured slash-command result with a terminal boundary."""
+
+    parts: Sequence[MessagePart]
+
+    def render(self) -> RenderableType:
+        response = AssistantResponseBlock.from_parts(self.parts).render()
+        if response is None:
+            return Text("\n")
+        return Group(response, Text("\n"))
+
+
+@dataclass(frozen=True, slots=True)
+class ResultAvailableBlock(MutableBlock):
+    """Tell the user how to reopen one durable flow result."""
+
+    run_id: str
+
+    def update(self, event: Any) -> None:
+        del event
+
+    def render(self) -> RenderableType:
+        line = Text("◇ result saved · ")
+        line.append(f"/show {self.run_id}", style="cyan")
+        return line
+
+
 @dataclass(slots=True)
 class ToolStepBlock(MutableBlock):
     """Tool step block."""
@@ -516,12 +813,16 @@ class ToolStepBlock(MutableBlock):
     status: str = "running"
     error: str = ""
     output_messages: list[str] = field(default_factory=list)
+    started_at: str = ""
+    finished_at: str = ""
+    exit_code: int | None = None
 
     @classmethod
     def create(cls, event: StepBegin) -> "ToolStepBlock":
         return cls(
             step=event.step,
-            detail="tool",
+            detail=tool_label(event.given),
+            started_at=event.started_at,
         )
 
     def update(self, event: StepEnd) -> None:
@@ -530,32 +831,39 @@ class ToolStepBlock(MutableBlock):
         self.detail = _tool_call_display_from_parts(event.output)
         self.error = event.error or ""
         self.output_messages = self._output_messages(event)
+        self.finished_at = event.finished_at
+        self.exit_code = tool_exit_code(event)
 
     def render(self) -> RenderableType:
         detail = self.detail
         output = " ".join("\n".join(self.output_messages).split())
 
         if self.status == "running":
-            return Text.from_markup(
-                f"[dim]•[/] [dim]{escape(progress_tail(f'running {detail}'))}[/]"
-            )
+            return Text.from_markup(f"[none]{escape(f'· executing {detail}…')}[/]")
 
         if self.error:
-            message = f"ran {detail} failed: {summarize(self.error, width=120)}"
-            line = Text.from_markup(f"[dim]•[/] [dim]{escape(message)}[/]")
+            message = f"{detail}: {summarize(self.error, width=120)}"
+            line = Text.from_markup(f"[red]! {escape(message)}[/]")
             if output:
                 width = max(8, markdown_width() - 2)
                 output = truncate_display(output, width=width)
-                return Group(line, Text.from_markup(f"[dim]  {escape(output)}[/]"))
-            return line
+                line = Group(line, Text.from_markup(f"[dim]  {escape(output)}[/]"))
+            return self._with_facts(line)
 
-        line = Text.from_markup(f"[dim]•[/] [dim]{escape(f'ran {detail}')}[/]")
-        if not output:
-            return line
+        result = output or "completed"
+        line = Text.from_markup(f"[dim]· {escape(f'{detail}: {result}')}[/]")
+        return self._with_facts(line)
 
-        width = max(8, markdown_width() - 2)
-        output = truncate_display(output, width=width)
-        return Group(line, Text.from_markup(f"[dim]  {escape(output)}[/]"))
+    def _with_facts(self, output: RenderableType) -> RenderableType:
+        facts = [
+            self.step,
+            elapsed(self.started_at, self.finished_at),
+            f"exit {self.exit_code}" if self.exit_code is not None else "",
+        ]
+        fact_text = " · ".join(fact for fact in facts if fact)
+        if not fact_text:
+            return output
+        return Group(output, Text.from_markup(f"[dim]  {escape(fact_text)}[/]"))
 
     @staticmethod
     def _output_messages(event: StepEnd) -> list[str]:

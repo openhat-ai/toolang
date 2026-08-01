@@ -71,14 +71,67 @@ def renderable_to_prompt_toolkit(renderable: RenderableType | None) -> Formatted
     return FormattedText(fragments)
 
 
-def renderable_height(renderable: RenderableType | None) -> int:
-    text = "".join(
-        segment.text for segment in render_segments(renderable) if not segment.control
-    )
-    if not text:
-        return 0
-    line_breaks = text.count("\n")
-    return line_breaks if text.endswith("\n") else line_breaks + 1
+def renderables_to_prompt_toolkit(
+    renderables: Sequence[RenderableType | None],
+    *,
+    max_rows: int | None = None,
+) -> FormattedText:
+    """Render multiple live blocks into one optionally bounded viewport."""
+
+    rows = _prompt_toolkit_rows(renderables)
+    if max_rows is not None:
+        if max_rows <= 0:
+            rows = []
+        elif len(rows) > max_rows:
+            if max_rows == 1:
+                rows = [rows[-1]]
+            else:
+                visible_rows = max_rows - 1
+                hidden_rows = len(rows) - visible_rows
+                rows = [
+                    [("class:dim", f"… {hidden_rows} earlier live lines")],
+                    *rows[-visible_rows:],
+                ]
+
+    fragments: list[tuple[str, str]] = []
+    for index, row in enumerate(rows):
+        if index:
+            fragments.append(("", "\n"))
+        fragments.extend(row)
+    return FormattedText(fragments)
+
+
+def renderables_height(renderables: Sequence[RenderableType | None]) -> int:
+    """Return the number of rows occupied by adjacent live blocks."""
+
+    return len(_prompt_toolkit_rows(renderables))
+
+
+def _prompt_toolkit_rows(
+    renderables: Sequence[RenderableType | None],
+) -> list[list[tuple[str, str]]]:
+    rows: list[list[tuple[str, str]]] = []
+    for renderable in renderables:
+        if renderable is None:
+            continue
+        block_rows: list[list[tuple[str, str]]] = [[]]
+        has_content = False
+        for segment in render_segments(renderable):
+            if segment.control or not segment.text:
+                continue
+            has_content = True
+            style = rich_style_to_prompt_toolkit(segment.style)
+            parts = segment.text.split("\n")
+            for index, part in enumerate(parts):
+                if index:
+                    block_rows.append([])
+                if part:
+                    block_rows[-1].append((style, part))
+        if has_content:
+            if len(block_rows) > 1 and not block_rows[-1]:
+                block_rows.pop()
+            rows.extend(block_rows)
+    return rows
 
 
 def write_renderable(

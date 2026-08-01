@@ -3,24 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from toolang.base.types.message import Percept
-from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
+from toolang.execution.events import RunEnd, StepEnd
+
+from ..execution_progress.state import CallState, RunState, StatementState
 
 from .console import ProgressConsole, Tone
-from .formatting import (
-    active_step_label,
-    completed_step_label,
+from ..execution_progress.formatting import (
     count,
     elapsed,
     integer,
-    mapping,
     model_label,
     one_line,
     output_preview,
     percept_lines,
-    runnable_label,
     shape_label,
     statement_head,
     statement_index,
@@ -29,7 +27,6 @@ from .formatting import (
     statement_target,
     status_label,
     text,
-    token_fact,
     tool_exit_code,
     tool_label,
     tool_result,
@@ -40,73 +37,10 @@ from .formatting import (
 
 
 @dataclass(slots=True)
-class Metrics:
-    """Aggregate work performed by one run tree or statement."""
-
-    runs: int = 0
-    model_calls: int = 0
-    tool_calls: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-
-    def add(self, other: Metrics) -> None:
-        self.runs += other.runs
-        self.model_calls += other.model_calls
-        self.tool_calls += other.tool_calls
-        self.input_tokens += other.input_tokens
-        self.output_tokens += other.output_tokens
-
-    def facts(
-        self,
-        *,
-        duration: str = "",
-        include_runs: bool = True,
-    ) -> list[str]:
-        facts = [duration]
-        if include_runs and self.runs:
-            facts.append(count(self.runs, "run"))
-        if self.input_tokens or self.output_tokens:
-            facts.append(token_fact(self.input_tokens, self.output_tokens))
-        if self.model_calls:
-            facts.append(count(self.model_calls, "model call"))
-        if self.tool_calls:
-            facts.append(count(self.tool_calls, "tool call"))
-        return [fact for fact in facts if fact]
-
-
-@dataclass(slots=True)
-class RunBlock:
+class RunBlock(RunState):
     """One root or recursive run block."""
 
-    run_id: str
-    parent: str | None
-    kind: str
-    name: str
-    placement: Mapping[str, object]
-    started_at: str
-    indent: int
-    metrics: Metrics = field(default_factory=lambda: Metrics(runs=1))
-    status: str = "running"
-
-    @classmethod
-    def from_event(cls, event: RunBegin, *, indent: int) -> RunBlock:
-        runnable = mapping(event.context.get("runnable"))
-        return cls(
-            run_id=event.run,
-            parent=event.parent,
-            kind=text(runnable.get("kind")) or "run",
-            name=runnable_label(text(runnable.get("name"))),
-            placement=mapping(event.context.get("placement")),
-            started_at=event.started_at,
-            indent=indent,
-        )
-
-    @property
-    def label(self) -> str:
-        return " ".join(value for value in (self.kind, self.name) if value)
-
-    def finish(self, event: RunEnd) -> None:
-        self.status = event.status
+    indent: int = 0
 
     def render_header(
         self,
@@ -191,25 +125,8 @@ class RunBlock:
 
 
 @dataclass(slots=True)
-class LaneBlock:
-    run_id: str
-    item: int
-    activity: str = "starting…"
-
-
-@dataclass(slots=True)
-class CallBlock:
+class CallBlock(CallState):
     """One model, tool, or system step within an agic."""
-
-    begin: StepBegin
-    preview: str = ""
-
-    @property
-    def active_label(self) -> str:
-        return active_step_label(self.begin)
-
-    def completed_label(self, event: StepEnd) -> str:
-        return completed_step_label(self.begin, event)
 
     def render_begin(
         self,
@@ -229,7 +146,7 @@ class CallBlock:
         indent: int,
         batched: bool,
     ) -> str:
-        self.preview = (self.preview + delta)[-800:]
+        self.append_delta(delta)
         value = truncate(one_line(self.preview), 100)
         if console.tty and not batched and value:
             console.show_live([f"{' ' * indent}· {value}"])
@@ -357,45 +274,17 @@ class CallBlock:
 
 
 @dataclass(slots=True)
-class StatementBlock:
+class StatementBlock(StatementState):
     """One authored flow statement and its child-work presentation."""
 
-    begin: StepBegin
-    base_indent: int
-    children: list[str] = field(default_factory=list)
-    completed: int = 0
-    failed: int = 0
-    failed_item: int | None = None
-    total: int | None = None
-    lane_count: int | None = None
-    lanes: dict[int, LaneBlock] = field(default_factory=dict)
-    metrics: Metrics = field(default_factory=Metrics)
+    base_indent: int = 0
     work_written: bool = False
-    active_run: str | None = None
-    active_item: int | None = None
-    active_activity: str = "starting…"
     hidden: bool = False
-    live_owner: str | None = None
-    ordinal: int | None = None
-    current_iteration: int | None = None
-    next_ordinal: int = 0
-    active_ordinal: int | None = None
-    active_title: str = ""
-    active_work: str = ""
-    until_decision: bool | None = None
     header_written: bool = False
-
-    @property
-    def statement(self) -> str:
-        return text(self.begin.given.get("statement"))
 
     @property
     def content_indent(self) -> int:
         return self.base_indent + 2
-
-    @property
-    def batched(self) -> bool:
-        return self.begin.kind in {"par", "loop"}
 
     def render_begin(
         self,
@@ -426,21 +315,6 @@ class StatementBlock:
             console.wrapped(doc, prefix=" " * self.content_indent)
             console.blank()
 
-    def child_started(self, run: RunBlock) -> None:
-        self.children.append(run.run_id)
-        self.active_run = run.run_id
-        item = integer(run.placement.get("item"))
-        self.active_item = item
-        self.active_activity = "starting…"
-        if (total := integer(run.placement.get("items"))) is not None:
-            self.total = max(self.total or 0, total)
-        lane = integer(run.placement.get("lane"))
-        lanes = integer(run.placement.get("lanes"))
-        if lane is not None and item is not None:
-            self.lanes[lane] = LaneBlock(run.run_id, item)
-        if lanes is not None:
-            self.lane_count = max(self.lane_count or 0, lanes)
-
     def enter_iteration(
         self,
         console: ProgressConsole,
@@ -450,26 +324,16 @@ class StatementBlock:
     ) -> int:
         """Enter one repeat iteration and allocate its local ordinal."""
 
-        if self.current_iteration != iteration:
-            self.current_iteration = iteration
-            self.next_ordinal = 0
+        changed = self.current_iteration != iteration
+        ordinal = self.note_iteration(iteration)
+        if changed:
             if verbosity >= 2:
                 console.blank()
                 console.write(
                     f"{' ' * self.content_indent}=== iteration {iteration} ==="
                 )
                 console.blank()
-        ordinal = self.next_ordinal
-        self.next_ordinal += 1
         return ordinal
-
-    def activate_nested(self, block: StatementBlock) -> None:
-        """Show one repeat-body statement in the bounded live section."""
-
-        self.active_ordinal = block.ordinal
-        self.active_title = statement_head(block.begin.given)
-        self.active_work = ""
-        self.active_activity = ""
 
     def render_until_begin(
         self,
@@ -480,13 +344,7 @@ class StatementBlock:
     ) -> None:
         """Open the repeat until clause as a sibling presentation block."""
 
-        iteration = integer(run.placement.get("loop"))
-        if iteration is not None and self.current_iteration != iteration:
-            self.current_iteration = iteration
-        self.active_ordinal = None
-        self.active_title = "until"
-        self.active_work = f"Run {run.label}"
-        self.active_activity = "starting…"
+        self.begin_until(run)
         if verbosity < 2:
             return
         console.blank()
@@ -502,30 +360,13 @@ class StatementBlock:
     ) -> None:
         """Record a successful until decision without guessing invalid output."""
 
-        self.until_decision = decision
+        self.record_until_decision(decision)
         if decision is None:
             return
         label = "stop repeating" if decision else "continue"
-        self.active_activity = f"↳ {label}"
         if verbosity >= 2:
             console.blank()
             console.write(f"{' ' * (self.content_indent + 2)}↳ {label}")
-
-    def child_finished(self, run: RunBlock) -> None:
-        self.metrics.add(run.metrics)
-        if run.status == "finished":
-            self.completed += 1
-        elif run.status == "failed":
-            self.failed += 1
-            self.failed_item = integer(run.placement.get("item"))
-        lane = integer(run.placement.get("lane"))
-        if lane is not None and (
-            current := self.lanes.get(lane)
-        ) is not None and current.run_id == run.run_id:
-            self.lanes.pop(lane, None)
-        if self.active_run == run.run_id:
-            self.active_run = None
-            self.active_item = None
 
     def render_work(
         self,
@@ -540,34 +381,6 @@ class StatementBlock:
         if self.hidden:
             return
         console.write(f"{' ' * self.content_indent}{self.work_line(run)}")
-
-    def work_line(self, run: RunBlock | None = None) -> str:
-        label = run.label if run is not None else self._unresolved_run_label()
-        total = self.total or len(self.children)
-        lanes = self.lane_count or integer(self.begin.given.get("par"))
-        if self.begin.kind == "par":
-            unit = "times" if self.statement == "storm" else "items"
-            if unit == "items":
-                details = count(total, "item")
-            else:
-                details = f"{total} times"
-            if lanes is not None:
-                details = f"{details}, {count(lanes, 'lane')}"
-            return f"Run {label} in parallel ({details})"
-        if self.statement == "settle":
-            return f"Run {label} sequentially ({count(total, 'item')})"
-        return f"Run {label}"
-
-    def _unresolved_run_label(self) -> str:
-        target = statement_target(self.begin.given)
-        return f"agic {target}" if target else "agic"
-
-    def set_activity(self, run_id: str, activity: str) -> None:
-        if self.active_run == run_id:
-            self.active_activity = activity
-        for lane in self.lanes.values():
-            if lane.run_id == run_id:
-                lane.activity = activity
 
     def live_lines(self, timestamp: str) -> list[str]:
         base = " " * self.content_indent

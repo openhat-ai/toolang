@@ -5,8 +5,11 @@ from typing import Any
 
 import pytest
 
+from toolang.base.types.message import TextPart
 from toolang.common.errors import ToolangError
 from toolang.cli.toolang.commands.chat import slashes
+from toolang.cli.toolang.commands.chat.base import ChatResult
+from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
 
 
 class _Client:
@@ -27,6 +30,12 @@ class _Client:
             "flow": {"default": None, "items": [{"name": "review"}]},
         }
         self.error: Exception | None = None
+        self.results = {
+            "run_saved": ChatResult(
+                run_id="run_saved",
+                output=(TextPart("saved result"),),
+            )
+        }
 
     def list_models(self) -> Mapping[str, Any]:
         if self.error is not None:
@@ -37,6 +46,15 @@ class _Client:
         if self.error is not None:
             raise self.error
         return self.executables[kind]
+
+    def get_result(
+        self,
+        run_id: str | None,
+        *,
+        thread_id: str | None,
+    ) -> ChatResult:
+        del thread_id
+        return self.results[run_id or "run_saved"]
 
 
 class _App:
@@ -51,6 +69,8 @@ class _App:
         self.exited = False
         self.status_refreshes = 0
         self.live_blocks: list[Any] = []
+        self.presenter = ChatRunPresenter()
+        self.thread_id: str | None = "thread_1"
 
     def get_client(self) -> Any:
         return self.client
@@ -64,11 +84,17 @@ class _App:
     def get_active_run(self) -> str | None:
         return self.active_run
 
+    def get_thread_id(self) -> str | None:
+        return self.thread_id
+
     def set_active_run(self, run_id: str | None) -> None:
         self.active_run = run_id
 
     def get_live_blocks(self) -> Any:
         return self.live_blocks
+
+    def get_presenter(self) -> ChatRunPresenter:
+        return self.presenter
 
     def ensure_thread_id(self) -> str:
         return "tui_test"
@@ -169,6 +195,32 @@ def test_slash_executable_selection_is_mutually_exclusive() -> None:
 
     assert result.lines == ["agic: chat"]
     assert app.selects == {"agic": "chat"}
+
+
+def test_slash_executable_rejects_a_name_not_in_the_available_items() -> None:
+    app = _App()
+    app.selects["agic"] = "chat"
+    app.client.executables["flow"] = {"default": None, "items": []}
+
+    result = slashes.handle(app, "/flow research")
+
+    assert result.lines is None
+    assert app.error == "Flow not available: research"
+    assert app.selects == {"agic": "chat"}
+    assert app.status_refreshes == 0
+
+
+def test_slash_show_loads_an_explicit_or_latest_durable_result() -> None:
+    app = _App()
+
+    explicit = slashes.handle(app, "/show run_saved")
+    latest = slashes.handle(app, "/show")
+
+    assert explicit.result == ChatResult(
+        run_id="run_saved",
+        output=(TextPart("saved result"),),
+    )
+    assert latest.result == explicit.result
 
 
 def test_slash_queue_edits_and_steers_numbered_items() -> None:

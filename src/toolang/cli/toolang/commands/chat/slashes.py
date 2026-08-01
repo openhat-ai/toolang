@@ -10,15 +10,16 @@ import click
 
 from toolang.common.errors import ToolangError
 from toolang.plugin.models.resolution import split_model_selectors
-from .base import AppContext, as_text, friendly_error
+from .base import AppContext, ChatResult, as_text, friendly_error
 
-SlashOutput = str | Sequence[str] | None
+SlashOutput = str | Sequence[str] | ChatResult | None
 
 
 @dataclass(frozen=True, slots=True)
 class SlashResult:
     handled: bool
     lines: list[str] | None = None
+    result: ChatResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +57,8 @@ def handle(app: AppContext, message: str) -> SlashResult:
         app.set_status_error(friendly_error(exc.message))
         return SlashResult(True)
 
+    if isinstance(output, ChatResult):
+        return SlashResult(True, result=output)
     if output is not None:
         lines = output.splitlines() or [""] if isinstance(output, str) else list(output)
         return SlashResult(True, lines)
@@ -120,9 +123,16 @@ def _executable(app: AppContext, command: str, argument: str) -> SlashOutput:
         app.set_status_error(f"Cannot change {command} while a run is active.")
         return None
 
-    _chat_set_executable_selector(selects, kind=command, name=argument)
+    name = _chat_resolve_executable_command(
+        client.list_executables(command), argument
+    )
+    if name is None:
+        app.set_status_error(f"{command.title()} not available: {argument}")
+        return None
+
+    _chat_set_executable_selector(selects, kind=command, name=name)
     app.refresh_status()
-    return f"{command}: {argument}"
+    return f"{command}: {name}"
 
 
 def _queue(app: AppContext, _command: str, argument: str) -> SlashOutput:
@@ -165,6 +175,18 @@ def _steer(app: AppContext, _command: str, argument: str) -> SlashOutput:
     return None
 
 
+def _show(app: AppContext, _command: str, argument: str) -> SlashOutput:
+    tokens = argument.split()
+    if len(tokens) > 1:
+        app.set_status_error("/show accepts at most one run id.")
+        return None
+    run_id = tokens[0] if tokens else None
+    return app.get_client().get_result(
+        run_id,
+        thread_id=app.get_thread_id(),
+    )
+
+
 SLASHES: tuple[SlashCommand, ...] = (
     SlashCommand(("help", "?"), "Show help.", _help, "/help, /?"),
     SlashCommand(
@@ -186,6 +208,12 @@ SLASHES: tuple[SlashCommand, ...] = (
         "Inspect or edit queued submissions.",
         _queue,
         "/queue <action>, /q <action>",
+    ),
+    SlashCommand(
+        ("show",),
+        "Show a durable run result.",
+        _show,
+        "/show [run_id]",
     ),
     SlashCommand(("exit", "quit"), "Exit chat.", _exit, "/exit, /quit"),
 )
@@ -298,6 +326,18 @@ def _chat_set_executable_selector(
 ) -> None:
     selects[kind] = name.strip()
     selects.pop("flow" if kind == "agic" else "agic", None)
+
+
+def _chat_resolve_executable_command(
+    payload: Mapping[str, Any], name: str
+) -> str | None:
+    requested = name.strip()
+    matches = [
+        candidate
+        for item in _items(payload)
+        if (candidate := as_text(item.get("name"))) == requested
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _chat_model_list_lines(payload: Mapping[str, Any]) -> list[str]:

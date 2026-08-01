@@ -7,6 +7,7 @@ from typing import Any, Literal, cast
 
 from prompt_toolkit.output.color_depth import ColorDepth
 from rich.console import RenderableType
+from rich.text import Text
 
 from toolang.base.types.message import (
     TextDelta,
@@ -23,6 +24,9 @@ from toolang.cli.toolang.commands.chat import (
     widgets,
 )
 from toolang.cli.toolang.commands.chat.events import ChatUIEvent
+from toolang.cli.toolang.commands.chat.base import ChatResult
+from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
+from toolang.cli.common.execution_progress.state import Metrics
 from toolang.execution.events import (
     PartDelta,
     RunBegin,
@@ -30,7 +34,7 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import RunControlRef
+from toolang.execution.records import OutputRef, RunControlRef
 
 
 def test_chat_run_events_keep_run_stop_block_until_run_end() -> None:
@@ -49,8 +53,11 @@ def test_chat_run_events_keep_run_stop_block_until_run_end() -> None:
         _model_step_end(output="final answer", finished_at="2026-01-01T00:00:02Z"),
         app,
     )
-    assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
-    assert [block.type for block in app.finalized] == ["ModelStepBlock"]
+    assert [block.type for block in app.live_blocks] == [
+        "ModelStepBlock",
+        "RunStopBlock",
+    ]
+    assert app.finalized == []
 
     events.handle_run_event(_run_end(status="finished"), app)
     assert app.live_blocks == []
@@ -58,6 +65,10 @@ def test_chat_run_events_keep_run_stop_block_until_run_end() -> None:
         "ModelStepBlock",
         "RunStopBlock",
     ]
+    response = _render_text(app.finalized[0].render())
+    assert "· final answer" in response
+    assert "  run_1/1 · 1.0s · model · 1/1 tokens" in response
+    assert "◆ run_1 succeeded" in _render_text(app.finalized[1].render())
     assert app.finished
 
 
@@ -127,7 +138,35 @@ def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
 
     assert app.live_blocks == []
     assert [block.type for block in app.finalized] == ["RunStopBlock"]
-    assert "run_1 canceled" in _render_text(app.finalized[0].render())
+    rendered = _render_text(app.finalized[0].render())
+    assert rendered.splitlines() == [
+        "",
+        "◆ run_1 canceled · 3.0s",
+        "",
+    ]
+    assert "---" not in rendered
+
+
+def test_chat_flow_root_footer_counts_child_runs() -> None:
+    block = blocks.RunStopBlock.create(_run_begin(executable_kind="flow"))
+    block.update(_run_end(status="finished"))
+    block.set_metrics(
+        Metrics(
+            runs=7,
+            model_calls=8,
+            tool_calls=2,
+            input_tokens=1200,
+            output_tokens=300,
+        ),
+        include_child_runs=True,
+    )
+
+    rendered = _render_text(block.render(), width=160)
+
+    assert "run_1 succeeded" in rendered
+    assert "6 runs" in rendered
+    assert "8 model calls" in rendered
+    assert "2 tool calls" in rendered
 
 
 def test_chat_tool_step_uses_dim_dot_marker_and_summary() -> None:
@@ -138,19 +177,35 @@ def test_chat_tool_step_uses_dim_dot_marker_and_summary() -> None:
         for segment in rendering.render_segments(block.render(), width=80)
         if segment.text.strip()
     ]
-    running_marker = next(
-        segment for segment in running_segments if segment.text == "•"
-    )
-
-    assert running_marker.style is not None
-    assert running_marker.style.dim
-    assert "running tool" in _render_text(block.render())
+    assert running_segments
+    assert "· executing tool…" in _render_text(block.render())
 
     block.update(_tool_step_end())
     rendered = _render_text(block.render())
 
-    assert rendered.startswith("• ran shell__execute")
+    assert rendered.startswith("· shell__execute")
     assert "ok" in rendered
+
+
+def test_chat_canceled_model_step_is_not_rendered_as_completed() -> None:
+    block = blocks.ModelStepBlock.create(
+        _model_step_begin(model="deepseek/deepseek-chat")
+    )
+    block.update(
+        StepEnd(
+            step="run_1/1",
+            kind="model",
+            status="canceled",
+            error="canceled",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+    )
+
+    rendered = _render_text(block.render())
+
+    assert "! model call canceled" in rendered
+    assert "  run_1/1 · 1.0s · deepseek/deepseek-chat" in rendered
+    assert "model completed" not in rendered
 
 
 def test_chat_flow_step_blocks_render_flow_operation_summary() -> None:
@@ -163,13 +218,15 @@ def test_chat_flow_step_blocks_render_flow_operation_summary() -> None:
         "FlowStepBlock",
         "RunStopBlock",
     ]
-    assert "... running map summarize" in _render_text(app.live_blocks[0].render())
+    assert "[1] statement" in _render_text(app.live_blocks[0].render())
+    assert "· starting…" in _render_text(app.live_blocks[0].render())
 
     events.handle_run_event(_flow_step_end(), app)
 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
     assert [block.type for block in app.finalized] == ["FlowStepBlock"]
-    assert "... ran map summarize" in _render_text(app.finalized[0].render())
+    assert "[1] statement" in _render_text(app.finalized[0].render())
+    assert "0 runs · empty input list" in _render_text(app.finalized[0].render())
 
 
 def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
@@ -177,33 +234,106 @@ def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
 
     events.handle_run_event(_run_begin(executable_kind="flow"), app)
     events.handle_run_event(_child_run_step_begin(), app)
-    events.handle_run_event(
-        _run_begin(run_id="run_child", parent_run_id="run_1"), app
-    )
+    events.handle_run_event(_run_begin(run_id="run_child", parent_run_id="run_1"), app)
     events.handle_run_event(_model_step_begin(run_id="run_child"), app)
+
+    assert [block.type for block in app.live_blocks] == [
+        "FlowStepBlock",
+        "RunStopBlock",
+    ]
+    rendered = _render_text(app.live_blocks[0].render())
+    assert "· thinking…" in rendered
+    assert "running…" not in rendered
+
+    events.handle_run_event(
+        PartDelta(
+            step="run_child/1",
+            part=0,
+            delta=TextDelta(text="drafting report"),
+        ),
+        app,
+    )
+
+    assert [block.type for block in app.live_blocks] == [
+        "FlowStepBlock",
+        "RunStopBlock",
+    ]
+    assert "· drafting report" in _render_text(app.live_blocks[0].render())
+
     events.handle_run_event(
         _model_step_end(run_id="run_child", output="child done"), app
     )
+
+    assert [block.type for block in app.live_blocks] == [
+        "FlowStepBlock",
+        "RunStopBlock",
+    ]
+    assert "· child done" in _render_text(app.live_blocks[0].render())
+
     events.handle_run_event(_run_end(run_id="run_child", status="finished"), app)
 
     assert app.active_run == "run_1"
     assert not app.finished
     assert [block.type for block in app.live_blocks] == [
-        "ChildRunStepBlock",
+        "FlowStepBlock",
         "RunStopBlock",
     ]
-    assert [block.type for block in app.finalized] == ["ModelStepBlock"]
+    assert app.finalized == []
 
     events.handle_run_event(_child_run_step_end(), app)
+    statement = _render_text(app.finalized[0].render()).rstrip()
+    assert statement.splitlines() == [
+        "[2] statement",
+        "  Run agic test",
+        "  · model completed",
+        "    run_child/1 · 1.0s · model · 1/1 tokens",
+        "  ↳ run_child succeeded · 3.0s",
+    ]
     events.handle_run_event(_run_end(status="finished"), app)
 
     assert app.live_blocks == []
     assert [block.type for block in app.finalized] == [
-        "ModelStepBlock",
-        "ChildRunStepBlock",
+        "FlowStepBlock",
+        "ResultAvailableBlock",
         "RunStopBlock",
     ]
     assert app.finished
+
+
+def test_chat_flow_statement_owns_child_model_tool_model_activity() -> None:
+    app = FakeApp()
+
+    events.handle_run_event(_run_begin(executable_kind="flow"), app)
+    events.handle_run_event(_child_run_step_begin(), app)
+    events.handle_run_event(_run_begin(run_id="run_child", parent_run_id="run_1"), app)
+    events.handle_run_event(_model_step_begin(run_id="run_child", step_index=0), app)
+    events.handle_run_event(
+        _model_step_end(run_id="run_child", step_index=0, output="call a tool"),
+        app,
+    )
+    events.handle_run_event(
+        StepBegin(
+            step="run_child/1",
+            kind="tool",
+            given={"tool": "shell__execute"},
+        ),
+        app,
+    )
+
+    assert [block.type for block in app.live_blocks] == [
+        "FlowStepBlock",
+        "RunStopBlock",
+    ]
+    assert "· executing shell__execute…" in _render_text(app.live_blocks[0].render())
+
+    events.handle_run_event(_tool_step_end(run_id="run_child", step_index=1), app)
+    events.handle_run_event(_model_step_begin(run_id="run_child", step_index=2), app)
+
+    assert [block.type for block in app.live_blocks] == [
+        "FlowStepBlock",
+        "RunStopBlock",
+    ]
+    assert "· thinking…" in _render_text(app.live_blocks[0].render())
 
 
 def test_late_root_begin_does_not_replace_a_different_active_run() -> None:
@@ -227,7 +357,7 @@ def test_chat_nested_step_blocks_are_keyed_by_full_path() -> None:
 
     assert [block.type for block in app.live_blocks] == [
         "FlowStepBlock",
-        "ChildRunStepBlock",
+        "FlowStepBlock",
         "RunStopBlock",
     ]
 
@@ -237,7 +367,442 @@ def test_chat_nested_step_blocks_are_keyed_by_full_path() -> None:
         "FlowStepBlock",
         "RunStopBlock",
     ]
-    assert [block.type for block in app.finalized] == ["ChildRunStepBlock"]
+    assert [block.type for block in app.finalized] == ["FlowStepBlock"]
+
+
+def test_chat_confirms_only_the_root_output_model_response() -> None:
+    app = FakeApp()
+
+    events.handle_run_event(_run_begin(), app)
+    events.handle_run_event(_model_step_begin(step_index=0), app)
+    events.handle_run_event(_model_step_end(step_index=0, output="internal plan"), app)
+
+    assert "internal plan" in _render_text(app.live_blocks[0].render())
+    assert app.finalized == []
+
+    events.handle_run_event(
+        StepBegin(
+            step="run_1/1",
+            kind="tool",
+            given={"tool": "shell.execute"},
+            started_at="2026-01-01T00:00:02Z",
+        ),
+        app,
+    )
+
+    assert all(
+        "internal plan" not in _render_text(block.render()) for block in app.live_blocks
+    )
+    assert [block.type for block in app.finalized] == ["ModelStepBlock"]
+    internal = _render_text(app.finalized[0].render())
+    assert "internal plan" not in internal
+    assert "model completed" in internal
+    assert "run_1/0" in internal
+
+    events.handle_run_event(_tool_step_end(step_index=1), app)
+    events.handle_run_event(_model_step_begin(step_index=2), app)
+    events.handle_run_event(_model_step_end(step_index=2, output="final answer"), app)
+
+    assert [block.type for block in app.live_blocks] == [
+        "ModelStepBlock",
+        "RunStopBlock",
+    ]
+
+    events.handle_run_event(
+        RunEnd(
+            run="run_1",
+            status="finished",
+            output=OutputRef(step="run_1/2"),
+            finished_at="2026-01-01T00:00:04Z",
+        ),
+        app,
+    )
+
+    rendered = "\n".join(_render_text(block.render()) for block in app.finalized)
+    assert "internal plan" not in rendered
+    assert "final answer" in rendered
+    assert "run_1 succeeded" in rendered
+    assert [block.type for block in app.finalized] == [
+        "ModelStepBlock",
+        "ToolStepBlock",
+        "ModelStepBlock",
+        "RunStopBlock",
+    ]
+
+
+def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
+    app = FakeApp()
+
+    events.handle_run_event(_run_begin(), app)
+    events.handle_run_event(
+        StepBegin(
+            step="run_1/1",
+            kind="par",
+            given={
+                "statement": "map",
+                "runnable": "summarize",
+                "par": 2,
+                "binding": "_",
+                "doc": "Search the web for each query",
+                "source": {"head": "map summarize par 2"},
+            },
+            started_at="2026-01-01T00:00:01Z",
+        ),
+        app,
+    )
+    for item in range(2):
+        events.handle_run_event(
+            RunBegin(
+                run=f"run_child_{item}",
+                parent="run_1/1",
+                input=RunControlRef(),
+                context={
+                    "root": "run_1",
+                    "runnable": {"kind": "agic", "name": "summarize"},
+                    "placement": {
+                        "item": item,
+                        "items": 8,
+                        "lane": item,
+                        "lanes": 2,
+                    },
+                },
+            ),
+            app,
+        )
+        events.handle_run_event(
+            StepBegin(
+                step=f"run_child_{item}/0",
+                kind="model",
+                given={"model": {"ref": "test/model"}},
+            ),
+            app,
+        )
+
+    assert [block.type for block in app.live_blocks] == [
+        "FlowStepBlock",
+        "RunStopBlock",
+    ]
+    live = _render_text(app.live_blocks[0].render())
+    live_lines = live.splitlines()
+    assert live_lines[:5] == [
+        "[1] map summarize par 2",
+        "  Search the web for each query",
+        "",
+        "  Run agic summarize in parallel (8 items, 2 lanes)",
+        "  · 2 active",
+    ]
+    assert any(line.startswith("  0 │ item 0") for line in live_lines)
+    assert any(line.startswith("  1 │ item 1") for line in live_lines)
+    assert "item 2" not in live
+
+    for item in range(2):
+        events.handle_run_event(
+            StepEnd(
+                step=f"run_child_{item}/0",
+                kind="model",
+                status="finished",
+                output=(TextPart(f"summary {item}"),),
+            ),
+            app,
+        )
+        events.handle_run_event(
+            RunEnd(run=f"run_child_{item}", status="finished"),
+            app,
+        )
+    events.handle_run_event(
+        StepEnd(
+            step="run_1/1",
+            kind="par",
+            status="finished",
+            noted={"shape": "list", "items": 2},
+            finished_at="2026-01-01T00:00:03Z",
+        ),
+        app,
+    )
+
+    stable = _render_text(app.finalized[0].render())
+    stable_lines = stable.splitlines()
+    assert stable_lines[:5] == [
+        "[1] map summarize par 2",
+        "  Search the web for each query",
+        "",
+        "  Run agic summarize in parallel (8 items, 2 lanes)",
+        "  · 2 runs succeeded · 2.0s · 2 model calls",
+    ]
+    assert stable.endswith("\n\n")
+    assert "item 0" not in stable
+    assert "item 1" not in stable
+    assert "2-item list saved to _" in stable
+
+
+def test_chat_flow_root_result_is_durable_and_hidden_until_requested() -> None:
+    app = FakeApp()
+
+    events.handle_run_event(_run_begin(executable_kind="flow"), app)
+    events.handle_run_event(
+        StepBegin(
+            step="run_1/1",
+            kind="run",
+            given={
+                "statement": "gather",
+                "runnable": "synthesize",
+                "source": {"head": "gather synthesize"},
+            },
+        ),
+        app,
+    )
+    events.handle_run_event(
+        StepEnd(
+            step="run_1/1",
+            kind="run",
+            status="finished",
+            output=(TextPart("flow response"),),
+            noted={"shape": "item"},
+        ),
+        app,
+    )
+    events.handle_run_event(
+        RunEnd(
+            run="run_1",
+            status="finished",
+            output=OutputRef(step="run_1/1"),
+        ),
+        app,
+    )
+
+    rendered = "\n".join(_render_text(block.render()) for block in app.finalized)
+    assert "flow response" not in rendered
+    assert "0 runs" in rendered
+    assert "/show run_1" in rendered
+    assert [block.type for block in app.finalized] == [
+        "FlowStepBlock",
+        "ResultAvailableBlock",
+        "RunStopBlock",
+    ]
+    result = app.finalized[-2].render()
+    result_segments = [
+        segment
+        for segment in rendering.render_segments(result)
+        if "result saved" in segment.text
+    ]
+    assert result_segments
+    assert result_segments[0].style is None or not result_segments[0].style.dim
+    assert _render_text(result).startswith("◇ result saved · /show run_1")
+    assert "◆ run_1 succeeded" in _render_text(app.finalized[-1].render())
+
+
+def test_chat_flow_failure_and_cancellation_use_the_same_terminal_summary() -> None:
+    failed = FakeApp()
+    events.handle_run_event(_run_begin(executable_kind="flow"), failed)
+    events.handle_run_event(
+        RunEnd(
+            run="run_1",
+            status="failed",
+            error="flow failed",
+            finished_at="2026-01-01T00:00:03Z",
+        ),
+        failed,
+    )
+
+    failed_lines = _render_text(failed.finalized[-1].render()).splitlines()
+    assert failed_lines[:3] == [
+        "! flow failed",
+        "",
+        "◆ run_1 failed · 3.0s · 0 runs",
+    ]
+    assert all(block.type != "ResultAvailableBlock" for block in failed.finalized)
+
+    canceled = FakeApp()
+    events.handle_run_event(_run_begin(executable_kind="flow"), canceled)
+    events.handle_run_event(
+        RunEnd(
+            run="run_1",
+            status="canceled",
+            error="canceled",
+            finished_at="2026-01-01T00:00:03Z",
+        ),
+        canceled,
+    )
+
+    canceled_lines = _render_text(canceled.finalized[-1].render()).splitlines()
+    assert canceled_lines[:2] == [
+        "",
+        "◆ run_1 canceled · 3.0s · 0 runs",
+    ]
+    assert all(block.type != "ResultAvailableBlock" for block in canceled.finalized)
+
+
+def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() -> None:
+    block = blocks.FlowStepBlock.create(
+        StepBegin(
+            step="run_1/2",
+            kind="par",
+            given={
+                "statement": "map",
+                "runnable": "search_web",
+                "source": {"head": "map search_web par 4"},
+            },
+            started_at="2026-01-01T00:00:01Z",
+        )
+    )
+    block.state.children.extend(f"run_child_{index}" for index in range(5))
+    block.state.completed = 5
+    block.state.metrics = Metrics(
+        runs=5,
+        model_calls=13,
+        tool_calls=8,
+        input_tokens=13_600,
+        output_tokens=3_100,
+    )
+    block.update(
+        StepEnd(
+            step="run_1/2",
+            kind="par",
+            status="canceled",
+            error="canceled",
+            finished_at="2026-01-01T00:00:28Z",
+        )
+    )
+
+    rendered = _render_text(block.render())
+
+    assert "  ! run_1/2 canceled" in rendered
+    assert "statement failed" not in rendered
+    assert "    5 runs succeeded · 27.0s" in rendered
+    assert "  · 5 runs succeeded" not in rendered
+
+
+def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
+    app = FakeApp()
+
+    events.handle_run_event(_run_begin(), app)
+    events.handle_run_event(
+        StepBegin(
+            step="run_1/1",
+            kind="loop",
+            given={
+                "statement": "repeat",
+                "count": 2,
+                "source": {"head": "repeat 2"},
+            },
+            started_at="2026-01-01T00:00:01Z",
+        ),
+        app,
+    )
+    events.handle_run_event(
+        StepBegin(
+            step="run_1/1/0",
+            kind="run",
+            given={
+                "statement": "run",
+                "runnable": "revise",
+                "placement": {"loop": 0},
+                "source": {"head": "run revise"},
+            },
+        ),
+        app,
+    )
+    events.handle_run_event(
+        RunBegin(
+            run="run_revise",
+            parent="run_1/1/0",
+            input=RunControlRef(),
+            context={
+                "root": "run_1",
+                "runnable": {"kind": "agic", "name": "revise"},
+                "placement": {"loop": 0},
+            },
+        ),
+        app,
+    )
+    events.handle_run_event(
+        StepBegin(step="run_revise/0", kind="model"),
+        app,
+    )
+    events.handle_run_event(
+        PartDelta(
+            step="run_revise/0",
+            part=0,
+            delta=TextDelta(text="revising"),
+        ),
+        app,
+    )
+
+    assert [block.type for block in app.live_blocks] == [
+        "FlowStepBlock",
+        "RunStopBlock",
+    ]
+    live = _render_text(app.live_blocks[0].render())
+    assert "=== iteration 0 ===" in live
+    assert "[0] run revise" in live
+    assert "· revising" in live
+
+    events.handle_run_event(
+        StepEnd(
+            step="run_revise/0",
+            kind="model",
+            status="finished",
+            output=(TextPart("revised"),),
+        ),
+        app,
+    )
+    events.handle_run_event(RunEnd(run="run_revise", status="finished"), app)
+    events.handle_run_event(
+        StepEnd(
+            step="run_1/1/0",
+            kind="run",
+            status="finished",
+            output=(TextPart("revised"),),
+        ),
+        app,
+    )
+    events.handle_run_event(
+        StepEnd(
+            step="run_1/1",
+            kind="loop",
+            status="finished",
+            output=(TextPart("revised"),),
+            finished_at="2026-01-01T00:00:03Z",
+        ),
+        app,
+    )
+
+    stable = _render_text(app.finalized[0].render())
+    assert "[1] repeat 2" in stable
+    assert "1 iteration · 2.0s" in stable
+    assert "revising" not in stable
+
+
+def test_chat_reports_a_direct_failure_once() -> None:
+    app = FakeApp()
+    message = "provider returned status 429"
+
+    events.handle_run_event(_run_begin(), app)
+    events.handle_run_event(_tool_step_begin(), app)
+    events.handle_run_event(
+        StepEnd(
+            step="run_1/1",
+            kind="tool",
+            status="failed",
+            error=message,
+            finished_at="2026-01-01T00:00:02Z",
+        ),
+        app,
+    )
+    events.handle_run_event(
+        RunEnd(
+            run="run_1",
+            status="failed",
+            error=message,
+            finished_at="2026-01-01T00:00:03Z",
+        ),
+        app,
+    )
+
+    rendered = "\n".join(_render_text(block.render()) for block in app.finalized)
+    assert rendered.count(message) == 1
+    assert "---" not in rendered
+    assert "◆ run_1 failed · 3.0s · 1 tool call" in rendered
 
 
 def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
@@ -298,10 +863,30 @@ def test_chat_model_step_streaming_wraps_like_final_markdown(
     block.update(_model_step_end(output=long_text))
     final_lines = _render_text(block.render(), width=44).splitlines()
 
-    assert live_lines[0].startswith("• ")
-    assert final_lines[0].startswith("• ")
+    assert live_lines[0].startswith("· ")
+    assert final_lines[0].startswith("· ")
     assert max(len(line) for line in live_lines) <= 44
     assert max(len(line) for line in final_lines) <= 44
+
+
+def test_chat_live_viewport_keeps_latest_rows_and_reports_hidden_rows() -> None:
+    renderables = [Text("\n".join(f"line {index}" for index in range(10)))]
+
+    viewport = "".join(
+        fragment[1]
+        for fragment in rendering.renderables_to_prompt_toolkit(
+            renderables,
+            max_rows=4,
+        )
+    )
+
+    assert rendering.renderables_height(renderables) == 10
+    assert viewport.splitlines() == [
+        "… 7 earlier live lines",
+        "line 7",
+        "line 8",
+        "line 9",
+    ]
 
 
 def test_chat_model_step_marker_style_does_not_leak_to_streaming_text() -> None:
@@ -319,11 +904,9 @@ def test_chat_model_step_marker_style_does_not_leak_to_streaming_text() -> None:
         for segment in rendering.render_segments(block.render(), width=60)
         if segment.text.strip()
     ]
-    marker = next(segment for segment in segments if segment.text == "•")
     text = next(segment for segment in segments if "streaming hello" in segment.text)
 
-    assert marker.style is not None
-    assert marker.style.color is not None
+    assert text.text.startswith("· ")
     assert text.style is None or text.style.color is None
 
 
@@ -398,8 +981,7 @@ def test_chat_model_label_uses_default_or_selected_model() -> None:
 
     assert slashes.chat_model_label(payload, {}) == "auto"
     assert (
-        slashes.chat_model_label(payload, {"model": "openai/o3[openai]"})
-        == "openai/o3"
+        slashes.chat_model_label(payload, {"model": "openai/o3[openai]"}) == "openai/o3"
     )
 
 
@@ -589,6 +1171,31 @@ def test_chat_tui_removes_live_block_before_writing_scrollback(
     assert block not in app.unfinalized_blocks
 
 
+def test_chat_tui_show_command_renders_durable_markdown(
+    monkeypatch: Any,
+) -> None:
+    app = tui.ChatTuiApp(
+        thread_id="thread_1",
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    written: list[RenderableType | None] = []
+    monkeypatch.setattr(
+        tui.rendering,
+        "write_renderables",
+        lambda renderables: written.extend(renderables),
+    )
+
+    app.handle_submit("/show run_saved")
+
+    rendered = "\n".join(_render_text(item) for item in written)
+    assert "Result run_saved" in rendered
+    assert "durable result" in rendered
+    assert _render_text(written[-1]).endswith("\n\n")
+
+
 def _render_text(renderable: RenderableType | None, *, width: int = 80) -> str:
     return "".join(
         segment.text
@@ -603,16 +1210,18 @@ def _run_begin(
     parent_run_id: str | None = None,
     executable_kind: str = "agic",
 ) -> RunBegin:
-    del parent_run_id, executable_kind
     return RunBegin(
         run=run_id,
         input=RunControlRef(index=0),
+        parent=f"{parent_run_id}/2" if parent_run_id is not None else None,
         started_at="2026-01-01T00:00:00Z",
         context={
             "origin": "chat",
             "root": "run_1",
+            "runnable": {"kind": executable_kind, "name": "test"},
         },
     )
+
 
 def _run_end(
     *,
@@ -622,6 +1231,11 @@ def _run_end(
     return RunEnd(
         run=run_id,
         status=status,
+        output=(
+            OutputRef(step=f"{run_id}/1")
+            if run_id == "run_1" and status == "finished"
+            else None
+        ),
         finished_at="2026-01-01T00:00:03Z",
     )
 
@@ -727,13 +1341,15 @@ def _child_run_step_end(*, step_index: int = 2, step: str | None = None) -> Step
         finished_at="2026-01-01T00:00:02Z",
     )
 
+
 def _tool_step_end(
     *,
+    run_id: str = "run_1",
     step_index: int = 1,
     finished_at: str = "2026-01-01T00:00:02Z",
 ) -> StepEnd:
     return StepEnd(
-        step=f"run_1/{step_index}",
+        step=f"{run_id}/{step_index}",
         kind="tool",
         status="finished",
         output=(
@@ -761,6 +1377,7 @@ class FakeApp:
     finalized: list[blocks.MutableBlock] = field(default_factory=list)
     active_run: str | None = None
     finished: bool = False
+    presenter: ChatRunPresenter = field(default_factory=ChatRunPresenter)
 
     def get_selects(self) -> dict[str, object]:
         return {}
@@ -774,11 +1391,17 @@ class FakeApp:
     def get_active_run(self) -> str | None:
         return self.active_run
 
+    def get_thread_id(self) -> str | None:
+        return "thread_1"
+
     def set_active_run(self, run_id: str | None) -> None:
         self.active_run = run_id
 
     def get_live_blocks(self) -> list[blocks.MutableBlock]:
         return self.live_blocks
+
+    def get_presenter(self) -> ChatRunPresenter:
+        return self.presenter
 
     def ensure_thread_id(self) -> str:
         return "thread_1"
@@ -831,6 +1454,18 @@ class FakeClient:
 
     def create_thread(self) -> str:
         return "thread_1"
+
+    def get_result(
+        self,
+        run_id: str | None,
+        *,
+        thread_id: str | None,
+    ) -> ChatResult:
+        del thread_id
+        return ChatResult(
+            run_id=run_id or "run_latest",
+            output=(TextPart("durable result"),),
+        )
 
     def start_run(self, *args: object, **kwargs: object) -> None:
         del args, kwargs

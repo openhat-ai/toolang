@@ -16,6 +16,7 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
+from rich.console import RenderableType
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -42,6 +43,7 @@ from .base import (
 )
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
+from .presenter import ChatRunPresenter
 
 _RUN_EVENT_TYPES = (
     RunBegin,
@@ -70,11 +72,17 @@ class ChatTuiAppContext:
     def get_active_run(self) -> str | None:
         return self._app.active_run_id
 
+    def get_thread_id(self) -> str | None:
+        return self._app.thread_id
+
     def set_active_run(self, run_id: str | None) -> None:
         self._app.active_run_id = run_id
 
     def get_live_blocks(self) -> list[blocks.MutableBlock]:
         return self._app.unfinalized_blocks
+
+    def get_presenter(self) -> ChatRunPresenter:
+        return self._app.presenter
 
     def ensure_thread_id(self) -> str:
         if self._app.thread_id is None:
@@ -156,8 +164,9 @@ class ChatTuiApp:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
         self.actual_model: str | None = None
+        self.presenter = ChatRunPresenter()
 
-        queue_panel = widgets.QueuePanel(lambda: self.queue)
+        self.queue_panel = widgets.QueuePanel(lambda: self.queue)
         self.status_bar = widgets.StatusBar(self._status_label())
         self.prompt = widgets.PromptBox(
             self._enqueue_ui_event,
@@ -172,7 +181,7 @@ class ChatTuiApp:
                 HSplit(
                     [
                         DynamicContainer(self._live_blocks_container),
-                        queue_panel.container(),
+                        self.queue_panel.container(),
                         self.prompt.container(),
                         self.status_bar.container(),
                     ]
@@ -191,17 +200,31 @@ class ChatTuiApp:
     def _live_blocks_container(self) -> HSplit | Window:
         if not self.unfinalized_blocks:
             return Window(height=0)
-        return HSplit([self._block_window(block) for block in self.unfinalized_blocks])
-
-    def _block_window(self, block: blocks.MutableBlock) -> Window:
         return Window(
             FormattedTextControl(
-                lambda: rendering.renderable_to_prompt_toolkit(block.render())
+                lambda: rendering.renderables_to_prompt_toolkit(
+                    self._live_renderables(),
+                    max_rows=self._available_live_rows(),
+                )
             ),
-            height=lambda: rendering.renderable_height(block.render()),
+            height=self._live_area_height,
             wrap_lines=False,
             always_hide_cursor=True,
         )
+
+    def _live_renderables(self) -> list[RenderableType | None]:
+        return [block.render() for block in self.unfinalized_blocks]
+
+    def _live_area_height(self) -> int:
+        return min(
+            rendering.renderables_height(self._live_renderables()),
+            self._available_live_rows(),
+        )
+
+    def _available_live_rows(self) -> int:
+        terminal_rows = self.app.output.get_size().rows
+        reserved_rows = self.queue_panel.rows() + self.prompt.rows() + 1
+        return max(0, terminal_rows - reserved_rows)
 
     def _enqueue_ui_event(self, event: ChatUIEvent) -> None:
         self.ui_events.put_nowait(event)
@@ -338,6 +361,18 @@ class ChatTuiApp:
         self.status_bar.clear_error()
         slash_result = slashes.handle(self.app_context, message)
         if slash_result.handled:
+            if slash_result.result is not None:
+                result = slash_result.result
+                rendering.write_renderables(
+                    [
+                        blocks.SlashBlock(
+                            message,
+                            [f"Result {result.run_id}"],
+                        ).render(),
+                        blocks.SlashResultBlock(result.output).render(),
+                    ]
+                )
+                return
             if slash_result.lines is not None:
                 rendering.write_renderable(
                     blocks.SlashBlock(message, slash_result.lines).render()

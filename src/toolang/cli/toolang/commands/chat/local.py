@@ -26,6 +26,7 @@ from toolang.lang.input import perceive_input
 from toolang.setup import SetupWatcher
 from toolang.state.state import AgentState
 from toolang.state.watcher import StateWatcher
+from .base import ChatResult
 
 
 @dataclass(slots=True)
@@ -114,6 +115,39 @@ class LocalChatSession:
 
     def create_thread(self) -> str:
         return self.threads.create(prefix=ThreadPrefix.TERM)
+
+    def get_result(
+        self,
+        run_id: str | None,
+        *,
+        thread_id: str | None,
+    ) -> ChatResult:
+        run = self.store.get_run(run_id=run_id) if run_id is not None else None
+        if run_id is None:
+            if thread_id is None:
+                raise ValueError("No run result is available in this chat.")
+            run = next(
+                (
+                    candidate
+                    for candidate in reversed(
+                        self.store.list_thread_history_chronological(
+                            thread_id=thread_id
+                        )
+                    )
+                    if candidate.parent is None
+                    and candidate.status == "finished"
+                    and candidate.output is not None
+                ),
+                None,
+            )
+        if run is None:
+            if run_id is not None:
+                raise ValueError(f"Run not found: {run_id}")
+            raise ValueError("No run result is available in this chat.")
+        output = self.store.run_output(run_id=run.id)
+        if not output:
+            raise ValueError(f"Run has no result: {run.id}")
+        return ChatResult(run_id=run.id, output=output)
 
     def start_run(
         self,
@@ -215,6 +249,9 @@ class LocalChatSession:
             self._stop_signal.set()
         await self.executor.shutdown()
         if self._watch_tasks:
+            for task in self._watch_tasks:
+                if not task.done():
+                    task.cancel()
             await asyncio.gather(*self._watch_tasks, return_exceptions=True)
 
     def _submit(self, coroutine: Any, *, allow_closed: bool = False) -> Future[Any]:
@@ -226,8 +263,24 @@ class LocalChatSession:
         asyncio.set_event_loop(self._loop)
         self._stop_signal = asyncio.Event()
         self._ready.set()
-        self._loop.run_forever()
-        self._loop.close()
+        try:
+            self._loop.run_forever()
+        finally:
+            _close_event_loop(self._loop)
+            asyncio.set_event_loop(None)
+
+
+def _close_event_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Close an owned event loop after draining every remaining task."""
+
+    pending = {task for task in asyncio.all_tasks(loop) if not task.done()}
+    for task in pending:
+        task.cancel()
+    if pending:
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    loop.run_until_complete(loop.shutdown_asyncgens())
+    loop.run_until_complete(loop.shutdown_default_executor())
+    loop.close()
 
 
 def _runnable(state: AgentState, selects: Mapping[str, object]) -> str:
