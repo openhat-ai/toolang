@@ -445,6 +445,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if routed is not None:
         return routed
+    routed = routing.dispatch_visiting(
+        raw_args,
+        run_app=lambda args, layout: _run_app(
+            args,
+            layout.name,
+            prog_name=prog_name,
+            catch_system_exit=True,
+            layout=layout,
+        ),
+    )
+    if routed is not None:
+        return routed
     args, prefix_agent = routing.normalize(raw_args)
     return _run_app(args, prefix_agent, prog_name=prog_name)
 

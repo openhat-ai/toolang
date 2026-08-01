@@ -222,17 +222,30 @@ Behavior:
 - key execution events are recorded in `runs.db` for script runs just like chat,
   task, and chore runs
 
-The same roaming source path selects its durable execution history:
+The same roaming source path selects direct chat or its durable execution
+history:
 
 ```bash
+toolang SCRIPT chat [THREAD]
 toolang SCRIPT threads
 toolang SCRIPT runs [--thread THREAD]
 toolang SCRIPT inspect TARGET
 ```
 
-These are the only agent-management commands currently routed for roaming
-sources. Visiting selectors will gain the same three read-only commands when
-their `run`, `start`, and `stop` target resolution is unified.
+These four command names immediately following a local `.too` source are
+interpreted as agent-management commands. They are the only agent-management
+commands currently routed for roaming sources.
+
+Visiting selectors support direct chat and read-only inspection:
+
+```bash
+toolang brice/alice chat [THREAD]
+toolang brice/alice inspect TARGET
+```
+
+Visiting chat resolves and materializes the remote program using the same
+stable visiting layout as `run`. Visiting inspection only derives that layout
+and reads an existing `runs.db`; it does not resolve or fetch the remote source.
 
 ## File Request Runtime
 

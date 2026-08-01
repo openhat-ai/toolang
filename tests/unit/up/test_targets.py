@@ -100,6 +100,27 @@ def test_resolve_resident_layout_does_not_materialize_files(tmp_path: Path) -> N
     assert not layout.home.exists()
 
 
+def test_visiting_layout_derivation_does_not_resolve_or_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selector = "brice/researcher"
+    monkeypatch.setattr(
+        agents,
+        "resolve_agent_selector_ref",
+        lambda *_args, **_kwargs: pytest.fail("history layout must not resolve"),
+    )
+    monkeypatch.setattr(
+        agents,
+        "fetch_agent_ref",
+        lambda *_args, **_kwargs: pytest.fail("history layout must not fetch"),
+    )
+
+    assert agents.visiting_layout(selector) == AgentLayout.visiting(
+        selector,
+        "researcher",
+    )
+
+
 def test_resolve_visiting_layout_materializes_and_reuses_program(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -114,7 +135,7 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
 
     monkeypatch.setattr(agents, "fetch_agent_ref", fake_fetch)
 
-    first = agents.resolve_run_layout(tmp_path, source)
+    first = agents.resolve_visiting_layout(source)
     second = agents.resolve_run_layout(tmp_path / "other", source)
 
     assert first is not second

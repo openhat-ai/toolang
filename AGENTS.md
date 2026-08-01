@@ -299,12 +299,13 @@
   or sandbox hosting. Stdout is reserved for the final result, a shared CLI
   `RunTracer` writes concise progress to stderr, and `PY_LOG` diagnostics go to
   the per-run log file.
-- A roaming `.too` source path may select `threads`, `runs`, or `inspect`.
+- A roaming `.too` source path may select `chat`, `threads`, `runs`, or `inspect`.
   Routing binds its exact `AgentLayout` into `CliContext`; it must not rewrite
   the roaming target into a resident `--root` and agent-name pair. Other
-  roaming management commands remain unsupported for now. Visiting selectors
-  gain these three read-only commands only when runtime target resolution is
-  unified.
+  roaming management commands remain unsupported for now. A visiting selector
+  may select `chat` or `inspect`: chat resolves and materializes the remote
+  source, while inspect derives the stable visiting layout without fetching it.
+  Other visiting management commands remain unsupported for now.
 - Define module loggers with `logging.getLogger(__name__)` so logger names
   always match their package and module paths. Configure logging with package
   prefixes such as `toolang.execution`, `toolang.execution.executor`,

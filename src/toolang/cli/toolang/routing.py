@@ -11,6 +11,7 @@ from toolang.common.layout import AgentLayout
 from toolang.up import process as agents
 from ...up.logging import configure_logging
 from ..caps.commands import CAP_KINDS
+from ..common.progress import as_progress_sink, make_cli_progress
 from ..common.routing import extract_root_args
 from .commands import runtime, script
 
@@ -88,7 +89,8 @@ PREFIX_AGENT_COMMANDS = frozenset(
     }
 )
 THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
-ROAMING_HISTORY_COMMANDS = frozenset({"threads", "runs", "inspect"})
+ROAMING_AGENT_COMMANDS = frozenset({"chat", "threads", "runs", "inspect"})
+VISITING_AGENT_COMMANDS = frozenset({"chat", "inspect"})
 
 
 def dispatch_roaming(
@@ -105,7 +107,7 @@ def dispatch_roaming(
     except ValueError as exc:
         typer.echo(f"toolang error: {exc}", err=True)
         return 1
-    if len(body) >= 2 and body[1] in ROAMING_HISTORY_COMMANDS:
+    if len(body) >= 2 and body[1] in ROAMING_AGENT_COMMANDS:
         if global_args:
             return _unsupported_global_options()
         try:
@@ -120,6 +122,48 @@ def dispatch_roaming(
         return runtime.run_roaming_file(source, body[1:])
 
     return script.dispatch(global_args, body, prog_name=prog_name)
+
+
+def dispatch_visiting(
+    argv: list[str],
+    *,
+    run_app: Callable[[list[str], AgentLayout], int],
+) -> int | None:
+    """Route supported remote-selector commands through a visiting layout."""
+
+    global_args, body = extract_root_args(argv)
+    if len(body) < 2 or body[1] not in VISITING_AGENT_COMMANDS:
+        return None
+    try:
+        selector = agents.parse_agent_selector(body[0])
+    except ValueError as exc:
+        typer.echo(f"toolang error: {exc}", err=True)
+        return 1
+    if selector.form == "name":
+        return None
+
+    progress = make_cli_progress() if body[1] == "chat" else None
+    try:
+        layout = (
+            agents.resolve_visiting_layout(
+                selector.text,
+                progress=as_progress_sink(progress),
+            )
+            if body[1] == "chat"
+            else agents.visiting_layout(selector.text)
+        )
+    except KeyboardInterrupt:
+        if progress is not None:
+            progress.interrupt()
+        return 130
+    except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
+        if progress is not None:
+            progress.finish(details=False)
+        typer.echo(f"toolang error: {exc}", err=True)
+        return 1
+    if progress is not None:
+        progress.finish(details=False)
+    return run_app([*global_args, *body[1:]], layout)
 
 
 def normalize(argv: list[str]) -> tuple[list[str], str | None]:
