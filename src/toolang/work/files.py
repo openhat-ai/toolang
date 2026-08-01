@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import mimetypes
 from pathlib import Path
 import sqlite3
 import threading
-from typing import Literal, cast
+from typing import cast
 
-from toolang.up import process as agents
+from toolang.base.types.message import (
+    DocumentPart,
+    ImagePart,
+    Message,
+    TextPart,
+)
+from toolang.common.layout import AgentLayout
 from toolang.execution.types import RunStatus
+from .records import FileRequestRecord
+from .types import FileRequestStatus, FileSnapshot
 
-FileRequestStatus = Literal["running", "finished", "failed", "canceled"]
-
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _TEXT_PART_EXTENSIONS = {
     ".cfg",
     ".conf",
@@ -89,38 +94,6 @@ _TEXT_MEDIA_TYPES = {
 _FILE_THREAD_HASH_CHARS = 12
 
 
-@dataclass(frozen=True, slots=True)
-class FileSnapshot:
-    """One stable regular file observed under an inbox."""
-
-    watch_root: str
-    relative_path: str
-    absolute_path: str
-    size: int
-    mtime_ns: int
-    fingerprint: str
-
-
-@dataclass(frozen=True, slots=True)
-class FileRequestRecord:
-    """One persisted file request row."""
-
-    request_id: int
-    watch_root: str
-    relative_path: str
-    absolute_path: str
-    size: int
-    mtime_ns: int
-    fingerprint: str
-    thread_id: str
-    status: FileRequestStatus
-    run_id: str
-    error: str | None
-    first_seen_at: str
-    processed_at: str | None
-    updated_at: str
-
-
 class FileRequestStore:
     """SQLite-backed file request claim and completion store."""
 
@@ -140,7 +113,6 @@ class FileRequestStore:
         self,
         snapshot: FileSnapshot,
         *,
-        run_id: str,
         thread_id: str,
         now: datetime | None = None,
     ) -> FileRequestRecord | None:
@@ -154,7 +126,7 @@ class FileRequestStore:
                     watch_root, relative_path, absolute_path, size, mtime_ns,
                     fingerprint, thread_id, status, run_id, error, first_seen_at,
                     processed_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, NULL, ?, NULL, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', NULL, NULL, ?, NULL, ?)
                 """,
                 (
                     snapshot.watch_root,
@@ -164,7 +136,6 @@ class FileRequestStore:
                     snapshot.mtime_ns,
                     snapshot.fingerprint,
                     thread_id,
-                    run_id,
                     _iso(current),
                     _iso(current),
                 ),
@@ -178,6 +149,43 @@ class FileRequestStore:
             ).fetchone()
             self._conn.commit()
         return _record_from_row(row) if row is not None else None
+
+    def bind_run(
+        self,
+        *,
+        request_id: int,
+        run_id: str,
+        now: datetime | None = None,
+    ) -> FileRequestRecord:
+        """Bind an executor-assigned run id to one active file claim."""
+
+        current = _utc(now)
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    """
+                    UPDATE file_requests
+                    SET run_id = ?, updated_at = ?
+                    WHERE request_id = ? AND status = 'running' AND run_id IS NULL
+                    """,
+                    (run_id, _iso(current), request_id),
+                )
+            except sqlite3.IntegrityError as exc:
+                self._conn.rollback()
+                raise ValueError(f"file run already bound: {run_id}") from exc
+            if cursor.rowcount != 1:
+                self._conn.rollback()
+                raise ValueError(f"file request cannot bind run: {request_id}")
+            updated = self._conn.execute(
+                "SELECT * FROM file_requests WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+            self._conn.commit()
+        if updated is None:
+            raise RuntimeError(
+                f"file request not found after run binding: {request_id}"
+            )
+        return _record_from_row(updated)
 
     def finish_run(
         self,
@@ -262,7 +270,7 @@ class FileRequestStore:
                 fingerprint TEXT NOT NULL,
                 thread_id TEXT NOT NULL,
                 status TEXT NOT NULL,
-                run_id TEXT NOT NULL UNIQUE,
+                run_id TEXT UNIQUE,
                 error TEXT,
                 first_seen_at TEXT NOT NULL,
                 processed_at TEXT,
@@ -273,16 +281,16 @@ class FileRequestStore:
         )
 
 
-def files_db_path(toolang_root: Path, agent_name: str) -> Path:
+def files_db_path(layout: AgentLayout) -> Path:
     """Return the file request database path."""
 
-    return agents.agent_room(toolang_root, agent_name) / "files.db"
+    return layout.file_store
 
 
-def open_file_request_store(toolang_root: Path, agent_name: str) -> FileRequestStore:
+def open_file_request_store(layout: AgentLayout) -> FileRequestStore:
     """Open the file request store for one agent."""
 
-    return FileRequestStore(files_db_path(toolang_root, agent_name))
+    return FileRequestStore(files_db_path(layout))
 
 
 def fingerprint_file(path: Path) -> str:
@@ -311,7 +319,39 @@ def render_file_input(path: Path) -> tuple[str, list[dict[str, str]]]:
     if part_type == "text":
         text = resolved.read_text(encoding="utf-8")
         return text, [{"type": "text", "text": text, "path": str(resolved)}]
-    return f"Attached {part_type}: {resolved}", [{"type": part_type, "path": str(resolved)}]
+    return f"Attached {part_type}: {resolved}", [
+        {"type": part_type, "path": str(resolved)}
+    ]
+
+
+def file_input_message(path: Path) -> Message:
+    """Build one canonical user message for an inbox file."""
+
+    resolved = path.expanduser().resolve()
+    part_type = path_part_type(resolved)
+    if part_type == "text":
+        return Message.user(resolved.read_text(encoding="utf-8"))
+    media_type, _encoding = mimetypes.guess_type(resolved.as_posix())
+    attachment = (
+        ImagePart(
+            image_url=resolved.as_uri(),
+            filename=resolved.name,
+            media_type=media_type,
+        )
+        if part_type == "image"
+        else DocumentPart(
+            url=resolved.as_uri(),
+            filename=resolved.name,
+            media_type=media_type,
+        )
+    )
+    return Message(
+        role="user",
+        parts=(
+            TextPart(text=f"Attached {part_type}: {resolved}"),
+            attachment,
+        ),
+    )
 
 
 def path_part_type(path: Path) -> str:
@@ -347,10 +387,12 @@ def _record_from_row(row: sqlite3.Row) -> FileRequestRecord:
         fingerprint=str(row["fingerprint"]),
         thread_id=str(row["thread_id"]),
         status=cast(FileRequestStatus, str(row["status"])),
-        run_id=str(row["run_id"]),
+        run_id=str(row["run_id"]) if row["run_id"] is not None else None,
         error=str(row["error"]) if row["error"] is not None else None,
         first_seen_at=str(row["first_seen_at"]),
-        processed_at=str(row["processed_at"]) if row["processed_at"] is not None else None,
+        processed_at=str(row["processed_at"])
+        if row["processed_at"] is not None
+        else None,
         updated_at=str(row["updated_at"]),
     )
 

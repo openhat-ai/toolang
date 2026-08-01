@@ -7,6 +7,11 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE
+from toolang.execution.schemas import (
+    RunControlInfo,
+    RunDetail,
+    ThreadInfo,
+)
 
 
 class ApiRequest(BaseModel):
@@ -34,8 +39,10 @@ class ImageInputPart(ApiRequest):
 
     @model_validator(mode="after")
     def validate_source(self) -> Self:
-        if self.image_url is None and self.file_id is None:
-            raise ValueError("image part requires image_url or file_id")
+        if sum(value is not None for value in (self.image_url, self.file_id)) != 1:
+            raise ValueError(
+                "image part requires exactly one of image_url or file_id"
+            )
         return self
 
 
@@ -51,33 +58,32 @@ class AudioInputPart(ApiRequest):
 
     @model_validator(mode="after")
     def validate_source(self) -> Self:
-        if self.data is None and self.data_url is None:
-            raise ValueError("audio part requires data or data_url")
+        if sum(value is not None for value in (self.data, self.data_url)) != 1:
+            raise ValueError("audio part requires exactly one of data or data_url")
         return self
 
 
-class FileInputPart(ApiRequest):
-    """One file input part."""
+class DocumentInputPart(ApiRequest):
+    """One document input part."""
 
-    type: Literal["file"]
-    file_data: str | None = None
-    file_url: str | None = None
+    type: Literal["document"]
+    data: str | None = None
+    url: str | None = None
     file_id: str | None = None
-    data_url: str | None = None
     filename: str | None = None
     media_type: str | None = None
 
     @model_validator(mode="after")
     def validate_source(self) -> Self:
-        if not any((self.file_data, self.file_url, self.file_id, self.data_url)):
+        if sum(value is not None for value in (self.data, self.url, self.file_id)) != 1:
             raise ValueError(
-                "file part requires file_data, file_url, file_id, or data_url"
+                "document part requires exactly one of data, url, or file_id"
             )
         return self
 
 
 InputPart = Annotated[
-    TextInputPart | ImageInputPart | AudioInputPart | FileInputPart,
+    TextInputPart | ImageInputPart | AudioInputPart | DocumentInputPart,
     Field(discriminator="type"),
 ]
 
@@ -87,11 +93,10 @@ class InputMessagePayload(ApiRequest):
 
     role: Literal["user"] = "user"
     parts: list[InputPart] = Field(min_length=1)
-    meta: dict[str, object] = Field(default_factory=dict)
 
 
 class ThreadPeerPayload(ApiRequest):
-    """One optional chat thread peer descriptor."""
+    """One optional thread peer descriptor."""
 
     type: str = Field(default="user", min_length=1)
     name: str = Field(default="user", min_length=1)
@@ -99,40 +104,21 @@ class ThreadPeerPayload(ApiRequest):
 
 
 class ThreadCreateRequest(ApiRequest):
-    """Request one empty chat thread."""
+    """Request one empty thread."""
 
-    client: Literal["web", "term", "tui", "chat"] = "term"
+    client: Literal["web", "term", "tui", "chat", "script"] = "term"
     peer: ThreadPeerPayload | None = None
 
 
 class ThreadRewindRequest(ApiRequest):
     """Request a thread rewind from one anchor run."""
 
-    run_id: str = Field(min_length=1)
+    run_id: str | None = Field(default=None, min_length=1)
     request_id: str | None = None
-    message: InputMessagePayload | None = None
 
 
 class ThreadForkRequest(ThreadRewindRequest):
     """Request a thread fork from one anchor run."""
-
-    include_anchor: bool = False
-
-
-class ChatRequest(ApiRequest):
-    """One formal chat submission."""
-
-    thread: str | None = Field(default=None, min_length=1)
-    client: Literal["web", "term", "tui", "chat"] = "web"
-    peer: ThreadPeerPayload | None = None
-    request_id: str | None = Field(default=None, min_length=1)
-    message: InputMessagePayload
-    model: str | None = None
-    models: list[str] = Field(default_factory=list)
-    agic: str | None = None
-    flow: str | None = None
-    tools: list[str] | None = None
-    caps: list[str] = Field(default_factory=list)
 
 
 class PutCapRequest(ApiRequest):
@@ -182,13 +168,12 @@ class ChorePatchRequest(ApiRequest):
 class RunCreateRequest(ApiRequest):
     """One non-interactive agic or flow execution request."""
 
-    executable_kind: Literal["agic", "flow"] = "agic"
-    executable_name: str | None = None
-    input: str = ""
-    models: list[str] = Field(default_factory=list)
-    tools: list[str] | None = None
-    caps: list[str] = Field(default_factory=list)
-    metadata: dict[str, object] = Field(default_factory=dict)
+    thread: str = Field(min_length=1)
+    request_id: str | None = Field(default=None, min_length=1)
+    runnable: str = Field(min_length=1)
+    input: list[InputPart] = Field(default_factory=list)
+    model: str | None = None
+    args: dict[str, object] | None = None
 
 
 class RunCancelRequest(ApiRequest):
@@ -205,3 +190,16 @@ class RunSteerRequest(ApiRequest):
     request_id: str | None = None
     mode: Literal["immediate", "next_step", "next_call"] = "next_step"
     message: InputMessagePayload
+
+
+class ThreadResult(BaseModel):
+    """One HTTP thread mutation response."""
+
+    thread: ThreadInfo
+
+
+class RunCommandResult(BaseModel):
+    """One accepted HTTP run control."""
+
+    run: RunDetail
+    command: RunControlInfo

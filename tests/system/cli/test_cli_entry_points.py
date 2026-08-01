@@ -12,8 +12,8 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from toolang.cli.caps.cli import app as caps_app
-from toolang.cli.toolang.cli import app as toolang_app
+from toolang.cli.caps.main import app as caps_app
+from toolang.cli.toolang.main import app as toolang_app
 from tests import PROJECT_ROOT
 
 

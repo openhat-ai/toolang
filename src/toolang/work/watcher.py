@@ -8,22 +8,23 @@ from pathlib import Path
 
 from watchfiles import Change, awatch
 
+from toolang.common.layout import AgentLayout
+
 from .state import HomeJobs
 
 
 class JobWatcher:
     """Publish immutable home-job snapshots when authored files change."""
 
-    def __init__(self, root: Path, name: str) -> None:
-        self.root = root
-        self.name = name
-        self._jobs = HomeJobs.load(root, name)
+    def __init__(self, layout: AgentLayout) -> None:
+        self.layout = layout
+        self._jobs = HomeJobs.load(layout)
 
     def current(self) -> HomeJobs:
         return self._jobs
 
     def refresh(self) -> HomeJobs:
-        self._jobs = HomeJobs.load(self.root, self.name)
+        self._jobs = HomeJobs.load(self.layout)
         return self._jobs
 
     def start(
@@ -50,7 +51,7 @@ class JobWatcher:
         interval_ms: float = 1_000.0,
         debounce_ms: float = 500.0,
     ) -> AsyncIterator[HomeJobs]:
-        home = self.root / "agents" / self.name
+        home = self.layout.home
         home.mkdir(parents=True, exist_ok=True)
         async for changes in awatch(
             home,

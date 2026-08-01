@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields
 from collections.abc import Mapping
 from functools import lru_cache
-from typing import Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import TypeAdapter
+from pydantic import Discriminator, Tag, TypeAdapter
 from tree_sitter import Language, Node as TreeSitterNode, Parser, Tree
 import tree_sitter_toolang
 
@@ -264,21 +264,29 @@ class LetStmt(Node):
     value: str
 
 
-FlowStmt = (
-    RunStmt
-    | SeekStmt
-    | AskStmt
-    | ScatterStmt
-    | StormStmt
-    | GatherStmt
-    | SettleStmt
-    | MapStmt
-    | KeepStmt
-    | DropStmt
-    | RankStmt
-    | RepeatStmt
-    | LetStmt
-)
+def _flow_statement_kind(value: Any) -> str | None:
+    kind = (
+        value.get("kind") if isinstance(value, dict) else getattr(value, "kind", None)
+    )
+    return kind if isinstance(kind, str) else None
+
+
+FlowStmt = Annotated[
+    Annotated[RunStmt, Tag("run")]
+    | Annotated[SeekStmt, Tag("seek")]
+    | Annotated[AskStmt, Tag("ask")]
+    | Annotated[ScatterStmt, Tag("scatter")]
+    | Annotated[StormStmt, Tag("storm")]
+    | Annotated[GatherStmt, Tag("gather")]
+    | Annotated[SettleStmt, Tag("settle")]
+    | Annotated[MapStmt, Tag("map")]
+    | Annotated[KeepStmt, Tag("keep")]
+    | Annotated[DropStmt, Tag("drop")]
+    | Annotated[RankStmt, Tag("rank")]
+    | Annotated[RepeatStmt, Tag("repeat")]
+    | Annotated[LetStmt, Tag("let")],
+    Discriminator(_flow_statement_kind),
+]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -329,7 +337,7 @@ class Program(Node):
 
 
 def _parse_source(source: str) -> _ParsedSource:
-    from .diagnostics import ToolangSyntaxError
+    from .errors import ToolangSyntaxError
 
     syntax = source if not source or source.endswith("\n") else f"{source}\n"
     encoded = syntax.encode("utf-8")

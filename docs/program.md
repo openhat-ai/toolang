@@ -11,12 +11,12 @@ parsing is specified in [input-syntax.md](./input-syntax.md).
 agent      optional program header
 with       external cap reference
 struct     named structured type
-context    reusable context prompt
-instruct   reusable agent instruction profile
+context    reusable context template
+instruct   reusable instruction template
 psyche     inline psyche cap
 skill      inline skill cap
 service    inline service cap
-prompt     reusable content expansion
+prompt     reusable ContentBody template
 task       authored task
 chore      authored recurring work
 agic       model/tool executable
@@ -25,6 +25,49 @@ flow       ordered statement executable
 
 Top-level agics and flows share one executable namespace. Their authored names
 must be unique across both declaration kinds.
+
+
+## Documentation Comments
+
+`##!` documents the complete program. Program documentation comments must be
+unindented, may appear anywhere between top-level declarations, and are joined
+in source order:
+
+```too
+##! Research assistant.
+agic search:
+  Search for relevant sources.
+
+##! Produces a source-backed report.
+flow research:
+  run search
+```
+
+`##` documents the immediately following semantic node at the same indentation
+level. Consecutive `##` lines form one newline-separated document:
+
+```too
+## Search the web.
+## Return source-backed evidence.
+agic search:
+  ## The model request body.
+  Find relevant sources.
+
+flow research:
+  ## Run two searches.
+  repeat 2:
+    ## Run one search.
+    run search
+```
+
+At the program level, `##` may document any declaration. Inside a struct it may
+document a field, inside an agic it may document a message, and inside a flow
+or nested flow block it may document a statement.
+
+A blank line, an ordinary `#` comment, another syntax item, or the end of the
+current scope ends attachment. Documentation comments never skip an
+intervening directive or setting. Parameters and directives do not currently
+accept documentation comments.
 
 
 ## External Caps
@@ -141,24 +184,32 @@ synthetic `--in` option.
 
 ### Value Types
 
-Core value types include:
+Built-in value types include:
 
 ```text
 Text
 Number
 Boolean
 Json
-Path
-Artifact
 Part
 Part[]
-T[]
-StructName
 ```
 
-`Part` is one canonical content part. `Part[]` is ordered multimodal content.
-`Message` is a model-call and chat-projection type, not a Toolang language
-value.
+`T[]` denotes an array of any language type `T`. `S` denotes the name of any
+declared struct type; neither `T` nor `S` is a literal type name that can be
+written in source.
+
+The language names map to package-level protocol values:
+
+```text
+Part    = one PerceptPart
+Part[]  = one Percept
+```
+
+The `lang` AST deliberately preserves the concise `Part` and `Part[]` names.
+Packages outside `toolang.lang` use `PerceptPart` and `Percept` for the same
+runtime values. `Message` is a model-call and chat-projection type, not a
+Toolang language value.
 
 Value type and runtime shape are independent. A `Part[]`, `Text[]`, or other
 array value normally occupies one local with `shape=item`. Only flow operations
@@ -181,17 +232,19 @@ For an agic:
 
 - no declaration keeps normal unstructured assistant content
 - `Text`, `Part`, and `Part[]` use content output with type validation
-- `Number`, `Boolean`, `Json`, structs, and `T[]` use structured model output
+- `Number`, `Boolean`, `Json`, declared structs `S`, and ordinary `T[]` values
+  use structured model output
 
-A flow validates its final primary local against its declared output type.
+A runnable applies output coercion to its final value. For an agic, this is the
+terminal assistant content; for a flow, it is the final primary local.
 
-Script output is rendered predictably:
+After output coercion, script serializes the resulting value predictably:
 
 ```text
 Text                 raw text
 Number               canonical decimal
 Boolean              true or false
-Json, struct, T[]     compact JSON
+Json, S, T[]          compact JSON
 Part                  one JSON object
 Part[]                one JSON array when explicitly declared
 undeclared agic       human-readable assistant content
@@ -212,7 +265,7 @@ struct ReviewFinding:
 struct ReviewResult:
   summary: Text
   findings: ReviewFinding[]
-  patch?: Artifact
+  patch?: Json
 ```
 
 `name: Type` is required and `name?: Type` is optional. Structs may be used by
@@ -284,7 +337,7 @@ Unnamed declarations define program defaults:
 
 ```too
 context:
-  Current agent: {{runtime.agent.name}}
+  Current agent: {{agent.name}}
 
 instruct:
   Use tools only when they materially help.
@@ -297,8 +350,21 @@ context report:
   Include the report constraints.
 
 instruct strict:
-  Return only data matching {{runtime.agic.output}}.
+  Run the {{runnable.name}} runnable in strict mode.
 ```
+
+The executor supplies `date` and `timezone` as flat runtime variables to both
+context and instruct templates:
+
+```too
+context:
+  Current date: {{date}}
+  Timezone: {{timezone}}
+```
+
+`date` is the UTC calendar date on which the root run was accepted, and
+`timezone` is `UTC`. Both remain fixed for the complete recursive run tree so
+child runs and later model calls observe the same temporal context.
 
 An agic may select one of each:
 
@@ -328,12 +394,11 @@ leaves the AST reference as `None`; runtime policy normally resolves that like
 
 ### Messages
 
-Agic message roles are:
+Authored agic message roles are:
 
 ```text
 user
 assistant
-tool
 ```
 
 Messages are model-call templates, not Toolang runtime value types. They are
@@ -344,11 +409,11 @@ agic simulate():
   recall = none
   user: hello
   assistant: hi
-  tool: cached result
 ```
 
-Message content uses the shared content syntax and may read `_`, named locals,
-and documented runtime template variables.
+Message content uses the shared `ContentBody` syntax and may read `_` and the
+agic's declared parameters. Tool messages are runtime results paired with tool
+calls; they cannot be authored in a `ContentBody`.
 
 
 ## Flows
@@ -367,6 +432,12 @@ Flows use the same parameters, output declaration, directives, and executable
 namespace as agics. Statement syntax, bindings, inline agics, and result shapes
 are defined in [flow-syntax.md](./flow-syntax.md).
 
+Each flow invocation resets its resource ceiling from the `_AgentCeiling`
+resolved at root-run start. Its directives establish the ceiling used by agics
+executed in that flow. Nested flow calls reset again, even when the nested flow
+has no directives, so a flow's correction does not implicitly constrain
+another independently authored flow.
+
 Inline runnable bodies lower to generated `AgicDecl` values named
 `<agic:LINE>`. The `<...>` prefix cannot be authored as an executable name, so
 generated names cannot collide with user declarations.
@@ -374,7 +445,7 @@ generated names cannot collide with user declarations.
 
 ## Prompts
 
-A prompt is a reusable content expansion:
+A prompt is a reusable `ContentBody` template:
 
 ````too
 prompt review: ```md
@@ -393,9 +464,9 @@ It is invoked with slash-like content syntax:
 /review src/app.py "only errors"
 ```
 
-Prompt invocation, attached content, includes, and escaping are defined in
-[input-syntax.md](./input-syntax.md). Prompt slashes expand content; they are
-not built-in chat commands.
+`PromptCall` syntax, attached bodies, include references, and escaping are
+defined in [input-syntax.md](./input-syntax.md). A prompt call invokes one
+reusable prompt template during input perceiving.
 
 
 ## Service Caps
@@ -439,9 +510,11 @@ Chat, task, chore, and file surfaces require an executable that accepts primary
 input and no additional required named parameters. Script may invoke any valid
 signature and derives its CLI from that signature.
 
-Interactive and authored content is parsed into `Part[]` before type coercion.
-If the executable expects another primary type, the surface must decode and
-validate the content explicitly rather than guessing inside the executor.
+Input perceiving turns an interactive or authored `ContentBody` into a
+protocol-level `Percept` before execution. That value corresponds to language
+`Part[]`. After resolving the runnable's signature, `RunExecutor` uses
+language-owned input coercion to decode and validate another declared primary
+type before accepting the run. The caller does not duplicate signature parsing.
 
 Execution context such as `cwd`, agent home, and Toolang root is runtime state,
 not executable parameters.
@@ -455,12 +528,10 @@ Toolang assembles model calls in these conceptual layers:
 runtime protocol
 selected instruct and capability instructions
 tool definitions
-context data
 recalled messages
-authored agic messages
-current primary input
+authored agic messages and current primary input
 ```
 
 Runtime protocol cannot be overridden by an agic. Context remains data rather
-than instructions. Tool definitions remain structured model API input rather
-than prompt text.
+than instructions and is prepended to the final user content. Tool definitions
+remain structured model API input rather than prompt text.

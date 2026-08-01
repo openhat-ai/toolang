@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
-from toolang.base.error import ToolangError
+from toolang.base.errors import ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.message import (
+    AudioFormat,
     AudioPart,
-    FilePart,
+    DocumentPart,
     ImagePart,
     Message,
     TextDelta,
@@ -20,21 +21,22 @@ from toolang.base.types.message import (
     ToolCallDelta,
     ToolCallPart,
     ToolResultPart,
+    message_summary,
 )
 from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
-    ModelEventHandler,
-    ModelPartDeltaEvent,
-    ModelPartEndEvent,
-    ModelPartStartEvent,
+    ModelPartDelta,
+    ModelPartEnd,
+    ModelPartStart,
+    ModelStreamHandler,
     ModelUsage,
     ToolCall,
 )
 from toolang.base.types.tool import ToolDefinition
 
-_ADAPTER_LOGGER = logging.getLogger("toolang.model.adapter")
+_ADAPTER_LOGGER = logging.getLogger(__name__)
 _LOG_PREVIEW_LIMIT = 4_000
 
 
@@ -45,25 +47,25 @@ class ChatCompletionsModelAdapter(ModelAdapter):
     name: str = "chat_completions"
     description: str | None = "Use the OpenAI Chat Completions-compatible API shape."
 
-    def invoke(
+    async def invoke(
         self,
         target: ModelTarget,
         request: ModelCall,
     ) -> ModelCallResult:
         """Execute one non-streaming Chat Completions API call."""
 
-        return invoke_chat_completion(target, request)
+        return await invoke_chat_completion(target, request)
 
-    def stream(
+    async def stream(
         self,
         target: ModelTarget,
         request: ModelCall,
         *,
-        on_event: ModelEventHandler,
+        on_event: ModelStreamHandler,
     ) -> ModelCallResult:
         """Execute one streaming Chat Completions API call."""
 
-        return stream_chat_completion(target, request, on_event=on_event)
+        return await stream_chat_completion(target, request, on_event=on_event)
 
 
 def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
@@ -77,7 +79,7 @@ def create_client(target: ModelTarget) -> Any:
     """Create one OpenAI-compatible client for a resolved model target."""
 
     try:
-        from openai import OpenAI
+        from openai import AsyncOpenAI
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise ToolangError(
             "The 'openai' package is not installed. Reinstall toolang with its runtime dependencies to enable runtime execution."
@@ -89,10 +91,10 @@ def create_client(target: ModelTarget) -> Any:
         kwargs["api_key"] = target.api_key
     if target.headers:
         kwargs["default_headers"] = dict(target.headers)
-    return OpenAI(**kwargs)
+    return AsyncOpenAI(**kwargs)
 
 
-def invoke_chat_completion(
+async def invoke_chat_completion(
     target: ModelTarget,
     request: ModelCall,
 ) -> ModelCallResult:
@@ -101,16 +103,19 @@ def invoke_chat_completion(
     client = create_client(target)
     payload = chat_completion_payload(target, request, stream=False)
     _log_api_request(target, payload, stream=False)
-    response = client.chat.completions.create(**payload)
+    response = await client.chat.completions.create(**payload)
     _log_api_response(target, response, stream=False)
-    return parse_chat_completion(response)
+    return parse_chat_completion(
+        response,
+        audio_format=_output_audio_format(target),
+    )
 
 
-def stream_chat_completion(
+async def stream_chat_completion(
     target: ModelTarget,
     request: ModelCall,
     *,
-    on_event: ModelEventHandler,
+    on_event: ModelStreamHandler,
 ) -> ModelCallResult:
     """Execute one streaming Chat Completions API call."""
 
@@ -119,12 +124,15 @@ def stream_chat_completion(
     _log_api_request(target, payload, stream=True)
     reasoning_parts: list[str] = []
     text_parts: list[str] = []
+    audio_data_parts: list[str] = []
+    audio_transcript_parts: list[str] = []
     tool_buffers: dict[int, _ToolCallBuffer] = {}
     final_usage: ModelUsage | None = None
     text_started = False
-    stream = client.chat.completions.create(**payload)
+    defer_text = _audio_output_requested(target)
+    stream = await client.chat.completions.create(**payload)
     try:
-        for chunk in stream:
+        async for chunk in stream:
             chunk_usage = chat_usage(chunk)
             if chunk_usage is not None:
                 final_usage = chunk_usage
@@ -137,13 +145,21 @@ def stream_chat_completion(
             reasoning_content = getattr(delta, "reasoning_content", None)
             if isinstance(reasoning_content, str) and reasoning_content:
                 reasoning_parts.append(reasoning_content)
+            audio = getattr(delta, "audio", None)
+            audio_data = _value_text(audio, "data")
+            audio_transcript = _value_text(audio, "transcript")
+            if audio_data:
+                audio_data_parts.append(audio_data)
+            if audio_transcript:
+                audio_transcript_parts.append(audio_transcript)
             content = getattr(delta, "content", None)
             if isinstance(content, str) and content:
-                if not text_started:
-                    text_started = True
-                    on_event(ModelPartStartEvent(kind="text"))
                 text_parts.append(content)
-                on_event(ModelPartDeltaEvent(delta=TextDelta(text=content)))
+                if not defer_text:
+                    if not text_started:
+                        text_started = True
+                        await on_event(ModelPartStart(kind="text"))
+                    await on_event(ModelPartDelta(delta=TextDelta(text=content)))
             for call_delta in getattr(delta, "tool_calls", None) or ():
                 index = getattr(call_delta, "index", None)
                 if not isinstance(index, int):
@@ -151,12 +167,12 @@ def stream_chat_completion(
                 buffer = tool_buffers.setdefault(index, _ToolCallBuffer())
                 if not buffer.started:
                     buffer.started = True
-                    on_event(ModelPartStartEvent(kind="tool_call"))
+                    await on_event(ModelPartStart(kind="tool_call"))
                 buffer.append(call_delta)
                 arguments_delta = _tool_call_delta_arguments(call_delta)
                 if arguments_delta:
-                    on_event(
-                        ModelPartDeltaEvent(
+                    await on_event(
+                        ModelPartDelta(
                             delta=ToolCallDelta(
                                 text=arguments_delta,
                                 tool_call_id=buffer.tool_call_id or f"tool-call-{index}",
@@ -166,19 +182,33 @@ def stream_chat_completion(
     finally:
         close = getattr(stream, "close", None)
         if callable(close):
-            close()
+            await close()
     text = "".join(text_parts)
     tool_calls = tuple(buffer.to_tool_call(index) for index, buffer in sorted(tool_buffers.items()))
+    audio = _audio_part(
+        data="".join(audio_data_parts),
+        transcript="".join(audio_transcript_parts),
+        format=_output_audio_format(target),
+    )
     message = _assistant_message(
         text=text,
         tool_calls=tool_calls,
         reasoning_content="".join(reasoning_parts),
+        audio=audio,
     )
-    if text:
-        on_event(ModelPartEndEvent(data=TextPart(text=text)))
+    keep_text = bool(text and (audio is None or text != audio.transcript))
+    if keep_text and defer_text:
+        await on_event(ModelPartStart(kind="text"))
+        for delta in text_parts:
+            await on_event(ModelPartDelta(delta=TextDelta(text=delta)))
+    if keep_text:
+        await on_event(ModelPartEnd(data=TextPart(text=text)))
+    if audio is not None:
+        await on_event(ModelPartStart(kind="audio"))
+        await on_event(ModelPartEnd(data=audio))
     for call in tool_calls:
-        on_event(
-            ModelPartEndEvent(
+        await on_event(
+            ModelPartEnd(
                 data=ToolCallPart(
                     tool_call_id=call.tool_call_id,
                     call_id=call.call_id,
@@ -247,7 +277,7 @@ def encode_message(target: ModelTarget, message: Message) -> dict[str, Any] | li
 
     role = message.role.strip()
     if role == "user":
-        return {"role": "user", "content": _text_content(message)}
+        return {"role": "user", "content": _encode_user_content(message)}
     if role == "assistant":
         text = _text_content(message)
         tool_calls = [_encode_tool_call_part(part) for part in message.parts if isinstance(part, ToolCallPart)]
@@ -260,7 +290,7 @@ def encode_message(target: ModelTarget, message: Message) -> dict[str, Any] | li
         return payload
     if role == "tool":
         results = [
-            _encode_tool_result_part(part, message=message)
+            _encode_tool_result_part(part)
             for part in message.parts
             if isinstance(part, ToolResultPart)
         ]
@@ -285,7 +315,11 @@ def tool_payload(definition: ToolDefinition) -> dict[str, Any]:
     }
 
 
-def parse_chat_completion(response: Any) -> ModelCallResult:
+def parse_chat_completion(
+    response: Any,
+    *,
+    audio_format: AudioFormat = "wav",
+) -> ModelCallResult:
     """Normalize one Chat Completions response object."""
 
     choice = _first_choice(response)
@@ -297,11 +331,16 @@ def parse_chat_completion(response: Any) -> ModelCallResult:
     text = getattr(raw_message, "content", None)
     reasoning_content = getattr(raw_message, "reasoning_content", None)
     tool_calls = tuple(parse_tool_calls(getattr(raw_message, "tool_calls", None)))
+    audio = _audio_part_from_value(
+        getattr(raw_message, "audio", None),
+        format=audio_format,
+    )
     return ModelCallResult(
         message=_assistant_message(
             text=text if isinstance(text, str) else "",
             tool_calls=tool_calls,
             reasoning_content=reasoning_content if isinstance(reasoning_content, str) else "",
+            audio=audio,
         ),
         tool_calls=tool_calls,
         usage=chat_usage(response),
@@ -373,10 +412,69 @@ def _text_content(message: Message) -> str:
             continue
         if isinstance(part, ToolResultPart) and message.role == "tool":
             continue
-        if isinstance(part, (ImagePart, AudioPart, FilePart)):
-            raise ToolangError("chat completions adapter only supports text and tool message parts")
+        if isinstance(part, AudioPart):
+            text.append(part.transcript or message_summary((part,)))
+            continue
+        if isinstance(part, (ImagePart, DocumentPart)):
+            text.append(message_summary((part,)))
+            continue
         raise ToolangError(f"unsupported chat message part: {part.type}")
     return "\n".join(item for item in text if item)
+
+
+def _encode_user_content(message: Message) -> list[dict[str, Any]]:
+    content: list[dict[str, Any]] = []
+    for part in message.parts:
+        if isinstance(part, TextPart):
+            content.append({"type": "text", "text": part.text})
+            continue
+        if isinstance(part, ImagePart):
+            if part.image_url is None:
+                raise ToolangError(
+                    "Chat Completions image input requires image_url"
+                )
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": part.image_url,
+                        "detail": part.detail,
+                    },
+                }
+            )
+            continue
+        if isinstance(part, AudioPart):
+            content.append(
+                {
+                    "type": "input_audio",
+                    "input_audio": {
+                        "data": part.data,
+                        "format": part.format,
+                    },
+                }
+            )
+            continue
+        if isinstance(part, DocumentPart):
+            if part.url is not None:
+                raise ToolangError(
+                    "Chat Completions document input does not accept a URL; "
+                    "provide document data or a provider file_id"
+                )
+            file: dict[str, Any] = {}
+            if part.data is not None:
+                file["file_data"] = part.data
+            elif part.file_id is not None:
+                file["file_id"] = part.file_id
+            else:  # pragma: no cover - guarded by DocumentPart validation
+                raise ToolangError(
+                    "document part is missing data or file_id"
+                )
+            if part.filename is not None:
+                file["filename"] = part.filename
+            content.append({"type": "file", "file": file})
+            continue
+        raise ToolangError(f"unsupported user message part: {part.type}")
+    return content
 
 
 def _encode_tool_call_part(part: ToolCallPart) -> dict[str, Any]:
@@ -390,14 +488,14 @@ def _encode_tool_call_part(part: ToolCallPart) -> dict[str, Any]:
     }
 
 
-def _encode_tool_result_part(part: ToolResultPart, *, message: Message) -> dict[str, Any]:
+def _encode_tool_result_part(part: ToolResultPart) -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "ok": "error" not in message.meta,
+        "ok": part.error is None,
         "name": part.tool_name,
         "output": dict(part.output),
     }
-    if "error" in message.meta:
-        payload["error"] = str(message.meta["error"])
+    if part.error is not None:
+        payload["error"] = part.error
     call_id = part.call_id or part.tool_call_id
     if not call_id:
         raise ToolangError("tool follow-up message is missing call_id")
@@ -413,11 +511,14 @@ def _assistant_message(
     text: str,
     tool_calls: tuple[ToolCall, ...],
     reasoning_content: str = "",
+    audio: AudioPart | None = None,
 ) -> Message | None:
-    parts: list[TextPart | ToolCallPart] = []
-    if text:
+    parts: list[TextPart | AudioPart | ToolCallPart] = []
+    if text and (audio is None or text != audio.transcript):
         parts.append(TextPart(text=text))
-    for call in tool_calls:
+    if audio is not None:
+        parts.append(audio)
+    for index, call in enumerate(tool_calls):
         parts.append(
             ToolCallPart(
                 tool_call_id=call.tool_call_id,
@@ -425,12 +526,12 @@ def _assistant_message(
                 tool_name=call.name,
                 tool_family=call.name,
                 input=dict(call.input),
+                reasoning=(reasoning_content or None) if index == 0 else None,
             )
         )
     if not parts:
         return None
-    meta = {"reasoning_content": reasoning_content} if reasoning_content and tool_calls else {}
-    return Message(role="assistant", parts=tuple(parts), meta=meta)
+    return Message(role="assistant", parts=tuple(parts))
 
 
 def _reasoning_content_for_payload(
@@ -441,11 +542,74 @@ def _reasoning_content_for_payload(
 ) -> str | None:
     if target.provider != "deepseek" or not tool_calls:
         return None
-    reasoning_content = message.meta.get("reasoning_content")
-    if not isinstance(reasoning_content, str):
+    return next(
+        (
+            part.reasoning
+            for part in message.parts
+            if isinstance(part, ToolCallPart) and part.reasoning
+        ),
+        None,
+    )
+
+
+def _audio_part_from_value(
+    value: object,
+    *,
+    format: AudioFormat,
+) -> AudioPart | None:
+    return _audio_part(
+        data=_value_text(value, "data"),
+        transcript=_value_text(value, "transcript"),
+        format=format,
+    )
+
+
+def _audio_part(
+    *,
+    data: str,
+    transcript: str,
+    format: AudioFormat,
+) -> AudioPart | None:
+    if not data:
         return None
-    text = reasoning_content.strip()
-    return text or None
+    return AudioPart(
+        data=data,
+        format=format,
+        transcript=transcript or None,
+    )
+
+
+def _value_text(value: object, name: str) -> str:
+    raw = (
+        cast(Mapping[str, object], value).get(name)
+        if isinstance(value, Mapping)
+        else getattr(value, name, None)
+    )
+    return raw if isinstance(raw, str) else ""
+
+
+def _output_audio_format(target: ModelTarget) -> AudioFormat:
+    audio = target.options.get("audio")
+    raw = audio.get("format") if isinstance(audio, Mapping) else None
+    if raw is None:
+        return "wav"
+    value = str(raw).strip().lower()
+    if value not in {"mp3", "wav"}:
+        raise ToolangError(
+            f"unsupported canonical audio output format: {value or '<empty>'}"
+        )
+    return cast(AudioFormat, value)
+
+
+def _audio_output_requested(target: ModelTarget) -> bool:
+    if isinstance(target.options.get("audio"), Mapping):
+        return True
+    modalities = target.options.get("modalities")
+    return (
+        isinstance(modalities, Sequence)
+        and not isinstance(modalities, (str, bytes, bytearray))
+        and "audio" in modalities
+    )
 
 
 def _first_choice(response: Any) -> Any | None:

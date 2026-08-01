@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import inspect
 from typing import Any, get_args, get_origin
 
-from ..error import ToolangError
+from ..errors import ToolangError
 from ..protocols.tool import AgentTool
 from ..types.tool import ToolContext, ToolDefinition
 
@@ -39,7 +40,11 @@ class _FunctionTool(AgentTool):
             parameters=self.spec.parameters,
         )
 
-    def invoke(self, arguments: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
+    async def invoke(
+        self,
+        arguments: Mapping[str, Any],
+        context: ToolContext,
+    ) -> dict[str, Any]:
         kwargs = {
             name: value
             for name, value in arguments.items()
@@ -47,7 +52,13 @@ class _FunctionTool(AgentTool):
         }
         if self.spec.wants_context:
             kwargs["context"] = context
-        return _normalize_output(self.spec.func(**kwargs))
+        if inspect.iscoroutinefunction(self.spec.func):
+            value = await self.spec.func(**kwargs)
+        else:
+            value = await asyncio.to_thread(self.spec.func, **kwargs)
+        if inspect.isawaitable(value):
+            value = await value
+        return _normalize_output(value)
 
 
 def tool(

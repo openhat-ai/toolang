@@ -5,19 +5,18 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 
 import click
 import typer
 from typer.core import TyperCommand
 
 from ....catalog import templates
-from toolang.up.process import agent_home
-from ....execution.types import UpdateKind
+from ....catalog.types import JobStage
+from toolang.common.layout import AgentLayout
 from toolang.state.source import read_authored_source
 from toolang.catalog.job import AuthoredJobs, JobFile
-from toolang.catalog.types import JobStage
-from toolang.catalog.error import CatalogError
+from toolang.catalog.errors import CatalogError
 from toolang.work.authoring import (
     allocate_authored_job_id,
     assign_missing_authored_job_ids,
@@ -25,7 +24,6 @@ from toolang.work.authoring import (
 from toolang.work.state import AgentJobs, job_display_title
 from toolang.work.store import open_job_store
 from ...common.client import runtime_post
-from ...common.updates import append_agent_update
 from ...common.context import context_root, require_prefix_agent, user_call
 from ...common.output import echo_table
 from ...common.routing import PrefixAgentJobGroup, RequiredPrefixAgentCommand
@@ -229,13 +227,12 @@ def _new(kind: JobKind, _title: str) -> Callable[..., None]:
             text,
             kind=kind,
             stage="draft" if draft else "ready",
-            job_id=allocate_authored_job_id(root, agent),
+            job_id=allocate_authored_job_id(_layout(root, agent)),
         )
         saved = user_call(_jobs(root, agent).create, job.with_meta(job.meta))
         path = _job_path(saved)
         if not draft:
             _reconcile(root, agent, kind)
-        _notify(root, agent, kind, path.stem, path)
         typer.echo(f"{kind} {path.stem} created\t{path}")
 
     return command
@@ -250,7 +247,7 @@ def _clone(kind: JobKind, title: str) -> Callable[..., None]:
         source = _jobs(root, agent).get(kind, id, stage=None)
         if source is None:
             raise click.ClickException(f"{kind} not found: {id}")
-        clone_id = allocate_authored_job_id(root, agent)
+        clone_id = allocate_authored_job_id(_layout(root, agent))
         clone = source.with_meta({**source.meta, "id": clone_id, "name": clone_id})
         saved = user_call(
             _jobs(root, agent).create,
@@ -258,7 +255,6 @@ def _clone(kind: JobKind, title: str) -> Callable[..., None]:
         )
         path = _job_path(saved)
         _reconcile(root, agent, kind)
-        _notify(root, agent, kind, path.stem, path)
         typer.echo(f"{kind} {path.stem} cloned\t{path}")
 
     return command
@@ -288,7 +284,6 @@ def _edit(kind: JobKind, title: str) -> Callable[..., None]:
         saved = user_call(catalog.update, document.with_meta(document.meta))
         path = _job_path(saved)
         _reconcile(root, agent, kind)
-        _notify(root, agent, kind, id, path)
         typer.echo(str(path))
 
     return command
@@ -303,7 +298,6 @@ def _move(kind: JobKind, title: str, stage: JobStage) -> Callable[..., None]:
         moved = user_call(_jobs(root, agent).move, kind, id, stage)
         path = _job_path(moved)
         _reconcile(root, agent, kind)
-        _notify(root, agent, kind, id, path)
         verb = {"draft": "drafted", "ready": "ready", "archived": "archived"}[stage]
         typer.echo(f"{kind} {id} {verb}\t{path}")
 
@@ -330,7 +324,7 @@ def _reopen(kind: JobKind, title: str) -> Callable[..., None]:
         if kind != "task":
             raise click.ClickException("reopen is only supported for tasks")
         root, agent = context_root(ctx), require_prefix_agent(ctx)
-        store = open_job_store(root, agent)
+        store = open_job_store(_layout(root, agent))
         try:
             record = user_call(
                 store.reopen_task,
@@ -363,7 +357,7 @@ def _cancel(kind: JobKind, title: str) -> Callable[..., None]:
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
         root, agent = context_root(ctx), require_prefix_agent(ctx)
-        store = open_job_store(root, agent)
+        store = open_job_store(_layout(root, agent))
         try:
             store.reconcile(jobs=_agent_jobs(root, agent), kind=kind)
             record = store.get(job_id=id, kind=kind)
@@ -403,25 +397,15 @@ def _delete(kind: JobKind, title: str) -> Callable[..., None]:
         entry = catalog.get(kind, id, stage="archived")
         if entry is None:
             raise click.ClickException(f"archived {kind} not found: {id}")
-        removed = user_call(catalog.remove, kind, id)
+        user_call(catalog.remove, kind, id)
         _reconcile(root, agent, kind)
-        _notify(root, agent, kind, id, _job_path(removed))
         typer.echo(f"{kind} {id} deleted")
 
     return command
 
 
-def _notify(root: Path, agent: str, kind: JobKind, id: str, path: Path) -> None:
-    append_agent_update(
-        root,
-        agent,
-        cast(UpdateKind, f"{kind}_changed"),
-        {"id": id, "path": str(path)},
-    )
-
-
 def _reconcile(root: Path, agent: str, kind: JobKind) -> None:
-    store = open_job_store(root, agent)
+    store = open_job_store(_layout(root, agent))
     try:
         store.reconcile(jobs=_agent_jobs(root, agent), kind=kind)
     finally:
@@ -430,13 +414,16 @@ def _reconcile(root: Path, agent: str, kind: JobKind) -> None:
 
 def _agent_jobs(root: Path, agent: str) -> AgentJobs:
     program = read_authored_source(root, agent).load_program().parse()
-    return AgentJobs.load(root, agent, program)
+    return AgentJobs.load(_layout(root, agent), program)
 
 
 def _jobs(root: Path, agent: str) -> AuthoredJobs:
-    catalog = AuthoredJobs(agent_home(root, agent))
+    catalog = AuthoredJobs(_layout(root, agent).home)
     try:
-        assign_missing_authored_job_ids(root, agent, catalog=catalog)
+        assign_missing_authored_job_ids(
+            _layout(root, agent),
+            catalog=catalog,
+        )
     except (CatalogError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     return catalog
@@ -450,9 +437,13 @@ def _job_path(job: JobFile) -> Path:
 
 def _location(root: Path, agent: str, path: Path) -> str:
     try:
-        return str(path.relative_to(agent_home(root, agent)))
+        return str(path.relative_to(_layout(root, agent).home))
     except ValueError:
         return str(path)
+
+
+def _layout(root: Path, agent: str) -> AgentLayout:
+    return AgentLayout.resident(root, agent)
 
 
 chore_app = _create_app("chore", "Chore")

@@ -1,7 +1,7 @@
 # Selector Syntax
 
 This document defines the shared selector syntax used by list filters, runtime
-activation flags, and agic directives.
+allow lists, and runnable directives.
 
 
 ## Grammar
@@ -287,9 +287,10 @@ too run alice --caps "skill/reviewer,service/github[home]"
 ```
 
 
-## Runtime Activation
+## Runtime Allow Lists
 
-Runtime activation flags set the activation ceiling for a runtime:
+Runtime flags accept selector lists that act as model, tool, and cap allow
+lists for a server, chat session, or script invocation:
 
 ```bash
 too run alice --models SELECTOR-LIST --tools SELECTOR-LIST --caps SELECTOR-LIST
@@ -306,6 +307,22 @@ Each flag uses its matching domain:
 | `--caps` | `cap` | Allowed caps across all cap kinds |
 
 If a flag is repeated, all values are appended to one selector list.
+When a caller supports equivalent environment or config settings, it
+normalizes and combines those values into an immutable `CeilingSpec`. An
+explicit CLI value has higher priority. The spec does not filter `AgentSetup`
+or invalidate the setup model cache.
+
+`--models` and `--model` are intentionally different:
+
+- `--models SELECTOR-LIST` contributes the model allow list to `CeilingSpec`;
+- `--model SELECTOR` selects one model for a specific `RunSpec`.
+
+A WebUI connected to a server may choose a different `model` for every run,
+but every choice must remain within the server's `--models` allow list.
+
+At `RunExecutor.start()`, the captured `AgentSetup`, `AgentState`, and
+`CeilingSpec` resolve to a private concrete `_AgentCeiling`. The selector lists
+belong to the spec; the ceiling contains only resolved resources.
 
 
 ## List Filters
@@ -325,10 +342,12 @@ List filters use the same selector list grammar.
 
 ## Directive Set Math
 
-At agic start, each directive set starts from the activation ceiling:
+At agic start, each directive set starts from the nearest concrete flow
+ceiling, or from the concrete agent ceiling when there is no containing flow:
 
 ```text
-current = activation ceiling
+inherited = nearest flow ceiling or agent ceiling
+current = inherited
 ```
 
 Directives apply in source order:
@@ -347,9 +366,20 @@ The canonical operator meanings are:
 | `=` | set intersection |
 | `+=` | set union |
 
-`matches(selector-list)` is always evaluated against the activation ceiling, not
-against all prepared resources. Therefore `+=` cannot grant access to a model,
-tool, or cap outside the activation ceiling.
+`matches(selector-list)` is always evaluated against `inherited`, not against
+all setup resources. Therefore `+=` cannot grant access outside the current
+flow ceiling or the agent ceiling.
+
+Every flow invocation is a ceiling reset boundary:
+
+```text
+flow ceiling = apply(agent ceiling, flow directives)
+```
+
+A flow without directives resets to the agent ceiling. Flow directives
+constrain agics executed in that flow, but do not propagate through nested flow
+calls. When a nested flow returns, subsequent sibling agics again use the
+caller's immutable flow ceiling.
 
 Examples:
 

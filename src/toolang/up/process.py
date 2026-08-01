@@ -2,32 +2,30 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+import asyncio
 from dataclasses import dataclass
 from functools import lru_cache
-import hashlib
 import json
 import os
 from pathlib import Path
 import shlex
-import signal
 import shutil
 import subprocess
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
-from collections.abc import Mapping, Sequence
-from typing import Iterator, Literal
+from collections.abc import Sequence
+from typing import Literal
 
-from toolang.base.protocols.sandbox import AgentSandbox
-from toolang.base.types.sandbox import SandboxState
 from toolang.common.github import (
     GitHubRef,
     github_raw_url,
     parse_github_file_url,
     parse_github_ref,
 )
+from toolang.common.files import atomic_write_text, file_write_lock
+from toolang.common.layout import AgentLayout
 from ..common.progress import ProgressSink, emit_progress
 
 AgentSelectorForm = Literal["name", "shorthand", "ref"]
@@ -72,18 +70,6 @@ class AgentSelector:
         if self.name is not None:
             return self.name
         return self.resolved_ref().default_name()
-
-
-def agent_home(toolang_root: Path, agent_name: str) -> Path:
-    """Return one resident agent home path."""
-
-    return toolang_root / "agents" / agent_name
-
-
-def agent_program_path(toolang_root: Path, agent_name: str) -> Path:
-    """Return one resident agent program path."""
-
-    return agent_home(toolang_root, agent_name) / "agent.too"
 
 
 def parse_agent_selector(text: str) -> AgentSelector:
@@ -236,40 +222,38 @@ class AgentStatus:
 
 
 class AgentProcess:
-    """Start, inspect, and stop one resident agent process."""
+    """Inspect one resident AgentServer process."""
 
-    def __init__(self, root: Path, name: str) -> None:
-        self.root = root
-        self.name = name
+    def __init__(self, layout: AgentLayout) -> None:
+        self.layout = layout
 
     def state(self) -> dict[str, object] | None:
-        return _load_runtime_state(agent_runtime_state_path(self.root, self.name))
+        return _load_runtime_state(self.layout.runtime_status)
 
     def status(self, *, ui_base_url: str) -> AgentStatus | None:
-        home = agent_home(self.root, self.name)
-        if not home.is_dir():
+        if not self.layout.home.is_dir():
             return None
         runtime_state = self.state()
         raw_endpoint = runtime_state.get("endpoint") if runtime_state else None
         raw_status = runtime_state.get("status") if runtime_state else None
         pid = runtime_state.get("pid") if runtime_state else None
-        sandbox = runtime_state.get("sandbox") if runtime_state else None
+        sandbox = _runtime_sandbox_label(runtime_state)
         endpoint = (
             raw_endpoint
             if isinstance(raw_endpoint, str) and raw_endpoint.strip()
             else None
         )
-        pid_alive = isinstance(pid, int) and _pid_alive(pid)
+        pid_alive = isinstance(pid, int) and sandbox == "none" and _pid_alive(pid)
         scan = runtime_state is not None and raw_status == "stopped" and not pid_alive
         process_alive = pid_alive or bool(self.pids() if scan else ())
         status = _runtime_status_label(
             raw_status,
             pid_alive=process_alive,
-            sandbox_alive=_sandbox_alive(sandbox),
+            sandbox_alive=_hosting_running(self.layout),
         )
         active = status in {"running", "preparing", "starting"}
         return AgentStatus(
-            name=self.name,
+            name=self.layout.name,
             status=status,
             endpoint=endpoint if active else None,
             api_url=_api_docs_url(endpoint) if active else None,
@@ -287,231 +271,26 @@ class AgentProcess:
         if not agents_dir.is_dir():
             return ()
         statuses = (
-            cls(root, home.name).status(ui_base_url=ui_base_url)
+            cls(AgentLayout.resident(root, home.name)).status(ui_base_url=ui_base_url)
             for home in sorted(item for item in agents_dir.iterdir() if item.is_dir())
         )
         return tuple(status for status in statuses if status is not None)
 
-    def start(
-        self,
-        command: Sequence[str],
-        *,
-        environ: Mapping[str, str],
-        cwd: Path,
-        log_path: Path,
-        ui_base_url: str,
-        timeout_sec: float = 30.0,
-    ) -> AgentStatus:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        launched_at = time.time()
-        with log_path.open("ab") as stream:
-            process = subprocess.Popen(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=stream,
-                stderr=stream,
-                env=dict(environ),
-                cwd=str(cwd),
-                start_new_session=True,
-                close_fds=True,
-            )
-        deadline = time.monotonic() + timeout_sec
-        state_path = agent_runtime_state_path(self.root, self.name)
-        while time.monotonic() < deadline:
-            if (
-                state_path.is_file()
-                and state_path.stat().st_mtime >= launched_at - 0.01
-            ):
-                status = self.status(ui_base_url=ui_base_url)
-                if status is not None and status.status in {"running", "failed"}:
-                    return status
-            if process.poll() is not None:
-                break
-            time.sleep(0.1)
-        if state_path.is_file() and state_path.stat().st_mtime >= launched_at - 0.01:
-            status = self.status(ui_base_url=ui_base_url)
-            if status is not None:
-                return status
-        if process.poll() is not None:
-            raise RuntimeError(f"agent failed to start: {log_path}")
-        raise TimeoutError(f"agent start timed out: {log_path}")
-
-    def stop(
-        self,
-        *,
-        sandbox_plugin: AgentSandbox | None = None,
-        force: bool = False,
-    ) -> bool:
-        runtime_state = self.state()
-        pid = runtime_state.get("pid") if runtime_state is not None else None
-        pid_alive = isinstance(pid, int) and _pid_alive(pid)
-        runtime_pids = () if pid_alive else self.pids()
-        if runtime_state is None and not runtime_pids:
-            raise FileNotFoundError(
-                f"runtime state not found: {agent_runtime_state_path(self.root, self.name)}"
-            )
-
-        sandbox = runtime_state.get("sandbox") if runtime_state is not None else None
-        started_at = (
-            runtime_state.get("started_at") if runtime_state is not None else None
-        )
-        stopped = False
-        if isinstance(sandbox, dict):
-            if sandbox_plugin is None:
-                raise ValueError("sandbox plugin is required to stop a sandboxed agent")
-            sandbox_state = SandboxState.from_data(sandbox)
-            if sandbox_state.runtime_id:
-                sandbox_plugin.stop(sandbox_state, force=force)
-                stopped = True
-        failed_pids: list[int] = []
-        if pid_alive and isinstance(pid, int):
-            if _stop_pid(pid, force=force):
-                stopped = True
-            else:
-                failed_pids.append(pid)
-        for runtime_pid in runtime_pids:
-            if runtime_pid == pid:
-                continue
-            if _stop_pid(runtime_pid, force=force):
-                stopped = True
-            else:
-                failed_pids.append(runtime_pid)
-        if failed_pids:
-            pid_text = ", ".join(str(item) for item in sorted(set(failed_pids)))
-            raise ValueError(
-                f"agent did not stop: {self.name} (pid {pid_text}); retry with --force"
-            )
-        if runtime_state is not None:
-            stop_runtime_state(
-                self.root,
-                self.name,
-                expected_pid=pid if isinstance(pid, int) else None,
-                expected_started_at=(
-                    started_at if isinstance(started_at, str) else None
-                ),
-            )
-        return stopped
-
     def pids(self) -> tuple[int, ...]:
-        return _agent_runtime_process_pids(self.root, self.name)
+        return _agent_runtime_process_pids(self.layout)
 
 
-RunTargetKind = Literal["resident", "visiting"]
 VISITING_PROGRAM_CACHE_TTL_SEC = 3600
 
 
-@dataclass(frozen=True, slots=True)
-class MaterializedRunTarget:
-    """One local runtime target prepared from a resident or visiting selector."""
-
-    toolang_root: Path
-    agent_name: str
-    kind: RunTargetKind
-
-
-def agent_room(toolang_root: Path, agent_name: str) -> Path:
-    """Return one agent room path."""
-
-    return agent_home(toolang_root, agent_name) / ".runtime"
-
-
-def agent_runtime_state_path(toolang_root: Path, agent_name: str) -> Path:
-    """Return one agent runtime state path."""
-
-    return agent_room(toolang_root, agent_name) / "status.json"
-
-
-def agent_runtime_log_path(toolang_root: Path, agent_name: str) -> Path:
-    """Return one agent process log path."""
-
-    return agent_room(toolang_root, agent_name) / "agent.log"
-
-
-def agent_script_run_log_path(
-    toolang_root: Path, agent_name: str, *, executable_name: str | None, run_id: str
-) -> Path:
-    """Return one per-run script invoke log path."""
-
-    return (
-        agent_room(toolang_root, agent_name)
-        / "logs"
-        / _safe_log_label(executable_name or "default")
-        / f"{run_id}.log"
-    )
-
-
-def agent_id_state_path(toolang_root: Path, agent_name: str) -> Path:
-    """Return one agent local-id allocator state path."""
-
-    return agent_room(toolang_root, agent_name) / "ids.json"
-
-
-def docker_container_identity(container_name: str) -> tuple[str, int] | None:
-    """Return Docker container identity details."""
-
-    from toolang.plugin.sandboxes.docker import (
-        docker_container_identity as resolve_identity,
-    )
-
-    return resolve_identity(container_name)
-
-
-def docker_container_running(container_name: str) -> bool:
-    """Return whether a Docker container is running."""
-
-    from toolang.plugin.sandboxes.docker import docker_container_running as is_running
-
-    return is_running(container_name)
-
-
-def tool_room(toolang_root: Path, agent_name: str, plugin_name: str) -> Path:
-    """Return one tool-plugin room path."""
-
-    return agent_room(toolang_root, agent_name) / "tools" / plugin_name
-
-
-def channel_room(toolang_root: Path, agent_name: str, binding_name: str) -> Path:
-    """Return one channel-plugin room path."""
-
-    return agent_room(toolang_root, agent_name) / "channels" / binding_name
-
-
-def _sandbox_stage_dir(toolang_root: Path, agent_name: str) -> Path:
-    return toolang_root / ".sandbox" / agent_name
-
-
-def remove_sandbox_stage(toolang_root: Path, agent_name: str) -> None:
+def remove_sandbox_stage(layout: AgentLayout) -> None:
     """Remove one agent's runtime-owned sandbox staging directory."""
 
-    stage_dir = _sandbox_stage_dir(toolang_root, agent_name)
-    if stage_dir.exists():
-        shutil.rmtree(stage_dir)
+    if layout.sandbox_stage.exists():
+        shutil.rmtree(layout.sandbox_stage)
 
 
-def roaming_root(source_path: Path) -> Path:
-    """Return the fixed local root for one roaming source program."""
-
-    return source_path.resolve().parent / ".toolang"
-
-
-def visiting_root(toolang_root: Path, ref: AgentRef) -> Path:
-    """Return the stable local root for one visiting remote agent ref."""
-
-    return visiting_source_root(
-        toolang_root, source=ref.render(), agent_name=ref.default_name()
-    )
-
-
-def visiting_source_root(toolang_root: Path, *, source: str, agent_name: str) -> Path:
-    """Return the stable local root for one visiting source selector."""
-
-    del toolang_root
-    label = _safe_visiting_root_label(agent_name)
-    source_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()[:8]
-    return Path("/tmp") / f"toolang-{label}-{source_digest}"
-
-
-def materialize_roaming_program(source_path: Path) -> tuple[Path, str]:
+def materialize_roaming_program(source_path: Path) -> AgentLayout:
     """Materialize one local .too source into its fixed roaming root."""
 
     resolved_source = source_path.expanduser().resolve()
@@ -519,16 +298,14 @@ def materialize_roaming_program(source_path: Path) -> tuple[Path, str]:
         raise FileNotFoundError(f"agent program not found: {resolved_source}")
     if resolved_source.suffix != ".too":
         raise ValueError(f"agent program must point to a .too file: {resolved_source}")
-    toolang_root = roaming_root(resolved_source)
-    agent_name = resolved_source.stem
-    home = agent_home(toolang_root, agent_name)
-    home.mkdir(parents=True, exist_ok=True)
+    layout = AgentLayout.roaming(resolved_source)
+    layout.home.mkdir(parents=True, exist_ok=True)
     _replace_relative_symlink(
-        agent_program_path(toolang_root, agent_name),
+        layout.program,
         resolved_source,
     )
-    _sync_roaming_config_link(home, resolved_source.parent / "toolang.toml")
-    return toolang_root, agent_name
+    _sync_roaming_config_link(layout.home, resolved_source.parent / "toolang.toml")
+    return layout
 
 
 def _sync_roaming_config_link(home: Path, source_config: Path) -> None:
@@ -555,63 +332,37 @@ def _replace_relative_symlink(
     link_path.symlink_to(relative_target)
 
 
-def _safe_log_label(value: str) -> str:
-    text = "".join(
-        char if char.isalnum() or char in {"-", "_", "."} else "_"
-        for char in value.strip()
-    )
-    return text.strip("._") or "default"
-
-
 def materialize_visiting_program(
-    toolang_root: Path,
     ref: AgentRef,
     source_text: str,
     *,
     source: str | None = None,
-) -> tuple[Path, str]:
+) -> AgentLayout:
     """Materialize one remote agent into its stable visiting root."""
 
     agent_name = ref.default_name()
-    root = visiting_source_root(
-        toolang_root, source=source or ref.render(), agent_name=agent_name
-    )
-    home = agent_home(root, agent_name)
-    home.mkdir(parents=True, exist_ok=True)
-    program_path = agent_program_path(root, agent_name)
-    program_path.write_text(source_text, encoding="utf-8")
-    return root, agent_name
+    layout = AgentLayout.visiting(source or ref.render(), agent_name)
+    layout.home.mkdir(parents=True, exist_ok=True)
+    layout.program.write_text(source_text, encoding="utf-8")
+    return layout
 
 
-@contextmanager
-def resolved_run_target(
+def resolve_run_layout(
     toolang_root: Path,
     selector_text: str,
     *,
     progress: ProgressSink | None = None,
-) -> Iterator[MaterializedRunTarget]:
-    """Yield one runnable local target for one selector."""
+) -> AgentLayout:
+    """Resolve and materialize one selector as an immutable agent layout."""
 
     selector = parse_agent_selector(selector_text)
     if selector.form == "name":
-        yield MaterializedRunTarget(
-            toolang_root=toolang_root,
-            agent_name=selector.name or "",
-            kind="resident",
-        )
-        return
+        return AgentLayout.resident(toolang_root, selector.name or "")
 
     agent_name = selector.default_name()
-    run_root = visiting_source_root(
-        toolang_root, source=selector.text, agent_name=agent_name
-    )
-    if _visiting_program_cache_fresh(agent_program_path(run_root, agent_name)):
-        yield MaterializedRunTarget(
-            toolang_root=run_root,
-            agent_name=agent_name,
-            kind="visiting",
-        )
-        return
+    layout = AgentLayout.visiting(selector.text, agent_name)
+    if _visiting_program_cache_fresh(layout.program):
+        return layout
     resolved_ref = resolve_agent_selector_ref(selector, progress=progress)
     source_text = fetch_agent_ref(resolved_ref, progress=progress)
     emit_progress(
@@ -622,8 +373,7 @@ def resolved_run_target(
         status="running",
         detail=agent_name,
     )
-    run_root, run_agent_name = materialize_visiting_program(
-        toolang_root,
+    layout = materialize_visiting_program(
         resolved_ref,
         source_text,
         source=selector.text,
@@ -636,11 +386,7 @@ def resolved_run_target(
         status="ok",
         detail=agent_name,
     )
-    yield MaterializedRunTarget(
-        toolang_root=run_root,
-        agent_name=run_agent_name,
-        kind="visiting",
-    )
+    return layout
 
 
 def _parse_agent_ref(text: str) -> AgentRef:
@@ -745,45 +491,24 @@ def _visiting_program_cache_fresh(program_path: Path) -> bool:
     return time.time() - program_path.stat().st_mtime <= VISITING_PROGRAM_CACHE_TTL_SEC
 
 
-@contextmanager
-def materialized_run_target(
-    toolang_root: Path,
-    selector_text: str,
-    *,
-    progress: ProgressSink | None = None,
-) -> Iterator[tuple[Path, str]]:
-    """Yield one runnable local target for one selector."""
-
-    with resolved_run_target(toolang_root, selector_text, progress=progress) as target:
-        yield target.toolang_root, target.agent_name
-
-
-def _safe_visiting_root_label(name: str) -> str:
-    label = "".join(
-        char.lower() if char.isalnum() or char in {"-", "_"} else "-" for char in name
-    )
-    return label.strip("-_") or "agent"
-
-
 def write_runtime_state(
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     endpoint: str,
     started_at: str,
     pid: int | None,
-    sandbox: dict[str, object] | None = None,
+    sandbox: str = "none",
     models: Sequence[str] | None = None,
     status: str = "running",
     message: str | None = None,
 ) -> Path:
     """Persist one minimal runtime state file for a running agent."""
 
-    path = agent_runtime_state_path(toolang_root, agent_name)
+    path = layout.runtime_status
     _save_runtime_state(
         path,
         {
-            "agent": agent_name,
+            "agent": layout.name,
             "status": status,
             "endpoint": endpoint,
             "started_at": started_at,
@@ -798,39 +523,40 @@ def write_runtime_state(
 
 
 def stop_runtime_state(
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     expected_pid: int | None = None,
     expected_started_at: str | None = None,
 ) -> bool:
     """Mark one runtime state as stopped while keeping the last endpoint."""
 
-    path = agent_runtime_state_path(toolang_root, agent_name)
-    runtime_state = _load_runtime_state(path)
-    if runtime_state is None:
-        return False
-    if expected_pid is not None and runtime_state.get("pid") != expected_pid:
-        return False
-    if (
-        expected_started_at is not None
-        and runtime_state.get("started_at") != expected_started_at
-    ):
-        return False
-    runtime_state["status"] = "stopped"
-    runtime_state["pid"] = None
-    runtime_state["message"] = None
-    runtime_state["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    _save_runtime_state(path, runtime_state)
+    path = layout.runtime_status
+    with file_write_lock(path.with_suffix(".lock")):
+        runtime_state = _load_runtime_state(path)
+        if runtime_state is None:
+            return False
+        if expected_pid is not None and runtime_state.get("pid") != expected_pid:
+            return False
+        if (
+            expected_started_at is not None
+            and runtime_state.get("started_at") != expected_started_at
+        ):
+            return False
+        runtime_state["status"] = "stopped"
+        runtime_state["pid"] = None
+        runtime_state["message"] = None
+        runtime_state["updated_at"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(),
+        )
+        _save_runtime_state(path, runtime_state)
     return True
 
 
-def preferred_runtime_port(toolang_root: Path, agent_name: str) -> int | None:
+def preferred_runtime_port(layout: AgentLayout) -> int | None:
     """Return one previously used port for an agent when available."""
 
-    runtime_state = _load_runtime_state(
-        agent_runtime_state_path(toolang_root, agent_name)
-    )
+    runtime_state = _load_runtime_state(layout.runtime_status)
     return _runtime_state_port(runtime_state)
 
 
@@ -851,9 +577,8 @@ def assigned_runtime_ports(
         agent_name = home.name
         if exclude_agent is not None and agent_name == exclude_agent:
             continue
-        port = _runtime_state_port(
-            _load_runtime_state(agent_runtime_state_path(toolang_root, agent_name))
-        )
+        layout = AgentLayout.resident(toolang_root, agent_name)
+        port = _runtime_state_port(_load_runtime_state(layout.runtime_status))
         if port is not None:
             ports.add(port)
     return ports
@@ -871,56 +596,28 @@ def _runtime_state_port(runtime_state: dict[str, object] | None) -> int | None:
         return None
 
 
-def update_runtime_state(
-    toolang_root: Path,
-    agent_name: str,
+def runtime_pid_label(
+    runtime_state: dict[str, object] | None,
     *,
-    status: str | None = None,
-    message: str | None = None,
-) -> Path | None:
-    """Update one existing runtime state with lightweight status fields."""
-
-    path = agent_runtime_state_path(toolang_root, agent_name)
-    runtime_state = _load_runtime_state(path)
-    if runtime_state is None:
-        return None
-    if status is not None:
-        runtime_state["status"] = status
-    runtime_state["message"] = message
-    runtime_state["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    _save_runtime_state(path, runtime_state)
-    return path
-
-
-def runtime_pid_label(runtime_state: dict[str, object] | None) -> str | None:
+    layout: AgentLayout | None = None,
+) -> str | None:
     """Return one human-readable process label for runtime info output."""
 
     if runtime_state is None:
         return None
-    sandbox = runtime_state.get("sandbox")
-    if isinstance(sandbox, dict):
-        sandbox_data = {str(key): value for key, value in sandbox.items()}
-        runtime_id = sandbox_data.get("runtime_id")
-        selector = sandbox_data.get("selector")
-        if isinstance(selector, dict):
-            selector_data = {str(key): value for key, value in selector.items()}
-            driver = selector_data.get("driver")
-            if (
-                driver == "docker"
-                and isinstance(runtime_id, str)
-                and runtime_id.strip()
-            ):
-                identity = docker_container_identity(runtime_id)
-                if identity is not None:
-                    container_id, pid = identity
-                    return f"{container_id[:12]}:{pid}"
+    if layout is not None:
+        from toolang.up.hosting import HostingState
+
+        state = HostingState.load(layout.hosting_state)
+        if state is not None:
+            return state.ref.runtime_id
     pid = runtime_state.get("pid")
     if isinstance(pid, int) and pid > 0:
         return str(pid)
     return None
 
 
-def _agent_runtime_process_pids(toolang_root: Path, agent_name: str) -> tuple[int, ...]:
+def _agent_runtime_process_pids(layout: AgentLayout) -> tuple[int, ...]:
     """Return live local runtime process ids for one agent.
 
     Runtime state is the normal source of truth, but older or interrupted
@@ -939,7 +636,7 @@ def _agent_runtime_process_pids(toolang_root: Path, agent_name: str) -> tuple[in
     except (OSError, subprocess.CalledProcessError):
         return ()
 
-    expected_root = _resolved_path_text(toolang_root)
+    expected_root = _resolved_path_text(layout.root)
     pids: list[int] = []
     for raw_line in completed.stdout.splitlines():
         line = raw_line.strip()
@@ -952,7 +649,11 @@ def _agent_runtime_process_pids(toolang_root: Path, agent_name: str) -> tuple[in
             continue
         if pid == os.getpid() or not _pid_alive(pid):
             continue
-        if _runtime_command_matches(command, root=expected_root, agent_name=agent_name):
+        if _runtime_command_matches(
+            command,
+            root=expected_root,
+            agent_name=layout.name,
+        ):
             pids.append(pid)
     return tuple(sorted(set(pids)))
 
@@ -973,10 +674,9 @@ def _load_runtime_state(path: Path) -> dict[str, object] | None:
 
 
 def _save_runtime_state(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    atomic_write_text(
+        path,
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
     )
 
 
@@ -1000,17 +700,8 @@ def _runtime_sandbox_label(runtime_state: dict[str, object] | None) -> str | Non
     if runtime_state is None:
         return None
     sandbox = runtime_state.get("sandbox")
-    if isinstance(sandbox, dict):
-        sandbox_data = {str(key): value for key, value in sandbox.items()}
-        selector = sandbox_data.get("selector")
-        if isinstance(selector, dict):
-            selector_data = {str(key): value for key, value in selector.items()}
-            driver = selector_data.get("driver")
-            target = selector_data.get("target")
-            if isinstance(driver, str) and driver.strip():
-                if isinstance(target, str) and target.strip():
-                    return f"{driver.strip()}:{target.strip()}"
-                return driver.strip()
+    if isinstance(sandbox, str) and sandbox.strip():
+        return sandbox.strip()
     return "none"
 
 
@@ -1031,7 +722,7 @@ def _runtime_command_matches(command: str, *, root: str, agent_name: str) -> boo
         return True
 
     for index, token in enumerate(tokens[:-1]):
-        if token == "run" and tokens[index + 1] == agent_name:
+        if token == "serve" and tokens[index + 1] == agent_name:
             return True
     return False
 
@@ -1060,51 +751,21 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _stop_pid(pid: int, *, force: bool) -> bool:
+def _hosting_running(layout: AgentLayout) -> bool:
+    from toolang.up.hosting import HostingState
+    from toolang.plugin.sandboxes.loading import load_hosting
+
     try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return True
-    except PermissionError as exc:
-        raise ValueError(f"permission denied while stopping pid {pid}") from exc
-
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline:
-        if not _pid_alive(pid):
-            return True
-        time.sleep(0.05)
-    if not _pid_alive(pid):
-        return True
-    if not force:
+        state = HostingState.load(layout.hosting_state)
+    except ValueError:
         return False
-    kill_signal = getattr(signal, "SIGKILL", signal.SIGTERM)
+    if state is None:
+        return False
+    name, _, _ = state.sandbox.partition(":")
     try:
-        os.kill(pid, kill_signal)
-    except ProcessLookupError:
-        return True
-    except PermissionError as exc:
-        raise ValueError(f"permission denied while force-stopping pid {pid}") from exc
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline:
-        if not _pid_alive(pid):
-            return True
-        time.sleep(0.05)
-    return not _pid_alive(pid)
-
-
-def _sandbox_alive(payload: object) -> bool:
-    if not isinstance(payload, dict):
+        return asyncio.run(load_hosting(name, config={}).running(state.ref))
+    except (OSError, RuntimeError, ValueError):
         return False
-    data = {str(key): value for key, value in payload.items()}
-    runtime_id = data.get("runtime_id")
-    selector = data.get("selector")
-    if not isinstance(selector, dict):
-        return False
-    selector_data = {str(key): value for key, value in selector.items()}
-    driver = selector_data.get("driver")
-    if driver == "docker" and isinstance(runtime_id, str) and runtime_id.strip():
-        return docker_container_running(runtime_id)
-    return False
 
 
 def _webui_url(endpoint: str | None, *, ui_base_url: str) -> str | None:

@@ -1,0 +1,90 @@
+##! Turn a rough idea into a decision-ready proposal through bounded review.
+##!
+##! Example:
+##! too examples/proposal_workshop.too workshop --models '[deepseek]' \
+##!   audience='Engineering leadership' \
+##!   criteria='Clear ownership, measurable outcomes, and bounded risk' \
+##!   'Adopt an internal platform for reusable AI agent capabilities'
+
+agic draft_proposal(_: Part[], audience?: Text, criteria?: Text):
+  recall = none
+  tools = none
+
+  Proposal request:
+  {{_}}
+
+  Audience:
+  {{audience}}
+
+  Decision criteria:
+  {{criteria}}
+
+  Write a concrete first draft that helps the audience make a decision.
+  Include the problem, proposed change, expected outcomes, scope, non-goals,
+  implementation outline, ownership, risks, alternatives, and success
+  measures.
+  Keep the complete draft under 500 words.
+
+agic review_draft(_: Part[], request: Part[], audience?: Text, criteria?: Text):
+  recall = none
+  tools = none
+
+  Original request:
+  {{request}}
+
+  Audience:
+  {{audience}}
+
+  Decision criteria:
+  {{criteria}}
+
+  Current draft:
+  {{_}}
+
+  Review this draft as a skeptical decision maker.
+  Identify the three most consequential weaknesses that remain.
+  Prefer missing evidence, vague ownership, hidden dependencies, weak success
+  measures, and unaddressed alternatives over stylistic criticism.
+  Return exactly 3 concise, actionable bullets and stay under 180 words.
+  Do not rewrite the proposal.
+
+agic revise_draft(_: Part[], feedback: Part[], request: Part[], audience?: Text, criteria?: Text):
+  recall = none
+  tools = none
+
+  Original request:
+  {{request}}
+
+  Audience:
+  {{audience}}
+
+  Decision criteria:
+  {{criteria}}
+
+  Current draft:
+  {{_}}
+
+  Review feedback:
+  {{feedback}}
+
+  Revise the complete proposal to address the feedback.
+  Preserve strong material, make decisions and ownership explicit, and do not
+  invent facts that the request does not support.
+  End with a precise decision request.
+  Keep the complete revision under 600 words.
+  Return only the complete revised proposal.
+
+## Draft and improve a proposal through three review-revision cycles.
+flow workshop(_: Text, audience?: Text, criteria?: Text):
+  let request:
+    {{_}}
+
+  ## Create the initial proposal
+  run draft_proposal
+
+  ## Carry each revised draft into the next review cycle
+  repeat 3:
+    ## Review the current value of _
+    let feedback = run review_draft
+    ## Revise _ using the feedback local from this iteration
+    run revise_draft

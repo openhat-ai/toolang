@@ -8,7 +8,7 @@ from fnmatch import fnmatchcase
 from types import MappingProxyType
 from typing import Literal
 
-from .error import ToolangError
+from .errors import ToolangError
 
 SelectorDomain = Literal["model", "tool", "cap"]
 

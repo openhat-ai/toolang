@@ -6,8 +6,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
-from toolang.base.types.sandbox import SandboxSelector
-
 
 @dataclass(frozen=True, slots=True)
 class ChannelBinding:
@@ -22,7 +20,8 @@ class ChannelBinding:
 class SandboxBinding:
     """One configured sandbox plugin binding."""
 
-    selector: SandboxSelector
+    name: str
+    spec: str | None
     config: dict[str, object]
 
 
@@ -163,6 +162,7 @@ def parse_sandbox_binding(
         else {}
     )
     return SandboxBinding(
-        selector=SandboxSelector(driver=driver.strip(), target=target),
+        name=driver.strip(),
+        spec=target,
         config=config,
     )

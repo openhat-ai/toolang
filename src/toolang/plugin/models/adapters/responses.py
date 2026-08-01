@@ -6,13 +6,14 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
-from toolang.base.error import ToolangError
+from toolang.base.errors import ToolangError
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.message import (
+    AudioFormat,
     AudioPart,
-    FilePart,
+    DocumentPart,
     ImagePart,
     Message,
     TextDelta,
@@ -20,21 +21,22 @@ from toolang.base.types.message import (
     ToolCallDelta,
     ToolCallPart,
     ToolResultPart,
+    message_summary,
 )
 from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
-    ModelEventHandler,
-    ModelPartDeltaEvent,
-    ModelPartEndEvent,
-    ModelPartStartEvent,
+    ModelPartDelta,
+    ModelPartEnd,
+    ModelPartStart,
+    ModelStreamHandler,
     ModelUsage,
     ToolCall,
 )
 from toolang.base.types.tool import ToolDefinition
 
-_ADAPTER_LOGGER = logging.getLogger("toolang.model.adapter")
+_ADAPTER_LOGGER = logging.getLogger(__name__)
 _LOG_PREVIEW_LIMIT = 4_000
 _STATEFUL_PROVIDERS = frozenset({"openai"})
 _AUDIO_MODEL_PREFIXES: tuple[str, ...] = (
@@ -51,7 +53,7 @@ class ResponsesModelAdapter(ModelAdapter):
     name: str = "responses"
     description: str | None = "Use the OpenAI Responses-compatible API shape."
 
-    def invoke(
+    async def invoke(
         self,
         target: ModelTarget,
         request: ModelCall,
@@ -59,23 +61,23 @@ class ResponsesModelAdapter(ModelAdapter):
         """Execute one non-streaming Responses API call."""
 
         _require_supported_inputs(target, request)
-        return invoke_response(
+        return await invoke_response(
             target,
             request,
             stateful=_stateful_target(target),
         )
 
-    def stream(
+    async def stream(
         self,
         target: ModelTarget,
         request: ModelCall,
         *,
-        on_event: ModelEventHandler,
+        on_event: ModelStreamHandler,
     ) -> ModelCallResult:
         """Execute one streaming Responses API call."""
 
         _require_supported_inputs(target, request)
-        return stream_response(
+        return await stream_response(
             target,
             request,
             stateful=_stateful_target(target),
@@ -127,6 +129,7 @@ def _request_has_audio_input(request: ModelCall) -> bool:
     return any(
         isinstance(part, AudioPart)
         for message in request.messages
+        if message.role == "user"
         for part in message.parts
     )
 
@@ -135,7 +138,7 @@ def create_client(target: ModelTarget) -> Any:
     """Create one OpenAI-compatible client for a resolved model target."""
 
     try:
-        from openai import OpenAI
+        from openai import AsyncOpenAI
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise ToolangError(
             "The 'openai' package is not installed. Reinstall toolang with its runtime dependencies to enable runtime execution."
@@ -147,10 +150,10 @@ def create_client(target: ModelTarget) -> Any:
         kwargs["api_key"] = target.api_key
     if target.headers:
         kwargs["default_headers"] = dict(target.headers)
-    return OpenAI(**kwargs)
+    return AsyncOpenAI(**kwargs)
 
 
-def invoke_response(
+async def invoke_response(
     target: ModelTarget,
     request: ModelCall,
     *,
@@ -170,7 +173,7 @@ def invoke_response(
         stateful=stateful,
         stream=False,
     )
-    response = client.responses.create(
+    response = await client.responses.create(
         **payload
     )
     _log_api_response(
@@ -186,12 +189,12 @@ def invoke_response(
     )
 
 
-def stream_response(
+async def stream_response(
     target: ModelTarget,
     request: ModelCall,
     *,
     stateful: bool,
-    on_event: ModelEventHandler,
+    on_event: ModelStreamHandler,
 ) -> ModelCallResult:
     """Execute one streaming Responses API call."""
 
@@ -207,20 +210,24 @@ def stream_response(
         stateful=stateful,
         stream=True,
     )
-    with client.responses.stream(
+    async with client.responses.stream(
         **payload
     ) as stream:
         seen_tool_inputs: set[str] = set()
         text_started = False
-        for event in stream:
+        text_deltas: list[str] = []
+        defer_text = _supports_openai_audio_input(target)
+        async for event in stream:
             event_type = getattr(event, "type", None)
             if event_type == "response.output_text.delta":
                 delta = str(getattr(event, "delta", ""))
                 if delta:
-                    if not text_started:
-                        text_started = True
-                        on_event(ModelPartStartEvent(kind="text"))
-                    on_event(ModelPartDeltaEvent(delta=TextDelta(text=delta)))
+                    text_deltas.append(delta)
+                    if not defer_text:
+                        if not text_started:
+                            text_started = True
+                            await on_event(ModelPartStart(kind="text"))
+                        await on_event(ModelPartDelta(delta=TextDelta(text=delta)))
                 continue
             if event_type != "response.function_call_arguments.delta":
                 continue
@@ -231,22 +238,22 @@ def stream_response(
             )
             if current_tool_call_id not in seen_tool_inputs:
                 seen_tool_inputs.add(current_tool_call_id)
-                on_event(
-                    ModelPartStartEvent(
+                await on_event(
+                    ModelPartStart(
                         kind="tool_call",
                     )
                 )
             delta = str(getattr(event, "delta", ""))
             if delta:
-                on_event(
-                    ModelPartDeltaEvent(
+                await on_event(
+                    ModelPartDelta(
                         delta=ToolCallDelta(
                             text=delta,
                             tool_call_id=current_tool_call_id,
                         ),
                     )
                 )
-        response = stream.get_final_response()
+        response = await stream.get_final_response()
     _log_api_response(
         target,
         response,
@@ -258,10 +265,17 @@ def stream_response(
         request=request,
         stateful=stateful,
     )
+    if defer_text and _message_has_text(result.message):
+        await on_event(ModelPartStart(kind="text"))
+        for delta in text_deltas:
+            await on_event(ModelPartDelta(delta=TextDelta(text=delta)))
     if result.message is not None:
         for part in result.message.parts:
-            if isinstance(part, (TextPart, ToolCallPart)):
-                on_event(ModelPartEndEvent(data=part))
+            if isinstance(part, (ImagePart, AudioPart)):
+                await on_event(ModelPartStart(kind=part.type))
+                await on_event(ModelPartEnd(data=part))
+            elif isinstance(part, (TextPart, ToolCallPart)):
+                await on_event(ModelPartEnd(data=part))
     return result
 
 
@@ -373,7 +387,6 @@ def encode_message(
         items = [
             _encode_tool_result_part(
                 part,
-                message=message,
                 message_index=message_index,
                 part_index=part_index,
             )
@@ -442,10 +455,15 @@ def assistant_message(
 ) -> Message | None:
     """Return one canonical assistant message from one response."""
 
-    parts: list[TextPart | ToolCallPart] = []
+    audio_parts = _response_audio_parts(response)
+    image_parts = _response_image_parts(response)
+    parts: list[TextPart | ImagePart | AudioPart | ToolCallPart] = []
     text = response_text(response)
-    if text:
+    transcripts = {part.transcript for part in audio_parts if part.transcript}
+    if text and text not in transcripts:
         parts.append(TextPart(text=text))
+    parts.extend(image_parts)
+    parts.extend(audio_parts)
     for call in tool_calls:
         parts.append(
             ToolCallPart(
@@ -459,6 +477,71 @@ def assistant_message(
     if not parts:
         return None
     return Message(role="assistant", parts=tuple(parts))
+
+
+def _response_audio_parts(response: Any) -> list[AudioPart]:
+    parts: list[AudioPart] = []
+    for item in getattr(response, "output", ()):
+        candidates = [item, *list(getattr(item, "content", ()))]
+        for candidate in candidates:
+            if getattr(candidate, "type", None) not in {
+                "audio",
+                "output_audio",
+            }:
+                continue
+            data = _value_text(candidate, "data")
+            if not data:
+                continue
+            raw_format = _value_text(candidate, "format").lower()
+            format = raw_format if raw_format in {"mp3", "wav"} else "wav"
+            parts.append(
+                AudioPart(
+                    data=data,
+                    format=cast(AudioFormat, format),
+                    transcript=_value_text(candidate, "transcript") or None,
+                )
+            )
+    return parts
+
+
+def _response_image_parts(response: Any) -> list[ImagePart]:
+    parts: list[ImagePart] = []
+    for item in getattr(response, "output", ()):
+        candidates = [item, *list(getattr(item, "content", ()))]
+        for candidate in candidates:
+            candidate_type = getattr(candidate, "type", None)
+            if candidate_type == "image_generation_call":
+                data = _value_text(candidate, "result")
+                if data:
+                    parts.append(
+                        ImagePart(
+                            image_url=f"data:image/png;base64,{data}",
+                            media_type="image/png",
+                        )
+                    )
+                continue
+            if candidate_type not in {"image", "output_image"}:
+                continue
+            file_id = _value_text(candidate, "file_id") or None
+            image_url = (
+                _value_text(candidate, "image_url")
+                or _value_text(candidate, "url")
+                or None
+            )
+            if file_id is not None:
+                parts.append(ImagePart(file_id=file_id))
+            elif image_url is not None:
+                parts.append(ImagePart(image_url=image_url))
+    return parts
+
+
+def _value_text(value: object, name: str) -> str:
+    raw = (
+        cast(Mapping[str, object], value).get(name)
+        if isinstance(value, Mapping)
+        else getattr(value, name, None)
+    )
+    return raw if isinstance(raw, str) else ""
 
 
 def response_state(
@@ -550,19 +633,31 @@ def _encode_actor_message(
             text_buffer.append({"type": text_type, "text": part.text})
             continue
         if isinstance(part, ImagePart):
-            if message.role != "user":
-                raise ToolangError("assistant messages cannot contain image parts")
+            if message.role == "assistant":
+                text_buffer.append(
+                    {"type": text_type, "text": message_summary((part,))}
+                )
+                continue
             text_buffer.append(_encode_image_part(part))
             continue
         if isinstance(part, AudioPart):
-            if message.role != "user":
-                raise ToolangError("assistant messages cannot contain audio parts")
+            if message.role == "assistant":
+                text_buffer.append(
+                    {
+                        "type": text_type,
+                        "text": part.transcript or message_summary((part,)),
+                    }
+                )
+                continue
             text_buffer.append(_encode_audio_part(part))
             continue
-        if isinstance(part, FilePart):
-            if message.role != "user":
-                raise ToolangError("assistant messages cannot contain file parts")
-            text_buffer.append(_encode_file_part(part))
+        if isinstance(part, DocumentPart):
+            if message.role == "assistant":
+                text_buffer.append(
+                    {"type": text_type, "text": message_summary((part,))}
+                )
+                continue
+            text_buffer.append(_encode_document_part(part))
             continue
         _flush_text_buffer()
         if isinstance(part, ToolCallPart):
@@ -637,25 +732,30 @@ def _encode_audio_part(part: AudioPart) -> dict[str, Any]:
     }
 
 
-def _encode_file_part(part: FilePart) -> dict[str, Any]:
+def _encode_document_part(part: DocumentPart) -> dict[str, Any]:
     payload: dict[str, Any] = {"type": "input_file"}
-    if part.file_data is not None:
-        payload["file_data"] = part.file_data
-    elif part.file_url is not None:
-        payload["file_url"] = part.file_url
+    if part.data is not None:
+        payload["file_data"] = part.data
+    elif part.url is not None:
+        payload["file_url"] = part.url
     elif part.file_id is not None:
         payload["file_id"] = part.file_id
-    else:  # pragma: no cover - guarded by FilePart validation
-        raise ToolangError("file part is missing file_data, file_url, or file_id")
+    else:  # pragma: no cover - guarded by DocumentPart validation
+        raise ToolangError("document part is missing data, url, or file_id")
     if part.filename is not None:
         payload["filename"] = part.filename
     return payload
 
 
+def _message_has_text(message: Message | None) -> bool:
+    return message is not None and any(
+        isinstance(part, TextPart) for part in message.parts
+    )
+
+
 def _encode_tool_result_part(
     part: object,
     *,
-    message: Message,
     message_index: int | None,
     part_index: int,
 ) -> dict[str, Any]:
@@ -663,12 +763,12 @@ def _encode_tool_result_part(
         raise ToolangError("tool messages can only contain tool result parts")
     del message_index, part_index
     payload: dict[str, Any] = {
-        "ok": "error" not in message.meta,
+        "ok": part.error is None,
         "name": part.tool_name,
         "output": dict(part.output),
     }
-    if "error" in message.meta:
-        payload["error"] = str(message.meta["error"])
+    if part.error is not None:
+        payload["error"] = part.error
     call_id = part.call_id or part.tool_call_id
     if not call_id:
         raise ToolangError("tool follow-up message is missing call_id")

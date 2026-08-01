@@ -72,6 +72,29 @@ Toolang uses model infos for:
 - route-neutral agic ref expansion
 - selector matching inside one provider
 
+`toolang.setup` discovers model infos before accepting a run. The resulting
+`AgentSetup.models` tuple is an immutable availability snapshot; model
+selection during execution never calls a provider or reads a cache.
+
+Provider lists are cached under `${TOOLANG_ROOT}/.setup/models/`. Cache
+entries are keyed by provider configuration and a non-reversible digest of
+required environment values. Writes use provider-specific inter-process locks
+and atomic replacement. A successful refresh advances the entry generation.
+Remote providers may fall back to the last good list when refresh fails; local
+providers do not report a stale list as current availability. This cache is a
+`toolang.setup` implementation detail. `SetupWatcher` owns setup loading and
+constructs snapshots only through `refresh()`; callers consume the resulting
+`AgentSetup.models` instead of constructing or querying the cache directly.
+
+`SetupWatcher(layout)` receives the process-owned immutable `AgentLayout`. It
+reads provider and tool configuration from the root `config.toml`, overlays
+the process environment on the root `.env`, loads the installed providers,
+adapters, and tools, and periodically rebuilds the snapshot. The resulting
+`AgentSetup` retains the same layout object. Agent-home setup overrides are deferred.
+Environment changes, local provider availability, and cache generations written
+by another process become visible to newly accepted runs. Existing runs retain
+the setup snapshot they started with.
+
 
 ## Model Config
 
@@ -129,11 +152,44 @@ Toolang uses these shared run-side types:
 | `ModelCall` | `instructions`, `messages`, `tools`, optional `state` |
 | `ModelCallResult` | `message`, `tool_calls`, optional `usage`, optional `state` |
 
-Streaming providers emit:
+Streaming providers report these model-part updates through `ModelStreamHandler`:
 
-- `ModelPartStartEvent`
-- `ModelPartDeltaEvent`
-- `ModelPartEndEvent`
+- `ModelPartStart`
+- `ModelPartDelta`
+- `ModelPartEnd`
+
+`ModelAdapter.invoke()` and `ModelAdapter.stream()` are asynchronous.
+Streaming adapters await `ModelStreamHandler` for every update so execution
+observes provider parts in order.
+
+
+## Canonical Multimodal Mapping
+
+`ModelCall` contains provider-neutral `Message` values. One `Percept` is an
+ordered sequence of `TextPart`, `ImagePart`, `AudioPart`, and `DocumentPart`
+values. Model/tool protocol messages may additionally use `ToolCallPart` and
+`ToolResultPart`. Adapters translate these typed values to provider payloads
+and reject unsupported combinations before sending a request. They never
+flatten a non-text part into prompt text.
+
+The built-in OpenAI adapters map multimodal input as follows:
+
+| PerceptPart | Chat Completions | Responses |
+| --- | --- | --- |
+| `TextPart` | text content | `input_text` |
+| `ImagePart` | image content | `input_image` |
+| `AudioPart` | input audio | `input_audio` |
+| `DocumentPart` with data or file id | file content | `input_file` |
+| `DocumentPart` with only a document URL | reject | `input_file` |
+
+Chat Completions callers must resolve a document URL to document data or a
+provider file id before invocation. Actual support still depends on the
+selected model and provider route.
+
+When a provider returns audio with a transcript, the adapter produces one
+`AudioPart` carrying both the audio and transcript. It does not synthesize a
+second `TextPart`, because doing so would duplicate one provider output in
+canonical history.
 
 
 ## Built-In Model Providers
@@ -222,15 +278,18 @@ The Ollama provider uses the local Ollama HTTP API and defaults to:
 
 ## Resolution Rule
 
-One run resolves exactly one model target before loop execution starts.
+One agic run resolves exactly one model target before execution starts.
 
 Resolution proceeds in this order:
 
-1. explicit CLI selector
-2. default selector from activation config
+1. explicit `RunSpec.model`, including CLI `--model` or an HTTP request model
+2. default selector from runtime config
 3. default model route or selector from root config
 4. built-in default selector
 
-When an agic declares route-neutral refs through `models = ...` and the
-activation also provides `--models`, Toolang keeps only the intersection and
-preserves activation order.
+Every candidate must be inside the current private `_RunCeiling`. `--models`
+contributes a selector list to `CeilingSpec`; it does not select one model and
+does not alter the complete model list cached by `SetupWatcher`. At start, the
+executor resolves the spec and captured snapshots into `_AgentCeiling`. Agic
+`models` directives further intersect the nearest flow ceiling. A nested flow
+resets its ceiling from `_AgentCeiling`.

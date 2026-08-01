@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from pathlib import Path
 
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
@@ -11,7 +10,6 @@ from toolang.plugin.models.discovery import (
     default_provider_api_key_env,
     default_provider_base_url,
     missing_provider_env_vars,
-    model_infos,
     required_provider_env_vars,
 )
 from toolang.plugin.models.resolution import selectable_model_targets
@@ -20,22 +18,20 @@ from toolang.plugin.models.resolution import selectable_model_targets
 def model_list_rows(
     *,
     providers: Mapping[str, ModelProvider],
+    models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
-    environ: Mapping[str, str],
+    envs: Mapping[str, str],
     selectors: Sequence[str] = (),
-    cache_dir: Path | None = None,
-    refresh: bool = False,
 ) -> list[tuple[str, str, str]]:
     """Return table rows for selectable model listings."""
 
     rows: list[tuple[str, str, str]] = []
     for _selector, target in selectable_model_targets(
         providers=providers,
+        models=models,
         aliases=aliases,
-        environ=environ,
+        envs=envs,
         selectors=selectors,
-        cache_dir=cache_dir,
-        refresh=refresh,
     ):
         rows.append(
             (
@@ -43,10 +39,7 @@ def model_list_rows(
                 target.provider,
                 model_target_profile(
                     target,
-                    provider=providers.get(target.provider),
-                    environ=environ,
-                    cache_dir=cache_dir,
-                    refresh=refresh,
+                    models=models,
                 ),
             )
         )
@@ -56,35 +49,33 @@ def model_list_rows(
 def model_provider_rows(
     *,
     providers: Mapping[str, ModelProvider],
+    models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     provider_configs: Mapping[str, object],
-    environ: Mapping[str, str],
-    cache_dir: Path | None = None,
-    refresh: bool = False,
+    envs: Mapping[str, str],
 ) -> list[tuple[str, str, str]]:
     """Return table rows for model provider configuration status."""
 
     available_counts = _available_model_counts_by_provider(
-        providers=providers,
-        environ=environ,
-        cache_dir=cache_dir,
-        refresh=refresh,
+        models=models,
     )
     rows: list[tuple[str, str, str]] = []
     for name, provider in sorted(providers.items()):
         if name == "custom":
             continue
-        models = model_infos(provider, environ=environ, cache_dir=cache_dir, refresh=refresh)
-        adapter = model_provider_adapter_summary(models)
+        provider_models = tuple(
+            model for model in models if model.provider == provider.name
+        )
+        adapter = model_provider_adapter_summary(provider_models)
         model_count = _model_provider_model_count(
-            models=models,
+            models=provider_models,
             available_count=available_counts.get(name, 0),
         )
         details = model_provider_config(
             provider,
-            environ=environ,
+            environ=envs,
             adapter=adapter,
-            model_count=len(models),
+            model_count=len(provider_models),
             available_count=available_counts.get(name, 0),
             configured=bool(provider_configs.get(name)),
         )
@@ -92,7 +83,7 @@ def model_provider_rows(
             details = f"config=models.providers.{name}, {details}"
         rows.append((name, model_count, details))
     for name, alias in sorted(aliases.items()):
-        adapter, details = model_alias_status(alias, providers=providers, environ=environ)
+        adapter, details = model_alias_status(alias, providers=providers, environ=envs)
         rows.append((alias.provider, "-", f"alias={name}, {details}, adapter={adapter}"))
     return rows
 
@@ -108,14 +99,11 @@ def available_model_adapters() -> tuple[str, ...]:
 def model_target_profile(
     target: ModelTarget,
     *,
-    provider: ModelProvider | None,
-    environ: Mapping[str, str],
-    cache_dir: Path | None = None,
-    refresh: bool = False,
+    models: Sequence[ModelInfo],
 ) -> str:
     """Return a compact profile string for one selectable model target."""
 
-    info = _find_model_info(target, provider=provider, environ=environ, cache_dir=cache_dir, refresh=refresh)
+    info = _find_model_info(target, models=models)
     parts: list[str] = []
     parts.append(f"streaming={'y' if target.streaming else 'n'}")
     parts.append(f"tools={'y' if target.tools else 'n'}")
@@ -193,20 +181,11 @@ def model_provider_adapter_summary(models: tuple[ModelInfo, ...]) -> str:
 
 def _available_model_counts_by_provider(
     *,
-    providers: Mapping[str, ModelProvider],
-    environ: Mapping[str, str],
-    cache_dir: Path | None = None,
-    refresh: bool = False,
+    models: Sequence[ModelInfo],
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
-    for _selector, target in selectable_model_targets(
-        providers=providers,
-        aliases={},
-        environ=environ,
-        cache_dir=cache_dir,
-        refresh=refresh,
-    ):
-        counts[target.provider] = counts.get(target.provider, 0) + 1
+    for model in models:
+        counts[model.provider] = counts.get(model.provider, 0) + 1
     return counts
 
 
@@ -282,15 +261,10 @@ def _model_alias_details(
 def _find_model_info(
     target: ModelTarget,
     *,
-    provider: ModelProvider | None,
-    environ: Mapping[str, str],
-    cache_dir: Path | None = None,
-    refresh: bool = False,
+    models: Sequence[ModelInfo],
 ) -> ModelInfo | None:
-    if provider is None:
-        return None
-    for info in model_infos(provider, environ=environ, cache_dir=cache_dir, refresh=refresh):
-        if info.ref == target.ref:
+    for info in models:
+        if info.provider == target.provider and info.ref == target.ref:
             return info
     return None
 

@@ -1,150 +1,58 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
-from pathlib import Path
-from types import SimpleNamespace
 import threading
+from types import SimpleNamespace
 from typing import Any, Literal, cast
 
 from prompt_toolkit.output.color_depth import ColorDepth
 from rich.console import RenderableType
 
 from toolang.base.types.message import (
-    Message,
     TextDelta,
     TextPart,
     ToolCallPart,
     ToolResultPart,
 )
-from toolang.cli.impl.chat import blocks, events, local, rendering, slashes, tui, widgets
-from toolang.cli.impl.chat.base import ChatUIEvent
+from toolang.cli.toolang.commands.chat import (
+    blocks,
+    events,
+    rendering,
+    slashes,
+    tui,
+    widgets,
+)
+from toolang.cli.toolang.commands.chat.events import ChatUIEvent
 from toolang.execution.events import (
     PartDelta,
     RunBegin,
     RunEnd,
-    RunStarting,
-    RunSteering,
-    RunStopping,
-    RunWaiting,
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import InputRef
+from toolang.execution.records import RunControlRef
 
 
-def test_local_chat_session_runs_stop_and_steer_on_one_event_loop(
-    tmp_path: Path, monkeypatch
-) -> None:
-    started = threading.Event()
-    operations: list[tuple[str, int]] = []
-
-    class FakeExecutor:
-        def __init__(self) -> None:
-            self.reply: Any = None
-            self.release: asyncio.Event | None = None
-            self.request: Any = None
-            self.store: Any = SimpleNamespace(
-                close=lambda: operations.append(("store_close", 0))
-            )
-            self.id_state_path = tmp_path / "ids.json"
-
-        def allocate_run_id(self) -> str:
-            return "run_local"
-
-        async def run(self, request, state, *, reply) -> None:
-            del state
-            operations.append(("run", id(asyncio.get_running_loop())))
-            self.request = request
-            self.reply = reply
-            self.release = asyncio.Event()
-            started.set()
-            reply.on_event(SimpleNamespace(type="run_starting"))
-            await self.release.wait()
-            reply.on_event(SimpleNamespace(type="run_end"))
-
-        async def stop(self, **_kwargs) -> None:
-            operations.append(("stop", id(asyncio.get_running_loop())))
-            self.reply.on_event(SimpleNamespace(type="run_stopping"))
-            assert self.release is not None
-            self.release.set()
-
-        def steer(self, **_kwargs) -> None:
-            operations.append(("steer", id(asyncio.get_running_loop())))
-            self.reply.on_event(SimpleNamespace(type="run_steering"))
-
-        async def close(self) -> None:
-            operations.append(("close", id(asyncio.get_running_loop())))
-
-    class FakeWatcher:
-        def current(self) -> object:
-            return object()
-
-        async def run(self, *, stop_signal, **_kwargs) -> None:
-            await stop_signal.wait()
-
-    executor = FakeExecutor()
-    monkeypatch.setattr(
-        local.agent_up,
-        "assemble_execution",
-        lambda **_kwargs: (executor, FakeWatcher()),
-    )
-    session = local.LocalChatSession(
-        tmp_path,
-        "alice",
-        environ={},
-        agent_state=cast(Any, SimpleNamespace()),
-    )
-    received: list[str] = []
-    errors: list[str] = []
-    run_thread = threading.Thread(
-        target=lambda: session.start_run(
-            "term_test",
-            "hello",
-            {"flow": "review"},
-            lambda event: received.append(event.type),
-            errors.append,
-        )
-    )
-    run_thread.start()
-    assert started.wait(timeout=1)
-
-    session.steer_run("run_local", "focus", lambda _event: None, errors.append)
-    session.stop_run("run_local", lambda _event: None, errors.append)
-    run_thread.join(timeout=1)
-    session.close()
-
-    assert not run_thread.is_alive()
-    assert errors == []
-    assert received == ["run_starting", "run_steering", "run_stopping", "run_end"]
-    assert executor.request.executable_kind == "flow"
-    assert executor.request.executable_name == "review"
-    loop_ids = {
-        loop_id for operation, loop_id in operations if operation != "store_close"
-    }
-    assert len(loop_ids) == 1
-
-
-def test_chat_trace_events_keep_run_stop_block_until_run_end() -> None:
+def test_chat_run_events_keep_run_stop_block_until_run_end() -> None:
     app = FakeApp()
 
-    events.handle_trace_event(_run_begin(), app)
+    events.handle_run_event(_run_begin(), app)
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
 
-    events.handle_trace_event(_model_step_begin(), app)
+    events.handle_run_event(_model_step_begin(), app)
     assert [block.type for block in app.live_blocks] == [
         "ModelStepBlock",
         "RunStopBlock",
     ]
 
-    events.handle_trace_event(
+    events.handle_run_event(
         _model_step_end(output="final answer", finished_at="2026-01-01T00:00:02Z"),
         app,
     )
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
     assert [block.type for block in app.finalized] == ["ModelStepBlock"]
 
-    events.handle_trace_event(_run_end(status="finished"), app)
+    events.handle_run_event(_run_end(status="finished"), app)
     assert app.live_blocks == []
     assert [block.type for block in app.finalized] == [
         "ModelStepBlock",
@@ -153,34 +61,38 @@ def test_chat_trace_events_keep_run_stop_block_until_run_end() -> None:
     assert app.finished
 
 
-def test_chat_trace_events_finalize_start_block_on_run_begin() -> None:
+def test_chat_run_begin_finalizes_local_submission_block() -> None:
     app = FakeApp()
-
-    events.handle_trace_event(_run_waiting(), app)
-    events.handle_trace_event(_run_starting(), app)
+    app.live_blocks.append(blocks.RunStartBlock.create("hello"))
 
     assert [block.type for block in app.live_blocks] == ["RunStartBlock"]
     assert "hello" in _render_text(app.live_blocks[0].render())
 
-    events.handle_trace_event(_run_begin(), app)
+    events.handle_run_event(_run_begin(), app)
 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
     assert [block.type for block in app.finalized] == ["RunStartBlock"]
     assert "run_1" in _render_text(app.finalized[0].render())
 
 
-def test_chat_trace_events_finalize_steer_block_on_next_step() -> None:
+def test_chat_next_step_finalizes_local_steer_block() -> None:
     app = FakeApp()
 
-    events.handle_trace_event(_run_begin(), app)
-    events.handle_trace_event(_run_steering(), app)
+    events.handle_run_event(_run_begin(), app)
+    app.live_blocks.insert(
+        0,
+        blocks.RunSteerBlock.create(
+            message="adjust",
+            run_id="run_1",
+        ),
+    )
 
     assert [block.type for block in app.live_blocks] == [
         "RunSteerBlock",
         "RunStopBlock",
     ]
 
-    events.handle_trace_event(_model_step_begin(), app)
+    events.handle_run_event(_model_step_begin(), app)
 
     assert [block.type for block in app.live_blocks] == [
         "ModelStepBlock",
@@ -190,11 +102,12 @@ def test_chat_trace_events_finalize_steer_block_on_next_step() -> None:
     assert "pending for next step" not in _render_text(app.finalized[0].render())
 
 
-def test_chat_trace_events_update_existing_run_stop_block_on_stop() -> None:
+def test_chat_local_stop_updates_existing_run_stop_block() -> None:
     app = FakeApp()
 
-    events.handle_trace_event(_run_begin(), app)
-    events.handle_trace_event(_run_stopping(), app)
+    events.handle_run_event(_run_begin(), app)
+    stop = cast(blocks.RunStopBlock, app.live_blocks[0])
+    stop.mark_canceling()
 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
     assert "canceling..." in _render_text(app.live_blocks[0].render())
@@ -203,13 +116,14 @@ def test_chat_trace_events_update_existing_run_stop_block_on_stop() -> None:
 def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
     app = FakeApp()
 
-    events.handle_trace_event(_run_begin(), app)
-    events.handle_trace_event(_run_stopping(), app)
+    events.handle_run_event(_run_begin(), app)
+    stop = cast(blocks.RunStopBlock, app.live_blocks[0])
+    stop.mark_canceling()
 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
     assert "canceling..." in _render_text(app.live_blocks[0].render())
 
-    events.handle_trace_event(_run_end(status="canceled"), app)
+    events.handle_run_event(_run_end(status="canceled"), app)
 
     assert app.live_blocks == []
     assert [block.type for block in app.finalized] == ["RunStopBlock"]
@@ -224,7 +138,9 @@ def test_chat_tool_step_uses_dim_dot_marker_and_summary() -> None:
         for segment in rendering.render_segments(block.render(), width=80)
         if segment.text.strip()
     ]
-    running_marker = next(segment for segment in running_segments if segment.text == "•")
+    running_marker = next(
+        segment for segment in running_segments if segment.text == "•"
+    )
 
     assert running_marker.style is not None
     assert running_marker.style.dim
@@ -240,35 +156,35 @@ def test_chat_tool_step_uses_dim_dot_marker_and_summary() -> None:
 def test_chat_flow_step_blocks_render_flow_operation_summary() -> None:
     app = FakeApp()
 
-    events.handle_trace_event(_run_begin(executable_kind="flow"), app)
-    events.handle_trace_event(_flow_step_begin(), app)
+    events.handle_run_event(_run_begin(executable_kind="flow"), app)
+    events.handle_run_event(_flow_step_begin(), app)
 
     assert [block.type for block in app.live_blocks] == [
         "FlowStepBlock",
         "RunStopBlock",
     ]
-    assert "... running map summarize" in _render_text(
-        app.live_blocks[0].render()
-    )
+    assert "... running map summarize" in _render_text(app.live_blocks[0].render())
 
-    events.handle_trace_event(_flow_step_end(), app)
+    events.handle_run_event(_flow_step_end(), app)
 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
     assert [block.type for block in app.finalized] == ["FlowStepBlock"]
-    assert "... ran map summarize" in _render_text(
-        app.finalized[0].render()
-    )
+    assert "... ran map summarize" in _render_text(app.finalized[0].render())
 
 
 def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
     app = FakeApp()
 
-    events.handle_trace_event(_run_begin(executable_kind="flow"), app)
-    events.handle_trace_event(_child_run_step_begin(), app)
-    events.handle_trace_event(_run_begin(run_id="run_child", parent_run_id="run_1"), app)
-    events.handle_trace_event(_model_step_begin(run_id="run_child"), app)
-    events.handle_trace_event(_model_step_end(run_id="run_child", output="child done"), app)
-    events.handle_trace_event(_run_end(run_id="run_child", status="finished"), app)
+    events.handle_run_event(_run_begin(executable_kind="flow"), app)
+    events.handle_run_event(_child_run_step_begin(), app)
+    events.handle_run_event(
+        _run_begin(run_id="run_child", parent_run_id="run_1"), app
+    )
+    events.handle_run_event(_model_step_begin(run_id="run_child"), app)
+    events.handle_run_event(
+        _model_step_end(run_id="run_child", output="child done"), app
+    )
+    events.handle_run_event(_run_end(run_id="run_child", status="finished"), app)
 
     assert app.active_run == "run_1"
     assert not app.finished
@@ -278,8 +194,8 @@ def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
     ]
     assert [block.type for block in app.finalized] == ["ModelStepBlock"]
 
-    events.handle_trace_event(_child_run_step_end(), app)
-    events.handle_trace_event(_run_end(status="finished"), app)
+    events.handle_run_event(_child_run_step_end(), app)
+    events.handle_run_event(_run_end(status="finished"), app)
 
     assert app.live_blocks == []
     assert [block.type for block in app.finalized] == [
@@ -290,12 +206,24 @@ def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
     assert app.finished
 
 
+def test_late_root_begin_does_not_replace_a_different_active_run() -> None:
+    app = FakeApp(active_run="run_new")
+
+    events.handle_run_event(_run_begin(run_id="run_old"), app)
+
+    assert app.active_run == "run_new"
+
+
+def test_run_event_guard_rejects_unrelated_typed_values() -> None:
+    assert not tui._is_run_event(SimpleNamespace(type="run_end"))
+
+
 def test_chat_nested_step_blocks_are_keyed_by_full_path() -> None:
     app = FakeApp()
 
-    events.handle_trace_event(_run_begin(executable_kind="flow"), app)
-    events.handle_trace_event(_flow_step_begin(step_index=0), app)
-    events.handle_trace_event(_child_run_step_begin(step="run_1/0/0"), app)
+    events.handle_run_event(_run_begin(executable_kind="flow"), app)
+    events.handle_run_event(_flow_step_begin(step_index=0), app)
+    events.handle_run_event(_child_run_step_begin(step="run_1/0/0"), app)
 
     assert [block.type for block in app.live_blocks] == [
         "FlowStepBlock",
@@ -303,7 +231,7 @@ def test_chat_nested_step_blocks_are_keyed_by_full_path() -> None:
         "RunStopBlock",
     ]
 
-    events.handle_trace_event(_child_run_step_end(step="run_1/0/0"), app)
+    events.handle_run_event(_child_run_step_end(step="run_1/0/0"), app)
 
     assert [block.type for block in app.live_blocks] == [
         "FlowStepBlock",
@@ -313,25 +241,14 @@ def test_chat_nested_step_blocks_are_keyed_by_full_path() -> None:
 
 
 def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
-    start = blocks.RunStartBlock.create(
-        RunStarting(
-            run="run_1",
-            cmd=0,
-            parent=None,
-            thread="thread_1",
-            input=Message.user("hello"),
-        )
-    )
+    start = blocks.RunStartBlock.create("hello")
+    start.update(_run_begin())
     assert "> hello" in _render_text(start.render())
     assert "run_1" in _render_text(start.render())
 
     steer = blocks.RunSteerBlock.create(
-        RunSteering(
-            run="run_1",
-            cmd=1,
-            input=Message.user("adjust"),
-            apply="next_step",
-        )
+        message="adjust",
+        run_id="run_1",
     )
     assert "+ adjust" in _render_text(steer.render())
     assert "pending for next step" in _render_text(steer.render())
@@ -479,9 +396,9 @@ def test_chat_model_label_uses_default_or_selected_model() -> None:
         ],
     }
 
-    assert slashes.chat_model_label(payload, {}) == "openai/gpt-5"
+    assert slashes.chat_model_label(payload, {}) == "auto"
     assert (
-        slashes.chat_model_label(payload, {"models": ["openai/o3[openai]"]})
+        slashes.chat_model_label(payload, {"model": "openai/o3[openai]"})
         == "openai/o3"
     )
 
@@ -502,7 +419,9 @@ def test_chat_model_list_lines_render_as_columns() -> None:
             },
         ],
     }
-    block = blocks.SlashBlock("/model", ["Available Models", *slashes._chat_model_list_lines(payload)])
+    block = blocks.SlashBlock(
+        "/model", ["Available Models", *slashes._chat_model_list_lines(payload)]
+    )
     rendered = _render_text(block.render(), width=120)
     model_lines = [line for line in rendered.splitlines() if "deepseek/" in line]
     rendered_lines = rendered.splitlines()
@@ -520,9 +439,7 @@ def test_chat_model_list_lines_render_as_columns() -> None:
 def test_chat_status_bar_uses_right_aligned_shortcut_hints(
     monkeypatch: Any,
 ) -> None:
-    monkeypatch.setattr(
-        widgets.StatusBar, "_terminal_width", staticmethod(lambda: 80)
-    )
+    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 80))
     text = "".join(
         fragment for _style, fragment in widgets.StatusBar("runtime model")._render()
     )
@@ -534,9 +451,7 @@ def test_chat_status_bar_uses_right_aligned_shortcut_hints(
 
 
 def test_chat_status_bar_error_uses_full_width_error_line(monkeypatch: Any) -> None:
-    monkeypatch.setattr(
-        widgets.StatusBar, "_terminal_width", staticmethod(lambda: 40)
-    )
+    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 40))
     status = widgets.StatusBar("runtime model")
     status.set_error("No active run to steer.")
 
@@ -569,7 +484,9 @@ def test_chat_tui_status_bar_uses_resolved_model_and_clears_error_on_input() -> 
         client=FakeClient(),
     )
 
-    assert app.status_bar.status_label == "openai/gpt-5"
+    assert app.status_bar.status_label == "auto"
+    app.handle_run_event(_model_step_begin(model="deepseek/deepseek-chat"))
+    assert app.status_bar.status_label == "deepseek/deepseek-chat"
 
     app.status_bar.set_error("Model selector matched no models")
     assert app.status_bar.error_message
@@ -577,6 +494,42 @@ def test_chat_tui_status_bar_uses_resolved_model_and_clears_error_on_input() -> 
     app.prompt.buffer.text = "retry"
 
     assert app.status_bar.error_message == ""
+
+
+def test_chat_tui_creates_a_thread_only_for_the_first_submission(
+    monkeypatch: Any,
+) -> None:
+    started = threading.Event()
+
+    class LazyClient(FakeClient):
+        def __init__(self) -> None:
+            self.created = 0
+
+        def create_thread(self) -> str:
+            self.created += 1
+            return "term_lazy"
+
+        def start_run(self, *args: object, **kwargs: object) -> None:
+            del args, kwargs
+            started.set()
+
+    client = LazyClient()
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=client,
+    )
+    monkeypatch.setattr(tui.rendering, "write_renderable", lambda *_args: None)
+
+    app.handle_submit("/help")
+    assert client.created == 0
+
+    app.handle_submit("hello")
+    assert started.wait(timeout=1)
+    assert client.created == 1
+    assert app.thread_id == "term_lazy"
 
 
 def test_chat_tui_empty_input_requires_two_interrupts_to_exit() -> None:
@@ -653,51 +606,13 @@ def _run_begin(
     del parent_run_id, executable_kind
     return RunBegin(
         run=run_id,
-        input=InputRef(cmd=0),
+        input=RunControlRef(index=0),
         started_at="2026-01-01T00:00:00Z",
         context={
             "origin": "chat",
             "root": "run_1",
         },
     )
-
-
-def _run_waiting() -> RunWaiting:
-    return RunWaiting(
-        run="run_1",
-        cmd=0,
-        parent=None,
-        thread="thread_1",
-        input=Message.user("hello"),
-    )
-
-
-def _run_starting() -> RunStarting:
-    return RunStarting(
-        run="run_1",
-        cmd=0,
-        parent=None,
-        thread="thread_1",
-        input=Message.user("hello"),
-    )
-
-
-def _run_steering() -> RunSteering:
-    return RunSteering(
-        run="run_1",
-        cmd=1,
-        input=Message.user("adjust"),
-        apply="next_step",
-    )
-
-
-def _run_stopping() -> RunStopping:
-    return RunStopping(
-        run="run_1",
-        cmd=1,
-        apply="now",
-    )
-
 
 def _run_end(
     *,
@@ -711,11 +626,17 @@ def _run_end(
     )
 
 
-def _model_step_begin(*, run_id: str = "run_1", step_index: int = 1) -> StepBegin:
+def _model_step_begin(
+    *,
+    run_id: str = "run_1",
+    step_index: int = 1,
+    model: str | None = None,
+) -> StepBegin:
     return StepBegin(
         step=f"{run_id}/{step_index}",
         kind="model",
         input=(),
+        given={"model": {"ref": model}} if model is not None else {},
         started_at="2026-01-01T00:00:01Z",
     )
 
@@ -741,8 +662,10 @@ def _model_step_end(
         kind="model",
         status="finished",
         output=(TextPart(text=output),),
-        detail={"model_ref": "test/model", "usage": {"input_tokens": 1, "output_tokens": 1}},
-        started_at="2026-01-01T00:00:01Z",
+        noted={
+            "model_ref": "test/model",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        },
         finished_at=finished_at,
     )
 
@@ -753,7 +676,7 @@ def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
         kind="par",
         input=(),
         started_at="2026-01-01T00:00:01Z",
-        context={
+        given={
             "statement": "map",
             "runnable": "summarize",
             "par": 2,
@@ -767,97 +690,42 @@ def _flow_step_end(*, step_index: int = 1) -> StepEnd:
         kind="par",
         status="finished",
         output=(),
-        detail={
+        noted={
             "statement": "map",
             "runnable": "summarize",
             "par": 2,
             "shape": "list",
         },
-        started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
 
 
-def _child_run_step_begin(
-    *, step_index: int = 2, step: str | None = None
-) -> StepBegin:
+def _child_run_step_begin(*, step_index: int = 2, step: str | None = None) -> StepBegin:
     return StepBegin(
         step=step or f"run_1/{step_index}",
         kind="run",
         input=(),
         started_at="2026-01-01T00:00:01Z",
-        context={
+        given={
             "statement": "run",
             "runnable": "summarize",
         },
     )
 
 
-def _child_run_step_end(
-    *, step_index: int = 2, step: str | None = None
-) -> StepEnd:
+def _child_run_step_end(*, step_index: int = 2, step: str | None = None) -> StepEnd:
     return StepEnd(
         step=step or f"run_1/{step_index}",
         kind="run",
         status="finished",
         output=(TextPart(text="done"),),
-        detail={
+        noted={
             "statement": "run",
             "runnable": "summarize",
             "shape": "item",
         },
-        started_at="2026-01-01T00:00:01Z",
         finished_at="2026-01-01T00:00:02Z",
     )
-
-
-def _parallel_child_step_begin(*, step_index: int, item_index: int) -> StepBegin:
-    return StepBegin(
-        step=f"run_1/{step_index}",
-        kind="run",
-        input=(),
-        started_at="2026-01-01T00:00:01Z",
-        context={
-            "call": "stage",
-            "target_kind": "agic",
-            "target": "score",
-            "child_run_ids": (f"run_child_{item_index}",),
-            "parallelism": 2,
-            "lane_index": item_index,
-            "stage_index": 1,
-            "stage_kind": "each",
-            "stage_label": "each score",
-            "item_index": item_index,
-            "item_count": 2,
-        },
-    )
-
-
-def _parallel_child_step_end(*, step_index: int, item_index: int) -> StepEnd:
-    return StepEnd(
-        step=f"run_1/{step_index}",
-        kind="run",
-        status="finished",
-        output=(TextPart(text="done"),),
-        detail={
-            "call": "stage",
-            "target": {"kind": "agic", "name": "score"},
-            "child_runs": [f"run_child_{item_index}"],
-            "lane": {"count": 2, "index": item_index},
-            "item": {"index": item_index},
-            "source": {
-                "stage_index": 1,
-                "stage_kind": "each",
-                "stage_label": "each score",
-                "parallelism": 2,
-                "lane_index": item_index,
-                "item_count": 2,
-            },
-        },
-        started_at="2026-01-01T00:00:01Z",
-        finished_at="2026-01-01T00:00:02Z",
-    )
-
 
 def _tool_step_end(
     *,
@@ -882,8 +750,7 @@ def _tool_step_end(
                 output={"stdout": "ok\n"},
             ),
         ),
-        detail={"tool": "shell__execute"},
-        started_at="2026-01-01T00:00:01Z",
+        noted={"tool": "shell__execute"},
         finished_at=finished_at,
     )
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -11,7 +12,7 @@ import shlex
 import threading
 from typing import Any, Literal, cast
 
-from toolang.base.error import ToolangError
+from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext, ToolDefinition
 
@@ -50,8 +51,12 @@ class _LeafTool(AgentTool):
     def definition(self) -> ToolDefinition:
         return self._definition
 
-    def invoke(self, arguments: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
-        return self._invoke(arguments, context)
+    async def invoke(
+        self,
+        arguments: Mapping[str, Any],
+        context: ToolContext,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self._invoke, arguments, context)
 
 
 @dataclass(frozen=True, slots=True)

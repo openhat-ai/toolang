@@ -1,1 +1,0 @@
-"""Chat TUI package."""

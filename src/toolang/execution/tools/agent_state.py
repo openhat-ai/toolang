@@ -10,12 +10,13 @@ from typing import Any, Literal, cast
 import frontmatter
 
 from toolang.catalog import cap as caps
-from toolang.catalog.error import CatalogError
+from toolang.catalog.errors import CatalogError
 from toolang.state import state as cap_state
 from toolang.common.immutable import mutable_data
+from toolang.common.layout import AgentLayout
 from toolang.catalog.job import AuthoredJobs, JobFile
-from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE, JobKind
-from toolang.common.error import ToolangError
+from toolang.catalog.types import CapKind, DEFAULT_CHORE_SCHEDULE, JobKind
+from toolang.common.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
@@ -27,7 +28,6 @@ from toolang.work.authoring import (
 )
 from toolang.work.state import job_thread_id
 
-CapKind = Literal["psyche", "skill", "service", "prompt"]
 VisibilityFilter = Literal["all", "private", "shared"]
 
 
@@ -533,8 +533,7 @@ class AgentStatePlugin:
 
 @dataclass(frozen=True, slots=True)
 class _AgentStateScope:
-    toolang_root: Path
-    agent_name: str
+    layout: AgentLayout
 
 
 def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
@@ -551,7 +550,13 @@ def _scope(context: ToolContext | None) -> _AgentStateScope:
         raise ToolangError(
             f"agent_state tool requires an agent home under agents/: {home}"
         )
-    return _AgentStateScope(toolang_root=home.parent.parent, agent_name=home.name)
+    return _AgentStateScope(
+        AgentLayout(
+            root=home.parent.parent,
+            name=home.name,
+            placement=context.placement,
+        )
+    )
 
 
 def _task_payload(document: JobFile) -> dict[str, Any]:
@@ -578,11 +583,10 @@ def _chore_payload(document: JobFile) -> dict[str, Any]:
 
 
 def _jobs(scope: _AgentStateScope) -> AuthoredJobs:
-    catalog = AuthoredJobs(scope.toolang_root / "agents" / scope.agent_name)
+    catalog = AuthoredJobs(scope.layout.home)
     try:
         assign_missing_authored_job_ids(
-            scope.toolang_root,
-            scope.agent_name,
+            scope.layout,
             catalog=catalog,
         )
     except (CatalogError, ValueError) as exc:
@@ -600,7 +604,7 @@ def _new_job(
 ) -> JobFile:
     return new_job_file(
         kind=kind,
-        job_id=allocate_authored_job_id(scope.toolang_root, scope.agent_name),
+        job_id=allocate_authored_job_id(scope.layout),
         title=title,
         body=body,
         schedule=schedule,
@@ -619,8 +623,8 @@ def _list_caps(
     scope = _scope(context)
     filter_visibility = _visibility_filter(visibility)
     entries = cap_state.list_entries(
-        scope.toolang_root,
-        scope.agent_name,
+        scope.layout.root,
+        scope.layout.name,
         visibility=None if filter_visibility == "all" else filter_visibility,
         kinds={kind},
     )
@@ -693,7 +697,7 @@ def _delete_cap(
     entry = _find_cap_entry(
         scope, kind, name, visibility=cap_visibility, source_form="file"
     )
-    deleted_path = scope.toolang_root / entry.path
+    deleted_path = scope.layout.root / entry.path
     if entry.shape == "dir":
         deleted_path = deleted_path.parent
     _authored_caps(scope, cap_visibility).remove(kind, name)
@@ -717,8 +721,8 @@ def _find_cap_entry(
 ) -> PreparedCap:
     entry_visibility = None if visibility == "all" else visibility
     entries = cap_state.list_entries(
-        scope.toolang_root,
-        scope.agent_name,
+        scope.layout.root,
+        scope.layout.name,
         visibility=entry_visibility,
         kinds={kind},
     )
@@ -736,7 +740,7 @@ def _find_cap_entry(
         raise ToolangError(f"{qualifier}{kind} not found: {name}")
     return sorted(
         matches,
-        key=lambda entry: cap_state.entry_ref(entry, agent_name=scope.agent_name),
+        key=lambda entry: cap_state.entry_ref(entry, agent_name=scope.layout.name),
     )[0]
 
 
@@ -746,15 +750,15 @@ def _cap_payload(
     *,
     include_content: bool = False,
 ) -> dict[str, Any]:
-    visibility = cap_state.entry_visibility(entry, agent_name=scope.agent_name)
+    visibility = cap_state.entry_visibility(entry, agent_name=scope.layout.name)
     item: dict[str, Any] = {
         "kind": entry.kind,
         "name": entry.name,
-        "scope": cap_state.entry_scope(entry, agent_name=scope.agent_name),
+        "scope": cap_state.entry_scope(entry, agent_name=scope.layout.name),
         "origin": cap_state.entry_origin(entry),
         "form": cap_state.entry_form(entry),
-        "ref": cap_state.entry_ref(entry, agent_name=scope.agent_name),
-        "path": str(scope.toolang_root / entry.path),
+        "ref": cap_state.entry_ref(entry, agent_name=scope.layout.name),
+        "path": str(scope.layout.root / entry.path),
         "definition_file": cap_state.entry_definition_file(entry),
         "meta": mutable_data(entry.meta),
     }
@@ -787,11 +791,7 @@ def _authored_caps(
     scope: _AgentStateScope,
     visibility: PreparedVisibility,
 ) -> caps.AuthoredCaps:
-    directory = (
-        scope.toolang_root
-        if visibility == "shared"
-        else scope.toolang_root / "agents" / scope.agent_name
-    )
+    directory = scope.layout.root if visibility == "shared" else scope.layout.home
     return caps.AuthoredCaps(directory)
 
 

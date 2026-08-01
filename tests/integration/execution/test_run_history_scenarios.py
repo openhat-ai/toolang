@@ -1,0 +1,118 @@
+"""Caller-facing durable execution history scenarios."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from tests.support.execution_fixtures import project_run_end, project_run_start
+from toolang.base.types.message import Message
+from toolang.common.ids import IdIssuer
+from toolang.execution.history import RunHistory
+from toolang.execution.store import RunStore
+from toolang.execution.threads import ThreadManager
+from toolang.execution.types import ThreadPrefix
+
+
+def test_run_history_batches_thread_and_run_summaries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_history",
+            thread_id="term_history",
+            origin="chat",
+            input=Message.user("hello"),
+        )
+        project_run_end(store, run_id=run.id)
+        history = RunHistory(store)
+        monkeypatch.setattr(
+            store,
+            "list_thread_history_chronological",
+            lambda **_kwargs: pytest.fail("history must batch thread reads"),
+        )
+        monkeypatch.setattr(
+            store,
+            "list_run_controls",
+            lambda **_kwargs: pytest.fail("history must batch summary controls"),
+        )
+
+        threads = history.list_threads(limit=None)
+        runs = history.list_runs(limit=None)
+        thread = history.get_thread(run.thread)
+
+        assert [(item.id, item.run_count) for item in threads] == [("term_history", 1)]
+        assert [item.id for item in runs] == ["run_history"]
+        assert thread is not None
+        assert [item.id for item in thread.runs] == ["run_history"]
+    finally:
+        store.close()
+
+
+def test_run_history_projects_fork_and_rewind_from_one_snapshot(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    ids = IdIssuer(tmp_path / "ids.json")
+    manager = ThreadManager(store, ids)
+    try:
+        source = manager.create(prefix=ThreadPrefix.TERM)
+        first = project_run_start(
+            store,
+            run_id="run_first",
+            thread_id=source,
+            origin="chat",
+            input=Message.user("first"),
+        )
+        project_run_end(store, run_id=first.id)
+        second = project_run_start(
+            store,
+            run_id="run_second",
+            thread_id=source,
+            origin="chat",
+            input=Message.user("second"),
+        )
+        project_run_end(store, run_id=second.id)
+        forked = manager.fork(thread_id=source, run_id=first.id)
+        manager.rewind(thread_id=source, run_id=second.id)
+
+        histories = store.list_thread_histories_chronological(
+            thread_ids=(source, forked)
+        )
+        projected = {
+            item.id: item for item in RunHistory(store).list_threads(limit=None)
+        }
+
+        assert [run.id for run in histories[source]] == [first.id]
+        assert [run.id for run in histories[forked]] == [first.id]
+        assert projected[source].run_count == 1
+        assert projected[forked].run_count == 1
+    finally:
+        store.close()
+
+
+def test_run_history_zero_detail_limit_returns_only_thread_summary(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_summary",
+            thread_id="term_summary",
+            origin="chat",
+            input=Message.user("hello"),
+        )
+        project_run_end(store, run_id=run.id)
+
+        thread = RunHistory(store).get_thread(run.thread, run_limit=0)
+
+        assert thread is not None
+        assert thread.run_count == 1
+        assert thread.runs == []
+    finally:
+        store.close()

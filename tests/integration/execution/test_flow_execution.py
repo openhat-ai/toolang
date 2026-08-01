@@ -1,258 +1,529 @@
 from __future__ import annotations
 
 import asyncio
+from multiprocessing import get_context
+from pathlib import Path
+import sqlite3
+import threading
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
-from toolang.common.error import ToolangError
-from toolang.base.types.message import Message, TextPart
-from toolang.base.types.run import RunResult
-from toolang.execution.binding import _Run
-from toolang.execution.store import RunStore, PersistSink
+from toolang.base.types.message import ImagePart, Message, TextPart
+from toolang.base.types.run import ModelCall
+from toolang.common.errors import ToolangError
+from toolang.common.ids import IdIssuer
+from toolang.common.layout import AgentLayout
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
-    RunStarting,
-    RunSteering,
-    RunStopping,
+    RunEvent,
+    RunTracer,
     StepBegin,
     StepEnd,
-    TraceEvent,
+    ThreadEvent,
+    ThreadListener,
 )
-from toolang.execution.executor import (
-    Executor,
-    Local,
-    _RunExecution,
-    _decode_agic_output,
-)
-from toolang.execution.request import RunRequest
-from toolang.execution.records import InputRef, OutputRef
-from toolang.execution.setup import AgentSetup
+from toolang.execution.executor import CeilingSpec, RunExecutor, RunSpec
+from toolang.execution.executor.ceiling import resolve_agent_ceiling
+from toolang.execution.executor.common import BoundRun, Local
+from toolang.execution.executor.executor import _Execution
+from toolang.execution.executor.runs import agic as agic_run
+from toolang.execution.history import RunHistory
+from toolang.execution.records import OutputRef, RunControlRef, ThreadControlRef
+from toolang.execution.executor._persist import _PersistSink
+from toolang.execution.store import RunStore
+from toolang.execution.threads import ThreadManager
+from toolang.execution.types import ThreadPrefix
 from toolang.lang.ast import (
-    AskStmt,
-    DropStmt,
-    GatherStmt,
-    KeepStmt,
-    LetStmt,
-    MapStmt,
-    Program,
-    RankStmt,
-    RepeatStmt,
-    RunStmt,
-    ScatterStmt,
-    SeekStmt,
-    Span,
-    StormStmt,
-    Field,
+    AgicDecl,
+    Directive,
     FlowDecl,
-    StructDecl,
+    LetStmt,
+    Parameter,
+    Program,
+    RunStmt,
+    Span,
 )
+from toolang.setup import AgentSetup
+from tests.support.execution_harness import RecordingTool
 
 
-FLOW_SOURCE = """
-agic helper(_: Text) -> Text:
-  user: {{_}}
+class _RecordingTracer(RunTracer):
+    def __init__(self, store: RunStore, *, fail: bool = False) -> None:
+        self.store = store
+        self.fail = fail
+        self.events: list[RunEvent] = []
+        self.thread_ids: set[int] = set()
+        self._handling = False
 
-flow pipeline(_: Text) -> Text:
-  run helper
-  run -> Text: inline run
-  bare inline run
-  seek alice helper
-  seek bob -> Text: inline seek
-  ask: continue?
-  scatter 3 helper
-  storm 4 helper par 2
-  gather helper
-  settle helper
-  map helper par 2
-  keep first 2
-  keep helper par 2
-  drop last 1
-  rank helper top 3 par 2
-  repeat 2:
-    run helper
-    until: done?
-  let result = run helper
-  let run helper
-  let note: authored text
-"""
+    async def on_event(self, event: RunEvent) -> None:
+        assert not self._handling
+        self._handling = True
+        run_id = (
+            event.run
+            if isinstance(event, RunBegin | RunEnd)
+            else event.step.split("/", 1)[0]
+        )
+        assert self.store.get_run(run_id=run_id) is not None
+        self.thread_ids.add(threading.get_ident())
+        try:
+            await asyncio.sleep(0)
+            self.events.append(event)
+            if self.fail:
+                raise RuntimeError("tracer failed")
+        finally:
+            self._handling = False
 
 
-def test_flow_statements_lower_to_specific_nodes() -> None:
-    program = Program.from_source(FLOW_SOURCE)
-    flow = program.flows[0]
+class _RecordingThreadListener(ThreadListener):
+    def __init__(self) -> None:
+        self.events: list[ThreadEvent] = []
 
-    assert flow.name == "pipeline"
-    assert flow.input is not None and flow.input.type_name == "Text"
-    assert flow.output == "Text"
-    assert [stmt.kind for stmt in flow.stmts] == [
-        "run",
-        "run",
-        "run",
-        "seek",
-        "seek",
-        "ask",
-        "scatter",
-        "storm",
-        "gather",
-        "settle",
-        "map",
-        "keep",
-        "keep",
-        "drop",
-        "rank",
-        "repeat",
-        "run",
-        "run",
-        "let",
-    ]
+    def on_event(self, event: ThreadEvent) -> None:
+        self.events.append(event)
 
-    assert isinstance(flow.stmts[0], RunStmt)
-    assert flow.stmts[0].runnable == "helper"
-    assert isinstance(flow.stmts[3], SeekStmt)
-    assert flow.stmts[3].agent == "alice"
-    assert isinstance(flow.stmts[5], AskStmt)
-    assert flow.stmts[5].body == "continue?"
-    assert isinstance(flow.stmts[6], ScatterStmt)
-    assert flow.stmts[6].count == 3
-    assert isinstance(flow.stmts[7], StormStmt)
-    assert (flow.stmts[7].count, flow.stmts[7].par) == (4, 2)
-    assert isinstance(flow.stmts[10], MapStmt)
-    assert flow.stmts[10].par == 2
-    assert isinstance(flow.stmts[11], KeepStmt)
-    assert (flow.stmts[11].position, flow.stmts[11].count) == ("first", 2)
-    assert isinstance(flow.stmts[13], DropStmt)
-    assert (flow.stmts[13].position, flow.stmts[13].count) == ("last", 1)
-    assert isinstance(flow.stmts[14], RankStmt)
-    assert (flow.stmts[14].limit, flow.stmts[14].count, flow.stmts[14].par) == (
-        "top",
-        3,
-        2,
+
+def _executor(tmp_path: Path) -> RunExecutor:
+    store = RunStore(tmp_path / ".runtime" / "runs.db")
+    store.create_thread(thread_id="term_test")
+    return RunExecutor(store, IdIssuer(tmp_path / ".runtime" / "ids.json"))
+
+
+def _state(*flows: FlowDecl) -> Any:
+    return cast(
+        Any,
+        SimpleNamespace(
+            program=Program(span=Span(line=1), flows=flows),
+            program_source="agents/alice/agent.too",
+            root_config={},
+            home_config={},
+            caps=(),
+            fingerprint="state-test",
+        ),
     )
 
 
-def test_public_executor_runs_explicit_agent_state(tmp_path) -> None:
+def _setup() -> AgentSetup:
+    return AgentSetup(
+        layout=AgentLayout.resident(Path("/"), "alice"),
+        providers={},
+        adapters={},
+        models=(),
+        tools={},
+        envs={},
+    )
+
+
+def _capture_model_text(store: RunStore, body: str) -> str:
+    captured = store.capture_model_call(
+        target={
+            "ref": "test/model",
+            "provider": "test",
+            "name": "model",
+            "model": "model",
+            "adapter": "test",
+        },
+        call=ModelCall(instructions=body, messages=[]),
+    )
+    call = captured.get("call")
+    if not isinstance(call, dict) or not isinstance(call.get("instructions"), str):
+        raise AssertionError("captured model instructions are missing")
+    return call["instructions"]
+
+
+async def _start(
+    executor: RunExecutor,
+    setup: AgentSetup,
+    state: Any,
+    name: str,
+    *,
+    run_id: str | None = None,
+    thread_id: str = "term_test",
+    request_id: str | None = None,
+    tracer: RunTracer | None = None,
+) -> Any:
+    return await executor.start(
+        RunSpec(
+            setup=setup,
+            state=state,
+            thread=thread_id,
+            runnable=name,
+        ),
+        run_id=run_id,
+        request_id=request_id,
+        tracer=tracer,
+    )
+
+
+def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     flow = FlowDecl(
         name="pipeline",
         stmts=(LetStmt(value="done", span=Span(line=2)),),
         span=Span(line=1),
     )
-    program = Program(span=Span(line=1), flows=(flow,))
-    state = cast(Any, SimpleNamespace(program=program, fingerprint="state-test"))
-    setup = AgentSetup(tools={}, model_providers={}, model_adapters={})
-    store = RunStore(tmp_path / "runs.db")
-    events: list[TraceEvent] = []
-    executor = Executor(
-        root=tmp_path,
-        name="alice",
-        home=tmp_path / "agents" / "alice",
-        id_state_path=tmp_path / "ids.json",
-        setup=setup,
-        store=store,
-        model_aliases={},
-        default_models=(),
-        model_environ={},
-        trace=events.append,
-    )
+    executor = _executor(tmp_path)
+    store = executor.store
+    tracer = _RecordingTracer(store)
+    owner_thread = threading.get_ident()
 
     record = asyncio.run(
-        executor.run(
-            RunRequest(
-                group="script",
-                origin="script",
-                executable_kind="flow",
-                executable_name="pipeline",
-            ),
-            state,
-        )
+        _start(executor, _setup(), _state(flow), flow.name, tracer=tracer)
     )
 
     assert record.status == "finished"
-    assert record.context["executable"] == {"kind": "flow", "name": "pipeline"}
     assert store.run_output_text(run_id=record.id) == "done"
-    assert [event.type for event in events] == [
-        "run_starting",
+    assert [event.type for event in tracer.events] == [
         "run_begin",
         "step_begin",
         "step_end",
         "run_end",
     ]
-    store.close()
+    assert tracer.thread_ids == {owner_thread}
+    start = store.get_run_control(run_id=record.id, index=0)
+    assert start is not None and start.status == "finished"
+    detail = RunHistory(store).get_run(record.id)
+    assert detail is not None
+    assert detail.runnable_kind == "flow"
+    assert detail.runnable_name == "pipeline"
+    assert detail.input == Message(role="user")
+    assert [control.index for control in detail.controls] == [0]
+    assert detail.controls[0].message == detail.input
+    assert [step.kind for step in detail.steps] == ["system"]
+    assert detail.steps[0].output == [TextPart(text="done")]
+    assert not hasattr(detail.steps[0], "message")
+    asyncio.run(executor.shutdown())
 
 
-def test_inline_runnables_are_generated_once_and_referenced_by_name() -> None:
-    program = Program.from_source(FLOW_SOURCE)
-    flow = program.flows[0]
-    generated = {
-        agic.name: agic for agic in program.agics if agic.name.startswith("<agic:")
-    }
-
-    inline_run = flow.stmts[1]
-    bare_run = flow.stmts[2]
-    inline_seek = flow.stmts[4]
-    repeat = flow.stmts[15]
-    assert isinstance(inline_run, RunStmt)
-    assert isinstance(bare_run, RunStmt)
-    assert isinstance(inline_seek, SeekStmt)
-    assert isinstance(repeat, RepeatStmt)
-    assert inline_run.runnable in generated
-    assert generated[inline_run.runnable].output == "Text"
-    assert bare_run.runnable in generated
-    assert generated[bare_run.runnable].messages[0].content == "bare inline run"
-    assert inline_seek.runnable in generated
-    assert repeat.until in generated
-    assert generated[repeat.until].output == "Boolean"
-
-
-def test_flow_bindings_are_independent_of_statement_kind() -> None:
-    flow = Program.from_source(FLOW_SOURCE).flows[0]
-
-    named = flow.stmts[-3]
-    discarded = flow.stmts[-2]
-    authored = flow.stmts[-1]
-    assert isinstance(named, RunStmt) and named.binding == "result"
-    assert isinstance(discarded, RunStmt) and discarded.binding is None
-    assert isinstance(authored, LetStmt)
-    assert (authored.binding, authored.value) == ("note", "authored text")
-
-
-def test_inline_context_and_instruct_are_program_owned_declarations() -> None:
-    program = Program.from_source(
-        """
-agic answer:
-  context:
-    Runtime context.
-  instruct:
-    Be concise.
-  user: Answer now.
-"""
+def test_run_executor_validates_args_against_runnable_params(
+    tmp_path: Path,
+) -> None:
+    flow = FlowDecl(
+        name="pipeline",
+        params=(Parameter(name="focus", span=Span(line=1)),),
+        span=Span(line=1),
     )
-    agic = program.agics[0]
+    executor = _executor(tmp_path)
+    setup = _setup()
+    state = _state(flow)
 
-    assert agic.context == "<context:3>"
-    assert agic.instruct == "<instruct:5>"
-    assert program.contexts[0].name == agic.context
-    assert program.contexts[0].body == "Runtime context."
-    assert program.instructs[0].name == agic.instruct
-    assert program.instructs[0].body == "Be concise."
+    async def scenario() -> None:
+        with pytest.raises(ValueError, match="missing arguments.*focus"):
+            executor.start(
+                RunSpec(
+                    setup=setup,
+                    state=state,
+                    thread="term_test",
+                    runnable=flow.name,
+                )
+            )
+        with pytest.raises(ValueError, match="unknown arguments.*other"):
+            executor.start(
+                RunSpec(
+                    setup=setup,
+                    state=state,
+                    thread="term_test",
+                    runnable=flow.name,
+                    args={
+                        "focus": (TextPart("events"),),
+                        "other": True,
+                    },
+                )
+            )
+        record = await executor.start(
+            RunSpec(
+                setup=setup,
+                state=state,
+                thread="term_test",
+                runnable=flow.name,
+                args={"focus": (TextPart("events"),)},
+            )
+        )
+        assert record.status == "finished"
+
+    asyncio.run(scenario())
+    asyncio.run(executor.shutdown())
 
 
-def test_agic_and_flow_names_share_one_namespace() -> None:
-    with pytest.raises(ToolangError, match="Duplicate runnable name"):
-        Program.from_source(
-            """
-agic shared:
-  Hello.
+def test_run_executor_rejects_lossy_input_before_acceptance(
+    tmp_path: Path,
+) -> None:
+    flow = FlowDecl(
+        name="pipeline",
+        input=Parameter(
+            name="_",
+            type_name="Text",
+            span=Span(line=1),
+        ),
+        span=Span(line=1),
+    )
+    executor = _executor(tmp_path)
 
-flow shared:
-  run shared
-"""
+    async def scenario() -> None:
+        with pytest.raises(ToolangError, match="non-text parts"):
+            executor.start(
+                RunSpec(
+                    setup=_setup(),
+                    state=_state(flow),
+                    thread="term_test",
+                    runnable=flow.name,
+                    input=(ImagePart(file_id="image-1"),),
+                )
+            )
+
+    asyncio.run(scenario())
+    assert executor.store.list_runs() == []
+    asyncio.run(executor.shutdown())
+
+
+def test_run_executor_rejects_invalid_ceiling_before_acceptance(
+    tmp_path: Path,
+) -> None:
+    flow = FlowDecl(name="pipeline", span=Span(line=1))
+    executor = _executor(tmp_path)
+
+    async def scenario() -> None:
+        with pytest.raises(ValueError, match="tool selector matched no tools"):
+            executor.start(
+                RunSpec(
+                    setup=_setup(),
+                    state=_state(flow),
+                    thread="term_test",
+                    runnable=flow.name,
+                    ceiling=CeilingSpec(tools=("missing/*",)),
+                )
+            )
+
+    asyncio.run(scenario())
+    assert executor.store.list_runs() == []
+    asyncio.run(executor.shutdown())
+
+
+def test_top_level_agic_has_no_containing_step_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agic = AgicDecl(name="default", span=Span(line=1))
+    state = cast(
+        Any,
+        SimpleNamespace(
+            program=Program(span=Span(line=1), agics=(agic,)),
+            program_source="agents/alice/agent.too",
+            root_config={},
+            home_config={},
+            caps=(),
+            fingerprint="state-test",
+        ),
+    )
+    executor = _executor(tmp_path)
+    store = executor.store
+    tracer = _RecordingTracer(store)
+
+    async def execute_agic(*_args: Any, **_kwargs: Any) -> Local:
+        return Local("done", "item")
+
+    monkeypatch.setattr(agic_run, "execute", execute_agic)
+    record = asyncio.run(_start(executor, _setup(), state, "default", tracer=tracer))
+
+    assert record.status == "finished"
+    assert [event.type for event in tracer.events] == ["run_begin", "run_end"]
+    assert store.list_steps(run_id=record.id) == []
+    asyncio.run(executor.shutdown())
+
+
+def test_runtime_emits_and_persists_system_failure_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agic = AgicDecl(name="default", span=Span(line=1))
+    state = cast(
+        Any,
+        SimpleNamespace(
+            program=Program(span=Span(line=1), agics=(agic,)),
+            program_source="agents/alice/agent.too",
+            root_config={},
+            home_config={},
+            caps=(),
+            fingerprint="state-test",
+        ),
+    )
+    executor = _executor(tmp_path)
+    tracer = _RecordingTracer(executor.store)
+
+    async def fail_agic(*_args: Any, **_kwargs: Any) -> Local:
+        raise RuntimeError("runtime failed")
+
+    monkeypatch.setattr(agic_run, "execute", fail_agic)
+    record = asyncio.run(_start(executor, _setup(), state, "default", tracer=tracer))
+
+    assert record.status == "failed"
+    assert [event.type for event in tracer.events] == [
+        "run_begin",
+        "step_begin",
+        "step_end",
+        "run_end",
+    ]
+    steps = executor.store.list_steps(run_id=record.id)
+    assert len(steps) == 1
+    assert steps[0].kind == "system"
+    assert steps[0].status == "failed"
+    assert steps[0].error == "runtime failed"
+    assert steps[0].given == {"runtime": "failure"}
+    asyncio.run(executor.shutdown())
+
+
+def test_event_delivery_does_not_read_run_state_per_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    flow = FlowDecl(
+        name="pipeline",
+        stmts=(LetStmt(value="done", span=Span(line=2)),),
+        span=Span(line=1),
+    )
+    executor = _executor(tmp_path)
+    original = executor.store.get_run
+    reads = 0
+
+    def get_run(*, run_id: str):
+        nonlocal reads
+        reads += 1
+        return original(run_id=run_id)
+
+    monkeypatch.setattr(executor.store, "get_run", get_run)
+    record = asyncio.run(_start(executor, _setup(), _state(flow), flow.name))
+
+    assert record.status == "finished"
+    assert reads == 1
+    asyncio.run(executor.shutdown())
+
+
+def test_start_rejects_ambiguous_runnable_name(tmp_path: Path) -> None:
+    runnable = "shared"
+    state = cast(
+        Any,
+        SimpleNamespace(
+            program=Program(
+                span=Span(line=1),
+                agics=(AgicDecl(name=runnable, span=Span(line=1)),),
+                flows=(FlowDecl(name=runnable, span=Span(line=2)),),
+            ),
+            program_source="agents/alice/agent.too",
+            root_config={},
+            home_config={},
+            caps=(),
+            fingerprint="state-test",
+        ),
+    )
+    executor = _executor(tmp_path)
+
+    async def scenario() -> None:
+        with pytest.raises(ToolangError, match="Runnable name is not unique"):
+            executor.start(
+                RunSpec(
+                    setup=_setup(),
+                    state=state,
+                    thread="term_test",
+                    runnable=runnable,
+                )
+            )
+
+    asyncio.run(scenario())
+    asyncio.run(executor.shutdown())
+
+
+def test_tracer_failure_does_not_fail_execution(tmp_path: Path) -> None:
+    flow = FlowDecl(name="pipeline", span=Span(line=1))
+    executor = _executor(tmp_path)
+    store = executor.store
+
+    record = asyncio.run(
+        _start(
+            executor,
+            _setup(),
+            _state(flow),
+            flow.name,
+            tracer=_RecordingTracer(store, fail=True),
+        )
+    )
+
+    assert record.status == "finished"
+    asyncio.run(executor.shutdown())
+
+
+def test_run_handle_shields_execution_from_waiter_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    flow = FlowDecl(name="waiting", span=Span(line=1))
+    executor = _executor(tmp_path)
+
+    async def wait_forever(*_args: Any, **_kwargs: Any) -> Any:
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(_Execution, "execute", wait_forever)
+
+    async def scenario() -> Any:
+        handle = executor.start(
+            RunSpec(
+                setup=_setup(),
+                state=_state(flow),
+                thread="term_test",
+                runnable=flow.name,
+            )
+        )
+        assert handle.executor is executor
+        accepted = executor.store.get_run(run_id=handle.run_id)
+        assert accepted is not None and accepted.status == "pending"
+        waiter = asyncio.ensure_future(handle)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert not handle.task.cancelled()
+        handle.stop(reason="done")
+        return await asyncio.wait_for(handle, timeout=2)
+
+    record = asyncio.run(scenario())
+
+    assert record.status == "canceled"
+    asyncio.run(executor.shutdown())
+
+
+def test_duplicate_start_request_is_rejected(tmp_path: Path) -> None:
+    flow = FlowDecl(name="pipeline", span=Span(line=1))
+    executor = _executor(tmp_path)
+    store = executor.store
+    first_tracer = _RecordingTracer(store)
+    store.create_thread(thread_id="term_idempotent")
+
+    first = asyncio.run(
+        _start(
+            executor,
+            _setup(),
+            _state(flow),
+            flow.name,
+            run_id="run_unique",
+            thread_id="term_idempotent",
+            request_id="start-unique",
+            tracer=first_tracer,
+        )
+    )
+    with pytest.raises(ValueError, match="run already exists"):
+        asyncio.run(
+            _start(
+                executor,
+                _setup(),
+                _state(flow),
+                flow.name,
+                run_id="run_unique",
+                thread_id="term_idempotent",
+                request_id="start-unique",
+            )
         )
 
+    assert first.status == "finished"
+    assert len(store.list_run_controls(run_id=first.id)) == 1
+    asyncio.run(executor.shutdown())
 
-def test_executor_persists_parent_and_child_run_hierarchy(tmp_path) -> None:
+
+def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None:
     child = FlowDecl(
         name="child",
         stmts=(LetStmt(value="done", span=Span(line=2)),),
@@ -260,534 +531,1342 @@ def test_executor_persists_parent_and_child_run_hierarchy(tmp_path) -> None:
     )
     parent = FlowDecl(
         name="parent",
-        stmts=(RunStmt(runnable="child", span=Span(line=5)),),
-        span=Span(line=4),
+        stmts=(RunStmt(runnable="child", span=Span(line=4)),),
+        span=Span(line=3),
     )
-    context, binding = _executor_fixture(tmp_path, parent, child)
-    store = RunStore(tmp_path / "runs.db")
-    sink = PersistSink(store)
-    sink.on_event(_starting(binding, parent))
+    executor = _executor(tmp_path)
+    store = executor.store
+    tracer = _RecordingTracer(store)
+
+    root = asyncio.run(
+        _start(
+            executor,
+            _setup(),
+            _state(parent, child),
+            parent.name,
+            tracer=tracer,
+        )
+    )
+
+    runs = store.list_runs(limit=None)
+    child_run = next(run for run in runs if run.id != root.id)
+    assert child_run.parent == f"{root.id}/0"
+    assert child_run.status == "finished"
+    assert [event.type for event in tracer.events] == [
+        "run_begin",
+        "step_begin",
+        "run_begin",
+        "step_begin",
+        "step_end",
+        "run_end",
+        "step_end",
+        "run_end",
+    ]
+    assert [event.type for event in tracer.events].count("run_begin") == 2
+    assert not any(event.type == "run_starting" for event in tracer.events)
+    asyncio.run(executor.shutdown())
+
+
+def test_nested_flow_resets_ceiling_and_restores_parent_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    direct = AgicDecl(name="direct", span=Span(line=1))
+    nested = AgicDecl(name="nested", span=Span(line=1))
+    sibling = AgicDecl(name="sibling", span=Span(line=1))
+    inner = FlowDecl(
+        name="inner",
+        stmts=(RunStmt(runnable=nested.name, span=Span(line=4)),),
+        span=Span(line=3),
+    )
+    outer = FlowDecl(
+        name="outer",
+        directives=(
+            Directive(
+                name="tools",
+                operator="=",
+                values=("alpha/*",),
+                span=Span(line=6),
+            ),
+        ),
+        stmts=(
+            RunStmt(runnable=direct.name, span=Span(line=7)),
+            RunStmt(runnable=inner.name, span=Span(line=8)),
+            RunStmt(runnable=sibling.name, span=Span(line=9)),
+        ),
+        span=Span(line=5),
+    )
+    state = cast(
+        Any,
+        SimpleNamespace(
+            program=Program(
+                span=Span(line=1),
+                agics=(direct, nested, sibling),
+                flows=(outer, inner),
+            ),
+            program_source="agents/alice/agent.too",
+            root_config={},
+            home_config={},
+            caps=(),
+            fingerprint="state-test",
+        ),
+    )
+    tools = {
+        "alpha__one": RecordingTool("alpha__one", output={}),
+        "beta__two": RecordingTool("beta__two", output={}),
+    }
+    base_setup = _setup()
+    setup = AgentSetup(
+        layout=base_setup.layout,
+        providers=base_setup.providers,
+        adapters=base_setup.adapters,
+        models=base_setup.models,
+        tools=tools,
+        envs=base_setup.envs,
+    )
+    observed: list[tuple[str, tuple[str, ...]]] = []
+
+    async def execute_agic(
+        _execution: _Execution,
+        binding: BoundRun,
+        agic: AgicDecl,
+        _locals: dict[str, Local],
+    ) -> Local:
+        assert binding.ceiling is not None
+        observed.append((agic.name, tuple(binding.ceiling.tools)))
+        return Local("done", "item")
+
+    monkeypatch.setattr(agic_run, "execute", execute_agic)
+    executor = _executor(tmp_path)
+
+    record = asyncio.run(_start(executor, setup, state, outer.name))
+
+    assert record.status == "finished"
+    assert observed == [
+        ("direct", ("alpha__one",)),
+        ("nested", ("alpha__one", "beta__two")),
+        ("sibling", ("alpha__one",)),
+    ]
+    asyncio.run(executor.shutdown())
+
+
+def test_parallel_children_preserve_input_and_output_types(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = FlowDecl(
+        name="child",
+        input=Parameter(name="_", type_name="Text", span=Span(line=1)),
+        output="Number",
+        span=Span(line=1),
+    )
+    parent = FlowDecl(name="parent", span=Span(line=2))
+    executor = _executor(tmp_path)
+    setup = _setup()
+    state = _state(parent, child)
+    binding = BoundRun(
+        run_id="run_root",
+        root_run_id="run_root",
+        thread="term_test",
+        input=Message.user("input"),
+        args={},
+        model=None,
+        state=state,
+        setup=setup,
+        agent_ceiling=resolve_agent_ceiling(setup, state, CeilingSpec()),
+        created_at="2026-01-01T00:00:00Z",
+    )
+
+    async def emit(_event: RunEvent) -> None:
+        return None
+
+    execution = _Execution(executor, root=binding, emit=emit)
+    observed_types: list[str | None] = []
+
+    async def execute_child(
+        _parent: BoundRun,
+        child_locals: dict[str, Local],
+        _step: str,
+        _name: str,
+        _placement: dict[str, object] | None,
+    ) -> Local:
+        observed_types.append(child_locals["_"].type_name)
+        return Local(1, "item", type_name="Number")
+
+    monkeypatch.setattr(execution, "execute_child", execute_child)
 
     result = asyncio.run(
-        _RunExecution(context, emit=sink.on_event).run(binding, parent)
+        execution.parallel_children(
+            binding,
+            {"_": Local(["one", "two"], "list", type_name="Text")},
+            "run_root/0",
+            child.name,
+            ["one", "two"],
+            limit=2,
+        )
     )
 
-    assert result == Local("done", "item")
-    runs = store.list_runs(limit=None, include_superseded=True)
-    assert len(runs) == 2
-    root = next(run for run in runs if run.id == binding.run_id)
-    child_run = next(run for run in runs if run.id != binding.run_id)
-    assert (root.status, root.output.step if root.output else None) == (
-        "finished",
-        f"{binding.run_id}/0",
+    assert result == Local([1, 1], "list", type_name="Number")
+    assert observed_types == ["Text", "Text"]
+    asyncio.run(executor.shutdown())
+
+
+def test_parallel_children_reuse_the_lane_that_finished(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    child = FlowDecl(name="child", output="Number", span=Span(line=1))
+    parent = FlowDecl(name="parent", span=Span(line=2))
+    executor = _executor(tmp_path)
+    setup = _setup()
+    state = _state(parent, child)
+    binding = BoundRun(
+        run_id="run_root",
+        root_run_id="run_root",
+        thread="term_test",
+        input=Message.user("input"),
+        args={},
+        model=None,
+        state=state,
+        setup=setup,
+        agent_ceiling=resolve_agent_ceiling(setup, state, CeilingSpec()),
+        created_at="2026-01-01T00:00:00Z",
     )
-    assert child_run.parent == f"{binding.run_id}/0"
-    assert child_run.status == "finished"
-    assert [
-        (step.path, step.kind, step.status) for step in store.list_steps(run_id=root.id)
-    ] == [(f"{binding.run_id}/0", "run", "finished")]
-    assert [
-        (step.index, step.kind, step.status)
-        for step in store.list_steps(run_id=child_run.id)
-    ] == [(0, "system", "finished")]
+
+    async def emit(_event: RunEvent) -> None:
+        return None
+
+    execution = _Execution(executor, root=binding, emit=emit)
+    started: asyncio.Queue[int] = asyncio.Queue()
+    gates = [asyncio.Event() for _index in range(5)]
+    placements: dict[int, dict[str, object]] = {}
+
+    async def execute_child(
+        _parent: BoundRun,
+        child_locals: dict[str, Local],
+        _step: str,
+        _name: str,
+        placement: dict[str, object] | None,
+    ) -> Local:
+        item = cast(int, child_locals["_"].value)
+        assert placement is not None
+        placements[item] = placement
+        started.put_nowait(item)
+        await gates[item].wait()
+        return Local(item, "item", type_name="Number")
+
+    monkeypatch.setattr(execution, "execute_child", execute_child)
+
+    async def scenario() -> Local:
+        task = asyncio.create_task(
+            execution.parallel_children(
+                binding,
+                {"_": Local(list(range(5)), "list", type_name="Number")},
+                "run_root/0",
+                child.name,
+                list(range(5)),
+                limit=4,
+            )
+        )
+        try:
+            first = {await asyncio.wait_for(started.get(), timeout=1) for _ in range(4)}
+            assert first == {0, 1, 2, 3}
+            gates[2].set()
+            assert await asyncio.wait_for(started.get(), timeout=1) == 4
+            assert placements[4]["lane"] == placements[2]["lane"]
+        finally:
+            for gate in gates:
+                gate.set()
+        return await task
+
+    assert asyncio.run(scenario()) == Local(
+        list(range(5)), "list", type_name="Number"
+    )
+    asyncio.run(executor.shutdown())
+
+
+def test_flow_step_events_carry_complete_input_references(tmp_path: Path) -> None:
+    child = FlowDecl(
+        name="child",
+        stmts=(LetStmt(value="done", span=Span(line=2)),),
+        span=Span(line=1),
+    )
+    parent = FlowDecl(
+        name="parent",
+        stmts=(
+            RunStmt(runnable="child", span=Span(line=4)),
+            RunStmt(runnable="child", span=Span(line=5)),
+        ),
+        span=Span(line=3),
+    )
+    executor = _executor(tmp_path)
+
+    root = asyncio.run(_start(executor, _setup(), _state(parent, child), parent.name))
+
+    steps = [
+        step
+        for step in executor.store.list_steps(run_id=root.id)
+        if step.parent == root.id
+    ]
+    assert [step.input for step in steps] == [
+        (RunControlRef(),),
+        (OutputRef(step=f"{root.id}/0"),),
+    ]
+    assert [step.given["source"] for step in steps] == [
+        {"line": 4, "head": "run child"},
+        {"line": 5, "head": "run child"},
+    ]
+    asyncio.run(executor.shutdown())
+
+
+def test_steer_control_is_finished_when_step_consumes_it(tmp_path: Path) -> None:
+    flow = FlowDecl(
+        name="pipeline",
+        stmts=(LetStmt(value="default", span=Span(line=2)),),
+        span=Span(line=1),
+    )
+    executor = _executor(tmp_path)
+    store = executor.store
+
+    class SteeringTracer(RunTracer):
+        control_index: int | None = None
+
+        async def on_event(self, event: RunEvent) -> None:
+            if isinstance(event, RunBegin) and self.control_index is None:
+                control = executor.steer(
+                    run_id=event.run,
+                    message=Message.user("steered"),
+                    timing="next_step",
+                    request_id="steer-1",
+                )
+                self.control_index = control.index
+
+    tracer = SteeringTracer()
+    record = asyncio.run(
+        _start(executor, _setup(), _state(flow), flow.name, tracer=tracer)
+    )
+
+    assert tracer.control_index is not None
+    control = store.get_run_control(run_id=record.id, index=tracer.control_index)
+    assert control is not None and control.status == "finished"
+    steps = store.list_steps(run_id=record.id)
+    assert steps[0].input == (RunControlRef(index=tracer.control_index),)
+    asyncio.run(executor.shutdown())
+
+
+def test_unreachable_control_fails_when_run_ends(tmp_path: Path) -> None:
+    flow = FlowDecl(name="pipeline", span=Span(line=1))
+    executor = _executor(tmp_path)
+    store = executor.store
+
+    class SteeringTracer(RunTracer):
+        control_index: int | None = None
+
+        async def on_event(self, event: RunEvent) -> None:
+            if isinstance(event, RunBegin):
+                self.control_index = executor.steer(
+                    run_id=event.run,
+                    message=Message.user("unused"),
+                    timing="next_call",
+                ).index
+
+    tracer = SteeringTracer()
+    record = asyncio.run(
+        _start(executor, _setup(), _state(flow), flow.name, tracer=tracer)
+    )
+
+    assert tracer.control_index is not None
+    control = store.get_run_control(run_id=record.id, index=tracer.control_index)
+    assert control is not None
+    assert control.status == "failed"
+    assert control.error == "run ended before the control could be applied"
+    asyncio.run(executor.shutdown())
+
+
+def test_run_control_request_id_is_unique_across_runs(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    store.create_thread(thread_id="term_test")
+    store.create_thread(thread_id="term_other")
+    store.accept_start(
+        run_id="run_test",
+        parent=None,
+        thread="term_test",
+        input=Message.user("hello"),
+        context={},
+        request_id="start-1",
+        created_at="2026-01-01T00:00:00Z",
+    )
+    store.accept_start(
+        run_id="run_other",
+        parent=None,
+        thread="term_other",
+        input=Message.user("hello"),
+        context={},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
+    )
+
+    first = store.accept_run_control(
+        run_id="run_test",
+        kind="steer",
+        timing="next_step",
+        input=Message.user("continue"),
+        context={},
+        request_id="steer-1",
+        created_at="2026-01-01T00:00:01Z",
+    )
+    with pytest.raises(ValueError, match="run control request already exists: steer-1"):
+        store.accept_run_control(
+            run_id="run_other",
+            kind="steer",
+            timing="next_step",
+            input=Message.user("continue"),
+            context={},
+            request_id="steer-1",
+            created_at="2026-01-01T00:00:03Z",
+        )
+
+    assert first.run == "run_test"
     store.close()
 
 
-def test_executor_map_preserves_input_order(tmp_path) -> None:
-    identity = FlowDecl(
-        name="identity",
-        span=Span(line=1),
-    )
-    flow = FlowDecl(
-        name="map_values",
-        stmts=(MapStmt(runnable="identity", par=2, span=Span(line=4)),),
-        span=Span(line=3),
-    )
-    context, binding = _executor_fixture(tmp_path, flow, identity)
-    events: list[TraceEvent] = []
-    executor = _RunExecution(context, emit=events.append)
-
-    result = asyncio.run(
-        executor.run(binding, flow, locals={"_": Local([3, 1, 2], "list")})
+def test_run_control_acceptance_rejects_invalid_runtime_values(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    store.create_thread(thread_id="term_test")
+    store.accept_start(
+        run_id="run_test",
+        parent=None,
+        thread="term_test",
+        input=Message.user("hello"),
+        context={},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
     )
 
-    assert result == Local([3, 1, 2], "list")
-    child_starts = [event for event in events if isinstance(event, RunStarting)]
-    assert [event.context["placement"]["item"] for event in child_starts] == [0, 1, 2]
-    step_end = next(event for event in events if isinstance(event, StepEnd))
-    assert step_end.step == f"{binding.run_id}/0"
-    assert step_end.kind == "par"
+    with pytest.raises(ValueError, match="unsupported run control kind"):
+        store.accept_run_control(
+            run_id="run_test",
+            kind=cast(Any, "start"),
+            timing="immediate",
+            input=Message.user("duplicate start"),
+            context={},
+            request_id=None,
+            created_at="2026-01-01T00:00:01Z",
+        )
+    with pytest.raises(ValueError, match="unsupported run control timing"):
+        store.accept_run_control(
+            run_id="run_test",
+            kind="stop",
+            timing=cast(Any, "later"),
+            input=None,
+            context={},
+            request_id=None,
+            created_at="2026-01-01T00:00:01Z",
+        )
+    with pytest.raises(ValueError, match="steer control requires input"):
+        store.accept_run_control(
+            run_id="run_test",
+            kind="steer",
+            timing="next_step",
+            input=None,
+            context={},
+            request_id=None,
+            created_at="2026-01-01T00:00:01Z",
+        )
+    store.close()
 
 
-def test_executor_positional_filters_use_system_steps(tmp_path) -> None:
-    flow = FlowDecl(
-        name="select_values",
-        stmts=(
-            KeepStmt(position="first", count=3, span=Span(line=2)),
-            DropStmt(position="last", count=1, span=Span(line=3)),
-        ),
-        span=Span(line=1),
+def test_internal_event_projection_does_not_update_control_status(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    store.create_thread(thread_id="term_test")
+    store.accept_start(
+        run_id="run_test",
+        parent=None,
+        thread="term_test",
+        input=Message.user("hello"),
+        context={},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
     )
-    context, binding = _executor_fixture(tmp_path, flow)
-    events: list[TraceEvent] = []
-    executor = _RunExecution(context, emit=events.append)
+    sink = _PersistSink(store)
 
-    result = asyncio.run(
-        executor.run(binding, flow, locals={"_": Local([1, 2, 3, 4], "list")})
+    sink.on_event(
+        RunBegin(
+            run="run_test",
+            input=RunControlRef(index=0),
+            started_at="2026-01-01T00:00:01Z",
+        )
     )
 
-    assert result == Local([1, 2], "list")
-    assert [event.kind for event in events if isinstance(event, StepBegin)] == [
-        "system",
-        "system",
+    control = store.get_run_control(run_id="run_test", index=0)
+    assert control is not None and control.status == "pending"
+    store.close()
+
+
+def test_thread_manager_emits_only_successful_events(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    listener = _RecordingThreadListener()
+    manager = ThreadManager(executor.store, executor.ids, listener=listener)
+
+    thread_id = manager.create(prefix=ThreadPrefix.TERM)
+    created = executor.store.get_thread(thread_id=thread_id)
+
+    assert created is not None and created.created_by.index == 0
+    assert [event.type for event in listener.events] == ["thread_created"]
+    with pytest.raises(ValueError, match="thread has no runs"):
+        manager.fork(thread_id=thread_id, run_id="run_missing")
+    assert [event.type for event in listener.events] == ["thread_created"]
+    asyncio.run(executor.shutdown())
+
+
+def test_thread_create_rejects_duplicate_request_id(
+    tmp_path: Path,
+) -> None:
+    executor = _executor(tmp_path)
+    listener = _RecordingThreadListener()
+    manager = ThreadManager(executor.store, executor.ids, listener=listener)
+
+    first = manager.create(prefix=ThreadPrefix.TERM, request_id="create-thread")
+    with pytest.raises(ValueError, match="thread control request already exists"):
+        manager.create(prefix=ThreadPrefix.TERM, request_id="create-thread")
+
+    assert executor.store.get_thread(thread_id=first) is not None
+    assert [event.type for event in listener.events] == ["thread_created"]
+    asyncio.run(executor.shutdown())
+
+
+def test_thread_request_id_is_unique_across_thread_kinds(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    manager = ThreadManager(executor.store, executor.ids)
+
+    manager.create(prefix=ThreadPrefix.TERM, request_id="create-thread")
+
+    with pytest.raises(ValueError, match="thread control request already exists"):
+        manager.create(prefix=ThreadPrefix.WEB, request_id="create-thread")
+    asyncio.run(executor.shutdown())
+
+
+def test_run_history_starts_from_thread_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executor = _executor(tmp_path)
+    store = executor.store
+    created = ThreadManager(store, executor.ids).create(prefix=ThreadPrefix.TERM)
+    history = RunHistory(store)
+    monkeypatch.setattr(
+        store,
+        "list_runs",
+        lambda **_kwargs: pytest.fail("thread inspection must not scan all runs"),
+    )
+
+    threads = history.list_threads(limit=None)
+
+    projected = next(thread for thread in threads if thread.id == created)
+    assert projected.run_count == 0
+    asyncio.run(executor.shutdown())
+
+
+def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
+    tmp_path: Path,
+) -> None:
+    executor = _executor(tmp_path)
+    store = executor.store
+    listener = _RecordingThreadListener()
+    manager = ThreadManager(store, executor.ids, listener=listener)
+    created = manager.create(prefix=ThreadPrefix.TERM)
+    anchor_id = "run_anchor"
+    store.accept_start(
+        run_id=anchor_id,
+        parent=None,
+        thread=created,
+        input=Message.user("hello"),
+        context={"runnable": {"kind": "flow", "name": "test"}},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
+    )
+    sink = _PersistSink(store)
+    sink.on_event(
+        RunBegin(
+            run=anchor_id,
+            input=RunControlRef(index=0),
+            started_at="2026-01-01T00:00:01Z",
+        )
+    )
+    store.finish_run_controls(
+        run_id=anchor_id, indexes=(0,), finished_at="2026-01-01T00:00:01Z"
+    )
+    sink.on_event(
+        RunEnd(
+            run=anchor_id,
+            status="finished",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+    )
+
+    forked = manager.fork(thread_id=created)
+
+    assert store.list_runs(thread_id=forked, limit=None) == []
+    assert [
+        run.id for run in store.list_thread_history_chronological(thread_id=forked)
+    ] == [anchor_id]
+    assert manager.rewind(thread_id=created, run_id=anchor_id) is None
+    rewound = store.get_thread(thread_id=created)
+    anchor = store.get_run(run_id=anchor_id)
+    assert anchor is not None and rewound is not None
+    assert anchor.superseded_by == rewound.head
+    assert [event.type for event in listener.events] == [
+        "thread_created",
+        "thread_forked",
+        "thread_rewound",
     ]
-    assert not any(isinstance(event, RunStarting) for event in events)
+    asyncio.run(executor.shutdown())
 
 
-def test_parallel_failure_ends_children_before_parent_step(tmp_path) -> None:
-    invalid_child = FlowDecl(
-        name="invalid_child",
-        stmts=(GatherStmt(runnable="invalid_child", span=Span(line=2)),),
-        span=Span(line=1),
+def test_thread_fork_rejects_duplicate_request_without_starting_runs(
+    tmp_path: Path,
+) -> None:
+    executor = _executor(tmp_path)
+    store = executor.store
+    listener = _RecordingThreadListener()
+    manager = ThreadManager(store, executor.ids, listener=listener)
+    created = manager.create(prefix=ThreadPrefix.TERM)
+    store.accept_start(
+        run_id="run_anchor",
+        parent=None,
+        thread=created,
+        input=Message.user("hello"),
+        context={"runnable": {"kind": "flow", "name": "test"}},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
     )
-    flow = FlowDecl(
-        name="parallel_failure",
-        stmts=(MapStmt(runnable="invalid_child", par=2, span=Span(line=4)),),
-        span=Span(line=3),
+    sink = _PersistSink(store)
+    sink.on_event(
+        RunBegin(
+            run="run_anchor",
+            input=RunControlRef(index=0),
+            started_at="2026-01-01T00:00:01Z",
+        )
     )
-    context, binding = _executor_fixture(tmp_path, flow, invalid_child)
-    events: list[TraceEvent] = []
+    sink.on_event(
+        RunEnd(
+            run="run_anchor",
+            status="finished",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+    )
 
-    with pytest.raises(ToolangError, match="gather requires current shape list"):
-        asyncio.run(
-            _RunExecution(context, emit=events.append).run(
-                binding,
-                flow,
-                locals={"_": Local([1, 2, 3], "list")},
+    forked = manager.fork(
+        thread_id=created,
+        request_id="fork-thread",
+    )
+    with pytest.raises(ValueError, match="thread control request already exists"):
+        manager.fork(
+            thread_id=created,
+            request_id="fork-thread",
+        )
+    manager.rewind(
+        thread_id=created,
+        request_id="rewind-thread",
+    )
+
+    assert store.get_thread(thread_id=forked) is not None
+    assert [run.id for run in store.list_runs(limit=None, include_superseded=True)] == [
+        "run_anchor"
+    ]
+    assert [event.type for event in listener.events] == [
+        "thread_created",
+        "thread_forked",
+        "thread_rewound",
+    ]
+    asyncio.run(executor.shutdown())
+
+
+def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
+    tmp_path: Path,
+) -> None:
+    executor = _executor(tmp_path)
+    store = executor.store
+    manager = ThreadManager(store, executor.ids)
+    created = manager.create(prefix=ThreadPrefix.TERM)
+    sink = _PersistSink(store)
+    timestamp = "2026-01-01T00:00:00Z"
+    for run_id in ("run_before", "run_anchor", "run_after"):
+        store.accept_start(
+            run_id=run_id,
+            parent=None,
+            thread=created,
+            input=Message.user(run_id),
+            context={"runnable": {"kind": "flow", "name": "test"}},
+            request_id=None,
+            created_at=timestamp,
+        )
+        sink.on_event(
+            RunBegin(
+                run=run_id,
+                input=RunControlRef(index=0),
+                started_at=timestamp,
+            )
+        )
+        sink.on_event(RunEnd(run=run_id, status="finished", finished_at=timestamp))
+
+    manager.rewind(thread_id=created, run_id="run_anchor")
+
+    before = store.get_run(run_id="run_before")
+    anchor = store.get_run(run_id="run_anchor")
+    after = store.get_run(run_id="run_after")
+    rewound = store.get_thread(thread_id=created)
+    assert before is not None and before.superseded_by is None
+    assert rewound is not None
+    assert anchor is not None and anchor.superseded_by == rewound.head
+    assert after is not None and after.superseded_by == rewound.head
+    asyncio.run(executor.shutdown())
+
+
+def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    store = executor.store
+    manager = ThreadManager(store, executor.ids)
+    source = manager.create(prefix=ThreadPrefix.TERM)
+    sink = _PersistSink(store)
+    for run_id in ("run_a", "run_b"):
+        store.accept_start(
+            run_id=run_id,
+            parent=None,
+            thread=source,
+            input=Message.user(run_id),
+            context={"runnable": {"kind": "flow", "name": "test"}},
+            request_id=None,
+            created_at="2026-01-01T00:00:00Z",
+        )
+        sink.on_event(
+            RunBegin(
+                run=run_id,
+                input=RunControlRef(index=0),
+                started_at="2026-01-01T00:00:01Z",
+            )
+        )
+        sink.on_event(
+            RunEnd(
+                run=run_id,
+                status="finished",
+                finished_at="2026-01-01T00:00:02Z",
             )
         )
 
-    child_runs = {
-        event.run
-        for event in events
-        if isinstance(event, RunStarting) and event.parent == f"{binding.run_id}/0"
-    }
-    child_end_positions = [
-        index
-        for index, event in enumerate(events)
-        if isinstance(event, RunEnd) and event.run in child_runs
-    ]
-    parent_step_end = next(
-        index
-        for index, event in enumerate(events)
-        if isinstance(event, StepEnd) and event.step == f"{binding.run_id}/0"
-    )
-    assert child_runs
-    assert len(child_end_positions) == len(child_runs)
-    assert max(child_end_positions) < parent_step_end
+    forked = manager.fork(thread_id=source)
+    manager.rewind(thread_id=forked)
 
-
-def test_executor_repeat_uses_unique_nested_step_paths(tmp_path) -> None:
-    flow = FlowDecl(
-        name="repeat_values",
-        stmts=(
-            RepeatStmt(
-                count=2,
-                stmts=(LetStmt(value="again", span=Span(line=3)),),
-                span=Span(line=2),
-            ),
-        ),
-        span=Span(line=1),
-    )
-    context, binding = _executor_fixture(tmp_path, flow)
-    store = RunStore(tmp_path / "runs.db")
-    sink = PersistSink(store)
-    sink.on_event(_starting(binding, flow))
-
-    result = asyncio.run(_RunExecution(context, emit=sink.on_event).run(binding, flow))
-
-    assert result == Local("again", "item")
     assert [
-        (step.parent, step.index) for step in store.list_steps(run_id=binding.run_id)
-    ] == [
-        (binding.run_id, 0),
-        (f"{binding.run_id}/0", 0),
-        (f"{binding.run_id}/0", 1),
-    ]
-    store.close()
+        run.id for run in store.list_thread_history_chronological(thread_id=forked)
+    ] == ["run_a"]
+    source_anchor = store.get_run(run_id="run_b")
+    assert source_anchor is not None and source_anchor.superseded_by is None
+    asyncio.run(executor.shutdown())
 
 
-def test_nested_first_step_inherits_parent_basis_without_cycle(tmp_path) -> None:
-    flow = FlowDecl(
-        name="nested_basis",
-        stmts=(
-            LetStmt(value="before", span=Span(line=2)),
-            RepeatStmt(
-                count=1,
-                stmts=(RepeatStmt(count=0, stmts=(), span=Span(line=4)),),
-                span=Span(line=3),
-            ),
-        ),
-        span=Span(line=1),
-    )
-    context, binding = _executor_fixture(tmp_path, flow)
-    store = RunStore(tmp_path / "runs.db")
-    sink = PersistSink(store)
-    sink.on_event(_starting(binding, flow))
-
-    asyncio.run(_RunExecution(context, emit=sink.on_event).run(binding, flow))
-
-    steps = {step.path: step for step in store.list_steps(run_id=binding.run_id)}
-    assert steps[f"{binding.run_id}/1"].input == (
-        OutputRef(step=f"{binding.run_id}/0"),
-    )
-    assert steps[f"{binding.run_id}/1/0"].input == (
-        OutputRef(step=f"{binding.run_id}/0"),
-    )
-    store.close()
-
-
-def test_run_output_tracks_primary_binding_not_last_step(tmp_path) -> None:
-    flow = FlowDecl(
-        name="bindings",
-        stmts=(
-            LetStmt(value="primary", span=Span(line=2)),
-            LetStmt(value="named", binding="side", span=Span(line=3)),
-            LetStmt(value="discarded", binding=None, span=Span(line=4)),
-        ),
-        span=Span(line=1),
-    )
-    context, binding = _executor_fixture(tmp_path, flow)
-    store = RunStore(tmp_path / "runs.db")
-    sink = PersistSink(store)
-    sink.on_event(_starting(binding, flow))
-
-    result = asyncio.run(_RunExecution(context, emit=sink.on_event).run(binding, flow))
-
-    run = store.get_run(run_id=binding.run_id)
-    assert result == Local("primary", "item")
-    assert run is not None
-    assert run.output == OutputRef(step=f"{binding.run_id}/0")
-    store.close()
-
-
-def test_flow_validates_its_declared_output(tmp_path) -> None:
-    flow = FlowDecl(
-        name="typed",
-        output="Number",
-        stmts=(LetStmt(value="not a number", span=Span(line=2)),),
-        span=Span(line=1),
-    )
-    context, binding = _executor_fixture(tmp_path, flow)
-    events: list[TraceEvent] = []
-
-    with pytest.raises(ToolangError, match="output is not Number"):
-        asyncio.run(_RunExecution(context, emit=events.append).run(binding, flow))
-
-    assert isinstance(events[-1], RunEnd)
-    assert events[-1].status == "failed"
-
-
-def test_agic_decodes_and_validates_structured_output() -> None:
-    report = StructDecl(
-        name="Report",
-        fields=(
-            Field(name="title", type_name="Text", span=Span(line=2)),
-            Field(
-                name="scores",
-                type_name="Number[]",
-                optional=True,
-                span=Span(line=3),
-            ),
-        ),
-        span=Span(line=1),
-    )
-    structs = {report.name: report}
-
-    assert _decode_agic_output(
-        RunResult(output_text='{"title":"result","scores":[3,2,1]}'),
-        "Report",
-        structs=structs,
-    ) == {"title": "result", "scores": [3, 2, 1]}
-
-    with pytest.raises(ToolangError, match=r"output.scores\[0\] is not Number"):
-        _decode_agic_output(
-            RunResult(output_text='{"title":"result","scores":[true]}'),
-            "Report",
-            structs=structs,
-        )
-
-
-def test_next_call_steer_waits_for_a_calling_statement(tmp_path) -> None:
-    child = FlowDecl(name="child", span=Span(line=1))
-    flow = FlowDecl(
-        name="steering",
-        stmts=(
-            LetStmt(value="before", span=Span(line=3)),
-            RunStmt(runnable="child", span=Span(line=4)),
-        ),
-        span=Span(line=2),
-    )
-    context, binding = _executor_fixture(tmp_path, flow, child)
-    store = RunStore(tmp_path / "runs.db")
-    sink = PersistSink(store)
-    sink.on_event(_starting(binding, flow))
-    sink.on_event(
-        RunSteering(
-            run=binding.run_id,
-            cmd=1,
-            input=Message.user("steered"),
-            apply="next_call",
-            created_at="2026-01-01T00:00:01Z",
-        )
-    )
-    executor = _RunExecution(
-        context,
-        emit=sink.on_event,
-        consume_commands=lambda run, kind: store.pending_commands(
-            run_id=run, kind=kind
-        ),
-    )
-
-    result = asyncio.run(executor.run(binding, flow))
-
-    steps = {step.path: step for step in store.list_steps(run_id=binding.run_id)}
-    command = store.get_command(run_id=binding.run_id, index=1)
-    assert result == Local("steered", "item")
-    assert steps[f"{binding.run_id}/0"].input == ()
-    assert steps[f"{binding.run_id}/1"].input == (InputRef(cmd=1),)
-    assert command is not None and command.status == "finished"
-    store.close()
-
-
-def test_next_call_stop_cancels_before_the_calling_statement(tmp_path) -> None:
-    child = FlowDecl(name="child", span=Span(line=1))
-    flow = FlowDecl(
-        name="stopping",
-        stmts=(
-            LetStmt(value="before", span=Span(line=3)),
-            RunStmt(runnable="child", span=Span(line=4)),
-        ),
-        span=Span(line=2),
-    )
-    context, binding = _executor_fixture(tmp_path, flow, child)
-    store = RunStore(tmp_path / "runs.db")
-    sink = PersistSink(store)
-    sink.on_event(_starting(binding, flow))
-    sink.on_event(
-        RunStopping(
-            run=binding.run_id,
-            cmd=1,
-            apply="next_call",
-            input=Message.user("stop before call"),
-            created_at="2026-01-01T00:00:01Z",
-        )
-    )
-    executor = _RunExecution(
-        context,
-        emit=sink.on_event,
-        consume_commands=lambda run, kind: store.pending_commands(
-            run_id=run, kind=kind
-        ),
-    )
-
-    with pytest.raises(asyncio.CancelledError):
-        asyncio.run(executor.run(binding, flow))
-
-    run = store.get_run(run_id=binding.run_id)
-    command = store.get_command(run_id=binding.run_id, index=1)
-    assert run is not None and run.status == "canceled"
-    assert command is not None and command.status == "finished"
-    assert [step.path for step in store.list_steps(run_id=binding.run_id)] == [
-        f"{binding.run_id}/0"
-    ]
-    store.close()
-
-
-def test_run_begin_uses_execution_time_not_acceptance_time(
-    tmp_path, monkeypatch
-) -> None:
-    flow = FlowDecl(name="timing", span=Span(line=1))
-    context, binding = _executor_fixture(tmp_path, flow)
-    events: list[TraceEvent] = []
-    monkeypatch.setattr(
-        "toolang.execution.executor._utc_now", lambda: "2026-01-01T00:01:00Z"
-    )
-
-    asyncio.run(_RunExecution(context, emit=events.append).run(binding, flow))
-
-    begin = next(event for event in events if isinstance(event, RunBegin))
-    assert begin.started_at == "2026-01-01T00:01:00Z"
-
-
-def test_persist_sink_replays_the_same_trace_idempotently(tmp_path) -> None:
-    store = RunStore(tmp_path / "runs.db")
-    sink = PersistSink(store)
-    trace: tuple[TraceEvent, ...] = (
-        RunStarting(
-            run="run_abc123",
-            cmd=0,
-            parent=None,
-            thread="term_abc123",
-            input=Message.user("hello"),
-            context={"origin": "chat", "root": "run_abc123"},
+def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
+    executor = _executor(tmp_path)
+    store = executor.store
+    manager = ThreadManager(store, executor.ids)
+    source = manager.create(prefix=ThreadPrefix.TERM)
+    sink = _PersistSink(store)
+    for run_id, parent in (("run_root", None), ("run_child", "run_root/0")):
+        store.accept_start(
+            run_id=run_id,
+            parent=parent,
+            thread=source,
+            input=Message.user(run_id),
+            context={"runnable": {"kind": "flow", "name": "test"}},
+            request_id=None,
             created_at="2026-01-01T00:00:00Z",
-        ),
+        )
+        sink.on_event(
+            RunBegin(
+                run=run_id,
+                input=RunControlRef(index=0),
+                started_at="2026-01-01T00:00:01Z",
+            )
+        )
+        sink.on_event(
+            RunEnd(
+                run=run_id,
+                status="finished",
+                finished_at="2026-01-01T00:00:02Z",
+            )
+        )
+
+    forked = manager.fork(thread_id=source)
+    control = store.get_thread_control(thread_id=forked, index=0)
+
+    assert control is not None and control.anchor_run == "run_root"
+    asyncio.run(executor.shutdown())
+
+
+def _accept_controls(db_path: str, run_id: str, offset: int, count: int) -> list[int]:
+    store = RunStore(Path(db_path))
+    indexes = [
+        store.accept_run_control(
+            run_id=run_id,
+            kind="steer",
+            timing="next_step",
+            input=Message.user(str(index)),
+            context={},
+            request_id=f"worker-{offset + index}",
+            created_at="2026-01-01T00:00:01Z",
+        ).index
+        for index in range(count)
+    ]
+    store.close()
+    return indexes
+
+
+def _accept_same_start(db_path: str) -> bool:
+    store = RunStore(Path(db_path))
+    try:
+        store.accept_start(
+            run_id="run_shared_start",
+            parent=None,
+            thread="term_shared_start",
+            input=Message.user("hello"),
+            context={"runnable": {"kind": "flow", "name": "shared"}},
+            request_id="shared-start",
+            created_at="2026-01-01T00:00:00Z",
+        )
+        return True
+    except ValueError:
+        return False
+    finally:
+        store.close()
+
+
+def _allocate_execution_ids(state_path: str, count: int) -> tuple[list[str], list[str]]:
+    ids = IdIssuer(Path(state_path))
+    return (
+        [ids.issue_run() for _ in range(count)],
+        [ids.issue_thread(ThreadPrefix.TERM.value) for _ in range(count)],
+    )
+
+
+def _accept_remote_stop(db_path: str, run_id: str) -> None:
+    store = RunStore(Path(db_path))
+    store.accept_run_control(
+        run_id=run_id,
+        kind="stop",
+        timing="immediate",
+        input=Message.user("remote stop"),
+        context={},
+        request_id="remote-stop",
+        created_at="2026-01-01T00:00:01Z",
+    )
+    store.close()
+
+
+def _rewind_thread(db_path: str, request_id: str) -> int | None:
+    store = RunStore(Path(db_path))
+    try:
+        _thread, control, _superseded = store.rewind_thread(
+            thread_id="term_thread_controls",
+            anchor_run="run_thread_anchor",
+            request_id=request_id,
+            expected_head=ThreadControlRef("term_thread_controls", 0),
+            context={},
+            created_at="2026-01-01T00:00:03Z",
+        )
+        return control.index
+    except ValueError:
+        return None
+    finally:
+        store.close()
+
+
+def test_run_control_indexes_are_process_safe(tmp_path: Path) -> None:
+    db_path = tmp_path / "runs.db"
+    store = RunStore(db_path)
+    store.create_thread(thread_id="term_test")
+    store.accept_start(
+        run_id="run_test",
+        parent=None,
+        thread="term_test",
+        input=Message.user("hello"),
+        context={},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
+    )
+    store.close()
+    context = get_context("spawn")
+    with context.Pool(4) as pool:
+        groups = pool.starmap(
+            _accept_controls,
+            [(str(db_path), "run_test", worker * 10, 10) for worker in range(4)],
+        )
+
+    indexes = sorted(index for group in groups for index in group)
+    assert indexes == list(range(1, 41))
+
+
+def test_run_start_has_one_owner_across_processes(tmp_path: Path) -> None:
+    db_path = tmp_path / "runs.db"
+    store = RunStore(db_path)
+    store.create_thread(thread_id="term_shared_start")
+    store.close()
+    context = get_context("spawn")
+    with context.Pool(4) as pool:
+        owners = pool.map(_accept_same_start, [str(db_path)] * 4)
+
+    assert owners.count(True) == 1
+    assert owners.count(False) == 3
+
+
+def test_run_and_thread_ids_are_process_safe(tmp_path: Path) -> None:
+    state_path = tmp_path / "ids.json"
+    context = get_context("spawn")
+    with context.Pool(4) as pool:
+        groups = pool.starmap(
+            _allocate_execution_ids,
+            [(str(state_path), 20) for _ in range(4)],
+        )
+
+    run_ids = [run_id for runs, _threads in groups for run_id in runs]
+    thread_ids = [thread_id for _runs, threads in groups for thread_id in threads]
+    assert len(run_ids) == len(set(run_ids)) == 80
+    assert len(thread_ids) == len(set(thread_ids)) == 80
+
+
+def test_remote_process_can_stop_an_owned_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    flow = FlowDecl(name="waiting", span=Span(line=1))
+    executor = _executor(tmp_path)
+    store = executor.store
+
+    async def wait_until_canceled(
+        runtime: _Execution,
+        binding: Any,
+        executable: Any,
+        **_kwargs: Any,
+    ) -> Any:
+        await runtime.emit(
+            RunBegin(
+                run=binding.run_id,
+                input=RunControlRef(index=0),
+                started_at="2026-01-01T00:00:00Z",
+            )
+        )
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(_Execution, "execute", wait_until_canceled)
+
+    async def scenario() -> Any:
+        handle = executor.start(
+            RunSpec(
+                setup=_setup(),
+                state=_state(flow),
+                thread="term_test",
+                runnable=flow.name,
+            ),
+            run_id="run_remote_stop",
+        )
+        while (
+            run := store.get_run(run_id="run_remote_stop")
+        ) is None or run.status != "running":
+            await asyncio.sleep(0.01)
+        process = get_context("spawn").Process(
+            target=_accept_remote_stop,
+            args=(str(store.db_path), "run_remote_stop"),
+        )
+        process.start()
+        await asyncio.to_thread(process.join, 10)
+        assert process.exitcode == 0
+        return await asyncio.wait_for(handle, timeout=2)
+
+    record = asyncio.run(scenario())
+
+    control = store.get_run_control(run_id=record.id, index=1)
+    assert record.status == "canceled"
+    assert control is not None and control.status == "finished"
+    asyncio.run(executor.shutdown())
+
+
+def test_executor_shutdown_cancels_and_persists_active_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    flow = FlowDecl(name="waiting", span=Span(line=1))
+    executor = _executor(tmp_path)
+    store = executor.store
+
+    async def wait_until_canceled(
+        runtime: _Execution,
+        binding: Any,
+        executable: Any,
+        **_kwargs: Any,
+    ) -> Any:
+        await runtime.emit(
+            RunBegin(
+                run=binding.run_id,
+                input=RunControlRef(index=0),
+                started_at="2026-01-01T00:00:00Z",
+            )
+        )
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(_Execution, "execute", wait_until_canceled)
+
+    async def scenario() -> Any:
+        handle = executor.start(
+            RunSpec(
+                setup=_setup(),
+                state=_state(flow),
+                thread="term_test",
+                runnable=flow.name,
+            ),
+            run_id="run_shutdown",
+        )
+        while (
+            run := store.get_run(run_id="run_shutdown")
+        ) is None or run.status != "running":
+            await asyncio.sleep(0.01)
+        await executor.shutdown()
+        return await handle
+
+    record = asyncio.run(scenario())
+
+    assert record.status == "canceled"
+    assert executor._active == {}
+    assert executor._monitor_task is None
+    with pytest.raises(RuntimeError, match="run executor is shut down"):
+        executor.stop(run_id=record.id)
+    assert store.get_run(run_id=record.id) == record
+
+
+def test_executor_shutdown_persists_run_before_owner_task_starts(
+    tmp_path: Path,
+) -> None:
+    flow = FlowDecl(name="never-started", span=Span(line=1))
+    executor = _executor(tmp_path)
+
+    async def scenario() -> Any:
+        handle = executor.start(
+            RunSpec(
+                setup=_setup(),
+                state=_state(flow),
+                thread="term_test",
+                runnable=flow.name,
+            ),
+            run_id="run_never_started",
+        )
+        await executor.shutdown()
+        return await handle
+
+    record = asyncio.run(scenario())
+
+    assert record.status == "canceled"
+    assert record.started_at == ""
+    assert executor._active == {}
+
+
+def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> None:
+    db_path = tmp_path / "runs.db"
+    store = RunStore(db_path)
+    store.create_thread(thread_id="term_thread_controls")
+    store.accept_start(
+        run_id="run_thread_anchor",
+        parent=None,
+        thread="term_thread_controls",
+        input=Message.user("hello"),
+        context={},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
+    )
+    sink = _PersistSink(store)
+    sink.on_event(
         RunBegin(
-            run="run_abc123",
-            input=InputRef(cmd=0),
-            context={"origin": "chat", "root": "run_abc123"},
+            run="run_thread_anchor",
+            input=RunControlRef(index=0),
             started_at="2026-01-01T00:00:01Z",
-        ),
+        )
+    )
+    sink.on_event(
+        RunEnd(
+            run="run_thread_anchor",
+            status="finished",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+    )
+    store.close()
+    context = get_context("spawn")
+    with context.Pool(2) as pool:
+        results = pool.starmap(
+            _rewind_thread,
+            [(str(db_path), "rewind-a"), (str(db_path), "rewind-b")],
+        )
+
+    assert sorted(results, key=lambda value: value is not None) == [None, 1]
+    reopened = RunStore(db_path)
+    assert [
+        control.index
+        for control in reopened.list_thread_controls(thread_id="term_thread_controls")
+    ] == [0, 1]
+    reopened.close()
+
+
+def test_private_event_projector_persists_run_and_step_records(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    store.create_thread(thread_id="term_test")
+    store.accept_start(
+        run_id="run_test",
+        parent=None,
+        thread="term_test",
+        input=Message.user("hello"),
+        context={},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
+    )
+    sink = _PersistSink(store)
+    sink.on_event(
+        RunBegin(
+            run="run_test",
+            input=RunControlRef(index=0),
+            started_at="2026-01-01T00:00:01Z",
+        )
+    )
+    sink.on_event(
         StepBegin(
-            step="run_abc123/0",
+            step="run_test/0",
             kind="system",
-            input=(InputRef(cmd=0),),
-            context={"statement": "let"},
+            input=(RunControlRef(index=0),),
             started_at="2026-01-01T00:00:02Z",
-        ),
+        )
+    )
+    sink.on_event(
         StepEnd(
-            step="run_abc123/0",
+            step="run_test/0",
             kind="system",
             status="finished",
             output=(TextPart(text="done"),),
-            detail={"statement": "let", "shape": "item"},
-            started_at="2026-01-01T00:00:02Z",
             finished_at="2026-01-01T00:00:03Z",
-        ),
-        RunEnd(
-            run="run_abc123",
-            status="finished",
-            output=OutputRef(step="run_abc123/0"),
-            finished_at="2026-01-01T00:00:04Z",
-        ),
-    )
-
-    for _ in range(2):
-        for event in trace:
-            sink.on_event(event)
-
-    run = store.get_run(run_id="run_abc123")
-    command = store.get_command(run_id="run_abc123", index=0)
-    assert run is not None and command is not None
-    assert (run.status, run.output, run.finished_at) == (
-        "finished",
-        OutputRef(step="run_abc123/0"),
-        "2026-01-01T00:00:04Z",
-    )
-    assert command.status == "finished"
-    assert len(store.list_steps(run_id="run_abc123")) == 1
-    store.close()
-
-
-def test_persist_sink_preserves_null_run_context_values(tmp_path) -> None:
-    store = RunStore(tmp_path / "runs.db")
-    sink = PersistSink(store)
-    context = {
-        "root": "run_abc123",
-        "invoke_params": {"accumulator": None},
-    }
-
-    sink.on_event(
-        RunStarting(
-            run="run_abc123",
-            cmd=0,
-            parent=None,
-            thread="term_abc123",
-            input=Message.user("hello"),
-            context=context,
-            created_at="2026-01-01T00:00:00Z",
         )
     )
     sink.on_event(
-        RunBegin(
-            run="run_abc123",
-            input=InputRef(cmd=0),
-            context=context,
+        RunEnd(
+            run="run_test",
+            status="finished",
+            output=OutputRef(step="run_test/0"),
+            finished_at="2026-01-01T00:00:04Z",
+        )
+    )
+
+    run = store.get_run(run_id="run_test")
+    assert run is not None and run.status == "finished"
+    assert store.run_output_text(run_id="run_test") == "done"
+    assert len(store.list_steps(run_id="run_test")) == 1
+    store.close()
+
+
+def test_run_store_migrates_schema_without_deleting_history(tmp_path: Path) -> None:
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    store.create_thread(thread_id="term_test")
+    store.accept_start(
+        run_id="run_test",
+        parent=None,
+        thread="term_test",
+        input=Message.user("hello"),
+        context={"runnable": {"kind": "flow", "name": "pipeline"}},
+        request_id="start-test",
+        created_at="2026-01-01T00:00:00Z",
+    )
+    store.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("DROP INDEX idx_run_controls_request")
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX idx_run_controls_request
+        ON run_controls(run, request_id)
+        WHERE request_id IS NOT NULL
+        """
+    )
+    connection.execute("PRAGMA user_version=13")
+    connection.commit()
+    connection.close()
+
+    reopened = RunStore(path)
+    try:
+        assert reopened.get_thread(thread_id="term_test") is not None
+        assert reopened.get_run(run_id="run_test") is not None
+        assert len(reopened.list_run_controls(run_id="run_test")) == 1
+    finally:
+        reopened.close()
+
+
+def test_run_store_removes_legacy_thread_control_error_without_deleting_history(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    store.create_thread(thread_id="term_test")
+    store.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE thread_controls ADD COLUMN error TEXT")
+    connection.execute("PRAGMA user_version=17")
+    connection.commit()
+    connection.close()
+
+    reopened = RunStore(path)
+    try:
+        assert reopened.get_thread(thread_id="term_test") is not None
+        assert len(reopened.list_thread_controls(thread_id="term_test")) == 1
+    finally:
+        reopened.close()
+
+    connection = sqlite3.connect(path)
+    try:
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(thread_controls)"
+            ).fetchall()
+        }
+        assert "error" not in columns
+    finally:
+        connection.close()
+
+
+def test_run_store_migrates_step_and_model_text_names_in_place(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    store.create_thread(thread_id="term_test")
+    store.accept_start(
+        run_id="run_test",
+        parent=None,
+        thread="term_test",
+        input=Message.user("hello"),
+        context={"runnable": {"kind": "flow", "name": "pipeline"}},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
+    )
+    sink = _PersistSink(store)
+    sink.on_event(
+        StepBegin(
+            step="run_test/0",
+            kind="system",
+            given={"runtime": "test"},
             started_at="2026-01-01T00:00:01Z",
         )
     )
-
-    run = store.get_run(run_id="run_abc123")
-    assert run is not None
-    assert run.context["invoke_params"] == {"accumulator": None}
+    sink.on_event(
+        StepEnd(
+            step="run_test/0",
+            kind="system",
+            status="finished",
+            noted={"shape": "item"},
+            finished_at="2026-01-01T00:00:02Z",
+        )
+    )
+    text_hash = _capture_model_text(store, "stable")
     store.close()
 
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE steps RENAME COLUMN given TO context")
+    connection.execute("ALTER TABLE steps RENAME COLUMN noted TO detail")
+    connection.execute("ALTER TABLE model_texts RENAME TO prompts")
+    connection.execute("PRAGMA user_version=15")
+    connection.commit()
+    connection.close()
 
-def test_persist_sink_rejects_conflicting_start_replay(tmp_path) -> None:
+    reopened = RunStore(path)
+    try:
+        step = reopened.list_steps(run_id="run_test")[0]
+        assert step.given == {"runtime": "test"}
+        assert step.noted == {"shape": "item"}
+        assert reopened.get_model_text(text_hash=text_hash) == "stable"
+    finally:
+        reopened.close()
+
+
+def test_run_store_migrates_v16_model_texts_in_place(tmp_path: Path) -> None:
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    text_hash = _capture_model_text(store, "stable")
+    store.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE model_texts RENAME TO templates")
+    connection.execute("PRAGMA user_version=16")
+    connection.commit()
+    connection.close()
+
+    reopened = RunStore(path)
+    try:
+        assert reopened.get_model_text(text_hash=text_hash) == "stable"
+    finally:
+        reopened.close()
+
+
+def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
-    sink = PersistSink(store)
-    start = RunStarting(
-        run="run_abc123",
-        cmd=0,
-        parent=None,
-        thread="term_abc123",
-        input=Message.user("hello"),
-        context={"origin": "chat"},
-        created_at="2026-01-01T00:00:00Z",
-    )
-    sink.on_event(start)
-
-    with pytest.raises(ValueError, match="conflicting accepted run event"):
+    store.create_thread(thread_id="term_test")
+    sink = _PersistSink(store)
+    for run_id, text in (("run_%", "literal"), ("run_ax", "other")):
+        store.accept_start(
+            run_id=run_id,
+            parent=None,
+            thread="term_test",
+            input=Message.user(text),
+            context={},
+            request_id=None,
+            created_at="2026-01-01T00:00:00Z",
+        )
         sink.on_event(
-            RunStarting(
-                run=start.run,
-                cmd=start.cmd,
-                parent=start.parent,
-                thread=start.thread,
-                input=Message.user("different"),
-                context=start.context,
-                created_at=start.created_at,
+            RunBegin(
+                run=run_id,
+                input=RunControlRef(index=0),
+                started_at="2026-01-01T00:00:01Z",
             )
         )
+        sink.on_event(
+            StepBegin(
+                step=f"{run_id}/0",
+                kind="system",
+                started_at="2026-01-01T00:00:02Z",
+            )
+        )
+        sink.on_event(
+            StepEnd(
+                step=f"{run_id}/0",
+                kind="system",
+                status="finished",
+                output=(TextPart(text=text),),
+                finished_at="2026-01-01T00:00:03Z",
+            )
+        )
+        sink.on_event(
+            RunEnd(
+                run=run_id,
+                status="finished",
+                finished_at="2026-01-01T00:00:04Z",
+            )
+        )
+
+    assert [step.parent for step in store.list_steps(run_id="run_%")] == ["run_%"]
+    grouped = store.list_steps_for_runs(run_ids=("run_%", "run_ax"))
+    assert [step.parent for step in grouped["run_%"]] == ["run_%"]
+    assert [step.parent for step in grouped["run_ax"]] == ["run_ax"]
+    with pytest.raises(ValueError, match="invalid run id"):
+        store.accept_start(
+            run_id="run/invalid",
+            parent=None,
+            thread="term_test",
+            input=Message.user("invalid"),
+            context={},
+            request_id=None,
+            created_at="2026-01-01T00:00:05Z",
+        )
     store.close()
-
-
-def _executor_fixture(tmp_path, selected: FlowDecl, *runnables: FlowDecl):
-    program = Program(span=Span(line=1), flows=(selected, *runnables))
-    state = SimpleNamespace(program=program, fingerprint="state-test")
-    context = cast(
-        Any,
-        SimpleNamespace(
-            root=tmp_path,
-            name="alice",
-            id_state_path=tmp_path / "ids.json",
-        ),
-    )
-    binding = _Run(
-        run_id="run_abc123",
-        group="chat",
-        origin="chat",
-        thread_id="term_abc123",
-        executable_kind="flow",
-        executable_name=selected.name,
-        input_text="",
-        message=Message.user(""),
-        model_selector=None,
-        model_selectors=(),
-        tool_selectors=None,
-        cap_selectors=(),
-        run_loop="basic",
-        metadata={},
-        state=cast(Any, state),
-        setup=AgentSetup(tools={}, model_providers={}, model_adapters={}),
-        created_at="2026-01-01T00:00:00Z",
-    )
-    return context, binding
-
-
-def _starting(binding: _Run, flow: FlowDecl) -> RunStarting:
-    return RunStarting(
-        run=binding.run_id,
-        cmd=0,
-        parent=None,
-        thread=binding.thread_id,
-        input=binding.message or Message.user(binding.input_text),
-        context={
-            "origin": binding.origin,
-            "root": binding.run_id,
-            "executable": {"kind": "flow", "name": flow.name},
-            "call": "top",
-        },
-        created_at=binding.created_at,
-    )

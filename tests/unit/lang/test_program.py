@@ -6,10 +6,11 @@ from typing import Any, cast
 import pytest
 
 from tests import FIXTURES_ROOT, PROJECT_ROOT
-from toolang.common.error import ToolangError
+from toolang.common.errors import ToolangError
 from toolang.lang import Program, to_data
-from toolang.lang.ast import LetStmt, RepeatStmt
-from toolang.lang.input import expand_program_input
+from toolang.lang.ast import LetStmt, RepeatStmt, SettleStmt
+from toolang.base.types.message import TextPart
+from toolang.lang.input import perceive_input
 from toolang.state.source import read_authored_source
 
 
@@ -195,6 +196,57 @@ flow pipeline:
     assert repeat.until is not None
 
 
+def test_inline_settle_exposes_the_current_item() -> None:
+    program = Program.from_source(
+        """
+flow summarize(_: Text[]) -> Text:
+  settle -> Text:
+    {{_}}{{item}}
+"""
+    )
+
+    statement = program.flows[0].stmts[0]
+    assert isinstance(statement, SettleStmt)
+    generated = next(agic for agic in program.agics if agic.name == statement.runnable)
+    assert generated.input is not None
+    assert generated.input.type_name == "Part[]"
+    assert [(param.name, param.type_name) for param in generated.params] == [
+        ("item", "Part[]")
+    ]
+
+
+def test_inline_flow_evaluators_disable_recall_and_tools() -> None:
+    program = Program.from_source(
+        """
+agic action:
+  pass
+
+flow evaluate:
+  keep: Return true when the item is useful.
+  rank: Return a relevance score.
+  repeat 2:
+    run action
+    until: Return true when complete.
+"""
+    )
+
+    generated = [agic for agic in program.agics if agic.name.startswith("<agic:")]
+
+    assert sorted(agic.output for agic in generated if agic.output) == [
+        "Boolean",
+        "Boolean",
+        "Number",
+    ]
+    for agic in generated:
+        assert [
+            (directive.name, directive.operator, directive.values)
+            for directive in agic.directives
+        ] == [
+            ("recall", "=", ("none",)),
+            ("tools", "=", ("none",)),
+        ]
+
+
 def test_inline_prompting_is_flattened_and_referenced() -> None:
     program = Program.from_source(
         """
@@ -254,15 +306,63 @@ def test_program_data_round_trips_without_parsing_source() -> None:
     from toolang.lang.ast import program_from_data
 
     program = Program.from_source(
-        "agic hello:\n"
-        "  Hello.\n"
-        "\n"
-        "flow work:\n"
-        "  repeat 2:\n"
-        "    run hello\n"
+        "agic hello:\n  Hello.\n\nflow work:\n  repeat 2:\n    run hello\n"
     )
 
     assert program_from_data(to_data(program)) == program
+
+
+def test_program_data_round_trip_preserves_ambiguous_statement_kinds() -> None:
+    from toolang.lang.ast import program_from_data
+
+    program = Program.from_source(
+        """
+agic action:
+  pass
+
+agic predicate -> Boolean:
+  pass
+
+flow work:
+  gather action
+  settle action
+  keep predicate
+  drop predicate
+  repeat 2:
+    settle action
+    drop predicate
+"""
+    )
+
+    restored = program_from_data(to_data(program))
+
+    assert restored == program
+    assert [type(statement) for statement in restored.flows[0].stmts] == [
+        type(statement) for statement in program.flows[0].stmts
+    ]
+    restored_repeat = restored.flows[0].stmts[-1]
+    original_repeat = program.flows[0].stmts[-1]
+    assert isinstance(restored_repeat, RepeatStmt)
+    assert isinstance(original_repeat, RepeatStmt)
+    assert [type(statement) for statement in restored_repeat.stmts] == [
+        type(statement) for statement in original_repeat.stmts
+    ]
+
+
+def test_program_data_rejects_unknown_statement_kind() -> None:
+    from toolang.lang.ast import program_from_data
+
+    data = cast(
+        dict[str, Any],
+        to_data(
+            Program.from_source("agic action:\n  pass\nflow work:\n  run action\n")
+        ),
+    )
+    flows = cast(list[dict[str, Any]], data["flows"])
+    flows[0]["stmts"][0]["kind"] = "future"
+
+    with pytest.raises(ValueError, match="Input tag 'future'"):
+        program_from_data(data)
 
 
 def test_validation_runs_after_lowering() -> None:
@@ -376,18 +476,21 @@ prompt review:
   Review {{path}} carefully.
   {{focus}}
 
+  {{_}}
+
 agic:
   Respond directly.
 """.strip(),
     )
     program = read_authored_source(root, "alice").load_program().parse()
 
-    expanded = expand_program_input(
-        program, '/review src/app.py "only errors"\n\nAlso inspect tests.'
+    expanded = perceive_input(
+        '/review src/app.py "only errors"\n\nAlso inspect tests.',
+        program=program,
     )
 
     assert expanded == (
-        "Review src/app.py carefully.\nonly errors\n\nAlso inspect tests."
+        TextPart("Review src/app.py carefully.\nonly errors\n\nAlso inspect tests."),
     )
 
 
@@ -399,7 +502,7 @@ def test_repo_program_fixtures_parse_cleanly() -> None:
 
 def test_example_programs_parse_cleanly() -> None:
     for source_path in sorted((PROJECT_ROOT / "examples").glob("*.too")):
-        if source_path.name == "invoke-playground.too":
+        if source_path.name == "script-playground.too":
             continue
         program = Program.from_source(source_path.read_text(encoding="utf-8"))
         assert program.agics, source_path.name

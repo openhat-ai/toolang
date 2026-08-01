@@ -20,7 +20,12 @@ from urllib.request import Request, urlopen
 
 import frontmatter
 
-from toolang.catalog import cap as cap_catalog
+from toolang.catalog.config import WiredCaps
+from toolang.catalog.types import (
+    CAP_DIR_BY_KIND,
+    CAP_KIND_BY_DIR,
+    CAP_KINDS as CATALOG_CAP_KINDS,
+)
 from toolang.state.source import AuthoredFile, AuthoredSource, read_authored_source
 from ..common.immutable import freeze_mapping, mutable_data
 from ..common.progress import ProgressSink, emit_progress
@@ -51,11 +56,11 @@ from .types import (
     Visibility,
 )
 
-CAP_KINDS: tuple[EntryKind, ...] = cap_catalog.CAP_KINDS
+CAP_KINDS: tuple[EntryKind, ...] = CATALOG_CAP_KINDS
 EMBEDDED_CAP_KINDS = frozenset({"psyche", "service", "prompt"})
 FILE_BACKED_KINDS = frozenset({"psyche", "service", "prompt"})
-DIR_NAME_BY_KIND: dict[EntryKind, str] = cap_catalog.CAP_DIR_BY_KIND
-KIND_BY_DIR_NAME: dict[str, EntryKind] = cap_catalog.CAP_KIND_BY_DIR
+DIR_NAME_BY_KIND: dict[EntryKind, str] = CAP_DIR_BY_KIND
+KIND_BY_DIR_NAME: dict[str, EntryKind] = CAP_KIND_BY_DIR
 REMOTE_CAP_MATERIALIZE_WORKERS = 4
 _AGENT_STATE_VERSION_DOMAIN = b"toolang-agent-state-v1\0"
 
@@ -251,6 +256,7 @@ class AgentState:
     root_config: Mapping[str, object]
     home_config: Mapping[str, object]
     config: Mapping[str, object]
+    program_source: str
     program: Program
     caps: tuple[PreparedCap, ...]
     loaded_at: str
@@ -277,6 +283,7 @@ class AgentState:
             "toolang_version": self.toolang_version,
             "updated_at": self.loaded_at,
             "loaded_at": self.loaded_at,
+            "program_source": self.program_source,
             "program": to_data(self.program),
             "caps": [cap.path for cap in self.caps],
         }
@@ -289,6 +296,7 @@ def compose_agent_state(
     toolang_version: str,
     root_config: Mapping[str, object],
     home_config: Mapping[str, object],
+    program_source: str,
     program: Program,
     root_caps: tuple[PreparedCap, ...],
     home_caps: tuple[PreparedCap, ...],
@@ -304,6 +312,7 @@ def compose_agent_state(
         root_config=root_config,
         home_config=home_config,
         config=_merge_config(root_config, home_config),
+        program_source=program_source,
         program=program,
         caps=effective_caps(root_caps, home_caps),
         loaded_at=loaded_at,
@@ -1281,7 +1290,7 @@ def _collect_remote_entry_requests(
         )
         if config_file is None:
             continue
-        for entry in cap_catalog.WiredCaps(config_file.path).parse(
+        for entry in WiredCaps(config_file.path).parse(
             config_file.read_text(), kinds=kinds
         ):
             requests.append(
@@ -1588,9 +1597,7 @@ def _materialize_remote_entry_requests(
         _emit_remote_entry_pending(request, progress=progress)
     entries: list[PreparedCap] = []
     files: dict[str, bytes] = {}
-    results: list[tuple[PreparedCap, dict[str, bytes]] | None] = [None] * len(
-        requests
-    )
+    results: list[tuple[PreparedCap, dict[str, bytes]] | None] = [None] * len(requests)
     first_error: BaseException | None = None
     executor = ThreadPoolExecutor(max_workers=REMOTE_CAP_MATERIALIZE_WORKERS)
     try:

@@ -9,7 +9,14 @@ from typing import Any, Literal, cast
 
 
 MessageRole = Literal["user", "assistant", "tool"]
-PartType = Literal["text", "image", "audio", "file", "tool_call", "tool_result"]
+MessagePartType = Literal[
+    "text",
+    "image",
+    "audio",
+    "document",
+    "tool_call",
+    "tool_result",
+]
 DeltaType = Literal["text", "tool_call"]
 ImageDetail = Literal["low", "high", "auto", "original"]
 AudioFormat = Literal["mp3", "wav"]
@@ -40,6 +47,12 @@ class ImagePart:
     filename: str | None = None
     media_type: str | None = None
     type: Literal["image"] = "image"
+
+    def __post_init__(self) -> None:
+        if sum(value is not None for value in (self.image_url, self.file_id)) != 1:
+            raise ValueError(
+                "image part requires exactly one of image_url or file_id"
+            )
 
     @classmethod
     def from_data(cls, payload: Mapping[str, Any]) -> ImagePart:
@@ -82,7 +95,14 @@ class AudioPart:
     format: AudioFormat
     filename: str | None = None
     media_type: str | None = None
+    transcript: str | None = None
     type: Literal["audio"] = "audio"
+
+    def __post_init__(self) -> None:
+        if not self.data:
+            raise ValueError("audio part requires data")
+        if self.format not in {"mp3", "wav"}:
+            raise ValueError(f"unsupported audio format: {self.format}")
 
     @classmethod
     def from_data(cls, payload: Mapping[str, Any]) -> AudioPart:
@@ -101,11 +121,13 @@ class AudioPart:
             data = parsed_data
         format_value = _audio_format(payload.get("format"), media_type=media_type)
         filename = _optional_text(payload.get("filename"))
+        transcript = _optional_text(payload.get("transcript"))
         return cls(
             data=data,
             format=format_value,
             filename=filename,
             media_type=media_type,
+            transcript=transcript,
         )
 
     def to_data(self) -> dict[str, Any]:
@@ -118,56 +140,62 @@ class AudioPart:
             data["filename"] = self.filename
         if self.media_type is not None:
             data["media_type"] = self.media_type
+        if self.transcript is not None:
+            data["transcript"] = self.transcript
         return data
 
 
 @dataclass(frozen=True, slots=True)
-class FilePart:
-    """One canonical file input part."""
+class DocumentPart:
+    """One canonical document part."""
 
-    file_data: str | None = None
-    file_url: str | None = None
+    data: str | None = None
+    url: str | None = None
     file_id: str | None = None
     filename: str | None = None
     media_type: str | None = None
-    type: Literal["file"] = "file"
+    type: Literal["document"] = "document"
+
+    def __post_init__(self) -> None:
+        if sum(
+            value is not None
+            for value in (self.data, self.url, self.file_id)
+        ) != 1:
+            raise ValueError(
+                "document part requires exactly one of data, url, or file_id"
+            )
 
     @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> FilePart:
-        file_data = _optional_text(payload.get("file_data"))
-        file_url = _optional_text(payload.get("file_url"))
+    def from_data(cls, payload: Mapping[str, Any]) -> DocumentPart:
+        document_data = _optional_text(payload.get("data"))
+        url = _optional_text(payload.get("url"))
         file_id = _optional_text(payload.get("file_id"))
         filename = _optional_text(payload.get("filename"))
         media_type = _optional_text(payload.get("media_type"))
-        if file_data is None:
-            data_url = _optional_text(payload.get("data_url"))
-            if data_url is not None:
-                parsed_media_type, _parsed_data = _parse_data_url(data_url)
-                media_type = media_type or parsed_media_type
-                file_data = data_url
-        if file_data is None and file_url is None and file_id is None:
-            raise ValueError("file part requires file_data, file_url, file_id, or data_url")
+        if document_data is not None and document_data.startswith("data:"):
+            parsed_media_type, _parsed_data = _parse_data_url(document_data)
+            media_type = media_type or parsed_media_type
         return cls(
-            file_data=file_data,
-            file_url=file_url,
+            data=document_data,
+            url=url,
             file_id=file_id,
             filename=filename,
             media_type=media_type,
         )
 
     def to_data(self) -> dict[str, Any]:
-        data: dict[str, Any] = {"type": self.type}
-        if self.file_data is not None:
-            data["file_data"] = self.file_data
-        if self.file_url is not None:
-            data["file_url"] = self.file_url
+        result: dict[str, Any] = {"type": self.type}
+        if self.data is not None:
+            result["data"] = self.data
+        if self.url is not None:
+            result["url"] = self.url
         if self.file_id is not None:
-            data["file_id"] = self.file_id
+            result["file_id"] = self.file_id
         if self.filename is not None:
-            data["filename"] = self.filename
+            result["filename"] = self.filename
         if self.media_type is not None:
-            data["media_type"] = self.media_type
-        return data
+            result["media_type"] = self.media_type
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +207,7 @@ class ToolCallPart:
     tool_family: str
     input: dict[str, Any] = field(default_factory=dict)
     call_id: str | None = None
+    reasoning: str | None = None
     type: Literal["tool_call"] = "tool_call"
 
     @classmethod
@@ -189,6 +218,7 @@ class ToolCallPart:
             tool_family=str(payload.get("tool_family") or payload.get("tool_name") or ""),
             input=_json_object(payload.get("input")),
             call_id=_optional_text(payload.get("call_id")),
+            reasoning=_optional_text(payload.get("reasoning")),
         )
 
     def to_data(self) -> dict[str, Any]:
@@ -201,6 +231,8 @@ class ToolCallPart:
         }
         if self.call_id:
             data["call_id"] = self.call_id
+        if self.reasoning:
+            data["reasoning"] = self.reasoning
         return data
 
 
@@ -213,6 +245,7 @@ class ToolResultPart:
     tool_family: str
     output: dict[str, Any] = field(default_factory=dict)
     call_id: str | None = None
+    error: str | None = None
     type: Literal["tool_result"] = "tool_result"
 
     @classmethod
@@ -223,6 +256,7 @@ class ToolResultPart:
             tool_family=str(payload.get("tool_family") or payload.get("tool_name") or ""),
             output=_json_object(payload.get("output")),
             call_id=_optional_text(payload.get("call_id")),
+            error=_optional_text(payload.get("error")),
         )
 
     def to_data(self) -> dict[str, Any]:
@@ -235,10 +269,14 @@ class ToolResultPart:
         }
         if self.call_id:
             data["call_id"] = self.call_id
+        if self.error:
+            data["error"] = self.error
         return data
 
 
-Part = TextPart | ImagePart | AudioPart | FilePart | ToolCallPart | ToolResultPart
+PerceptPart = TextPart | ImagePart | AudioPart | DocumentPart
+Percept = tuple[PerceptPart, ...]
+MessagePart = PerceptPart | ToolCallPart | ToolResultPart
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,7 +299,7 @@ class ToolCallDelta:
 Delta = TextDelta | ToolCallDelta
 
 
-def part_from_data(payload: Mapping[str, Any]) -> Part:
+def part_from_data(payload: Mapping[str, Any]) -> MessagePart:
     """Return one canonical part from one serialized payload."""
 
     part_type = str(payload.get("type", "")).strip()
@@ -271,8 +309,8 @@ def part_from_data(payload: Mapping[str, Any]) -> Part:
         return ImagePart.from_data(payload)
     if part_type == "audio":
         return AudioPart.from_data(payload)
-    if part_type == "file":
-        return FilePart.from_data(payload)
+    if part_type == "document":
+        return DocumentPart.from_data(payload)
     if part_type == "tool_call":
         return ToolCallPart.from_data(payload)
     if part_type == "tool_result":
@@ -280,25 +318,27 @@ def part_from_data(payload: Mapping[str, Any]) -> Part:
     raise ValueError(f"unknown message part type: {part_type or '<empty>'}")
 
 
-def parts_from_data(payloads: Sequence[Mapping[str, Any]]) -> tuple[Part, ...]:
+def parts_from_data(
+    payloads: Sequence[Mapping[str, Any]],
+) -> tuple[MessagePart, ...]:
     """Return canonical parts from one serialized sequence."""
 
     return tuple(part_from_data(item) for item in payloads)
 
 
-def parts_to_data(parts: Sequence[Part]) -> list[dict[str, Any]]:
+def parts_to_data(parts: Sequence[MessagePart]) -> list[dict[str, Any]]:
     """Return serialized canonical parts."""
 
     return [part.to_data() for part in parts]
 
 
-def message_text(parts: Sequence[Part]) -> str:
+def message_text(parts: Sequence[MessagePart]) -> str:
     """Return concatenated text from canonical message parts."""
 
     return "".join(part.text for part in parts if isinstance(part, TextPart))
 
 
-def message_summary(parts: Sequence[Part]) -> str:
+def message_summary(parts: Sequence[MessagePart]) -> str:
     """Return a compact human-readable summary for message parts."""
 
     items: list[str] = []
@@ -314,8 +354,8 @@ def message_summary(parts: Sequence[Part]) -> str:
         if isinstance(part, AudioPart):
             items.append(_part_label("audio", filename=part.filename))
             continue
-        if isinstance(part, FilePart):
-            items.append(_part_label("file", filename=part.filename))
+        if isinstance(part, DocumentPart):
+            items.append(_part_label("document", filename=part.filename))
             continue
     return " ".join(items)
 
@@ -325,8 +365,31 @@ class Message:
     """Stable canonical message payload."""
 
     role: MessageRole
-    parts: tuple[Part, ...] = field(default_factory=tuple)
-    meta: dict[str, Any] = field(default_factory=dict)
+    parts: tuple[MessagePart, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if self.role == "user" and not all(
+            isinstance(part, (TextPart, ImagePart, AudioPart, DocumentPart))
+            for part in self.parts
+        ):
+            raise ValueError("user messages can only contain percept parts")
+        if self.role == "assistant" and not all(
+            isinstance(
+                part,
+                (TextPart, ImagePart, AudioPart, DocumentPart, ToolCallPart),
+            )
+            for part in self.parts
+        ):
+            raise ValueError(
+                "assistant messages can only contain percept or tool-call parts"
+            )
+        if self.role == "tool" and (
+            not self.parts
+            or not all(isinstance(part, ToolResultPart) for part in self.parts)
+        ):
+            raise ValueError(
+                "tool messages require one or more tool-result parts"
+            )
 
     @classmethod
     def from_data(cls, payload: Mapping[str, Any]) -> Message:
@@ -336,11 +399,9 @@ class Message:
             if isinstance(parts_payload, Sequence) and not isinstance(parts_payload, (str, bytes, bytearray))
             else ()
         )
-        meta = payload.get("meta")
         return cls(
             role=_message_role(payload.get("role")),
             parts=parts,
-            meta=dict(meta) if isinstance(meta, Mapping) else {},
         )
 
     @classmethod
@@ -355,10 +416,7 @@ class Message:
     def tool_output(cls, *, call_id: str, content: str) -> Message:
         payload = _tool_output_payload(content)
         tool_name = str(payload.get("name", ""))
-        meta: dict[str, Any] = {}
         error = payload.get("error")
-        if error is not None:
-            meta["error"] = str(error)
         return cls(
             role="tool",
             parts=(
@@ -368,9 +426,9 @@ class Message:
                     tool_family=str(payload.get("family") or tool_name),
                     output=_json_object(payload.get("output")),
                     call_id=call_id,
+                    error=str(error) if error is not None else None,
                 ),
             ),
-            meta=meta,
         )
 
     @property
@@ -385,11 +443,19 @@ class Message:
             return None
         return message_text(self.parts)
 
+    @property
+    def percept(self) -> Percept:
+        """Return the message's content when it contains only percept parts."""
+
+        if not all(
+            isinstance(part, (TextPart, ImagePart, AudioPart, DocumentPart))
+            for part in self.parts
+        ):
+            raise ValueError(f"{self.role} message is not a Percept")
+        return cast(Percept, self.parts)
+
     def to_data(self) -> dict[str, Any]:
-        data: dict[str, Any] = {"role": self.role, "parts": parts_to_data(self.parts)}
-        if self.meta:
-            data["meta"] = dict(self.meta)
-        return data
+        return {"role": self.role, "parts": parts_to_data(self.parts)}
 
 
 def _tool_output_payload(content: str) -> dict[str, Any]:

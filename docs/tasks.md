@@ -7,10 +7,6 @@ Current built-in job kinds are:
 - `task`
 - `chore`
 
-The jobs API also exposes one `will` endpoint for a long-horizon definition.
-When no will is configured, that endpoint returns `null`.
-
-
 ## Directory Structure
 
 Jobs live under one agent home:
@@ -96,6 +92,13 @@ Stage is expressed by folder placement, not by frontmatter:
 
 Runtime fields such as status, last run, next run, counters, and errors are not
 written to Markdown.
+
+The Markdown body is a `ContentBody` using
+[input-syntax.md](./input-syntax.md). It has no ambient template variables;
+includes resolve relative to the job document, and invoked prompt templates
+receive only their own explicit arguments and input. Input perceiving produces
+the `Percept` passed to `RunSpec.input`; the selected runnable still sees its
+language-level primary type such as the default `Part[]`.
 
 
 ## Tasks
@@ -187,15 +190,15 @@ output.
 Job thread ids are runtime projections derived from job kind and id:
 
 ```text
-tsk_<id>
-chr_<id>
+task_<id>
+chore_<id>
 ```
 
 Examples:
 
 ```text
-tsk_3nprht9x
-chr_xy1234ab
+task_3nprht9x
+chore_xy1234ab
 ```
 
 Run ids use the run id family with a `run_` prefix:
@@ -234,7 +237,7 @@ Task projection:
   "path": "tasks/3nprht9x.md",
   "updated_at": "2026-04-23T10:10:00Z",
   "runtime": {
-    "thread_id": "tsk_3nprht9x",
+    "thread_id": "task_3nprht9x",
     "last_run": null,
     "next_run_at": null
   }
@@ -254,7 +257,7 @@ Chore projection:
   "path": "chores/xy1234ab.md",
   "updated_at": "2026-04-23T10:10:00Z",
   "runtime": {
-    "thread_id": "chr_xy1234ab",
+    "thread_id": "chore_xy1234ab",
     "last_run": {
       "id": "run_ab12cd34",
       "status": "finished",

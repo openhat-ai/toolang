@@ -9,33 +9,36 @@ import logging
 from pathlib import Path
 from collections.abc import Callable
 
-from toolang.execution.executor import Executor
+from toolang.base.types.message import Message
+from toolang.common.layout import AgentLayout
+from toolang.execution.executor import CeilingSpec, RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
-from toolang.execution.request import RunRequest
 from toolang.state.state import AgentState
+from toolang.setup import AgentSetup
 from toolang.work import files
+from toolang.work.records import FileRequestRecord
+from toolang.work.types import FileSnapshot
 
 DEFAULT_INTERVAL_MS = 1_000.0
 DEFAULT_STABLE_MS = 500.0
-logger = logging.getLogger("toolang.files")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
 class FileSubmission:
     """One claimed file request ready for execution."""
 
-    record: files.FileRequestRecord
-    run_id: str
-    text: str
-    parts: list[dict[str, str]]
+    record: FileRequestRecord
+    input: Message
 
 
 def spawn(
     *,
-    root: Path,
-    name: str,
-    executor: Executor,
+    layout: AgentLayout,
+    executor: RunExecutor,
+    get_agent_setup: Callable[[], AgentSetup],
     get_agent_state: Callable[[], AgentState],
+    ceiling: CeilingSpec = CeilingSpec(),
     inboxes: tuple[Path, ...],
     interval_ms: float,
     stable_ms: float,
@@ -45,10 +48,11 @@ def spawn(
 
     return asyncio.create_task(
         run(
-            root=root,
-            name=name,
+            layout=layout,
             executor=executor,
+            get_agent_setup=get_agent_setup,
             get_agent_state=get_agent_state,
+            ceiling=ceiling,
             inboxes=inboxes,
             interval_ms=interval_ms,
             stable_ms=stable_ms,
@@ -59,10 +63,11 @@ def spawn(
 
 async def run(
     *,
-    root: Path,
-    name: str,
-    executor: Executor,
+    layout: AgentLayout,
+    executor: RunExecutor,
+    get_agent_setup: Callable[[], AgentSetup],
     get_agent_state: Callable[[], AgentState],
+    ceiling: CeilingSpec = CeilingSpec(),
     inboxes: tuple[Path, ...],
     interval_ms: float,
     stable_ms: float,
@@ -73,13 +78,13 @@ async def run(
     interval_timeout = interval_ms / 1000
     logger.debug(
         "files.started root=%s agent=%s interval_ms=%s inboxes=%s",
-        root,
-        name,
+        layout.root,
+        layout.name,
         int(interval_ms),
         ",".join(str(path) for path in inboxes) or "-",
     )
     active: dict[str, asyncio.Task[RunRecord]] = {}
-    store = files.open_file_request_store(root, name)
+    store = files.open_file_request_store(layout)
     try:
         while True:
             now = datetime.now(timezone.utc)
@@ -89,33 +94,45 @@ async def run(
                 now=now,
             )
             for submission in collect_file_submissions(
-                executor, store, inboxes=inboxes, stable_ms=stable_ms, now=now
+                store, inboxes=inboxes, stable_ms=stable_ms, now=now
             ):
-                active[submission.run_id] = asyncio.create_task(
-                    executor.run(
-                        RunRequest(
-                            group="file",
-                            origin="file",
-                            run_id=submission.run_id,
-                            thread_id=submission.record.thread_id,
-                            input=submission.text,
-                            executable_name="file",
-                            metadata={
-                                "invoke_parts": submission.parts,
-                                "file_request": {
-                                    "id": submission.record.request_id,
-                                    "watch_root": submission.record.watch_root,
-                                    "relative_path": submission.record.relative_path,
-                                    "path": submission.record.absolute_path,
-                                    "size": submission.record.size,
-                                    "mtime_ns": submission.record.mtime_ns,
-                                    "fingerprint": submission.record.fingerprint,
-                                },
-                            },
+                if (
+                    executor.store.get_thread(thread_id=submission.record.thread_id)
+                    is None
+                ):
+                    executor.store.create_thread(
+                        thread_id=submission.record.thread_id,
+                        origin="file",
+                        context={"file_request_id": submission.record.request_id},
+                    )
+                state = get_agent_state()
+                handle = executor.start(
+                    RunSpec(
+                        setup=get_agent_setup(),
+                        state=state,
+                        ceiling=ceiling,
+                        thread=submission.record.thread_id,
+                        runnable=(
+                            "file"
+                            if state.program.find_agic("file") is not None
+                            else "default"
                         ),
-                        get_agent_state(),
+                        input=submission.input.percept,
                     )
                 )
+                try:
+                    store.bind_run(
+                        request_id=submission.record.request_id,
+                        run_id=handle.run_id,
+                        now=now,
+                    )
+                except Exception:
+                    try:
+                        handle.stop(reason="File run binding failed.")
+                    except (RuntimeError, ValueError):
+                        pass
+                    raise
+                active[handle.run_id] = handle.task
             try:
                 await asyncio.wait_for(stop_signal.wait(), timeout=interval_timeout)
             except TimeoutError:
@@ -130,7 +147,6 @@ async def run(
 
 
 def collect_file_submissions(
-    executor: Executor,
     store: files.FileRequestStore,
     *,
     inboxes: tuple[Path, ...],
@@ -144,25 +160,20 @@ def collect_file_submissions(
     for inbox in inboxes:
         for snapshot in _scan_inbox(inbox, now=current, stable_ms=stable_ms):
             try:
-                text, parts = files.render_file_input(Path(snapshot.absolute_path))
+                message = files.file_input_message(Path(snapshot.absolute_path))
             except (OSError, UnicodeDecodeError) as exc:
                 logger.debug(
                     "files.input_skipped path=%s error=%s", snapshot.absolute_path, exc
                 )
                 continue
-            run_id = executor.allocate_run_id()
             thread_id = files.file_thread_id(snapshot.absolute_path)
-            record = store.claim(
-                snapshot, run_id=run_id, thread_id=thread_id, now=current
-            )
+            record = store.claim(snapshot, thread_id=thread_id, now=current)
             if record is None:
                 continue
             submissions.append(
                 FileSubmission(
                     record=record,
-                    run_id=run_id,
-                    text=text,
-                    parts=parts,
+                    input=message,
                 )
             )
     return submissions
@@ -173,7 +184,7 @@ def _scan_inbox(
     *,
     now: datetime,
     stable_ms: float,
-) -> tuple[files.FileSnapshot, ...]:
+) -> tuple[FileSnapshot, ...]:
     try:
         root = inbox.expanduser().resolve()
     except OSError as exc:
@@ -182,7 +193,7 @@ def _scan_inbox(
     if not root.is_dir():
         logger.warning("files.inbox_missing inbox=%s", root)
         return ()
-    snapshots: list[files.FileSnapshot] = []
+    snapshots: list[FileSnapshot] = []
     for path in sorted(root.rglob("*")):
         try:
             if not path.is_file():
@@ -200,7 +211,7 @@ def _scan_inbox(
             logger.debug("files.hash_skipped path=%s error=%s", path, exc)
             continue
         snapshots.append(
-            files.FileSnapshot(
+            FileSnapshot(
                 watch_root=str(root),
                 relative_path=relative_path,
                 absolute_path=str(path),

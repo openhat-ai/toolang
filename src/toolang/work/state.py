@@ -12,6 +12,7 @@ import re
 from ..lang.ast import JobDecl, Program
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE, JobKind
+from toolang.common.layout import AgentLayout
 from .authoring import assign_missing_authored_job_ids
 
 _REMOTE_REF_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
@@ -60,10 +61,13 @@ class HomeJobs:
     definitions: tuple[JobDefinition, ...] = ()
 
     @classmethod
-    def load(cls, root: Path, name: str) -> HomeJobs:
-        catalog = AuthoredJobs(root / "agents" / name)
-        assign_missing_authored_job_ids(root, name, catalog=catalog)
-        jobs = [_file_definition(root, job) for job in catalog.list()]
+    def load(cls, layout: AgentLayout) -> HomeJobs:
+        catalog = AuthoredJobs(layout.home)
+        assign_missing_authored_job_ids(
+            layout,
+            catalog=catalog,
+        )
+        jobs = [_file_definition(layout.root, job) for job in catalog.list()]
         return cls(tuple(sorted(jobs, key=lambda item: (item.kind, item.id))))
 
 
@@ -74,8 +78,8 @@ class AgentJobs:
     definitions: tuple[JobDefinition, ...] = ()
 
     @classmethod
-    def load(cls, root: Path, name: str, program: Program) -> AgentJobs:
-        return cls.merge(HomeJobs.load(root, name), program)
+    def load(cls, layout: AgentLayout, program: Program) -> AgentJobs:
+        return cls.merge(HomeJobs.load(layout), program)
 
     @classmethod
     def merge(cls, home: HomeJobs, program: Program) -> AgentJobs:

@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from . import ast
-from .diagnostics import ToolangValidationError
+from .errors import ToolangValidationError
 
 _SERVICE_FIELDS = frozenset(
     {"description", "transport", "protocol", "target", "headers", "env"}
@@ -105,6 +105,10 @@ def _validate_caps(caps: tuple[ast.CapDecl, ...]) -> None:
                 label=f"parameter in prompt {cap.name!r}",
             )
             for param in cap.params:
+                if param.name == "_":
+                    raise ToolangValidationError(
+                        f"Prompt parameter '_' is reserved for primary input at line {param.span.line}."
+                    )
                 if _PARAM_NAME_RE.fullmatch(param.name) is None:
                     raise ToolangValidationError(
                         f"Invalid prompt parameter {param.name!r} at line {param.span.line}."

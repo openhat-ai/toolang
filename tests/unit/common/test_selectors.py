@@ -5,7 +5,7 @@ from typing import Any, cast
 
 import pytest
 
-from toolang.common.error import ToolangError
+from toolang.common.errors import ToolangError
 from toolang.common.selectors import (
     Selector,
     SelectorDomain,

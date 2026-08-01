@@ -7,9 +7,6 @@ from dataclasses import dataclass
 from importlib.metadata import entry_points
 from typing import Any, Literal, TypeVar, cast
 
-from toolang.base.error import ToolangError
-from toolang.base.protocols.loop import AgentLoop
-
 PluginSource = Literal["built-in", "external"]
 FactoryT = TypeVar("FactoryT", bound=Callable[..., object])
 
@@ -60,7 +57,9 @@ def create_plugin(
 ) -> object:
     """Create one plugin instance by entry point name."""
 
-    factory = cast(Callable[[Mapping[str, Any]], object], load_plugin_factory(name, group=group))
+    factory = cast(
+        Callable[[Mapping[str, Any]], object], load_plugin_factory(name, group=group)
+    )
     return factory(dict(config or {}))
 
 
@@ -84,31 +83,6 @@ def load_plugins(
             continue
         plugins[plugin_name] = plugin
     return plugins
-
-
-def normalize_run_loop_name(name: str) -> str:
-    """Normalize one user-facing run-loop name."""
-
-    text = name.strip()
-    if not text:
-        return "basic"
-    return text
-
-
-def load_loops() -> dict[str, AgentLoop]:
-    """Load installed agent loops."""
-
-    return cast(dict[str, AgentLoop], load_plugins(group="toolang.loop"))
-
-
-def load_loop(name: str) -> AgentLoop:
-    """Load one installed agent loop by name."""
-
-    normalized = normalize_run_loop_name(name)
-    loop = load_loops().get(normalized)
-    if loop is not None:
-        return loop
-    raise ToolangError(f"unknown agent loop: {name}")
 
 
 def _plugin_name(plugin: object, *, fallback: str) -> str:

@@ -1,0 +1,181 @@
+##! Turn a rough project idea into an execution-ready delivery plan.
+##!
+##! Example:
+##! too examples/delivery_plan.too plan --models '[deepseek]' \
+##!   constraints='Six weeks; team of four' \
+##!   'Launch self-serve enterprise SSO'
+
+agic decompose(_: Part[], constraints?: Text) -> Text[]:
+  recall = none
+  tools = none
+
+  Project:
+  {{_}}
+
+  Constraints:
+  {{constraints}}
+
+  Decompose this project into exactly 5 outcome-oriented workstreams.
+  Make the workstreams collectively sufficient, independently actionable, and
+  as parallelizable as the project allows.
+  Return only a JSON array of 5 concise workstream descriptions.
+
+agic plan_workstream(_: Part[], project: Part[], constraints?: Text):
+  recall = none
+  tools = none
+
+  Project:
+  {{project}}
+
+  Constraints:
+  {{constraints}}
+
+  Workstream:
+  {{_}}
+
+  Produce a compact workstream plan with:
+  - intended outcome
+  - concrete tasks in dependency order
+  - inputs and dependencies
+  - owner profile
+  - exit criteria
+  - important delivery risks
+
+  Be specific enough that a team could estimate and assign the work.
+
+agic assemble_plan(_: Part[], project: Part[], constraints?: Text):
+  recall = none
+  tools = none
+
+  Project:
+  {{project}}
+
+  Constraints:
+  {{constraints}}
+
+  Workstream plans:
+  {{_}}
+
+  Assemble one coherent delivery plan.
+  Reconcile dependencies across workstreams instead of merely concatenating
+  their contents.
+
+  Include:
+  - objective and explicit non-goals
+  - assumptions and constraints
+  - phased execution plan
+  - parallel work and critical path
+  - milestones with exit criteria
+  - cross-workstream risks
+  - decisions still required
+  - actions for the first seven days
+
+agic review_lenses(_: Part[], project: Part[], constraints?: Text) -> Text[]:
+  recall = none
+  tools = none
+
+  Project:
+  {{project}}
+
+  Constraints:
+  {{constraints}}
+
+  Draft delivery plan:
+  {{_}}
+
+  Define exactly 3 distinct review lenses that would expose the most important
+  weaknesses in this specific plan. Cover different concerns such as delivery
+  feasibility, operational readiness, product adoption, security, cost, or
+  organizational dependencies as appropriate.
+
+  Return only a JSON array of 3 concise review instructions.
+
+agic review_plan(_: Part[], draft: Part[], project: Part[], constraints?: Text):
+  recall = none
+  tools = none
+
+  Project:
+  {{project}}
+
+  Constraints:
+  {{constraints}}
+
+  Draft delivery plan:
+  {{draft}}
+
+  Review lens:
+  {{_}}
+
+  Review the draft only through this lens.
+  Identify concrete gaps, unsafe assumptions, missing dependencies, and weak
+  exit criteria. Recommend a small number of high-value corrections.
+  Do not rewrite the complete plan.
+
+agic apply_review(_: Part[], item: Part[], draft: Part[], project: Part[], constraints?: Text):
+  recall = none
+  tools = none
+
+  Project:
+  {{project}}
+
+  Constraints:
+  {{constraints}}
+
+  Original draft:
+  {{draft}}
+
+  Current revision:
+  {{_}}
+
+  Review to apply:
+  {{item}}
+
+  Update the complete delivery plan using this review.
+  When Current revision is empty, start from Original draft.
+  Apply useful corrections without discarding sound details or inventing
+  unsupported constraints.
+  Return only the complete revised plan.
+
+agic improve_plan(_: Part[], project: Part[], constraints?: Text):
+  recall = none
+  tools = none
+
+  Project:
+  {{project}}
+
+  Constraints:
+  {{constraints}}
+
+  Current delivery plan:
+  {{_}}
+
+  Find the single most consequential remaining weakness in this plan and fix
+  it. Preserve useful detail, remove repetition, and keep ownership,
+  dependencies, and exit criteria explicit.
+  Return only the complete improved plan.
+
+## Build, challenge, and improve an execution-ready delivery plan.
+flow plan(_: Text, constraints?: Text):
+  let project:
+    {{_}}
+
+  ## Decompose the project into independently actionable workstreams
+  scatter 5 decompose
+  ## Plan independent workstreams concurrently
+  map plan_workstream par 4
+  ## Reconcile the workstreams into one dependency-aware draft
+  gather assemble_plan
+
+  let draft:
+    {{_}}
+
+  ## Select review perspectives suited to this particular plan
+  scatter 3 review_lenses
+  ## Challenge the draft from each perspective concurrently
+  map review_plan par 3
+  ## Apply the independent reviews sequentially to one evolving plan
+  settle apply_review
+
+  ## Make two bounded improvements to the reviewed plan
+  repeat 2:
+    run improve_plan

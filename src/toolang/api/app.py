@@ -1,40 +1,31 @@
-"""FastAPI application assembly for one agent runtime."""
+"""FastAPI application assembly for one agent."""
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass, field
-from pathlib import Path
-import threading
 from typing import Annotated, Any, cast
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from toolang.catalog.cap import AuthoredCaps, WiredCaps
-from toolang.catalog.error import CatalogConflictError, CatalogNotFoundError
-from toolang.catalog.job import AuthoredJobs
-from toolang.execution.events import RunStarting, TraceEvent
-from toolang.execution.executor import Executor
-from toolang.execution.records import CommandRecord, RunRecord
-from toolang.execution.reply import ReplySink
-from toolang.execution.request import RunRequest
-from toolang.state.watcher import StateWatcher
+from toolang.api.common import LiveEventRelay
+from toolang.catalog import CapsManager, JobsManager
+from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
+from toolang.execution.executor import CeilingSpec
+from toolang.up import AgentCore
 
-DEFAULT_CORS_ORIGINS = [
+DEFAULT_CORS_ORIGINS = (
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "https://too.run",
-]
+)
 OPENAPI_TAGS = [
     {
         "name": "agent",
         "description": "Agent profile, health, and operational update endpoints.",
     },
-    {"name": "chat", "description": "Chat submission and streaming endpoints."},
     {"name": "caps", "description": "Capability inspection and mutation endpoints."},
     {"name": "jobs", "description": "Task and chore management endpoints."},
     {"name": "runs", "description": "Run execution and inspection endpoints."},
@@ -42,117 +33,66 @@ OPENAPI_TAGS = [
 ]
 
 
-@dataclass(slots=True)
-class ApiContext:
-    """Process-local dependencies owned by one FastAPI application."""
+def get_agent_core(request: Request) -> AgentCore:
+    """Return the process-local core owned by the application."""
 
-    root: Path
-    name: str
-    home: Path
-    executor: Executor
-    state_watcher: StateWatcher
-    authored_jobs: AuthoredJobs
-    private_authored_caps: AuthoredCaps
-    shared_authored_caps: AuthoredCaps
-    private_wired_caps: WiredCaps
-    shared_wired_caps: WiredCaps
-    host: str
-    port: int
-    cors_allowed_origins: tuple[str, ...]
-    shutdown_signal: threading.Event | None = None
-    run_tasks: set[asyncio.Task[RunRecord]] = field(default_factory=set, init=False)
-
-    def spawn_run(
-        self,
-        request: RunRequest,
-        *,
-        reply: ReplySink | None = None,
-    ) -> asyncio.Task[RunRecord]:
-        """Create and retain one run task owned by the API runtime."""
-
-        task = asyncio.create_task(
-            self.executor.run(request, self.state_watcher.current(), reply=reply)
-        )
-        self.run_tasks.add(task)
-        task.add_done_callback(self.run_tasks.discard)
-        return task
-
-    async def submit_run(
-        self,
-        request: RunRequest,
-        *,
-        reply: ReplySink | None = None,
-    ) -> tuple[RunRecord, CommandRecord]:
-        """Spawn one run and wait until its start command is durably accepted."""
-
-        if request.run_id is None:
-            raise ValueError("API run submission requires an allocated run id")
-        acceptance = _RunAcceptance(request.run_id, reply=reply)
-        task = self.spawn_run(request, reply=acceptance)
-        await acceptance.wait(task)
-        run = self.executor.store.get_run(run_id=request.run_id)
-        command = self.executor.store.get_command(run_id=request.run_id, index=0)
-        if run is None or command is None:
-            raise RuntimeError(f"accepted run projection missing: {request.run_id}")
-        return run, command
+    return cast(AgentCore, request.app.state.agent_core)
 
 
-def get_api_context(request: Request) -> ApiContext:
-    """Return the process-local context owned by the current application."""
+def get_caps_manager(request: Request) -> CapsManager:
+    """Return the capability catalogs owned by the application."""
 
-    return cast(ApiContext, request.app.state.context)
-
-
-ApiContextDep = Annotated[ApiContext, Depends(get_api_context)]
+    return cast(CapsManager, request.app.state.caps_manager)
 
 
-class _RunAcceptance:
-    """Observe durable start acceptance while preserving a caller reply sink."""
+def get_jobs_manager(request: Request) -> JobsManager:
+    """Return the job catalogs owned by the application."""
 
-    def __init__(self, run_id: str, *, reply: ReplySink | None) -> None:
-        self.run_id = run_id
-        self.reply = reply
-        self.wants_stream = reply.wants_stream if reply is not None else False
-        self._accepted: asyncio.Future[None] = (
-            asyncio.get_running_loop().create_future()
-        )
+    return cast(JobsManager, request.app.state.jobs_manager)
 
-    def on_event(self, event: TraceEvent) -> None:
-        if (
-            isinstance(event, RunStarting)
-            and event.run == self.run_id
-            and not self._accepted.done()
-        ):
-            self._accepted.set_result(None)
-        if self.reply is not None:
-            self.reply.on_event(event)
 
-    async def wait(self, task: asyncio.Task[RunRecord]) -> None:
-        done, _pending = await asyncio.wait(
-            (self._accepted, task), return_when=asyncio.FIRST_COMPLETED
-        )
-        if self._accepted in done:
-            return
-        await task
-        raise RuntimeError(f"run completed without start acceptance: {self.run_id}")
+def get_live_events(request: Request) -> LiveEventRelay:
+    """Return the process-local live event relay."""
+
+    return cast(LiveEventRelay, request.app.state.live_events)
+
+
+def get_ceiling_spec(request: Request) -> CeilingSpec:
+    """Return the immutable ceiling specification owned by this server."""
+
+    return cast(CeilingSpec, request.app.state.ceiling_spec)
+
+
+AgentCoreDep = Annotated[AgentCore, Depends(get_agent_core)]
+CapsManagerDep = Annotated[CapsManager, Depends(get_caps_manager)]
+JobsManagerDep = Annotated[JobsManager, Depends(get_jobs_manager)]
+LiveEventRelayDep = Annotated[LiveEventRelay, Depends(get_live_events)]
+CeilingSpecDep = Annotated[CeilingSpec, Depends(get_ceiling_spec)]
 
 
 def create_app(
-    context: ApiContext,
+    core: AgentCore,
+    caps: CapsManager,
+    jobs: JobsManager,
     *,
+    ceiling: CeilingSpec = CeilingSpec(),
     lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
-    shutdown_signal: threading.Event | None = None,
+    cors_allowed_origins: Sequence[str] = DEFAULT_CORS_ORIGINS,
 ) -> FastAPI:
-    """Create one FastAPI app for an existing runtime context."""
+    """Create one FastAPI app around explicitly owned agent services."""
 
-    origins = list(context.cors_allowed_origins or DEFAULT_CORS_ORIGINS)
     app = FastAPI(
         title="Toolang Agent API",
         lifespan=lifespan,
         openapi_tags=OPENAPI_TAGS,
     )
-    context.shutdown_signal = shutdown_signal
-    app.state.context = context
+    app.state.agent_core = core
+    app.state.caps_manager = caps
+    app.state.jobs_manager = jobs
+    app.state.ceiling_spec = ceiling
+    live_events = LiveEventRelay()
+    app.state.live_events = live_events
+    core.threads.listener = live_events
 
     @app.exception_handler(CatalogNotFoundError)
     async def catalog_not_found(
@@ -166,6 +106,7 @@ def create_app(
     ) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
+    origins = list(cors_allowed_origins)
     if origins:
         app.add_middleware(
             cast(Any, CORSMiddleware),

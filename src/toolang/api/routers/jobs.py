@@ -1,55 +1,42 @@
-"""Job inspection and management routes."""
+"""Job inspection and authored-file management routes."""
 
-from pathlib import Path
-from typing import Literal, cast
+from collections.abc import Iterable
+from typing import cast
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
-from toolang.api.app import ApiContextDep
+from toolang.api.app import AgentCoreDep, JobsManagerDep
 from toolang.api.schemas import (
     ChoreCreateRequest,
     ChorePatchRequest,
     TaskCreateRequest,
     TaskPatchRequest,
 )
+from toolang.catalog import JobsManager
 from toolang.catalog.job import JobFile
 from toolang.catalog.types import JobKind, JobStage
-from toolang.work.state import AgentJobs
-from toolang.work.authoring import (
-    allocate_authored_job_id,
-    new_job_file,
-)
-from toolang.work.projection import JobProjector
+from toolang.up import AgentCore
+from toolang.work.authoring import allocate_authored_job_id, new_job_file
+from toolang.work.inspection import JobInspection, JobRun
 from toolang.work.schemas import JobDetail, JobInfo
+from toolang.work.state import AgentJobs
 from toolang.work.store import open_job_store
-from toolang.execution.projection import ExecutionProjector, command_info_from_record
-from toolang.execution.request import RunRequest
-from toolang.execution.schemas import RunCommandResult
-
 
 router = APIRouter(tags=["jobs"])
 
 
-@router.post(
-    "/tasks", summary="Create Task", status_code=201, response_model=JobDetail
-)
+@router.post("/tasks", summary="Create Task", status_code=201, response_model=JobDetail)
 def create_task(
-    context: ApiContextDep,
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
     payload: TaskCreateRequest,
 ) -> JobDetail:
-    document = _task_document_from_create(context, payload)
-    saved = context.authored_jobs.create(document)
-    _reconcile_jobs(context, kind="task")
-    _append_job_update(
-        context,
-        kind="task",
-        item_id=saved.id,
-        action="created",
-        path=_job_path(saved),
+    saved = manager.home_authoring.create(
+        _new_job(core, kind="task", payload=payload)
     )
-    entry = _find_task_or_404(context, saved.id)
-    return _task_detail_item(context, entry)
+    _reconcile_jobs(core, kind="task")
+    return _job_detail(core, saved)
 
 
 @router.patch(
@@ -58,12 +45,13 @@ def create_task(
     response_model=JobDetail,
 )
 def update_archived_task(
-    context: ApiContextDep,
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
     task_id: str,
     payload: TaskPatchRequest,
 ) -> JobDetail:
-    entry = _find_archived_task_or_404(context, task_id)
-    return _update_task(context, entry=entry, payload=payload)
+    entry = _require_job(manager, "task", task_id, stage="archived")
+    return _update_job(core, manager, entry, payload)
 
 
 @router.delete(
@@ -72,223 +60,110 @@ def update_archived_task(
     status_code=204,
     response_class=Response,
 )
-def delete_archived_task(context: ApiContextDep, task_id: str) -> None:
-    entry = _find_archived_task_or_404(context, task_id)
-    context.authored_jobs.remove("task", task_id)
-    _reconcile_jobs(context, kind="task")
-    _append_job_update(
-        context,
-        kind="task",
-        item_id=task_id,
-        action="deleted",
-        path=_job_path(entry),
-    )
+def delete_archived_task(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    task_id: str,
+) -> None:
+    _require_job(manager, "task", task_id, stage="archived")
+    manager.home_authoring.remove("task", task_id)
+    _reconcile_jobs(core, kind="task")
 
 
 @router.patch("/tasks/{task_id}", summary="Update Task", response_model=JobDetail)
 def update_task(
-    context: ApiContextDep,
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
     task_id: str,
     payload: TaskPatchRequest,
 ) -> JobDetail:
-    entry = _find_task_or_404(context, task_id)
-    return _update_task(context, entry=entry, payload=payload)
-
-
-@router.post(
-    "/tasks/{task_id}/draft", summary="Draft Task", response_model=JobDetail
-)
-def draft_task(context: ApiContextDep, task_id: str) -> JobDetail:
-    catalog = context.authored_jobs
-    moved = catalog.move("task", task_id, "draft")
-    _reconcile_jobs(context, kind="task")
-    _append_job_update(
-        context,
-        kind="task",
-        item_id=task_id,
-        action="drafted",
-        path=_job_path(moved),
+    return _update_job(
+        core,
+        manager,
+        _require_job(manager, "task", task_id),
+        payload,
     )
-    entry = catalog.get("task", task_id, stage="draft")
-    if entry is None:
-        raise HTTPException(
-            status_code=404, detail=f"task not found after draft: {task_id}"
-        )
-    return _task_detail_item(context, entry)
+
+
+@router.post("/tasks/{task_id}/draft", summary="Draft Task", response_model=JobDetail)
+def draft_task(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    task_id: str,
+) -> JobDetail:
+    return _move_job(core, manager, "task", task_id, "draft")
+
+
+@router.post("/tasks/{task_id}/ready", summary="Ready Task", response_model=JobDetail)
+def ready_task(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    task_id: str,
+) -> JobDetail:
+    return _move_job(core, manager, "task", task_id, "ready")
 
 
 @router.post(
-    "/tasks/{task_id}/ready", summary="Ready Task", response_model=JobDetail
+    "/tasks/{task_id}/archive",
+    summary="Archive Task",
+    response_model=JobDetail,
 )
-def ready_task(context: ApiContextDep, task_id: str) -> JobDetail:
-    moved = context.authored_jobs.move("task", task_id, "ready")
-    _reconcile_jobs(context, kind="task")
-    _append_job_update(
-        context,
-        kind="task",
-        item_id=task_id,
-        action="ready",
-        path=_job_path(moved),
-    )
-    entry = _find_task_or_404(context, task_id)
-    return _task_detail_item(context, entry)
+def archive_task(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    task_id: str,
+) -> JobDetail:
+    return _move_job(core, manager, "task", task_id, "archived")
+
+
+@router.post("/tasks/{task_id}/reopen", summary="Reopen Task")
+def reopen_task(
+    task_id: str,
+) -> None:
+    del task_id
+    _work_trigger_unavailable()
+
+
+@router.post("/tasks/{task_id}/cancel", summary="Cancel Task")
+def cancel_task(
+    task_id: str,
+) -> None:
+    del task_id
+    _work_trigger_unavailable()
 
 
 @router.post(
-    "/tasks/{task_id}/archive", summary="Archive Task", response_model=JobDetail
-)
-def archive_task(context: ApiContextDep, task_id: str) -> JobDetail:
-    moved = context.authored_jobs.move("task", task_id, "archived")
-    _reconcile_jobs(context, kind="task")
-    _append_job_update(
-        context,
-        kind="task",
-        item_id=task_id,
-        action="archived",
-        path=_job_path(moved),
-    )
-    entry = _find_archived_task_or_404(context, task_id)
-    return _task_detail_item(context, entry)
-
-
-@router.post(
-    "/tasks/{task_id}/reopen", summary="Reopen Task", response_model=JobDetail
-)
-def reopen_task(context: ApiContextDep, task_id: str) -> JobDetail:
-    store = open_job_store(context.root, context.name)
-    try:
-        store.reopen_task(
-            jobs=AgentJobs.load(
-                context.root, context.name, context.state_watcher.current().program
-            ),
-            task_id=task_id,
-        )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    finally:
-        store.close()
-    return _task_detail_item(context, _find_task_or_404(context, task_id))
-
-
-@router.post(
-    "/tasks/{task_id}/cancel", summary="Cancel Task", response_model=JobDetail
-)
-async def cancel_task(context: ApiContextDep, task_id: str) -> JobDetail:
-    store = open_job_store(context.root, context.name)
-    try:
-        store.reconcile(
-            jobs=AgentJobs.load(
-                context.root, context.name, context.state_watcher.current().program
-            ),
-            kind="task",
-        )
-        record = store.get(job_id=task_id, kind="task")
-        if record is None:
-            raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
-        if record.status == "todo":
-            store.cancel_pending_task(task_id=task_id)
-        elif record.status == "running" and record.last_run_id is not None:
-            await context.executor.stop(run_id=record.last_run_id)
-        else:
-            raise HTTPException(
-                status_code=409,
-                detail=f"task cannot be canceled from status: {record.status}",
-            )
-    finally:
-        store.close()
-    return _task_detail_item(context, _find_task_or_404(context, task_id))
-
-
-@router.post(
-    "/chores", summary="Create Chore", status_code=201, response_model=JobDetail
+    "/chores",
+    summary="Create Chore",
+    status_code=201,
+    response_model=JobDetail,
 )
 def create_chore(
-    context: ApiContextDep,
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
     payload: ChoreCreateRequest,
 ) -> JobDetail:
-    document = _chore_document_from_create(context, payload)
-    saved = context.authored_jobs.create(document)
-    _reconcile_jobs(context, kind="chore")
-    _append_job_update(
-        context,
-        kind="chore",
-        item_id=saved.id,
-        action="created",
-        path=_job_path(saved),
+    saved = manager.home_authoring.create(
+        _new_job(core, kind="chore", payload=payload)
     )
-    entry = _find_chore_or_404(context, saved.id)
-    return _chore_detail_item(context, entry)
+    _reconcile_jobs(core, kind="chore")
+    return _job_detail(core, saved)
 
 
-@router.post(
-    "/chores/{chore_id}/run",
-    summary="Run Chore",
-    status_code=202,
-    response_model=RunCommandResult,
-)
-async def run_chore(context: ApiContextDep, chore_id: str) -> RunCommandResult:
-    store = open_job_store(context.root, context.name)
-    try:
-        claimed = store.claim_chore_manual(
-            jobs=AgentJobs.load(
-                context.root, context.name, context.state_watcher.current().program
-            ),
-            chore_id=chore_id,
-            run_id=context.executor.allocate_run_id(),
-        )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    finally:
-        store.close()
-    run, command = await context.submit_run(
-        RunRequest(
-            group="pulse:chore",
-            origin="chore",
-            run_id=claimed.run_id,
-            thread_id=claimed.job.thread_id,
-            input=claimed.definition.input,
-            metadata={
-                "job": claimed.definition.run_metadata(),
-                "job_trigger": "manual",
-            },
-        ),
-    )
-    projector = ExecutionProjector(context.executor.store)
-    return RunCommandResult(
-        run=projector.run_info(run),
-        command=command_info_from_record(run, command),
-    )
+@router.post("/chores/{chore_id}/run", summary="Run Chore", status_code=202)
+def run_chore(
+    chore_id: str,
+) -> None:
+    del chore_id
+    _work_trigger_unavailable()
 
 
-@router.post(
-    "/chores/{chore_id}/cancel", summary="Cancel Chore", response_model=JobDetail
-)
-async def cancel_chore(context: ApiContextDep, chore_id: str) -> JobDetail:
-    store = open_job_store(context.root, context.name)
-    try:
-        store.reconcile(
-            jobs=AgentJobs.load(
-                context.root, context.name, context.state_watcher.current().program
-            ),
-            kind="chore",
-        )
-        record = store.get(job_id=chore_id, kind="chore")
-        if record is None:
-            raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
-        if record.status == "running" and record.last_run_id is not None:
-            await context.executor.stop(run_id=record.last_run_id)
-        else:
-            raise HTTPException(
-                status_code=409,
-                detail=f"chore cannot be canceled from status: {record.status}",
-            )
-    finally:
-        store.close()
-    return _chore_detail_item(context, _find_chore_or_404(context, chore_id))
+@router.post("/chores/{chore_id}/cancel", summary="Cancel Chore")
+def cancel_chore(
+    chore_id: str,
+) -> None:
+    del chore_id
+    _work_trigger_unavailable()
 
 
 @router.patch(
@@ -297,12 +172,13 @@ async def cancel_chore(context: ApiContextDep, chore_id: str) -> JobDetail:
     response_model=JobDetail,
 )
 def update_archived_chore(
-    context: ApiContextDep,
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
     chore_id: str,
     payload: ChorePatchRequest,
 ) -> JobDetail:
-    entry = _find_archived_chore_or_404(context, chore_id)
-    return _update_chore(context, entry=entry, payload=payload)
+    entry = _require_job(manager, "chore", chore_id, stage="archived")
+    return _update_job(core, manager, entry, payload)
 
 
 @router.delete(
@@ -311,103 +187,85 @@ def update_archived_chore(
     status_code=204,
     response_class=Response,
 )
-def delete_archived_chore(context: ApiContextDep, chore_id: str) -> None:
-    entry = _find_archived_chore_or_404(context, chore_id)
-    context.authored_jobs.remove("chore", chore_id)
-    _reconcile_jobs(context, kind="chore")
-    _append_job_update(
-        context,
-        kind="chore",
-        item_id=chore_id,
-        action="deleted",
-        path=_job_path(entry),
-    )
+def delete_archived_chore(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    chore_id: str,
+) -> None:
+    _require_job(manager, "chore", chore_id, stage="archived")
+    manager.home_authoring.remove("chore", chore_id)
+    _reconcile_jobs(core, kind="chore")
 
 
 @router.patch("/chores/{chore_id}", summary="Update Chore", response_model=JobDetail)
 def update_chore(
-    context: ApiContextDep,
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
     chore_id: str,
     payload: ChorePatchRequest,
 ) -> JobDetail:
-    entry = _find_chore_or_404(context, chore_id)
-    return _update_chore(context, entry=entry, payload=payload)
+    return _update_job(
+        core,
+        manager,
+        _require_job(manager, "chore", chore_id),
+        payload,
+    )
 
 
 @router.post(
-    "/chores/{chore_id}/draft", summary="Draft Chore", response_model=JobDetail
+    "/chores/{chore_id}/draft",
+    summary="Draft Chore",
+    response_model=JobDetail,
 )
-def draft_chore(context: ApiContextDep, chore_id: str) -> JobDetail:
-    catalog = context.authored_jobs
-    moved = catalog.move("chore", chore_id, "draft")
-    _reconcile_jobs(context, kind="chore")
-    _append_job_update(
-        context,
-        kind="chore",
-        item_id=chore_id,
-        action="drafted",
-        path=_job_path(moved),
-    )
-    entry = catalog.get("chore", chore_id, stage="draft")
-    if entry is None:
-        raise HTTPException(
-            status_code=404, detail=f"chore not found after draft: {chore_id}"
-        )
-    return _chore_detail_item(context, entry)
+def draft_chore(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    chore_id: str,
+) -> JobDetail:
+    return _move_job(core, manager, "chore", chore_id, "draft")
 
 
 @router.post(
-    "/chores/{chore_id}/ready", summary="Ready Chore", response_model=JobDetail
+    "/chores/{chore_id}/ready",
+    summary="Ready Chore",
+    response_model=JobDetail,
 )
-def ready_chore(context: ApiContextDep, chore_id: str) -> JobDetail:
-    moved = context.authored_jobs.move("chore", chore_id, "ready")
-    _reconcile_jobs(context, kind="chore")
-    _append_job_update(
-        context,
-        kind="chore",
-        item_id=chore_id,
-        action="ready",
-        path=_job_path(moved),
-    )
-    entry = _find_chore_or_404(context, chore_id)
-    return _chore_detail_item(context, entry)
+def ready_chore(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    chore_id: str,
+) -> JobDetail:
+    return _move_job(core, manager, "chore", chore_id, "ready")
 
 
 @router.post(
-    "/chores/{chore_id}/archive", summary="Archive Chore", response_model=JobDetail
+    "/chores/{chore_id}/archive",
+    summary="Archive Chore",
+    response_model=JobDetail,
 )
-def archive_chore(context: ApiContextDep, chore_id: str) -> JobDetail:
-    moved = context.authored_jobs.move("chore", chore_id, "archived")
-    _reconcile_jobs(context, kind="chore")
-    _append_job_update(
-        context,
-        kind="chore",
-        item_id=chore_id,
-        action="archived",
-        path=_job_path(moved),
-    )
-    entry = _find_archived_chore_or_404(context, chore_id)
-    return _chore_detail_item(context, entry)
+def archive_chore(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    chore_id: str,
+) -> JobDetail:
+    return _move_job(core, manager, "chore", chore_id, "archived")
 
 
 @router.get("/jobs", summary="List Jobs", response_model=list[JobInfo])
-def jobs(context: ApiContextDep, kind: JobKind | None = None) -> list[JobInfo]:
-    items = _job_collection(context, archived=False)
-    if kind is not None:
-        items = [item for item in items if item.kind == kind]
-    return items
+def jobs(core: AgentCoreDep, kind: JobKind | None = None) -> list[JobInfo]:
+    return _job_collection(core, kind=kind, stage="ready")
 
 
 @router.get(
-    "/jobs/archived", summary="List Archived Jobs", response_model=list[JobInfo]
+    "/jobs/archived",
+    summary="List Archived Jobs",
+    response_model=list[JobInfo],
 )
 def archived_jobs(
-    context: ApiContextDep, kind: JobKind | None = None
+    core: AgentCoreDep,
+    kind: JobKind | None = None,
 ) -> list[JobInfo]:
-    items = _job_collection(context, archived=True)
-    if kind is not None:
-        items = [item for item in items if item.kind == kind]
-    return items
+    return _job_collection(core, kind=kind, stage="archived")
 
 
 @router.get(
@@ -415,27 +273,38 @@ def archived_jobs(
     summary="Get Archived Job",
     response_model=JobDetail,
 )
-def archived_job_detail(context: ApiContextDep, job_id: str) -> JobDetail:
-    kind, entry = _find_archived_job_or_404(context, job_id)
-    return _job_detail_item(context, kind=kind, entry=entry)
+def archived_job_detail(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    job_id: str,
+) -> JobDetail:
+    return _job_detail(
+        core,
+        _require_any_job(manager, job_id, stage="archived"),
+    )
 
 
 @router.get("/jobs/{job_id}", summary="Get Job", response_model=JobDetail)
-def job_detail(context: ApiContextDep, job_id: str) -> JobDetail:
-    kind, entry = _find_job_or_404(context, job_id)
-    return _job_detail_item(context, kind=kind, entry=entry)
+def job_detail(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    job_id: str,
+) -> JobDetail:
+    return _job_detail(core, _require_any_job(manager, job_id))
 
 
 @router.get("/tasks", summary="List Tasks", response_model=list[JobInfo])
-def tasks(context: ApiContextDep) -> list[JobInfo]:
-    return _task_collection(context, archived=False)
+def tasks(core: AgentCoreDep) -> list[JobInfo]:
+    return _job_collection(core, kind="task", stage="ready")
 
 
 @router.get(
-    "/tasks/archived", summary="List Archived Tasks", response_model=list[JobInfo]
+    "/tasks/archived",
+    summary="List Archived Tasks",
+    response_model=list[JobInfo],
 )
-def archived_tasks(context: ApiContextDep) -> list[JobInfo]:
-    return _task_collection(context, archived=True)
+def archived_tasks(core: AgentCoreDep) -> list[JobInfo]:
+    return _job_collection(core, kind="task", stage="archived")
 
 
 @router.get(
@@ -443,27 +312,38 @@ def archived_tasks(context: ApiContextDep) -> list[JobInfo]:
     summary="Get Archived Task",
     response_model=JobDetail,
 )
-def archived_task_detail(context: ApiContextDep, task_id: str) -> JobDetail:
-    entry = _find_archived_task_or_404(context, task_id)
-    return _task_detail_item(context, entry)
+def archived_task_detail(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    task_id: str,
+) -> JobDetail:
+    return _job_detail(
+        core,
+        _require_job(manager, "task", task_id, stage="archived"),
+    )
 
 
 @router.get("/tasks/{task_id}", summary="Get Task", response_model=JobDetail)
-def task_detail(context: ApiContextDep, task_id: str) -> JobDetail:
-    entry = _find_task_or_404(context, task_id)
-    return _task_detail_item(context, entry)
+def task_detail(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    task_id: str,
+) -> JobDetail:
+    return _job_detail(core, _require_job(manager, "task", task_id))
 
 
 @router.get("/chores", summary="List Chores", response_model=list[JobInfo])
-def chores(context: ApiContextDep) -> list[JobInfo]:
-    return _chore_collection(context, archived=False)
+def chores(core: AgentCoreDep) -> list[JobInfo]:
+    return _job_collection(core, kind="chore", stage="ready")
 
 
 @router.get(
-    "/chores/archived", summary="List Archived Chores", response_model=list[JobInfo]
+    "/chores/archived",
+    summary="List Archived Chores",
+    response_model=list[JobInfo],
 )
-def archived_chores(context: ApiContextDep) -> list[JobInfo]:
-    return _chore_collection(context, archived=True)
+def archived_chores(core: AgentCoreDep) -> list[JobInfo]:
+    return _job_collection(core, kind="chore", stage="archived")
 
 
 @router.get(
@@ -471,232 +351,144 @@ def archived_chores(context: ApiContextDep) -> list[JobInfo]:
     summary="Get Archived Chore",
     response_model=JobDetail,
 )
-def archived_chore_detail(context: ApiContextDep, chore_id: str) -> JobDetail:
-    entry = _find_archived_chore_or_404(context, chore_id)
-    return _chore_detail_item(context, entry)
+def archived_chore_detail(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    chore_id: str,
+) -> JobDetail:
+    return _job_detail(
+        core,
+        _require_job(manager, "chore", chore_id, stage="archived"),
+    )
 
 
 @router.get("/chores/{chore_id}", summary="Get Chore", response_model=JobDetail)
-def chore_detail(context: ApiContextDep, chore_id: str) -> JobDetail:
-    entry = _find_chore_or_404(context, chore_id)
-    return _chore_detail_item(context, entry)
+def chore_detail(
+    core: AgentCoreDep,
+    manager: JobsManagerDep,
+    chore_id: str,
+) -> JobDetail:
+    return _job_detail(core, _require_job(manager, "chore", chore_id))
 
 
-def _reconcile_jobs(context, *, kind: JobKind) -> None:
-    store = open_job_store(context.root, context.name)
+def _reconcile_jobs(core: AgentCore, *, kind: JobKind) -> None:
+    store = open_job_store(core.layout)
     try:
         store.reconcile(
-            jobs=AgentJobs.load(
-                context.root, context.name, context.state_watcher.current().program
-            ),
+            jobs=AgentJobs.load(core.layout, core.state.current().program),
             kind=kind,
         )
     finally:
         store.close()
 
 
-def _job_path(job: JobFile) -> Path:
-    if job.path is None:
-        raise ValueError("authored job path is required")
-    return job.path
-
-
-def _job_projector(context) -> JobProjector:
-    return JobProjector.load(
-        root=context.root,
-        agent_name=context.name,
-        home=context.home,
-        program=context.state_watcher.current().program,
-        runs=context.executor.store.list_runs(limit=None),
+def _inspection(core: AgentCore) -> JobInspection:
+    return JobInspection.load(
+        layout=core.layout,
+        program=core.state.current().program,
+        runs=cast(Iterable[JobRun], core.store.list_runs(limit=None)),
     )
 
 
-def _job_collection(context, *, archived: bool) -> list[JobInfo]:
-    stage: JobStage = "archived" if archived else "ready"
-    return list(_job_projector(context).list(stage=stage))
-
-
-def _task_collection(context, *, archived: bool) -> list[JobInfo]:
-    stage: JobStage = "archived" if archived else "ready"
-    return [item for item in _job_projector(context).list(kind="task", stage=stage)]
-
-
-def _chore_collection(context, *, archived: bool) -> list[JobInfo]:
-    stage: JobStage = "archived" if archived else "ready"
-    return [item for item in _job_projector(context).list(kind="chore", stage=stage)]
-
-
-def _task_detail_item(context, entry: JobFile) -> JobDetail:
-    return _job_projector(context).detail(entry)
-
-
-def _chore_detail_item(context, entry: JobFile) -> JobDetail:
-    return _job_projector(context).detail(entry)
-
-
-def _job_detail_item(context, *, kind: JobKind, entry: JobFile) -> JobDetail:
-    del kind
-    return _job_projector(context).detail(entry)
-
-
-def _find_job_or_404(context, job_id: str) -> tuple[JobKind, JobFile]:
-    catalog = context.authored_jobs
-    task = catalog.get("task", job_id)
-    if task is not None:
-        return "task", task
-    chore = catalog.get("chore", job_id)
-    if chore is not None:
-        return "chore", chore
-    raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
-
-
-def _find_archived_job_or_404(context, job_id: str) -> tuple[JobKind, JobFile]:
-    catalog = context.authored_jobs
-    task = catalog.get("task", job_id, stage="archived")
-    if task is not None:
-        return "task", task
-    chore = catalog.get("chore", job_id, stage="archived")
-    if chore is not None:
-        return "chore", chore
-    raise HTTPException(status_code=404, detail=f"archived job not found: {job_id}")
-
-
-def _find_task_or_404(context, task_id: str) -> JobFile:
-    entry = context.authored_jobs.get("task", task_id)
-    if entry is None:
-        raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
-    return entry
-
-
-def _find_archived_task_or_404(context, task_id: str) -> JobFile:
-    entry = context.authored_jobs.get("task", task_id, stage="archived")
-    if entry is None:
-        raise HTTPException(
-            status_code=404, detail=f"archived task not found: {task_id}"
-        )
-    return entry
-
-
-def _find_chore_or_404(context, chore_id: str) -> JobFile:
-    entry = context.authored_jobs.get("chore", chore_id)
-    if entry is None:
-        raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
-    return entry
-
-
-def _find_archived_chore_or_404(context, chore_id: str) -> JobFile:
-    entry = context.authored_jobs.get("chore", chore_id, stage="archived")
-    if entry is None:
-        raise HTTPException(
-            status_code=404, detail=f"archived chore not found: {chore_id}"
-        )
-    return entry
-
-
-def _task_document_from_create(context, payload: TaskCreateRequest) -> JobFile:
-    try:
-        return new_job_file(
-            kind="task",
-            job_id=allocate_authored_job_id(context.root, context.name),
-            title=payload.title,
-            body=payload.body,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-def _chore_document_from_create(context, payload: ChoreCreateRequest) -> JobFile:
-    try:
-        return new_job_file(
-            kind="chore",
-            job_id=allocate_authored_job_id(context.root, context.name),
-            title=payload.title,
-            body=payload.body,
-            schedule=payload.schedule,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-def _update_task(
-    context,
+def _job_collection(
+    core: AgentCore,
     *,
-    entry: JobFile,
-    payload: TaskPatchRequest,
-) -> JobDetail:
-    document = _patch_task_document(entry, payload)
-    saved = context.authored_jobs.update(document)
-    _append_job_update(
-        context,
-        kind="task",
-        item_id=saved.id,
-        action="updated",
-        path=_job_path(saved),
-    )
-    return _job_projector(context).detail(saved)
+    kind: JobKind | None,
+    stage: JobStage,
+) -> list[JobInfo]:
+    return list(_inspection(core).list(kind=kind, stage=stage))
 
 
-def _update_chore(
-    context,
+def _job_detail(core: AgentCore, entry: JobFile) -> JobDetail:
+    return _inspection(core).detail(entry)
+
+
+def _require_any_job(
+    manager: JobsManager,
+    job_id: str,
     *,
-    entry: JobFile,
-    payload: ChorePatchRequest,
-) -> JobDetail:
-    document = _patch_chore_document(entry, payload)
-    saved = context.authored_jobs.update(document)
-    _append_job_update(
-        context,
-        kind="chore",
-        item_id=saved.id,
-        action="updated",
-        path=_job_path(saved),
-    )
-    return _job_projector(context).detail(saved)
-
-
-def _patch_task_document(document: JobFile, payload: TaskPatchRequest) -> JobFile:
-    return _patch_document(document, payload, fields=("title", "body"))
-
-
-def _patch_chore_document(document: JobFile, payload: ChorePatchRequest) -> JobFile:
-    return _patch_document(document, payload, fields=("title", "body", "schedule"))
-
-
-def _patch_document(
-    document: JobFile,
-    payload: TaskPatchRequest | ChorePatchRequest,
-    *,
-    fields: tuple[str, ...],
+    stage: JobStage = "ready",
 ) -> JobFile:
+    for kind in ("task", "chore"):
+        entry = manager.home_authoring.get(kind, job_id, stage=stage)
+        if entry is not None:
+            return entry
+    prefix = "archived " if stage == "archived" else ""
+    raise HTTPException(status_code=404, detail=f"{prefix}job not found: {job_id}")
+
+
+def _require_job(
+    manager: JobsManager,
+    kind: JobKind,
+    job_id: str,
+    *,
+    stage: JobStage = "ready",
+) -> JobFile:
+    entry = manager.home_authoring.get(kind, job_id, stage=stage)
+    if entry is not None:
+        return entry
+    prefix = "archived " if stage == "archived" else ""
+    raise HTTPException(status_code=404, detail=f"{prefix}{kind} not found: {job_id}")
+
+
+def _new_job(
+    core: AgentCore,
+    *,
+    kind: JobKind,
+    payload: TaskCreateRequest | ChoreCreateRequest,
+) -> JobFile:
+    try:
+        return new_job_file(
+            kind=kind,
+            job_id=allocate_authored_job_id(core.layout),
+            title=payload.title,
+            body=payload.body,
+            schedule=(
+                payload.schedule if isinstance(payload, ChoreCreateRequest) else None
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _update_job(
+    core: AgentCore,
+    manager: JobsManager,
+    entry: JobFile,
+    payload: TaskPatchRequest | ChorePatchRequest,
+) -> JobDetail:
+    fields = (
+        ("title", "body", "schedule")
+        if isinstance(payload, ChorePatchRequest)
+        else ("title", "body")
+    )
     changes = {
         field: getattr(payload, field)
         for field in fields
         if field in payload.model_fields_set
     }
     try:
-        return document.patch(changes)
+        saved = manager.home_authoring.update(entry.patch(changes))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _reconcile_jobs(core, kind=entry.kind)
+    return _job_detail(core, saved)
 
 
-def _append_job_update(
-    context,
-    *,
+def _move_job(
+    core: AgentCore,
+    manager: JobsManager,
     kind: JobKind,
-    item_id: str,
-    action: str,
-    path: Path,
-) -> None:
-    try:
-        relative_path = str(path.relative_to(context.home))
-    except ValueError:
-        relative_path = str(path)
-    context.executor.store.append_update(
-        kind=cast(Literal["task_changed", "chore_changed"], f"{kind}_changed"),
-        payload={
-            "id": item_id,
-            "kind": kind,
-            "action": action,
-            "path": relative_path,
-        },
+    job_id: str,
+    stage: JobStage,
+) -> JobDetail:
+    manager.home_authoring.move(kind, job_id, stage)
+    _reconcile_jobs(core, kind=kind)
+    return _job_detail(core, _require_job(manager, kind, job_id, stage=stage))
+
+
+def _work_trigger_unavailable() -> None:
+    raise HTTPException(
+        status_code=501,
+        detail="job execution controls will be migrated with the work runtime",
     )

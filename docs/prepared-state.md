@@ -4,7 +4,7 @@ Prepared state is an immutable, self-contained runtime snapshot derived from
 authored source. `toolang.state` creates and loads snapshots; it never edits
 program source, authored caps, or wired-cap declarations.
 The Toolang root and agent home must already exist; catalog or caller code owns
-their creation. State only writes beneath their `.prepared` directories. A
+their creation. State only writes beneath their `.state` directories. A
 missing `agent.too` uses the existing in-memory default program and is not
 created by state.
 
@@ -26,11 +26,11 @@ each top-level run and keeps using that snapshot for the entire run.
 
 ## Layout
 
-Root caches live under `${TOOLANG_ROOT}/.prepared`. Home caches live
-under `${TOOLANG_ROOT}/agents/<agent>/.prepared`.
+Root caches live under `${TOOLANG_ROOT}/.state`. Home caches live
+under `${TOOLANG_ROOT}/agents/<agent>/.state`.
 
 ```text
-.prepared/
+.state/
   current
   prepare.lock
   versions/

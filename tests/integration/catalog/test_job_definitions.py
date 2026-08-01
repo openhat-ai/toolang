@@ -6,6 +6,7 @@ import frontmatter
 import pytest
 
 from toolang.catalog.job import AuthoredJobs, JobFile
+from toolang.common.layout import AgentLayout
 from toolang.work.state import HomeJobs
 
 
@@ -91,7 +92,7 @@ def test_state_assigns_and_persists_missing_manual_job_id(tmp_path: Path) -> Non
     path.parent.mkdir(parents=True)
     path.write_text("---\ntitle: Manual\n---\nReview manually.\n", encoding="utf-8")
 
-    jobs = HomeJobs.load(tmp_path, "alice")
+    jobs = HomeJobs.load(AgentLayout.resident(tmp_path, "alice"))
     job = AuthoredJobs(home).list(kind="task")[0]
 
     assert job.path == path

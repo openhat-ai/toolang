@@ -1,21 +1,22 @@
-"""Sandbox plugin loading."""
+"""Sandbox hosting plugin loading."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, cast
 
-from toolang.base.protocols.sandbox import AgentSandbox
-
+from toolang.base.protocols.hosting import Hosting
 from toolang.plugin.loading import create_plugin
 
 
-def create_sandbox_plugin(
+def load_hosting(
     name: str,
     *,
     config: Mapping[str, Any] | None = None,
-) -> AgentSandbox:
+) -> Hosting:
+    """Load one hosting implementation by sandbox name."""
+
     return cast(
-        AgentSandbox,
+        Hosting,
         create_plugin(name, group="toolang.sandbox", config=config),
     )

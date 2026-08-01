@@ -6,22 +6,24 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import os
 from pathlib import Path
-import tomllib
 from typing import Any
 
 import click
 import typer
 from dotenv import dotenv_values
 
-from ...common.error import ToolangError
-from ...common.web import resolve_ui_base_url
-from ...catalog.error import CatalogError
+from ...common.errors import ToolangError
+from ...common.config import resolve_ui_base_url
+from ...common.layout import AgentLayout
+from ..config import load_config
+from ...catalog.errors import CatalogError
 
 
 @dataclass(slots=True)
 class CliContext:
     root: Path
     agent: str | None = None
+    layout: AgentLayout | None = None
 
 
 def cli_context(ctx: typer.Context) -> CliContext:
@@ -45,6 +47,15 @@ def require_prefix_agent(ctx: typer.Context) -> str:
     raise typer.Exit()
 
 
+def context_layout(ctx: typer.Context) -> AgentLayout:
+    """Return the explicitly selected layout or one resident layout."""
+
+    state = cli_context(ctx)
+    if state.layout is not None:
+        return state.layout
+    return AgentLayout.resident(state.root, require_prefix_agent(ctx))
+
+
 def require_runtime_agent(ctx: typer.Context, agent: str | None) -> str:
     if agent:
         return agent
@@ -66,36 +77,19 @@ def resolve_root(
 def ui_base_url(*, environ: Mapping[str, str] | None = None) -> str:
     values = os.environ if environ is None else environ
     root = resolve_root(None, environ=values)
-    config: dict[str, object] = {}
-    path = root / "config.toml"
-    if path.is_file():
-        config = tomllib.loads(path.read_text(encoding="utf-8"))
+    config = load_config(root / "config.toml")
     return resolve_ui_base_url(config, environ=values)
 
 
-def runtime_environ(
-    ctx: typer.Context,
-    agent_name: str,
-    *,
-    root: Path | None = None,
-) -> dict[str, str]:
-    return load_runtime_environ(
-        root or context_root(ctx),
-        agent_name,
-        base_environ=os.environ,
-    )
-
-
 def load_runtime_environ(
-    root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     *,
     base_environ: Mapping[str, str],
 ) -> dict[str, str]:
     """Load root and agent dotenv defaults below explicit process values."""
 
-    merged = _load_dotenv(root / ".env")
-    merged.update(_load_dotenv(root / "agents" / agent_name / ".env"))
+    merged = _load_dotenv(layout.root_env)
+    merged.update(_load_dotenv(layout.env))
     merged.update(base_environ)
     return merged
 

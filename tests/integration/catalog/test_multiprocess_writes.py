@@ -6,9 +6,11 @@ from pathlib import Path
 
 import frontmatter
 
-from toolang.catalog.cap import AuthoredCaps, CapFile, CapRef, WiredCaps
-from toolang.catalog.error import CatalogConflictError
+from toolang.catalog.cap import AuthoredCaps, CapFile
+from toolang.catalog.config import CapRef, WiredCaps
+from toolang.catalog.errors import CatalogConflictError
 from toolang.catalog.job import AuthoredJobs, JobFile, JobKind
+from toolang.common.layout import AgentLayout
 from toolang.work.authoring import (
     allocate_authored_job_id,
     assign_missing_authored_job_ids,
@@ -47,12 +49,16 @@ def _create_same_job(directory: str, kind: JobKind) -> str:
 
 
 def _assign_manual_job(root: str) -> None:
-    assign_missing_authored_job_ids(Path(root), "alice")
+    assign_missing_authored_job_ids(
+        AgentLayout.resident(Path(root), "alice")
+    )
 
 
 def _allocate_and_create_job(root: str) -> None:
     root_path = Path(root)
-    job_id = allocate_authored_job_id(root_path, "alice")
+    job_id = allocate_authored_job_id(
+        AgentLayout.resident(root_path, "alice")
+    )
     AuthoredJobs(root_path / "agents" / "alice").create(
         new_job_file(
             kind="task",

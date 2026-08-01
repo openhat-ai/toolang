@@ -138,7 +138,7 @@ def parse_program(
         typer.Option("--stdin-filepath", help="Path label for stdin."),
     ] = None,
 ) -> None:
-    from ....common.error import ToolangError
+    from ....common.errors import ToolangError
     from ....lang.ast import Program, to_data
 
     label, text = _read_source(source, stdin_filepath=stdin_filepath)

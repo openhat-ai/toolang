@@ -5,20 +5,17 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from pathlib import Path
 from typing import Protocol
 
-from toolang.base.error import ToolangError
+from toolang.base.errors import ToolangError
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
 from toolang.plugin.models.discovery import (
     default_provider_api_key_env,
     default_provider_base_url,
-    missing_provider_env_vars,
-    model_infos,
     required_provider_env_vars,
 )
-from toolang.plugin.models.errors import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
+from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
 from toolang.common.selectors import (
     Selector as ModelSelector,
     filter_value_matches,
@@ -46,19 +43,11 @@ def parse_model_selector(raw: str) -> ModelSelector:
 class SupportsModelSelection(Protocol):
     """Minimal context shape needed to resolve model selectors."""
 
-    model_providers: Mapping[str, ModelProvider]
+    providers: Mapping[str, ModelProvider]
+    models: tuple[ModelInfo, ...]
     model_aliases: Mapping[str, ModelAlias]
     default_models: tuple[str, ...]
-    model_environ: Mapping[str, str]
-
-
-def _context_model_cache_dir(context: SupportsModelSelection) -> Path | None:
-    value = getattr(context, "model_cache_dir", None)
-    return value if isinstance(value, Path) else None
-
-
-def _context_model_cache_refresh(context: SupportsModelSelection) -> bool:
-    return bool(getattr(context, "model_cache_refresh", False))
+    envs: Mapping[str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,15 +67,12 @@ def resolve_model(
 ) -> ModelTarget:
     """Resolve one model selector against one uptime context."""
 
-    cache_dir = _context_model_cache_dir(context)
-    cache_refresh = _context_model_cache_refresh(context)
     resolved_allowed = _resolve_allowed_targets(
         allowed_selectors,
-        providers=context.model_providers,
+        providers=context.providers,
+        models=context.models,
         aliases=context.model_aliases,
-        environ=context.model_environ,
-        cache_dir=cache_dir,
-        refresh=cache_refresh,
+        envs=context.envs,
     )
     effective_selector = _first_non_empty(
         selector,
@@ -96,20 +82,18 @@ def resolve_model(
     )
     matches = _resolve_selector_targets(
         (effective_selector,),
-        providers=context.model_providers,
+        providers=context.providers,
+        models=context.models,
         aliases=context.model_aliases,
-        environ=context.model_environ,
-        cache_dir=cache_dir,
-        refresh=cache_refresh,
+        envs=context.envs,
     )
     if not matches:
         raise ToolangError(
             _empty_model_selection_message(
-                providers=context.model_providers,
+                providers=context.providers,
+                models=context.models,
                 aliases=context.model_aliases,
-                environ=context.model_environ,
-                cache_dir=cache_dir,
-                refresh=cache_refresh,
+                envs=context.envs,
             )
         )
     if len(matches) > 1:
@@ -123,73 +107,68 @@ def resolve_model(
 def select_model_selectors(
     context: SupportsModelSelection,
     *,
-    agic_selectors: Sequence[str] = (),
-    activation_selectors: Sequence[str] = (),
+    directive_selectors: Sequence[str] = (),
+    allowed_selectors: Sequence[str] = (),
     default_selector: str | None = None,
 ) -> tuple[str, ...]:
     """Return the effective ordered model selectors for one run."""
 
-    cache_dir = _context_model_cache_dir(context)
-    cache_refresh = _context_model_cache_refresh(context)
-    agic_candidates = _resolve_selector_targets(
-        agic_selectors,
-        providers=context.model_providers,
+    directive_candidates = _resolve_selector_targets(
+        directive_selectors,
+        providers=context.providers,
+        models=context.models,
         aliases=context.model_aliases,
-        environ=context.model_environ,
-        cache_dir=cache_dir,
-        refresh=cache_refresh,
+        envs=context.envs,
     )
-    activation_candidates = _resolve_selector_targets(
-        activation_selectors,
-        providers=context.model_providers,
+    allowed_candidates = _resolve_selector_targets(
+        allowed_selectors,
+        providers=context.providers,
+        models=context.models,
         aliases=context.model_aliases,
-        environ=context.model_environ,
-        cache_dir=cache_dir,
-        refresh=cache_refresh,
+        envs=context.envs,
     )
-    if agic_selectors and not agic_candidates:
+    if directive_selectors and not directive_candidates:
         raise ToolangError(
             _empty_model_selection_message(
-                providers=context.model_providers,
+                providers=context.providers,
+                models=context.models,
                 aliases=context.model_aliases,
-                environ=context.model_environ,
-                cache_dir=cache_dir,
-                refresh=cache_refresh,
+                envs=context.envs,
             )
         )
-    if activation_selectors and not activation_candidates:
+    if allowed_selectors and not allowed_candidates:
         raise ToolangError(
             _empty_model_selection_message(
-                providers=context.model_providers,
+                providers=context.providers,
+                models=context.models,
                 aliases=context.model_aliases,
-                environ=context.model_environ,
-                cache_dir=cache_dir,
-                refresh=cache_refresh,
+                envs=context.envs,
             )
         )
-    if agic_candidates and activation_candidates:
-        agic_identities = {_target_identity(candidate.target) for candidate in agic_candidates}
+    if directive_candidates and allowed_candidates:
+        directive_identities = {
+            _target_identity(candidate.target) for candidate in directive_candidates
+        }
         selected = tuple(
             candidate.selector
-            for candidate in activation_candidates
-            if _target_identity(candidate.target) in agic_identities
+            for candidate in allowed_candidates
+            if _target_identity(candidate.target) in directive_identities
         )
         if selected:
             return selected
         raise ToolangError(NO_MATCHED_MODELS_MESSAGE)
 
-    if activation_candidates:
-        return _dedupe(candidate.selector for candidate in activation_candidates)
+    if allowed_candidates:
+        return _dedupe(candidate.selector for candidate in allowed_candidates)
 
-    if agic_candidates:
-        return _dedupe(candidate.selector for candidate in agic_candidates)
+    if directive_candidates:
+        return _dedupe(candidate.selector for candidate in directive_candidates)
 
     available = _discover_available_candidates(
-        providers=context.model_providers,
+        providers=context.providers,
+        models=context.models,
         aliases=context.model_aliases,
-        environ=context.model_environ,
-        cache_dir=cache_dir,
-        refresh=cache_refresh,
+        envs=context.envs,
     )
     defaults = (
         (default_selector,)
@@ -198,11 +177,10 @@ def select_model_selectors(
     ) or (DEFAULT_MODEL_SELECTOR,)
     preferred = _resolve_selector_targets(
         defaults,
-        providers=context.model_providers,
+        providers=context.providers,
+        models=context.models,
         aliases=context.model_aliases,
-        environ=context.model_environ,
-        cache_dir=cache_dir,
-        refresh=cache_refresh,
+        envs=context.envs,
     )
     ordered: list[str] = []
     seen: set[str] = set()
@@ -215,11 +193,10 @@ def select_model_selectors(
         return tuple(ordered)
     raise ToolangError(
         _empty_model_selection_message(
-            providers=context.model_providers,
+            providers=context.providers,
+            models=context.models,
             aliases=context.model_aliases,
-            environ=context.model_environ,
-            cache_dir=cache_dir,
-            refresh=cache_refresh,
+            envs=context.envs,
         )
     )
 
@@ -227,11 +204,10 @@ def select_model_selectors(
 def selectable_model_targets(
     *,
     providers: Mapping[str, ModelProvider],
+    models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
-    environ: Mapping[str, str],
+    envs: Mapping[str, str],
     selectors: Sequence[str] | None = None,
-    cache_dir: Path | None = None,
-    refresh: bool = False,
 ) -> tuple[tuple[str, ModelTarget], ...]:
     """Return selectable model targets for CLI/API listing."""
 
@@ -241,20 +217,18 @@ def selectable_model_targets(
             for candidate in _resolve_selector_targets(
                 selectors,
                 providers=providers,
+                models=models,
                 aliases=aliases,
-                environ=environ,
-                cache_dir=cache_dir,
-                refresh=refresh,
+                envs=envs,
             )
         )
     return tuple(
         (candidate.selector, candidate.target)
         for candidate in _discover_available_candidates(
             providers=providers,
+            models=models,
             aliases=aliases,
-            environ=environ,
-            cache_dir=cache_dir,
-            refresh=refresh,
+            envs=envs,
         )
     )
 
@@ -263,19 +237,17 @@ def _resolve_allowed_targets(
     selectors: Sequence[str] | None,
     *,
     providers: Mapping[str, ModelProvider],
+    models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
-    environ: Mapping[str, str],
-    cache_dir: Path | None = None,
-    refresh: bool = False,
+    envs: Mapping[str, str],
 ) -> tuple[ModelTarget, ...]:
     targets: list[ModelTarget] = []
     for candidate in _resolve_selector_targets(
         selectors,
         providers=providers,
+        models=models,
         aliases=aliases,
-        environ=environ,
-        cache_dir=cache_dir,
-        refresh=refresh,
+        envs=envs,
     ):
         targets.append(candidate.target)
     return tuple(targets)
@@ -284,10 +256,9 @@ def _resolve_allowed_targets(
 def _discover_available_candidates(
     *,
     providers: Mapping[str, ModelProvider],
+    models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
-    environ: Mapping[str, str],
-    cache_dir: Path | None = None,
-    refresh: bool = False,
+    envs: Mapping[str, str],
 ) -> tuple[_Candidate, ...]:
     candidates: list[_Candidate] = []
     seen: set[tuple[str, str, str, str | None]] = set()
@@ -295,10 +266,9 @@ def _discover_available_candidates(
         target = _target_from_alias(
             alias,
             providers=providers,
-            environ=environ,
+            models=models,
+            envs=envs,
             strict=False,
-            cache_dir=cache_dir,
-            refresh=refresh,
         )
         if target is None:
             continue
@@ -314,23 +284,23 @@ def _discover_available_candidates(
                 alias=alias,
             )
         )
-    for provider in providers.values():
-        if provider.name == CUSTOM_MODEL_PROVIDER or missing_provider_env_vars(provider, environ=environ):
+    for info in models:
+        provider = providers.get(info.provider)
+        if provider is None or provider.name == CUSTOM_MODEL_PROVIDER:
             continue
-        for info in model_infos(provider, environ=environ, cache_dir=cache_dir, refresh=refresh):
-            target = _target_from_info(provider, info, environ=environ)
-            identity = _target_identity(target)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            selector = f"{info.ref}[{provider.name}]"
-            candidates.append(
-                _Candidate(
-                    selector=selector,
-                    target=target,
-                    match_values=_candidate_match_values(selector, target, *info.selectors),
-                )
+        target = _target_from_info(provider, info, envs=envs)
+        identity = _target_identity(target)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        selector = f"{info.ref}[{provider.name}]"
+        candidates.append(
+            _Candidate(
+                selector=selector,
+                target=target,
+                match_values=_candidate_match_values(selector, target, *info.selectors),
             )
+        )
     return tuple(candidates)
 
 
@@ -338,17 +308,15 @@ def _resolve_selector_targets(
     selectors: Sequence[str] | None,
     *,
     providers: Mapping[str, ModelProvider],
+    models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
-    environ: Mapping[str, str],
-    cache_dir: Path | None = None,
-    refresh: bool = False,
+    envs: Mapping[str, str],
 ) -> tuple[_Candidate, ...]:
     candidates = _discover_available_candidates(
         providers=providers,
+        models=models,
         aliases=aliases,
-        environ=environ,
-        cache_dir=cache_dir,
-        refresh=refresh,
+        envs=envs,
     )
     selected: list[_Candidate] = []
     seen: set[tuple[str, str, str, str | None]] = set()
@@ -360,10 +328,9 @@ def _resolve_selector_targets(
             target = _target_from_alias(
                 aliases[text],
                 providers=providers,
-                environ=environ,
+                models=models,
+                envs=envs,
                 strict=True,
-                cache_dir=cache_dir,
-                refresh=refresh,
             )
             if target is None:
                 continue
@@ -385,10 +352,9 @@ def _resolve_selector_targets(
             matches = _resolve_exact_ref(
                 selector.pattern,
                 providers=providers,
+                models=models,
                 aliases=aliases,
-                environ=environ,
-                cache_dir=cache_dir,
-                refresh=refresh,
+                envs=envs,
             )
         for candidate in matches:
             identity = _target_identity(candidate.target)
@@ -403,18 +369,18 @@ def _resolve_exact_ref(
     ref: str,
     *,
     providers: Mapping[str, ModelProvider],
+    models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
-    environ: Mapping[str, str],
-    cache_dir: Path | None = None,
-    refresh: bool = False,
+    envs: Mapping[str, str],
 ) -> tuple[_Candidate, ...]:
     matches: list[_Candidate] = []
-    for provider in providers.values():
-        if provider.name == CUSTOM_MODEL_PROVIDER or missing_provider_env_vars(provider, environ=environ):
+    for info in models:
+        if info.ref != ref:
             continue
-        target = _target_from_provider_ref(provider, ref, environ=environ, cache_dir=cache_dir, refresh=refresh)
-        if target is None:
+        provider = providers.get(info.provider)
+        if provider is None or provider.name == CUSTOM_MODEL_PROVIDER:
             continue
+        target = _target_from_info(provider, info, envs=envs)
         matches.append(
             _Candidate(
                 selector=f"{target.ref}[{provider.name}]",
@@ -428,10 +394,9 @@ def _resolve_exact_ref(
         target = _target_from_alias(
             alias,
             providers=providers,
-            environ=environ,
+            models=models,
+            envs=envs,
             strict=False,
-            cache_dir=cache_dir,
-            refresh=refresh,
         )
         if target is None:
             continue
@@ -501,35 +466,20 @@ def _looks_exact_ref(selector: ModelSelector) -> bool:
     return "/" in pattern and not any(char in pattern for char in "*?[")
 
 
-def _target_from_provider_ref(
-    provider: ModelProvider,
-    ref: str,
-    *,
-    environ: Mapping[str, str],
-    cache_dir: Path | None = None,
-    refresh: bool = False,
-) -> ModelTarget | None:
-    info = _find_model_info_by_ref(provider, ref, environ=environ, cache_dir=cache_dir, refresh=refresh)
-    if info is not None:
-        return _target_from_info(provider, info, environ=environ)
-    return None
-
-
 def _target_from_alias(
     alias: ModelAlias,
     *,
     providers: Mapping[str, ModelProvider],
-    environ: Mapping[str, str],
+    models: Sequence[ModelInfo],
+    envs: Mapping[str, str],
     strict: bool,
-    cache_dir: Path | None = None,
-    refresh: bool = False,
 ) -> ModelTarget | None:
     provider = providers.get(alias.provider)
     if provider is None:
         if strict:
             raise ToolangError(f"unknown model provider for alias {alias.name!r}: {alias.provider}")
         return None
-    missing = _missing_target_env_vars(provider, alias=alias, environ=environ)
+    missing = _missing_target_env_vars(provider, alias=alias, envs=envs)
     if missing:
         if strict:
             joined = ", ".join(missing)
@@ -539,22 +489,20 @@ def _target_from_alias(
         if strict:
             raise ToolangError(f"model alias {alias.name!r} is missing endpoint")
         return None
-    info = _find_model_info_by_ref(provider, alias.ref, environ=environ, cache_dir=cache_dir, refresh=refresh)
+    info = _find_model_info_by_ref(models, provider=provider.name, ref=alias.ref)
     if info is not None:
-        return _target_from_info(provider, info, environ=environ, alias=alias)
-    return _target_from_alias_only(provider, alias, environ=environ)
+        return _target_from_info(provider, info, envs=envs, alias=alias)
+    return _target_from_alias_only(provider, alias, envs=envs)
 
 
 def _find_model_info_by_ref(
-    provider: ModelProvider,
-    ref: str,
+    models: Sequence[ModelInfo],
     *,
-    environ: Mapping[str, str],
-    cache_dir: Path | None = None,
-    refresh: bool = False,
+    provider: str,
+    ref: str,
 ) -> ModelInfo | None:
-    for info in model_infos(provider, environ=environ, cache_dir=cache_dir, refresh=refresh):
-        if info.ref == ref:
+    for info in models:
+        if info.provider == provider and info.ref == ref:
             return info
     return None
 
@@ -563,11 +511,11 @@ def _target_from_info(
     provider: ModelProvider,
     info: ModelInfo,
     *,
-    environ: Mapping[str, str],
+    envs: Mapping[str, str],
     alias: ModelAlias | None = None,
 ) -> ModelTarget:
     api_key_env = alias.key_env if alias is not None and alias.key_env is not None else default_provider_api_key_env(provider)
-    api_key = environ.get(api_key_env) if api_key_env else None
+    api_key = envs.get(api_key_env) if api_key_env else None
     scope = alias.scope if alias is not None and alias.scope is not None else info.scope or _provider_scope(provider.name)
     return ModelTarget(
         ref=info.ref,
@@ -575,7 +523,7 @@ def _target_from_info(
         name=alias.display_name if alias is not None and alias.display_name is not None else info.name,
         model=alias.model if alias is not None and alias.model is not None else info.model,
         adapter=alias.adapter if alias is not None and alias.adapter is not None else info.adapter,
-        base_url=alias.endpoint if alias is not None and alias.endpoint is not None else default_provider_base_url(provider, environ=environ),
+        base_url=alias.endpoint if alias is not None and alias.endpoint is not None else default_provider_base_url(provider, environ=envs),
         api_key=api_key,
         scope=scope,
         tags=alias.tags if alias is not None and alias.tags else info.tags,
@@ -590,10 +538,10 @@ def _target_from_alias_only(
     provider: ModelProvider,
     alias: ModelAlias,
     *,
-    environ: Mapping[str, str],
+    envs: Mapping[str, str],
 ) -> ModelTarget:
     model_name = alias.model or _provider_model_name_from_ref(alias.provider, alias.ref)
-    endpoint = alias.endpoint or default_provider_base_url(provider, environ=environ)
+    endpoint = alias.endpoint or default_provider_base_url(provider, environ=envs)
     scope = alias.scope or _scope_from_endpoint(endpoint) or _provider_scope(alias.provider)
     api_key_env = alias.key_env or default_provider_api_key_env(provider)
     return ModelTarget(
@@ -603,7 +551,7 @@ def _target_from_alias_only(
         model=model_name,
         adapter=alias.adapter or _default_provider_adapter(provider.name),
         base_url=endpoint,
-        api_key=environ.get(api_key_env) if api_key_env else None,
+        api_key=envs.get(api_key_env) if api_key_env else None,
         scope=scope,
         tags=alias.tags,
         headers=dict(alias.headers),
@@ -647,7 +595,7 @@ def _missing_target_env_vars(
     provider: ModelProvider,
     *,
     alias: ModelAlias | None,
-    environ: Mapping[str, str],
+    envs: Mapping[str, str],
 ) -> tuple[str, ...]:
     required = list(required_provider_env_vars(provider))
     default_key_env = default_provider_api_key_env(provider)
@@ -662,7 +610,7 @@ def _missing_target_env_vars(
         if not env_name or env_name in seen:
             continue
         seen.add(env_name)
-        if not str(environ.get(env_name, "")).strip():
+        if not str(envs.get(env_name, "")).strip():
             missing.append(env_name)
     return tuple(missing)
 
@@ -692,7 +640,8 @@ def _require_allowed(
         return
     allowed_text = ", ".join(f"{item.ref}[{item.provider}]" for item in allowed)
     raise ToolangError(
-        f"model selector is not allowed for this activation: {selector} (allowed: {allowed_text})"
+        f"model selector is outside the current ceiling: {selector} "
+        f"(allowed: {allowed_text})"
     )
 
 
@@ -722,17 +671,15 @@ def _dedupe(items: Iterable[str]) -> tuple[str, ...]:
 def _empty_model_selection_message(
     *,
     providers: Mapping[str, ModelProvider],
+    models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
-    environ: Mapping[str, str],
-    cache_dir: Path | None = None,
-    refresh: bool = False,
+    envs: Mapping[str, str],
 ) -> str:
     available = _discover_available_candidates(
         providers=providers,
+        models=models,
         aliases=aliases,
-        environ=environ,
-        cache_dir=cache_dir,
-        refresh=refresh,
+        envs=envs,
     )
     if available:
         return NO_MATCHED_MODELS_MESSAGE

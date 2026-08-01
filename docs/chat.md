@@ -15,8 +15,8 @@ Chat uses the same runtime units as the rest of Toolang:
 | `run` | One handling attempt inside that thread |
 | `step` | One execution unit inside the run |
 
-One chat submission creates one start command, one run, and one thread when no
-thread id is supplied.
+One chat submission creates one start control and one run in an existing
+thread. A client creates the thread explicitly before the first submission.
 
 Thread ids use one underscore-delimited normalized form:
 
@@ -26,10 +26,11 @@ Thread ids use one underscore-delimited normalized form:
 
 Examples:
 
-- `tsk_3nprht9x`
-- `chr_xy1234ab`
+- `task_3nprht9x`
+- `chore_xy1234ab`
 - `web_def456gh`
-- `tui_jk789mnp`
+- `term_jk789mnp`
+- `script_pqr234st`
 - `tg_123456789`
 
 The parser splits on the first `_`; the trailing id may contain additional
@@ -56,7 +57,6 @@ The public message shape is:
 - `role`
 - `parts`
 - `created_at`
-- `meta`
 
 Current roles are:
 
@@ -64,17 +64,21 @@ Current roles are:
 - `assistant`
 - `tool`
 
-Current part kinds are:
+Messages use the shared canonical part vocabularies:
 
-- `text`
-- `image`
-- `audio`
-- `file`
-- `tool_call`
-- `tool_result`
+```text
+PerceptPart = TextPart | ImagePart | AudioPart | DocumentPart
+Percept     = PerceptPart[]
+MessagePart = PerceptPart | ToolCallPart | ToolResultPart
+Message     = { role: MessageRole, parts: MessagePart[] }
+```
 
-The initial `start` command projects to the user message. Later `steer`
-commands project to additional user messages in the same run. Step output
+User messages contain only `PerceptPart` values. Assistant messages may
+additionally contain `ToolCallPart` values, while tool messages contain only
+`ToolResultPart` values.
+
+The initial `start` control projects to the user message. Later `steer`
+controls project to additional user messages in the same run. Step output
 projects to assistant or tool messages.
 
 
@@ -110,24 +114,25 @@ There is no separate top-level `thread.messages` field.
 
 To build a full transcript, flatten:
 
-1. each run command with a message
+1. each run control with a message
 2. each step message in run order
 
 Forked chat threads store their source thread and anchor run in `parent`.
-Inherited transcript context includes visible source-thread runs before the
-anchor run.
+Inherited transcript context includes the anchor run. Run and step rows are not
+copied into the new thread.
 
 
 ## Run API
 
 Run detail returns:
 
-- `info`
 - `input`
-- `output`
+- `controls`
+- `steps`
 
-`output.steps` contains the projected step detail for the run. This is the
-source used by trace and chat inspection pages.
+The inherited `RunInfo` fields contain summary and lifecycle information.
+`steps` contains the projected step detail used by trace and chat inspection
+pages.
 
 Run control endpoints are:
 
@@ -142,15 +147,18 @@ Thread lifecycle endpoints are:
 `steer` and `cancel` require a running run. They can target chat, task, and
 chore runs.
 
-`rewind` replaces the visible suffix of a branchable chat thread from the
-anchor run onward and starts a replacement run in the same thread. Superseded
-runs remain inspectable by id but are hidden from normal thread projections.
+`rewind` removes the visible suffix of a branchable chat thread from the anchor
+run onward. Superseded runs remain inspectable by id but are hidden from normal
+thread projections. It does not start a replacement run.
 
-`fork` creates a new chat thread from the context before the anchor run and
-starts one run in the new thread.
+`fork` creates a new chat thread whose inherited context ends with the anchor
+run. It does not start a run in the new thread.
 
-Both lifecycle request bodies identify the anchor with `run_id`. Fork requests
-may additionally set `include_anchor`.
+Both lifecycle request bodies may identify the anchor with `run_id`. Omitting
+it selects the last visible top-level run. An anchor must be terminal. Fork
+includes its anchor and may select an earlier terminal run while a later run
+remains active. Rewind discards its anchor and requires the entire thread to
+have no pending or running runs; callers must stop active runs before rewinding.
 
 Task and chore thread ids are derived from job ids, so job threads cannot be
 rewound or forked. Job execution commands expose explicit job semantics such as
@@ -159,54 +167,42 @@ rewound or forked. Job execution commands expose explicit job semantics such as
 
 ## Chat API
 
-Buffered chat:
+The HTTP API models chat as thread management plus normal run execution. It
+does not expose a separate `/chat` resource.
 
-- `GET /api/v1/models`
-- `POST /api/v1/chat`
+A client starts a new conversation by calling:
 
-request body:
+1. `POST /api/v1/threads` with `client` and an optional peer.
+2. `POST /api/v1/runs/stream` with the returned thread id, runnable, percept
+   input, optional model, and optional runnable arguments.
 
-- `thread`
-- `client`: `web`, `tui`, or `chat`; defaults to `web` and controls the prefix
-  for newly allocated chat thread ids
-- `peer` optional; defaults to the user peer
-- `message`
-  - `role`
-  - `parts`
-- `model` optional selected model selector
+Subsequent turns reuse the same thread id. The client explicitly selects the
+chat/default runnable. Persisted state is read through the normal thread and run
+detail endpoints.
 
-returns:
-
-- `thread`
-- `run`
-- `message`
-- `assistant`
-
-`thread` is `ThreadInfo`; `run` is `RunInfo`.
-
-Streaming chat:
-
-- `POST /api/v1/chat/stream`
-
-returns an SSE stream for the same run.
-
-`GET /api/v1/models` returns the current chat-selectable model selectors
-and the default selector after applying activation config and the `chat` agic.
+`GET /api/v1/models` returns model selectors inside the server's current
+`CeilingSpec` and the default selector. A run applies its selected runnable's
+`models` directive after it starts.
 
 
 ## Streaming Rule
 
-The stream is the primary real-time output surface for a live chat exchange.
+The canonical root-run stream is the primary real-time output surface for a
+live chat exchange. It includes events from the complete recursive run tree.
+Runtime surfaces should treat the canonical thread and root-run event streams
+as the source of progress truth. A web client adapts native `RunEvent` values
+into any UI-specific protocol locally.
 
-Runtime surfaces should treat the canonical thread and run event streams as the
-source of progress truth. The chat SSE endpoint exposes an AI SDK UI message
-stream adapter for web clients that use AI SDK Elements; it is not the canonical
-execution protocol.
+The TUI does not consume the HTTP API. Its process calls `RunExecutor` directly
+and renders native `RunEvent` values received through a `RunTracer`.
 
-UIs should keep exactly one active mutable block for the visible run. Finalized
-blocks can move into scrollback immediately instead of waiting for the whole run
-to finish. Parallel tool calls, agic calls, or flow lanes are rendered inside
-the current mutable block.
+The chat TUI keeps only live mutable blocks in its live area. Stable blocks
+move into terminal scrollback progressively instead of waiting for the whole
+run to finish. Parallel tool calls, agic calls, and flow lanes are summarized by
+their owning visible operation rather than finalized in completion order. See
+[execution-presentation.md](./execution-presentation.md) for the shared display
+language and the TUI's existing control-bar, streaming, alignment, and
+scrollback constraints.
 
 Thread and run detail endpoints are inspection surfaces used to:
 

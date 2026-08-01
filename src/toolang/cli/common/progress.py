@@ -12,7 +12,8 @@ from rich.console import Console
 from rich.live import Live
 from rich.text import Text
 
-from ...common.progress import ProgressEvent, ProgressSink
+from ...common.events import ProgressEvent
+from ...common.progress import ProgressSink
 
 
 class CliProgress:

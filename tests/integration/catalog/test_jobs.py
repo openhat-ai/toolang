@@ -9,7 +9,8 @@ import frontmatter
 import pytest
 
 from toolang.catalog.job import AuthoredJobs, JobFile
-from toolang.catalog.error import DuplicateJobIdError
+from toolang.catalog.errors import DuplicateJobIdError
+from toolang.common.layout import AgentLayout
 from toolang.lang.ast import Program
 from toolang.work.state import AgentJobs, HomeJobs, JobDefinition
 from toolang.work.store import JobStore
@@ -24,7 +25,9 @@ def _job(kind, job_id: str, body: str, *, stage="ready") -> JobFile:
 def test_job_watcher_current_returns_published_snapshot_without_rescanning(
     tmp_path: Path, monkeypatch
 ) -> None:
-    watcher = JobWatcher(tmp_path / "toolang", "alice")
+    watcher = JobWatcher(
+        AgentLayout.resident(tmp_path / "toolang", "alice")
+    )
     published = watcher.current()
     monkeypatch.setattr(
         HomeJobs,
@@ -41,7 +44,10 @@ def test_agent_jobs_merge_home_over_program(tmp_path: Path) -> None:
     AuthoredJobs(home).create(_job("task", "review", "Review from file."))
     program = Program.from_source("task review:\n  Review from program.\n")
 
-    jobs = AgentJobs.merge(HomeJobs.load(root, "alice"), program)
+    jobs = AgentJobs.merge(
+        HomeJobs.load(AgentLayout.resident(root, "alice")),
+        program,
+    )
 
     assert len(jobs.definitions) == 1
     assert jobs.definitions[0].input == "Review from file."
@@ -115,7 +121,10 @@ def test_job_store_claims_once_across_connections(tmp_path: Path) -> None:
     AuthoredJobs(root / "agents" / "alice").create(
         _job("task", "review", "Review this.")
     )
-    jobs = AgentJobs.merge(HomeJobs.load(root, "alice"), Program.from_source(""))
+    jobs = AgentJobs.merge(
+        HomeJobs.load(AgentLayout.resident(root, "alice")),
+        Program.from_source(""),
+    )
     path = root / "agents" / "alice" / ".runtime" / "jobs.db"
     stores = (JobStore(path), JobStore(path))
     for store in stores:
@@ -124,20 +133,19 @@ def test_job_store_claims_once_across_connections(tmp_path: Path) -> None:
     claims = []
     lock = threading.Lock()
 
-    def claim(store: JobStore, run_id: str) -> None:
+    def claim(store: JobStore) -> None:
         barrier.wait()
         claimed = store.claim_due(
             jobs=jobs,
             kind="task",
-            run_id=run_id,
             now=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
         with lock:
             claims.append(claimed)
 
     threads = [
-        threading.Thread(target=claim, args=(store, f"run-{index}"))
-        for index, store in enumerate(stores)
+        threading.Thread(target=claim, args=(store,))
+        for store in stores
     ]
     for thread in threads:
         thread.start()

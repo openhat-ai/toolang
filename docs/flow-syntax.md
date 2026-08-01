@@ -12,6 +12,7 @@ NAME       local name
 T          Toolang type
 N          non-negative count or selection size
 P          positive concurrency limit
+VALUE_STMT a result-producing statement other than repeat
 RUNNABLE   named agic or flow
 AGENT      agent selector
 EXPANDER   one-run runnable returning a list
@@ -39,6 +40,10 @@ KEYWORD ...:
   TEXT
 ```
 
+When a statement consumes authored content, its `BODY` is a `ContentBody` and
+follows [input-syntax.md](./input-syntax.md). A statement block uses `STMTS`
+instead.
+
 
 ## Flow And Binding
 
@@ -46,20 +51,23 @@ KEYWORD ...:
 flow [NAME] [(PARAMS)] [-> T]:
   STMTS
 
-STMT                    update `_`
-let NAME = STMT         update `NAME`
-let STMT                discard the result
+VALUE_STMT                    update `_`
+let NAME = VALUE_STMT         update `NAME`
+let VALUE_STMT                discard the result
 
-let NAME: BODY          assign authored text directly to `NAME`
+repeat ...                    update locals through its body
+
+let NAME: BODY          perceive a ContentBody and assign one `Percept` to `NAME`
 ```
 
 Flow signatures use the executable parameter rules in
 [program.md](./program.md), including implicit `_ : Part[]`, explicit `()`, and
 named parameters.
 
-`_` is the primary local. A statement may read all locals, but it computes its
-result from a snapshot before the selected local is updated. Binding therefore
-remains separate from statement execution.
+`_` is the primary local. A value statement reads a locals snapshot, computes
+one result, and applies its binding only after the complete statement succeeds.
+`repeat` is different: it produces no result and accepts no `let` binding. Its
+body statements update the current flow locals normally as the loop proceeds.
 
 
 ## Statements
@@ -118,7 +126,7 @@ repeat:
 run      run a named agic or flow, or an inline agic
 seek     seek another agent's help with a named runnable or inline request
 ask      ask the human owner for input, judgment, or confirmation
-scatter  scatter the current item into up to N items in one run
+scatter  scatter the current item into a list in one run
 storm    storm N independent results from the current item
 gather   gather the current list into one item in one run
 settle   settle the current list into one item through sequential runs
@@ -129,6 +137,17 @@ rank     rank items by score and optionally keep the top or bottom N
 repeat   repeat a statement block, bounded by N or until
 ```
 
+The reshape statements form two execution families:
+
+| Execution | `item -> list` | `list -> list` | `list -> item` |
+| --- | --- | --- | --- |
+| one child run | `scatter` | - | `gather` |
+| multiple child runs | `storm` | `map` | `settle` |
+
+`scatter/gather` delegate reshape to one runnable. `storm/map/settle` let the
+executor coordinate multiple child runs. All five remain value statements and
+bind their complete result once.
+
 
 ## Rules
 
@@ -138,10 +157,18 @@ repeat   repeat a statement block, bounded by N or until
 - Inline bodies use `-> T` only when their produced item type is configurable.
   Statement semantics determine whether those items form an `item` or `list`
   result shape.
-- `ask` returns the human owner's input.
+- `ask` perceives its ContentBody for the human owner and returns the owner's
+  canonical `Percept`, represented in the language as `Part[]`.
+- A direct `let NAME: BODY` perceives its ContentBody as one `Percept` local
+  with language type `Part[]`, without starting a child run.
 - Inline `keep`, `drop`, and `until` bodies return `Boolean`.
 - A `SCORER` or inline `rank` body returns `Number`.
-- `repeat` is control flow. Its result is the last executed child result.
+- Generated inline `keep`, `drop`, `rank`, and `until` evaluators do not
+  recall thread history or receive tools. Use a named agic when evaluation
+  intentionally needs either resource.
+- `repeat` is control flow, not a value statement. It has no result or binding.
+  Its body statements update the same working locals according to their own
+  bindings. Zero iterations leave locals unchanged.
 
 
 ### Runs
@@ -152,10 +179,15 @@ repeat   repeat a statement block, bounded by N or until
 - `seek AGENT RUNNABLE` resolves in the target agent's program. Inline `seek`
   sends its body to the target agent.
 - `scatter` and `gather` each start one child run, then reshape its result.
+- The current `scatter N` surface retains `N`, but execution uses the returned
+  array length and neither validates nor truncates it.
 - `storm` starts `N` independent child runs and preserves result order.
 - `map`, filter-based `keep/drop`, and `rank` start one child run per item.
-- `settle` starts one child run per item in sequence and carries its
-  accumulator forward.
+- `settle` starts one child run per item in sequence. The first run receives
+  empty primary input `_` and source item `0` as argument `item`; each output
+  becomes `_` for the next run. Inline settle agics receive an implicit
+  `item: Part[]` parameter. This accumulator is internal to settle; outer flow
+  locals receive only the final successful result through settle's binding.
 - Positional `keep/drop` do not start child runs.
 
 
@@ -169,7 +201,10 @@ repeat   repeat a statement block, bounded by N or until
 - `top N` and `bottom N` are mutually exclusive. Selected items retain ranked
   order; omitting both returns the complete ranked list.
 - Every `repeat` has `N`, `until`, or both. When both are present, the first
-  stopping condition reached ends the loop. `until` is always final.
+  stopping condition reached ends the loop. `until` is always final, reads the
+  latest locals after the iteration, and does not bind its Boolean result. A
+  failed evaluator run or failed Boolean coercion fails the repeat and its
+  enclosing flow; failure is never interpreted as `false`.
 
 The common form is:
 

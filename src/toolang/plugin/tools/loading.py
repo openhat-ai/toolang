@@ -46,12 +46,12 @@ class LoadedTool(AgentTool):
             parameters=dict(definition.parameters),
         )
 
-    def invoke(
+    async def invoke(
         self,
         arguments: Mapping[str, Any],
         context: ToolContext,
     ) -> dict[str, Any]:
-        return self.leaf_tool.invoke(arguments, context)
+        return await self.leaf_tool.invoke(arguments, context)
 
 
 def load_tool_plugins(

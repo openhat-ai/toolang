@@ -2,8 +2,8 @@
 
 from fastapi import HTTPException
 
-from toolang.base.types.message import Message
-from .schemas import InputMessagePayload
+from toolang.base.types.message import Message, Percept
+from .schemas import InputMessagePayload, InputPart
 
 
 def parse_user_message(payload: InputMessagePayload) -> Message:
@@ -18,3 +18,20 @@ def parse_user_message(payload: InputMessagePayload) -> Message:
     if message.role != "user":
         raise HTTPException(status_code=422, detail="input message role must be user")
     return message
+
+
+def parse_percept(parts: list[InputPart]) -> Percept:
+    """Parse and validate canonical HTTP input parts."""
+
+    try:
+        return Message.from_data(
+            {
+                "role": "user",
+                "parts": [
+                    part.model_dump(mode="python", exclude_none=True)
+                    for part in parts
+                ],
+            }
+        ).percept
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

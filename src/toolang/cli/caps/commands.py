@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Literal
 from urllib.parse import quote
 
 import click
@@ -13,12 +13,15 @@ import typer
 from typer.core import TyperGroup
 
 from ...catalog import templates
-from ...catalog.error import CatalogConflictError
-from ...common.error import ToolangError
+from ...catalog.errors import CatalogConflictError
+from ...common.errors import ToolangError
 from ...common.github import parse_github_ref
+from ...common.layout import AgentLayout
 from toolang.catalog import cap as cap_store
+from toolang.catalog import config as cap_config
+from toolang.catalog.types import CAP_KINDS, CapKind
 from toolang.state import state as cap_state
-from ..common.updates import append_agent_update
+from toolang.state.prepare import prepare_agent_state
 from ..common.context import context_agent, context_root, user_call
 from ..common.output import echo_block, echo_table
 from ..common.routing import (
@@ -26,19 +29,17 @@ from ..common.routing import (
     OptionalPrefixAgentListCommand,
     OptionalPrefixAgentTemplateCommand,
 )
+from ..common.version import toolang_version
 
 if TYPE_CHECKING:
-    from ...execution.records import UpdateKind
     from toolang.state.state import AgentState
     from toolang.state.state import PreparedCap
     from ..common.progress import CliProgress
 
-CapKind = Literal["skill", "psyche", "prompt", "service"]
 EntryKind = CapKind
 PreparedVisibility = Literal["shared", "private"]
 CapForm = Literal["inline", "ref", "wired", "file"]
 CapScope = Literal["root", "home", "here"]
-CAP_KINDS: tuple[CapKind, ...] = ("psyche", "skill", "service", "prompt")
 CAP_FORMS: tuple[CapForm, ...] = ("inline", "ref", "wired", "file")
 CAP_SCOPES: tuple[CapScope, ...] = ("root", "home", "here")
 
@@ -333,12 +334,9 @@ def _make_new_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             cap,
         )
         if selected_agent:
-            _refresh_and_append_cap_update(
+            _refresh_agent_state(
                 context_root(ctx),
                 selected_agent,
-                kind=kind,
-                name=name,
-                visibility=visibility,
                 progress_total=1,
             )
         typer.echo(f"Created {kind} {name}: {saved.path}")
@@ -376,12 +374,9 @@ def _make_edit_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             cap,
         )
         if selected_agent:
-            _refresh_and_append_cap_update(
+            _refresh_agent_state(
                 context_root(ctx),
                 selected_agent,
-                kind=kind,
-                name=name,
-                visibility=visibility,
                 progress_total=1,
             )
         typer.echo(f"Updated {kind} {name}: {saved.path}")
@@ -405,7 +400,7 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             )
             name = cap_state.remote_entry_name(kind, canonical_ref)
             _wired_caps(context_root(ctx), agent_name, visibility).create(
-                cap_store.CapRef(kind=kind, name=name, ref=canonical_ref)
+                cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
             )
         except CatalogConflictError as exc:
             progress.finish(details=False)
@@ -431,12 +426,9 @@ def _make_add_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
         )
         if selected_agent:
             try:
-                _refresh_and_append_cap_update(
+                _refresh_agent_state(
                     context_root(ctx),
                     selected_agent,
-                    kind=kind,
-                    name=entry.name,
-                    visibility=visibility,
                     progress_total=1,
                     progress=progress,
                 )
@@ -471,12 +463,9 @@ def _make_remove_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             name,
         )
         if selected_agent:
-            _refresh_and_append_cap_update(
+            _refresh_agent_state(
                 context_root(ctx),
                 selected_agent,
-                kind=kind,
-                name=name,
-                visibility=visibility,
                 progress_total=0,
             )
         typer.echo(f"Removed {kind} {name}: {entry.ref}")
@@ -508,12 +497,9 @@ def _make_delete_cap_command(kind: CapKind, title: str) -> Callable[..., None]:
             name,
         )
         if selected_agent:
-            _refresh_and_append_cap_update(
+            _refresh_agent_state(
                 context_root(ctx),
                 selected_agent,
-                kind=kind,
-                name=name,
-                visibility=visibility,
                 progress_total=0,
             )
         typer.echo(f"Deleted {kind} {name}: {deleted_path}")
@@ -618,7 +604,6 @@ def _all_cap_entries(
     kinds: set[EntryKind],
 ) -> tuple[PreparedCap, ...]:
     if prepare and (toolang_root / "agents" / agent_name / "agent.too").is_file():
-        from toolang.up.server import prepare_agent
         from ..common.progress import as_progress_sink, make_cli_progress
 
         progress = make_cli_progress(
@@ -627,14 +612,12 @@ def _all_cap_entries(
         )
         try:
             state = user_call(
-                prepare_agent,
-                toolang_root=toolang_root,
-                agent_name=agent_name,
+                prepare_agent_state,
+                AgentLayout.resident(toolang_root, agent_name),
+                toolang_version=toolang_version(),
                 progress=as_progress_sink(progress),
             )
-            entries = _prepared_cap_entries(
-                state, visibility=visibility, kinds=kinds
-            )
+            entries = _prepared_cap_entries(state, visibility=visibility, kinds=kinds)
             progress.set_prepare_total(len(entries))
             return entries
         finally:
@@ -656,8 +639,7 @@ def _prepared_cap_entries(
     return tuple(
         cap
         for cap in state.caps
-        if cap.kind in kinds
-        and (visibility == "all" or cap.visibility == visibility)
+        if cap.kind in kinds and (visibility == "all" or cap.visibility == visibility)
     )
 
 
@@ -723,29 +705,9 @@ def _wired_caps(
     toolang_root: Path,
     agent_name: str,
     visibility: PreparedVisibility,
-) -> cap_store.WiredCaps:
-    return cap_store.WiredCaps(
+) -> cap_config.WiredCaps:
+    return cap_config.WiredCaps(
         _cap_directory(toolang_root, agent_name, visibility) / "config.toml"
-    )
-
-
-def _append_cap_update(
-    toolang_root: Path,
-    agent_name: str,
-    *,
-    kind: CapKind,
-    name: str,
-    visibility: PreparedVisibility,
-) -> None:
-    update_kind = cast("UpdateKind", f"{kind}_changed")
-    append_agent_update(
-        toolang_root,
-        agent_name,
-        update_kind,
-        {
-            "name": name,
-            "visibility": visibility,
-        },
     )
 
 
@@ -758,31 +720,20 @@ def _make_cap_write_progress() -> CliProgress:
     )
 
 
-def _refresh_and_append_cap_update(
+def _refresh_agent_state(
     toolang_root: Path,
     agent_name: str,
     *,
-    kind: CapKind,
-    name: str,
-    visibility: PreparedVisibility,
     progress_total: int,
     progress: CliProgress | None = None,
 ) -> None:
-    from toolang.up.server import prepare_agent
     from ..common.progress import as_progress_sink
 
     user_call(
-        prepare_agent,
-        toolang_root=toolang_root,
-        agent_name=agent_name,
+        prepare_agent_state,
+        AgentLayout.resident(toolang_root, agent_name),
+        toolang_version=toolang_version(),
         progress=as_progress_sink(progress),
     )
     if progress is not None:
         progress.set_prepare_total(progress_total)
-    _append_cap_update(
-        toolang_root,
-        agent_name,
-        kind=kind,
-        name=name,
-        visibility=visibility,
-    )

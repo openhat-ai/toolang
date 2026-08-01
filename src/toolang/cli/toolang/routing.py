@@ -7,11 +7,12 @@ from pathlib import Path
 
 import typer
 
+from toolang.common.layout import AgentLayout
 from toolang.up import process as agents
 from ...up.logging import configure_logging
 from ..caps.commands import CAP_KINDS
 from ..common.routing import extract_root_args
-from .commands import runtime
+from .commands import runtime, script
 
 TOP_LEVEL_COMMANDS = frozenset(
     {
@@ -23,6 +24,7 @@ TOP_LEVEL_COMMANDS = frozenset(
         "hidden",
         "fmt",
         "parse",
+        "script",
         "model",
         "tool",
         "channel",
@@ -86,16 +88,14 @@ PREFIX_AGENT_COMMANDS = frozenset(
     }
 )
 THREAD_TARGET_COMMANDS = frozenset({"steer", "cancel", "rewind", "fork"})
-ROAMING_THREAD_COMMANDS = frozenset(
-    {"threads", "runs", "inspect", "steer", "cancel", "rewind", "fork"}
-)
+ROAMING_HISTORY_COMMANDS = frozenset({"threads", "runs", "inspect"})
 
 
 def dispatch_roaming(
     argv: list[str],
     *,
     prog_name: str,
-    run_app: Callable[[list[str], str | None], int],
+    run_app: Callable[[list[str], AgentLayout], int],
 ) -> int | None:
     global_args, body = extract_root_args(argv)
     if not body or (source := _source_path(body[0])) is None:
@@ -105,23 +105,21 @@ def dispatch_roaming(
     except ValueError as exc:
         typer.echo(f"toolang error: {exc}", err=True)
         return 1
-    if len(body) >= 2 and body[1] in ROAMING_THREAD_COMMANDS:
+    if len(body) >= 2 and body[1] in ROAMING_HISTORY_COMMANDS:
         if global_args:
             return _unsupported_global_options()
         try:
-            root, agent = agents.materialize_roaming_program(source)
+            layout = agents.materialize_roaming_program(source)
         except (FileExistsError, FileNotFoundError, ValueError) as exc:
             typer.echo(f"toolang error: {exc}", err=True)
             return 1
-        return run_app(["--root", str(root), *body[1:]], agent)
+        return run_app(body[1:], layout)
     if runtime.is_roaming_file_request(body[1:]):
         if global_args:
             return _unsupported_global_options()
         return runtime.run_roaming_file(source, body[1:])
 
-    from ..impl.invoke import runner as invoke
-
-    return invoke.handle_roaming_invoke(global_args, body, prog_name=prog_name)
+    return script.dispatch(global_args, body, prog_name=prog_name)
 
 
 def normalize(argv: list[str]) -> tuple[list[str], str | None]:

@@ -1,7 +1,84 @@
 import pytest
 
 from tests import FIXTURES_ROOT, PROJECT_ROOT
-from toolang.lang import Program, ToolangFormatError, format_source, to_data
+from toolang.lang import (
+    Program,
+    ToolangFormatError,
+    format_source,
+    format_statement_head,
+    to_data,
+)
+
+
+def test_format_statement_head_preserves_compact_source_order() -> None:
+    program = Program.from_source(
+        """
+agic action:
+  pass
+
+agic predicate -> Boolean:
+  pass
+
+agic score -> Number:
+  pass
+
+flow work:
+  let topic:
+    hello
+  run action
+  let reviewed = run action
+  let run action
+  seek reviewer action
+  ask: Continue?
+  scatter 2 action
+  storm 3 action par 2
+  gather action
+  settle action
+  map action par 4
+  keep first 2
+  keep predicate par 2
+  drop last 1
+  rank score top 3 par 2
+  repeat 2:
+    run action
+"""
+    )
+
+    assert [format_statement_head(statement) for statement in program.flows[0].stmts] == [
+        "let topic",
+        "run action",
+        "let reviewed = run action",
+        "let run action",
+        "seek reviewer action",
+        "ask",
+        "scatter 2 action",
+        "storm 3 action par 2",
+        "gather action",
+        "settle action",
+        "map action par 4",
+        "keep first 2",
+        "keep predicate par 2",
+        "drop last 1",
+        "rank score top 3 par 2",
+        "repeat 2",
+    ]
+
+
+def test_format_statement_head_hides_generated_inline_agic_names() -> None:
+    program = Program.from_source(
+        """
+flow work:
+  run: Draft a report.
+  map par 3: Rewrite this item.
+  rank top 2 par 3: Score this item.
+"""
+    )
+
+    assert [format_statement_head(statement) for statement in program.flows[0].stmts] == [
+        "run",
+        "map par 3",
+        "rank top 2 par 3",
+    ]
 
 
 def test_format_source_normalizes_too_spacing() -> None:
@@ -583,7 +660,7 @@ def test_repo_programs_format_idempotently_without_semantic_changes() -> None:
         *(
             path
             for path in sorted((PROJECT_ROOT / "examples").glob("*.too"))
-            if path.name != "invoke-playground.too"
+            if path.name != "script-playground.too"
         ),
     ]
 

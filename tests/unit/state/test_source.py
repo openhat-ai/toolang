@@ -10,9 +10,7 @@ def test_source_tree_round_trips_nested_metadata(tmp_path: Path) -> None:
     source = tmp_path / "source"
     skill = source / "skills" / "pdf" / "scripts"
     skill.mkdir(parents=True)
-    (source / "skills" / "pdf" / "SKILL.md").write_text(
-        "# PDF\n", encoding="utf-8"
-    )
+    (source / "skills" / "pdf" / "SKILL.md").write_text("# PDF\n", encoding="utf-8")
     (skill / "convert.py").write_text("pass\n", encoding="utf-8")
 
     tree = scan_source(source, ("skills", "config.toml"))

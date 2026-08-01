@@ -43,12 +43,9 @@ class OllamaModelProvider(ModelProvider):
         return None
 
     def list_models(self, *, environ: Mapping[str, str]) -> tuple[ModelInfo, ...]:
-        try:
-            response = httpx.get(f"{_ollama_host(environ)}/api/tags", timeout=2.0)
-            response.raise_for_status()
-            payload = response.json()
-        except Exception:
-            return ()
+        response = httpx.get(f"{_ollama_host(environ)}/api/tags", timeout=2.0)
+        response.raise_for_status()
+        payload = response.json()
         raw_models = payload.get("models")
         if not isinstance(raw_models, list):
             return ()

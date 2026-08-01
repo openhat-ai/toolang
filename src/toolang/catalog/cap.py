@@ -1,4 +1,4 @@
-"""Authored cap files and wired cap references."""
+"""Authored capability files."""
 
 from __future__ import annotations
 
@@ -7,30 +7,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 import re
-import tomllib
-from typing import Any, Literal, cast
-
 import frontmatter
-import tomlkit
-
 from toolang.common.files import atomic_write_text, file_write_lock
 
-from ._frontmatter import normalize_meta
-from .error import CatalogConflictError, CatalogNotFoundError
-
-CapKind = Literal["psyche", "skill", "service", "prompt"]
-
-CAP_KINDS: tuple[CapKind, ...] = ("psyche", "skill", "service", "prompt")
-CAP_DIR_BY_KIND: dict[CapKind, str] = {
-    "psyche": "psyches",
-    "skill": "skills",
-    "service": "services",
-    "prompt": "prompts",
-}
-CAP_KIND_BY_DIR: dict[str, CapKind] = {
-    directory: kind for kind, directory in CAP_DIR_BY_KIND.items()
-}
-CAP_DIRECTORY_NAMES = tuple(CAP_DIR_BY_KIND.values())
+from .common import normalize_meta
+from .errors import CatalogConflictError, CatalogNotFoundError
+from .types import CAP_DIR_BY_KIND, CAP_KINDS, CapKind
 _SKILL_FIELDS = frozenset({"name", "description"})
 _SERVICE_FIELDS = frozenset(
     {"name", "description", "transport", "protocol", "target", "headers", "env"}
@@ -81,21 +63,6 @@ class CapFile:
         )
         _validate_cap(cap)
         return cap
-
-
-@dataclass(frozen=True, slots=True)
-class CapRef:
-    """One named wired cap reference."""
-
-    kind: CapKind
-    name: str
-    ref: str
-
-    def __post_init__(self) -> None:
-        _validate_kind(self.kind)
-        _validate_name(self.name)
-        if not self.ref.strip():
-            raise ValueError("cap ref cannot be empty")
 
 
 class AuthoredCaps:
@@ -200,106 +167,6 @@ class AuthoredCaps:
         return replace(cap, path=path)
 
 
-class WiredCaps:
-    """CRUD for named cap references in one explicitly supplied config file."""
-
-    def __init__(self, config_path: Path) -> None:
-        self.config_path = config_path
-
-    @property
-    def lock_path(self) -> Path:
-        return self.config_path.with_name(f".{self.config_path.name}.lock")
-
-    def write_lock(self) -> AbstractContextManager[None]:
-        """Return the shared lock used by all wired-cap mutations."""
-
-        return file_write_lock(self.lock_path)
-
-    def list(self, *, kinds: set[CapKind] | None = None) -> tuple[CapRef, ...]:
-        if not self.config_path.is_file():
-            return ()
-        return self.parse(
-            self.config_path.read_text(encoding="utf-8"),
-            kinds=kinds,
-        )
-
-    def parse(
-        self,
-        content: str,
-        *,
-        kinds: set[CapKind] | None = None,
-    ) -> tuple[CapRef, ...]:
-        data = cast(dict[str, object], tomllib.loads(content))
-        refs: list[CapRef] = []
-        for kind in CAP_KINDS:
-            if kinds is not None and kind not in kinds:
-                continue
-            table = _kind_table(data, kind, create=False)
-            if table is None:
-                continue
-            for name, item in sorted(table.items()):
-                refs.append(CapRef(kind=kind, name=name, ref=_config_ref(item)))
-        return tuple(refs)
-
-    def get(self, kind: CapKind, name: str) -> CapRef | None:
-        _validate_kind(kind)
-        _validate_name(name)
-        return next(
-            (item for item in self.list(kinds={kind}) if item.name == name),
-            None,
-        )
-
-    def create(self, cap: CapRef) -> CapRef:
-        with self.write_lock():
-            if self.get(cap.kind, cap.name) is not None:
-                raise CatalogConflictError(
-                    f"wired {cap.kind} already exists: {cap.name}"
-                )
-            self._write(cap)
-            return cap
-
-    def update(self, cap: CapRef) -> CapRef:
-        with self.write_lock():
-            if self.get(cap.kind, cap.name) is None:
-                raise CatalogNotFoundError(f"wired {cap.kind} not found: {cap.name}")
-            self._write(cap)
-            return cap
-
-    def upsert(self, cap: CapRef) -> CapRef:
-        """Create or replace one wired capability atomically."""
-
-        with self.write_lock():
-            self._write(cap)
-            return cap
-
-    def remove(self, kind: CapKind, name: str) -> CapRef:
-        with self.write_lock():
-            cap = self.get(kind, name)
-            if cap is None:
-                raise CatalogNotFoundError(f"wired {kind} not found: {name}")
-            document = _load_config_document(self.config_path)
-            table = _document_kind_table(document, kind, create=False)
-            if table is None or name not in table:
-                raise CatalogNotFoundError(f"wired {kind} not found: {name}")
-            del table[name]
-            atomic_write_text(self.config_path, tomlkit.dumps(document))
-            return cap
-
-    def _write(self, cap: CapRef) -> None:
-        document = _load_config_document(self.config_path)
-        table = _document_kind_table(document, cap.kind, create=True)
-        assert table is not None
-        entry = table.get(cap.name)
-        if isinstance(entry, Mapping):
-            entry["ref"] = cap.ref
-        else:
-            encoded_ref = tomlkit.string(cap.ref).as_string()
-            table[cap.name] = tomlkit.parse(f"value = {{ ref = {encoded_ref} }}\n")[
-                "value"
-            ]
-        atomic_write_text(self.config_path, tomlkit.dumps(document))
-
-
 def _validate_cap(cap: CapFile) -> None:
     _validate_kind(cap.kind)
     _validate_name(cap.name)
@@ -377,48 +244,3 @@ def _is_env_names(value: object) -> bool:
     else:
         return False
     return bool(items) and all(_ENV_NAME_RE.fullmatch(item) for item in items)
-
-
-def _kind_table(
-    data: dict[str, object],
-    kind: CapKind,
-    *,
-    create: bool,
-) -> dict[str, object] | None:
-    value = data.get(CAP_DIR_BY_KIND[kind])
-    if isinstance(value, dict):
-        return cast(dict[str, object], value)
-    if value is not None:
-        raise ValueError(f"invalid wired cap table: {CAP_DIR_BY_KIND[kind]}")
-    if not create:
-        return None
-    table: dict[str, object] = {}
-    data[CAP_DIR_BY_KIND[kind]] = table
-    return table
-
-
-def _config_ref(item: object) -> str:
-    if isinstance(item, dict):
-        ref = cast(dict[str, object], item).get("ref")
-        if isinstance(ref, str) and ref.strip():
-            return ref
-    raise ValueError(f"invalid wired cap config entry: {item!r}")
-
-
-def _load_config_document(path: Path) -> Any:
-    content = path.read_text(encoding="utf-8") if path.is_file() else ""
-    return tomlkit.parse(content)
-
-
-def _document_kind_table(document: Any, kind: CapKind, *, create: bool) -> Any | None:
-    key = CAP_DIR_BY_KIND[kind]
-    value = document.get(key)
-    if value is not None:
-        if not isinstance(value, Mapping):
-            raise ValueError(f"invalid wired cap table: {key}")
-        return value
-    if not create:
-        return None
-    value = tomlkit.table()
-    document[key] = value
-    return value

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from collections.abc import Iterable, Mapping, Sequence
 from contextvars import ContextVar
@@ -11,7 +12,7 @@ import io
 import json
 from typing import TYPE_CHECKING, Any, cast
 
-from ..error import ToolangError
+from ..errors import ToolangError
 from ..protocols.tool import AgentTool
 from ..types.tool import ToolContext, ToolDefinition
 
@@ -191,8 +192,12 @@ class _TyperTool(AgentTool):
     def definition(self) -> ToolDefinition:
         return self.spec.definition()
 
-    def invoke(self, arguments: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
-        return self.spec.invoke(arguments, context)
+    async def invoke(
+        self,
+        arguments: Mapping[str, Any],
+        context: ToolContext,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self.spec.invoke, arguments, context)
 
 
 def create_typer_tools(

@@ -77,26 +77,26 @@ runtime assembly. It does not define the semantic shape of one run.
 Agent hosting describes where and how the agent API process is launched after
 an agent target has been materialized. It is separate from source placement.
 
-Current hosting drivers are:
+The public CLI calls these choices sandboxes. Internally, each sandbox plugin
+implements the `Hosting` lifecycle. Current implementations are:
 
 | Driver | Meaning |
 | --- | --- |
-| `none` | Run the API process on the current host |
-| `docker` | Run the API process in a container with the same root and home mounted into it |
+| `none` | Launch `too serve` as a local child process |
+| `docker` | Launch a container whose primary workload is `too serve` |
 
-Future drivers may use a cloud host or combine a host API process with
-restricted tool execution. The CLI resolves `--sandbox` into hosting inputs;
-`Executor` receives an `AgentSetup` and an immutable `AgentState` and does not
-know where its process is hosted.
+Selectors use `name[:spec]`. Generic orchestration selects the plugin by name
+and passes the remaining spec unchanged to that implementation. Future drivers
+may use a cloud host. `RunExecutor` receives an `AgentSetup` and an immutable
+`AgentState` and does not know where its process is hosted.
 
-The materialized root and home remain the authoritative data in every hosting
-driver. A hosted process exposes the same agent API on the same selected
-numeric port from the caller's perspective.
+`HostingState` persists only the control-side workload reference required by a
+later `stop` command. AgentServer status and execution data remain separate.
+The materialized root and home remain authoritative in every environment.
 
-Foreground CLI sessions may avoid an API process when the resolved driver is
-`none`. For example, chat can use a process-local executor in the current CLI.
-Managed drivers use a session-owned API so the executor remains inside the
-selected host.
+Both `run` and `start` launch the same AgentServer entrypoint. `run` waits for
+the hosted workload and releases it on exit; `start` returns after readiness.
+One-shot scripts and the chat TUI continue to use the execution core directly.
 
 
 ## Caps
@@ -145,9 +145,6 @@ Current built-in job kinds are:
 - `task`
 - `chore`
 
-The jobs API also exposes one `will` endpoint for a long-horizon definition.
-When no will is configured, that endpoint returns `null`.
-
 Jobs are definitions. They are not runs.
 
 
@@ -167,52 +164,45 @@ A run is one concrete handling attempt inside one thread.
 
 A run has:
 
-- one origin
-- one start command input
+- one globally unique run id
+- one thread
+- one runnable name
+- one start-control input
 - one status
 - zero or more steps
 
-The run origin names the semantic source of the run. Current origins are:
-
-| Origin | Meaning |
-| --- | --- |
-| `chat` | A conversational user message |
-| `task` | A local task execution |
-| `chore` | A scheduled chore execution |
-| `script` | A direct CLI executable invocation |
-
-Placement and origin are independent. Placement decides how the agent is
-assembled; origin decides how instructions, messages, and execution context are
-assembled for one run.
+The runnable name resolves uniquely to an agic or flow in the captured program.
+Thread metadata describes the conversation or work context; execution does not
+carry a separate run-origin switch.
 
 Toolang-owned run ids may also use one dedicated short generated id family. See
 [ids.md](./ids.md).
 
 
-## Activation Sets
+## Resource Ceilings
 
-Runtime resources such as tools, models, and program-scoped caps are selected
-through ordered sets.
+Runtime resources such as models, tools, and caps are selected through ordered
+sets. Config, environment, and CLI inputs contribute selector-list allow lists
+to one immutable `CeilingSpec`. The spec remains stable for the lifetime of its
+server, chat session, or script invocation.
 
-Placement provides a default resource set. CLI options may override or adjust
-that default for one activation. The result is the activation set.
+At root-run start, the executor resolves `CeilingSpec` against the captured
+`AgentSetup` and `AgentState`. The resulting agent ceiling is the absolute
+resource limit for that recursive run tree.
 
-Programs may also define inline caps or reference resources. Those items form
-a program set. Program resources are not automatically effective for every
-agic.
-
-Agic directives compute the effective set from the activation set:
+Flow and agic directives compute narrower run ceilings:
 
 ```text
-current_set = activation_set
+current_set = inherited_ceiling
 
 items += operand  => current_set = current_set union operand
 items -= operand  => current_set = current_set minus operand
 items = operand   => current_set = current_set intersect operand
 ```
 
-`+=` operands must name resources from the program set. `-=` and `=` operands
-may be arbitrary selectors, for example a selector that removes all local
+All operands are evaluated inside the inherited ceiling, so `+=` cannot grant
+resources outside the agent ceiling. `-=` and `=` operands may use arbitrary
+selectors, for example a selector that removes all local
 models. `=` is a keep-only filter, not a traditional assignment.
 
 
@@ -248,6 +238,20 @@ other local names. Durable input and output refs are persistence metadata, not
 part of a local.
 
 
+## Perceiving And Coercion
+
+Toolang uses three operations at runnable boundaries:
+
+- input perceiving interprets supported input as one ordered `Percept`
+- input coercion converts that percept to the runnable's declared primary type
+- output coercion converts the runnable's final value to its declared output
+  type
+
+Input perceiving applies equally to plain text, authored bodies with runtime
+values, and multimodal caller input. Input and output coercion are
+language-owned type operations; they do not define transport serialization.
+
+
 ## Message
 
 A message is the canonical model and projection unit used across:
@@ -261,16 +265,26 @@ Each message has:
 
 - one role
 - ordered `parts`
-- optional `meta`
 
-Current core part kinds are:
+Toolang separates authored and executable content from message-only protocol
+parts:
 
-- `text`
-- `tool_call`
-- `tool_result`
+```text
+PerceptPart = TextPart | ImagePart | AudioPart | DocumentPart
+Percept     = PerceptPart[]
+MessagePart = PerceptPart | ToolCallPart | ToolResultPart
+Message     = { role: MessageRole, parts: MessagePart[] }
+```
 
-Toolang executable values use `Part` and `Part[]`; `Message` is not a language
-value type.
+At the language boundary, `Part` maps to one `PerceptPart` and `Part[]` maps to
+one `Percept`. The `lang` AST keeps those concise source type names; other
+packages use `PerceptPart` and `Percept`. Messages use ordered `MessagePart`
+values so model and tool interaction can add tool calls and results. `Message`
+and `MessagePart` are not Toolang language value types.
+
+User messages contain only `PerceptPart` values. Assistant messages may
+additionally contain `ToolCallPart` values, and tool messages contain only
+`ToolResultPart` values.
 
 
 ## Relationships

@@ -12,8 +12,92 @@ from . import ast
 
 _PROMPT_PARAM_RE = re.compile(r"^(?P<name>[A-Za-z_][\w-]*)(?P<optional>\?)?$")
 _DECL_REF_RE = re.compile(r"^[A-Za-z_][\w-]*$")
-_TRIVIA = {"blank_line", "comment_line", "line_end"}
+_TRIVIA = {
+    "blank_line",
+    "comment_line",
+    "doc_line",
+    "line_end",
+    "parent_doc_line",
+}
 NodeT = TypeVar("NodeT", bound=ast.Node)
+
+
+class _DocComments:
+    """Resolve source-level documentation comments by line and indentation."""
+
+    def __init__(self, source: bytes) -> None:
+        lines = source.decode("utf-8").splitlines()
+        self.program_doc = self._program_doc(lines)
+        self._attached = self._attached_docs(lines)
+        self._comment_lines = {
+            line_number
+            for line_number, line in enumerate(lines, start=1)
+            if self._content(line).startswith("##")
+        }
+
+    def for_node(self, node: CstNode) -> str | None:
+        return self._attached.get(node.start_point.row + 1)
+
+    def is_doc_comment(self, node: CstNode) -> bool:
+        return node.start_point.row + 1 in self._comment_lines
+
+    @classmethod
+    def _program_doc(cls, lines: list[str]) -> str | None:
+        docs = [
+            cls._content(line).removeprefix("##!").strip()
+            for line in lines
+            if not cls._indent(line) and cls._content(line).startswith("##!")
+        ]
+        return cls._joined(docs)
+
+    @classmethod
+    def _attached_docs(cls, lines: list[str]) -> dict[int, str]:
+        attached: dict[int, str] = {}
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            indent = cls._indent(line)
+            content = cls._content(line)
+            if not content.startswith("##") or content.startswith("##!"):
+                index += 1
+                continue
+
+            docs: list[str] = []
+            while index < len(lines):
+                line = lines[index]
+                if cls._indent(line) != indent:
+                    break
+                content = cls._content(line)
+                if not content.startswith("##") or content.startswith("##!"):
+                    break
+                docs.append(content.removeprefix("##").strip())
+                index += 1
+
+            if index >= len(lines):
+                continue
+            target = lines[index]
+            target_content = cls._content(target)
+            if (
+                cls._indent(target) == indent
+                and target_content
+                and not target_content.startswith("#")
+            ):
+                doc = cls._joined(docs)
+                if doc is not None:
+                    attached[index + 1] = doc
+        return attached
+
+    @staticmethod
+    def _indent(line: str) -> str:
+        return line[: len(line) - len(line.lstrip(" \t"))]
+
+    @staticmethod
+    def _content(line: str) -> str:
+        return line.lstrip(" \t")
+
+    @staticmethod
+    def _joined(items: list[str]) -> str | None:
+        return "\n".join(item for item in items if item).strip() or None
 
 
 def _node_line(node: NodeT) -> int:
@@ -29,6 +113,7 @@ def _lower(cst: ast._ParsedSource) -> ast.Program:
 class _Lowerer:
     def __init__(self, cst: ast._ParsedSource) -> None:
         self.cst = cst
+        self.docs = _DocComments(cst.source)
         self.withs: list[ast.WithDecl] = []
         self.caps: list[ast.CapDecl] = []
         self.jobs: list[ast.JobDecl] = []
@@ -39,26 +124,15 @@ class _Lowerer:
         self.flows: list[ast.FlowDecl] = []
 
     def lower(self) -> ast.Program:
-        program_doc: list[str] = []
-        pending_doc: list[str] = []
         for child in self.cst.tree.root_node.named_children:
             node = self._item(child)
-            if node.type == "parent_doc_line":
-                program_doc.append(self._doc_text(node))
-                continue
-            if node.type == "doc_line":
-                pending_doc.append(self._doc_text(node))
-                continue
             if node.type in _TRIVIA:
-                pending_doc.clear()
                 continue
-            doc = self._pending_doc(pending_doc)
-            pending_doc.clear()
-            self._lower_item(node, doc=doc)
+            self._lower_item(node, doc=self.docs.for_node(node))
 
         return ast.Program(
             span=ast.Span(line=1),
-            doc="\n".join(filter(None, program_doc)).strip() or None,
+            doc=self.docs.program_doc,
             withs=tuple(sorted(self.withs, key=_node_line)),
             caps=tuple(sorted(self.caps, key=_node_line)),
             jobs=tuple(sorted(self.jobs, key=_node_line)),
@@ -141,13 +215,8 @@ class _Lowerer:
     def _lower_struct(self, node: CstNode, *, doc: str | None) -> ast.StructDecl:
         body = self._required(node, "body")
         fields: list[ast.Field] = []
-        pending_doc: list[str] = []
         for child in body.named_children:
-            if child.type == "doc_line":
-                pending_doc.append(self._doc_text(child))
-                continue
             if child.type in _TRIVIA:
-                pending_doc.clear()
                 continue
             if child.type != "field":
                 raise RuntimeError(
@@ -159,10 +228,9 @@ class _Lowerer:
                     type_name=self._required_text(child, "type").strip(),
                     optional=child.child_by_field_name("optional") is not None,
                     span=self._span(child),
-                    doc=self._pending_doc(pending_doc),
+                    doc=self.docs.for_node(child),
                 )
             )
-            pending_doc.clear()
         return ast.StructDecl(
             name=self._required_text(node, "name").strip(),
             fields=tuple(fields),
@@ -205,14 +273,9 @@ class _Lowerer:
         context: str | None = None
         instruct: str | None = None
         body = self._required(node, "body")
-        pending_doc: list[str] = []
 
         for child in body.named_children:
-            if child.type == "doc_line":
-                pending_doc.append(self._doc_text(child))
-                continue
-            if child.type in _TRIVIA or child.type == "parent_doc_line":
-                pending_doc.clear()
+            if child.type in _TRIVIA:
                 continue
             if child.type == "directive":
                 directives.append(self._lower_directive(child))
@@ -231,18 +294,10 @@ class _Lowerer:
                 instruct = self._lower_setting(child, target="instruct")
                 continue
             if child.type == "messages":
-                messages.extend(
-                    self._lower_messages(
-                        child, initial_doc=self._pending_doc(pending_doc)
-                    )
-                )
-                pending_doc.clear()
+                messages.extend(self._lower_messages(child))
                 continue
             if child.type == "message":
-                messages.append(
-                    self._lower_message(child, doc=self._pending_doc(pending_doc))
-                )
-                pending_doc.clear()
+                messages.append(self._lower_message(child, doc=self.docs.for_node(child)))
                 continue
             if child.type in {"pass_keyword", "pass_statement"}:
                 continue
@@ -290,26 +345,18 @@ class _Lowerer:
         self.instructs.append(decl)
         return decl.name
 
-    def _lower_messages(
-        self, node: CstNode, *, initial_doc: str | None = None
-    ) -> list[ast.Message]:
+    def _lower_messages(self, node: CstNode) -> list[ast.Message]:
         messages: list[ast.Message] = []
-        pending_doc = [initial_doc] if initial_doc else []
         for child in node.named_children:
-            if child.type == "doc_line":
-                pending_doc.append(self._doc_text(child))
-                continue
-            if child.type in _TRIVIA or child.type == "parent_doc_line":
-                pending_doc.clear()
+            if child.type in _TRIVIA:
                 continue
             if child.type != "message":
                 raise RuntimeError(
                     f"Unsupported message CST node {child.type!r} at line {self._line(child)}."
                 )
-            messages.append(
-                self._lower_message(child, doc=self._pending_doc(pending_doc))
-            )
-            pending_doc.clear()
+            if self.docs.is_doc_comment(child):
+                continue
+            messages.append(self._lower_message(child, doc=self.docs.for_node(child)))
         return messages
 
     def _lower_message(self, node: CstNode, *, doc: str | None) -> ast.Message:
@@ -335,25 +382,15 @@ class _Lowerer:
         )
         directives: list[ast.Directive] = []
         stmts: list[ast.FlowStmt] = []
-        pending_doc: list[str] = []
         body = self._required(node, "body")
         for child in body.named_children:
-            if child.type == "doc_line":
-                pending_doc.append(self._doc_text(child))
-                continue
-            if child.type in _TRIVIA or child.type == "parent_doc_line":
-                pending_doc.clear()
+            if child.type in _TRIVIA:
                 continue
             if child.type == "directive":
                 directives.append(self._lower_directive(child))
                 continue
             if child.type == "statements":
-                stmts.extend(
-                    self._lower_statements(
-                        child, initial_doc=self._pending_doc(pending_doc)
-                    )
-                )
-                pending_doc.clear()
+                stmts.extend(self._lower_statements(child))
                 continue
             if child.type in {"pass_keyword", "pass_statement"}:
                 continue
@@ -371,20 +408,14 @@ class _Lowerer:
             doc=doc,
         )
 
-    def _lower_statements(
-        self, node: CstNode, *, initial_doc: str | None = None
-    ) -> list[ast.FlowStmt]:
+    def _lower_statements(self, node: CstNode) -> list[ast.FlowStmt]:
         stmts: list[ast.FlowStmt] = []
-        pending_doc = [initial_doc] if initial_doc else []
         for child in node.named_children:
-            if child.type == "doc_line":
-                pending_doc.append(self._doc_text(child))
+            if child.type in _TRIVIA:
                 continue
-            if child.type in _TRIVIA or child.type == "parent_doc_line":
-                pending_doc.clear()
+            if self.docs.is_doc_comment(child):
                 continue
-            stmts.append(self._lower_stmt(child, doc=self._pending_doc(pending_doc)))
-            pending_doc.clear()
+            stmts.append(self._lower_stmt(child, doc=self.docs.for_node(child)))
         return stmts
 
     def _lower_stmt(self, node: CstNode, *, doc: str | None) -> ast.FlowStmt:
@@ -438,7 +469,20 @@ class _Lowerer:
         if node.type == "gather_statement":
             return ast.GatherStmt(runnable=self._runnable(node), span=span, doc=doc)
         if node.type == "settle_statement":
-            return ast.SettleStmt(runnable=self._runnable(node), span=span, doc=doc)
+            return ast.SettleStmt(
+                runnable=self._runnable(
+                    node,
+                    generated_params=(
+                        ast.Parameter(
+                            name="item",
+                            type_name="Part[]",
+                            span=span,
+                        ),
+                    ),
+                ),
+                span=span,
+                doc=doc,
+            )
         if node.type == "map_statement":
             return ast.MapStmt(
                 runnable=self._runnable(node), par=self._par(node), span=span, doc=doc
@@ -455,7 +499,11 @@ class _Lowerer:
                     else None
                 ),
                 count=self._required_int(position, "count") if position else None,
-                predicate=None if position else self._runnable(node, output="Boolean"),
+                predicate=(
+                    None
+                    if position
+                    else self._runnable(node, output="Boolean", evaluator=True)
+                ),
                 par=self._par(node),
                 span=span,
                 doc=doc,
@@ -463,7 +511,7 @@ class _Lowerer:
         if node.type == "rank_statement":
             selection = self._child_of_type(node, "rank_selection_clause")
             return ast.RankStmt(
-                scorer=self._runnable(node, output="Number"),
+                scorer=self._runnable(node, output="Number", evaluator=True),
                 limit=cast(
                     ast.Limit, self._required_text(selection, "selection").strip()
                 )
@@ -489,6 +537,7 @@ class _Lowerer:
                     agic,
                     body=self._block_text(self._required(agic, "body")),
                     output="Boolean",
+                    evaluator=True,
                 )
             return ast.RepeatStmt(
                 count=self._optional_int(node.child_by_field_name("count")),
@@ -501,7 +550,14 @@ class _Lowerer:
             f"Unsupported flow statement {node.type!r} at line {self._line(node)}."
         )
 
-    def _runnable(self, node: CstNode, *, output: str | None = None) -> str:
+    def _runnable(
+        self,
+        node: CstNode,
+        *,
+        output: str | None = None,
+        generated_params: tuple[ast.Parameter, ...] = (),
+        evaluator: bool = False,
+    ) -> str:
         if runnable := node.child_by_field_name("runnable"):
             return self._text(runnable).strip()
         agic = node.child_by_field_name("agic")
@@ -512,15 +568,45 @@ class _Lowerer:
             agic,
             body=self._block_text(self._required(agic, "body")),
             output=output or declared_output,
+            params=generated_params,
+            evaluator=evaluator,
         )
 
-    def _generated_agic(self, node: CstNode, *, body: str, output: str | None) -> str:
+    def _generated_agic(
+        self,
+        node: CstNode,
+        *,
+        body: str,
+        output: str | None,
+        params: tuple[ast.Parameter, ...] = (),
+        evaluator: bool = False,
+    ) -> str:
         name = self._generated_name("agic", node)
+        directives = (
+            (
+                ast.Directive(
+                    name="recall",
+                    operator="=",
+                    values=("none",),
+                    span=self._span(node),
+                ),
+                ast.Directive(
+                    name="tools",
+                    operator="=",
+                    values=("none",),
+                    span=self._span(node),
+                ),
+            )
+            if evaluator
+            else ()
+        )
         self.agics.append(
             ast.AgicDecl(
                 name=name,
                 input=self._default_input(node),
+                params=params,
                 output=output,
+                directives=directives,
                 messages=(
                     ast.Message(role="user", content=body, span=self._span(node)),
                 ),
@@ -694,11 +780,3 @@ class _Lowerer:
     @staticmethod
     def _item(node: CstNode) -> CstNode:
         return node.named_children[0] if node.type == "item" else node
-
-    def _doc_text(self, node: CstNode) -> str:
-        text = self._text(node).strip()
-        return text.removeprefix("##!").removeprefix("##").strip()
-
-    @staticmethod
-    def _pending_doc(items: list[str]) -> str | None:
-        return "\n".join(item for item in items if item).strip() or None

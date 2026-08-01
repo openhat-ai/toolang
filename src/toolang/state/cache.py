@@ -14,6 +14,8 @@ import shutil
 from typing import Literal, Mapping, cast
 from uuid import uuid4
 
+from toolang.common.layout import AgentLayout
+
 from ..common.immutable import freeze_mapping
 from ..lang.ast import Program, program_from_data
 from .state import CapResolution, PreparedCap
@@ -63,47 +65,39 @@ class HomePrepared:
         object.__setattr__(self, "config", freeze_mapping(self.config))
 
 
-def prepared_root(toolang_root: Path, agent_name: str | None = None) -> Path:
-    """Return the root or agent-home prepared directory."""
+def state_root(layout: AgentLayout, scope: PreparedScope) -> Path:
+    """Return the root- or home-scoped prepared-state directory."""
 
-    if agent_name is None:
-        return toolang_root / ".prepared"
-    return toolang_root / "agents" / agent_name / ".prepared"
+    return layout.root_state if scope == "root" else layout.home_state
 
 
-def prepared_current_path(
-    toolang_root: Path, agent_name: str | None = None
-) -> Path:
+def prepared_current_path(layout: AgentLayout, scope: PreparedScope) -> Path:
     """Return the current-version pointer path for one prepared scope."""
 
-    return prepared_root(toolang_root, agent_name) / "current"
+    return state_root(layout, scope) / "current"
 
 
-def prepared_lock_path(toolang_root: Path, agent_name: str | None = None) -> Path:
+def prepared_lock_path(layout: AgentLayout, scope: PreparedScope) -> Path:
     """Return the writer lock path for one prepared scope."""
 
-    return prepared_root(toolang_root, agent_name) / "prepare.lock"
+    return state_root(layout, scope) / "prepare.lock"
 
 
 def prepared_version_dir(
-    toolang_root: Path,
+    layout: AgentLayout,
+    scope: PreparedScope,
     version: bytes,
-    agent_name: str | None = None,
 ) -> Path:
     """Return the immutable directory for one prepared version."""
 
     _require_sha256(version, name="prepared version")
-    return prepared_root(toolang_root, agent_name) / "versions" / version.hex()
+    return state_root(layout, scope) / "versions" / version.hex()
 
 
-def load_current_version(
-    toolang_root: Path, agent_name: str | None = None
-) -> bytes:
+def load_current_version(layout: AgentLayout, scope: PreparedScope) -> bytes:
     """Load the current prepared version for one scope."""
 
-    value = prepared_current_path(toolang_root, agent_name).read_text(
-        encoding="utf-8"
-    ).strip()
+    value = prepared_current_path(layout, scope).read_text(encoding="utf-8").strip()
     try:
         version = bytes.fromhex(value)
     except ValueError as exc:
@@ -131,13 +125,13 @@ def load_version_prepared(version_dir: Path) -> dict[str, object]:
 
 
 def load_root_prepared(
-    toolang_root: Path,
+    layout: AgentLayout,
     version: bytes | None = None,
 ) -> RootPrepared:
     """Load and validate one root prepared version."""
 
-    effective_version = version or load_current_version(toolang_root)
-    version_dir = prepared_version_dir(toolang_root, effective_version)
+    effective_version = version or load_current_version(layout, "root")
+    version_dir = prepared_version_dir(layout, "root", effective_version)
     source, resolutions, prepared, caps = _load_validated_version(
         version_dir,
         version=effective_version,
@@ -155,16 +149,13 @@ def load_root_prepared(
 
 
 def load_home_prepared(
-    toolang_root: Path,
-    agent_name: str,
+    layout: AgentLayout,
     version: bytes | None = None,
 ) -> HomePrepared:
     """Load and validate one agent-home prepared version."""
 
-    effective_version = version or load_current_version(toolang_root, agent_name)
-    version_dir = prepared_version_dir(
-        toolang_root, effective_version, agent_name
-    )
+    effective_version = version or load_current_version(layout, "home")
+    version_dir = prepared_version_dir(layout, "home", effective_version)
     source, resolutions, prepared, caps = _load_validated_version(
         version_dir,
         version=effective_version,
@@ -184,23 +175,21 @@ def load_home_prepared(
 
 def write_prepared(
     *,
-    toolang_root: Path,
+    layout: AgentLayout,
     scope: PreparedScope,
     source: Source,
     resolutions: tuple[CapResolution, ...],
     prepared: Mapping[str, object],
     files: Mapping[str, bytes],
-    agent_name: str | None = None,
 ) -> bytes:
     """Atomically publish one complete, immutable prepared version."""
 
-    _validate_scope(scope, agent_name=agent_name)
     version = prepared_version(
         scope=scope,
         source=source,
         resolutions=resolutions,
     )
-    target = prepared_version_dir(toolang_root, version, agent_name)
+    target = prepared_version_dir(layout, scope, version)
     versions_dir = target.parent
     versions_dir.mkdir(parents=True, exist_ok=True)
     if target.exists() or target.is_symlink():
@@ -232,16 +221,15 @@ def write_prepared(
 
 
 def publish_current(
-    toolang_root: Path,
+    layout: AgentLayout,
+    scope: PreparedScope,
     version: bytes,
-    agent_name: str | None = None,
 ) -> None:
     """Atomically point one scope at an existing prepared version."""
 
-    scope: PreparedScope = "home" if agent_name is not None else "root"
-    target = prepared_version_dir(toolang_root, version, agent_name)
+    target = prepared_version_dir(layout, scope, version)
     _load_validated_version(target, version=version, scope=scope)
-    current = prepared_current_path(toolang_root, agent_name)
+    current = prepared_current_path(layout, scope)
     current.parent.mkdir(parents=True, exist_ok=True)
     temporary = current.with_name(f".{current.name}.tmp-{uuid4().hex}")
     temporary.write_text(f"{version.hex()}\n", encoding="utf-8")
@@ -249,12 +237,10 @@ def publish_current(
 
 
 @contextmanager
-def prepare_lock(
-    toolang_root: Path, agent_name: str | None = None
-) -> Iterator[None]:
+def prepare_lock(layout: AgentLayout, scope: PreparedScope) -> Iterator[None]:
     """Serialize prepared writers for the root or one agent home."""
 
-    path = prepared_lock_path(toolang_root, agent_name)
+    path = prepared_lock_path(layout, scope)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+b") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
@@ -489,10 +475,7 @@ def _validate_resolved_document(
             if not path.is_file():
                 raise FileNotFoundError(f"resolved file not found: {path}")
             expected_size = file.get("size")
-            if (
-                not isinstance(expected_size, int)
-                or isinstance(expected_size, bool)
-            ):
+            if not isinstance(expected_size, int) or isinstance(expected_size, bool):
                 raise TypeError("resolved file size must be an integer")
             if path.stat().st_size != expected_size:
                 raise ValueError(f"resolved file size mismatch: {path}")
@@ -509,13 +492,6 @@ def _validate_version_layout(path: Path) -> None:
 def _quarantine_version(path: Path) -> None:
     quarantine = path.with_name(f".{path.name}.invalid-{uuid4().hex}")
     os.replace(path, quarantine)
-
-
-def _validate_scope(scope: PreparedScope, *, agent_name: str | None) -> None:
-    if scope == "root" and agent_name is not None:
-        raise ValueError("root prepared version cannot have an agent name")
-    if scope == "home" and agent_name is None:
-        raise ValueError("home prepared version requires an agent name")
 
 
 def _require_sha256(value: bytes, *, name: str) -> None:

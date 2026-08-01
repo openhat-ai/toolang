@@ -5,8 +5,8 @@ from typing import Any
 
 import pytest
 
-from toolang.cli.impl.chat import slashes
-from toolang.cli.common.client import RuntimeClientError
+from toolang.common.errors import ToolangError
+from toolang.cli.toolang.commands.chat import slashes
 
 
 class _Client:
@@ -128,8 +128,37 @@ def test_slash_model_lists_and_updates_selected_model() -> None:
 
     assert listed.lines == ["Available Models", "[openai]  default  openai"]
     assert selected.lines == ["model: openai/gpt-5"]
-    assert app.selects == {"models": ["openai"]}
+    assert app.selects == {"model": "[openai]"}
     assert app.status_refreshes == 1
+
+
+def test_slash_model_requires_one_unambiguous_model() -> None:
+    app = _App()
+    app.client.models = {
+        "default": "[openai]",
+        "items": [
+            {
+                "selector": "openai/gpt-5[openai]",
+                "provider": "openai",
+                "model": "gpt-5",
+            },
+            {
+                "selector": "openai/o3[openai]",
+                "provider": "openai",
+                "model": "o3",
+            },
+        ],
+    }
+
+    ambiguous = slashes.handle(app, "/model openai")
+    assert ambiguous.lines is None
+    assert app.error == "Model selector must match exactly one model: openai"
+
+    multiple = slashes.handle(app, "/model openai/gpt-5,openai/o3")
+
+    assert multiple.lines is None
+    assert app.error == "/model requires exactly one selector."
+    assert app.selects == {}
 
 
 def test_slash_executable_selection_is_mutually_exclusive() -> None:
@@ -157,7 +186,7 @@ def test_slash_queue_edits_and_steers_numbered_items() -> None:
 
 def test_slash_client_errors_are_reported_in_status() -> None:
     app = _App()
-    app.client.error = RuntimeClientError("runtime request failed: unavailable")
+    app.client.error = ToolangError("unavailable")
 
     result = slashes.handle(app, "/model")
 

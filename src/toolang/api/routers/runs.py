@@ -1,146 +1,163 @@
-"""Formal execution inspection routes."""
+"""Run execution, inspection, control, and live event routes."""
 
-from typing import cast
+from collections.abc import AsyncIterator
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 
-from toolang.api.app import ApiContextDep
-from toolang.api.conversion import parse_user_message
+from toolang.api.app import AgentCoreDep, CeilingSpecDep, LiveEventRelayDep
+from toolang.api.common import EventSubscription, sse_stream
+from toolang.api.conversion import parse_percept, parse_user_message
 from toolang.api.schemas import (
     RunCancelRequest,
+    RunCommandResult,
     RunCreateRequest,
     RunSteerRequest,
 )
-from toolang.execution.projection import ExecutionProjector, command_info_from_record
+from toolang.common.errors import ToolangError
+from toolang.execution.executor import RunHandle, RunSpec
 from toolang.execution.records import RunRecord
-from toolang.execution.reply import TraceReplySink
-from toolang.execution.request import RunRequest
-from toolang.execution.schemas import RunCommandResult, RunDetail, RunInfo
-from toolang.execution.types import CommandApply, RunStatus
-from toolang.execution.stream import event_data, stream_events
-from .._streaming import (
-    ShutdownAwareStreamingResponse,
-    event_stream_response,
-    guarded_stream,
-)
-
+from toolang.execution.schemas import RunControlInfo, RunDetail, RunInfo
+from toolang.execution.types import RunStatus
+from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
+_StartedRunStream = tuple[RunHandle, EventSubscription]
+
+
+async def _start_run_stream(
+    core: AgentCoreDep,
+    ceiling: CeilingSpecDep,
+    live: LiveEventRelayDep,
+    payload: RunCreateRequest,
+) -> AsyncIterator[_StartedRunStream]:
+    thread_id = _run_thread(core, payload)
+    try:
+        handle = core.executor.start(
+            RunSpec(
+                setup=core.setup.current(),
+                state=core.state.current(),
+                ceiling=ceiling,
+                thread=thread_id,
+                runnable=payload.runnable,
+                input=parse_percept(payload.input),
+                model=payload.model,
+                args=payload.args,
+            ),
+            request_id=payload.request_id,
+            tracer=live.trace(thread_id=thread_id),
+        )
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    subscription = live.subscribe_run(handle.run_id)
+    try:
+        yield handle, subscription
+    finally:
+        subscription.close()
+
+
+async def _subscribe_root_run(
+    core: AgentCoreDep,
+    live: LiveEventRelayDep,
+    run_id: str,
+) -> AsyncIterator[EventSubscription]:
+    run = _run_or_404(core, run_id)
+    if run.parent is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"run stream requires a root run: {run_id}; "
+                f"subscribe to {run.root_run_id}"
+            ),
+        )
+    subscription = live.subscribe_run(run_id)
+    try:
+        yield subscription
+    finally:
+        subscription.close()
 
 
 @router.get("", summary="List Runs", response_model=list[RunInfo])
 def runs(
-    context: ApiContextDep,
+    core: AgentCoreDep,
     limit: int = Query(default=50),
     thread_id: str | None = None,
     status: RunStatus | None = None,
 ) -> list[RunInfo]:
-    items = ExecutionProjector(context.executor.store).list_runs(
-        limit=limit, thread_id=thread_id, status=status
+    return core.history.list_runs(
+        limit=limit,
+        thread_id=thread_id,
+        status=status,
     )
-    return items
 
 
-@router.post("/stream", summary="Execute Run Stream")
+@router.post(
+    "/stream",
+    summary="Execute Run Stream",
+    response_class=EventSourceResponse,
+)
 async def execute_run_stream(
-    context: ApiContextDep,
-    payload: RunCreateRequest,
-) -> ShutdownAwareStreamingResponse:
-    reply = TraceReplySink()
-    context.spawn_run(
-        RunRequest(
-            group="script",
-            origin="script",
-            run_id=context.executor.allocate_run_id(),
-            executable_kind=payload.executable_kind,
-            executable_name=payload.executable_name,
-            input=payload.input,
-            model_selectors=tuple(payload.models),
-            tool_selectors=(
-                tuple(payload.tools) if payload.tools is not None else None
-            ),
-            cap_selectors=tuple(payload.caps),
-            metadata=dict(payload.metadata),
-        ),
-        reply=reply,
-    )
-    return ShutdownAwareStreamingResponse(
-        guarded_stream(reply.stream()),
-        shutdown_signal=getattr(context, "shutdown_signal", None),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    core: AgentCoreDep,
+    request: Request,
+    started: Annotated[_StartedRunStream, Depends(_start_run_stream)],
+) -> AsyncIterator[ServerSentEvent]:
+    handle, subscription = started
+    async for event in sse_stream(
+        request,
+        subscription,
+        terminal_run_id=handle.run_id,
+        stopped=lambda: _run_terminal(core, handle.run_id),
+    ):
+        yield event
 
 
 @router.get("/{run_id}", summary="Get Run", response_model=RunDetail)
-def run_detail(context: ApiContextDep, run_id: str) -> RunDetail:
-    detail = ExecutionProjector(context.executor.store).run_detail(run_id)
+def run_detail(core: AgentCoreDep, run_id: str) -> RunDetail:
+    detail = core.history.get_run(run_id)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
     return detail
 
 
-@router.get("/{run_id}/events", summary="List Run Events")
-def run_events(
-    context: ApiContextDep,
-    run_id: str,
-    after: int | None = None,
-    limit: int = Query(default=100),
-) -> dict[str, object]:
-    _run_or_404(context, run_id)
-    events = context.executor.store.list_events(
-        domain="run", domain_id=run_id, after=after, limit=limit
-    )
-    return {
-        "cursor": context.executor.store.latest_event_cursor(
-            domain="run", domain_id=run_id
-        ),
-        "items": [event_data(item) for item in events],
-    }
-
-
-@router.get("/{run_id}/stream", summary="Stream Run Events")
+@router.get(
+    "/{run_id}/stream",
+    summary="Stream Run Events",
+    response_class=EventSourceResponse,
+)
 async def run_stream(
-    context: ApiContextDep,
+    core: AgentCoreDep,
     request: Request,
     run_id: str,
-    after: int | None = None,
-) -> ShutdownAwareStreamingResponse:
-    _run_or_404(context, run_id)
-    return event_stream_response(
+    subscription: Annotated[EventSubscription, Depends(_subscribe_root_run)],
+) -> AsyncIterator[ServerSentEvent]:
+    async for event in sse_stream(
         request,
-        stream_events(
-            context.executor.store, domain="run", domain_id=run_id, after=after
-        ),
-    )
+        subscription,
+        terminal_run_id=run_id,
+        stopped=lambda: _run_terminal(core, run_id),
+    ):
+        yield event
 
 
 @router.post(
-    "/{run_id}/cancel", summary="Cancel Run", response_model=RunCommandResult
+    "/{run_id}/cancel",
+    summary="Cancel Run",
+    response_model=RunCommandResult,
 )
-async def cancel_run(
-    context: ApiContextDep,
+def cancel_run(
+    core: AgentCoreDep,
     run_id: str,
     payload: RunCancelRequest | None = None,
 ) -> RunCommandResult:
-    run = _run_or_404(context, run_id)
-    if run.status != "running":
-        raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
-    command_record, run = await context.executor.stop(
-        run_id=run.run_id,
-        apply=_input_apply(payload.mode if payload else "immediate"),
+    run = _running_run_or_409(core, run_id)
+    control = core.executor.stop(
+        run_id=run.id,
+        timing=payload.mode if payload else "immediate",
         request_id=payload.request_id if payload else None,
         reason=payload.reason if payload else None,
     )
-    projector = ExecutionProjector(context.executor.store)
-    return RunCommandResult(
-        run=projector.run_info(run),
-        command=command_info_from_record(run, command_record),
-    )
+    return _control_result(core, run.id, control)
 
 
 @router.post(
@@ -150,36 +167,57 @@ async def cancel_run(
     response_model=RunCommandResult,
 )
 def steer_run(
-    context: ApiContextDep, run_id: str, payload: RunSteerRequest
+    core: AgentCoreDep,
+    run_id: str,
+    payload: RunSteerRequest,
 ) -> RunCommandResult:
-    run = _run_or_404(context, run_id)
-    if run.status != "running":
-        raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
-    message = parse_user_message(payload.message)
-    command_record = context.executor.steer(
-        run_id=run.run_id,
-        apply=_input_apply(payload.mode),
+    run = _running_run_or_409(core, run_id)
+    control = core.executor.steer(
+        run_id=run.id,
+        timing=payload.mode,
         request_id=payload.request_id,
-        message=message,
+        message=parse_user_message(payload.message),
     )
-    updated = _run_or_404(context, run_id)
-    projector = ExecutionProjector(context.executor.store)
-    return RunCommandResult(
-        run=projector.run_info(updated),
-        command=command_info_from_record(updated, command_record),
-    )
+    return _control_result(core, run.id, control)
 
 
-def _run_or_404(context, run_id: str) -> RunRecord:
-    run = context.executor.store.get_run(run_id=run_id)
+def _run_or_404(core: AgentCore, run_id: str) -> RunRecord:
+    run = core.store.get_run(run_id=run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
     return run
 
 
-def _input_apply(value: str) -> CommandApply:
-    if value not in {"immediate", "next_step", "next_call"}:
+def _running_run_or_409(core: AgentCore, run_id: str) -> RunRecord:
+    run = _run_or_404(core, run_id)
+    if run.status != "running":
+        raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
+    return run
+
+
+def _control_result(core: AgentCore, run_id: str, control) -> RunCommandResult:
+    run = _run_or_404(core, run_id)
+    detail = core.history.get_run(run_id)
+    if detail is None:
         raise HTTPException(
-            status_code=422, detail=f"unsupported run input mode: {value}"
+            status_code=500,
+            detail=f"run not found after control: {run_id}",
         )
-    return "now" if value == "immediate" else cast(CommandApply, value)
+    return RunCommandResult(
+        run=detail,
+        command=RunControlInfo.from_record(run, control),
+    )
+
+
+def _run_thread(core: AgentCore, payload: RunCreateRequest) -> str:
+    if core.store.get_thread(thread_id=payload.thread) is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"thread not found: {payload.thread}",
+        )
+    return payload.thread
+
+
+def _run_terminal(core: AgentCore, run_id: str) -> bool:
+    run = core.store.get_run(run_id=run_id)
+    return run is None or run.status not in {"pending", "running"}

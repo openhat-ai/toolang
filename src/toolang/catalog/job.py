@@ -13,7 +13,7 @@ import frontmatter
 
 from toolang.common.files import atomic_write_text, file_write_lock
 
-from ._frontmatter import normalize_meta
+from .common import normalize_meta
 from .types import (
     DEFAULT_CHORE_SCHEDULE,
     JOB_KINDS,
@@ -21,7 +21,7 @@ from .types import (
     JobKind,
     JobStage,
 )
-from .error import CatalogConflictError, CatalogNotFoundError, DuplicateJobIdError
+from .errors import CatalogConflictError, CatalogNotFoundError, DuplicateJobIdError
 
 
 @dataclass(frozen=True, slots=True)

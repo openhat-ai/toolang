@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from ..types.model import ModelInfo, ModelTarget
-from ..types.run import ModelCall, ModelCallResult, ModelEventHandler
+from ..types.run import ModelCall, ModelCallResult, ModelStreamHandler
 
 
 @runtime_checkable
@@ -41,18 +41,18 @@ class ModelAdapter(Protocol):
     name: str
     description: str | None
 
-    def invoke(
+    async def invoke(
         self,
         target: ModelTarget,
         request: ModelCall,
     ) -> ModelCallResult:
         """Execute one non-streaming model turn."""
 
-    def stream(
+    async def stream(
         self,
         target: ModelTarget,
         request: ModelCall,
         *,
-        on_event: ModelEventHandler,
+        on_event: ModelStreamHandler,
     ) -> ModelCallResult:
         """Execute one streaming model turn."""

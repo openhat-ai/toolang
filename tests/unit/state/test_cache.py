@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from toolang.lang.ast import Program, to_data
+from toolang.common.layout import AgentLayout
+from toolang.lang.ast import Program, SettleStmt, to_data
 from toolang.state.state import CapResolution, agent_state_version
 from toolang.state.cache import (
     load_current_version,
@@ -75,8 +76,9 @@ def test_agent_state_version_preserves_root_home_order(tmp_path: Path) -> None:
 
     assert len(version) == 32
     assert version != agent_state_version(home, root)
-    assert prepared_version_dir(tmp_path, root) == (
-        tmp_path / ".prepared" / "versions" / root.hex()
+    layout = AgentLayout.resident(tmp_path, "alice")
+    assert prepared_version_dir(layout, "root", root) == (
+        tmp_path / ".state" / "versions" / root.hex()
     )
 
 
@@ -102,22 +104,25 @@ def test_prepared_version_is_self_contained_and_can_be_published(
     }
 
     version = write_prepared(
-        toolang_root=tmp_path,
-        agent_name="alice",
+        layout=AgentLayout.resident(tmp_path, "alice"),
         scope="home",
         source=source,
         resolutions=(),
         prepared=prepared,
-        files={"agent.too": b"agent alice\n", "authored/prompts/review.md": b"# Review\n"},
+        files={
+            "agent.too": b"agent alice\n",
+            "authored/prompts/review.md": b"# Review\n",
+        },
     )
-    version_dir = prepared_version_dir(tmp_path, version, "alice")
-    publish_current(tmp_path, version, "alice")
+    layout = AgentLayout.resident(tmp_path, "alice")
+    version_dir = prepared_version_dir(layout, "home", version)
+    publish_current(layout, "home", version)
 
-    assert load_current_version(tmp_path, "alice") == version
+    assert load_current_version(layout, "home") == version
     assert load_version_source(version_dir) == source
     assert load_version_resolved(version_dir) == {"schema": 1, "entries": []}
     assert load_version_prepared(version_dir) == prepared
-    home = load_home_prepared(tmp_path, "alice")
+    home = load_home_prepared(layout)
     assert home.version == version
     assert home.config == {"models": {"default": "fast"}}
     assert home.program.find_agic("hello") is not None
@@ -132,12 +137,11 @@ def test_home_prepared_loads_program_without_reparsing_source(
 ) -> None:
     source_dir = tmp_path / "source"
     source_dir.mkdir()
-    source_text = "agic hello:\n  Hello.\n"
+    source_text = "agic hello:\n  Hello.\n\nflow work:\n  settle hello\n"
     (source_dir / "agent.too").write_text(source_text, encoding="utf-8")
     source = scan_source(source_dir, ("agent.too",))
     version = write_prepared(
-        toolang_root=tmp_path,
-        agent_name="alice",
+        layout=AgentLayout.resident(tmp_path, "alice"),
         scope="home",
         source=source,
         resolutions=(),
@@ -150,14 +154,19 @@ def test_home_prepared_loads_program_without_reparsing_source(
         },
         files={"agent.too": source_text.encode()},
     )
-    publish_current(tmp_path, version, "alice")
+    layout = AgentLayout.resident(tmp_path, "alice")
+    publish_current(layout, "home", version)
 
     def fail_parse(_cls: type[Program], _source: str) -> Program:
         raise AssertionError("prepared program must not be reparsed")
 
     monkeypatch.setattr(Program, "from_source", classmethod(fail_parse))
 
-    assert load_home_prepared(tmp_path, "alice").program.find_agic("hello")
+    program = load_home_prepared(layout).program
+    assert program.find_agic("hello")
+    flow = program.find_flow("work")
+    assert flow is not None
+    assert isinstance(flow.stmts[0], SettleStmt)
 
 
 def test_prepared_version_rejects_files_outside_its_files_directory(
@@ -167,7 +176,7 @@ def test_prepared_version_rejects_files_outside_its_files_directory(
 
     with pytest.raises(ValueError, match="cache file path must be relative"):
         write_prepared(
-            toolang_root=tmp_path,
+            layout=AgentLayout.resident(tmp_path, "alice"),
             scope="root",
             source=source,
             resolutions=(),

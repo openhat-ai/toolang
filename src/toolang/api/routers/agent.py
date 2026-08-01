@@ -3,70 +3,47 @@
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 
-from toolang.api.app import ApiContextDep
-from toolang.common.error import ToolangError
-from toolang.execution.effective import (
-    effective_agics,
-    effective_origin_model_selectors,
-    select_origin_agic,
-)
-from toolang.execution.projection import ExecutionProjector
+from toolang.api.app import AgentCoreDep, CeilingSpecDep
+from toolang.common.errors import ToolangError
+from toolang.execution.executor.prepare import effective_agics
 from toolang.execution.schemas import ThreadInfo
-from toolang.plugin.models.resolution import selectable_model_targets
-from toolang.up import process as agents
+from toolang.execution.executor.ceiling import agent_model_targets
+from toolang.up import AgentCore, process as agents
 
 
 router = APIRouter(tags=["agent"])
 
 
 @router.get("/profile", summary="Get Profile")
-def profile(context: ApiContextDep) -> dict[str, object]:
-    runtime_state = agents.AgentProcess(context.root, context.name).state() or {}
+def profile(core: AgentCoreDep) -> dict[str, object]:
+    runtime_state = agents.AgentProcess(core.layout).state() or {}
     return {
-        "agent": context.name,
-        "display_name": context.name,
+        "agent": core.layout.name,
+        "display_name": core.layout.name,
         "title": None,
         "summary": None,
         "description": None,
         "avatar": None,
-        "environment": _profile_environment(context, runtime_state=runtime_state),
-        "metrics": _profile_metrics(context),
-    }
-
-
-@router.get("/updates", summary="List Updates")
-def updates(
-    context: ApiContextDep, limit: int = Query(default=100)
-) -> dict[str, object]:
-    return {
-        "items": [
-            item.to_data() for item in context.executor.store.list_updates(limit=limit)
-        ]
+        "environment": _profile_environment(core, runtime_state=runtime_state),
+        "metrics": _profile_metrics(core),
     }
 
 
 @router.get("/models", summary="List Agent Models")
-def models(context: ApiContextDep) -> dict[str, object]:
+def models(
+    core: AgentCoreDep,
+    ceiling: CeilingSpecDep,
+) -> dict[str, object]:
     try:
-        selectors = effective_origin_model_selectors(
-            context.executor,
-            state=context.state_watcher.current(),
-            origin="chat",
-        )
-        targets = selectable_model_targets(
-            providers=context.executor.setup.model_providers,
-            aliases=context.executor.model_aliases,
-            environ=context.executor.model_environ,
-            selectors=selectors,
-            cache_dir=context.executor.model_cache_dir,
-            refresh=context.executor.model_cache_refresh,
-        )
+        setup = core.setup.current()
+        state = core.state.current()
+        default, targets = agent_model_targets(setup, state, ceiling)
     except ToolangError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {
-        "default": selectors[0] if selectors else None,
+        "default": default,
         "items": [
             _model_item(selector=selector, target=target)
             for selector, target in targets
@@ -75,8 +52,8 @@ def models(context: ApiContextDep) -> dict[str, object]:
 
 
 @router.get("/agics", summary="List Agent Agics")
-def agics(context: ApiContextDep) -> dict[str, object]:
-    program = context.state_watcher.current().program
+def agics(core: AgentCoreDep) -> dict[str, object]:
+    program = core.state.current().program
     return {
         "default": _default_agic_name(program, origin="chat"),
         "items": [{"name": agic.name} for agic in effective_agics(program)],
@@ -84,19 +61,19 @@ def agics(context: ApiContextDep) -> dict[str, object]:
 
 
 @router.get("/flows", summary="List Agent Flows")
-def flows(context: ApiContextDep) -> dict[str, object]:
-    program = context.state_watcher.current().program
+def flows(core: AgentCoreDep) -> dict[str, object]:
+    program = core.state.current().program
     return {
         "default": None,
         "items": [{"name": flow.name} for flow in program.flows],
     }
 
 
-def _profile_metrics(context) -> dict[str, object]:
-    threads = ExecutionProjector(context.executor.store).list_threads(limit=None)
-    runs = context.executor.store.list_runs(limit=None)
-    steps_by_run = context.executor.store.list_steps_for_runs(
-        run_ids=tuple(item.run_id for item in runs)
+def _profile_metrics(core: AgentCore) -> dict[str, object]:
+    threads = core.history.list_threads(limit=None)
+    runs = core.store.list_runs(limit=None)
+    steps_by_run = core.store.list_steps_for_runs(
+        run_ids=tuple(item.id for item in runs)
     )
     thread_counts = {"chat": 0, "chore": 0, "task": 0}
     step_total = 0
@@ -114,7 +91,7 @@ def _profile_metrics(context) -> dict[str, object]:
             step_total += 1
             if step.kind == "model":
                 model_total += 1
-                usage = step.detail.get("usage")
+                usage = step.noted.get("usage")
                 if isinstance(usage, Mapping):
                     input_tokens += int(usage.get("input_tokens", 0) or 0)
                     output_tokens += int(usage.get("output_tokens", 0) or 0)
@@ -148,38 +125,26 @@ def _thread_metric_kind(thread: ThreadInfo) -> Literal["chat", "chore", "task"]:
 
 
 def _profile_environment(
-    context, *, runtime_state: dict[str, object]
+    core: AgentCore, *, runtime_state: dict[str, object]
 ) -> dict[str, object]:
     return {
         "sandbox": _runtime_sandbox_spec(runtime_state),
-        "home": str(context.home),
-        "endpoint": _runtime_endpoint(context, runtime_state=runtime_state),
+        "home": str(core.layout.home),
+        "endpoint": _runtime_endpoint(runtime_state),
     }
 
 
-def _runtime_endpoint(
-    context, *, runtime_state: dict[str, object] | None = None
-) -> str:
-    if runtime_state is not None:
-        endpoint = runtime_state.get("endpoint")
-        if isinstance(endpoint, str) and endpoint.strip():
-            return endpoint.strip()
-    return f"http://{context.host}:{context.port}"
+def _runtime_endpoint(runtime_state: dict[str, object]) -> str | None:
+    endpoint = runtime_state.get("endpoint")
+    if isinstance(endpoint, str) and endpoint.strip():
+        return endpoint.strip()
+    return None
 
 
 def _runtime_sandbox_spec(runtime_state: dict[str, object]) -> str:
     sandbox = runtime_state.get("sandbox")
-    if isinstance(sandbox, dict):
-        sandbox_data = {str(key): value for key, value in sandbox.items()}
-        selector = sandbox_data.get("selector")
-        if isinstance(selector, dict):
-            selector_data = {str(key): value for key, value in selector.items()}
-            driver = selector_data.get("driver")
-            target = selector_data.get("target")
-            if isinstance(driver, str) and driver.strip():
-                if isinstance(target, str) and target.strip():
-                    return f"{driver.strip()}:{target.strip()}"
-                return driver.strip()
+    if isinstance(sandbox, str) and sandbox.strip():
+        return sandbox.strip()
     return "none"
 
 
@@ -197,7 +162,7 @@ def _model_item(*, selector: str, target: Any) -> dict[str, object]:
 
 
 def _default_agic_name(program: Any, *, origin: str) -> str | None:
-    try:
-        return select_origin_agic(program, origin=origin).name
-    except ToolangError:
-        return None
+    del origin
+    if program.find_agic("chat") is not None:
+        return "chat"
+    return "default"

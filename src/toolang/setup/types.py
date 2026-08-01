@@ -1,0 +1,88 @@
+"""Immutable runtime setup types."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+import platform
+from types import MappingProxyType
+
+from toolang.base.protocols.model import ModelAdapter, ModelProvider
+from toolang.base.protocols.tool import AgentTool
+from toolang.base.types.model import ModelInfo
+from toolang.common.layout import AgentLayout
+
+
+@dataclass(frozen=True, slots=True)
+class AgentEnvironment:
+    """Safe process-environment facts captured where the agent actually runs."""
+
+    sandbox: str
+    system: str
+    release: str
+    machine: str
+    container: bool
+    root: Path
+    home: Path
+    working_directory: Path
+
+    @classmethod
+    def capture(
+        cls,
+        layout: AgentLayout,
+        *,
+        envs: Mapping[str, str],
+    ) -> AgentEnvironment:
+        """Capture non-secret environment facts from explicit setup inputs."""
+
+        sandbox = envs.get("TOOLANG_SANDBOX", "none").strip() or "none"
+        return cls(
+            sandbox=sandbox,
+            system=platform.system(),
+            release=platform.release(),
+            machine=platform.machine(),
+            container=sandbox.partition(":")[0] == "docker",
+            root=layout.root,
+            home=layout.home,
+            working_directory=Path.cwd().resolve(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentSetup:
+    """Installed implementations and models fixed for one agent run."""
+
+    layout: AgentLayout
+    providers: Mapping[str, ModelProvider]
+    adapters: Mapping[str, ModelAdapter]
+    models: tuple[ModelInfo, ...]
+    tools: Mapping[str, AgentTool]
+    envs: Mapping[str, str]
+    environment: AgentEnvironment | None = None
+
+    def __post_init__(self) -> None:
+        providers = dict(self.providers)
+        adapters = dict(self.adapters)
+        models = tuple(self.models)
+        for key, provider in providers.items():
+            if key != provider.name:
+                raise ValueError(
+                    f"provider mapping key {key!r} does not match {provider.name!r}"
+                )
+        identities = [(model.provider, model.ref) for model in models]
+        if len(identities) != len(set(identities)):
+            raise ValueError("setup models must be unique by provider and ref")
+        missing_providers = {
+            model.provider for model in models if model.provider not in providers
+        }
+        if missing_providers:
+            raise ValueError(
+                "setup models reference unknown providers: "
+                + ", ".join(sorted(missing_providers))
+            )
+        object.__setattr__(self, "providers", MappingProxyType(providers))
+        object.__setattr__(self, "adapters", MappingProxyType(adapters))
+        object.__setattr__(self, "models", models)
+        object.__setattr__(self, "tools", MappingProxyType(dict(self.tools)))
+        object.__setattr__(self, "envs", MappingProxyType(dict(self.envs)))
