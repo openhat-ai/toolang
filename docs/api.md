@@ -2,10 +2,11 @@
 
 This document defines the public CLI and local agent HTTP API.
 
-Interactive CLI, TUI, and WebUI surfaces recognize and handle their slash and
-shell commands before passing remaining input to `ContentBody` parsing and input
-perceiving. Command dispatch belongs to the control surface rather than the
-Toolang input syntax.
+Interactive CLI, TUI, and WebUI surfaces resolve `Submission` text according
+to their declared submission profile. Chat surfaces may apply `QuickCommand`
+and `SettingCommand` results locally; every execution surface turns an
+accepted `RunnableCall` into the structured run request defined by
+[input-syntax.md](./input-syntax.md).
 
 
 ## CLI
@@ -175,8 +176,8 @@ Arguments:
 - `SCRIPT` is the local Toolang script or agent file
 - `RUNNABLE` is the uniquely named public agic or flow to run
 - `ARGS` provide named runnable parameters, written as `NAME=VALUE`
-- `INPUT` values form a `ContentBody` perceived as the canonical primary
-  `Percept`
+- `INPUT` values form the content portion of one `Submission`; script mode
+  accepts only a resolved `RunnableCall` and uses its evaluated content
 
 Behavior:
 

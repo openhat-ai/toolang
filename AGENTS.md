@@ -91,8 +91,9 @@
 - `docs/program.md` defines `.too` declarations, executable signatures,
   agics, flows, directives, and surface rules.
 - `docs/flow-syntax.md` defines flow statements, bindings, and clauses.
-- `docs/input-syntax.md` defines `ContentBody` syntax, input perceiving, input
-  coercion, and output coercion.
+- `docs/input-syntax.md` defines submissions, quick and setting commands,
+  runnable calls and overrides, shared `Content` syntax, content evaluation, and
+  input/output coercion.
 - `docs/layout.md` defines Toolang root, agent home, and agent room layout.
 - `docs/caps.md` defines cap kinds, scopes, sources, and effective-cap rules.
 - `docs/tasks.md` defines task and chore documents and their runtime mapping.
@@ -129,10 +130,10 @@
   `toolang.common.errors` is a compatibility export of the error type owned by
   `toolang.base`.
 - `toolang.lang` owns `.too` parsing, authored source semantics, source
-  editing, pure `ContentBody` parsing, input perceiving, input coercion, and
-  output coercion. The language and its AST retain the concise `Part` and `Part[]`
-  type names; they map to package-level `PerceptPart` and `Percept` values
-  respectively.
+  editing, pure `Submission` and `Content` parsing, content evaluation,
+  input coercion, and output coercion. The language and its AST retain the
+  concise `Part` and `Part[]` type names; they map to package-level
+  `PerceptPart` and `Percept` values respectively.
 - `toolang.up` owns remote agent target resolution, runtime-state files,
   managed processes, visiting and roaming materialization, sandbox filesystem
   assembly, hosting lifecycle orchestration, and AgentServer assembly.
@@ -213,8 +214,8 @@
   async contracts. Sync Python tool callables may be isolated with
   `asyncio.to_thread()` at the function-tool boundary; do not move the agic
   loop itself into a worker thread.
-- Prompt caps, agic bodies, and applicable flow statement bodies are
-  `ContentBody` sources perceived as canonical `Percept` values. Language
+- Prompt caps, agic bodies, and applicable flow statement bodies are `Content`
+  sources evaluated as canonical `Percept` values. Language
   `Part` and `Part[]` variables remain percept parts rather than becoming text.
   Instruct and context declarations remain text templates and see only flat
   runtime variables. Body variables stay flat; do not add wrapper namespaces

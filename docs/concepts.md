@@ -238,18 +238,20 @@ other local names. Durable input and output refs are persistence metadata, not
 part of a local.
 
 
-## Perceiving And Coercion
+## Content Evaluation And Coercion
 
-Toolang uses three operations at runnable boundaries:
+Toolang uses four operations at runnable boundaries:
 
-- input perceiving interprets supported input as one ordered `Percept`
+- submission resolution produces a command or one `RunnableCall`
+- content evaluation produces one ordered canonical `Percept`
 - input coercion converts that percept to the runnable's declared primary type
 - output coercion converts the runnable's final value to its declared output
   type
 
-Input perceiving applies equally to plain text, authored bodies with runtime
-values, and multimodal caller input. Input and output coercion are
-language-owned type operations; they do not define transport serialization.
+Content evaluation applies equally to plain text, authored bodies with runtime
+values, and multimodal caller input. Submission resolution, input coercion,
+and output coercion are language-owned operations; they do not define transport
+serialization.
 
 
 ## Message

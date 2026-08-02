@@ -93,12 +93,13 @@ Stage is expressed by folder placement, not by frontmatter:
 Runtime fields such as status, last run, next run, counters, and errors are not
 written to Markdown.
 
-The Markdown body is a `ContentBody` using
+The Markdown body is one `Submission` using
 [input-syntax.md](./input-syntax.md). It has no ambient template variables;
 includes resolve relative to the job document, and invoked prompt templates
-receive only their own explicit arguments and input. Input perceiving produces
-the `Percept` passed to `RunSpec.input`; the selected runnable still sees its
-language-level primary type such as the default `Part[]`.
+receive only their own explicit arguments and input. Task and chore profiles
+accept only `RunnableCall`; its evaluated content is passed to `RunSpec.input`,
+and the selected runnable sees its declared primary type such as the default
+`Part[]`.
 
 
 ## Tasks
