@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from toolang.base.types.message import MessagePart
 from toolang.execution.events import RunEvent
+from toolang.lang.submission import SettingCommand
 
 if TYPE_CHECKING:
     from .blocks import MutableBlock
@@ -24,12 +25,26 @@ class ChatResult:
     output: tuple[MessagePart, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class QueuedCall:
+    """One chat call with settings captured when it was submitted."""
+
+    source: str
+    selects: Mapping[str, object]
+
+
 class ChatClient(Protocol):
     def list_models(self) -> Mapping[str, Any]: ...
 
     def list_executables(self, kind: str) -> Mapping[str, Any]: ...
 
     def create_thread(self) -> str: ...
+
+    def apply_settings(
+        self,
+        settings: tuple[SettingCommand, ...],
+        selects: Mapping[str, object],
+    ) -> Mapping[str, object]: ...
 
     def get_result(
         self,
@@ -66,7 +81,7 @@ class AppContext(Protocol):
 
     def get_client(self) -> ChatClient: ...
 
-    def get_queue(self) -> list[str]: ...
+    def get_queue(self) -> list[QueuedCall]: ...
 
     def get_active_run(self) -> str | None: ...
 

@@ -800,7 +800,7 @@ class ResultAvailableBlock(MutableBlock):
 
     def render(self) -> RenderableType:
         line = Text("◇ result saved · ")
-        line.append(f"/show {self.run_id}", style="cyan")
+        line.append(f":show {self.run_id}", style="cyan")
         return line
 
 
@@ -943,7 +943,7 @@ class SlashBlock:
     def _body_line(line: str) -> Text:
         if not line.strip():
             return Text()
-        if line.startswith("/"):
+        if line.startswith(":"):
             return SlashBlock._command_line(line)
         columns = _split_columns(line)
         if len(columns) > 1:
@@ -986,13 +986,13 @@ class SlashBlock:
         for index, token in enumerate(usage.split(" ")):
             if index:
                 text.append(" ")
-            style = "cyan" if token.startswith("/") else "dim"
-            if token.startswith("/"):
+            style = "cyan" if token.startswith(":") else "dim"
+            if token.startswith(":"):
                 command, separator, rest = token.partition(",")
                 text.append(command, style=style)
                 if separator:
                     text.append(separator, style="dim")
-                    text.append(rest, style="cyan" if rest.startswith("/") else "dim")
+                    text.append(rest, style="cyan" if rest.startswith(":") else "dim")
             else:
                 text.append(token, style=style)
 

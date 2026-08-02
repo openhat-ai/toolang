@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
+from dataclasses import replace
 import json
-import mimetypes
 import os
 from pathlib import Path
 import sys
@@ -17,11 +16,6 @@ import typer
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
 from toolang.base.types.message import (
-    AudioPart,
-    DocumentPart,
-    ImagePart,
-    Percept,
-    PerceptPart,
     TextPart,
     message_text,
     parts_to_data,
@@ -29,13 +23,16 @@ from toolang.base.types.message import (
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor import CeilingSpec, RunExecutor, RunHandle, RunSpec
+from toolang.execution.calls import bind_runnable_call
+from toolang.execution.executor import CeilingSpec, RunExecutor, RunHandle
 from toolang.execution.records import RunRecord
+from toolang.execution.runnables import resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
-from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program, StructDecl
-from toolang.lang.input import coerce_input, perceive_input
+from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
+from toolang.lang.includes import resolve_file_include
+from toolang.lang.submission import Arguments, RunnableCall, parse_runnable_call
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
 from toolang.setup import SetupWatcher
@@ -50,37 +47,7 @@ from ...common.version import toolang_version
 
 Runnable = AgicDecl | FlowDecl
 _LITERAL_ITEM_PREFIX = "\ue002"
-
-_TEXT_MEDIA_TYPES = frozenset(
-    {
-        "application/javascript",
-        "application/json",
-        "application/toml",
-        "application/xml",
-        "application/yaml",
-        "application/x-ndjson",
-        "application/x-sh",
-        "application/x-yaml",
-    }
-)
-_DOCUMENT_EXTENSIONS = frozenset(
-    {
-        ".csv",
-        ".doc",
-        ".docx",
-        ".html",
-        ".json",
-        ".md",
-        ".pdf",
-        ".ppt",
-        ".pptx",
-        ".rtf",
-        ".txt",
-        ".xls",
-        ".xlsx",
-        ".xml",
-    }
-)
+_UNPERSISTED_THREAD = "<unpersisted-script-thread>"
 
 
 class _HelpArgument(TyperArgument):
@@ -219,19 +186,16 @@ def _runnable_command(
         quiet: bool,
         verbose: int,
     ) -> int:
-        input_value, args = _bind_arguments(
+        call, raw_args = _collect_call(
             runnable,
             items=items,
-            program=program,
             stdin=stdin,
         )
         return _run(
             source_path,
             runnable=runnable.name,
-            runnable_kind=runnable.kind,
-            runnable_doc=runnable.doc,
-            input_value=input_value,
-            args=args,
+            call=call,
+            raw_args=raw_args,
             model=model,
             ceiling=CeilingSpec(
                 models=tuple(dict.fromkeys(split_model_selectors(models))) or None,
@@ -341,13 +305,12 @@ def _public_runnables(program: Program) -> tuple[Runnable, ...]:
     )
 
 
-def _bind_arguments(
+def _collect_call(
     runnable: Runnable,
     *,
     items: tuple[str, ...],
-    program: Program,
     stdin: TextIO,
-) -> tuple[Percept, dict[str, object]]:
+) -> tuple[RunnableCall, Arguments]:
     params = {parameter.name: parameter for parameter in runnable.params}
     raw_args: dict[str, str] = {}
     input_items: list[str] = []
@@ -365,67 +328,22 @@ def _bind_arguments(
             continue
         input_items.append(item)
 
-    missing = [
-        parameter.name
-        for parameter in runnable.params
-        if not parameter.optional and parameter.name not in raw_args
-    ]
-    if missing:
-        joined = ", ".join(f"{name}=..." for name in missing)
-        raise click.UsageError(f"missing required arguments: {joined}")
-
-    include = _include_resolver(Path.cwd())
-    structs = {struct.name: struct for struct in program.structs}
-    args = {
-        name: _coerce_argument(
-            value,
-            parameter=params[name],
-            program=program,
-            structs=structs,
-            include=include,
-        )
-        for name, value in raw_args.items()
-    }
     input_source = _input_source(input_items, stdin=stdin)
-    if runnable.input is None:
-        if input_source is not None:
-            raise click.UsageError(f"{runnable.name} does not accept primary input")
-        return (), args
-    if input_source is None:
-        if not runnable.input.optional:
-            raise click.UsageError(f"{runnable.name} requires primary input")
-        return (), args
-    percept = perceive_input(
-        input_source,
-        program=program,
-        include=include,
+    call = (
+        RunnableCall(overrides=(), content="")
+        if input_source is None
+        else parse_runnable_call(input_source)
     )
-    coerce_input(
-        percept,
-        runnable.input.type_name or "Part[]",
-        structs=structs,
-    )
-    return percept, args
-
-
-def _coerce_argument(
-    source: str,
-    *,
-    parameter: Parameter,
-    program: Program,
-    structs: dict[str, StructDecl],
-    include: Callable[[str], PerceptPart],
-) -> object:
-    percept = perceive_input(
-        source,
-        program=program,
-        include=include,
-    )
-    return coerce_input(
-        percept,
-        parameter.type_name or "Part[]",
-        structs=structs,
-    )
+    if not any(item.kind in {"agic", "flow"} for item in call.overrides):
+        missing = [
+            parameter.name
+            for parameter in runnable.params
+            if not parameter.optional and parameter.name not in raw_args
+        ]
+        if missing:
+            joined = ", ".join(f"{name}=..." for name in missing)
+            raise click.UsageError(f"missing required arguments: {joined}")
+    return call, tuple(raw_args.items())
 
 
 def _input_source(items: list[str], *, stdin: TextIO) -> str | None:
@@ -471,76 +389,12 @@ def _protect_literal_items(argv: list[str]) -> list[str]:
     ]
 
 
-def _include_resolver(base: Path) -> Callable[[str], PerceptPart]:
-    def resolve(reference: str) -> PerceptPart:
-        path = Path(reference).expanduser()
-        if not path.is_absolute():
-            path = base / path
-        path = path.resolve()
-        if not path.is_file():
-            raise click.BadParameter(f"included file not found: {reference}")
-        media_type, _encoding = mimetypes.guess_type(path.name)
-        if _is_text(media_type):
-            try:
-                return TextPart(path.read_text(encoding="utf-8"))
-            except UnicodeDecodeError as exc:
-                raise click.BadParameter(
-                    f"included text is not UTF-8: {reference}"
-                ) from exc
-        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-        if media_type is not None and media_type.startswith("image/"):
-            return ImagePart(
-                image_url=_data_url(media_type, encoded),
-                filename=path.name,
-                media_type=media_type,
-            )
-        if media_type in {"audio/mpeg", "audio/mp3"}:
-            return AudioPart(
-                data=encoded,
-                format="mp3",
-                filename=path.name,
-                media_type=media_type,
-            )
-        if media_type in {"audio/wav", "audio/x-wav"}:
-            return AudioPart(
-                data=encoded,
-                format="wav",
-                filename=path.name,
-                media_type=media_type,
-            )
-        if path.suffix.lower() in _DOCUMENT_EXTENSIONS:
-            return DocumentPart(
-                data=_data_url(media_type or "application/octet-stream", encoded),
-                filename=path.name,
-                media_type=media_type,
-            )
-        raise click.BadParameter(f"unsupported included file: {reference}")
-
-    return resolve
-
-
-def _is_text(media_type: str | None) -> bool:
-    return bool(
-        media_type
-        and (
-            media_type.startswith("text/")
-            or media_type in _TEXT_MEDIA_TYPES
-        )
-    )
-
-
-def _data_url(media_type: str, encoded: str) -> str:
-    return f"data:{media_type};base64,{encoded}"
-
-
 def _run(
     source_path: Path,
     *,
     runnable: str,
-    runnable_kind: str,
-    runnable_doc: str | None,
-    input_value: Percept,
-    args: dict[str, object],
+    call: RunnableCall,
+    raw_args: Arguments,
     model: str | None,
     ceiling: CeilingSpec,
     quiet: bool,
@@ -578,10 +432,8 @@ def _run(
                 ids=ids,
                 run_id=run_id,
                 runnable=runnable,
-                runnable_kind=runnable_kind,
-                runnable_doc=runnable_doc,
-                input_value=input_value,
-                args=args,
+                call=call,
+                raw_args=raw_args,
                 model=model,
                 ceiling=ceiling,
                 quiet=quiet,
@@ -641,42 +493,48 @@ async def _execute(
     ids: IdIssuer,
     run_id: str,
     runnable: str,
-    runnable_kind: str,
-    runnable_doc: str | None,
-    input_value: Percept,
-    args: dict[str, object],
+    call: RunnableCall,
+    raw_args: Arguments,
     model: str | None,
     ceiling: CeilingSpec,
     quiet: bool,
     verbosity: int,
 ) -> RunRecord:
     setup = await SetupWatcher(layout).refresh()
-    thread = ThreadManager(store, ids).create(prefix=ThreadPrefix.SCRIPT)
     executor = RunExecutor(store, ids)
+    spec = bind_runnable_call(
+        call,
+        setup=setup,
+        state=state,
+        ceiling=ceiling,
+        thread=_UNPERSISTED_THREAD,
+        default_runnable=runnable,
+        default_model=model,
+        default_raw_args=raw_args,
+        include=lambda reference: resolve_file_include(
+            reference,
+            base=Path.cwd(),
+        ),
+    )
+    executor.validate(spec)
+    thread = ThreadManager(store, ids).create(prefix=ThreadPrefix.SCRIPT)
+    spec = replace(spec, thread=thread)
+    selected = resolve_runnable(state.program, spec.runnable)
     tracer = (
         ConsoleRunTracer(
             run_id=run_id,
             verbosity=verbosity,
-            runnable_kind=runnable_kind,
-            runnable_name=runnable,
-            runnable_doc=runnable_doc,
-            input_value=input_value,
-            args=args,
+            runnable_kind=selected.kind,
+            runnable_name=selected.name,
+            runnable_doc=selected.doc,
+            input_value=spec.input,
+            args=dict(spec.args or {}),
         )
         if not quiet and (sys.stderr.isatty() or verbosity > 0)
         else None
     )
     handle = executor.start(
-        RunSpec(
-            setup=setup,
-            state=state,
-            ceiling=ceiling,
-            thread=thread,
-            runnable=runnable,
-            input=input_value,
-            model=model,
-            args=args or None,
-        ),
+        spec,
         run_id=run_id,
         tracer=tracer,
     )

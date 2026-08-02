@@ -28,6 +28,7 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.common.errors import ToolangError
+from toolang.lang.submission import QuickCommand, RunnableCall, parse_submission
 
 from toolang.cli.common.version import toolang_version
 from . import blocks
@@ -38,6 +39,7 @@ from . import widgets
 from .base import (
     AppContext,
     ChatClient,
+    QueuedCall,
     chat_status_label,
     friendly_error,
 )
@@ -66,7 +68,7 @@ class ChatTuiAppContext:
     def get_client(self) -> ChatClient:
         return self._app.client
 
-    def get_queue(self) -> list[str]:
+    def get_queue(self) -> list[QueuedCall]:
         return self._app.queue
 
     def get_active_run(self) -> str | None:
@@ -155,7 +157,7 @@ class ChatTuiApp:
         self.input_history = input_history
         self.client = client
         self.ui_events: asyncio.Queue[ChatUIEvent] = asyncio.Queue()
-        self.queue: list[str] = []
+        self.queue: list[QueuedCall] = []
         self.active_run_id: str | None = None
         self.cancel_sent_run_id: str | None = None
         self.interrupt_exit_pending = False
@@ -166,7 +168,9 @@ class ChatTuiApp:
         self.actual_model: str | None = None
         self.presenter = ChatRunPresenter()
 
-        self.queue_panel = widgets.QueuePanel(lambda: self.queue)
+        self.queue_panel = widgets.QueuePanel(
+            lambda: [item.source for item in self.queue]
+        )
         self.status_bar = widgets.StatusBar(self._status_label())
         self.prompt = widgets.PromptBox(
             self._enqueue_ui_event,
@@ -359,8 +363,13 @@ class ChatTuiApp:
     def handle_submit(self, message: str) -> None:
         self.interrupt_exit_pending = False
         self.status_bar.clear_error()
-        slash_result = slashes.handle(self.app_context, message)
-        if slash_result.handled:
+        try:
+            submission = parse_submission(message)
+        except ValueError as exc:
+            self.status_bar.set_error(friendly_error(str(exc)))
+            return
+        if isinstance(submission, QuickCommand):
+            slash_result = slashes.handle(self.app_context, submission)
             if slash_result.result is not None:
                 result = slash_result.result
                 rendering.write_renderables(
@@ -378,10 +387,26 @@ class ChatTuiApp:
                     blocks.SlashBlock(message, slash_result.lines).render()
                 )
             return
+        if isinstance(submission, tuple):
+            try:
+                updated = self.client.apply_settings(
+                    submission,
+                    self.selects,
+                )
+            except (ToolangError, ValueError) as exc:
+                self.status_bar.set_error(friendly_error(str(exc)))
+                return
+            self.selects.clear()
+            self.selects.update(updated)
+            self.status_bar.set_status(self._status_label())
+            return
+        if not isinstance(submission, RunnableCall):
+            raise AssertionError("unknown submission value")
+        queued = QueuedCall(message, dict(self.selects))
         if self.active_run_id is not None or self.run_in_flight.is_set():
-            self.queue.append(message)
+            self.queue.append(queued)
         else:
-            self.start_run(message)
+            self.start_run(queued)
 
     def _handle_run_error(self, message: str) -> None:
         friendly = friendly_error(message)
@@ -456,7 +481,7 @@ class ChatTuiApp:
                     self.status_bar.set_status(self._status_label())
         events.handle_run_event(event, self.app_context)
 
-    def start_run(self, message: str) -> None:
+    def start_run(self, call: QueuedCall) -> None:
         try:
             thread_id = self.app_context.ensure_thread_id()
         except click.ClickException as exc:
@@ -466,14 +491,14 @@ class ChatTuiApp:
             self._handle_run_error(str(exc))
             return
 
-        self.unfinalized_blocks.append(blocks.RunStartBlock.create(message))
+        self.unfinalized_blocks.append(blocks.RunStartBlock.create(call.source))
         self.app.invalidate()
 
         def consume() -> None:
             self.client.start_run(
                 thread_id,
-                message,
-                self.selects,
+                call.source,
+                call.selects,
                 lambda event: self._enqueue_ui_event_from_thread(
                     ChatUIEvent("run_event", event)
                 ),

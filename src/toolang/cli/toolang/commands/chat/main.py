@@ -13,6 +13,7 @@ from toolang.base.types.message import TextDelta, TextPart, message_text
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.history import RunHistory
+from toolang.lang.submission import QuickCommand, RunnableCall, parse_submission
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
 from toolang.state.state import split_cap_selectors
@@ -20,7 +21,7 @@ from toolang.state.state import split_cap_selectors
 from toolang.cli.common.context import context_layout
 from toolang.cli.common.execution import open_execution
 from . import slashes as chat_slashes
-from .base import ChatClient, friendly_error as chat_friendly_error
+from .base import ChatClient, chat_status_label, friendly_error as chat_friendly_error
 from .history import ChatInputHistoryStore
 from .local import LocalChatSession
 from .tui import ChatTuiApp
@@ -207,18 +208,6 @@ def _chat_interactive_prompt_toolkit(
     )
 
 
-def _chat_resolve_model_command(
-    selector: str,
-    *,
-    client: ChatClient,
-) -> tuple[str, str] | None:
-    try:
-        payload = client.list_models()
-    except (click.ClickException, ToolangError, ValueError):
-        return None
-    return chat_slashes._chat_resolve_model_command(payload, selector)
-
-
 def _chat_interactive_scripted_local(
     *,
     client: ChatClient,
@@ -245,7 +234,7 @@ def _chat_interactive_scripted_local(
         except KeyboardInterrupt:
             typer.echo()
             return
-        if text.strip() in {"/exit", "/quit"}:
+        if text.strip() in {":exit", ":quit"}:
             return
         if not text.strip():
             continue
@@ -275,10 +264,27 @@ def _chat_handle_scripted_command(
     *,
     client: ChatClient,
 ) -> bool:
-    parsed = chat_slashes._chat_local_command(message)
-    if parsed is None:
+    try:
+        submission = parse_submission(message)
+    except ValueError as exc:
+        typer.echo(chat_friendly_error(str(exc)), err=True)
+        return True
+    if isinstance(submission, RunnableCall):
         return False
-    command, argument = parsed
+    if isinstance(submission, tuple):
+        try:
+            updated = client.apply_settings(submission, selector_payload)
+        except (click.ClickException, ToolangError, ValueError) as exc:
+            detail = exc.message if isinstance(exc, click.ClickException) else str(exc)
+            typer.echo(chat_friendly_error(detail), err=True)
+            return True
+        selector_payload.clear()
+        selector_payload.update(updated)
+        typer.echo(chat_status_label(selector_payload))
+        return True
+    if not isinstance(submission, QuickCommand):
+        raise AssertionError("unknown submission value")
+    command = submission.name
     if command in {"help", "?"}:
         for line in chat_slashes._chat_help_lines():
             typer.echo(line)
@@ -286,25 +292,11 @@ def _chat_handle_scripted_command(
     if command in {"agic", "flow"}:
         return _chat_handle_scripted_executable_command(
             command,
-            argument,
             selector_payload,
             client=client,
         )
     if command not in {"model", "models"}:
-        typer.echo(f"Unknown command: /{command}")
-        return True
-    if argument:
-        selectors = chat_slashes._chat_model_command_selectors(argument)
-        if len(selectors) != 1:
-            typer.echo("/model requires exactly one selector")
-            return True
-        resolved = _chat_resolve_model_command(selectors[0], client=client)
-        if resolved is None:
-            typer.echo(f"Model selector must match exactly one model: {selectors[0]}")
-            return True
-        selector, label = resolved
-        selector_payload["model"] = selector
-        typer.echo(f"model: {label}")
+        typer.echo(f"Unknown command: :{command}")
         return True
     try:
         payload = client.list_models()
@@ -320,19 +312,10 @@ def _chat_handle_scripted_command(
 
 def _chat_handle_scripted_executable_command(
     command: str,
-    argument: str,
     selector_payload: dict[str, object],
     *,
     client: ChatClient,
 ) -> bool:
-    if argument:
-        chat_slashes._chat_set_executable_selector(
-            selector_payload,
-            kind=command,
-            name=argument,
-        )
-        typer.echo(f"{command}: {argument}")
-        return True
     try:
         payload = client.list_executables(command)
     except (click.ClickException, ToolangError, ValueError) as exc:

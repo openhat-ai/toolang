@@ -24,7 +24,7 @@ from toolang.cli.toolang.commands.chat import (
     widgets,
 )
 from toolang.cli.toolang.commands.chat.events import ChatUIEvent
-from toolang.cli.toolang.commands.chat.base import ChatResult
+from toolang.cli.toolang.commands.chat.base import ChatResult, QueuedCall
 from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
 from toolang.cli.common.execution_progress.state import Metrics
 from toolang.execution.events import (
@@ -573,7 +573,7 @@ def test_chat_flow_root_result_is_durable_and_hidden_until_requested() -> None:
     rendered = "\n".join(_render_text(block.render()) for block in app.finalized)
     assert "flow response" not in rendered
     assert "0 runs" in rendered
-    assert "/show run_1" in rendered
+    assert ":show run_1" in rendered
     assert [block.type for block in app.finalized] == [
         "FlowStepBlock",
         "ResultAvailableBlock",
@@ -587,7 +587,7 @@ def test_chat_flow_root_result_is_durable_and_hidden_until_requested() -> None:
     ]
     assert result_segments
     assert result_segments[0].style is None or not result_segments[0].style.dim
-    assert _render_text(result).startswith("◇ result saved · /show run_1")
+    assert _render_text(result).startswith("◇ result saved · :show run_1")
     assert "◆ run_1 succeeded" in _render_text(app.finalized[-1].render())
 
 
@@ -912,12 +912,12 @@ def test_chat_model_step_marker_style_does_not_leak_to_streaming_text() -> None:
 
 def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     block = blocks.SlashBlock(
-        "/?",
+        ":?",
         [
-            "Slash Commands",
+            "Chat Commands",
             "",
-            "/help, /?                         Show help.",
-            "/model [selector]                List or switch models.",
+            ":help, :?                         Show help.",
+            ":model, :models                  List or switch models.",
         ],
     )
     rendered = _render_text(block.render(), width=80)
@@ -929,19 +929,19 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     ]
 
     assert not rendered_lines[0].strip()
-    assert rendered_lines[1].startswith("> /?")
+    assert rendered_lines[1].startswith("> :?")
     assert not rendered_lines[2].strip()
-    assert ": Slash Commands" in rendered
-    assert "/model [selector]" in rendered
+    assert ": Chat Commands" in rendered
+    assert ":model, :models" in rendered
     assert "List or switch models." in rendered
     assert rendered.endswith("\n")
-    command = next(segment for segment in segments if segment.text == "/model")
-    argument = next(segment for segment in segments if segment.text == "[selector]")
+    command = next(segment for segment in segments if segment.text == ":model")
+    argument = next(segment for segment in segments if segment.text == ":models")
 
     assert command.style is not None
     assert command.style.color is not None
     assert argument.style is not None
-    assert argument.style.dim
+    assert argument.style.color is not None
 
 
 def test_chat_header_shows_resolved_model_label() -> None:
@@ -1002,7 +1002,7 @@ def test_chat_model_list_lines_render_as_columns() -> None:
         ],
     }
     block = blocks.SlashBlock(
-        "/model", ["Available Models", *slashes._chat_model_list_lines(payload)]
+        ":model", ["Available Models", *slashes._chat_model_list_lines(payload)]
     )
     rendered = _render_text(block.render(), width=120)
     model_lines = [line for line in rendered.splitlines() if "deepseek/" in line]
@@ -1105,13 +1105,38 @@ def test_chat_tui_creates_a_thread_only_for_the_first_submission(
     )
     monkeypatch.setattr(tui.rendering, "write_renderable", lambda *_args: None)
 
-    app.handle_submit("/help")
+    app.handle_submit(":help")
     assert client.created == 0
 
     app.handle_submit("hello")
     assert started.wait(timeout=1)
     assert client.created == 1
     assert app.thread_id == "term_lazy"
+
+
+def test_chat_queue_captures_settings_at_submission_time() -> None:
+    class SettingsClient(FakeClient):
+        def apply_settings(self, settings, selects):
+            result = dict(selects)
+            result["model"] = settings[0].selector
+            return result
+
+    app = tui.ChatTuiApp(
+        thread_id="term_busy",
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=SettingsClient(),
+    )
+    app.active_run_id = "run_busy"
+
+    app.handle_submit(":model first")
+    app.handle_submit("first call")
+    app.handle_submit(":model second")
+    app.handle_submit("second call")
+
+    assert [item.source for item in app.queue] == ["first call", "second call"]
+    assert [item.selects["model"] for item in app.queue] == ["first", "second"]
 
 
 def test_chat_tui_empty_input_requires_two_interrupts_to_exit() -> None:
@@ -1188,7 +1213,7 @@ def test_chat_tui_show_command_renders_durable_markdown(
         lambda renderables: written.extend(renderables),
     )
 
-    app.handle_submit("/show run_saved")
+    app.handle_submit(":show run_saved")
 
     rendered = "\n".join(_render_text(item) for item in written)
     assert "Result run_saved" in rendered
@@ -1385,7 +1410,7 @@ class FakeApp:
     def get_client(self) -> Any:
         raise NotImplementedError
 
-    def get_queue(self) -> list[str]:
+    def get_queue(self) -> list[QueuedCall]:
         return []
 
     def get_active_run(self) -> str | None:
@@ -1454,6 +1479,10 @@ class FakeClient:
 
     def create_thread(self) -> str:
         return "thread_1"
+
+    def apply_settings(self, settings, selects):
+        del settings
+        return dict(selects)
 
     def get_result(
         self,

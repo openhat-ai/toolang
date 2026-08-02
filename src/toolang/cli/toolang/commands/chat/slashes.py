@@ -9,7 +9,7 @@ from typing import Any, cast
 import click
 
 from toolang.common.errors import ToolangError
-from toolang.plugin.models.resolution import split_model_selectors
+from toolang.lang.submission import QuickCommand
 from .base import AppContext, ChatResult, as_text, friendly_error
 
 SlashOutput = str | Sequence[str] | ChatResult | None
@@ -35,17 +35,15 @@ class SlashCommand:
 
     @property
     def display_usage(self) -> str:
-        return self.usage or f"/{self.primary}"
+        return self.usage or f":{self.primary}"
 
 
-def handle(app: AppContext, message: str) -> SlashResult:
-    parsed = _chat_local_command(message)
-    if parsed is None:
-        return SlashResult(False)
-    command, argument = parsed
+def handle(app: AppContext, quick: QuickCommand) -> SlashResult:
+    command = quick.name
+    argument = quick.tail or ""
     slash = _SLASH_BY_NAME.get(command)
     if slash is None:
-        app.set_status_error(f"Unknown command: /{command}")
+        app.set_status_error(f"Unknown command: :{command}")
         return SlashResult(True)
 
     try:
@@ -65,14 +63,6 @@ def handle(app: AppContext, message: str) -> SlashResult:
     return SlashResult(True)
 
 
-def _chat_local_command(message: str) -> tuple[str, str] | None:
-    stripped = message.strip()
-    if not stripped.startswith("/"):
-        return None
-    command, _, argument = stripped[1:].partition(" ")
-    return (command, argument.strip()) if command else None
-
-
 def _help(_app: AppContext, _command: str, _argument: str) -> list[str]:
     return _chat_help_lines()
 
@@ -84,55 +74,21 @@ def _exit(app: AppContext, _command: str, _argument: str) -> None:
 
 def _model(app: AppContext, _command: str, argument: str) -> SlashOutput:
     client = app.get_client()
-    selects = app.get_selects()
-    if not argument:
-        return ["Available Models", *_chat_model_list_lines(client.list_models())]
-    if app.is_busy():
-        app.set_status_error("Cannot change model while a run is active.")
-        return None
-
-    selectors = _chat_model_command_selectors(argument)
-    if len(selectors) != 1:
-        app.set_status_error("/model requires exactly one selector.")
-        return None
-    resolved = _chat_resolve_model_command(client.list_models(), selectors[0])
-    if resolved is None:
-        app.set_status_error(
-            f"Model selector must match exactly one model: {selectors[0]}"
-        )
-        return None
-
-    selector, label = resolved
-    selects["model"] = selector
-    app.refresh_status()
-    return f"model: {label}"
+    del argument
+    return ["Available Models", *_chat_model_list_lines(client.list_models())]
 
 
 def _executable(app: AppContext, command: str, argument: str) -> SlashOutput:
     client = app.get_client()
     selects = app.get_selects()
-    if not argument:
-        selected = as_text(selects.get(command))
-        return [
-            f"Available {command.title()}s",
-            *_chat_executable_list_lines(
-                client.list_executables(command), selected=selected
-            ),
-        ]
-    if app.is_busy():
-        app.set_status_error(f"Cannot change {command} while a run is active.")
-        return None
-
-    name = _chat_resolve_executable_command(
-        client.list_executables(command), argument
-    )
-    if name is None:
-        app.set_status_error(f"{command.title()} not available: {argument}")
-        return None
-
-    _chat_set_executable_selector(selects, kind=command, name=name)
-    app.refresh_status()
-    return f"{command}: {name}"
+    del argument
+    selected = as_text(selects.get(command))
+    return [
+        f"Available {command.title()}s",
+        *_chat_executable_list_lines(
+            client.list_executables(command), selected=selected
+        ),
+    ]
 
 
 def _queue(app: AppContext, _command: str, argument: str) -> SlashOutput:
@@ -154,22 +110,22 @@ def _queue(app: AppContext, _command: str, argument: str) -> SlashOutput:
     elif action not in {"steer", "s", "delete", "d", "edit", "e"}:
         app.set_status_error(f"Unknown queue command: {tokens[0]}")
     elif index is None:
-        app.set_status_error(f"/queue {tokens[0]} requires an item number.")
+        app.set_status_error(f":queue {tokens[0]} requires an item number.")
     elif action in {"delete", "d"}:
         queue.pop(index)
     elif action in {"edit", "e"}:
-        app.replace_input(queue.pop(index))
+        app.replace_input(queue.pop(index).source)
     elif app.get_active_run() is None:
         app.set_status_error("No active run to steer.")
     else:
-        app.request_steer(queue[index])
+        app.request_steer(queue[index].source)
         queue.pop(index)
     return None
 
 
 def _steer(app: AppContext, _command: str, argument: str) -> SlashOutput:
     if not argument:
-        app.set_status_error("/steer requires a message.")
+        app.set_status_error(":steer requires a message.")
         return None
     app.request_steer(argument)
     return None
@@ -178,7 +134,7 @@ def _steer(app: AppContext, _command: str, argument: str) -> SlashOutput:
 def _show(app: AppContext, _command: str, argument: str) -> SlashOutput:
     tokens = argument.split()
     if len(tokens) > 1:
-        app.set_status_error("/show accepts at most one run id.")
+        app.set_status_error(":show accepts at most one run id.")
         return None
     run_id = tokens[0] if tokens else None
     return app.get_client().get_result(
@@ -188,34 +144,34 @@ def _show(app: AppContext, _command: str, argument: str) -> SlashOutput:
 
 
 SLASHES: tuple[SlashCommand, ...] = (
-    SlashCommand(("help", "?"), "Show help.", _help, "/help, /?"),
+    SlashCommand(("help", "?"), "Show help.", _help, ":help, :?"),
     SlashCommand(
         ("model", "models"),
         "List or switch models.",
         _model,
-        "/model [selector]",
+        ":model, :models",
     ),
-    SlashCommand(("agic",), "List or use an agic.", _executable, "/agic [name]"),
-    SlashCommand(("flow",), "List or use a flow.", _executable, "/flow [name]"),
+    SlashCommand(("agic",), "List agics.", _executable, ":agic"),
+    SlashCommand(("flow",), "List flows.", _executable, ":flow"),
     SlashCommand(
         ("steer", "s"),
         "Steer the active run.",
         _steer,
-        "/steer <message>, /s <message>",
+        ":steer <message>",
     ),
     SlashCommand(
         ("queue", "q"),
         "Inspect or edit queued submissions.",
         _queue,
-        "/queue <action>, /q <action>",
+        ":queue <action>",
     ),
     SlashCommand(
         ("show",),
         "Show a durable run result.",
         _show,
-        "/show [run_id]",
+        ":show [run_id]",
     ),
-    SlashCommand(("exit", "quit"), "Exit chat.", _exit, "/exit, /quit"),
+    SlashCommand(("exit", "quit"), "Exit chat.", _exit, ":exit, :quit"),
 )
 _SLASH_BY_NAME = {name: slash for slash in SLASHES for name in slash.names}
 
@@ -223,7 +179,7 @@ _SLASH_BY_NAME = {name: slash for slash in SLASHES for name in slash.names}
 def _chat_help_lines() -> list[str]:
     width = max(len(slash.display_usage) for slash in SLASHES)
     return [
-        "Slash Commands",
+        "Chat Commands",
         "",
         *[
             f"{slash.display_usage:<{width}}  {slash.summary}"
@@ -236,16 +192,11 @@ def _chat_queue_help_lines() -> list[str]:
     return [
         "Queue Commands",
         "",
-        "/queue steer N   Steer the active run with item #N.",
-        "/queue edit N    Edit item #N in the input box.",
-        "/queue delete N  Delete item #N.",
-        "/queue clear     Clear all items.",
-        "/q s N           First-letter abbreviations are accepted.",
+        ":queue steer N   Steer the active run with item #N.",
+        ":queue edit N    Edit item #N in the input box.",
+        ":queue delete N  Delete item #N.",
+        ":queue clear     Clear all items.",
     ]
-
-
-def _chat_model_command_selectors(argument: str) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(split_model_selectors((argument,))))
 
 
 def _chat_resolve_model_command_labels(
@@ -319,25 +270,6 @@ def chat_model_label(
         return "auto"
     labels = _chat_resolve_model_command_labels(models_payload, (model,))
     return labels[0] if labels else model
-
-
-def _chat_set_executable_selector(
-    selects: dict[str, object], *, kind: str, name: str
-) -> None:
-    selects[kind] = name.strip()
-    selects.pop("flow" if kind == "agic" else "agic", None)
-
-
-def _chat_resolve_executable_command(
-    payload: Mapping[str, Any], name: str
-) -> str | None:
-    requested = name.strip()
-    matches = [
-        candidate
-        for item in _items(payload)
-        if (candidate := as_text(item.get("name"))) == requested
-    ]
-    return matches[0] if len(matches) == 1 else None
 
 
 def _chat_model_list_lines(payload: Mapping[str, Any]) -> list[str]:

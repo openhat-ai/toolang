@@ -17,7 +17,6 @@ from toolang.base.types.message import (
     Percept,
     TextPart,
 )
-from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt, Parameter
@@ -39,6 +38,7 @@ from ..records import (
 )
 from ..store import RunStore
 from ..types import ControlTiming, RunControlKind, StepPath
+from ..runnables import resolve_runnable
 from .common import (
     BoundRun,
     EventEmitter,
@@ -55,8 +55,8 @@ from .ceiling import (
     _AgentCeiling,
     resolve_agent_ceiling,
     resolve_run_ceiling,
+    validate_root_run_resources,
 )
-from .prepare import effective_agics
 from ._persist import _PersistSink
 
 _LOGGER = logging.getLogger(__name__)
@@ -182,13 +182,7 @@ class RunExecutor:
 
         self._require_available()
         loop = asyncio.get_running_loop()
-        executable = _require_runnable(spec.state, spec.runnable)
-        _validate_call(spec, executable)
-        agent_ceiling = resolve_agent_ceiling(
-            spec.setup,
-            spec.state,
-            spec.ceiling,
-        )
+        executable, agent_ceiling = _validate_start_spec(spec)
         bound = _bind_run(
             spec,
             run_id=run_id or self.ids.issue_run(),
@@ -214,6 +208,11 @@ class RunExecutor:
         task.add_done_callback(self._task_done)
         self._ensure_monitor(bound.setup.layout.name)
         return RunHandle(bound.run_id, self, task)
+
+    def validate(self, spec: RunSpec) -> None:
+        """Validate one immutable run spec without accepting a run."""
+
+        _validate_start_spec(spec)
 
     async def _execute_owned(
         self,
@@ -732,7 +731,7 @@ class _Execution:
     ) -> Local:
         """Accept and execute one recursive child agic or flow run."""
 
-        executable = _require_runnable(parent.state, name)
+        executable = resolve_runnable(parent.state.program, name)
         binding = _child_binding(
             self,
             parent,
@@ -775,7 +774,7 @@ class _Execution:
     ) -> Local:
         """Execute child runs concurrently and preserve their output type."""
 
-        executable = _require_runnable(binding.state, runnable)
+        executable = resolve_runnable(binding.state.program, runnable)
         lanes = limit or max(len(inputs), 1)
         available_lanes: asyncio.Queue[int] = asyncio.Queue()
         for lane in range(lanes):
@@ -947,21 +946,6 @@ class _Execution:
         )
 
 
-def _require_runnable(state: AgentState, name: str) -> AgicDecl | FlowDecl:
-    if not name or name != name.strip():
-        raise ValueError("run spec requires a canonical runnable name")
-    program = state.program
-    matches: tuple[AgicDecl | FlowDecl, ...] = (
-        *(agic for agic in effective_agics(program) if agic.name == name),
-        *(flow for flow in program.flows if flow.name == name),
-    )
-    if not matches:
-        raise ToolangError(f"Runnable not found: {name}")
-    if len(matches) > 1:
-        raise ToolangError(f"Runnable name is not unique: {name}")
-    return matches[0]
-
-
 def _parallel_output_type(
     results: Sequence[Local],
     executable: AgicDecl | FlowDecl,
@@ -1102,6 +1086,26 @@ def _validate_call(spec: RunSpec, executable: AgicDecl | FlowDecl) -> None:
         input=tuple(spec.input),
         args=dict(spec.args or {}),
     )
+
+
+def _validate_start_spec(
+    spec: RunSpec,
+) -> tuple[AgicDecl | FlowDecl, _AgentCeiling]:
+    executable = resolve_runnable(spec.state.program, spec.runnable)
+    _validate_call(spec, executable)
+    agent_ceiling = resolve_agent_ceiling(
+        spec.setup,
+        spec.state,
+        spec.ceiling,
+    )
+    validate_root_run_resources(
+        spec.setup,
+        spec.state,
+        executable=executable,
+        agent=agent_ceiling,
+        model=spec.model,
+    )
+    return executable, agent_ceiling
 
 
 def _validate_inputs(

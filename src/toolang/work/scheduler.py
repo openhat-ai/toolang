@@ -5,10 +5,15 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
+import logging
+from pathlib import Path
 
-from toolang.base.types.message import TextPart
-from ..execution.executor import CeilingSpec, RunExecutor, RunSpec
+from toolang.base.errors import ToolangError
+from ..execution.calls import bind_runnable_call
+from ..execution.executor import CeilingSpec, RunExecutor
 from ..execution.records import RunRecord
+from ..lang.includes import resolve_file_include
+from ..lang.submission import parse_runnable_call
 from ..state.state import AgentState
 from ..setup import AgentSetup
 from toolang.catalog.types import JobKind
@@ -16,6 +21,7 @@ from .state import AgentJobs, HomeJobs
 from .store import ClaimedJob, JobStore
 
 DEFAULT_INTERVAL_MS = 30_000.0
+_LOGGER = logging.getLogger(__name__)
 
 
 class Scheduler:
@@ -75,6 +81,46 @@ class Scheduler:
                 kind=kind,
                 now=current,
             ):
+                runnable = (
+                    kind if state.program.find_agic(kind) is not None else "default"
+                )
+                try:
+                    setup = self.get_agent_setup()
+                    call = parse_runnable_call(claimed.definition.body)
+                    base = (
+                        Path(claimed.definition.path).parent
+                        if claimed.definition.path is not None
+                        else setup.layout.home
+                    )
+                    spec = bind_runnable_call(
+                        call,
+                        setup=setup,
+                        state=state,
+                        ceiling=self.ceiling,
+                        thread=claimed.job.thread_id,
+                        default_runnable=runnable,
+                        include=lambda reference, base=base: resolve_file_include(
+                            reference,
+                            base=base,
+                        ),
+                    )
+                    self.executor.validate(spec)
+                except (OSError, ToolangError, ValueError) as exc:
+                    _LOGGER.warning(
+                        "jobs.submission_rejected kind=%s job_id=%s source=%s error=%s",
+                        claimed.job.kind,
+                        claimed.job.job_id,
+                        claimed.definition.source,
+                        exc,
+                    )
+                    self.job_store.reject_claim(
+                        jobs=jobs,
+                        job_id=claimed.job.job_id,
+                        kind=claimed.job.kind,
+                        now=current,
+                    )
+                    claimed_jobs.append(claimed)
+                    continue
                 if (
                     self.executor.store.get_thread(thread_id=claimed.job.thread_id)
                     is None
@@ -84,19 +130,7 @@ class Scheduler:
                         origin=kind,
                         context={"job_id": claimed.job.job_id},
                     )
-                runnable = (
-                    kind if state.program.find_agic(kind) is not None else "default"
-                )
-                handle = self.executor.start(
-                    RunSpec(
-                        setup=self.get_agent_setup(),
-                        state=state,
-                        ceiling=self.ceiling,
-                        thread=claimed.job.thread_id,
-                        runnable=runnable,
-                        input=(TextPart(text=claimed.definition.input),),
-                    )
-                )
+                handle = self.executor.start(spec)
                 try:
                     self.job_store.bind_run(
                         job_id=claimed.job.job_id,

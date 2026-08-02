@@ -3,13 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-import pytest
-
 from toolang.base.types.message import TextPart
 from toolang.common.errors import ToolangError
 from toolang.cli.toolang.commands.chat import slashes
-from toolang.cli.toolang.commands.chat.base import ChatResult
+from toolang.cli.toolang.commands.chat.base import ChatResult, QueuedCall
 from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
+from toolang.lang.submission import QuickCommand
 
 
 class _Client:
@@ -61,7 +60,7 @@ class _App:
     def __init__(self) -> None:
         self.client = _Client()
         self.selects: dict[str, object] = {}
-        self.queue: list[str] = []
+        self.queue: list[QueuedCall] = []
         self.active_run: str | None = None
         self.error = ""
         self.replaced = ""
@@ -78,7 +77,7 @@ class _App:
     def get_selects(self) -> dict[str, object]:
         return self.selects
 
-    def get_queue(self) -> list[str]:
+    def get_queue(self) -> list[QueuedCall]:
         return self.queue
 
     def get_active_run(self) -> str | None:
@@ -124,97 +123,53 @@ class _App:
         self.active_run = None
 
 
-def test_slash_handle_distinguishes_messages_and_unknown_commands() -> None:
+def test_quick_handle_reports_unknown_commands() -> None:
     app = _App()
 
-    assert slashes.handle(app, "hello").handled is False
-    result = slashes.handle(app, "/missing")
+    result = slashes.handle(app, QuickCommand("missing"))
 
     assert result.handled is True
-    assert app.error == "Unknown command: /missing"
+    assert app.error == "Unknown command: :missing"
 
 
-def test_slash_help_and_exit_are_declarative_commands() -> None:
+def test_quick_help_and_exit_are_declarative_commands() -> None:
     app = _App()
 
-    help_result = slashes.handle(app, "/?")
-    exit_result = slashes.handle(app, "/quit")
+    help_result = slashes.handle(app, QuickCommand("?"))
+    exit_result = slashes.handle(app, QuickCommand("quit"))
 
     assert help_result.lines is not None
-    assert help_result.lines[0] == "Slash Commands"
+    assert help_result.lines[0] == "Chat Commands"
     assert exit_result.handled is True
     assert app.exited is True
 
 
-def test_slash_model_lists_and_updates_selected_model() -> None:
+def test_quick_model_lists_models_without_changing_settings() -> None:
     app = _App()
 
-    listed = slashes.handle(app, "/model")
-    selected = slashes.handle(app, "/model openai")
+    listed = slashes.handle(app, QuickCommand("model"))
 
     assert listed.lines == ["Available Models", "[openai]  default  openai"]
-    assert selected.lines == ["model: openai/gpt-5"]
-    assert app.selects == {"model": "[openai]"}
-    assert app.status_refreshes == 1
-
-
-def test_slash_model_requires_one_unambiguous_model() -> None:
-    app = _App()
-    app.client.models = {
-        "default": "[openai]",
-        "items": [
-            {
-                "selector": "openai/gpt-5[openai]",
-                "provider": "openai",
-                "model": "gpt-5",
-            },
-            {
-                "selector": "openai/o3[openai]",
-                "provider": "openai",
-                "model": "o3",
-            },
-        ],
-    }
-
-    ambiguous = slashes.handle(app, "/model openai")
-    assert ambiguous.lines is None
-    assert app.error == "Model selector must match exactly one model: openai"
-
-    multiple = slashes.handle(app, "/model openai/gpt-5,openai/o3")
-
-    assert multiple.lines is None
-    assert app.error == "/model requires exactly one selector."
     assert app.selects == {}
-
-
-def test_slash_executable_selection_is_mutually_exclusive() -> None:
-    app = _App()
-    app.selects["flow"] = "review"
-
-    result = slashes.handle(app, "/agic chat")
-
-    assert result.lines == ["agic: chat"]
-    assert app.selects == {"agic": "chat"}
-
-
-def test_slash_executable_rejects_a_name_not_in_the_available_items() -> None:
-    app = _App()
-    app.selects["agic"] = "chat"
-    app.client.executables["flow"] = {"default": None, "items": []}
-
-    result = slashes.handle(app, "/flow research")
-
-    assert result.lines is None
-    assert app.error == "Flow not available: research"
-    assert app.selects == {"agic": "chat"}
     assert app.status_refreshes == 0
 
 
-def test_slash_show_loads_an_explicit_or_latest_durable_result() -> None:
+def test_quick_executable_lists_without_changing_settings() -> None:
+    app = _App()
+    app.selects["flow"] = "review"
+
+    result = slashes.handle(app, QuickCommand("agic"))
+
+    assert result.lines == ["Available Agics", "chat  default"]
+    assert app.selects == {"flow": "review"}
+    assert app.status_refreshes == 0
+
+
+def test_quick_show_loads_an_explicit_or_latest_durable_result() -> None:
     app = _App()
 
-    explicit = slashes.handle(app, "/show run_saved")
-    latest = slashes.handle(app, "/show")
+    explicit = slashes.handle(app, QuickCommand("show", "run_saved"))
+    latest = slashes.handle(app, QuickCommand("show"))
 
     assert explicit.result == ChatResult(
         run_id="run_saved",
@@ -223,34 +178,33 @@ def test_slash_show_loads_an_explicit_or_latest_durable_result() -> None:
     assert latest.result == explicit.result
 
 
-def test_slash_queue_edits_and_steers_numbered_items() -> None:
+def test_quick_queue_edits_and_steers_numbered_items() -> None:
     app = _App()
-    app.queue[:] = ["first", "second"]
+    app.queue[:] = [QueuedCall("first", {}), QueuedCall("second", {})]
 
-    slashes.handle(app, "/q e 2")
+    slashes.handle(app, QuickCommand("queue", "edit 2"))
     app.active_run = "run_abc"
-    slashes.handle(app, "/queue steer 1")
+    slashes.handle(app, QuickCommand("queue", "steer 1"))
 
     assert app.replaced == "second"
     assert app.steers == ["first"]
     assert app.queue == []
 
 
-def test_slash_client_errors_are_reported_in_status() -> None:
+def test_quick_client_errors_are_reported_in_status() -> None:
     app = _App()
     app.client.error = ToolangError("unavailable")
 
-    result = slashes.handle(app, "/model")
+    result = slashes.handle(app, QuickCommand("model"))
 
     assert result.handled is True
     assert result.lines is None
     assert app.error == "unavailable"
 
 
-@pytest.mark.parametrize("command", ("/steer", "/s"))
-def test_slash_steer_requires_message(command: str) -> None:
+def test_quick_steer_requires_message() -> None:
     app = _App()
 
-    slashes.handle(app, command)
+    slashes.handle(app, QuickCommand("steer"))
 
-    assert app.error == "/steer requires a message."
+    assert app.error == ":steer requires a message."

@@ -485,12 +485,12 @@ agic:
     program = read_authored_source(root, "alice").load_program().parse()
 
     expanded = perceive_input(
-        '/review src/app.py "only errors"\n\nAlso inspect tests.',
+        '/review path=src/app.py focus="only errors" -\n\nAlso inspect tests.',
         program=program,
     )
 
     assert expanded == (
-        TextPart("Review src/app.py carefully.\nonly errors\n\nAlso inspect tests."),
+        TextPart("Review src/app.py carefully.\nonly errors\n\n\nAlso inspect tests."),
     )
 
 

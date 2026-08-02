@@ -101,6 +101,11 @@ accept only `RunnableCall`; its evaluated content is passed to `RunSpec.input`,
 and the selected runnable sees its declared primary type such as the default
 `Part[]`.
 
+Job snapshots retain the authored body, not a parsed `RunnableCall`. The
+scheduler parses, binds, and validates the body only after the job is due and
+atomically claimed. A rejected submission records a failed occurrence without
+creating an execution run.
+
 
 ## Tasks
 

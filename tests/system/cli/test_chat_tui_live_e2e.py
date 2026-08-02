@@ -71,7 +71,7 @@ def test_chat_tui_runs_with_real_deepseek_provider(
         if kind == "agic":
             expected.append(response)
         else:
-            expected.extend(("result saved", "/show run_"))
+            expected.extend(("result saved", ":show run_"))
         if progress is not None:
             expected.append(progress)
         output = session.wait_for(*expected, timeout=180)
@@ -80,7 +80,7 @@ def test_chat_tui_runs_with_real_deepseek_provider(
         assert "Traceback" not in output
 
         if kind == "flow":
-            session.send(b"/show\r")
+            session.send(b":show\r")
             session.wait_for(response, timeout=30)
 
         session.send(b"\x04")

@@ -15,6 +15,7 @@ from toolang.lang.ast import AgicDecl, Directive, FlowDecl
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE
 from toolang.plugin.models.resolution import (
+    resolve_model,
     select_model_selectors,
     selectable_model_targets,
 )
@@ -149,6 +150,33 @@ def resolve_agent_ceiling(
         MappingProxyType(dict(tools)),
         caps,
     )
+
+
+def validate_root_run_resources(
+    setup: AgentSetup,
+    state: AgentState,
+    *,
+    executable: _Executable,
+    agent: _AgentCeiling,
+    model: str | None,
+) -> None:
+    """Validate root runnable directives and model selection before acceptance."""
+
+    selection = _snapshot_model_selection(setup, state)
+    ceiling = resolve_run_ceiling(
+        selection,
+        executable=executable,
+        agent=agent,
+        flow=None,
+        agent_name=setup.layout.name,
+    )
+    if model is not None or isinstance(executable, AgicDecl):
+        resolve_model(
+            selection,
+            selector=model,
+            default_selector=ceiling.models[0] if ceiling.models else None,
+            allowed_selectors=ceiling.models,
+        )
 
 
 def resolve_run_ceiling(

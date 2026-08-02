@@ -29,7 +29,6 @@ class JobDefinition:
     body: str
     source: str
     path: str | None
-    input: str
     schedule: str | None
     fingerprint: str
     thread: str
@@ -115,7 +114,6 @@ def _file_definition(
         body=job.body,
         source=source,
         path=str(job.path),
-        input_text=job_input(job, fallback=name),
         schedule=job.schedule if job.kind == "chore" else None,
     )
 
@@ -123,9 +121,6 @@ def _file_definition(
 def _program_definition(decl: JobDecl) -> JobDefinition:
     title = str(decl.meta.get("title") or "").strip()
     body = decl.body.strip()
-    input_text = (
-        f"# {title}\n\n{body}" if title and body else body or title or decl.name
-    )
     schedule = (
         str(decl.meta.get("schedule") or DEFAULT_CHORE_SCHEDULE).strip()
         if decl.kind == "chore"
@@ -139,7 +134,6 @@ def _program_definition(decl: JobDecl) -> JobDefinition:
         body=body,
         source=f"agent.too:{decl.span.line}",
         path=None,
-        input_text=input_text,
         schedule=schedule,
     )
 
@@ -153,11 +147,10 @@ def _definition(
     body: str,
     source: str,
     path: str | None,
-    input_text: str,
     schedule: str | None,
 ) -> JobDefinition:
     payload = json.dumps(
-        [job_id, kind, source, input_text, schedule],
+        [job_id, kind, source, title, body, schedule],
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -169,7 +162,6 @@ def _definition(
         body=body,
         source=source,
         path=path,
-        input=input_text,
         schedule=schedule,
         fingerprint=sha256(payload.encode()).hexdigest(),
         thread=f"{kind}_{job_id.strip()}",
@@ -196,18 +188,6 @@ def job_thread_id(job: JobFile) -> str:
     """Return the runtime thread projection for one authored job."""
 
     return f"{job.kind}_{job.id}"
-
-
-def job_input(job: JobFile, *, fallback: str) -> str:
-    """Render authored job content as runtime input."""
-
-    if job.kind == "task":
-        return job.body.strip() or fallback.strip()
-    title = (job.title or "").strip() or fallback.strip()
-    body = job.body.strip()
-    if title and body:
-        return f"# {title}\n\n{body}"
-    return body or title
 
 
 def job_display_title(job: JobFile, *, fallback: str) -> str:

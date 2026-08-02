@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 
 from toolang.api.app import AgentCoreDep, CeilingSpecDep
 from toolang.common.errors import ToolangError
-from toolang.execution.executor.prepare import effective_agics
+from toolang.execution.runnables import effective_agics
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.executor.ceiling import agent_model_targets
 from toolang.up import AgentCore, process as agents

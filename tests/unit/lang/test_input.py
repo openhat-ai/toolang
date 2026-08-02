@@ -67,6 +67,105 @@ def test_include_resolver_inserts_one_typed_part() -> None:
     )
 
 
+def test_content_markers_are_special_only_at_the_start_of_a_line() -> None:
+    assert perceive_input(" //review\n @file.md\n::model gpt-5\n//review\n@@file.md") == (
+        TextPart(" //review\n @file.md\n:model gpt-5\n/review\n@file.md"),
+    )
+
+
+def test_markdown_fences_suspend_content_recognition() -> None:
+    source = "```text\n/review\n@file.md\n```\nAfter"
+
+    assert perceive_input(source) == (TextPart(source),)
+
+
+def test_prompt_without_input_leaves_following_content_outside() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="label",
+                params=(),
+                body="LABEL",
+                span=Span(1),
+            ),
+        )
+    )
+
+    assert perceive_input("/label\nFollowing", program=program) == (
+        TextPart("LABEL\nFollowing"),
+    )
+
+
+def test_tail_prompt_consumes_all_remaining_content() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="wrap",
+                params=(),
+                body="Before {{_}} after",
+                span=Span(1),
+            ),
+        )
+    )
+
+    assert perceive_input("/wrap -\nOne\nTwo", program=program) == (
+        TextPart("Before One\nTwo after"),
+    )
+
+
+def test_fenced_prompt_consumes_only_its_exact_backtick_scope() -> None:
+    from toolang.lang.ast import CapDecl, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="wrap",
+                params=(),
+                body="[{{_}}]",
+                span=Span(1),
+            ),
+        )
+    )
+
+    assert perceive_input(
+        "/wrap ```\nInside\n```\nOutside",
+        program=program,
+    ) == (TextPart("[Inside\n]\nOutside"),)
+
+    with pytest.raises(ToolangError, match="Unclosed prompt fence"):
+        perceive_input("/wrap ````\nInside\n```", program=program)
+
+
+def test_prompt_arguments_require_named_syntax() -> None:
+    from toolang.lang.ast import CapDecl, Parameter, Program
+
+    program = Program(
+        span=Span(1),
+        caps=(
+            CapDecl(
+                kind="prompt",
+                name="review",
+                params=(Parameter(name="focus", span=Span(1)),),
+                body="{{focus}}",
+                span=Span(1),
+            ),
+        ),
+    )
+
+    with pytest.raises(ToolangError, match="name=value syntax"):
+        perceive_input("/review security", program=program)
+
+
 def test_input_coercion_preserves_parts_and_parses_declared_values() -> None:
     image = ImagePart(file_id="image-1")
 
