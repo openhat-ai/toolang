@@ -27,9 +27,7 @@ from toolang.lang.ast import (
     AgicDecl,
     Directive,
     Message as AstMessage,
-    Parameter,
     Program,
-    Span,
 )
 from toolang.lang.input import coerce_input, perceive_input
 from toolang.plugin.models.resolution import resolve_model
@@ -47,11 +45,6 @@ _TEXT_HISTORY_MESSAGE_LIMIT = 32
 _DEFAULT_INSTRUCT_TEMPLATE = prompts.load("instruct.default.md")
 _DEFAULT_CONTEXT_TEMPLATE = prompts.load("context.default.md")
 _PRIMARY_REFERENCE_RE = re.compile(r"{{\s*(?:[#^/]\s*)?_(?:\.[A-Za-z_][\w-]*)*\s*}}")
-_RUNTIME_DEFAULT_AGIC = AgicDecl(
-    name="default",
-    input=Parameter(name="_", type_name="Part[]", span=Span(line=1)),
-    span=Span(line=1),
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,12 +167,6 @@ def prepare_agic(
     )
     _log_prepared(prepared)
     return prepared
-
-
-def effective_agics(program: Program) -> tuple[AgicDecl, ...]:
-    if program.find_agic("default") is not None:
-        return program.agics
-    return (*program.agics, _RUNTIME_DEFAULT_AGIC)
 
 
 def _directives(agic: AgicDecl, name: str) -> tuple[Directive, ...]:

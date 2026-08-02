@@ -43,6 +43,10 @@ Discard at most one final `LineBreak`, then resolve the remaining body:
 5. With no leading setting-shaped lines, the complete body is `InputContent`
    and there are no `RunOverride` values.
 
+On a run-only source, selector lines with no following content are
+`RunOverride` values with empty content, not `SettingCommand` values. The call
+is valid only when the selected runnable accepts no primary input.
+
 `InputContent` must contain a non-whitespace item. Until its first item, an
 unescaped `:` at line start enters the command namespace. A quick command
 cannot be combined with other lines; an unknown or malformed command is an

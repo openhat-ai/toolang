@@ -140,12 +140,24 @@ def parse_submission(source: str) -> Submission:
 
 
 def parse_runnable_call(source: str) -> RunnableCall:
-    """Parse a run-only submission, rejecting quick and setting commands."""
+    """Parse a run-only submission, rejecting only quick commands."""
 
     submission = parse_submission(source)
-    if not isinstance(submission, RunnableCall):
+    if isinstance(submission, RunnableCall):
+        return submission
+    if isinstance(submission, QuickCommand):
         raise ValueError("submission is not a runnable call")
-    return submission
+    return RunnableCall(
+        overrides=tuple(
+            RunOverride(
+                kind=command.kind,
+                selector=command.selector,
+                args=command.args,
+            )
+            for command in submission
+        ),
+        content="",
+    )
 
 
 def _strip_final_line_break(source: str) -> str:

@@ -22,8 +22,8 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
     session = ChatTuiPtySession.start("tests.support.chat_tui_e2e", tmp_path)
     try:
         session.wait_for("Toolang", "^d exit")
-        session.send(b"/flow research\r")
-        session.wait_for("Flow not available: research")
+        session.send(b":flow research\r")
+        session.wait_for("Runnable not found: research")
         session.send(b"hello from user")
         session.wait_for("hello from user")
         session.send(b"\r")
@@ -91,15 +91,15 @@ def test_chat_tui_reopens_a_durable_flow_result(
             "[0] run chat",
             "succeeded",
             "result saved",
-            "/show run_",
+            ":show run_",
         )
         assert "1 run" in output
         assert "Window too small" not in output
-        show_index = output.rfind("/show run_")
-        run_id = output[show_index + len("/show ") :].split()[0]
+        show_index = output.rfind(":show run_")
+        run_id = output[show_index + len(":show ") :].split()[0]
         assert output.rfind("◇ result saved") < output.rfind(f"◆ {run_id} succeeded")
 
-        session.send(b"/show\r")
+        session.send(b":show\r")
         result = session.wait_for("Result run_", "hello from terminal e2e")
         assert "Traceback" not in result
 

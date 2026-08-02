@@ -47,7 +47,7 @@ from toolang.lang.ast import (
     Span,
 )
 from toolang.setup import AgentSetup
-from tests.support.execution_harness import RecordingTool
+from tests.support.execution_harness import FakeModelProvider, RecordingTool
 
 
 class _RecordingTracer(RunTracer):
@@ -111,6 +111,18 @@ def _setup() -> AgentSetup:
         providers={},
         adapters={},
         models=(),
+        tools={},
+        envs={},
+    )
+
+
+def _model_setup() -> AgentSetup:
+    provider = FakeModelProvider(streaming=False)
+    return AgentSetup(
+        layout=AgentLayout.resident(Path("/"), "alice"),
+        providers={provider.name: provider},
+        adapters={},
+        models=provider.list_models(environ={}),
         tools={},
         envs={},
     )
@@ -323,7 +335,9 @@ def test_top_level_agic_has_no_containing_step_events(
         return Local("done", "item")
 
     monkeypatch.setattr(agic_run, "execute", execute_agic)
-    record = asyncio.run(_start(executor, _setup(), state, "default", tracer=tracer))
+    record = asyncio.run(
+        _start(executor, _model_setup(), state, "default", tracer=tracer)
+    )
 
     assert record.status == "finished"
     assert [event.type for event in tracer.events] == ["run_begin", "run_end"]
@@ -353,7 +367,9 @@ def test_runtime_emits_and_persists_system_failure_step(
         raise RuntimeError("runtime failed")
 
     monkeypatch.setattr(agic_run, "execute", fail_agic)
-    record = asyncio.run(_start(executor, _setup(), state, "default", tracer=tracer))
+    record = asyncio.run(
+        _start(executor, _model_setup(), state, "default", tracer=tracer)
+    )
 
     assert record.status == "failed"
     assert [event.type for event in tracer.events] == [

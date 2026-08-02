@@ -50,7 +50,7 @@ def test_agent_jobs_merge_home_over_program(tmp_path: Path) -> None:
     )
 
     assert len(jobs.definitions) == 1
-    assert jobs.definitions[0].input == "Review from file."
+    assert jobs.definitions[0].body == "Review from file."
     assert jobs.definitions[0].source.endswith("tasks/review.md")
 
 
@@ -63,7 +63,6 @@ def test_agent_jobs_reject_duplicate_home_ids() -> None:
         body="Review.",
         source="tasks/review.md",
         path="/tmp/review.md",
-        input="Review.",
         schedule=None,
         fingerprint="abc",
         thread="task_review",

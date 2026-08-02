@@ -247,6 +247,50 @@ class JobStore:
             raise RuntimeError(f"job not found after run binding: {kind}:{job_id}")
         return _job_from_row(updated)
 
+    def reject_claim(
+        self,
+        *,
+        jobs: AgentJobs,
+        job_id: str,
+        kind: JobKind,
+        now: datetime | None = None,
+    ) -> JobRecord:
+        """Finish a claimed job whose submission was rejected before a run."""
+
+        current = _utc(now)
+        with self._write():
+            row = self._conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ? AND kind = ?",
+                (job_id, kind),
+            ).fetchone()
+            if row is None:
+                raise FileNotFoundError(f"job not found: {kind}:{job_id}")
+            job = _job_from_row(row)
+            if job.status != "running" or job.last_run_id is not None:
+                raise ValueError(f"job claim cannot be rejected: {kind}:{job_id}")
+            status, next_run_at = _completed_job_state(
+                jobs,
+                job,
+                run_status="failed",
+                now=current,
+            )
+            self._conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?, next_run_at = ?, run_count = run_count + 1,
+                    failed_count = failed_count + 1, updated_at = ?
+                WHERE job_id = ? AND kind = ?
+                """,
+                (status, next_run_at, _iso(current), job_id, kind),
+            )
+            updated = self._conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ? AND kind = ?",
+                (job_id, kind),
+            ).fetchone()
+        if updated is None:
+            raise RuntimeError(f"job not found after rejection: {kind}:{job_id}")
+        return _job_from_row(updated)
+
     def reopen_task(
         self,
         *,
@@ -327,23 +371,12 @@ class JobStore:
             if row is None:
                 return None
             job = _job_from_row(row)
-            if job.kind == "task":
-                status = _task_status_from_run(run_status)
-                next_run_at = None
-            else:
-                definition = jobs.get("chore", job.job_id)
-                next_at = (
-                    None
-                    if definition is None or definition.schedule is None
-                    else _next_scheduled_at(
-                        definition.schedule,
-                        anchor=current,
-                        not_before=current,
-                        inclusive=False,
-                    )
-                )
-                status = "todo" if next_at is not None else "done"
-                next_run_at = _iso(next_at) if next_at is not None else None
+            status, next_run_at = _completed_job_state(
+                jobs,
+                job,
+                run_status=run_status,
+                now=current,
+            )
             failed_inc = 1 if run_status == "failed" else 0
             canceled_inc = 1 if run_status == "canceled" else 0
             self._conn.execute(
@@ -605,6 +638,29 @@ def _initial_next_run(definition: JobDefinition, *, now: datetime) -> str | None
             inclusive=True,
         )
     )
+
+
+def _completed_job_state(
+    jobs: AgentJobs,
+    job: JobRecord,
+    *,
+    run_status: RunStatus,
+    now: datetime,
+) -> tuple[JobStatus, str | None]:
+    if job.kind == "task":
+        return _task_status_from_run(run_status), None
+    definition = jobs.get("chore", job.job_id)
+    next_at = (
+        None
+        if definition is None or definition.schedule is None
+        else _next_scheduled_at(
+            definition.schedule,
+            anchor=now,
+            not_before=now,
+            inclusive=False,
+        )
+    )
+    return ("todo" if next_at is not None else "done"), _iso(next_at)
 
 
 def _task_status_from_run(status: RunStatus) -> JobStatus:

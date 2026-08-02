@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 import json
 import re
 import shlex
-import textwrap
 from typing import cast
 
 from toolang.base.errors import ToolangError
@@ -28,7 +28,7 @@ IncludeResolver = Callable[[str], PerceptPart]
 
 _PROMPT_CALL_RE = re.compile(r"^/([A-Za-z_][\w-]*)(?:\s+(.*))?$")
 _SLOT_RE = re.compile(r"\ue000(\d+)\ue001")
-_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+_MARKDOWN_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _JSON_OUTPUT_FENCE_RE = re.compile(
     r"```[ \t]*json[ \t]*\r?\n(?P<value>.*?)\r?\n?```",
     re.IGNORECASE | re.DOTALL,
@@ -180,52 +180,74 @@ def _perceive_body(
     rendered, slots = _render_body(body, values=values, types=types)
     lines = rendered.splitlines(keepends=True)
     output: list[PerceptPart] = []
-    fence: str | None = None
+    markdown_fence: tuple[str, int] | None = None
     index = 0
     while index < len(lines):
         line = lines[index]
-        fence_match = _FENCE_RE.match(line)
-        if fence_match is not None:
-            marker = fence_match.group(1)[0]
-            fence = None if fence == marker else marker if fence is None else fence
+        text, line_break = _split_line(line)
+        if markdown_fence is not None:
             _extend_parts(output, _text_parts(line, slots))
-            index += 1
-            continue
-        if fence is not None:
-            _extend_parts(output, _text_parts(line, slots))
+            if _closes_markdown_fence(text, markdown_fence):
+                markdown_fence = None
             index += 1
             continue
 
-        stripped = line.strip()
-        if stripped.startswith("//") or stripped.startswith("@@"):
-            prefix = line.index(stripped)
-            literal = line[:prefix] + stripped[1:]
+        opened_fence = _opens_markdown_fence(text)
+        if opened_fence is not None:
+            _extend_parts(output, _text_parts(line, slots))
+            markdown_fence = opened_fence
+            index += 1
+            continue
+
+        if text.startswith(("::", "//", "@@")):
+            literal = text[1:] + line_break
             _extend_parts(output, _text_parts(literal, slots))
             index += 1
             continue
-        if stripped.startswith("@"):
-            reference = _include_reference(stripped)
+        if text.startswith("@"):
+            reference = _include_reference(text)
             if include is None:
                 raise ToolangError(
                     f"Include resolver is required for: {reference}"
                 )
             _append_part(output, _require_percept_part(include(reference)))
-            if line.endswith(("\n", "\r")):
-                _append_part(output, TextPart("\n"))
+            if line_break:
+                _append_part(output, TextPart(line_break))
             index += 1
             continue
 
-        call = _prompt_call(stripped)
+        call = _prompt_call(text)
         if call is not None:
-            prompt_name, raw_args, inline_body, accepts_indented = call
-            attached_body = inline_body
+            prompt_name = call.name
+            attached_body = ""
             consumed = 1
-            if accepts_indented and not inline_body:
-                attached_body, following = _indented_body(
-                    lines[index + 1 :],
-                    base_indent=_indent_width(line),
+            following_break = line_break
+            if call.scope == "tail":
+                if not line_break:
+                    raise ToolangError(
+                        f"Tail prompt /{prompt_name} requires a following line."
+                    )
+                attached_body = "".join(lines[index + 1 :])
+                consumed = len(lines) - index
+                following_break = ""
+            elif call.scope == "fenced":
+                if not line_break:
+                    raise ToolangError(
+                        f"Fenced prompt /{prompt_name} requires a following line."
+                    )
+                assert call.fence is not None
+                closing_index = _find_prompt_fence(
+                    lines,
+                    start=index + 1,
+                    fence=call.fence,
                 )
-                consumed += following
+                if closing_index is None:
+                    raise ToolangError(
+                        f"Unclosed prompt fence for /{prompt_name}."
+                    )
+                attached_body = "".join(lines[index + 1 : closing_index])
+                _, following_break = _split_line(lines[closing_index])
+                consumed = closing_index - index + 1
             prompt_input = _perceive_body(
                 attached_body,
                 program=program,
@@ -240,15 +262,15 @@ def _perceive_body(
                 _perceive_prompt(
                     program,
                     prompt_name=prompt_name,
-                    raw_args=raw_args,
+                    raw_args=call.raw_args,
                     input=prompt_input,
                     include=include,
                     prompt_stack=prompt_stack,
                     depth=depth + 1,
                 ),
             )
-            if line.endswith(("\n", "\r")):
-                _append_part(output, TextPart("\n"))
+            if following_break:
+                _append_part(output, TextPart(following_break))
             index += consumed
             continue
 
@@ -334,47 +356,117 @@ def _perceive_prompt(
     )
 
 
-def _prompt_call(
-    line: str,
-) -> tuple[str, str, str, bool] | None:
+@dataclass(frozen=True, slots=True)
+class _PromptCall:
+    name: str
+    raw_args: str
+    scope: str
+    fence: str | None = None
+
+
+def _prompt_call(line: str) -> _PromptCall | None:
     match = _PROMPT_CALL_RE.fullmatch(line)
     if match is None:
         return None
     prompt_name = match.group(1)
     raw = match.group(2) or ""
-    raw_args, attached, has_colon = _split_unquoted_colon(raw)
-    return prompt_name, raw_args.strip(), attached.strip(), has_colon
+    terminal = _unquoted_terminal_token(raw)
+    if terminal is None:
+        return _PromptCall(prompt_name, raw.strip(), "none")
+    start, token = terminal
+    if token == "-":
+        return _PromptCall(prompt_name, raw[:start].rstrip(), "tail")
+    if len(token) >= 3 and set(token) == {"`"}:
+        return _PromptCall(
+            prompt_name,
+            raw[:start].rstrip(),
+            "fenced",
+            fence=token,
+        )
+    return _PromptCall(prompt_name, raw.strip(), "none")
 
 
-def _split_unquoted_colon(value: str) -> tuple[str, str, bool]:
+def _unquoted_terminal_token(value: str) -> tuple[int, str] | None:
     quote: str | None = None
     escaped = False
+    token_start: int | None = None
+    token_is_plain = True
+    last: tuple[int, str] | None = None
     for index, character in enumerate(value):
         if escaped:
             escaped = False
+            token_is_plain = False
             continue
         if character == "\\":
+            if token_start is None:
+                token_start = index
             escaped = True
             continue
         if character in {'"', "'"}:
+            if token_start is None:
+                token_start = index
+            token_is_plain = False
             quote = None if quote == character else character if quote is None else quote
             continue
-        if character == ":" and quote is None:
-            return value[:index], value[index + 1 :], True
-    return value, "", False
+        if quote is None and character in " \t":
+            if token_start is not None:
+                if token_is_plain:
+                    last = (token_start, value[token_start:index])
+                else:
+                    last = None
+                token_start = None
+                token_is_plain = True
+            continue
+        if token_start is None:
+            token_start = index
+    if token_start is not None:
+        return (token_start, value[token_start:]) if token_is_plain else None
+    return last
 
 
-def _indented_body(
+def _split_line(line: str) -> tuple[str, str]:
+    if line.endswith("\r\n"):
+        return line[:-2], "\r\n"
+    if line.endswith("\n"):
+        return line[:-1], "\n"
+    return line, ""
+
+
+def _opens_markdown_fence(line: str) -> tuple[str, int] | None:
+    match = _MARKDOWN_FENCE_RE.fullmatch(line)
+    if match is None:
+        return None
+    fence, info = match.groups()
+    if fence[0] == "`" and "`" in info:
+        return None
+    return fence[0], len(fence)
+
+
+def _closes_markdown_fence(
+    line: str,
+    fence: tuple[str, int],
+) -> bool:
+    marker, minimum = fence
+    match = re.fullmatch(r" {0,3}([`~]+)[ \t]*", line)
+    return bool(
+        match
+        and match.group(1)[0] == marker
+        and set(match.group(1)) == {marker}
+        and len(match.group(1)) >= minimum
+    )
+
+
+def _find_prompt_fence(
     lines: Sequence[str],
     *,
-    base_indent: int,
-) -> tuple[str, int]:
-    selected: list[str] = []
-    for line in lines:
-        if line.strip() and _indent_width(line) <= base_indent:
-            break
-        selected.append(line)
-    return textwrap.dedent("".join(selected)).strip("\n"), len(selected)
+    start: int,
+    fence: str,
+) -> int | None:
+    for index in range(start, len(lines)):
+        text, _ = _split_line(lines[index])
+        if text == fence:
+            return index
+    return None
 
 
 def _include_reference(line: str) -> str:
@@ -630,10 +722,6 @@ def _is_json_value(value: object) -> bool:
     return True
 
 
-def _indent_width(value: str) -> int:
-    return len(value) - len(value.lstrip(" "))
-
-
 def _parse_prompt_args(
     raw_args: str,
     *,
@@ -649,28 +737,25 @@ def _parse_prompt_args(
             raise ToolangError(f"Invalid prompt argument syntax: {exc}") from exc
 
     bindings: dict[str, str] = {}
-    positionals: list[str] = []
     known = {param.name for param in params}
     for token in tokens:
-        if "=" in token:
-            candidate, value = token.split("=", 1)
-            if candidate in known:
-                if candidate in bindings:
-                    raise ToolangError(
-                        f"Duplicate prompt argument {candidate!r} "
-                        f"for /{prompt_name}."
-                    )
-                bindings[candidate] = value
-                continue
-        positionals.append(token)
+        candidate, separator, value = token.partition("=")
+        if not separator:
+            raise ToolangError(
+                f"Prompt argument must use name=value syntax for /{prompt_name}."
+            )
+        if candidate not in known:
+            raise ToolangError(
+                f"Unknown prompt argument {candidate!r} for /{prompt_name}."
+            )
+        if candidate in bindings:
+            raise ToolangError(
+                f"Duplicate prompt argument {candidate!r} for /{prompt_name}."
+            )
+        bindings[candidate] = value
 
-    positional_index = 0
     for param in params:
         if param.name in bindings:
-            continue
-        if positional_index < len(positionals):
-            bindings[param.name] = positionals[positional_index]
-            positional_index += 1
             continue
         if param.optional:
             bindings[param.name] = ""
@@ -680,6 +765,4 @@ def _parse_prompt_args(
             f"for /{prompt_name}."
         )
 
-    if positional_index < len(positionals):
-        raise ToolangError(f"Too many prompt arguments for /{prompt_name}.")
     return bindings

@@ -5,11 +5,11 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from toolang.base.types.message import ImagePart, TextPart
 from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import script
 from toolang.execution.executor import CeilingSpec
 from toolang.execution.records import RunControlRef, RunRecord
+from toolang.lang.submission import RunnableCall
 
 
 _SOURCE = """
@@ -66,8 +66,6 @@ def test_script_binds_options_arguments_and_primary_input(
     assert result == 0
     assert captured["source_path"] == source.resolve()
     assert captured["runnable"] == "demo"
-    assert captured["runnable_kind"] == "agic"
-    assert captured["runnable_doc"] == "Run the documented demo."
     assert captured["model"] == "openai/gpt"
     assert captured["ceiling"] == CeilingSpec(
         models=("openai/*", "deepseek/*"),
@@ -75,8 +73,10 @@ def test_script_binds_options_arguments_and_primary_input(
         caps=("skill/reviewer", "service/github"),
     )
     assert captured["verbosity"] == 2
-    assert captured["args"] == {"count": 2.5, "enabled": True}
-    assert captured["input_value"] == (TextPart("hello world"),)
+    assert captured["raw_args"] == (("count", "2.5"), ("enabled", "true"))
+    call = captured["call"]
+    assert isinstance(call, RunnableCall)
+    assert call.content == "hello world"
 
 
 def test_script_reads_primary_input_from_stdin(
@@ -100,7 +100,46 @@ def test_script_reads_primary_input_from_stdin(
     )
 
     assert result == 0
-    assert captured["input_value"] == (TextPart("from stdin"),)
+    call = captured["call"]
+    assert isinstance(call, RunnableCall)
+    assert call.content == "from stdin"
+
+
+def test_script_stdin_can_override_the_cli_runnable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = _write_source(
+        tmp_path,
+        """
+agic demo(_: Part[], count: Number):
+  {{_}}
+
+agic alternate(_: Part[]):
+  {{_}}
+""",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run(_source_path: Path, **kwargs) -> int:
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(script, "_run", fake_run)
+
+    result = script.dispatch(
+        [],
+        [str(source), "demo"],
+        prog_name="toolang",
+        stdin=StringIO(":agic alternate\n\nfrom stdin"),
+    )
+
+    assert result == 0
+    call = captured["call"]
+    assert isinstance(call, RunnableCall)
+    assert call.overrides[0].selector == "alternate"
+    assert call.content == "from stdin"
+    assert captured["raw_args"] == ()
 
 
 def test_script_supports_explicit_stdin_marker(
@@ -124,7 +163,9 @@ def test_script_supports_explicit_stdin_marker(
     )
 
     assert result == 0
-    assert captured["input_value"] == (TextPart("from stdin"),)
+    call = captured["call"]
+    assert isinstance(call, RunnableCall)
+    assert call.content == "from stdin"
 
 
 def test_script_keeps_assignments_after_separator_as_input(
@@ -154,8 +195,10 @@ agic demo(_: Part[], count?: Number):
     )
 
     assert result == 0
-    assert captured["args"] == {}
-    assert captured["input_value"] == (TextPart("count=2"),)
+    assert captured["raw_args"] == ()
+    call = captured["call"]
+    assert isinstance(call, RunnableCall)
+    assert call.content == "count=2"
 
 
 def test_script_includes_an_image(
@@ -182,13 +225,9 @@ def test_script_includes_an_image(
     )
 
     assert result == 0
-    parts = captured["input_value"]
-    assert isinstance(parts, tuple)
-    assert len(parts) == 1
-    part = parts[0]
-    assert isinstance(part, ImagePart)
-    assert part.image_url == "data:image/png;base64,iVBORw0K"
-    assert part.filename == "sample.png"
+    call = captured["call"]
+    assert isinstance(call, RunnableCall)
+    assert call.content == "@sample.png"
 
 
 def test_script_rejects_missing_required_parameter(

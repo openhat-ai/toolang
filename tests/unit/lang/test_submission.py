@@ -232,11 +232,13 @@ def test_invalid_submissions_are_rejected(source: str, message: str) -> None:
         parse_submission(source)
 
 
-def test_run_only_parser_rejects_quick_and_setting_commands() -> None:
+def test_run_only_parser_rejects_quick_and_treats_selector_lines_as_overrides() -> None:
     with pytest.raises(ValueError, match="not a runnable call"):
         parse_runnable_call(":help")
-    with pytest.raises(ValueError, match="not a runnable call"):
-        parse_runnable_call(":model openai/gpt-5")
+    assert parse_runnable_call(":model openai/gpt-5") == RunnableCall(
+        overrides=(RunOverride(kind="model", selector="openai/gpt-5"),),
+        content="",
+    )
 
 
 def test_submission_module_has_no_toolang_imports() -> None:

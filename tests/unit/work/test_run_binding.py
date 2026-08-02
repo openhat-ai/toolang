@@ -21,7 +21,6 @@ def test_job_claim_binds_executor_assigned_run_id(tmp_path: Path) -> None:
         body="",
         source="program",
         path=None,
-        input="work",
         schedule=None,
         fingerprint="definition-1",
         thread="task_TSK-1",
