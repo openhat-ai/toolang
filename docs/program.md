@@ -16,7 +16,7 @@ instruct   reusable instruction template
 psyche     inline psyche cap
 skill      inline skill cap
 service    inline service cap
-prompt     reusable ContentBody template
+prompt     reusable Content template
 task       authored task
 chore      authored recurring work
 agic       model/tool executable
@@ -411,9 +411,9 @@ agic simulate():
   assistant: hi
 ```
 
-Message content uses the shared `ContentBody` syntax and may read `_` and the
+Message content uses the shared `Content` syntax and may read `_` and the
 agic's declared parameters. Tool messages are runtime results paired with tool
-calls; they cannot be authored in a `ContentBody`.
+calls; they cannot be authored in `Content`.
 
 
 ## Flows
@@ -445,7 +445,7 @@ generated names cannot collide with user declarations.
 
 ## Prompts
 
-A prompt is a reusable `ContentBody` template:
+A prompt is a reusable `Content` template:
 
 ````too
 prompt review: ```md
@@ -458,15 +458,15 @@ Review {{path}} carefully.
 ```
 ````
 
-It is invoked with slash-like content syntax:
+It is invoked with slash-prefixed content syntax:
 
 ```text
-/review src/app.py "only errors"
+/review path=src/app.py focus="only errors"
 ```
 
-`PromptCall` syntax, attached bodies, include references, and escaping are
-defined in [input-syntax.md](./input-syntax.md). A prompt call invokes one
-reusable prompt template during input perceiving.
+`PromptCall` empty, remaining, and fenced input forms, include references, and
+escaping are defined in [input-syntax.md](./input-syntax.md). A prompt call
+invokes one reusable prompt template during content evaluation.
 
 
 ## Service Caps
@@ -506,15 +506,17 @@ chore   chore, else default
 file    file, else default
 ```
 
-Chat, task, chore, and file surfaces require an executable that accepts primary
-input and no additional required named parameters. Script may invoke any valid
-signature and derives its CLI from that signature.
+Every run surface must resolve a complete `RunnableCall`, including all
+required named arguments, before execution. Script derives its CLI from the
+selected signature; chat, task, and chore calls may supply initial `RunOverride`
+lines with `name=value` arguments.
 
-Input perceiving turns an interactive or authored `ContentBody` into a
+Content evaluation turns interactive or authored `Content` into a
 protocol-level `Percept` before execution. That value corresponds to language
 `Part[]`. After resolving the runnable's signature, `RunExecutor` uses
 language-owned input coercion to decode and validate another declared primary
-type before accepting the run. The caller does not duplicate signature parsing.
+type before accepting the run. The caller does not duplicate signature
+parsing.
 
 Execution context such as `cwd`, agent home, and Toolang root is runtime state,
 not executable parameters.

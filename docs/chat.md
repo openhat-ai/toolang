@@ -15,8 +15,9 @@ Chat uses the same runtime units as the rest of Toolang:
 | `run` | One handling attempt inside that thread |
 | `step` | One execution unit inside the run |
 
-One chat submission creates one start control and one run in an existing
-thread. A client creates the thread explicitly before the first submission.
+One chat `Submission` resolves to a `QuickCommand`, `SettingCommand`, or
+`RunnableCall`. Only `RunnableCall` creates one start control and one run in an
+existing thread. A client creates the thread explicitly before the first call.
 
 Thread ids use one underscore-delimited normalized form:
 

@@ -459,8 +459,8 @@ concepts:
 - `PreparedProgram`, `LiveProgram`, and `LiveState` are replaced by `Program`
   and immutable home/root/agent state
 - `ExecutionStore` becomes the focused `RunStore`
-- `QueueRunner`, `RunSubmission`, `RunBinding`, and `RunOutcome` are not public
-  target concepts
+- legacy queue-runner, submission-wrapper, binding, and outcome types are not
+  public target concepts
 - `RuntimeEventBus` is not required for local execution or persistence
 - jobs leave general agent state and become `HomeJobs` plus `AgentJobs`
 - `toolang.lang` becomes the canonical language package and the

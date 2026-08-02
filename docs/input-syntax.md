@@ -1,418 +1,220 @@
-# Input Syntax
+# Submission And Input Syntax
 
-This document defines how interactive and authored input becomes a canonical
-percept, how that percept is coerced to an executable input type, and how an
-execution result is coerced to its declared output type.
+This document defines the shared text syntax for chat, script, task, chore,
+agic, flow, and prompt input.
 
-
-## Terms
+## Submission
 
 ```text
-ContentBody = ContentItem+
-ContentItem = TextChunk | PromptCall | IncludeRef
+Submission   = QuickCommand | SettingCommand* | RunnableCall
+RunnableCall = RunOverride* + InputContent
 ```
 
-- `ContentBody` is an ordered sequence of authored `ContentItem` values owned by
-  a declaration, document, or caller.
-- `TextChunk` is literal authored text.
-- `PromptCall` invokes one authored prompt template.
-- `IncludeRef` resolves one authorized resource to a `PerceptPart`.
-- `Input perceiving` interprets supported input as one ordered `Percept`.
-- `Input coercion` converts a `Percept` into the primary Toolang value declared
-  by an executable signature.
-- `Output coercion` converts the final executable value into the output type
-  declared by that signature.
-- Executable arguments are typed runtime data: one optional primary value plus
-  named parameters. They contain no source syntax and are not a standalone
-  execution object.
+- `QuickCommand` performs one immediate chat operation.
+- `SettingCommand` changes settings used by later chat runs.
+- `RunnableCall` supplies overrides and content for one run.
 
-The package-level protocol vocabularies are:
+| Source | QuickCommand | SettingCommand* | RunnableCall |
+| --- | ---: | ---: | ---: |
+| chat TUI/WebUI | yes | yes | yes |
+| script | no | no | yes |
+| task/chore | no | no | yes |
+
+Agic, flow, and prompt bodies are `Content`, not `Submission`.
+
+### Lines And Resolution
 
 ```text
-PerceptPart = TextPart | ImagePart | AudioPart | DocumentPart
-Percept     = PerceptPart[]
-MessagePart = PerceptPart | ToolCallPart | ToolResultPart
-Message     = { role: MessageRole, parts: MessagePart[] }
+LineBreak = "\n" | "\r\n"
+Space     = (" " | "\t")+
+BlankLine = (" " | "\t")* LineBreak
 ```
 
-The Toolang language deliberately keeps the shorter structural types:
+Discard at most one final `LineBreak`, then resolve the remaining body:
+
+1. A complete quick-command line, followed only by blank lines, is a
+   `QuickCommand`.
+2. Read consecutive setting-shaped lines from the start.
+3. If only blank lines remain, parse each line independently as a
+   `SettingCommand`.
+4. Otherwise parse each line independently as a `RunOverride`. Discard the
+   line break after the last override and at most one following `BlankLine`;
+   the exact remainder is `InputContent`.
+5. With no leading setting-shaped lines, the complete body is `InputContent`
+   and there are no `RunOverride` values.
+
+`InputContent` must contain a non-whitespace item. Until its first item, an
+unescaped `:` at line start enters the command namespace. A quick command
+cannot be combined with other lines; an unknown or malformed command is an
+error, not text. Use `::` to start input with a literal colon. After content
+starts, `:` is ordinary text.
+
+Parsing is atomic. Any invalid command, override, argument, include, prompt,
+or value rejects the complete submission.
+
+### Quick Commands
 
 ```text
-Part    = one PerceptPart
-Part[]  = one Percept
+:help                 :show [RUN_ID]
+:?                    :queue [ACTION]
+:model                :steer MESSAGE
+:models               :quit
+:agic                 :exit
+:flow
 ```
 
-`lang` AST nodes therefore continue to carry names such as `Part` and
-`Part[]`, and an omitted executable signature still implies `_ : Part[]`.
-Packages outside `toolang.lang` use `PerceptPart` and `Percept` for the same
-runtime values. `MessagePart` belongs to model messages, tool interaction,
-execution events, and durable conversation history. Tool calls and tool results
-cannot be authored in a `ContentBody`.
+`:model`, `:agic`, and `:flow` without a value are quick commands. With a
+value, they are settings or overrides.
 
-The canonical message roles constrain that wider union:
+### Setting Commands
 
 ```text
-user      -> PerceptPart*
-assistant -> (PerceptPart | ToolCallPart)*
-tool      -> ToolResultPart+
+SettingCommand
+    = ":model" Space (ModelSelector | "auto")
+    | ":agic" Space ("auto" | AgicName (Space Argument)*)
+    | ":flow" Space FlowName (Space Argument)*
+
+Argument = Name "=" Value
 ```
 
-Canonical `Message` validation rejects a role/part combination that does not
-match this model. An adapter never silently converts a tool call or tool result
-to text.
-
-The four provider-neutral percept parts are:
-
-- `TextPart` carries text.
-- `ImagePart` carries an image URL or provider file id plus optional display
-  metadata.
-- `AudioPart` carries base64 data and its format. Provider output may also set
-  `transcript` on the same part.
-- `DocumentPart` carries document data, a document URL, or a provider file id
-  plus optional filename and media type.
-
-There is no `JsonPart`. A language `Json` value used in a `ContentBody` becomes
-canonical JSON text, while a JSON file is a `DocumentPart` with
-`media_type="application/json"`. Tool JSON remains structured inside
-`ToolCallPart` or `ToolResultPart`.
-
-Canonical percept parts may carry inline binary data. This design does not
-introduce a blob store: callers, execution, and adapters preserve the supplied
-values, while binary extraction and deduplication remain a separate future
-storage concern.
-
-The same source form appears at different runtime boundaries:
-
-- Chat, task, and chore inputs are `ContentBody` values that later become
-  executable arguments.
-- An agic body is model-call content evaluated inside a run.
-- A flow body is `FlowStmt[]`, not content text.
-- A flow statement body is either a `ContentBody` or nested `FlowStmt[]`, as
-  defined by that statement.
-
-At runtime, one language `Part[]` value is one ordered multimodal `Percept`.
-Plain multiline text remains one `TextPart`; line breaks alone do not create
-parts. A `PromptCall` uses slash-prefixed syntax inside a `ContentBody`.
-
-Already constructed `Percept` values are canonical data rather than source
-text. Input perceiving preserves them as supplied. For example, a structured
-`TextPart("@README.md")` remains literal text rather than becoming an
-`IncludeRef`.
-
-
-## Source Profiles
-
-| Source | Available values | Produces |
-| --- | --- | --- |
-| CLI/TUI input | none | primary `Percept` |
-| WebUI input | none | primary `Percept` |
-| task/chore body | none | primary `Percept` |
-| agic body/message | `_` and declared params | ModelCall content |
-| flow inline agic | current flow locals | generated AgicDecl |
-| flow `let` | current flow locals | Local |
-| flow `ask` | current flow locals | HumanCall content |
-| prompt template | declared params and `_` | `Percept` segment |
-
-Sources with no available runtime values treat `{{name}}` as literal authored
-text. Agic bodies, applicable flow statement bodies, and prompt bodies resolve
-the values listed in their source profile while being perceived.
-
-`IncludeRef` values resolve relative to the owning task, chore, `.too` source,
-or prompt definition. Browser sources may resolve only uploaded or otherwise
-authorized references. Prompt templates see only declared parameters and
-explicit `_` input. Prompt parameters are `Text`; prompt `_` input is `Part[]`.
-
-Instruct and context declarations are text templates rather than `ContentBody`
-values. They see only the flat runtime variables supplied by the executor and
-accept text-compatible values only.
-
-
-## Content Body
-
-`PromptCall` and `IncludeRef` items are recognized on standalone lines and are
-disabled inside fenced code blocks. `TextChunk` values may be interleaved with
-any number of them.
-
-### Text Chunk
-
-Ordinary multiline input remains one text item with its authored line breaks.
-
-### Include Reference
-
-An `IncludeRef` replaces one standalone line with one resolved `PerceptPart`:
+### Runnable Calls
 
 ```text
-@README.md
-@"path with spaces/image.png"
+RunOverride
+    = ":model" Space (ModelSelector | "auto")
+    | ":agic" Space ("auto" | AgicName (Space Argument)*)
+    | ":flow" Space FlowName (Space Argument)*
 ```
 
-The resolver classifies the referenced content by trusted media metadata, with
-the extension as a fallback:
+`SettingCommand` and `RunOverride` are intentionally separate definitions.
+The first affects later chat runs; the second belongs only to one
+`RunnableCall`.
+Each occupies one complete line. Consecutive values are separated by
+`LineBreak`; the final override and `InputContent` are separated as specified
+by the resolution rules above.
 
-- text-like content becomes `TextPart`
-- image content becomes `ImagePart`
-- audio content becomes `AudioPart`
-- supported text and document files become `DocumentPart`
-- unsupported binary, archive, and video content is rejected until it has a
-  dedicated percept part
+Both enforce:
 
-An `IncludeRef` does not own attached sibling content. The resolver decides
-whether the resulting percept part carries inline data, an authorized URL, or
-a provider file id.
+- at most one model line and one runnable line
+- mutual exclusion of `:agic` and `:flow`
+- no arguments after `:agic auto`; no `:flow auto` form
+- unique, signature-checked arguments, including every required argument
+- no primary input on a setting or override line
 
-### Prompt Call
-
-A `PromptCall` invokes a named prompt template:
+Lines use POSIX shell word quoting and backslash escaping, without expansion,
+substitution, or globbing. Trailing horizontal whitespace is ignored.
 
 ```text
-/review src/app.py "only errors"
+:model openai/gpt-5
+:agic review focus=security
+
+Review this API.
+@./api.md
 ```
 
-It may appear at any item position in a `ContentBody`. An optional `:` attaches
-either the rest of the current line or an indented `ContentBody`. The delimiter
-is the first unquoted colon after the arguments. Without it, the prompt receives
-only its declared parameters. Inline input ends with the line; indented input
-ends at the first non-empty dedented line.
+Inline primary input, such as
+`:agic review focus=security -- Review this API.`, is invalid.
+
+## Content
 
 ```text
-/review src/app.py: Focus on cancellation.
+InputContent = NonEmptyContent
+Content      = ContentItem*
+ContentItem  = Text | IncludeRef | PromptCall
 
-/review src/app.py:
-  Review event ordering.
-  @docs/executor.md
-  /rules strict:
-    Ignore formatting issues.
-
-This text is outside the prompt input.
+evaluate(InputContent | Content) -> Part[]
 ```
 
-Indented input is a `ContentBody`, so prompts may contain `IncludeRef` and
-nested `PromptCall` items. A prompt never consumes following sibling content
-implicitly.
-
-Prompt composition follows these rules:
-
-- nested prompts are resolved depth first
-- a prompt body may contain nested prompt calls and include references
-- each prompt has its own parameter and `_` scope
-- direct and indirect cycles are errors; repeated sibling calls are allowed
-- errors report the prompt call stack
-
-Implementations apply cumulative limits to one composition. Recommended
-defaults are depth 16, 64 prompt calls, 256 output parts, and 1,000,000 text
-characters. Include resolvers enforce separate access and byte limits.
-
-
-### Escapes
-
-At a position where a content prefix would otherwise be recognized:
+`/` and `@` are special only as the first character of a line. Ordinary
+Markdown code fences suspend special-line recognition. Double a leading marker
+to produce literal text:
 
 ```text
-//text  literal /text
-@@text  literal @text
+::model gpt-5    -> :model gpt-5
+//review         -> /review
+@@README.md      -> @README.md
 ```
 
-Escaping removes one prefix character.
-
-
-## Input Perceiving
-
-Input perceiving gives every supported input source the same result: one
-ordered `Percept`. Each `ContentBody` follows the source profile that owns it.
+### Includes
 
 ```text
-plain text          -> Percept
-ContentBody         -> Percept
-structured parts    -> Percept
+IncludeRef  = "@" ResourceRef
+ResourceRef = Path | QuotedPath | UploadRef
 ```
 
-A `ContentBody` may contain prompt calls, include references, and references to
-values allowed by its source profile. A language `Part` or `Part[]` value
-retains its percept parts and its position among surrounding text. Scalar and
-structured language values use their canonical textual forms.
+Examples: `@README.md`, `@"path with spaces/image.png"`, and
+`@upload:abc123`. An include occupies its complete line and resolves to one
+`Part`. Leading whitespace makes it text. Each caller defines allowed
+resources; a UI file picker inserts the same syntax.
 
-For example, using a language `Part[]` value—represented at runtime as a
-`Percept` containing `TextPart("this image")` and one `ImagePart`—in:
+### Prompts
 
 ```text
-Review {{_}} carefully.
+PromptCall = PromptHeader | TailPrompt | FencedPrompt(n)
+PromptHeader = "/" PromptName (Space Argument)*
+
+TailPrompt
+    = PromptHeader Space "-" LineBreak RemainingContent
+
+FencedPrompt(n)
+    = PromptHeader Space Fence(n) LineBreak FencedContent(n) FenceLine(n)
+
+Fence(n)     = exactly n backticks, n >= 3
+FenceLine(n) = Fence(n) followed by LineBreak or EOF
 ```
 
-produces the conceptual sequence:
+No prompt input; later lines remain in the enclosing content:
 
 ```text
-TextPart("Review this image")
-ImagePart(...)
-TextPart(" carefully.")
+/common a=b c=d
 ```
 
-Text already stored inside a supplied `TextPart` is literal canonical data.
-It is not parsed again for prompt calls, include references, or template tags.
-
-
-### Typed Values
-
-Input perceiving follows the declared Toolang type rather than guessing from
-the Python representation of a runtime value:
-
-| Toolang type | Representation in the resulting Percept |
-| --- | --- |
-| `Text` | Text in the surrounding `TextPart` |
-| `Number` | One canonical number as text |
-| `Boolean` | `true` or `false` as text |
-| `Json` | Compact JSON text |
-| `Part` | Exactly one `PerceptPart` |
-| `Part[]` | One ordered `Percept` |
-| `T[]` | Compact JSON text when used directly |
-| declared struct `S` | Compact JSON text when used directly |
-| missing optional value | Empty text |
-
-Mustache-style sections preserve declared element and field types:
-
-- iterating `T[]` evaluates each item as `T`
-- accessing a struct field uses the field type from its StructDecl
-- using a struct or ordinary array directly produces compact JSON text
-- iterating `Part[]` exposes its language `Part` values
-
-Declaration wins over value shape. A value declared as `Json` remains JSON text
-even when it is an object containing `"type": "image"`. Only a value declared
-as `Part` or `Part[]` can become canonical percept parts.
-
-Input perceiving therefore receives values together with their Toolang type
-names. Type information comes from:
-
-- executable primary input and named Parameter declarations
-- the type carried by a flow Local
-- fields in StructDecl
-- prompt parameters, which are `Text`
-- prompt `_` input, which is `Part[]`
-
-An untyped executable parameter defaults to `Part[]`. MessagePart-only values
-such as ToolCallPart and ToolResultPart are not Toolang values and cannot
-appear in an authored `ContentBody`.
-
-
-## Ownership
-
-- `toolang.base` owns canonical `PerceptPart`, `Percept`, `MessagePart`, and
-  `Message` values, role/part validation, and their data representation.
-- `toolang.lang` owns pure `ContentBody` parsing, input perceiving, input
-  coercion, and output coercion. It receives prompt and include resolvers rather
-  than reading catalogs or arbitrary files.
-- Model adapter plugins map canonical messages to provider payloads and back.
-  They do not parse or perceive a `ContentBody`.
-- `toolang.execution` preserves canonical percepts through run inputs,
-  controls, locals, events, records, model calls, and outputs. It does not
-  reinterpret a `Percept` as source text.
-- CLI, API, TUI, task, chore, and file callers own input acquisition and supply
-  the source profile and resolver authority appropriate to their environment.
-
-
-## Runtime Use
-
-The consumer determines what happens after input perceiving:
+Use all remaining content in the current scope:
 
 ```text
-chat/task/chore body    -> Percept -> RunSpec.input
-agic ContentBody        -> Percept -> Message -> ModelCall
-flow inline agic        -> generated AgicDecl -> child run
-flow let ContentBody    -> Percept -> Local(type=Part[])
-flow ask ContentBody    -> Percept -> HumanCall
-prompt ContentBody      -> Percept -> enclosing Percept
+/common a=b c=d -
+Review this file:
+@./api.md
 ```
 
-Prompt invocation does not expose local values from a chat, task, or chore
-body. Each invoked prompt receives only its own declared `Text` parameters and
-explicit `_ : Part[]` input; it does not inherit values from the enclosing
-source.
+Use only a matching fenced block:
 
-The same model applies to interactive and non-interactive callers:
-
-| Caller | Input behavior | Include authority |
-| --- | --- | --- |
-| CLI/TUI | Perceive the supplied ContentBody | Explicitly allowed local paths |
-| WebUI raw text | Perceive the supplied ContentBody | Uploaded or otherwise authorized references only |
-| WebUI structured input | Preserve the supplied Percept | Already resolved |
-| task/chore | Perceive the document ContentBody | Paths relative to the owning document |
-| file inbox | Construct a PerceptPart or perceive an accompanying ContentBody | The accepted inbox file |
-| agic or flow statement | Perceive its ContentBody | Paths relative to the owning `.too` source |
-| prompt | Perceive its body with prompt values | Paths relative to the prompt definition |
-
-Each caller supplies an Include resolver that enforces its own authority and
-byte limits. Input perceiving does not read arbitrary filesystem paths by
-itself.
-
-
-## Input Coercion
-
-Agics and flows use `_` as their primary input parameter:
-
-```too
-agic chat:                         # implicit _: Part[]
-agic ping():                       # no primary input
-agic review(_):                    # explicit _: Part[]
-agic parse(_: Json, mode: Text):
-
-flow research(_: Text) -> Report:
+````text
+/common a=b c=d ```
+Review this file:
+@./api.md
 ```
 
-Omitting the parameter list implies `_ : Part[]`. `()` accepts no primary
-input. An untyped parameter defaults to `Part[]`.
+Continue outside the prompt.
+````
 
-Input perceiving first produces a `Percept`, which is the runtime
-representation of language `Part[]`. After resolving the runnable, input
-coercion converts that percept to the declared primary type:
+`RemainingContent` ends with the current content scope. `FencedContent(n)` is
+the exact text before the first complete line equal to `Fence(n)` and may be
+empty. The `-` or opening fence must be the final header token. Fence lines are
+excluded; an unclosed fence is invalid. Prompt calls evaluate from the
+innermost call outward.
+
+## Evaluation
 
 ```text
-Part[]     preserve ordered parts
-Part       require exactly one part
-Text       require text-only content and preserve authored lines
-Number     parse one canonical number
-Boolean    parse true or false
-Json       parse one JSON value
-S/T[]      parse JSON and validate the declared type
+Text        -> text Part
+IncludeRef  -> one Part
+PromptCall  -> Part[]
+Content     -> Part[]
 ```
 
-No coercion may discard a non-text part. Invalid input is rejected before
-`run_begin`.
-
-The original `Percept` remains the durable start input and user-message
-content.
-The executor initializes `_` from the coerced primary value and named locals
-from the validated arguments. Locals retain their Toolang type names so later
-flow statement bodies can perceive them without inspecting value shape.
-`Message` and `MessagePart` belong to model calls and are not executable
-argument types.
-
-Value type and flow shape are independent. A language `Part[]` value backed by
-one `Percept`, or an ordinary `T[]` value, starts as one `shape=item` local and
-becomes `shape=list` only through an explicit flow operation.
-
-
-## Output Coercion
-
-Output coercion converts an agic or flow's final value to its declared output
-type. An agic without `-> T` keeps its normal assistant `Percept`.
+`Part` and `Part[]` remain parts. Other values become canonical text;
+structured values use compact JSON. The declared primary type is then applied:
 
 ```text
-Text                 require text
-Number               parse or validate one number
-Boolean              parse or validate one boolean
-Json                  parse or validate one JSON value
-S/T[]                 parse or validate the declared structured type
-Part                  require exactly one PerceptPart
-Part[]                preserve one ordered Percept
+Part[]      preserve all parts
+Part        require exactly one part
+Text        require text-only content
+Number      parse one canonical number
+Boolean     parse true or false
+Json/S/T[]  parse JSON and validate the declared type
 ```
 
-For an agic, output coercion applies to terminal assistant content. For a flow,
-it applies to the final primary local. The coerced result becomes `_` for its
-caller.
-
-Structured output accepts either raw JSON or exactly one Markdown code block
-explicitly labeled `json`. Surrounding prose is ignored only for that single
-explicit block; output coercion does not search arbitrary text for JSON or
-choose among multiple blocks.
-
-`Message` is not a Toolang input or output type. Language `Part` and `Part[]`
-outputs remain `PerceptPart` and `Percept` values internally. CLI and protocol
-callers serialize the coerced value for their own external boundary.
+Conversion never discards non-text parts. Invalid input is rejected before the
+run starts. Output uses the same declared-type validation; structured model
+output may also be one Markdown code block labeled `json`.
