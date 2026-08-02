@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 from io import StringIO
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
+from toolang.base.errors import ToolangError
 from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import script
 from toolang.execution.executor import CeilingSpec
 from toolang.execution.records import RunControlRef, RunRecord
-from toolang.lang.submission import RunnableCall
+from toolang.lang.submission import RunnableCall, parse_runnable_call
+from tests.support.execution_harness import ExecutionHarness
 
 
 _SOURCE = """
@@ -246,6 +250,42 @@ def test_script_rejects_missing_required_parameter(
 
     assert result == 2
     assert "missing required arguments: count=..." in output.err
+
+
+def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source=_SOURCE,
+        responses=[],
+    )
+
+    async def current_setup(_watcher):
+        return harness.setup
+
+    monkeypatch.setattr(script.SetupWatcher, "refresh", current_setup)
+    try:
+        with pytest.raises(ToolangError, match="Runnable not found: missing"):
+            asyncio.run(
+                script._execute(
+                    layout=harness.setup.layout,
+                    state=harness.state,
+                    store=harness.store,
+                    ids=harness.ids,
+                    run_id="run_test",
+                    runnable="demo",
+                    call=parse_runnable_call(":agic missing\nInput"),
+                    raw_args=(("count", "1"),),
+                    model=None,
+                    ceiling=CeilingSpec(),
+                    quiet=True,
+                    verbosity=0,
+                )
+            )
+
+        assert not harness.store.list_threads()
+        assert not harness.store.list_runs(limit=None)
+    finally:
+        harness.store.close()
 
 
 def test_script_uses_typer_help_and_authored_docs(

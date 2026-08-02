@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import logging
 
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
@@ -38,6 +39,7 @@ def _task(body: str) -> JobDefinition:
 
 def test_scheduler_rejects_invalid_submission_without_creating_a_run(
     tmp_path,
+    caplog,
 ) -> None:
     harness = ExecutionHarness.create(tmp_path / "agent", source=_SOURCE, responses=[])
     job_store = JobStore(tmp_path / "jobs.db")
@@ -49,13 +51,17 @@ def test_scheduler_rejects_invalid_submission_without_creating_a_run(
         get_agent_state=lambda: harness.state,
     )
     try:
-        assert len(scheduler.run_once(now=NOW)) == 1
+        with caplog.at_level(logging.WARNING, logger="toolang.work.scheduler"):
+            assert len(scheduler.run_once(now=NOW)) == 1
         record = job_store.get(job_id="review", kind="task")
         assert record is not None
         assert record.status == "failed"
         assert record.failed_count == 1
         assert not harness.store.list_runs(limit=None)
         assert not harness.store.list_threads()
+        assert "jobs.submission_rejected" in caplog.text
+        assert "job_id=review" in caplog.text
+        assert "submission is not a runnable call" in caplog.text
     finally:
         job_store.close()
         harness.store.close()

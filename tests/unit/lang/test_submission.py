@@ -241,6 +241,11 @@ def test_run_only_parser_rejects_quick_and_treats_selector_lines_as_overrides() 
     )
 
 
+def test_run_only_parser_accepts_an_absent_optional_input() -> None:
+    assert parse_runnable_call("") == RunnableCall(overrides=(), content="")
+    assert parse_runnable_call("\r\n") == RunnableCall(overrides=(), content="")
+
+
 def test_submission_module_has_no_toolang_imports() -> None:
     tree = ast.parse(inspect.getsource(submission_module))
     imports: set[str] = set()

@@ -7,7 +7,7 @@ agic, flow, and prompt input.
 
 ```text
 Submission   = QuickCommand | SettingCommand* | RunnableCall
-RunnableCall = RunOverride* + InputContent
+RunnableCall = RunOverride* + InputContent?
 ```
 
 - `QuickCommand` performs one immediate chat operation.
@@ -16,7 +16,8 @@ RunnableCall = RunOverride* + InputContent
 
 | Source | QuickCommand | SettingCommand* | RunnableCall |
 | --- | ---: | ---: | ---: |
-| chat TUI/WebUI | yes | yes | yes |
+| chat TUI | yes | yes | yes |
+| chat WebUI | not yet | not yet | not yet |
 | script | no | no | yes |
 | task/chore | no | no | yes |
 
@@ -43,15 +44,16 @@ Discard at most one final `LineBreak`, then resolve the remaining body:
 5. With no leading setting-shaped lines, the complete body is `InputContent`
    and there are no `RunOverride` values.
 
-On a run-only source, selector lines with no following content are
-`RunOverride` values with empty content, not `SettingCommand` values. The call
-is valid only when the selected runnable accepts no primary input.
+On a run-only source, `InputContent` may be absent. Selector lines with no
+following content are `RunOverride` values, not `SettingCommand` values. An
+empty call is also valid when the surface already selects the runnable. In
+either case, the selected runnable must accept no primary input.
 
-`InputContent` must contain a non-whitespace item. Until its first item, an
-unescaped `:` at line start enters the command namespace. A quick command
-cannot be combined with other lines; an unknown or malformed command is an
-error, not text. Use `::` to start input with a literal colon. After content
-starts, `:` is ordinary text.
+When present, `InputContent` must contain a non-whitespace item. Until its first
+item, an unescaped `:` at line start enters the command namespace. A quick
+command cannot be combined with other lines; an unknown or malformed command
+is an error, not text. Use `::` to start input with a literal colon. After
+content starts, `:` is ordinary text.
 
 Parsing is atomic. Any invalid command, override, argument, include, prompt,
 or value rejects the complete submission.

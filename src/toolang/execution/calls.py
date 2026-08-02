@@ -6,7 +6,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from toolang.base.errors import ToolangError
 from toolang.base.types.message import PerceptPart
 from toolang.lang.ast import AgicDecl, FlowDecl
 from toolang.lang.input import coerce_input, perceive_input
@@ -19,7 +18,7 @@ from toolang.lang.submission import (
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 
-from .runnables import effective_agics
+from .runnables import resolve_runnable
 
 if TYPE_CHECKING:
     from .executor.ceiling import CeilingSpec
@@ -125,29 +124,6 @@ def validate_setting_commands(
     )
 
 
-def resolve_runnable(
-    state: AgentState,
-    name: str,
-    *,
-    kind: str | None = None,
-) -> Runnable:
-    """Resolve one unique runnable and optionally require its declaration kind."""
-
-    if not name or name != name.strip():
-        raise ValueError("run spec requires a canonical runnable name")
-    matches: tuple[Runnable, ...] = (
-        *(agic for agic in effective_agics(state.program) if agic.name == name),
-        *(flow for flow in state.program.flows if flow.name == name),
-    )
-    if kind is not None:
-        matches = tuple(item for item in matches if item.kind == kind)
-    if not matches:
-        raise ToolangError(f"Runnable not found: {name}")
-    if len(matches) > 1:
-        raise ToolangError(f"Runnable name is not unique: {name}")
-    return matches[0]
-
-
 def _resolve_selection(
     *,
     state: AgentState,
@@ -201,7 +177,7 @@ def _resolve_selection(
             else command.args
         )
 
-    runnable = resolve_runnable(state, runnable_name, kind=runnable_kind)
+    runnable = resolve_runnable(state.program, runnable_name, kind=runnable_kind)
     bound_args = (
         _bind_raw_args(
             raw_args,

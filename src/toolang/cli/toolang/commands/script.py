@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -22,9 +23,10 @@ from toolang.base.types.message import (
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.execution.calls import bind_runnable_call, resolve_runnable
+from toolang.execution.calls import bind_runnable_call
 from toolang.execution.executor import CeilingSpec, RunExecutor, RunHandle
 from toolang.execution.records import RunRecord
+from toolang.execution.runnables import resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
@@ -45,6 +47,8 @@ from ...common.version import toolang_version
 
 Runnable = AgicDecl | FlowDecl
 _LITERAL_ITEM_PREFIX = "\ue002"
+_UNPERSISTED_THREAD = "<unpersisted-script-thread>"
+
 
 class _HelpArgument(TyperArgument):
     """One signature argument displayed by Typer but parsed by the collector."""
@@ -497,14 +501,13 @@ async def _execute(
     verbosity: int,
 ) -> RunRecord:
     setup = await SetupWatcher(layout).refresh()
-    thread = ThreadManager(store, ids).create(prefix=ThreadPrefix.SCRIPT)
     executor = RunExecutor(store, ids)
     spec = bind_runnable_call(
         call,
         setup=setup,
         state=state,
         ceiling=ceiling,
-        thread=thread,
+        thread=_UNPERSISTED_THREAD,
         default_runnable=runnable,
         default_model=model,
         default_raw_args=raw_args,
@@ -513,7 +516,10 @@ async def _execute(
             base=Path.cwd(),
         ),
     )
-    selected = resolve_runnable(state, spec.runnable)
+    executor.validate(spec)
+    thread = ThreadManager(store, ids).create(prefix=ThreadPrefix.SCRIPT)
+    spec = replace(spec, thread=thread)
+    selected = resolve_runnable(state.program, spec.runnable)
     tracer = (
         ConsoleRunTracer(
             run_id=run_id,

@@ -38,7 +38,7 @@ from ..records import (
 )
 from ..store import RunStore
 from ..types import ControlTiming, RunControlKind, StepPath
-from ..calls import resolve_runnable
+from ..runnables import resolve_runnable
 from .common import (
     BoundRun,
     EventEmitter,
@@ -731,7 +731,7 @@ class _Execution:
     ) -> Local:
         """Accept and execute one recursive child agic or flow run."""
 
-        executable = resolve_runnable(parent.state, name)
+        executable = resolve_runnable(parent.state.program, name)
         binding = _child_binding(
             self,
             parent,
@@ -774,7 +774,7 @@ class _Execution:
     ) -> Local:
         """Execute child runs concurrently and preserve their output type."""
 
-        executable = resolve_runnable(binding.state, runnable)
+        executable = resolve_runnable(binding.state.program, runnable)
         lanes = limit or max(len(inputs), 1)
         available_lanes: asyncio.Queue[int] = asyncio.Queue()
         for lane in range(lanes):
@@ -1091,7 +1091,7 @@ def _validate_call(spec: RunSpec, executable: AgicDecl | FlowDecl) -> None:
 def _validate_start_spec(
     spec: RunSpec,
 ) -> tuple[AgicDecl | FlowDecl, _AgentCeiling]:
-    executable = resolve_runnable(spec.state, spec.runnable)
+    executable = resolve_runnable(spec.state.program, spec.runnable)
     _validate_call(spec, executable)
     agent_ceiling = resolve_agent_ceiling(
         spec.setup,

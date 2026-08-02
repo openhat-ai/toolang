@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 
 from toolang.base.errors import ToolangError
@@ -20,6 +21,7 @@ from .state import AgentJobs, HomeJobs
 from .store import ClaimedJob, JobStore
 
 DEFAULT_INTERVAL_MS = 30_000.0
+_LOGGER = logging.getLogger(__name__)
 
 
 class Scheduler:
@@ -103,7 +105,14 @@ class Scheduler:
                         ),
                     )
                     self.executor.validate(spec)
-                except (OSError, ToolangError, ValueError):
+                except (OSError, ToolangError, ValueError) as exc:
+                    _LOGGER.warning(
+                        "jobs.submission_rejected kind=%s job_id=%s source=%s error=%s",
+                        claimed.job.kind,
+                        claimed.job.job_id,
+                        claimed.definition.source,
+                        exc,
+                    )
                     self.job_store.reject_claim(
                         jobs=jobs,
                         job_id=claimed.job.job_id,

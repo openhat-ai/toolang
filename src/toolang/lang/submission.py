@@ -142,6 +142,8 @@ def parse_submission(source: str) -> Submission:
 def parse_runnable_call(source: str) -> RunnableCall:
     """Parse a run-only submission, rejecting only quick commands."""
 
+    if not _strip_final_line_break(source):
+        return RunnableCall(overrides=(), content="")
     submission = parse_submission(source)
     if isinstance(submission, RunnableCall):
         return submission
