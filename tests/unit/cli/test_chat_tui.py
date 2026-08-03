@@ -1058,6 +1058,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     assert command.style.color is not None
     assert argument.style is not None
     assert argument.style.color is not None
+    assert all(segment.style is None or not segment.style.bold for segment in segments)
 
 
 def test_chat_header_shows_resolved_model_label() -> None:

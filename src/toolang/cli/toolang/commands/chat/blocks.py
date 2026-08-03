@@ -978,7 +978,7 @@ class SlashBlock:
         lines.extend([bar([], style="white on grey23"), Text()])
         if self.body:
             first, *rest = self.body
-            lines.append(Text.from_markup(f"[dim]:[/] [bold]{escape(first)}[/]"))
+            lines.append(Text.from_markup(f"[dim]:[/] [none]{escape(first)}[/]"))
             lines.append(Text())
             if rest and not rest[0].strip():
                 rest = rest[1:]
