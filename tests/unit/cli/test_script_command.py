@@ -5,6 +5,7 @@ from io import StringIO
 from pathlib import Path
 
 import pytest
+from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from toolang.base.errors import ToolangError
@@ -303,18 +304,19 @@ def test_script_uses_typer_help_and_authored_docs(
         stdin=StringIO(),
     )
     output = capsys.readouterr()
+    stdout = strip_ansi(output.out)
 
     assert result == 0
     assert (
         "Usage: toolang demo.too demo [OPTIONS] "
         "count=Number [enabled=Boolean] INPUT..."
-        in output.out
+        in stdout
     )
-    assert "Run the documented demo." in output.out
-    assert "Arguments" in output.out
-    assert "count=Number" in output.out
-    assert "enabled=Boolean" in output.out
-    assert "Primary Part[] input." in output.out
+    assert "Run the documented demo." in stdout
+    assert "Arguments" in stdout
+    assert "count=Number" in stdout
+    assert "enabled=Boolean" in stdout
+    assert "Primary Part[] input." in stdout
 
 
 def test_script_hides_default_and_generated_agics(
