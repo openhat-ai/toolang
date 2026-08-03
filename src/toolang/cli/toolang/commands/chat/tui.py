@@ -263,17 +263,21 @@ class ChatTuiApp:
                 await self.dispatcher_task
 
     def _header_model_label(self) -> str:
+        selected_model = str(self.selects.get("model") or "").strip()
+        default_selected = selected_model in {"", "default"}
         try:
             label = slashes.chat_model_label(self.client.list_models(), self.selects)
-            return self.actual_model if label == "auto" and self.actual_model else label
+            return self.actual_model if default_selected and self.actual_model else label
         except (click.ClickException, ToolangError, ValueError):
             label = chat_status_label(self.selects)
-            return self.actual_model if label == "auto" and self.actual_model else label
+            return self.actual_model if default_selected and self.actual_model else label
 
     def _status_label(self) -> str:
         model_label = self._header_model_label()
         flow = str(self.selects.get("flow") or "")
         agic = str(self.selects.get("agic") or "")
+        if agic == "default":
+            agic = ""
         executable = f"flow:{flow}" if flow else f"agic:{agic}" if agic else ""
         return f"{model_label}  {executable}" if executable else model_label
 
@@ -400,6 +404,8 @@ class ChatTuiApp:
                 return
             self.selects.clear()
             self.selects.update(updated)
+            if any(command.kind == "model" for command in submission):
+                self.actual_model = None
             self.status_bar.set_status(self._status_label())
             return
         if not isinstance(submission, RunnableCall):

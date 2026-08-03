@@ -145,35 +145,47 @@ def _resolve_selection(
 
     for command in settings:
         if command.kind == "model":
-            model = default_model if command.selector == "auto" else command.selector
+            model = (
+                default_model
+                if command.selector == "default"
+                else command.selector
+            )
             continue
         runnable_name = (
             default_runnable
-            if command.kind == "agic" and command.selector == "auto"
+            if command.kind == "agic" and command.selector == "default"
             else command.selector
         )
-        runnable_kind = None if command.selector == "auto" else command.kind
-        typed_args = dict(default_args or {}) if command.selector == "auto" else {}
+        runnable_kind = None if command.selector == "default" else command.kind
+        typed_args = (
+            dict(default_args or {}) if command.selector == "default" else {}
+        )
         raw_args = (
             default_raw_args or None
-            if command.selector == "auto"
+            if command.selector == "default"
             else command.args
         )
 
     for command in overrides:
         if command.kind == "model":
-            model = default_model if command.selector == "auto" else command.selector
+            model = (
+                default_model
+                if command.selector == "default"
+                else command.selector
+            )
             continue
         runnable_name = (
             default_runnable
-            if command.kind == "agic" and command.selector == "auto"
+            if command.kind == "agic" and command.selector == "default"
             else command.selector
         )
-        runnable_kind = None if command.selector == "auto" else command.kind
-        typed_args = dict(default_args or {}) if command.selector == "auto" else {}
+        runnable_kind = None if command.selector == "default" else command.kind
+        typed_args = (
+            dict(default_args or {}) if command.selector == "default" else {}
+        )
         raw_args = (
             default_raw_args or None
-            if command.selector == "auto"
+            if command.selector == "default"
             else command.args
         )
 

@@ -47,13 +47,13 @@ def test_bind_runnable_call_resolves_overrides_content_and_typed_args(
         harness.store.close()
 
 
-def test_run_override_auto_returns_to_surface_default_not_session_setting(
+def test_run_override_default_returns_to_surface_default_not_session_setting(
     tmp_path,
 ) -> None:
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
     try:
         spec = bind_runnable_call(
-            parse_runnable_call(":agic auto\nInput"),
+            parse_runnable_call(":agic default\nInput"),
             setup=harness.setup,
             state=harness.state,
             thread="term_test",

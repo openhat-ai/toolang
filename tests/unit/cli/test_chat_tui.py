@@ -18,6 +18,7 @@ from toolang.base.types.message import (
 from toolang.cli.toolang.commands.chat import (
     blocks,
     events,
+    local,
     rendering,
     slashes,
     tui,
@@ -35,6 +36,7 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.records import OutputRef, RunControlRef
+from toolang.lang.submission import SettingCommand
 
 
 def test_chat_run_events_keep_run_stop_block_until_run_end() -> None:
@@ -1093,7 +1095,7 @@ def test_chat_model_label_uses_default_or_selected_model() -> None:
         ],
     }
 
-    assert slashes.chat_model_label(payload, {}) == "auto"
+    assert slashes.chat_model_label(payload, {}) == "openai/gpt-5"
     assert (
         slashes.chat_model_label(payload, {"model": "openai/o3[openai]"}) == "openai/o3"
     )
@@ -1180,7 +1182,7 @@ def test_chat_tui_status_bar_uses_resolved_model_and_clears_error_on_input() -> 
         client=FakeClient(),
     )
 
-    assert app.status_bar.status_label == "auto"
+    assert app.status_bar.status_label == "openai/gpt-5"
     app.handle_run_event(_model_step_begin(model="deepseek/deepseek-chat"))
     assert app.status_bar.status_label == "deepseek/deepseek-chat"
 
@@ -1190,6 +1192,42 @@ def test_chat_tui_status_bar_uses_resolved_model_and_clears_error_on_input() -> 
     app.prompt.buffer.text = "retry"
 
     assert app.status_bar.error_message == ""
+
+
+def test_chat_tui_status_bar_hides_only_the_default_agic() -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={"agic": "default"},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+
+    assert app.status_bar.status_label == "openai/gpt-5"
+
+    app.selects = {"agic": "review"}
+    assert app._status_label() == "openai/gpt-5  agic:review"
+
+    app.selects = {"flow": "research"}
+    assert app._status_label() == "openai/gpt-5  flow:research"
+
+
+def test_chat_default_settings_clear_explicit_model_and_runnable() -> None:
+    selects = {
+        "model": "openai/o3[openai]",
+        "agic": "review",
+        "runnable_args": (("focus", "security"),),
+    }
+
+    updated = local._apply_settings(
+        selects,
+        (
+            SettingCommand(kind="model", selector="default"),
+            SettingCommand(kind="agic", selector="default"),
+        ),
+    )
+
+    assert updated == {}
 
 
 def test_chat_tui_creates_a_thread_only_for_the_first_submission(

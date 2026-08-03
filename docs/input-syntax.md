@@ -76,8 +76,8 @@ value, they are settings or overrides.
 
 ```text
 SettingCommand
-    = ":model" Space (ModelSelector | "auto")
-    | ":agic" Space ("auto" | AgicName (Space Argument)*)
+    = ":model" Space (ModelSelector | "default")
+    | ":agic" Space ("default" | AgicName (Space Argument)*)
     | ":flow" Space FlowName (Space Argument)*
 
 Argument = Name "=" Value
@@ -87,8 +87,8 @@ Argument = Name "=" Value
 
 ```text
 RunOverride
-    = ":model" Space (ModelSelector | "auto")
-    | ":agic" Space ("auto" | AgicName (Space Argument)*)
+    = ":model" Space (ModelSelector | "default")
+    | ":agic" Space ("default" | AgicName (Space Argument)*)
     | ":flow" Space FlowName (Space Argument)*
 ```
 
@@ -99,11 +99,15 @@ Each occupies one complete line. Consecutive values are separated by
 `LineBreak`; the final override and `InputContent` are separated as specified
 by the resolution rules above.
 
+`default` is the reserved model and agic selector that restores the surface
+default. It is not a model or agic name in this position. `auto` has no special
+meaning and may be used as an ordinary model, agic, or flow name.
+
 Both enforce:
 
 - at most one model line and one runnable line
 - mutual exclusion of `:agic` and `:flow`
-- no arguments after `:agic auto`; no `:flow auto` form
+- no arguments after `:agic default`; no `:flow default` form
 - unique, signature-checked arguments, including every required argument
 - no primary input on a setting or override line
 

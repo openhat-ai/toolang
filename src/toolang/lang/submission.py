@@ -247,10 +247,10 @@ def _parse_selector_fields(
             raise ValueError(f"line {line_number}: :model accepts no arguments")
         return "model", selector, ()
 
-    if kind == "flow" and selector == "auto":
-        raise ValueError(f"line {line_number}: :flow auto is not supported")
-    if kind == "agic" and selector == "auto" and len(tokens) != 2:
-        raise ValueError(f"line {line_number}: :agic auto accepts no arguments")
+    if kind == "flow" and selector == "default":
+        raise ValueError(f"line {line_number}: :flow default is not supported")
+    if kind == "agic" and selector == "default" and len(tokens) != 2:
+        raise ValueError(f"line {line_number}: :agic default accepts no arguments")
 
     args = _parse_arguments(tokens[2:], line_number=line_number)
     return kind, selector, args  # type: ignore[return-value]

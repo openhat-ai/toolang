@@ -65,7 +65,7 @@ def send_command(
     if target is None:  # pragma: no cover - the CLI argument is required
         raise click.ClickException("thread id is required")
     selectors: dict[str, object] = {}
-    if model is not None:
+    if model not in {None, "default"}:
         selectors["model"] = model
     renderer = _ScriptedRunRenderer()
     errors: list[str] = []
@@ -105,7 +105,7 @@ def _chat_selector_payload(
     model_selectors = tuple(dict.fromkeys(split_model_selectors(tuple(models or ()))))
     if model_selectors:
         payload["models"] = list(model_selectors)
-    if model is not None:
+    if model not in {None, "default"}:
         payload["model"] = model
     if tools is not None:
         tool_selectors = tuple(dict.fromkeys(split_tool_selectors(tuple(tools))))
@@ -113,7 +113,7 @@ def _chat_selector_payload(
     cap_selectors = tuple(dict.fromkeys(split_cap_selectors(tuple(caps or ()))))
     if cap_selectors:
         payload["caps"] = list(cap_selectors)
-    if agic is not None:
+    if agic not in {None, "default"}:
         payload["agic"] = agic
     if flow is not None:
         payload["flow"] = flow
