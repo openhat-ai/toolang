@@ -18,6 +18,7 @@ from toolang.base.types.message import (
 from toolang.cli.toolang.commands.chat import (
     blocks,
     events,
+    local,
     rendering,
     slashes,
     tui,
@@ -35,6 +36,7 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.records import OutputRef, RunControlRef
+from toolang.lang.submission import SettingCommand
 
 
 def test_chat_run_events_keep_run_stop_block_until_run_end() -> None:
@@ -84,6 +86,35 @@ def test_chat_run_begin_finalizes_local_submission_block() -> None:
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
     assert [block.type for block in app.finalized] == ["RunStartBlock"]
     assert "run_1" in _render_text(app.finalized[0].render())
+
+
+def test_chat_submission_has_no_status_before_run_begin() -> None:
+    block = blocks.RunStartBlock.create("hello")
+
+    rendered = _render_text(block.render(), width=20)
+
+    assert "> hello" in rendered
+    assert "starting" not in rendered
+    assert rendered.splitlines() == [" " * 20, "> hello" + " " * 13, " " * 20, ""]
+
+
+def test_chat_preaccept_error_does_not_render_a_failed_run() -> None:
+    app = FakeApp()
+    app.live_blocks.append(blocks.RunStartBlock.create(":flow missing\n\nInput"))
+
+    handled = events.handle_run_error(app, "Runnable not found: missing")
+
+    assert handled is True
+    assert app.live_blocks == []
+    assert [block.type for block in app.finalized] == [
+        "RunStartBlock",
+        "SubmissionErrorBlock",
+    ]
+    rendered = "\n".join(_render_text(block.render()) for block in app.finalized)
+    assert "! Runnable not found: missing" in rendered
+    assert "starting" not in rendered
+    assert "run failed" not in rendered
+    assert app.finished
 
 
 def test_chat_next_step_finalizes_local_steer_block() -> None:
@@ -298,6 +329,82 @@ def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
         "RunStopBlock",
     ]
     assert app.finished
+
+
+def test_chat_failed_child_is_a_statement_diagnostic_fact() -> None:
+    message = "You have no credits remaining."
+    app = FakeApp()
+
+    events.handle_run_event(_run_begin(executable_kind="flow"), app)
+    events.handle_run_event(
+        StepBegin(
+            step="run_1/1",
+            kind="run",
+            given={
+                "statement": "scatter",
+                "count": 6,
+                "runnable": "expand_queries",
+                "doc": "Expand the research question into diverse search queries",
+                "source": {"head": "scatter 6 expand_queries"},
+            },
+            started_at="2026-01-01T00:00:01Z",
+        ),
+        app,
+    )
+    events.handle_run_event(
+        RunBegin(
+            run="run_child",
+            input=RunControlRef(index=0),
+            parent="run_1/1",
+            context={
+                "origin": "chat",
+                "root": "run_1",
+                "runnable": {"kind": "agic", "name": "expand_queries"},
+            },
+            started_at="2026-01-01T00:00:01Z",
+        ),
+        app,
+    )
+    events.handle_run_event(_model_step_begin(run_id="run_child"), app)
+    events.handle_run_event(
+        StepEnd(
+            step="run_child/1",
+            kind="model",
+            status="failed",
+            error=message,
+            finished_at="2026-01-01T00:00:02Z",
+        ),
+        app,
+    )
+    events.handle_run_event(
+        RunEnd(
+            run="run_child",
+            status="failed",
+            error=message,
+            finished_at="2026-01-01T00:00:02Z",
+        ),
+        app,
+    )
+    events.handle_run_event(
+        StepEnd(
+            step="run_1/1",
+            kind="run",
+            status="failed",
+            error=message,
+            finished_at="2026-01-01T00:00:02Z",
+        ),
+        app,
+    )
+
+    assert [block.type for block in app.finalized] == ["FlowStepBlock"]
+    rendered = _render_text(app.finalized[0].render())
+    assert rendered.count("[1] scatter 6 expand_queries") == 1
+    diagnostic = f"! run_1/1 failed: {message}"
+    child_fact = "run_child failed · 1.0s"
+    assert diagnostic in rendered
+    assert child_fact in rendered
+    assert rendered.index(diagnostic) < rendered.index(child_fact)
+    assert "↳ run_child failed" not in rendered
 
 
 def test_chat_flow_statement_owns_child_model_tool_model_activity() -> None:
@@ -811,6 +918,15 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     assert "> hello" in _render_text(start.render())
     assert "run_1" in _render_text(start.render())
 
+    root_summary = blocks.RunStopBlock.create(_run_begin())
+    root_summary.update(_run_end(status="failed"))
+    marker = next(
+        segment
+        for segment in rendering.render_segments(root_summary.render(), width=80)
+        if "◆" in segment.text
+    )
+    assert marker.style is not None and marker.style.dim
+
     steer = blocks.RunSteerBlock.create(
         message="adjust",
         run_id="run_1",
@@ -942,6 +1058,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     assert command.style.color is not None
     assert argument.style is not None
     assert argument.style.color is not None
+    assert all(segment.style is None or not segment.style.bold for segment in segments)
 
 
 def test_chat_header_shows_resolved_model_label() -> None:
@@ -979,7 +1096,7 @@ def test_chat_model_label_uses_default_or_selected_model() -> None:
         ],
     }
 
-    assert slashes.chat_model_label(payload, {}) == "auto"
+    assert slashes.chat_model_label(payload, {}) == "openai/gpt-5"
     assert (
         slashes.chat_model_label(payload, {"model": "openai/o3[openai]"}) == "openai/o3"
     )
@@ -1066,7 +1183,7 @@ def test_chat_tui_status_bar_uses_resolved_model_and_clears_error_on_input() -> 
         client=FakeClient(),
     )
 
-    assert app.status_bar.status_label == "auto"
+    assert app.status_bar.status_label == "openai/gpt-5"
     app.handle_run_event(_model_step_begin(model="deepseek/deepseek-chat"))
     assert app.status_bar.status_label == "deepseek/deepseek-chat"
 
@@ -1076,6 +1193,42 @@ def test_chat_tui_status_bar_uses_resolved_model_and_clears_error_on_input() -> 
     app.prompt.buffer.text = "retry"
 
     assert app.status_bar.error_message == ""
+
+
+def test_chat_tui_status_bar_hides_only_the_default_agic() -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={"agic": "default"},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+
+    assert app.status_bar.status_label == "openai/gpt-5"
+
+    app.selects = {"agic": "review"}
+    assert app._status_label() == "openai/gpt-5  agic:review"
+
+    app.selects = {"flow": "research"}
+    assert app._status_label() == "openai/gpt-5  flow:research"
+
+
+def test_chat_default_settings_clear_explicit_model_and_runnable() -> None:
+    selects = {
+        "model": "openai/o3[openai]",
+        "agic": "review",
+        "runnable_args": (("focus", "security"),),
+    }
+
+    updated = local._apply_settings(
+        selects,
+        (
+            SettingCommand(kind="model", selector="default"),
+            SettingCommand(kind="agic", selector="default"),
+        ),
+    )
+
+    assert updated == {}
 
 
 def test_chat_tui_creates_a_thread_only_for_the_first_submission(
@@ -1112,6 +1265,37 @@ def test_chat_tui_creates_a_thread_only_for_the_first_submission(
     assert started.wait(timeout=1)
     assert client.created == 1
     assert app.thread_id == "term_lazy"
+
+
+def test_chat_thread_creation_error_is_a_submission_error_in_scrollback(
+    monkeypatch: Any,
+) -> None:
+    class FailingClient(FakeClient):
+        def create_thread(self) -> str:
+            raise ValueError("thread creation failed")
+
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FailingClient(),
+    )
+    rendered: list[str] = []
+    monkeypatch.setattr(
+        tui.rendering,
+        "write_renderable",
+        lambda value: rendered.append(_render_text(value)),
+    )
+
+    app.start_run(QueuedCall("hello", {}))
+
+    output = "\n".join(rendered)
+    assert "> hello" in output
+    assert "! thread creation failed" in output
+    assert "run failed" not in output
+    assert app.status_bar.error_message == ""
+    assert not app.run_in_flight.is_set()
 
 
 def test_chat_queue_captures_settings_at_submission_time() -> None:
@@ -1193,8 +1377,107 @@ def test_chat_tui_removes_live_block_before_writing_scrollback(
 
     tui.ChatTuiAppContext(app).finalize_block(block)
 
+
+def test_chat_tui_commits_live_finalization_in_one_terminal_transaction(
+    monkeypatch: Any,
+) -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    block = blocks.FlowStepBlock.create(_flow_step_begin())
+    app.unfinalized_blocks.append(block)
+    order: list[str] = []
+    monkeypatch.setattr(
+        type(app.app),
+        "is_running",
+        property(lambda _application: True),
+    )
+    monkeypatch.setattr(
+        app.app.renderer,
+        "erase",
+        lambda *, leave_alternate_screen: order.append(
+            f"erase:{leave_alternate_screen}"
+        ),
+    )
+
+    def write_scrollback(renderables: list[RenderableType | None]) -> None:
+        assert block not in app.unfinalized_blocks
+        assert len(renderables) == 1
+        order.append("write")
+
+    monkeypatch.setattr(app, "_write_scrollback", write_scrollback)
+    monkeypatch.setattr(app.app, "invalidate", lambda: order.append("invalidate"))
+
+    tui.ChatTuiAppContext(app).finalize_block(block)
+    assert order == []
+
+    app._commit_ui_update()
+
+    assert order == ["erase:False", "write", "invalidate"]
+    assert app._pending_scrollback == []
     assert block not in app.unfinalized_blocks
 
+
+def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
+    monkeypatch: Any,
+) -> None:
+    app = tui.ChatTuiApp(
+        thread_id="thread_1",
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    monkeypatch.setattr(
+        type(app.app),
+        "is_running",
+        property(lambda _application: True),
+    )
+    writes: list[str] = []
+    erases: list[bool] = []
+
+    def write_scrollback(renderables: list[RenderableType | None]) -> None:
+        writes.append("".join(_render_text(item) for item in renderables))
+
+    monkeypatch.setattr(app, "_write_scrollback", write_scrollback)
+    monkeypatch.setattr(
+        app.app.renderer,
+        "erase",
+        lambda *, leave_alternate_screen: erases.append(leave_alternate_screen),
+    )
+
+    app.handle_run_event(_run_begin())
+    app._commit_ui_update()
+
+    app.handle_run_event(_model_step_begin(model="openai/gpt-5"))
+    assert "thinking…" in "".join(
+        _render_text(block.render()) for block in app.unfinalized_blocks
+    )
+    app._commit_ui_update()
+
+    app.handle_run_event(
+        StepEnd(
+            step="run_1/1",
+            kind="model",
+            status="failed",
+            error="You have no credits remaining.",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+    )
+    app._commit_ui_update()
+
+    assert erases == [False]
+    assert len(writes) == 1
+    assert "thinking…" not in writes[0]
+    assert "You have no credits remaining." in writes[0]
+    assert all(
+        not isinstance(block, blocks.ModelStepBlock)
+        for block in app.unfinalized_blocks
+    )
 
 def test_chat_tui_show_command_renders_durable_markdown(
     monkeypatch: Any,

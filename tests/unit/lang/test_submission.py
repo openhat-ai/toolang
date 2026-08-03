@@ -68,9 +68,9 @@ def test_setting_commands_are_independent_line_values() -> None:
     ("line", "setting", "override"),
     [
         (
-            ":model auto",
-            SettingCommand(kind="model", selector="auto"),
-            RunOverride(kind="model", selector="auto"),
+            ":model default",
+            SettingCommand(kind="model", selector="default"),
+            RunOverride(kind="model", selector="default"),
         ),
         (
             ":model\topenai/gpt-5",
@@ -78,9 +78,9 @@ def test_setting_commands_are_independent_line_values() -> None:
             RunOverride(kind="model", selector="openai/gpt-5"),
         ),
         (
-            ":agic auto",
-            SettingCommand(kind="agic", selector="auto"),
-            RunOverride(kind="agic", selector="auto"),
+            ":agic default",
+            SettingCommand(kind="agic", selector="default"),
+            RunOverride(kind="agic", selector="default"),
         ),
         (
             ':agic review focus="security review"',
@@ -176,8 +176,8 @@ def test_line_break_forms_apply_to_quick_settings_and_calls(
 ) -> None:
     assert parse_submission(f":help{line_break}") == QuickCommand(name="help")
     assert parse_submission(
-        f":model auto{line_break}{line_break}"
-    ) == (SettingCommand(kind="model", selector="auto"),)
+        f":model default{line_break}{line_break}"
+    ) == (SettingCommand(kind="model", selector="default"),)
     assert parse_submission(
         f":agic review{line_break}Input{line_break}"
     ) == RunnableCall(
@@ -197,8 +197,17 @@ def test_command_prefix_is_special_only_before_content_starts() -> None:
 
 
 def test_setting_commands_allow_trailing_blank_lines() -> None:
-    assert parse_submission(":model auto\n \t\n\n") == (
-        SettingCommand(kind="model", selector="auto"),
+    assert parse_submission(":model default\n \t\n\n") == (
+        SettingCommand(kind="model", selector="default"),
+    )
+
+
+def test_auto_is_an_ordinary_runnable_name() -> None:
+    assert parse_submission(":agic auto focus=x") == (
+        SettingCommand(kind="agic", selector="auto", args=(("focus", "x"),)),
+    )
+    assert parse_submission(":flow auto") == (
+        SettingCommand(kind="flow", selector="auto"),
     )
 
 
@@ -213,8 +222,8 @@ def test_setting_commands_allow_trailing_blank_lines() -> None:
         (':model "', "No closing quotation"),
         (':model ""', "selector is empty"),
         (":model openai/gpt-5 focus=x", ":model accepts no arguments"),
-        (":flow auto", ":flow auto is not supported"),
-        (":agic auto focus=x", ":agic auto accepts no arguments"),
+        (":flow default", ":flow default is not supported"),
+        (":agic default focus=x", ":agic default accepts no arguments"),
         (":agic review focus", "name=value syntax"),
         (":agic review 1focus=x", "name=value syntax"),
         (":agic review focus=x focus=y", "duplicate argument"),

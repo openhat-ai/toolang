@@ -114,9 +114,11 @@ class AppContext(Protocol):
 
 def chat_status_label(selects: Mapping[str, object]) -> str:
     model = as_text(selects.get("model"))
-    model_label = model or "auto"
+    model_label = model or "default"
     flow = as_text(selects.get("flow"))
     agic = as_text(selects.get("agic"))
+    if agic == "default":
+        agic = None
     executable = f"flow:{flow}" if flow else f"agic:{agic}" if agic else ""
     return f"{model_label}  {executable}" if executable else model_label
 

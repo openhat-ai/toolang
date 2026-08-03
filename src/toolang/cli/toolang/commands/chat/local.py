@@ -349,7 +349,7 @@ def _apply_settings(
     result = dict(selects)
     for command in settings:
         if command.kind == "model":
-            if command.selector == "auto":
+            if command.selector == "default":
                 result.pop("model", None)
             else:
                 result["model"] = command.selector
@@ -357,7 +357,7 @@ def _apply_settings(
         result.pop("agic", None)
         result.pop("flow", None)
         result.pop("runnable_args", None)
-        if command.kind == "agic" and command.selector == "auto":
+        if command.kind == "agic" and command.selector == "default":
             continue
         result[command.kind] = command.selector
         if command.args:

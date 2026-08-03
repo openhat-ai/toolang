@@ -256,6 +256,16 @@ def test_chat_selector_payload_deduplicates_all_selector_families() -> None:
     }
 
 
+def test_chat_selector_payload_omits_default_model_and_agic() -> None:
+    assert chat._chat_selector_payload(
+        models=None,
+        model="default",
+        tools=None,
+        caps=None,
+        agic="default",
+    ) == {}
+
+
 def test_chat_runtime_builds_process_local_execution_resources(
     tmp_path: Path,
     monkeypatch: Any,

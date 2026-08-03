@@ -266,8 +266,12 @@ def chat_model_label(
     selects: Mapping[str, object],
 ) -> str:
     model = as_text(selects.get("model"))
-    if model is None:
-        return "auto"
+    if model in {None, "default"}:
+        default = as_text(models_payload.get("default"))
+        if default is None:
+            return "default"
+        labels = _chat_resolve_model_command_labels(models_payload, (default,))
+        return labels[0] if labels else default
     labels = _chat_resolve_model_command_labels(models_payload, (model,))
     return labels[0] if labels else model
 

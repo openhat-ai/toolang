@@ -382,6 +382,16 @@ non-batched, directly visible child may close with a compact line:
 The child does not repeat its final model output or resource totals when those
 are already represented by the statement outcome.
 
+When a child failure also fails its owning statement, the statement owns the
+single `!` diagnostic. The failed child becomes an unmarked continuation fact;
+the renderer does not place a failed `↳` closure before a second `!` marker:
+
+```text
+[1] scatter 6 expand_queries
+  ! run_parent/1 failed: provider rejected the request
+    run_child failed · 1.0s
+```
+
 
 ### Batched Work
 
@@ -670,10 +680,11 @@ The presenter exposes two results after applying an event:
 The TUI applies them atomically:
 
 1. replace the live block list;
-2. invalidate the prompt-toolkit layout;
-3. render finalized blocks to stdout in order;
-4. leave prompt, queue, and status state unchanged;
-5. finish the active root run only after its terminal block is finalized.
+2. erase the current prompt-toolkit frame when blocks were finalized;
+3. write finalized blocks directly to the terminal output in order;
+4. invalidate the prompt-toolkit layout once;
+5. leave prompt, queue, and status state unchanged;
+6. finish the active root run only after its terminal block is finalized.
 
 This contract prevents flicker, duplicated blocks, and completion-order
 reordering while keeping terminal I/O outside the semantic state.

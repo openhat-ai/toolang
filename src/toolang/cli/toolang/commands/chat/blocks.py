@@ -84,6 +84,21 @@ def _terminal_diagnostic(status: str, error: str) -> str:
     return value
 
 
+def _wrap_plain_lines(text: str) -> list[str]:
+    width = max(terminal_width() - 2, 20)
+    lines: list[str] = []
+    for raw_line in text.splitlines() or [""]:
+        line = raw_line.strip()
+        while len(line) > width:
+            split_at = line.rfind(" ", 0, width + 1)
+            split_at = width if split_at <= 0 else split_at
+            lines.append(line[:split_at].rstrip())
+            line = line[split_at:].lstrip()
+        if line:
+            lines.append(line)
+    return lines
+
+
 class MutableBlock:
     """A live UI block that the TUI can later move into scrollback."""
 
@@ -113,13 +128,7 @@ class RunStartBlock(MutableBlock):
         if isinstance(event, (RunBegin, RunEnd)):
             self.run_id = event.run or self.run_id
 
-    def _footer(self) -> str:
-        if self.run_id:
-            return f"  {self.run_id}"
-        return "  starting"
-
     def render(self) -> RenderableType:
-        footer = self._footer()
         lines: list[RenderableType] = [bar([], style="white on grey23")]
         for index, line in enumerate(self.message.splitlines() or [""]):
             lines.append(
@@ -127,7 +136,33 @@ class RunStartBlock(MutableBlock):
                 if index == 0
                 else bar([(f"  {line}", "white on grey23")], style="white on grey23")
             )
-        lines.append(bar([(footer, "grey70 on grey23")], style="white on grey23"))
+        if self.run_id:
+            lines.append(
+                bar(
+                    [(f"  {self.run_id}", "grey70 on grey23")],
+                    style="white on grey23",
+                )
+            )
+        else:
+            lines.append(bar([], style="white on grey23"))
+        lines.append(Text("\n"))
+        return Group(*lines)
+
+
+@dataclass(frozen=True, slots=True)
+class SubmissionErrorBlock(MutableBlock):
+    """A rejected submission diagnostic with no associated run."""
+
+    error: str
+
+    def update(self, event: Any) -> None:
+        del event
+
+    def render(self) -> RenderableType:
+        lines = [
+            Text.from_markup(f"[red]! {escape(line)}[/]")
+            for line in _wrap_plain_lines(friendly_error(self.error))
+        ]
         lines.append(Text("\n"))
         return Group(*lines)
 
@@ -244,12 +279,12 @@ class RunStopBlock(MutableBlock):
         if message:
             lines.extend(
                 Text.from_markup(f"[{tone}]! {escape(line)}[/]")
-                for line in self._wrap_plain_lines(message)
+                for line in _wrap_plain_lines(message)
             )
         facts = self._facts()
         suffix = f" · {' · '.join(facts)}" if facts else ""
         summary = Text()
-        summary.append("◆ ", style=tone)
+        summary.append("◆ ", style="dim")
         summary.append(f"{run_id} ", style="dim")
         summary.append(label, style=tone)
         summary.append(suffix, style="dim")
@@ -265,22 +300,6 @@ class RunStopBlock(MutableBlock):
                 count(max(self.metrics.runs - 1, 0), "run"),
             )
         return facts
-
-    @staticmethod
-    def _wrap_plain_lines(text: str) -> list[str]:
-        width = max(terminal_width() - 2, 20)
-        lines: list[str] = []
-        for raw_line in text.splitlines() or [""]:
-            line = raw_line.strip()
-            while len(line) > width:
-                split_at = line.rfind(" ", 0, width + 1)
-                split_at = width if split_at <= 0 else split_at
-                lines.append(line[:split_at].rstrip())
-                line = line[split_at:].lstrip()
-            if line:
-                lines.append(line)
-        return lines
-
 
 @dataclass(slots=True)
 class DefaultStepBlock(MutableBlock):
@@ -416,8 +435,8 @@ class FlowStepBlock(MutableBlock):
             lines.extend(self._live_lines())
             return Group(*lines)
         lines.extend(self._call_lines())
-        lines.extend(self._child_run_lines())
         if end.status != "finished":
+            lines.extend(self._successful_child_run_lines())
             error = _terminal_diagnostic(
                 end.status,
                 self.display_error or end.error or "",
@@ -434,10 +453,12 @@ class FlowStepBlock(MutableBlock):
                 detail = f"{detail}: {error}"
             tone = "yellow" if end.status == "canceled" else "red"
             lines.append(Text.from_markup(f"[{tone}]  ! {escape(detail)}[/]"))
+            lines.extend(self._failed_child_fact_lines())
             facts = self._aggregate_facts(end)
             if facts:
                 lines.append(Text.from_markup(f"[dim]    {escape(facts)}[/]"))
             return Group(*lines, Text("\n"))
+        lines.extend(self._child_run_lines())
         if state.statement == "repeat":
             iterations = (
                 state.current_iteration + 1
@@ -551,8 +572,34 @@ class FlowStepBlock(MutableBlock):
         return lines
 
     def _child_run_lines(self) -> list[RenderableType]:
+        return self._child_run_lines_for(self.child_runs)
+
+    def _successful_child_run_lines(self) -> list[RenderableType]:
+        return self._child_run_lines_for(
+            tuple(run for run in self.child_runs if run.status == "finished")
+        )
+
+    def _failed_child_fact_lines(self) -> list[RenderableType]:
         lines: list[RenderableType] = []
         for run in self.child_runs:
+            if run.status == "finished":
+                continue
+            facts = [
+                f"{run.run_id} {status_label(run.status)}",
+                elapsed(run.started_at, run.finished_at),
+            ]
+            tone = "yellow" if run.status == "canceled" else "red"
+            lines.append(
+                Text.from_markup(
+                    f"[{tone}]    {escape(' · '.join(fact for fact in facts if fact))}[/]"
+                )
+            )
+        return lines
+
+    @staticmethod
+    def _child_run_lines_for(runs: Sequence[RunState]) -> list[RenderableType]:
+        lines: list[RenderableType] = []
+        for run in runs:
             facts = [
                 f"{run.run_id} {status_label(run.status)}",
                 elapsed(run.started_at, run.finished_at),
@@ -931,7 +978,7 @@ class SlashBlock:
         lines.extend([bar([], style="white on grey23"), Text()])
         if self.body:
             first, *rest = self.body
-            lines.append(Text.from_markup(f"[dim]:[/] [bold]{escape(first)}[/]"))
+            lines.append(Text.from_markup(f"[dim]:[/] [none]{escape(first)}[/]"))
             lines.append(Text())
             if rest and not rest[0].strip():
                 rest = rest[1:]

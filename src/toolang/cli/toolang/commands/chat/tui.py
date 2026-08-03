@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import threading
 from typing import TypeGuard
 
@@ -100,8 +100,11 @@ class ChatTuiAppContext:
     def finalize_block(self, block: blocks.MutableBlock) -> None:
         live_blocks = self.get_live_blocks()
         live_blocks[:] = [item for item in live_blocks if item is not block]
-        self._app.app.invalidate()
-        rendering.write_renderable(block.render())
+        renderable = block.render()
+        if self._app.app.is_running:
+            self._app._pending_scrollback.append(renderable)
+        else:
+            rendering.write_renderable(renderable)
 
     def finish_run(self) -> None:
         self._app._finish_active_run()
@@ -162,6 +165,7 @@ class ChatTuiApp:
         self.cancel_sent_run_id: str | None = None
         self.interrupt_exit_pending = False
         self.unfinalized_blocks: list[blocks.MutableBlock] = []
+        self._pending_scrollback: list[RenderableType | None] = []
         self.run_in_flight = threading.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
@@ -261,17 +265,21 @@ class ChatTuiApp:
                 await self.dispatcher_task
 
     def _header_model_label(self) -> str:
+        selected_model = str(self.selects.get("model") or "").strip()
+        default_selected = selected_model in {"", "default"}
         try:
             label = slashes.chat_model_label(self.client.list_models(), self.selects)
-            return self.actual_model if label == "auto" and self.actual_model else label
+            return self.actual_model if default_selected and self.actual_model else label
         except (click.ClickException, ToolangError, ValueError):
             label = chat_status_label(self.selects)
-            return self.actual_model if label == "auto" and self.actual_model else label
+            return self.actual_model if default_selected and self.actual_model else label
 
     def _status_label(self) -> str:
         model_label = self._header_model_label()
         flow = str(self.selects.get("flow") or "")
         agic = str(self.selects.get("agic") or "")
+        if agic == "default":
+            agic = ""
         executable = f"flow:{flow}" if flow else f"agic:{agic}" if agic else ""
         return f"{model_label}  {executable}" if executable else model_label
 
@@ -288,10 +296,39 @@ class ChatTuiApp:
             try:
                 should_exit = self.handle_ui_event(event)
             finally:
-                self.ui_events.task_done()
-                self.app.invalidate()
+                try:
+                    self._commit_ui_update()
+                finally:
+                    self.ui_events.task_done()
             if should_exit:
                 return
+
+    def _commit_ui_update(self) -> None:
+        pending = self._pending_scrollback.copy()
+
+        if self.app.is_running and pending:
+            self.app.renderer.erase(leave_alternate_screen=False)
+            self._write_scrollback(pending)
+        elif pending:
+            rendering.write_renderables(pending)
+        del self._pending_scrollback[: len(pending)]
+        self.app.invalidate()
+
+    def _write_scrollback(
+        self,
+        renderables: Sequence[RenderableType | None],
+    ) -> None:
+        value = rendering.renderables_output(renderables)
+        if not value:
+            return
+        output = self.app.output
+        output.hide_cursor()
+        try:
+            output.write_raw(value)
+            output.flush()
+        finally:
+            output.show_cursor()
+            output.flush()
 
     def handle_ui_event(self, event: ChatUIEvent) -> bool:
         kind = event.type
@@ -398,6 +435,8 @@ class ChatTuiApp:
                 return
             self.selects.clear()
             self.selects.update(updated)
+            if any(command.kind == "model" for command in submission):
+                self.actual_model = None
             self.status_bar.set_status(self._status_label())
             return
         if not isinstance(submission, RunnableCall):
@@ -482,6 +521,8 @@ class ChatTuiApp:
         events.handle_run_event(event, self.app_context)
 
     def start_run(self, call: QueuedCall) -> None:
+        self.unfinalized_blocks.append(blocks.RunStartBlock.create(call.source))
+        self.app.invalidate()
         try:
             thread_id = self.app_context.ensure_thread_id()
         except click.ClickException as exc:
@@ -490,9 +531,6 @@ class ChatTuiApp:
         except (ToolangError, ValueError) as exc:
             self._handle_run_error(str(exc))
             return
-
-        self.unfinalized_blocks.append(blocks.RunStartBlock.create(call.source))
-        self.app.invalidate()
 
         def consume() -> None:
             self.client.start_run(
