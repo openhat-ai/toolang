@@ -73,9 +73,10 @@ class ChatRunPresenter:
                     app.finalize_block(block)
                 else:
                     self._discard(block, app)
+            app.finalize_block(blocks.SubmissionErrorBlock(message))
             self.reset()
             app.finish_run()
-            return False
+            return True
         for block in list(app.get_live_blocks()):
             if isinstance(block, (blocks.RunStartBlock, blocks.RunSteerBlock)):
                 app.finalize_block(block)

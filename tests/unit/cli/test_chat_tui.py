@@ -89,10 +89,11 @@ def test_chat_run_begin_finalizes_local_submission_block() -> None:
 def test_chat_submission_has_no_status_before_run_begin() -> None:
     block = blocks.RunStartBlock.create("hello")
 
-    rendered = _render_text(block.render())
+    rendered = _render_text(block.render(), width=20)
 
     assert "> hello" in rendered
     assert "starting" not in rendered
+    assert rendered.splitlines() == [" " * 20, "> hello" + " " * 13, " " * 20, ""]
 
 
 def test_chat_preaccept_error_does_not_render_a_failed_run() -> None:
@@ -101,10 +102,14 @@ def test_chat_preaccept_error_does_not_render_a_failed_run() -> None:
 
     handled = events.handle_run_error(app, "Runnable not found: missing")
 
-    assert handled is False
+    assert handled is True
     assert app.live_blocks == []
-    assert [block.type for block in app.finalized] == ["RunStartBlock"]
-    rendered = _render_text(app.finalized[0].render())
+    assert [block.type for block in app.finalized] == [
+        "RunStartBlock",
+        "SubmissionErrorBlock",
+    ]
+    rendered = "\n".join(_render_text(block.render()) for block in app.finalized)
+    assert "! Runnable not found: missing" in rendered
     assert "starting" not in rendered
     assert "run failed" not in rendered
     assert app.finished
@@ -1136,6 +1141,37 @@ def test_chat_tui_creates_a_thread_only_for_the_first_submission(
     assert started.wait(timeout=1)
     assert client.created == 1
     assert app.thread_id == "term_lazy"
+
+
+def test_chat_thread_creation_error_is_a_submission_error_in_scrollback(
+    monkeypatch: Any,
+) -> None:
+    class FailingClient(FakeClient):
+        def create_thread(self) -> str:
+            raise ValueError("thread creation failed")
+
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FailingClient(),
+    )
+    rendered: list[str] = []
+    monkeypatch.setattr(
+        tui.rendering,
+        "write_renderable",
+        lambda value: rendered.append(_render_text(value)),
+    )
+
+    app.start_run(QueuedCall("hello", {}))
+
+    output = "\n".join(rendered)
+    assert "> hello" in output
+    assert "! thread creation failed" in output
+    assert "run failed" not in output
+    assert app.status_bar.error_message == ""
+    assert not app.run_in_flight.is_set()
 
 
 def test_chat_queue_captures_settings_at_submission_time() -> None:

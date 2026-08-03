@@ -84,6 +84,21 @@ def _terminal_diagnostic(status: str, error: str) -> str:
     return value
 
 
+def _wrap_plain_lines(text: str) -> list[str]:
+    width = max(terminal_width() - 2, 20)
+    lines: list[str] = []
+    for raw_line in text.splitlines() or [""]:
+        line = raw_line.strip()
+        while len(line) > width:
+            split_at = line.rfind(" ", 0, width + 1)
+            split_at = width if split_at <= 0 else split_at
+            lines.append(line[:split_at].rstrip())
+            line = line[split_at:].lstrip()
+        if line:
+            lines.append(line)
+    return lines
+
+
 class MutableBlock:
     """A live UI block that the TUI can later move into scrollback."""
 
@@ -128,6 +143,26 @@ class RunStartBlock(MutableBlock):
                     style="white on grey23",
                 )
             )
+        else:
+            lines.append(bar([], style="white on grey23"))
+        lines.append(Text("\n"))
+        return Group(*lines)
+
+
+@dataclass(frozen=True, slots=True)
+class SubmissionErrorBlock(MutableBlock):
+    """A rejected submission diagnostic with no associated run."""
+
+    error: str
+
+    def update(self, event: Any) -> None:
+        del event
+
+    def render(self) -> RenderableType:
+        lines = [
+            Text.from_markup(f"[red]! {escape(line)}[/]")
+            for line in _wrap_plain_lines(friendly_error(self.error))
+        ]
         lines.append(Text("\n"))
         return Group(*lines)
 
@@ -244,7 +279,7 @@ class RunStopBlock(MutableBlock):
         if message:
             lines.extend(
                 Text.from_markup(f"[{tone}]! {escape(line)}[/]")
-                for line in self._wrap_plain_lines(message)
+                for line in _wrap_plain_lines(message)
             )
         facts = self._facts()
         suffix = f" · {' · '.join(facts)}" if facts else ""
@@ -265,22 +300,6 @@ class RunStopBlock(MutableBlock):
                 count(max(self.metrics.runs - 1, 0), "run"),
             )
         return facts
-
-    @staticmethod
-    def _wrap_plain_lines(text: str) -> list[str]:
-        width = max(terminal_width() - 2, 20)
-        lines: list[str] = []
-        for raw_line in text.splitlines() or [""]:
-            line = raw_line.strip()
-            while len(line) > width:
-                split_at = line.rfind(" ", 0, width + 1)
-                split_at = width if split_at <= 0 else split_at
-                lines.append(line[:split_at].rstrip())
-                line = line[split_at:].lstrip()
-            if line:
-                lines.append(line)
-        return lines
-
 
 @dataclass(slots=True)
 class DefaultStepBlock(MutableBlock):

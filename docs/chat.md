@@ -205,6 +205,13 @@ their owning visible operation rather than finalized in completion order. See
 language and the TUI's existing control-bar, streaming, alignment, and
 scrollback constraints.
 
+The input-box status bar is for transient editor and control feedback that has
+no submitted timeline owner. A runnable submission owns a scrollback block as
+soon as it is submitted. If it is rejected before `RunBegin`, its diagnostic is
+finalized in scrollback without a run id or run-status summary. After
+`RunBegin`, terminal diagnostics and status summaries belong to the accepted
+run and are finalized through its native events.
+
 Thread and run detail endpoints are inspection surfaces used to:
 
 - reload persisted history

@@ -482,6 +482,8 @@ class ChatTuiApp:
         events.handle_run_event(event, self.app_context)
 
     def start_run(self, call: QueuedCall) -> None:
+        self.unfinalized_blocks.append(blocks.RunStartBlock.create(call.source))
+        self.app.invalidate()
         try:
             thread_id = self.app_context.ensure_thread_id()
         except click.ClickException as exc:
@@ -490,9 +492,6 @@ class ChatTuiApp:
         except (ToolangError, ValueError) as exc:
             self._handle_run_error(str(exc))
             return
-
-        self.unfinalized_blocks.append(blocks.RunStartBlock.create(call.source))
-        self.app.invalidate()
 
         def consume() -> None:
             self.client.start_run(
