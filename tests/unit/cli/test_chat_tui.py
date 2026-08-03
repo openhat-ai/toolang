@@ -1378,7 +1378,7 @@ def test_chat_tui_removes_live_block_before_writing_scrollback(
     tui.ChatTuiAppContext(app).finalize_block(block)
 
 
-def test_chat_tui_erases_live_ui_before_writing_scrollback(
+def test_chat_tui_commits_live_finalization_in_one_terminal_transaction(
     monkeypatch: Any,
 ) -> None:
     app = tui.ChatTuiApp(
@@ -1404,18 +1404,80 @@ def test_chat_tui_erases_live_ui_before_writing_scrollback(
         ),
     )
 
-    def write_renderable(_renderable: RenderableType | None) -> None:
+    def write_scrollback(renderables: list[RenderableType | None]) -> None:
         assert block not in app.unfinalized_blocks
+        assert len(renderables) == 1
         order.append("write")
 
-    monkeypatch.setattr(tui.rendering, "write_renderable", write_renderable)
+    monkeypatch.setattr(app, "_write_scrollback", write_scrollback)
+    monkeypatch.setattr(app.app, "invalidate", lambda: order.append("invalidate"))
 
     tui.ChatTuiAppContext(app).finalize_block(block)
+    assert order == []
 
-    assert order == ["erase:False", "write"]
+    app._commit_ui_update()
 
+    assert order == ["erase:False", "write", "invalidate"]
+    assert app._pending_scrollback == []
     assert block not in app.unfinalized_blocks
 
+
+def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
+    monkeypatch: Any,
+) -> None:
+    app = tui.ChatTuiApp(
+        thread_id="thread_1",
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    monkeypatch.setattr(
+        type(app.app),
+        "is_running",
+        property(lambda _application: True),
+    )
+    writes: list[str] = []
+    erases: list[bool] = []
+
+    def write_scrollback(renderables: list[RenderableType | None]) -> None:
+        writes.append("".join(_render_text(item) for item in renderables))
+
+    monkeypatch.setattr(app, "_write_scrollback", write_scrollback)
+    monkeypatch.setattr(
+        app.app.renderer,
+        "erase",
+        lambda *, leave_alternate_screen: erases.append(leave_alternate_screen),
+    )
+
+    app.handle_run_event(_run_begin())
+    app._commit_ui_update()
+
+    app.handle_run_event(_model_step_begin(model="openai/gpt-5"))
+    assert "thinking…" in "".join(
+        _render_text(block.render()) for block in app.unfinalized_blocks
+    )
+    app._commit_ui_update()
+
+    app.handle_run_event(
+        StepEnd(
+            step="run_1/1",
+            kind="model",
+            status="failed",
+            error="You have no credits remaining.",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+    )
+    app._commit_ui_update()
+
+    assert erases == [False]
+    assert len(writes) == 1
+    assert "thinking…" not in writes[0]
+    assert "You have no credits remaining." in writes[0]
+    assert all(
+        not isinstance(block, blocks.ModelStepBlock)
+        for block in app.unfinalized_blocks
+    )
 
 def test_chat_tui_show_command_renders_durable_markdown(
     monkeypatch: Any,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 import threading
 from typing import TypeGuard
 
@@ -98,12 +98,13 @@ class ChatTuiAppContext:
         return self.get_active_run() is not None or self._app.run_in_flight.is_set()
 
     def finalize_block(self, block: blocks.MutableBlock) -> None:
-        if self._app.app.is_running:
-            self._app.app.renderer.erase(leave_alternate_screen=False)
         live_blocks = self.get_live_blocks()
         live_blocks[:] = [item for item in live_blocks if item is not block]
-        self._app.app.invalidate()
-        rendering.write_renderable(block.render())
+        renderable = block.render()
+        if self._app.app.is_running:
+            self._app._pending_scrollback.append(renderable)
+        else:
+            rendering.write_renderable(renderable)
 
     def finish_run(self) -> None:
         self._app._finish_active_run()
@@ -164,6 +165,7 @@ class ChatTuiApp:
         self.cancel_sent_run_id: str | None = None
         self.interrupt_exit_pending = False
         self.unfinalized_blocks: list[blocks.MutableBlock] = []
+        self._pending_scrollback: list[RenderableType | None] = []
         self.run_in_flight = threading.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
@@ -294,10 +296,39 @@ class ChatTuiApp:
             try:
                 should_exit = self.handle_ui_event(event)
             finally:
-                self.ui_events.task_done()
-                self.app.invalidate()
+                try:
+                    self._commit_ui_update()
+                finally:
+                    self.ui_events.task_done()
             if should_exit:
                 return
+
+    def _commit_ui_update(self) -> None:
+        pending = self._pending_scrollback.copy()
+
+        if self.app.is_running and pending:
+            self.app.renderer.erase(leave_alternate_screen=False)
+            self._write_scrollback(pending)
+        elif pending:
+            rendering.write_renderables(pending)
+        del self._pending_scrollback[: len(pending)]
+        self.app.invalidate()
+
+    def _write_scrollback(
+        self,
+        renderables: Sequence[RenderableType | None],
+    ) -> None:
+        value = rendering.renderables_output(renderables)
+        if not value:
+            return
+        output = self.app.output
+        output.hide_cursor()
+        try:
+            output.write_raw(value)
+            output.flush()
+        finally:
+            output.show_cursor()
+            output.flush()
 
     def handle_ui_event(self, event: ChatUIEvent) -> bool:
         kind = event.type

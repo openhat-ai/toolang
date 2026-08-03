@@ -149,13 +149,22 @@ def write_renderables(
     if hide_cursor:
         sys.stdout.write("\x1b[?25l")
     try:
-        output = "".join(_renderable_output(renderable) for renderable in pending)
-        sys.stdout.write(output)
+        sys.stdout.write(renderables_output(pending))
         sys.stdout.flush()
     finally:
         if hide_cursor:
             sys.stdout.write("\x1b[?25h")
             sys.stdout.flush()
+
+
+def renderables_output(renderables: Sequence[RenderableType | None]) -> str:
+    """Render stable terminal blocks into one ANSI-encoded write."""
+
+    return "".join(
+        _renderable_output(renderable)
+        for renderable in renderables
+        if renderable is not None
+    )
 
 
 def _renderable_output(renderable: RenderableType) -> str:

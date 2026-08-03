@@ -680,10 +680,11 @@ The presenter exposes two results after applying an event:
 The TUI applies them atomically:
 
 1. replace the live block list;
-2. invalidate the prompt-toolkit layout;
-3. render finalized blocks to stdout in order;
-4. leave prompt, queue, and status state unchanged;
-5. finish the active root run only after its terminal block is finalized.
+2. erase the current prompt-toolkit frame when blocks were finalized;
+3. write finalized blocks directly to the terminal output in order;
+4. invalidate the prompt-toolkit layout once;
+5. leave prompt, queue, and status state unchanged;
+6. finish the active root run only after its terminal block is finalized.
 
 This contract prevents flicker, duplicated blocks, and completion-order
 reordering while keeping terminal I/O outside the semantic state.
