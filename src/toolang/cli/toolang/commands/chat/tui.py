@@ -98,6 +98,8 @@ class ChatTuiAppContext:
         return self.get_active_run() is not None or self._app.run_in_flight.is_set()
 
     def finalize_block(self, block: blocks.MutableBlock) -> None:
+        if self._app.app.is_running:
+            self._app.app.renderer.erase(leave_alternate_screen=False)
         live_blocks = self.get_live_blocks()
         live_blocks[:] = [item for item in live_blocks if item is not block]
         self._app.app.invalidate()

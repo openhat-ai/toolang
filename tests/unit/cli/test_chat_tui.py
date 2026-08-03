@@ -329,6 +329,82 @@ def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
     assert app.finished
 
 
+def test_chat_failed_child_is_a_statement_diagnostic_fact() -> None:
+    message = "You have no credits remaining."
+    app = FakeApp()
+
+    events.handle_run_event(_run_begin(executable_kind="flow"), app)
+    events.handle_run_event(
+        StepBegin(
+            step="run_1/1",
+            kind="run",
+            given={
+                "statement": "scatter",
+                "count": 6,
+                "runnable": "expand_queries",
+                "doc": "Expand the research question into diverse search queries",
+                "source": {"head": "scatter 6 expand_queries"},
+            },
+            started_at="2026-01-01T00:00:01Z",
+        ),
+        app,
+    )
+    events.handle_run_event(
+        RunBegin(
+            run="run_child",
+            input=RunControlRef(index=0),
+            parent="run_1/1",
+            context={
+                "origin": "chat",
+                "root": "run_1",
+                "runnable": {"kind": "agic", "name": "expand_queries"},
+            },
+            started_at="2026-01-01T00:00:01Z",
+        ),
+        app,
+    )
+    events.handle_run_event(_model_step_begin(run_id="run_child"), app)
+    events.handle_run_event(
+        StepEnd(
+            step="run_child/1",
+            kind="model",
+            status="failed",
+            error=message,
+            finished_at="2026-01-01T00:00:02Z",
+        ),
+        app,
+    )
+    events.handle_run_event(
+        RunEnd(
+            run="run_child",
+            status="failed",
+            error=message,
+            finished_at="2026-01-01T00:00:02Z",
+        ),
+        app,
+    )
+    events.handle_run_event(
+        StepEnd(
+            step="run_1/1",
+            kind="run",
+            status="failed",
+            error=message,
+            finished_at="2026-01-01T00:00:02Z",
+        ),
+        app,
+    )
+
+    assert [block.type for block in app.finalized] == ["FlowStepBlock"]
+    rendered = _render_text(app.finalized[0].render())
+    assert rendered.count("[1] scatter 6 expand_queries") == 1
+    diagnostic = f"! run_1/1 failed: {message}"
+    child_fact = "run_child failed · 1.0s"
+    assert diagnostic in rendered
+    assert child_fact in rendered
+    assert rendered.index(diagnostic) < rendered.index(child_fact)
+    assert "↳ run_child failed" not in rendered
+
+
 def test_chat_flow_statement_owns_child_model_tool_model_activity() -> None:
     app = FakeApp()
 
@@ -840,6 +916,15 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     assert "> hello" in _render_text(start.render())
     assert "run_1" in _render_text(start.render())
 
+    root_summary = blocks.RunStopBlock.create(_run_begin())
+    root_summary.update(_run_end(status="failed"))
+    marker = next(
+        segment
+        for segment in rendering.render_segments(root_summary.render(), width=80)
+        if "◆" in segment.text
+    )
+    assert marker.style is not None and marker.style.dim
+
     steer = blocks.RunSteerBlock.create(
         message="adjust",
         run_id="run_1",
@@ -1252,6 +1337,43 @@ def test_chat_tui_removes_live_block_before_writing_scrollback(
     monkeypatch.setattr(tui.rendering, "write_renderable", write_renderable)
 
     tui.ChatTuiAppContext(app).finalize_block(block)
+
+
+def test_chat_tui_erases_live_ui_before_writing_scrollback(
+    monkeypatch: Any,
+) -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    block = blocks.FlowStepBlock.create(_flow_step_begin())
+    app.unfinalized_blocks.append(block)
+    order: list[str] = []
+    monkeypatch.setattr(
+        type(app.app),
+        "is_running",
+        property(lambda _application: True),
+    )
+    monkeypatch.setattr(
+        app.app.renderer,
+        "erase",
+        lambda *, leave_alternate_screen: order.append(
+            f"erase:{leave_alternate_screen}"
+        ),
+    )
+
+    def write_renderable(_renderable: RenderableType | None) -> None:
+        assert block not in app.unfinalized_blocks
+        order.append("write")
+
+    monkeypatch.setattr(tui.rendering, "write_renderable", write_renderable)
+
+    tui.ChatTuiAppContext(app).finalize_block(block)
+
+    assert order == ["erase:False", "write"]
 
     assert block not in app.unfinalized_blocks
 

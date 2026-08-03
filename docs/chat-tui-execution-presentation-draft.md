@@ -382,6 +382,16 @@ non-batched, directly visible child may close with a compact line:
 The child does not repeat its final model output or resource totals when those
 are already represented by the statement outcome.
 
+When a child failure also fails its owning statement, the statement owns the
+single `!` diagnostic. The failed child becomes an unmarked continuation fact;
+the renderer does not place a failed `↳` closure before a second `!` marker:
+
+```text
+[1] scatter 6 expand_queries
+  ! run_parent/1 failed: provider rejected the request
+    run_child failed · 1.0s
+```
+
 
 ### Batched Work
 

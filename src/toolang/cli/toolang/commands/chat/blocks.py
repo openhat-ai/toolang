@@ -284,7 +284,7 @@ class RunStopBlock(MutableBlock):
         facts = self._facts()
         suffix = f" · {' · '.join(facts)}" if facts else ""
         summary = Text()
-        summary.append("◆ ", style=tone)
+        summary.append("◆ ", style="dim")
         summary.append(f"{run_id} ", style="dim")
         summary.append(label, style=tone)
         summary.append(suffix, style="dim")
@@ -435,8 +435,8 @@ class FlowStepBlock(MutableBlock):
             lines.extend(self._live_lines())
             return Group(*lines)
         lines.extend(self._call_lines())
-        lines.extend(self._child_run_lines())
         if end.status != "finished":
+            lines.extend(self._successful_child_run_lines())
             error = _terminal_diagnostic(
                 end.status,
                 self.display_error or end.error or "",
@@ -453,10 +453,12 @@ class FlowStepBlock(MutableBlock):
                 detail = f"{detail}: {error}"
             tone = "yellow" if end.status == "canceled" else "red"
             lines.append(Text.from_markup(f"[{tone}]  ! {escape(detail)}[/]"))
+            lines.extend(self._failed_child_fact_lines())
             facts = self._aggregate_facts(end)
             if facts:
                 lines.append(Text.from_markup(f"[dim]    {escape(facts)}[/]"))
             return Group(*lines, Text("\n"))
+        lines.extend(self._child_run_lines())
         if state.statement == "repeat":
             iterations = (
                 state.current_iteration + 1
@@ -570,8 +572,34 @@ class FlowStepBlock(MutableBlock):
         return lines
 
     def _child_run_lines(self) -> list[RenderableType]:
+        return self._child_run_lines_for(self.child_runs)
+
+    def _successful_child_run_lines(self) -> list[RenderableType]:
+        return self._child_run_lines_for(
+            tuple(run for run in self.child_runs if run.status == "finished")
+        )
+
+    def _failed_child_fact_lines(self) -> list[RenderableType]:
         lines: list[RenderableType] = []
         for run in self.child_runs:
+            if run.status == "finished":
+                continue
+            facts = [
+                f"{run.run_id} {status_label(run.status)}",
+                elapsed(run.started_at, run.finished_at),
+            ]
+            tone = "yellow" if run.status == "canceled" else "red"
+            lines.append(
+                Text.from_markup(
+                    f"[{tone}]    {escape(' · '.join(fact for fact in facts if fact))}[/]"
+                )
+            )
+        return lines
+
+    @staticmethod
+    def _child_run_lines_for(runs: Sequence[RunState]) -> list[RenderableType]:
+        lines: list[RenderableType] = []
+        for run in runs:
             facts = [
                 f"{run.run_id} {status_label(run.status)}",
                 elapsed(run.started_at, run.finished_at),
