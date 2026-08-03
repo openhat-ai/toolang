@@ -113,13 +113,7 @@ class RunStartBlock(MutableBlock):
         if isinstance(event, (RunBegin, RunEnd)):
             self.run_id = event.run or self.run_id
 
-    def _footer(self) -> str:
-        if self.run_id:
-            return f"  {self.run_id}"
-        return "  starting"
-
     def render(self) -> RenderableType:
-        footer = self._footer()
         lines: list[RenderableType] = [bar([], style="white on grey23")]
         for index, line in enumerate(self.message.splitlines() or [""]):
             lines.append(
@@ -127,7 +121,13 @@ class RunStartBlock(MutableBlock):
                 if index == 0
                 else bar([(f"  {line}", "white on grey23")], style="white on grey23")
             )
-        lines.append(bar([(footer, "grey70 on grey23")], style="white on grey23"))
+        if self.run_id:
+            lines.append(
+                bar(
+                    [(f"  {self.run_id}", "grey70 on grey23")],
+                    style="white on grey23",
+                )
+            )
         lines.append(Text("\n"))
         return Group(*lines)
 

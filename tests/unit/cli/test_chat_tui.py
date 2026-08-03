@@ -86,6 +86,30 @@ def test_chat_run_begin_finalizes_local_submission_block() -> None:
     assert "run_1" in _render_text(app.finalized[0].render())
 
 
+def test_chat_submission_has_no_status_before_run_begin() -> None:
+    block = blocks.RunStartBlock.create("hello")
+
+    rendered = _render_text(block.render())
+
+    assert "> hello" in rendered
+    assert "starting" not in rendered
+
+
+def test_chat_preaccept_error_does_not_render_a_failed_run() -> None:
+    app = FakeApp()
+    app.live_blocks.append(blocks.RunStartBlock.create(":flow missing\n\nInput"))
+
+    handled = events.handle_run_error(app, "Runnable not found: missing")
+
+    assert handled is False
+    assert app.live_blocks == []
+    assert [block.type for block in app.finalized] == ["RunStartBlock"]
+    rendered = _render_text(app.finalized[0].render())
+    assert "starting" not in rendered
+    assert "run failed" not in rendered
+    assert app.finished
+
+
 def test_chat_next_step_finalizes_local_steer_block() -> None:
     app = FakeApp()
 

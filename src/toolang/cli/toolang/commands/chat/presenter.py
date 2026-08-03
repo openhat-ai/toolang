@@ -67,6 +67,15 @@ class ChatRunPresenter:
         active_run_id = app.get_active_run()
         if active_run_id is None and not app.get_live_blocks():
             return False
+        if active_run_id is None and self._root_run_id is None:
+            for block in list(app.get_live_blocks()):
+                if isinstance(block, blocks.RunStartBlock):
+                    app.finalize_block(block)
+                else:
+                    self._discard(block, app)
+            self.reset()
+            app.finish_run()
+            return False
         for block in list(app.get_live_blocks()):
             if isinstance(block, (blocks.RunStartBlock, blocks.RunSteerBlock)):
                 app.finalize_block(block)
