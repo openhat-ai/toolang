@@ -75,8 +75,21 @@ def test_run_resolves_hosting_inputs_and_runs_in_foreground(
         captured["resolve"] = kwargs
         return _launch_spec(**kwargs)
 
-    async def run(spec: hosting.LaunchSpec) -> int:
+    async def run(
+        spec: hosting.LaunchSpec,
+        *,
+        on_ready: Any,
+    ) -> int:
         captured["run"] = spec
+        on_ready(
+            hosting.HostingState(
+                sandbox=spec.sandbox,
+                ref=HostingRef(
+                    runtime_id="workload-1",
+                    endpoint=spec.serve.endpoint,
+                ),
+            )
+        )
         return 0
 
     monkeypatch.setattr(hosting, "resolve_launch", resolve_launch)
@@ -115,6 +128,10 @@ def test_run_resolves_hosting_inputs_and_runs_in_foreground(
     assert resolved["tools"] == ["filesystem,shell"]
     assert resolved["caps"] == ["skill/reviewer"]
     assert captured["run"] == _launch_spec(**resolved)
+    assert result.stdout == ""
+    assert result.stderr.strip() == (
+        "Running agent alice: http://0.0.0.0:8123 (Ctrl+C to stop)"
+    )
 
 
 def test_start_launches_in_background_and_reports_endpoint(

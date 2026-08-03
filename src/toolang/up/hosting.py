@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 import json
@@ -230,10 +230,16 @@ async def _launch_locked(spec: LaunchSpec) -> HostingHandle:
         raise
 
 
-async def run(spec: LaunchSpec) -> int:
+async def run(
+    spec: LaunchSpec,
+    *,
+    on_ready: Callable[[HostingState], None] | None = None,
+) -> int:
     """Launch, follow, and release one foreground AgentServer."""
 
     handle = await launch(spec)
+    if on_ready is not None:
+        on_ready(handle.state)
     try:
         exit_code = await handle.implementation.wait(handle.state.ref)
     except asyncio.CancelledError:
