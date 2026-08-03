@@ -40,7 +40,7 @@ class HostingRequest:
     endpoint: str
     command: tuple[str, ...]
     working_directory: Path
-    log_path: Path
+    log_path: Path | None
     envs: dict[str, str] = field(default_factory=dict)
     mounts: tuple[HostingMount, ...] = ()
     local_dev_artifact: Path | None = None
@@ -53,7 +53,7 @@ class HostingPlan:
     sandbox: str
     command: tuple[str, ...]
     working_directory: Path
-    log_path: Path
+    log_path: Path | None
     endpoint: str
     envs: dict[str, str] = field(default_factory=dict)
     mounts: tuple[HostingMount, ...] = ()

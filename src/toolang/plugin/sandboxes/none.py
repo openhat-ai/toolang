@@ -101,6 +101,15 @@ def create_hosting(config: Mapping[str, Any]) -> Hosting:
 def _launch(plan: HostingPlan) -> subprocess.Popen[bytes]:
     if not plan.command:
         raise ValueError("none hosting requires a command")
+    if plan.log_path is None:
+        return subprocess.Popen(
+            plan.command,
+            stdin=subprocess.DEVNULL,
+            env=dict(plan.envs),
+            cwd=str(plan.working_directory),
+            start_new_session=True,
+            close_fds=True,
+        )
     plan.log_path.parent.mkdir(parents=True, exist_ok=True)
     with plan.log_path.open("ab") as stream:
         return subprocess.Popen(

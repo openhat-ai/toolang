@@ -88,6 +88,7 @@ class LaunchSpec:
     sandbox: str
     config: dict[str, object]
     environ: dict[str, str]
+    log_path: Path | None = None
     dev_artifact: Path | None = None
 
 
@@ -113,6 +114,7 @@ async def resolve_launch(
     file_inboxes: Sequence[Path] | None = None,
     dev: Path | None = None,
     log_spec: str | None = None,
+    log_path: Path | None = None,
     temporary_port: bool = False,
 ) -> LaunchSpec:
     """Resolve source state, server inputs, and one sandbox selection."""
@@ -144,6 +146,7 @@ async def resolve_launch(
         sandbox=selected,
         config=config,
         environ=dict(environ),
+        log_path=log_path,
         dev_artifact=artifact,
     )
 
@@ -193,7 +196,7 @@ async def _launch_locked(spec: LaunchSpec) -> HostingHandle:
             ),
         ),
         working_directory=(spec.serve.layout.home if name == "none" else hosted_home),
-        log_path=spec.serve.layout.runtime_log,
+        log_path=spec.log_path,
         envs={
             **spec.environ,
             "TOOLANG_ROOT": str(hosted_root),

@@ -38,6 +38,7 @@ def _launch_spec(
     file_inboxes: Sequence[Path] | None,
     dev: Path | None,
     log_spec: str | None,
+    log_path: Path | None,
     environ: Mapping[str, str],
     **_kwargs: object,
 ) -> hosting.LaunchSpec:
@@ -59,6 +60,7 @@ def _launch_spec(
         sandbox=sandbox or "none",
         config={},
         environ=dict(environ),
+        log_path=log_path,
         dev_artifact=dev,
     )
 
@@ -127,6 +129,7 @@ def test_run_resolves_hosting_inputs_and_runs_in_foreground(
     assert resolved["models"] == ["openai/gpt-5[openai],o3"]
     assert resolved["tools"] == ["filesystem,shell"]
     assert resolved["caps"] == ["skill/reviewer"]
+    assert resolved["log_path"] is None
     assert captured["run"] == _launch_spec(**resolved)
     assert result.stdout == ""
     assert result.stderr.strip() == (
@@ -140,8 +143,10 @@ def test_start_launches_in_background_and_reports_endpoint(
 ) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
+    captured: dict[str, Any] = {}
 
     async def resolve_launch(**kwargs: Any) -> hosting.LaunchSpec:
+        captured["resolve"] = kwargs
         return _launch_spec(**kwargs)
 
     async def launch(spec: hosting.LaunchSpec) -> object:
@@ -177,6 +182,8 @@ def test_start_launches_in_background_and_reports_endpoint(
 
     assert result.exit_code == 0, result.stderr
     assert result.stdout.strip() == "Started agent alice: http://localhost:8124"
+    resolved = captured["resolve"]
+    assert resolved["log_path"] == root / "agents" / "alice" / ".runtime" / "agent.log"
 
 
 def test_stop_forwards_force_to_hosting(

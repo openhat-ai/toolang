@@ -9,10 +9,16 @@ import pytest
 from toolang.base.protocols.hosting import Hosting
 from toolang.base.types.hosting import HostingMount, HostingRequest
 from toolang.plugin.config import parse_sandbox_binding
+from toolang.plugin.sandboxes import none as none_sandbox
 from toolang.plugin.sandboxes.loading import load_hosting
 
 
-def _request(root: Path, *, dev: Path | None = None) -> HostingRequest:
+def _request(
+    root: Path,
+    *,
+    dev: Path | None = None,
+    foreground: bool = False,
+) -> HostingRequest:
     home = root / "agents" / "alice"
     home.mkdir(parents=True, exist_ok=True)
     return HostingRequest(
@@ -27,7 +33,7 @@ def _request(root: Path, *, dev: Path | None = None) -> HostingRequest:
         endpoint="http://localhost:8123",
         command=("too", "serve", "alice", "--port", "8123"),
         working_directory=home,
-        log_path=home / ".runtime" / "agent.log",
+        log_path=None if foreground else home / ".runtime" / "agent.log",
         envs={"EXAMPLE": "value"},
         mounts=(
             HostingMount(
@@ -52,6 +58,26 @@ def test_none_hosting_parses_own_spec_and_prepares_local_process(
     assert plan.working_directory == tmp_path / "agents" / "alice"
     with pytest.raises(ValueError, match="does not accept"):
         hosting.prepare("", _request(tmp_path))
+
+
+def test_none_foreground_hosting_inherits_console_streams(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    process = cast(Any, object())
+
+    def popen(command: tuple[str, ...], **kwargs: object) -> object:
+        captured.update(command=command, **kwargs)
+        return process
+
+    monkeypatch.setattr(none_sandbox.subprocess, "Popen", popen)
+    hosting = load_hosting("none", config={})
+    plan = hosting.prepare(None, _request(tmp_path, foreground=True))
+
+    assert none_sandbox._launch(plan) is process
+    assert "stdout" not in captured
+    assert "stderr" not in captured
 
 
 def test_docker_hosting_prepares_and_launches(
@@ -111,6 +137,33 @@ def test_docker_hosting_uses_configured_default_image(tmp_path: Path) -> None:
     plan = hosting.prepare(None, _request(tmp_path))
 
     assert plan.sandbox == "docker:python:3.14"
+
+
+def test_docker_foreground_hosting_follows_container_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "toolang.plugin.sandboxes.docker.docker_run_detached",
+        lambda **_kwargs: "container-123",
+    )
+    monkeypatch.setattr(
+        "toolang.plugin.sandboxes.docker.docker_follow_container_logs",
+        lambda name: calls.append(("logs", name)),
+    )
+    monkeypatch.setattr(
+        "toolang.plugin.sandboxes.docker.docker_wait_container",
+        lambda name: calls.append(("wait", name)) or 0,
+    )
+    hosting = load_hosting("docker", config={})
+    plan = hosting.prepare(None, _request(tmp_path, foreground=True))
+
+    ref = asyncio.run(hosting.launch(plan))
+    result = asyncio.run(hosting.wait(ref))
+
+    assert result == 0
+    assert calls == [("logs", ref.runtime_id), ("wait", ref.runtime_id)]
 
 
 def test_parse_sandbox_binding_keeps_plugin_owned_spec() -> None:
