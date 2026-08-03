@@ -109,3 +109,6 @@ caps [agent] list                    # List all caps
 - Website: [toolang.ai](https://toolang.ai/)
 - Docs: [toolang.ai/docs](https://toolang.ai/docs)
 - GitHub: [github.com/openhat-ai/toolang](https://github.com/openhat-ai/toolang)
+- [Changelog](https://github.com/openhat-ai/toolang/blob/main/CHANGELOG.md)
+- [Release notes](https://github.com/openhat-ai/toolang/blob/main/RELEASE_NOTES.md)
+- [Known limitations](https://github.com/openhat-ai/toolang/blob/main/KNOWN_LIMITATIONS.md)

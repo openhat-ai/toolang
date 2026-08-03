@@ -31,7 +31,7 @@ from ...common.context import (
 from ...common.output import active_agent_error
 
 if TYPE_CHECKING:
-    from toolang.up.hosting import LaunchSpec
+    from toolang.up.hosting import HostingState, LaunchSpec
     from ...common.progress import CliProgress
 
 
@@ -98,11 +98,21 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                 file_inboxes=options.inboxes,
                 dev=options.dev,
                 log_spec=log_plan.spec,
+                log_path=log_plan.path,
                 temporary_port=options.port is None,
                 environ=log_plan.environ,
             ),
         )
-        return user_call(asyncio.run, hosting.run(startup))
+        return user_call(
+            asyncio.run,
+            hosting.run(
+                startup,
+                on_ready=lambda state: _report_foreground_ready(
+                    layout.name,
+                    state,
+                ),
+            ),
+        )
     except KeyboardInterrupt:
         return 130
     except (
@@ -279,7 +289,13 @@ def run(
         finished = True
         exit_code = user_call(
             asyncio.run,
-            hosting.run(launch.startup),
+            hosting.run(
+                launch.startup,
+                on_ready=lambda state: _report_foreground_ready(
+                    launch.target.name,
+                    state,
+                ),
+            ),
         )
     except KeyboardInterrupt:
         if not finished:
@@ -299,6 +315,13 @@ def run(
             raise
         raise click.ClickException(str(exc)) from exc
     raise typer.Exit(exit_code)
+
+
+def _report_foreground_ready(name: str, state: HostingState) -> None:
+    typer.echo(
+        f"Running agent {name}: {state.ref.endpoint} (Ctrl+C to stop)",
+        err=True,
+    )
 
 
 def start(
@@ -520,6 +543,7 @@ def resolve_startup(
             file_inboxes=inboxes,
             dev=dev,
             log_spec=log_plan.spec,
+            log_path=log_plan.path,
             temporary_port=target.placement == "visiting" and port is None,
             environ=log_plan.environ,
         ),

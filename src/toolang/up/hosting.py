@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 import json
@@ -88,6 +88,7 @@ class LaunchSpec:
     sandbox: str
     config: dict[str, object]
     environ: dict[str, str]
+    log_path: Path | None = None
     dev_artifact: Path | None = None
 
 
@@ -113,6 +114,7 @@ async def resolve_launch(
     file_inboxes: Sequence[Path] | None = None,
     dev: Path | None = None,
     log_spec: str | None = None,
+    log_path: Path | None = None,
     temporary_port: bool = False,
 ) -> LaunchSpec:
     """Resolve source state, server inputs, and one sandbox selection."""
@@ -144,6 +146,7 @@ async def resolve_launch(
         sandbox=selected,
         config=config,
         environ=dict(environ),
+        log_path=log_path,
         dev_artifact=artifact,
     )
 
@@ -193,7 +196,7 @@ async def _launch_locked(spec: LaunchSpec) -> HostingHandle:
             ),
         ),
         working_directory=(spec.serve.layout.home if name == "none" else hosted_home),
-        log_path=spec.serve.layout.runtime_log,
+        log_path=spec.log_path,
         envs={
             **spec.environ,
             "TOOLANG_ROOT": str(hosted_root),
@@ -230,10 +233,16 @@ async def _launch_locked(spec: LaunchSpec) -> HostingHandle:
         raise
 
 
-async def run(spec: LaunchSpec) -> int:
+async def run(
+    spec: LaunchSpec,
+    *,
+    on_ready: Callable[[HostingState], None] | None = None,
+) -> int:
     """Launch, follow, and release one foreground AgentServer."""
 
     handle = await launch(spec)
+    if on_ready is not None:
+        on_ready(handle.state)
     try:
         exit_code = await handle.implementation.wait(handle.state.ref)
     except asyncio.CancelledError:

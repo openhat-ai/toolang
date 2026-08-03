@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "toolang"
-version = "0.2.7"
+version = "0.3.0"
 description = "A programming language and runtime for agents"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -21,10 +21,10 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Typing :: Typed",
 ]
 dependencies = [
     "anyio>=4.12,<5",
+    "click>=8.3.3,<8.4",
     "dataclasses-json>=0.6,<1.0",
     "python-dateutil>=2.9,<3",
     "ddgs>=9.13.0",
@@ -45,7 +45,7 @@ dependencies = [
     "tree-sitter>=0.24,<0.26",
     "tree-sitter-toolang>=0.2.1",
     "wcwidth>=0.8,<1",
-    "typer>=0.16,<1",
+    "typer>=0.16,<0.24.2",
     "uvicorn>=0.35,<1",
     "watchfiles>=1.1,<2",
 ]
@@ -91,8 +91,8 @@ docker = "toolang.plugin.sandboxes.docker:create_hosting"
 dev = [
   "pdoc>=15,<16",
   "pytest>=8.3.5",
-  "ruff>=0.15.6",
-  "ty>=0.0.23",
+  "ruff>=0.15.6,<0.16",
+  "ty>=0.0.23,<0.0.24",
 ]
 
 [tool.hatch.build.targets.wheel]

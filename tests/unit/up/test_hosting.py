@@ -208,11 +208,13 @@ def test_foreground_run_waits_then_releases_state(
 
     monkeypatch.setattr(hosting, "_wait_ready", ready)
     spec = _launch_spec(tmp_path)
+    ready_states: list[hosting.HostingState] = []
 
-    result = asyncio.run(hosting.run(spec))
+    result = asyncio.run(hosting.run(spec, on_ready=ready_states.append))
 
     ref = HostingRef("workload-1", spec.serve.endpoint)
     assert result == 7
+    assert ready_states == [hosting.HostingState(sandbox=spec.sandbox, ref=ref)]
     assert ("wait", ref) in implementation.calls
     assert ("release", ref) in implementation.calls
     assert hosting.HostingState.load(spec.serve.layout.hosting_state) is None

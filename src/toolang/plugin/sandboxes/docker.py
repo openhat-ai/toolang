@@ -157,6 +157,7 @@ class DockerHosting:
                 "container_id": container_id,
                 "image": image,
                 "stage_dir": _plan_text(plan, "stage_dir"),
+                "follow_logs": plan.log_path is None,
             },
         )
 
@@ -164,6 +165,8 @@ class DockerHosting:
         return await asyncio.to_thread(docker_container_running, ref.runtime_id)
 
     async def wait(self, ref: HostingRef) -> int:
+        if ref.meta.get("follow_logs") is True:
+            await asyncio.to_thread(docker_follow_container_logs, ref.runtime_id)
         return await asyncio.to_thread(docker_wait_container, ref.runtime_id)
 
     async def stop(self, ref: HostingRef, *, force: bool = False) -> None:
@@ -282,6 +285,18 @@ def docker_wait_container(container_name: str) -> int:
         return int(result.stdout.strip())
     except ValueError as exc:
         raise RuntimeError("docker wait returned an invalid exit code") from exc
+
+
+def docker_follow_container_logs(container_name: str) -> None:
+    try:
+        result = subprocess.run(
+            ("docker", "logs", "--follow", container_name),
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("docker command not found") from exc
+    if result.returncode != 0:
+        raise RuntimeError("docker logs failed")
 
 
 def docker_stop_container(container_name: str, *, force: bool) -> None:
