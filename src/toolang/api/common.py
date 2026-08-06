@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import threading
-from typing import Any, Literal
+from typing import Literal
 
 from fastapi import Request
 from fastapi.sse import ServerSentEvent
 
 from toolang.execution.events import (
-    PartBegin,
     RunBegin,
     RunEnd,
     RunEvent,
@@ -20,6 +19,7 @@ from toolang.execution.events import (
     ThreadEvent,
     ThreadForked,
     ThreadListener,
+    event_to_data,
 )
 
 KEEP_ALIVE_SEC = 15.0
@@ -209,7 +209,7 @@ async def sse_stream(
                 continue
             yield ServerSentEvent(
                 event=event.type,
-                data=_event_data(event),
+                data=event_to_data(event),
             )
             if (
                 terminal_run_id is not None
@@ -219,13 +219,6 @@ async def sse_stream(
                 return
     finally:
         subscription.close()
-
-
-def _event_data(event: LiveEvent) -> dict[str, Any]:
-    data = asdict(event)
-    if isinstance(event, PartBegin):
-        data["part_type"] = data.pop("type_")
-    return data
 
 
 def _shutdown_started(request: Request) -> bool:

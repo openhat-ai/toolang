@@ -715,6 +715,10 @@ Run collections return `RunInfo` arrays directly. `RunInfo` combines run
 identity, status, input text, output summary, failure, and timestamps; there is
 no separate `RunSummary` response type.
 
+`RunDetail.output` contains the canonical message parts resolved from the
+run's durable output edge. It is `null` until the run has an output edge and
+may be an empty array when the resolved runnable result is empty.
+
 `steer` and `cancel` operate on running runs. Thread `rewind` and `fork` request
 bodies take an optional `run_id` anchor and `request_id`. An omitted run id
 selects the last visible run. Task and chore threads cannot be rewound or forked

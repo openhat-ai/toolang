@@ -921,12 +921,7 @@ class RunStore:
             ).fetchone()
         if row is None:
             return ()
-        output = _step_from_row(row).output
-        if run.output.part is None:
-            return output
-        if 0 <= run.output.part < len(output):
-            return (output[run.output.part],)
-        return ()
+        return run.output.resolve((_step_from_row(row),))
 
     def run_output_text(self, *, run_id: str) -> str:
         """Return the text projection of one run's durable output."""

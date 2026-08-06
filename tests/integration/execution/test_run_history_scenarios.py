@@ -6,10 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.execution_fixtures import project_run_end, project_run_start
-from toolang.base.types.message import Message
+from tests.support.execution_fixtures import (
+    project_run_end,
+    project_run_start,
+    project_step,
+)
+from toolang.base.types.message import Message, TextPart
 from toolang.common.ids import IdIssuer
 from toolang.execution.history import RunHistory
+from toolang.execution.records import OutputRef
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
@@ -114,5 +119,47 @@ def test_run_history_zero_detail_limit_returns_only_thread_summary(
         assert thread is not None
         assert thread.run_count == 1
         assert thread.runs == []
+    finally:
+        store.close()
+
+
+def test_run_history_resolves_run_output_for_run_and_thread_details(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_output",
+            thread_id="term_output",
+            origin="chat",
+            input=Message.user("hello"),
+        )
+        step = project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="system",
+            status="finished",
+            input=(),
+            output=(TextPart("ignored"), TextPart("result")),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        project_run_end(
+            store,
+            run_id=run.id,
+            output=OutputRef(step=step.path, part=1),
+        )
+
+        history = RunHistory(store)
+        detail = history.get_run(run.id)
+        thread = history.get_thread(run.thread)
+
+        assert store.run_output(run_id=run.id) == (TextPart("result"),)
+        assert detail is not None
+        assert detail.output == [TextPart("result")]
+        assert thread is not None
+        assert thread.runs[0].output == [TextPart("result")]
     finally:
         store.close()
