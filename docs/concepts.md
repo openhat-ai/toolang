@@ -147,6 +147,11 @@ Current built-in job kinds are:
 
 Jobs are definitions. They are not runs.
 
+A ready task or chore has one scheduler checkpoint and one stable derived
+thread. Each concrete handling attempt is a run. Chat and direct script calls
+create runs directly and have no job or scheduler record. See
+[work.md](./work.md).
+
 
 ## Thread
 

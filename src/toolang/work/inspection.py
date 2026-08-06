@@ -9,12 +9,10 @@ from typing import Protocol
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.types import JobKind, JobStage
 from toolang.common.layout import AgentLayout
-from toolang.lang.ast import Program
-
 from .authoring import assign_missing_authored_job_ids
 from .records import JobRecord
 from .schemas import JobDetail, JobInfo, LastRunInfo
-from .state import AgentJobs, job_thread_id
+from .state import job_thread_id
 from .store import open_job_store
 
 
@@ -27,6 +25,7 @@ class JobRun(Protocol):
     created_at: str
     started_at: str | None
     finished_at: str | None
+    error: str | None
 
 
 class JobInspection:
@@ -37,7 +36,7 @@ class JobInspection:
         *,
         catalog: AuthoredJobs,
         home: Path,
-        records: dict[tuple[JobKind, str], JobRecord],
+        records: dict[str, JobRecord],
         latest_runs: dict[str, JobRun],
     ) -> None:
         self.catalog = catalog
@@ -50,8 +49,8 @@ class JobInspection:
         cls,
         *,
         layout: AgentLayout,
-        program: Program,
         runs: Iterable[JobRun],
+        read_only: bool = False,
     ) -> JobInspection:
         """Load one consistent inspection snapshot from the owning stores."""
 
@@ -60,11 +59,14 @@ class JobInspection:
             layout,
             catalog=catalog,
         )
-        job_store = open_job_store(layout)
-        try:
-            records = job_store.reconcile(jobs=AgentJobs.load(layout, program))
-        finally:
-            job_store.close()
+        if read_only and not layout.job_store.is_file():
+            records = ()
+        else:
+            job_store = open_job_store(layout, read_only=read_only)
+            try:
+                records = job_store.list()
+            finally:
+                job_store.close()
         latest_runs: dict[str, JobRun] = {}
         for run in runs:
             current = latest_runs.get(run.thread)
@@ -73,7 +75,7 @@ class JobInspection:
         return cls(
             catalog=catalog,
             home=layout.home,
-            records={(record.kind, record.job_id): record for record in records},
+            records={record.job_id: record for record in records},
             latest_runs=latest_runs,
         )
 
@@ -106,7 +108,9 @@ class JobInspection:
         )
 
     def _state(self, job: JobFile) -> tuple[JobRecord | None, LastRunInfo | None]:
-        record = self.records.get((job.kind, job.id)) if job.stage == "ready" else None
+        record = self.records.get(job.id) if job.stage == "ready" else None
+        if record is not None and record.kind != job.kind:
+            record = None
         run = self.latest_runs.get(job_thread_id(job))
         last_run = (
             LastRunInfo(
@@ -114,6 +118,7 @@ class JobInspection:
                 status=run.status,
                 started_at=run.started_at,
                 finished_at=run.finished_at,
+                error=run.error,
             )
             if run is not None
             else None

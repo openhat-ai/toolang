@@ -631,7 +631,7 @@ Chore items include:
 
 Task status values are:
 
-- `todo`
+- `pending`
 - `running`
 - `done`
 - `failed`
@@ -639,7 +639,7 @@ Task status values are:
 
 Chore status values are:
 
-- `todo`
+- `pending`
 - `running`
 - `done`
 
@@ -648,10 +648,12 @@ Chore status values are:
 - `thread_id`
 - `last_run`
 - `next_run_at`
+- `error`
 
 `last_run` is the latest run object or `null`. If `last_run.status` is
 `running`, that run is the active run. `next_run_at` is the next scheduled
-chore timestamp or `null`.
+chore timestamp or `null`. `runtime.error` is the current scheduler-side error;
+`last_run.error` is the execution failure for that run.
 
 Default job list endpoints return ready jobs. Draft and archived jobs are
 available only through explicit `/archived` routes.
@@ -673,7 +675,7 @@ Task create requests accept:
 
 Task patch requests accept any subset of `title` and `body`. Stage actions
 use the task `draft`, `ready`, and `archive` endpoints. `task reopen` sets a
-completed, failed, or canceled task back to scheduler status `todo`.
+completed, failed, or canceled task back to scheduler status `pending`.
 Delete is destructive and is available only through archived routes.
 
 Chore create requests accept:

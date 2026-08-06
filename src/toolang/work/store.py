@@ -1,8 +1,8 @@
-"""SQLite-backed scheduler state for ready task and chore jobs."""
+"""SQLite-backed checkpoints for ready task and chore jobs."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,35 +15,52 @@ from dateutil.rrule import rrulestr
 
 from toolang.catalog.types import JobKind
 from toolang.common.layout import AgentLayout
-from ..execution.types import RunStatus
-from .records import JobRecord
-from .types import JobStatus, JobTrigger
-from .state import AgentJobs, JobDefinition
+from toolang.execution.types import RunStatus
 
-_SCHEMA_VERSION = 2
+from .errors import JobStoreSchemaError
+from .records import JobRecord
+from .state import Job, schedule_revision
+from .types import JobStatus, JobTrigger
+
+_SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
 class ClaimedJob:
-    """One atomically claimed job ready for execution."""
+    """One activation durably assigned to a preallocated run id."""
 
-    job: JobRecord
-    definition: JobDefinition
+    job: Job
+    record: JobRecord
     trigger: JobTrigger
+    active_at: str
 
 
 class JobStore:
-    """Scheduler state and claim store for ready jobs."""
+    """Own durable scheduler transitions; due discovery stays in memory."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, read_only: bool = False) -> None:
         self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(
-            db_path.as_posix(), check_same_thread=False, timeout=30
-        )
+        self.read_only = read_only
+        if read_only:
+            target = f"{db_path.expanduser().resolve().as_uri()}?mode=ro"
+            self._conn = sqlite3.connect(
+                target,
+                uri=True,
+                check_same_thread=False,
+                timeout=30,
+            )
+        else:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(
+                db_path.as_posix(), check_same_thread=False, timeout=30
+            )
         self._conn.row_factory = sqlite3.Row
-        self._lock = threading.Lock()
-        self._init_schema()
+        self._lock = threading.RLock()
+        try:
+            self._init_schema()
+        except BaseException:
+            self._conn.close()
+            raise
 
     def close(self) -> None:
         with self._lock:
@@ -52,535 +69,510 @@ class JobStore:
     def reconcile(
         self,
         *,
-        jobs: AgentJobs,
-        kind: JobKind | None = None,
+        jobs: Mapping[str, Job] | Iterable[Job],
         now: datetime | None = None,
     ) -> tuple[JobRecord, ...]:
-        """Reconcile one immutable definition snapshot into durable state."""
+        """Project the latest effective ready definitions into checkpoints."""
 
         current = _utc(now)
-        seen: set[tuple[str, JobKind]] = set()
-        records: list[JobRecord] = []
+        indexed = _index_jobs(jobs)
         with self._write():
-            for definition in jobs.definitions:
-                if kind is not None and definition.kind != kind:
+            for job in indexed.values():
+                self._upsert_locked(job, now=current)
+            for row in self._conn.execute("SELECT * FROM jobs").fetchall():
+                record = _record(row)
+                if record.job_id in indexed or record.active_run_id is not None:
                     continue
-                key = (definition.id, definition.kind)
-                if key in seen:
-                    continue
-                seen.add(key)
-                record = self._upsert_definition_locked(
-                    definition=definition,
-                    now=current,
+                self._conn.execute(
+                    "DELETE FROM jobs WHERE job_id = ?",
+                    (record.job_id,),
                 )
-                records.append(record)
-            self._delete_missing_locked(kind=kind, seen=seen)
-        return tuple(records)
+            rows = self._conn.execute(
+                "SELECT * FROM jobs ORDER BY kind, job_id"
+            ).fetchall()
+        return tuple(_record(row) for row in rows)
 
     def get(self, *, job_id: str, kind: JobKind | None = None) -> JobRecord | None:
         with self._lock:
-            if kind is None:
-                row = self._conn.execute(
-                    "SELECT * FROM jobs WHERE job_id = ? ORDER BY kind LIMIT 1",
-                    (job_id,),
-                ).fetchone()
-            else:
-                row = self._conn.execute(
-                    "SELECT * FROM jobs WHERE job_id = ? AND kind = ?",
-                    (job_id, kind),
-                ).fetchone()
-        return _job_from_row(row) if row is not None else None
-
-    def get_by_thread(self, *, thread_id: str) -> JobRecord | None:
-        with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM jobs WHERE thread_id = ?",
-                (thread_id,),
+                "SELECT * FROM jobs WHERE job_id = ?",
+                (job_id,),
             ).fetchone()
-        return _job_from_row(row) if row is not None else None
+        if row is None:
+            return None
+        record = _record(row)
+        return record if kind is None or record.kind == kind else None
 
     def get_by_run(self, *, run_id: str) -> JobRecord | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM jobs WHERE last_run_id = ?",
+                "SELECT * FROM jobs WHERE active_run_id = ?",
                 (run_id,),
             ).fetchone()
-        return _job_from_row(row) if row is not None else None
+        return _record(row) if row is not None else None
 
     def list(self, *, kind: JobKind | None = None) -> tuple[JobRecord, ...]:
         with self._lock:
-            if kind is None:
-                rows = self._conn.execute(
-                    "SELECT * FROM jobs ORDER BY kind, job_id",
+            rows = (
+                self._conn.execute(
+                    "SELECT * FROM jobs ORDER BY kind, job_id"
                 ).fetchall()
-            else:
-                rows = self._conn.execute(
+                if kind is None
+                else self._conn.execute(
                     "SELECT * FROM jobs WHERE kind = ? ORDER BY job_id",
                     (kind,),
                 ).fetchall()
-        return tuple(_job_from_row(row) for row in rows)
-
-    def claim_due(
-        self,
-        *,
-        jobs: AgentJobs,
-        kind: JobKind,
-        now: datetime | None = None,
-        manual: bool = False,
-    ) -> ClaimedJob | None:
-        """Atomically claim one due ready job of the requested kind."""
-
-        current = _utc(now)
-        with self._write():
-            row = self._select_claimable_locked(kind=kind, now=current, manual=manual)
-            if row is None:
-                return None
-            job = _job_from_row(row)
-            definition = jobs.get(job.kind, job.job_id)
-            if definition is None:
-                self._conn.execute(
-                    "DELETE FROM jobs WHERE job_id = ? AND kind = ?",
-                    (job.job_id, job.kind),
-                )
-                return None
-            trigger: JobTrigger = "manual" if manual else "scheduler"
-            cursor = self._conn.execute(
-                """
-                UPDATE jobs
-                SET status = 'running', last_run_id = NULL, updated_at = ?
-                WHERE job_id = ? AND kind = ? AND status = 'todo'
-                """,
-                (_iso(current), job.job_id, job.kind),
             )
-            if cursor.rowcount != 1:
-                return None
-            updated = self._conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ? AND kind = ?",
-                (job.job_id, job.kind),
-            ).fetchone()
-        if updated is None:
-            return None
-        claimed = _job_from_row(updated)
-        return ClaimedJob(
-            job=claimed,
-            definition=definition,
-            trigger=trigger,
-        )
+        return tuple(_record(row) for row in rows)
 
-    def claim_chore_manual(
+    def claim(
         self,
         *,
-        jobs: AgentJobs,
-        chore_id: str,
-        now: datetime | None = None,
-    ) -> ClaimedJob:
-        """Atomically claim one ready chore for a manual run."""
-
-        self.reconcile(jobs=jobs, kind="chore", now=now)
-        current = _utc(now)
-        with self._write():
-            row = self._conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ? AND kind = 'chore'",
-                (chore_id,),
-            ).fetchone()
-            if row is None:
-                raise FileNotFoundError(f"chore not found: {chore_id}")
-            job = _job_from_row(row)
-            if job.status != "todo":
-                raise ValueError(f"chore cannot run from status: {job.status}")
-            definition = jobs.get("chore", chore_id)
-            if definition is None:
-                raise FileNotFoundError(f"chore not found: {chore_id}")
-            cursor = self._conn.execute(
-                """
-                UPDATE jobs
-                SET status = 'running', last_run_id = NULL, updated_at = ?
-                WHERE job_id = ? AND kind = 'chore' AND status = 'todo'
-                """,
-                (_iso(current), chore_id),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError(f"chore cannot run from status: {job.status}")
-            updated = self._conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ? AND kind = 'chore'",
-                (chore_id,),
-            ).fetchone()
-        if updated is None:
-            raise RuntimeError(f"chore not found after claim: {chore_id}")
-        return ClaimedJob(
-            job=_job_from_row(updated),
-            definition=definition,
-            trigger="manual",
-        )
-
-    def bind_run(
-        self,
-        *,
-        job_id: str,
-        kind: JobKind,
+        job: Job,
+        trigger: JobTrigger,
         run_id: str,
         now: datetime | None = None,
-    ) -> JobRecord:
-        """Bind an executor-assigned run id to one active job claim."""
+    ) -> ClaimedJob:
+        """Claim one known due activation without searching for another job."""
 
         current = _utc(now)
         with self._write():
-            try:
-                cursor = self._conn.execute(
-                    """
-                    UPDATE jobs
-                    SET last_run_id = ?, updated_at = ?
-                    WHERE job_id = ? AND kind = ?
-                      AND status = 'running' AND last_run_id IS NULL
-                    """,
-                    (run_id, _iso(current), job_id, kind),
-                )
-            except sqlite3.IntegrityError as exc:
-                raise ValueError(f"job run already bound: {run_id}") from exc
-            if cursor.rowcount != 1:
-                raise ValueError(f"job claim cannot bind run: {kind}:{job_id}")
-            updated = self._conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ? AND kind = ?",
-                (job_id, kind),
-            ).fetchone()
-        if updated is None:
-            raise RuntimeError(f"job not found after run binding: {kind}:{job_id}")
-        return _job_from_row(updated)
+            row = self._require_row_locked(job.id)
+            record = _record(row)
+            _require_kind(record, job)
+            if record.active_run_id is not None:
+                raise ValueError(f"job is already running: {job.id}")
+            active_at, ready_at, next_run_at = _consume_activation(
+                record,
+                job,
+                trigger=trigger,
+                now=current,
+            )
+            self._conn.execute(
+                """
+                UPDATE jobs
+                SET revision = ?, status = 'running', ready_at = ?,
+                    active_run_id = ?, active_revision = ?, active_trigger = ?,
+                    active_at = ?, next_run_at = ?, error = NULL, updated_at = ?
+                WHERE job_id = ? AND active_run_id IS NULL
+                """,
+                (
+                    job.revision,
+                    ready_at,
+                    run_id,
+                    job.revision,
+                    trigger,
+                    _iso(active_at),
+                    next_run_at,
+                    _iso(current),
+                    job.id,
+                ),
+            )
+            updated = self._require_row_locked(job.id)
+        return ClaimedJob(
+            job=job,
+            record=_record(updated),
+            trigger=trigger,
+            active_at=_iso(active_at),
+        )
+
+    def reject_activation(
+        self,
+        *,
+        job: Job,
+        trigger: JobTrigger,
+        error: str,
+        now: datetime | None = None,
+    ) -> JobRecord:
+        """Consume one invalid activation without creating a run."""
+
+        current = _utc(now)
+        with self._write():
+            record = _record(self._require_row_locked(job.id))
+            _require_kind(record, job)
+            if record.active_run_id is not None:
+                raise ValueError(f"job is already running: {job.id}")
+            _active_at, ready_at, next_run_at = _consume_activation(
+                record,
+                job,
+                trigger=trigger,
+                now=current,
+            )
+            status = _rejected_status(job.kind, ready_at, next_run_at)
+            self._conn.execute(
+                """
+                UPDATE jobs
+                SET revision = ?, status = ?, ready_at = ?, next_run_at = ?,
+                    error = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (
+                    job.revision,
+                    status,
+                    ready_at,
+                    next_run_at,
+                    error,
+                    _iso(current),
+                    job.id,
+                ),
+            )
+            updated = self._require_row_locked(job.id)
+        return _record(updated)
 
     def reject_claim(
         self,
         *,
-        jobs: AgentJobs,
-        job_id: str,
-        kind: JobKind,
-        now: datetime | None = None,
-    ) -> JobRecord:
-        """Finish a claimed job whose submission was rejected before a run."""
-
-        current = _utc(now)
-        with self._write():
-            row = self._conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ? AND kind = ?",
-                (job_id, kind),
-            ).fetchone()
-            if row is None:
-                raise FileNotFoundError(f"job not found: {kind}:{job_id}")
-            job = _job_from_row(row)
-            if job.status != "running" or job.last_run_id is not None:
-                raise ValueError(f"job claim cannot be rejected: {kind}:{job_id}")
-            status, next_run_at = _completed_job_state(
-                jobs,
-                job,
-                run_status="failed",
-                now=current,
-            )
-            self._conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, next_run_at = ?, run_count = run_count + 1,
-                    failed_count = failed_count + 1, updated_at = ?
-                WHERE job_id = ? AND kind = ?
-                """,
-                (status, next_run_at, _iso(current), job_id, kind),
-            )
-            updated = self._conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ? AND kind = ?",
-                (job_id, kind),
-            ).fetchone()
-        if updated is None:
-            raise RuntimeError(f"job not found after rejection: {kind}:{job_id}")
-        return _job_from_row(updated)
-
-    def reopen_task(
-        self,
-        *,
-        jobs: AgentJobs,
-        task_id: str,
-        now: datetime | None = None,
-    ) -> JobRecord:
-        """Set a non-running ready task back to todo."""
-
-        self.reconcile(jobs=jobs, kind="task", now=now)
-        current = _utc(now)
-        with self._write():
-            row = self._conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ? AND kind = 'task'",
-                (task_id,),
-            ).fetchone()
-            if row is None:
-                raise FileNotFoundError(f"task not found: {task_id}")
-            job = _job_from_row(row)
-            if job.status not in ("done", "failed", "canceled"):
-                raise ValueError(f"task cannot be reopened from status: {job.status}")
-            self._conn.execute(
-                "UPDATE jobs SET status = 'todo', updated_at = ? WHERE job_id = ? AND kind = 'task'",
-                (_iso(current), task_id),
-            )
-            updated = self._conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ? AND kind = 'task'",
-                (task_id,),
-            ).fetchone()
-        if updated is None:
-            raise RuntimeError(f"task not found after reopen: {task_id}")
-        return _job_from_row(updated)
-
-    def cancel_pending_task(
-        self, *, task_id: str, now: datetime | None = None
-    ) -> JobRecord:
-        """Mark a pending task canceled without creating a run."""
-
-        current = _utc(now)
-        with self._write():
-            row = self._conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ? AND kind = 'task'",
-                (task_id,),
-            ).fetchone()
-            if row is None:
-                raise FileNotFoundError(f"task not found: {task_id}")
-            job = _job_from_row(row)
-            if job.status != "todo":
-                raise ValueError(f"task cannot be canceled from status: {job.status}")
-            self._conn.execute(
-                "UPDATE jobs SET status = 'canceled', updated_at = ? WHERE job_id = ? AND kind = 'task'",
-                (_iso(current), task_id),
-            )
-            updated = self._conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ? AND kind = 'task'",
-                (task_id,),
-            ).fetchone()
-        if updated is None:
-            raise RuntimeError(f"task not found after cancel: {task_id}")
-        return _job_from_row(updated)
-
-    def finish_run(
-        self,
-        *,
-        jobs: AgentJobs,
         run_id: str,
-        run_status: RunStatus,
+        error: str,
         now: datetime | None = None,
     ) -> JobRecord | None:
-        """Update one job after its current run reaches a terminal status."""
+        """Finish a claimed activation rejected by RunExecutor acceptance."""
 
         current = _utc(now)
         with self._write():
             row = self._conn.execute(
-                "SELECT * FROM jobs WHERE last_run_id = ? AND status = 'running'",
+                "SELECT * FROM jobs WHERE active_run_id = ?",
                 (run_id,),
             ).fetchone()
             if row is None:
                 return None
-            job = _job_from_row(row)
-            status, next_run_at = _completed_job_state(
-                jobs,
-                job,
-                run_status=run_status,
-                now=current,
-            )
-            failed_inc = 1 if run_status == "failed" else 0
-            canceled_inc = 1 if run_status == "canceled" else 0
+            record = _record(row)
+            status = _finished_status(record, "failed")
             self._conn.execute(
                 """
                 UPDATE jobs
-                SET status = ?,
-                    next_run_at = ?,
-                    run_count = run_count + 1,
-                    failed_count = failed_count + ?,
-                    canceled_count = canceled_count + ?,
-                    updated_at = ?
-                WHERE job_id = ? AND kind = ?
+                SET status = ?, active_run_id = NULL, active_revision = NULL,
+                    active_trigger = NULL, active_at = NULL, error = ?, updated_at = ?
+                WHERE job_id = ? AND active_run_id = ?
                 """,
-                (
-                    status,
-                    next_run_at,
-                    failed_inc,
-                    canceled_inc,
-                    _iso(current),
-                    job.job_id,
-                    job.kind,
-                ),
+                (status, error, _iso(current), record.job_id, run_id),
             )
-            updated = self._conn.execute(
-                "SELECT * FROM jobs WHERE job_id = ? AND kind = ?",
-                (job.job_id, job.kind),
-            ).fetchone()
-        return _job_from_row(updated) if updated is not None else None
+            updated = self._require_row_locked(record.job_id)
+        return _record(updated)
 
-    def _upsert_definition_locked(
+    def release_claim(
         self,
         *,
-        definition: JobDefinition,
-        now: datetime,
+        run_id: str,
+        now: datetime | None = None,
+    ) -> JobRecord | None:
+        """Restore an activation whose preallocated run was never accepted."""
+
+        current = _utc(now)
+        with self._write():
+            row = self._conn.execute(
+                "SELECT * FROM jobs WHERE active_run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            record = _record(row)
+            ready_at = record.ready_at
+            next_run_at = record.next_run_at
+            if record.active_trigger in {"source", "manual"}:
+                ready_at = _earliest(ready_at, record.active_at)
+            elif record.active_trigger == "schedule":
+                next_run_at = _earliest(next_run_at, record.active_at)
+            self._conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'pending', ready_at = ?, next_run_at = ?,
+                    active_run_id = NULL, active_revision = NULL,
+                    active_trigger = NULL, active_at = NULL, updated_at = ?
+                WHERE job_id = ? AND active_run_id = ?
+                """,
+                (ready_at, next_run_at, _iso(current), record.job_id, run_id),
+            )
+            updated = self._require_row_locked(record.job_id)
+        return _record(updated)
+
+    def mark_recovery_blocked(
+        self,
+        *,
+        run_id: str,
+        error: str,
+        now: datetime | None = None,
+    ) -> JobRecord | None:
+        """Retain an ambiguous accepted run without risking duplicate dispatch."""
+
+        current = _utc(now)
+        with self._write():
+            cursor = self._conn.execute(
+                """
+                UPDATE jobs
+                SET error = ?, updated_at = ?
+                WHERE active_run_id = ?
+                """,
+                (error, _iso(current), run_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            row = self._conn.execute(
+                "SELECT * FROM jobs WHERE active_run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return _record(row) if row is not None else None
+
+    def finish_run(
+        self,
+        *,
+        jobs: Mapping[str, Job],
+        run_id: str,
+        run_status: RunStatus,
+        now: datetime | None = None,
+    ) -> JobRecord | None:
+        """Apply one terminal run result to its active checkpoint."""
+
+        if run_status in {"pending", "running"}:
+            raise ValueError(f"run is not terminal: {run_status}")
+        current = _utc(now)
+        with self._write():
+            row = self._conn.execute(
+                "SELECT * FROM jobs WHERE active_run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            record = _record(row)
+            job = jobs.get(record.job_id)
+            if job is None:
+                self._conn.execute(
+                    "DELETE FROM jobs WHERE job_id = ?",
+                    (record.job_id,),
+                )
+                return None
+            _require_kind(record, job)
+            status = _finished_status(record, run_status)
+            self._conn.execute(
+                """
+                UPDATE jobs
+                SET revision = ?, status = ?, active_run_id = NULL,
+                    active_revision = NULL, active_trigger = NULL,
+                    active_at = NULL, error = NULL, updated_at = ?
+                WHERE job_id = ? AND active_run_id = ?
+                """,
+                (job.revision, status, _iso(current), record.job_id, run_id),
+            )
+            updated = self._require_row_locked(record.job_id)
+        return _record(updated)
+
+    def reopen_task(
+        self,
+        *,
+        task_id: str,
+        now: datetime | None = None,
     ) -> JobRecord:
-        job_id = definition.id
-        kind = definition.kind
-        definition_hash = definition.fingerprint
-        thread_id = definition.thread
-        path = definition.source
+        """Request the current task revision again."""
+
+        current = _utc(now)
+        with self._write():
+            record = _record(self._require_row_locked(task_id))
+            if record.kind != "task":
+                raise ValueError(f"job is not a task: {task_id}")
+            if record.active_run_id is not None:
+                raise ValueError(f"task is running: {task_id}")
+            if record.status not in {"done", "failed", "canceled"}:
+                raise ValueError(f"task cannot reopen from status: {record.status}")
+            self._conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'pending', ready_at = ?, error = NULL, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (_iso(current), _iso(current), task_id),
+            )
+            updated = self._require_row_locked(task_id)
+        return _record(updated)
+
+    def request_manual_chore(
+        self,
+        *,
+        chore_id: str,
+        now: datetime | None = None,
+    ) -> JobRecord:
+        """Keep at most one pending manual occurrence for a ready chore."""
+
+        current = _utc(now)
+        with self._write():
+            record = _record(self._require_row_locked(chore_id))
+            if record.kind != "chore":
+                raise ValueError(f"job is not a chore: {chore_id}")
+            ready_at = record.ready_at or _iso(current)
+            status = "running" if record.active_run_id is not None else "pending"
+            self._conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?, ready_at = ?, error = NULL, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (status, ready_at, _iso(current), chore_id),
+            )
+            updated = self._require_row_locked(chore_id)
+        return _record(updated)
+
+    def cancel_pending_task(
+        self,
+        *,
+        task_id: str,
+        now: datetime | None = None,
+    ) -> JobRecord:
+        """Cancel a task activation that has not started."""
+
+        current = _utc(now)
+        with self._write():
+            record = _record(self._require_row_locked(task_id))
+            if record.kind != "task":
+                raise ValueError(f"job is not a task: {task_id}")
+            if record.active_run_id is not None or record.status != "pending":
+                raise ValueError(f"task cannot cancel from status: {record.status}")
+            self._conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'canceled', ready_at = NULL, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (_iso(current), task_id),
+            )
+            updated = self._require_row_locked(task_id)
+        return _record(updated)
+
+    def _upsert_locked(self, job: Job, *, now: datetime) -> None:
         row = self._conn.execute(
-            "SELECT * FROM jobs WHERE job_id = ? AND kind = ?",
-            (job_id, kind),
+            "SELECT * FROM jobs WHERE job_id = ?",
+            (job.id,),
         ).fetchone()
+        current_schedule_revision = schedule_revision(job)
         if row is None:
-            status: JobStatus = "todo"
-            next_run_at = _initial_next_run(definition, now=now)
+            anchor = _iso(now) if job.kind == "chore" else None
+            next_run_at = _initial_next_run(job, anchor=now, now=now)
             self._conn.execute(
                 """
                 INSERT INTO jobs(
-                    job_id, kind, path, definition_hash, thread_id, status,
-                    last_run_id, next_run_at, run_count, failed_count, canceled_count,
+                    job_id, kind, revision, status, ready_at,
+                    active_run_id, active_revision, active_trigger, active_at,
+                    schedule_revision, schedule_anchor, next_run_at, error,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, 'pending', ?, NULL, NULL, NULL, NULL,
+                          ?, ?, ?, NULL, ?, ?)
                 """,
                 (
-                    job_id,
-                    kind,
-                    path,
-                    definition_hash,
-                    thread_id,
-                    status,
-                    None,
+                    job.id,
+                    job.kind,
+                    job.revision,
+                    _iso(now) if job.kind == "task" else None,
+                    current_schedule_revision,
+                    anchor,
                     next_run_at,
-                    0,
-                    0,
-                    0,
                     _iso(now),
                     _iso(now),
                 ),
             )
-        else:
-            current = _job_from_row(row)
-            status = current.status
-            next_run_at = current.next_run_at
-            if kind == "chore" and (
-                current.definition_hash != definition_hash or next_run_at is None
-            ):
-                next_run_at = _initial_next_run(definition, now=now)
-            self._conn.execute(
-                """
-                UPDATE jobs
-                SET path = ?, definition_hash = ?, thread_id = ?, status = ?,
-                    next_run_at = ?, updated_at = ?
-                WHERE job_id = ? AND kind = ?
-                """,
-                (
-                    path,
-                    definition_hash,
-                    thread_id,
-                    status,
-                    next_run_at,
-                    _iso(now),
-                    job_id,
-                    kind,
-                ),
-            )
-        updated = self._conn.execute(
-            "SELECT * FROM jobs WHERE job_id = ? AND kind = ?",
-            (job_id, kind),
-        ).fetchone()
-        if updated is None:
-            raise RuntimeError(f"job not found after upsert: {kind}:{job_id}")
-        return _job_from_row(updated)
-
-    def _delete_missing_locked(
-        self,
-        *,
-        kind: JobKind | None,
-        seen: set[tuple[str, JobKind]],
-    ) -> None:
-        rows = (
-            self._conn.execute("SELECT job_id, kind FROM jobs").fetchall()
-            if kind is None
-            else self._conn.execute(
-                "SELECT job_id, kind FROM jobs WHERE kind = ?", (kind,)
-            ).fetchall()
-        )
-        for row in rows:
-            key = (str(row["job_id"]), cast(JobKind, str(row["kind"])))
-            if key not in seen:
-                self._conn.execute(
-                    "DELETE FROM jobs WHERE job_id = ? AND kind = ?",
-                    key,
-                )
-
-    def _select_claimable_locked(
-        self,
-        *,
-        kind: JobKind,
-        now: datetime,
-        manual: bool,
-    ) -> sqlite3.Row | None:
-        if kind == "task":
-            return self._conn.execute(
-                """
-                SELECT * FROM jobs
-                WHERE kind = 'task' AND status = 'todo'
-                ORDER BY created_at
-                LIMIT 1
-                """
-            ).fetchone()
-        if manual:
-            return self._conn.execute(
-                """
-                SELECT * FROM jobs
-                WHERE kind = 'chore' AND status = 'todo'
-                ORDER BY created_at
-                LIMIT 1
-                """
-            ).fetchone()
-        return self._conn.execute(
+            return
+        record = _record(row)
+        _require_kind(record, job)
+        status = record.status
+        ready_at = record.ready_at
+        anchor = record.schedule_anchor
+        next_run_at = record.next_run_at
+        error = record.error
+        if job.kind == "task" and job.revision != record.revision:
+            ready_at = ready_at or _iso(now)
+            status = "running" if record.active_run_id is not None else "pending"
+            error = None
+        elif job.kind == "chore":
+            if current_schedule_revision != record.schedule_revision:
+                anchor = _iso(now)
+                next_run_at = _initial_next_run(job, anchor=now, now=now)
+                if record.active_run_id is None:
+                    status = "pending" if ready_at or next_run_at else "done"
+                error = None
+            elif job.revision != record.revision:
+                error = None
+        self._conn.execute(
             """
-            SELECT * FROM jobs
-            WHERE kind = 'chore' AND status = 'todo'
-              AND next_run_at IS NOT NULL
-              AND next_run_at <= ?
-            ORDER BY next_run_at, created_at
-            LIMIT 1
+            UPDATE jobs
+            SET revision = ?, status = ?, ready_at = ?, schedule_revision = ?,
+                schedule_anchor = ?, next_run_at = ?, error = ?, updated_at = ?
+            WHERE job_id = ?
             """,
-            (_iso(now),),
+            (
+                job.revision,
+                status,
+                ready_at,
+                current_schedule_revision,
+                anchor,
+                next_run_at,
+                error,
+                _iso(now),
+                job.id,
+            ),
+        )
+
+    def _require_row_locked(self, job_id: str) -> sqlite3.Row:
+        row = self._conn.execute(
+            "SELECT * FROM jobs WHERE job_id = ?",
+            (job_id,),
         ).fetchone()
+        if row is None:
+            raise FileNotFoundError(f"job not found: {job_id}")
+        return row
 
     def _init_schema(self) -> None:
         with self._lock:
+            self._conn.execute("PRAGMA busy_timeout=30000;")
+            version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+            if version > _SCHEMA_VERSION or (
+                self.read_only and version != _SCHEMA_VERSION
+            ):
+                raise JobStoreSchemaError(
+                    version,
+                    current=_SCHEMA_VERSION,
+                    read_only=self.read_only,
+                )
+            if self.read_only:
+                self._conn.execute("PRAGMA query_only=ON;")
+                return
             self._conn.execute("PRAGMA journal_mode=WAL;")
             self._conn.execute("PRAGMA synchronous=NORMAL;")
-            self._conn.execute("PRAGMA busy_timeout=30000;")
             self._conn.execute("BEGIN IMMEDIATE")
             try:
-                version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-                if version != _SCHEMA_VERSION:
+                version = int(
+                    self._conn.execute("PRAGMA user_version").fetchone()[0]
+                )
+                if version > _SCHEMA_VERSION:
+                    raise JobStoreSchemaError(
+                        version,
+                        current=_SCHEMA_VERSION,
+                        read_only=False,
+                    )
+                if version < _SCHEMA_VERSION:
                     self._conn.execute("DROP TABLE IF EXISTS jobs")
                 self._conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS jobs (
-                        job_id TEXT NOT NULL,
+                        job_id TEXT PRIMARY KEY,
                         kind TEXT NOT NULL,
-                        path TEXT NOT NULL,
-                        definition_hash TEXT NOT NULL,
-                        thread_id TEXT NOT NULL,
+                        revision TEXT NOT NULL,
                         status TEXT NOT NULL,
-                        last_run_id TEXT,
+                        ready_at TEXT,
+                        active_run_id TEXT,
+                        active_revision TEXT,
+                        active_trigger TEXT,
+                        active_at TEXT,
+                        schedule_revision TEXT,
+                        schedule_anchor TEXT,
                         next_run_at TEXT,
-                        run_count INTEGER NOT NULL,
-                        failed_count INTEGER NOT NULL,
-                        canceled_count INTEGER NOT NULL,
+                        error TEXT,
                         created_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL,
-                        PRIMARY KEY(job_id, kind)
+                        updated_at TEXT NOT NULL
                     )
                     """
                 )
                 self._conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_jobs_kind_status_next ON jobs(kind, status, next_run_at)"
-                )
-                self._conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_jobs_thread ON jobs(thread_id)"
-                )
-                self._conn.execute(
                     """
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_last_run
-                    ON jobs(last_run_id)
-                    WHERE last_run_id IS NOT NULL
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_run
+                    ON jobs(active_run_id)
+                    WHERE active_run_id IS NOT NULL
                     """
                 )
                 self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
@@ -596,7 +588,7 @@ class JobStore:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 yield
-            except Exception:
+            except BaseException:
                 self._conn.rollback()
                 raise
             else:
@@ -604,89 +596,154 @@ class JobStore:
 
 
 def jobs_db_path(layout: AgentLayout) -> Path:
-    """Return the scheduler job database path."""
+    """Return the scheduler checkpoint database path."""
 
     return layout.job_store
 
 
-def open_job_store(layout: AgentLayout) -> JobStore:
-    """Open the scheduler job store for one agent."""
+def open_job_store(layout: AgentLayout, *, read_only: bool = False) -> JobStore:
+    """Open scheduler checkpoints for one agent."""
 
-    return JobStore(jobs_db_path(layout))
-
-
-def _next_scheduled_at(
-    schedule_text: str,
-    *,
-    anchor: datetime,
-    not_before: datetime,
-    inclusive: bool,
-) -> datetime | None:
-    schedule = rrulestr(schedule_text, dtstart=_utc(anchor))
-    candidate = schedule.after(_utc(not_before), inc=inclusive)
-    return None if candidate is None else _utc(candidate)
+    return JobStore(jobs_db_path(layout), read_only=read_only)
 
 
-def _initial_next_run(definition: JobDefinition, *, now: datetime) -> str | None:
-    if definition.kind == "task" or definition.schedule is None:
+def next_activation(record: JobRecord) -> tuple[datetime, JobTrigger] | None:
+    """Return one record's next in-memory heap activation."""
+
+    if record.active_run_id is not None:
         return None
-    return _iso(
-        _next_scheduled_at(
-            definition.schedule,
-            anchor=now,
-            not_before=now,
-            inclusive=True,
+    candidates: list[tuple[datetime, JobTrigger]] = []
+    if record.ready_at is not None:
+        candidates.append(
+            (
+                _parse(record.ready_at),
+                "source" if record.kind == "task" else "manual",
+            )
         )
-    )
+    if record.kind == "chore" and record.next_run_at is not None:
+        candidates.append((_parse(record.next_run_at), "schedule"))
+    return min(candidates, default=None, key=lambda item: (item[0], item[1]))
 
 
-def _completed_job_state(
-    jobs: AgentJobs,
-    job: JobRecord,
+def _consume_activation(
+    record: JobRecord,
+    job: Job,
     *,
-    run_status: RunStatus,
+    trigger: JobTrigger,
     now: datetime,
-) -> tuple[JobStatus, str | None]:
-    if job.kind == "task":
-        return _task_status_from_run(run_status), None
-    definition = jobs.get("chore", job.job_id)
-    next_at = (
-        None
-        if definition is None or definition.schedule is None
-        else _next_scheduled_at(
-            definition.schedule,
-            anchor=now,
-            not_before=now,
-            inclusive=False,
-        )
-    )
-    return ("todo" if next_at is not None else "done"), _iso(next_at)
+) -> tuple[datetime, str | None, str | None]:
+    ready_at = record.ready_at
+    next_run_at = record.next_run_at
+    if trigger == "source":
+        if job.kind != "task" or ready_at is None or _parse(ready_at) > now:
+            raise ValueError(f"task is not due: {job.id}")
+        active_at = _parse(ready_at)
+        ready_at = None
+    elif trigger == "manual":
+        if job.kind != "chore" or ready_at is None or _parse(ready_at) > now:
+            raise ValueError(f"chore has no manual request: {job.id}")
+        active_at = _parse(ready_at)
+        ready_at = None
+    else:
+        if (
+            job.kind != "chore"
+            or job.schedule is None
+            or record.schedule_anchor is None
+            or next_run_at is None
+            or _parse(next_run_at) > now
+        ):
+            raise ValueError(f"chore schedule is not due: {job.id}")
+        rule = rrulestr(job.schedule, dtstart=_parse(record.schedule_anchor))
+        scheduled = rule.before(now, inc=True)
+        if scheduled is None:
+            raise ValueError(f"chore schedule has no due occurrence: {job.id}")
+        active_at = _utc(scheduled)
+        following = rule.after(active_at, inc=False)
+        next_run_at = _iso(_utc(following)) if following is not None else None
+    return active_at, ready_at, next_run_at
 
 
-def _task_status_from_run(status: RunStatus) -> JobStatus:
-    if status == "finished":
+def _initial_next_run(job: Job, *, anchor: datetime, now: datetime) -> str | None:
+    if job.kind != "chore" or job.schedule is None:
+        return None
+    rule = rrulestr(job.schedule, dtstart=_utc(anchor))
+    candidate = rule.after(_utc(now), inc=True)
+    return _iso(_utc(candidate)) if candidate is not None else None
+
+
+def _finished_status(record: JobRecord, run_status: RunStatus) -> JobStatus:
+    if record.kind == "chore":
+        return "pending" if record.ready_at or record.next_run_at else "done"
+    if record.ready_at is not None or record.revision != record.active_revision:
+        return "pending"
+    if run_status == "finished":
         return "done"
-    if status == "canceled":
+    if run_status == "canceled":
         return "canceled"
     return "failed"
 
 
-def _job_from_row(row: sqlite3.Row) -> JobRecord:
+def _rejected_status(
+    kind: JobKind,
+    ready_at: str | None,
+    next_run_at: str | None,
+) -> JobStatus:
+    if kind == "task":
+        return "failed"
+    return "pending" if ready_at or next_run_at else "done"
+
+
+def _require_kind(record: JobRecord, job: Job) -> None:
+    if record.kind != job.kind:
+        raise ValueError(
+            f"job kind changed for {job.id}: {record.kind} -> {job.kind}"
+        )
+
+
+def _index_jobs(jobs: Mapping[str, Job] | Iterable[Job]) -> dict[str, Job]:
+    values: Iterable[Job]
+    if isinstance(jobs, Mapping):
+        values = cast(Mapping[str, Job], jobs).values()
+    else:
+        values = jobs
+    indexed: dict[str, Job] = {}
+    for job in values:
+        if job.id in indexed:
+            raise ValueError(f"duplicate job id: {job.id}")
+        indexed[job.id] = job
+    return indexed
+
+
+def _record(row: sqlite3.Row) -> JobRecord:
     return JobRecord(
         job_id=str(row["job_id"]),
         kind=cast(JobKind, str(row["kind"])),
-        path=str(row["path"]),
-        definition_hash=str(row["definition_hash"]),
-        thread_id=str(row["thread_id"]),
+        revision=str(row["revision"]),
         status=cast(JobStatus, str(row["status"])),
-        last_run_id=str(row["last_run_id"]) if row["last_run_id"] is not None else None,
-        next_run_at=str(row["next_run_at"]) if row["next_run_at"] is not None else None,
-        run_count=int(row["run_count"]),
-        failed_count=int(row["failed_count"]),
-        canceled_count=int(row["canceled_count"]),
+        ready_at=_optional(row["ready_at"]),
+        active_run_id=_optional(row["active_run_id"]),
+        active_revision=_optional(row["active_revision"]),
+        active_trigger=cast(JobTrigger | None, _optional(row["active_trigger"])),
+        active_at=_optional(row["active_at"]),
+        schedule_revision=_optional(row["schedule_revision"]),
+        schedule_anchor=_optional(row["schedule_anchor"]),
+        next_run_at=_optional(row["next_run_at"]),
+        error=_optional(row["error"]),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
     )
+
+
+def _optional(value: object) -> str | None:
+    return None if value is None else str(value)
+
+
+def _earliest(left: str | None, right: str | None) -> str | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return min(left, right)
 
 
 def _utc(value: datetime | None) -> datetime:
@@ -697,7 +754,9 @@ def _utc(value: datetime | None) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def _iso(value: datetime | None) -> str | None:
-    if value is None:
-        return None
+def _iso(value: datetime) -> str:
     return _utc(value).isoformat()
+
+
+def _parse(value: str) -> datetime:
+    return _utc(datetime.fromisoformat(value))

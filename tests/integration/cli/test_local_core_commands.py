@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 from collections.abc import Mapping
+import sqlite3
 from typing import Any
 
+import click
+import pytest
 from typer.testing import CliRunner
 
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.catalog import templates
 from toolang.catalog.agent import LocalAgents
+from toolang.catalog.job import AuthoredJobs, JobFile
 import toolang.cli.toolang.commands.agent as agent_commands
 import toolang.cli.toolang.commands.plugin as plugin_commands
 import toolang.cli.toolang.main as cli
@@ -19,6 +24,8 @@ from toolang.execution.history import RunHistory
 from toolang.execution.store import RunStore
 from toolang.setup import AgentSetup
 from toolang.up import process as agents
+from toolang.work.state import load_ready_jobs
+from toolang.work.store import JobStore
 from tests.support.execution_fixtures import (
     project_run_end,
     project_run_start,
@@ -39,6 +46,53 @@ def test_read_only_thread_commands_do_not_create_execution_store(
 
     assert result.exit_code == 0
     assert not layout.run_store.exists()
+
+
+@pytest.mark.parametrize(
+    ("schema_version", "advice"),
+    [
+        (11, "backup"),
+        (18, "upgrade"),
+    ],
+)
+def test_read_only_thread_commands_do_not_migrate_incompatible_history(
+    tmp_path: Path,
+    schema_version: int,
+    advice: str,
+) -> None:
+    root = tmp_path / "toolang"
+    layout = AgentLayout.resident(root, "alice")
+    layout.run_store.parent.mkdir(parents=True)
+    connection = sqlite3.connect(layout.run_store)
+    connection.execute("CREATE TABLE legacy_state (value TEXT NOT NULL)")
+    connection.execute("INSERT INTO legacy_state VALUES ('preserved')")
+    connection.execute(f"PRAGMA user_version={schema_version}")
+    connection.commit()
+    connection.close()
+
+    result = _invoke(root, "threads", "alice")
+    error_output = " ".join(
+        click.unstyle(result.stderr).replace("│", " ").split()
+    )
+
+    assert result.exit_code == 1
+    assert "Traceback" not in error_output
+    assert "execution history is incompatible with toolang" in error_output
+    assert f"uses schema {schema_version}" in error_output
+    assert "requires schema 19" in error_output
+    assert advice in error_output
+    assert "database was not changed" in error_output.lower()
+    connection = sqlite3.connect(layout.run_store)
+    try:
+        assert (
+            int(connection.execute("PRAGMA user_version").fetchone()[0])
+            == schema_version
+        )
+        assert connection.execute("SELECT value FROM legacy_state").fetchone() == (
+            "preserved",
+        )
+    finally:
+        connection.close()
 
 
 def test_thread_and_run_lists_read_local_history(tmp_path: Path) -> None:
@@ -86,6 +140,58 @@ def test_thread_and_run_lists_read_local_history(tmp_path: Path) -> None:
     assert "run_first" in runs.stdout
     assert "The repository looks good." in runs.stdout
     assert "succeeded" in runs.stdout
+
+
+def test_chore_list_shows_scheduler_and_latest_run_state(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    layout = AgentLayout.resident(root, "alice")
+    AuthoredJobs(layout.home).create(
+        JobFile.parse(
+            """---
+id: maintain
+title: Maintain knowledge
+schedule: FREQ=HOURLY
+---
+Maintain the knowledge base.
+""",
+            kind="chore",
+        )
+    )
+    (job,) = load_ready_jobs(layout)
+    jobs = JobStore(layout.job_store)
+    try:
+        jobs.reconcile(jobs=(job,), now=datetime.now(timezone.utc))
+    finally:
+        jobs.close()
+    runs = RunStore(layout.run_store)
+    try:
+        project_run_start(
+            runs,
+            run_id="run_failed",
+            thread_id="chore_maintain",
+            origin="chore",
+            input=Message.user("Maintain the knowledge base."),
+        )
+        project_run_end(
+            runs,
+            run_id="run_failed",
+            status="failed",
+            error="model credits exhausted",
+        )
+    finally:
+        runs.close()
+
+    result = _invoke(root, "chore", "list", "alice")
+
+    assert result.exit_code == 0, result.stderr
+    assert "STATUS" in result.stdout
+    assert "LAST RUN" in result.stdout
+    assert "NEXT RUN" in result.stdout
+    assert "ERROR" in result.stdout
+    assert "Maintain knowledge" in result.stdout
+    assert "pending" in result.stdout
+    assert "failed" in result.stdout
+    assert "model credits exhausted" in result.stdout
 
 
 def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:

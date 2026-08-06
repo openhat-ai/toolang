@@ -44,6 +44,10 @@ Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
 process exits. Schema upgrades migrate supported versions in place and fail
 without deleting records when an unsupported or conflicting schema is found.
+A store never opens a newer schema by rebuilding it as an older one. Read-only
+inspection opens SQLite in read-only mode, requires the current schema, and
+never applies migrations; the agent runtime performs supported forward
+migrations when it opens the store for execution.
 
 
 ## IDs And Indexes

@@ -1,12 +1,12 @@
 """Job inspection and authored-file management routes."""
 
-from collections.abc import Iterable
-from typing import cast
+from collections.abc import Callable, Iterable
+from typing import TypeVar, cast
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
-from toolang.api.app import AgentCoreDep, JobsManagerDep
+from toolang.api.app import AgentCoreDep, JobSchedulerDep, JobsManagerDep
 from toolang.api.schemas import (
     ChoreCreateRequest,
     ChorePatchRequest,
@@ -20,8 +20,9 @@ from toolang.up import AgentCore
 from toolang.work.authoring import allocate_authored_job_id, new_job_file
 from toolang.work.inspection import JobInspection, JobRun
 from toolang.work.schemas import JobDetail, JobInfo
-from toolang.work.state import AgentJobs
-from toolang.work.store import open_job_store
+from toolang.work.scheduler import JobScheduler
+
+_T = TypeVar("_T")
 
 router = APIRouter(tags=["jobs"])
 
@@ -30,12 +31,13 @@ router = APIRouter(tags=["jobs"])
 def create_task(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     payload: TaskCreateRequest,
 ) -> JobDetail:
     saved = manager.home_authoring.create(
         _new_job(core, kind="task", payload=payload)
     )
-    _reconcile_jobs(core, kind="task")
+    _refresh_jobs(scheduler)
     return _job_detail(core, saved)
 
 
@@ -47,11 +49,12 @@ def create_task(
 def update_archived_task(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     task_id: str,
     payload: TaskPatchRequest,
 ) -> JobDetail:
     entry = _require_job(manager, "task", task_id, stage="archived")
-    return _update_job(core, manager, entry, payload)
+    return _update_job(core, manager, scheduler, entry, payload)
 
 
 @router.delete(
@@ -63,23 +66,26 @@ def update_archived_task(
 def delete_archived_task(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     task_id: str,
 ) -> None:
     _require_job(manager, "task", task_id, stage="archived")
     manager.home_authoring.remove("task", task_id)
-    _reconcile_jobs(core, kind="task")
+    _refresh_jobs(scheduler)
 
 
 @router.patch("/tasks/{task_id}", summary="Update Task", response_model=JobDetail)
 def update_task(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     task_id: str,
     payload: TaskPatchRequest,
 ) -> JobDetail:
     return _update_job(
         core,
         manager,
+        scheduler,
         _require_job(manager, "task", task_id),
         payload,
     )
@@ -89,18 +95,20 @@ def update_task(
 def draft_task(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     task_id: str,
 ) -> JobDetail:
-    return _move_job(core, manager, "task", task_id, "draft")
+    return _move_job(core, manager, scheduler, "task", task_id, "draft")
 
 
 @router.post("/tasks/{task_id}/ready", summary="Ready Task", response_model=JobDetail)
 def ready_task(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     task_id: str,
 ) -> JobDetail:
-    return _move_job(core, manager, "task", task_id, "ready")
+    return _move_job(core, manager, scheduler, "task", task_id, "ready")
 
 
 @router.post(
@@ -111,25 +119,29 @@ def ready_task(
 def archive_task(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     task_id: str,
 ) -> JobDetail:
-    return _move_job(core, manager, "task", task_id, "archived")
+    return _move_job(core, manager, scheduler, "task", task_id, "archived")
 
 
 @router.post("/tasks/{task_id}/reopen", summary="Reopen Task")
 def reopen_task(
+    scheduler: JobSchedulerDep,
     task_id: str,
 ) -> None:
-    del task_id
-    _work_trigger_unavailable()
+    _scheduler_call(scheduler.reopen_task_sync, task_id)
 
 
 @router.post("/tasks/{task_id}/cancel", summary="Cancel Task")
 def cancel_task(
+    core: AgentCoreDep,
+    scheduler: JobSchedulerDep,
     task_id: str,
 ) -> None:
-    del task_id
-    _work_trigger_unavailable()
+    record = _scheduler_call(scheduler.cancel_task_sync, task_id)
+    if record.active_run_id is not None:
+        core.executor.stop(run_id=record.active_run_id, reason="task canceled")
 
 
 @router.post(
@@ -141,29 +153,36 @@ def cancel_task(
 def create_chore(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     payload: ChoreCreateRequest,
 ) -> JobDetail:
     saved = manager.home_authoring.create(
         _new_job(core, kind="chore", payload=payload)
     )
-    _reconcile_jobs(core, kind="chore")
+    _refresh_jobs(scheduler)
     return _job_detail(core, saved)
 
 
 @router.post("/chores/{chore_id}/run", summary="Run Chore", status_code=202)
 def run_chore(
+    scheduler: JobSchedulerDep,
     chore_id: str,
 ) -> None:
-    del chore_id
-    _work_trigger_unavailable()
+    _scheduler_call(scheduler.run_chore_sync, chore_id)
 
 
 @router.post("/chores/{chore_id}/cancel", summary="Cancel Chore")
 def cancel_chore(
+    core: AgentCoreDep,
+    scheduler: JobSchedulerDep,
     chore_id: str,
 ) -> None:
-    del chore_id
-    _work_trigger_unavailable()
+    record = scheduler.get_sync(chore_id)
+    if record is None or record.kind != "chore":
+        raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
+    if record.active_run_id is None:
+        raise HTTPException(status_code=409, detail="chore has no active run")
+    core.executor.stop(run_id=record.active_run_id, reason="chore canceled")
 
 
 @router.patch(
@@ -174,11 +193,12 @@ def cancel_chore(
 def update_archived_chore(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     chore_id: str,
     payload: ChorePatchRequest,
 ) -> JobDetail:
     entry = _require_job(manager, "chore", chore_id, stage="archived")
-    return _update_job(core, manager, entry, payload)
+    return _update_job(core, manager, scheduler, entry, payload)
 
 
 @router.delete(
@@ -190,23 +210,26 @@ def update_archived_chore(
 def delete_archived_chore(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     chore_id: str,
 ) -> None:
     _require_job(manager, "chore", chore_id, stage="archived")
     manager.home_authoring.remove("chore", chore_id)
-    _reconcile_jobs(core, kind="chore")
+    _refresh_jobs(scheduler)
 
 
 @router.patch("/chores/{chore_id}", summary="Update Chore", response_model=JobDetail)
 def update_chore(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     chore_id: str,
     payload: ChorePatchRequest,
 ) -> JobDetail:
     return _update_job(
         core,
         manager,
+        scheduler,
         _require_job(manager, "chore", chore_id),
         payload,
     )
@@ -220,9 +243,10 @@ def update_chore(
 def draft_chore(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     chore_id: str,
 ) -> JobDetail:
-    return _move_job(core, manager, "chore", chore_id, "draft")
+    return _move_job(core, manager, scheduler, "chore", chore_id, "draft")
 
 
 @router.post(
@@ -233,9 +257,10 @@ def draft_chore(
 def ready_chore(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     chore_id: str,
 ) -> JobDetail:
-    return _move_job(core, manager, "chore", chore_id, "ready")
+    return _move_job(core, manager, scheduler, "chore", chore_id, "ready")
 
 
 @router.post(
@@ -246,9 +271,10 @@ def ready_chore(
 def archive_chore(
     core: AgentCoreDep,
     manager: JobsManagerDep,
+    scheduler: JobSchedulerDep,
     chore_id: str,
 ) -> JobDetail:
-    return _move_job(core, manager, "chore", chore_id, "archived")
+    return _move_job(core, manager, scheduler, "chore", chore_id, "archived")
 
 
 @router.get("/jobs", summary="List Jobs", response_model=list[JobInfo])
@@ -371,21 +397,13 @@ def chore_detail(
     return _job_detail(core, _require_job(manager, "chore", chore_id))
 
 
-def _reconcile_jobs(core: AgentCore, *, kind: JobKind) -> None:
-    store = open_job_store(core.layout)
-    try:
-        store.reconcile(
-            jobs=AgentJobs.load(core.layout, core.state.current().program),
-            kind=kind,
-        )
-    finally:
-        store.close()
+def _refresh_jobs(scheduler: JobScheduler) -> None:
+    _scheduler_call(scheduler.refresh_sync)
 
 
 def _inspection(core: AgentCore) -> JobInspection:
     return JobInspection.load(
         layout=core.layout,
-        program=core.state.current().program,
         runs=cast(Iterable[JobRun], core.store.list_runs(limit=None)),
     )
 
@@ -454,6 +472,7 @@ def _new_job(
 def _update_job(
     core: AgentCore,
     manager: JobsManager,
+    scheduler: JobScheduler,
     entry: JobFile,
     payload: TaskPatchRequest | ChorePatchRequest,
 ) -> JobDetail:
@@ -471,24 +490,27 @@ def _update_job(
         saved = manager.home_authoring.update(entry.patch(changes))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _reconcile_jobs(core, kind=entry.kind)
+    _refresh_jobs(scheduler)
     return _job_detail(core, saved)
 
 
 def _move_job(
     core: AgentCore,
     manager: JobsManager,
+    scheduler: JobScheduler,
     kind: JobKind,
     job_id: str,
     stage: JobStage,
 ) -> JobDetail:
     manager.home_authoring.move(kind, job_id, stage)
-    _reconcile_jobs(core, kind=kind)
+    _refresh_jobs(scheduler)
     return _job_detail(core, _require_job(manager, kind, job_id, stage=stage))
 
 
-def _work_trigger_unavailable() -> None:
-    raise HTTPException(
-        status_code=501,
-        detail="job execution controls will be migrated with the work runtime",
-    )
+def _scheduler_call(call: Callable[..., _T], *args: object) -> _T:
+    try:
+        return call(*args)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

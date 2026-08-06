@@ -45,10 +45,6 @@ class JobFile:
         return _optional_meta_text(self.meta, "id")
 
     @property
-    def name(self) -> str:
-        return _required_meta_text(self.meta, "name")
-
-    @property
     def id(self) -> str:
         value = self.optional_id
         if value is None:
@@ -73,7 +69,6 @@ class JobFile:
         kind: JobKind,
         stage: JobStage = "ready",
         job_id: str | None = None,
-        name: str | None = None,
         path: Path | None = None,
     ) -> JobFile:
         """Parse source content and project caller-resolved identity metadata."""
@@ -87,12 +82,6 @@ class JobFile:
             )
         if authored_id is None and job_id is not None:
             meta["id"] = job_id
-        authored_name = _optional_meta_text(meta, "name")
-        expected_name = name or (path.stem if path is not None else None)
-        effective_name = authored_name or expected_name or authored_id or job_id
-        if effective_name is None:
-            raise ValueError("job name is required")
-        meta["name"] = effective_name
         return cls(
             path=path,
             content=content,
@@ -162,7 +151,7 @@ class AuthoredJobs:
                 for current_kind in kinds
                 for job in self._list_stage(current_kind, stage)
             )
-            _ensure_unique_ids(self._list_all())
+            _ensure_unique_ids(jobs)
             return tuple(sorted(jobs, key=_job_sort_key))
 
     def get(
@@ -204,11 +193,9 @@ class AuthoredJobs:
             _ensure_unique_ids(jobs)
             if any(item.optional_id == job.id for item in jobs):
                 raise CatalogConflictError(f"authored job id already exists: {job.id}")
-            target = self.path(job.kind, job.name, stage=job.stage)
+            target = self.path(job.kind, job.id, stage=job.stage)
             if target.exists():
-                raise CatalogConflictError(
-                    f"authored job name already exists: {job.name}"
-                )
+                raise CatalogConflictError(f"authored job path already exists: {target}")
             return self._write(job, path=target)
 
     def update(self, job: JobFile) -> JobFile:
@@ -240,9 +227,7 @@ class AuthoredJobs:
                 return job
             target = self._directory(job.kind, stage) / job.path.name
             if target.exists():
-                raise CatalogConflictError(
-                    f"authored job name already exists: {job.name}"
-                )
+                raise CatalogConflictError(f"authored job path already exists: {target}")
             target.parent.mkdir(parents=True, exist_ok=True)
             job.path.replace(target)
             _prune_empty_parents(
@@ -254,7 +239,6 @@ class AuthoredJobs:
                 kind=job.kind,
                 stage=stage,
                 job_id=job.id,
-                name=job.name,
                 path=target,
             )
 
@@ -270,11 +254,24 @@ class AuthoredJobs:
             )
             return job
 
-    def assign_missing_ids(self, id_factory: Callable[[], str]) -> tuple[JobFile, ...]:
+    def assign_missing_ids(
+        self,
+        id_factory: Callable[[], str],
+        *,
+        stage: JobStage | None = None,
+    ) -> tuple[JobFile, ...]:
         """Persist ids for manually authored files that do not declare one."""
 
         with self.write_lock():
-            jobs = self._list_all()
+            jobs = (
+                self._list_all()
+                if stage is None
+                else tuple(
+                    job
+                    for kind in JOB_KINDS
+                    for job in self._list_stage(kind, stage)
+                )
+            )
             _ensure_unique_ids(jobs)
             known_ids = {job.optional_id for job in jobs if job.optional_id is not None}
             assigned: list[JobFile] = []
@@ -297,11 +294,11 @@ class AuthoredJobs:
                 assigned.append(saved)
             return tuple(assigned)
 
-    def path(self, kind: JobKind, name: str, *, stage: JobStage) -> Path:
+    def path(self, kind: JobKind, job_id: str, *, stage: JobStage) -> Path:
         _validate_kind(kind)
         _validate_stage(stage)
-        _validate_name(name)
-        return self._directory(kind, stage) / f"{name}.md"
+        _validate_id(job_id)
+        return self._directory(kind, stage) / f"{job_id}.md"
 
     def _write(self, job: JobFile, *, path: Path) -> JobFile:
         _validate_job(job, require_id=True)
@@ -311,7 +308,6 @@ class AuthoredJobs:
             kind=job.kind,
             stage=job.stage,
             job_id=job.id,
-            name=job.name,
             path=path,
         )
 
@@ -332,7 +328,6 @@ class AuthoredJobs:
                 path.read_text(encoding="utf-8"),
                 kind=kind,
                 stage=stage,
-                name=path.stem,
                 path=path,
             )
             for path in sorted(directory.glob("*.md"))
@@ -352,7 +347,6 @@ class AuthoredJobs:
 def _validate_job(job: JobFile, *, require_id: bool) -> None:
     _validate_kind(job.kind)
     _validate_stage(job.stage)
-    _validate_name(job.name)
     job_id = job.optional_id
     if require_id and job_id is None:
         raise ValueError("job id is required")
@@ -408,12 +402,6 @@ def _validate_id(value: str) -> None:
     text = value.strip()
     if not text or text in {".", ".."} or "/" in text or "\\" in text:
         raise ValueError(f"invalid job id: {value!r}")
-
-
-def _validate_name(value: str) -> None:
-    text = value.strip()
-    if not text or text in {".", ".."} or "/" in text or "\\" in text:
-        raise ValueError(f"invalid job name: {value!r}")
 
 
 def _validate_optional_text(meta: Mapping[str, object], key: str) -> None:

@@ -165,7 +165,7 @@ def steer_command(
 ) -> None:
     """Persist one next-step steer control."""
 
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, writable=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         run_id = _active_run_id(RunHistory(resources.store), run)
@@ -186,7 +186,7 @@ def cancel_command(
 ) -> None:
     """Persist one immediate stop control."""
 
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, writable=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         run_id = _active_run_id(RunHistory(resources.store), run)
@@ -209,7 +209,7 @@ def rewind_command(
 ) -> None:
     """Rewind one idle thread before a terminal anchor run."""
 
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, writable=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         history = RunHistory(resources.store)
@@ -236,7 +236,7 @@ def fork_command(
 ) -> None:
     """Fork one thread through a terminal anchor run."""
 
-    with open_execution(ctx, required=True) as resources:
+    with open_execution(ctx, required=True, writable=True) as resources:
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         history = RunHistory(resources.store)

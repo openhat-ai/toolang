@@ -1,1 +1,1 @@
-"""Effective job scheduling, runtime stores, and file inbox work."""
+"""Job scheduling and the legacy file-inbox runtime."""

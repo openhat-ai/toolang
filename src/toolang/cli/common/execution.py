@@ -10,9 +10,11 @@ import click
 import typer
 
 from toolang.common.ids import IdIssuer
+from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.store import RunStore
 
 from .context import context_layout
+from .version import toolang_version
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,8 +30,9 @@ def open_execution(
     ctx: typer.Context,
     *,
     required: bool = False,
+    writable: bool = False,
 ) -> Iterator[ExecutionResources | None]:
-    """Open one agent's execution store without creating it for read-only access."""
+    """Open one agent's execution store in the requested access mode."""
 
     layout = context_layout(ctx)
     if not layout.run_store.is_file():
@@ -39,8 +42,37 @@ def open_execution(
             )
         yield None
         return
-    store = RunStore(layout.run_store)
+    try:
+        store = RunStore(layout.run_store, read_only=not writable)
+    except RunStoreSchemaError as exc:
+        raise click.ClickException(
+            run_store_schema_error(exc, path=layout.run_store)
+        ) from exc
     try:
         yield ExecutionResources(store=store, ids=IdIssuer(layout.id_state))
     finally:
         store.close()
+
+
+def run_store_schema_error(error: RunStoreSchemaError, *, path: object) -> str:
+    """Render one actionable CLI diagnostic for an incompatible run store."""
+
+    if error.version > error.current:
+        advice = (
+            "Upgrade this CLI to a Toolang version that supports the newer schema."
+        )
+    elif error.version in error.supported:
+        advice = (
+            "Start this agent once with the current Toolang runtime to apply the "
+            "supported upgrade, then retry."
+        )
+    else:
+        advice = (
+            "Restore a compatible backup or migrate it with a Toolang version that "
+            f"supports schema {error.version}."
+        )
+    return (
+        f"execution history is incompatible with toolang {toolang_version()}: "
+        f"{path} uses schema {error.version}, while this build requires schema "
+        f"{error.current}. {advice} The database was not changed."
+    )

@@ -96,7 +96,10 @@
   input/output coercion.
 - `docs/layout.md` defines Toolang root, agent home, and agent room layout.
 - `docs/caps.md` defines cap kinds, scopes, sources, and effective-cap rules.
-- `docs/tasks.md` defines task and chore documents and their runtime mapping.
+- `docs/work.md` defines task and chore scheduling, checkpoints, event-loop
+  ownership, recovery, inspection, and control.
+- `docs/tasks.md` defines authored task and chore documents and their
+  caller-facing projections.
 - `docs/execution.md` defines execution boundaries, lifecycle, locals,
   persistence, tracing, and caller-facing projection.
 - `docs/executor.md` defines agic and flow executor behavior.
@@ -146,8 +149,8 @@
   sources or infer the Toolang layout. `toolang.catalog.config` owns wired cap
   references and their round-trip TOML mutation; `toolang.catalog.types` owns
   shared authored-job vocabulary and defaults.
-- `toolang.work` owns effective job scheduling state, file inbox requests,
-  runtime stores, watchers, and scheduling loops.
+- `toolang.work` owns effective job definitions, scheduler checkpoints,
+  ready-job watching, inspection, and the dedicated job scheduling loop.
 - `toolang.work.schemas` owns caller-facing job protocol types;
   `toolang.work.types` owns scheduler status vocabulary;
   `toolang.work.records` owns durable scheduler entries; and

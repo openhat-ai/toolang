@@ -1,4 +1,4 @@
-"""Watch authored task and chore files."""
+"""Watch ready authored task and chore files."""
 
 from __future__ import annotations
 
@@ -10,39 +10,26 @@ from watchfiles import Change, awatch
 
 from toolang.common.layout import AgentLayout
 
-from .state import HomeJobs
+from .state import Job, load_ready_jobs
 
 
 class JobWatcher:
-    """Publish immutable home-job snapshots when authored files change."""
+    """Publish immutable ready-job snapshots when authored files change."""
 
     def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout
-        self._jobs = HomeJobs.load(layout)
+        self._jobs = load_ready_jobs(layout)
 
-    def current(self) -> HomeJobs:
+    def current(self) -> tuple[Job, ...]:
+        """Return the latest completed snapshot without filesystem access."""
+
         return self._jobs
 
-    def refresh(self) -> HomeJobs:
-        self._jobs = HomeJobs.load(self.layout)
+    def refresh(self) -> tuple[Job, ...]:
+        """Read and publish one complete ready-job snapshot."""
+
+        self._jobs = load_ready_jobs(self.layout)
         return self._jobs
-
-    def start(
-        self,
-        *,
-        stop_signal: asyncio.Event,
-        interval_ms: float = 1_000.0,
-        debounce_ms: float = 500.0,
-    ) -> asyncio.Task[None]:
-        async def watch() -> None:
-            async for _ in self.updates(
-                stop_signal=stop_signal,
-                interval_ms=interval_ms,
-                debounce_ms=debounce_ms,
-            ):
-                pass
-
-        return asyncio.create_task(watch())
 
     async def updates(
         self,
@@ -50,18 +37,24 @@ class JobWatcher:
         stop_signal: asyncio.Event,
         interval_ms: float = 1_000.0,
         debounce_ms: float = 500.0,
-    ) -> AsyncIterator[HomeJobs]:
-        home = self.layout.home
-        home.mkdir(parents=True, exist_ok=True)
+    ) -> AsyncIterator[tuple[Job, ...]]:
+        """Yield different stable snapshots until the owner loop stops."""
+
+        directories = (
+            self.layout.home / "tasks",
+            self.layout.home / "chores",
+        )
+        for directory in directories:
+            directory.mkdir(parents=True, exist_ok=True)
         async for changes in awatch(
-            home,
+            *directories,
             debounce=max(int(debounce_ms), 50),
             step=max(int(interval_ms), 50),
             stop_event=stop_signal,
         ):
             if not any(
                 kind in {Change.added, Change.modified, Change.deleted}
-                and _is_authored_job_path(home, Path(path))
+                and _is_ready_job_path(directories, Path(path))
                 for kind, path in changes
             ):
                 continue
@@ -71,18 +64,5 @@ class JobWatcher:
                 yield current
 
 
-def _is_authored_job_path(home: Path, path: Path) -> bool:
-    try:
-        relative = path.relative_to(home)
-    except ValueError:
-        return False
-    if relative.suffix != ".md":
-        return False
-    return relative.parts[:-1] in {
-        ("tasks",),
-        ("chores",),
-        ("drafts", "tasks"),
-        ("drafts", "chores"),
-        ("archive", "tasks"),
-        ("archive", "chores"),
-    }
+def _is_ready_job_path(directories: tuple[Path, Path], path: Path) -> bool:
+    return path.suffix == ".md" and path.parent in directories

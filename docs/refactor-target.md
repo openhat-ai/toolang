@@ -151,10 +151,10 @@ around a larger multi-operation transaction.
 - `remove()`
 
 `JobFile.stage` records folder placement as `draft`, `ready`, or `archived`.
-Stable identity remains in `JobFile.meta["id"]`, while the authored logical name
-is `JobFile.meta["name"]`. The catalog enforces id uniqueness across kinds and
-stages but does not allocate ids or write scheduler state. `toolang.work`
-allocates and persists missing ids before publishing home-job state.
+Stable identity remains in `JobFile.meta["id"]`; `title` is the only optional
+display label. The catalog enforces id uniqueness across kinds and stages but
+does not allocate ids or write scheduler state. `toolang.work` allocates and
+persists missing ids before publishing ready-job state.
 
 
 ## Agent State
@@ -174,7 +174,7 @@ jobs collection; program-declared jobs remain available as
 
 `StateWatcher` monitors the relevant files and publishes new immutable
 `AgentState` versions. It owns invalidation and reuse of unchanged parsed
-sources. It does not know about `RunExecutor` or `Scheduler`. Every API process
+sources. It does not know about `RunExecutor` or `JobScheduler`. Every API process
 that can accept runs starts its watcher as process infrastructure; watching is
 not an optional runtime component.
 
@@ -204,49 +204,34 @@ settings at the call site; plugin families parse their own sections from
 explicit config mappings.
 
 
-## Durable Work
+## Durable Jobs
 
 Job definitions and mutable scheduling state remain separate:
 
 ```text
-HomeJobs  = snapshot of authored task and chore files
-AgentJobs = merge(HomeJobs, AgentState.program.jobs)
-JobStore  = mutable scheduler projection in jobs.db
+Job          = immutable effective task or chore definition
+JobRecord    = mutable scheduler checkpoint in jobs.db
+Run          = durable execution fact in runs.db
 ```
 
-`JobWatcher` publishes immutable `HomeJobs` snapshots. `AgentJobs.merge()` owns
-definition precedence and duplicate validation.
+`JobWatcher` publishes immutable ready-file snapshots. `JobScheduler` merges
+them with current program jobs into a map keyed only by globally unique job id.
+Duplicate definitions are invalid; sources do not silently shadow one another.
 
-`JobStore` owns durable job status, schedules, counters, last and next run
-references, and atomic claims. It must be safe when multiple processes inspect
-or attempt to claim jobs.
+`JobStore` owns current revision state, RRULE cursors, active dispatch
+checkpoints, and atomic claims. Run counters, results, and history remain in
+`runs.db`.
 
-`Scheduler` is self-driven after `start()`. It receives state accessors rather
-than watcher objects:
+`JobScheduler` owns a dedicated thread and event loop after `start()`. The API
+loop remains the sole owner of `RunExecutor` and every run task. The scheduler
+submits one coroutine through a thread-safe future; that coroutine invokes and
+awaits `RunExecutor.start()` only on the execution loop. Execution has no
+scheduler callback or dependency.
 
-```python
-Scheduler(
-    job_store=job_store,
-    executor=executor,
-    get_agent_setup=get_agent_setup,
-    get_home_jobs=job_watcher.current,
-    get_agent_state=state_watcher.current,
-)
-```
-
-For one scheduling pass it captures one `AgentState`, merges `AgentJobs` from
-that state and the current `HomeJobs`, atomically claims due work, and submits
-`RunSpec` values to `RunExecutor`. The executor assigns the run ID, after which
-the scheduler binds it to the active claim. `Scheduler` persists job state
-through `JobStore`; `RunExecutor` persists run state through `RunStore`.
-
-Jobs link to their latest run through `JobRecord.last_run_id`. `RunStore` does
-not duplicate job records.
-
-File inbox requests use the same `toolang.work` ownership boundary but retain
-their independent `files.db` store. `jobs.db` and `files.db` are not merged by
-this refactor; a unified work record and store require a separate persistence
-design and migration.
+The scheduler uses one in-memory due heap and point-updates `jobs.db`; it does
+not scan SQLite to discover ready work. It preallocates a run id, persists an
+active checkpoint, and posts an immutable `RunSpec` to the execution loop.
+Startup repairs only checkpointed active run ids from `runs.db`.
 
 
 ## Execution
@@ -437,7 +422,7 @@ base/common
     -> state and work.state
     -> execution foundations
     -> RunExecutor
-    -> Scheduler
+    -> JobScheduler
     -> api, up, and CLI
 ```
 
@@ -462,7 +447,8 @@ concepts:
 - legacy queue-runner, submission-wrapper, binding, and outcome types are not
   public target concepts
 - `RuntimeEventBus` is not required for local execution or persistence
-- jobs leave general agent state and become `HomeJobs` plus `AgentJobs`
+- effective jobs leave general agent state and become immutable `Job` values
+  maintained directly by `JobScheduler`
 - `toolang.lang` becomes the canonical language package and the
   `toolang.program` facade is removed
 - `toolang.cli.toolang` and `toolang.cli.caps` are the two executable CLI
@@ -482,13 +468,13 @@ target APIs.
    `RootPrepared`, `AgentState`, and their watcher.
 3. Extract `RunStore`, persistence, reply sinks, and the final executor entry
    point from the current execution stack.
-4. Introduce `HomeJobs`, `AgentJobs`, `JobWatcher`, `JobStore`, and the
-   self-driven `Scheduler`.
+4. Introduce `Job`, `JobWatcher`, `JobStore`, and the self-driven
+   `JobScheduler`.
 5. Move CLI behavior into the five first-level CLI areas and reduce the root
    app to explicit assembly.
 6. Move process assembly to `up.server` and HTTP assembly to `api.app`.
 7. Move plugin families under `plugin`, authored CRUD under `catalog`, and
-   durable job/file processing under `work`.
+   durable job scheduling under `work`.
 8. Delete superseded modules and compatibility paths, then update the stable
    design documents and generated reference.
 
@@ -503,7 +489,8 @@ The refactor is complete when:
 - each core concept has one owner and one canonical type
 - `RunExecutor` runs against an explicit immutable `AgentState`
 - child runs cannot observe later source changes
-- `Scheduler` depends only on stores, executor, and state accessors
+- `JobScheduler` depends only on its watcher, store, executor, and immutable
+  setup/state accessors
 - authored CRUD is implemented through catalogs rather than CLI file editing
 - run and job persistence are separate and safe across processes
 - TUI, script, HTTP, and scheduled execution share the same executor behavior

@@ -1,187 +1,135 @@
-"""Immutable authored and effective job definitions."""
+"""Immutable effective job definitions."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
 from hashlib import sha256
-import json
 from pathlib import Path
 import re
 
-from ..lang.ast import JobDecl, Program
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE, JobKind
 from toolang.common.layout import AgentLayout
+from toolang.lang.ast import JobDecl, Program
+
 from .authoring import assign_missing_authored_job_ids
 
 _REMOTE_REF_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
 
 
 @dataclass(frozen=True, slots=True)
-class JobDefinition:
-    """One executable task or chore definition."""
+class Job:
+    """One current executable task or chore definition."""
 
     id: str
     kind: JobKind
-    name: str
     title: str | None
     body: str
-    source: str
-    path: str | None
     schedule: str | None
-    fingerprint: str
-    thread: str
+    revision: str
+    source: str
+    path: Path | None
 
-    def run_metadata(self) -> dict[str, object]:
-        """Return the job context captured by a run request."""
+    @property
+    def thread_id(self) -> str:
+        """Return the stable execution thread derived from job identity."""
 
-        return {
-            "kind": self.kind,
-            "id": self.id,
-            "provider": "local",
-            "name": self.name,
-            "title": self.title,
-            "body": self.body,
-            "schedule": self.schedule,
-            "thread_id": self.thread,
-            "source": self.source,
-            "path": self.path,
-            "readable": self.path is not None,
-            "writable": self.kind == "task" and self.path is not None,
-            "commentable": False,
-        }
+        return f"{self.kind}_{self.id}"
 
 
-@dataclass(frozen=True, slots=True)
-class HomeJobs:
-    """Immutable snapshot of ready task and chore files."""
+def load_ready_jobs(layout: AgentLayout) -> tuple[Job, ...]:
+    """Load normalized ready Markdown jobs for one agent home."""
 
-    definitions: tuple[JobDefinition, ...] = ()
-
-    @classmethod
-    def load(cls, layout: AgentLayout) -> HomeJobs:
-        catalog = AuthoredJobs(layout.home)
-        assign_missing_authored_job_ids(
-            layout,
-            catalog=catalog,
-        )
-        jobs = [_file_definition(layout.root, job) for job in catalog.list()]
-        return cls(tuple(sorted(jobs, key=lambda item: (item.kind, item.id))))
+    catalog = AuthoredJobs(layout.home)
+    ready = catalog.list(stage="ready")
+    if any(item.optional_id is None for item in ready):
+        assign_missing_authored_job_ids(layout, catalog=catalog, stage="ready")
+        ready = catalog.list(stage="ready")
+    return tuple(_file_job(layout.root, item) for item in ready)
 
 
-@dataclass(frozen=True, slots=True)
-class AgentJobs:
-    """Effective jobs from one home snapshot and one immutable program."""
+def program_jobs(program: Program) -> tuple[Job, ...]:
+    """Normalize program task and chore declarations."""
 
-    definitions: tuple[JobDefinition, ...] = ()
-
-    @classmethod
-    def load(cls, layout: AgentLayout, program: Program) -> AgentJobs:
-        return cls.merge(HomeJobs.load(layout), program)
-
-    @classmethod
-    def merge(cls, home: HomeJobs, program: Program) -> AgentJobs:
-        program_jobs = _index_jobs(
-            map(_program_definition, program.jobs), source="program"
-        )
-        home_jobs = _index_jobs(home.definitions, source="home")
-        program_jobs.update(home_jobs)
-        return cls(
-            tuple(sorted(program_jobs.values(), key=lambda item: (item.kind, item.id)))
-        )
-
-    def get(self, kind: JobKind, job_id: str) -> JobDefinition | None:
-        return next(
-            (job for job in self.definitions if job.kind == kind and job.id == job_id),
-            None,
-        )
+    return tuple(_program_job(decl) for decl in program.jobs)
 
 
-def _file_definition(
-    root: Path,
-    job: JobFile,
-) -> JobDefinition:
+def merge_jobs(*groups: Iterable[Job]) -> dict[str, Job]:
+    """Merge effective job sources while rejecting every duplicate id."""
+
+    merged: dict[str, Job] = {}
+    for group in groups:
+        for job in group:
+            previous = merged.get(job.id)
+            if previous is not None:
+                raise ValueError(
+                    f"duplicate job id {job.id!r}: {previous.source} and {job.source}"
+                )
+            merged[job.id] = job
+    return merged
+
+
+def schedule_revision(job: Job) -> str | None:
+    """Return the stable revision of one chore schedule."""
+
+    if job.schedule is None:
+        return None
+    return sha256(job.schedule.encode()).hexdigest()
+
+
+def _file_job(root: Path, job: JobFile) -> Job:
     if job.path is None:
         raise ValueError("authored job path is required")
-    name = job.name
-    source = str(job.path.relative_to(root))
-    return _definition(
+    return _job(
         job_id=job.id,
         kind=job.kind,
-        name=name,
         title=job.title,
         body=job.body,
-        source=source,
-        path=str(job.path),
         schedule=job.schedule if job.kind == "chore" else None,
+        source=str(job.path.relative_to(root)),
+        path=job.path,
     )
 
 
-def _program_definition(decl: JobDecl) -> JobDefinition:
+def _program_job(decl: JobDecl) -> Job:
     title = str(decl.meta.get("title") or "").strip()
-    body = decl.body.strip()
-    schedule = (
-        str(decl.meta.get("schedule") or DEFAULT_CHORE_SCHEDULE).strip()
-        if decl.kind == "chore"
-        else None
-    )
-    return _definition(
+    return _job(
         job_id=decl.name,
         kind=decl.kind,
-        name=decl.name,
         title=title or None,
-        body=body,
+        body=decl.body.strip(),
+        schedule=(
+            str(decl.meta.get("schedule") or DEFAULT_CHORE_SCHEDULE).strip()
+            if decl.kind == "chore"
+            else None
+        ),
         source=f"agent.too:{decl.span.line}",
         path=None,
-        schedule=schedule,
     )
 
 
-def _definition(
+def _job(
     *,
     job_id: str,
     kind: JobKind,
-    name: str,
     title: str | None,
     body: str,
-    source: str,
-    path: str | None,
     schedule: str | None,
-) -> JobDefinition:
-    payload = json.dumps(
-        [job_id, kind, source, title, body, schedule],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return JobDefinition(
+    source: str,
+    path: Path | None,
+) -> Job:
+    normalized_body = body.replace("\r\n", "\n").strip()
+    return Job(
         id=job_id,
         kind=kind,
-        name=name,
         title=title,
         body=body,
+        schedule=schedule,
+        revision=sha256(normalized_body.encode()).hexdigest(),
         source=source,
         path=path,
-        schedule=schedule,
-        fingerprint=sha256(payload.encode()).hexdigest(),
-        thread=f"{kind}_{job_id.strip()}",
     )
-
-
-def _key(job: JobDefinition) -> str:
-    return job.id
-
-
-def _index_jobs(
-    jobs: Iterable[JobDefinition], *, source: str
-) -> dict[str, JobDefinition]:
-    indexed: dict[str, JobDefinition] = {}
-    for job in jobs:
-        key = _key(job)
-        if key in indexed:
-            raise ValueError(f"duplicate {source} job id: {job.id}")
-        indexed[key] = job
-    return indexed
 
 
 def job_thread_id(job: JobFile) -> str:

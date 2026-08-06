@@ -30,6 +30,7 @@ def assign_missing_authored_job_ids(
     layout: AgentLayout,
     *,
     catalog: AuthoredJobs | None = None,
+    stage: JobStage | None = None,
 ) -> tuple[JobFile, ...]:
     """Assign and persist ids missing from manually authored job files."""
 
@@ -38,7 +39,8 @@ def assign_missing_authored_job_ids(
         lambda: allocate_authored_job_id(
             layout,
             catalog=effective_catalog,
-        )
+        ),
+        stage=stage,
     )
 
 
@@ -53,7 +55,7 @@ def new_job_file(
 ) -> JobFile:
     """Build one new authored job from caller-resolved values."""
 
-    meta: dict[str, object] = {"id": job_id, "name": job_id}
+    meta: dict[str, object] = {"id": job_id}
     if title is not None and title.strip():
         meta["title"] = title.strip()
     if kind == "chore":

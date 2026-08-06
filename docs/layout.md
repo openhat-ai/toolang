@@ -126,7 +126,7 @@ Key paths:
 | `status.json` | Runtime status, endpoint, sandbox summary, and selected models |
 | `agent.log`    | Runtime log                                                  |
 | `logs/<agic>/<run_id>.log` | Per-run script logs when `PY_LOG` is set |
-| `jobs.db` | Scheduler job projection and atomic job claims                |
+| `jobs.db` | Ready-job checkpoints, RRULE cursors, and active claims       |
 | `runs.db` | Threads, controls, runs, steps, and replayable model inputs   |
 | `files.db` | File request claims, fingerprints, and completion state        |
 | `ids.json`     | Local id allocator state                                     |
