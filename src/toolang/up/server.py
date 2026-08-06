@@ -245,9 +245,9 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
                 expected_started_at=started_at,
             )
             stop_signal.set()
-            await _finish_runtime_tasks(tasks)
             if scheduler is not None:
                 await scheduler.pause()
+            await _finish_runtime_tasks(tasks)
             await core.close()
             if scheduler is not None:
                 await scheduler.stop()
