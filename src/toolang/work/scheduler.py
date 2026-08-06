@@ -279,6 +279,7 @@ class JobScheduler:
             if self._watch_stop is not None:
                 self._watch_stop.set()
             if watch_task is not None:
+                watch_task.cancel()
                 await asyncio.gather(watch_task, return_exceptions=True)
             if self._active:
                 await asyncio.gather(

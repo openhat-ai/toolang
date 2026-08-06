@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
 import threading
+from typing import AsyncIterator
 
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
@@ -109,6 +110,58 @@ def test_scheduler_rejects_invalid_submission_without_creating_a_run(
             assert not harness.store.list_threads()
         finally:
             await _close_scheduler(scheduler, harness)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        harness.store.close()
+
+
+def test_scheduler_stop_cancels_an_unresponsive_job_watcher(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path / "toolang",
+        source=_SOURCE,
+        responses=[],
+    )
+    entered = threading.Event()
+    canceled = threading.Event()
+
+    class BlockingWatcher:
+        def __init__(self, _layout) -> None:
+            pass
+
+        def current(self):
+            return ()
+
+        def refresh(self):
+            return ()
+
+        async def updates(self, *, stop_signal) -> AsyncIterator[tuple]:
+            del stop_signal
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                canceled.set()
+            if False:  # pragma: no cover - keeps this an async generator
+                yield ()
+
+    monkeypatch.setattr("toolang.work.scheduler.JobWatcher", BlockingWatcher)
+    scheduler = _scheduler(harness)
+
+    async def scenario() -> None:
+        try:
+            await scheduler.start()
+            assert await asyncio.to_thread(entered.wait, 1)
+            async with asyncio.timeout(1):
+                await scheduler.stop()
+            assert canceled.is_set()
+        finally:
+            await harness.executor.shutdown()
+            await scheduler.stop()
 
     try:
         asyncio.run(scenario())
