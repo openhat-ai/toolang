@@ -73,7 +73,7 @@ class JobInfo:
             schedule=job.schedule if job.kind == "chore" else None,
             remote_ref=job_remote_ref(job),
             remote_status=job_remote_status(job),
-            title=job_display_title(job, fallback=job.path.stem),
+            title=job_display_title(job, fallback=job.id),
             path=path,
             updated_at=datetime.fromtimestamp(
                 job.path.stat().st_mtime_ns / 1_000_000_000,

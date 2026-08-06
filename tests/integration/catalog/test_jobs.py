@@ -12,7 +12,7 @@ from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.errors import DuplicateJobIdError
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import Program
-from toolang.work.state import AgentJobs, HomeJobs, JobDefinition
+from toolang.work.state import Job, load_ready_jobs, merge_jobs, program_jobs
 from toolang.work.store import JobStore
 from toolang.work.watcher import JobWatcher
 
@@ -30,46 +30,40 @@ def test_job_watcher_current_returns_published_snapshot_without_rescanning(
     )
     published = watcher.current()
     monkeypatch.setattr(
-        HomeJobs,
-        "load",
+        "toolang.work.watcher.load_ready_jobs",
         lambda *_args, **_kwargs: pytest.fail("current() must not scan authored jobs"),
     )
 
     assert watcher.current() is published
 
 
-def test_agent_jobs_merge_home_over_program(tmp_path: Path) -> None:
+def test_effective_jobs_reject_file_and_program_duplicate(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     home = root / "agents" / "alice"
     AuthoredJobs(home).create(_job("task", "review", "Review from file."))
     program = Program.from_source("task review:\n  Review from program.\n")
 
-    jobs = AgentJobs.merge(
-        HomeJobs.load(AgentLayout.resident(root, "alice")),
-        program,
-    )
-
-    assert len(jobs.definitions) == 1
-    assert jobs.definitions[0].body == "Review from file."
-    assert jobs.definitions[0].source.endswith("tasks/review.md")
+    with pytest.raises(ValueError, match="duplicate job id 'review'"):
+        merge_jobs(
+            load_ready_jobs(AgentLayout.resident(root, "alice")),
+            program_jobs(program),
+        )
 
 
-def test_agent_jobs_reject_duplicate_home_ids() -> None:
-    job = JobDefinition(
+def test_effective_jobs_reject_duplicate_ids() -> None:
+    job = Job(
         id="review",
         kind="task",
-        name="review",
         title=None,
         body="Review.",
-        source="tasks/review.md",
-        path="/tmp/review.md",
         schedule=None,
-        fingerprint="abc",
-        thread="task_review",
+        revision="abc",
+        source="tasks/review.md",
+        path=Path("/tmp/review.md"),
     )
 
-    with pytest.raises(ValueError, match="duplicate home job id: review"):
-        AgentJobs.merge(HomeJobs((job, job)), Program.from_source(""))
+    with pytest.raises(ValueError, match="duplicate job id 'review'"):
+        merge_jobs((job,), (job,))
 
 
 def test_authored_jobs_moves_between_stages(tmp_path: Path) -> None:
@@ -109,7 +103,7 @@ def test_authored_jobs_reports_last_modified_duplicate_id(tmp_path: Path) -> Non
     os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
 
     with pytest.raises(DuplicateJobIdError) as captured:
-        AuthoredJobs(home).list()
+        AuthoredJobs(home).contains_id("duplicate")
 
     assert captured.value.path == newer
     assert captured.value.existing_path == older
@@ -120,25 +114,30 @@ def test_job_store_claims_once_across_connections(tmp_path: Path) -> None:
     AuthoredJobs(root / "agents" / "alice").create(
         _job("task", "review", "Review this.")
     )
-    jobs = AgentJobs.merge(
-        HomeJobs.load(AgentLayout.resident(root, "alice")),
-        Program.from_source(""),
+    jobs = merge_jobs(
+        load_ready_jobs(AgentLayout.resident(root, "alice")),
+        program_jobs(Program.from_source("")),
     )
     path = root / "agents" / "alice" / ".runtime" / "jobs.db"
     stores = (JobStore(path), JobStore(path))
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     for store in stores:
-        store.reconcile(jobs=jobs)
+        store.reconcile(jobs=jobs, now=now)
     barrier = threading.Barrier(3)
     claims = []
     lock = threading.Lock()
 
     def claim(store: JobStore) -> None:
         barrier.wait()
-        claimed = store.claim_due(
-            jobs=jobs,
-            kind="task",
-            now=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        )
+        try:
+            claimed = store.claim(
+                job=jobs["review"],
+                trigger="source",
+                run_id=f"run_{id(store)}",
+                now=now,
+            )
+        except ValueError:
+            claimed = None
         with lock:
             claims.append(claimed)
 

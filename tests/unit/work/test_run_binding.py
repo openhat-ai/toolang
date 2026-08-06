@@ -4,7 +4,7 @@ from pathlib import Path
 from toolang.base.types.message import Message
 from toolang.work.files import FileRequestStore
 from toolang.work.inbox import collect_file_submissions
-from toolang.work.state import AgentJobs, JobDefinition
+from toolang.work.state import Job
 from toolang.work.store import JobStore
 from toolang.work.types import FileSnapshot
 
@@ -12,36 +12,32 @@ from toolang.work.types import FileSnapshot
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def test_job_claim_binds_executor_assigned_run_id(tmp_path: Path) -> None:
-    definition = JobDefinition(
+def test_job_claim_persists_preallocated_run_id(tmp_path: Path) -> None:
+    definition = Job(
         id="TSK-1",
         kind="task",
-        name="example",
         title=None,
         body="",
+        schedule=None,
+        revision="definition-1",
         source="program",
         path=None,
-        schedule=None,
-        fingerprint="definition-1",
-        thread="task_TSK-1",
     )
-    jobs = AgentJobs((definition,))
+    jobs = {definition.id: definition}
     store = JobStore(tmp_path / "jobs.db")
     try:
         store.reconcile(jobs=jobs, now=NOW)
 
-        claimed = store.claim_due(jobs=jobs, kind="task", now=NOW)
-
-        assert claimed is not None
-        assert claimed.job.status == "running"
-        assert claimed.job.last_run_id is None
-        bound = store.bind_run(
-            job_id=claimed.job.job_id,
-            kind=claimed.job.kind,
+        claimed = store.claim(
+            job=definition,
+            trigger="source",
             run_id="run_executor",
             now=NOW,
         )
-        assert bound.last_run_id == "run_executor"
+
+        assert claimed is not None
+        assert claimed.record.status == "running"
+        assert claimed.record.active_run_id == "run_executor"
         assert (
             store.finish_run(
                 jobs=jobs,

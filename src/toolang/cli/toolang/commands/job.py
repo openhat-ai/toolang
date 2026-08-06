@@ -14,15 +14,13 @@ from typer.core import TyperCommand
 from ....catalog import templates
 from ....catalog.types import JobStage
 from toolang.common.layout import AgentLayout
-from toolang.state.source import read_authored_source
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.errors import CatalogError
 from toolang.work.authoring import (
     allocate_authored_job_id,
     assign_missing_authored_job_ids,
 )
-from toolang.work.state import AgentJobs, job_display_title
-from toolang.work.store import open_job_store
+from toolang.work.state import job_display_title
 from ...common.client import runtime_post
 from ...common.context import context_root, require_prefix_agent, user_call
 from ...common.output import echo_table
@@ -231,8 +229,6 @@ def _new(kind: JobKind, _title: str) -> Callable[..., None]:
         )
         saved = user_call(_jobs(root, agent).create, job.with_meta(job.meta))
         path = _job_path(saved)
-        if not draft:
-            _reconcile(root, agent, kind)
         typer.echo(f"{kind} {path.stem} created\t{path}")
 
     return command
@@ -248,13 +244,12 @@ def _clone(kind: JobKind, title: str) -> Callable[..., None]:
         if source is None:
             raise click.ClickException(f"{kind} not found: {id}")
         clone_id = allocate_authored_job_id(_layout(root, agent))
-        clone = source.with_meta({**source.meta, "id": clone_id, "name": clone_id})
+        clone = source.with_meta({**source.meta, "id": clone_id})
         saved = user_call(
             _jobs(root, agent).create,
             replace(clone, path=None, stage="ready"),
         )
         path = _job_path(saved)
-        _reconcile(root, agent, kind)
         typer.echo(f"{kind} {path.stem} cloned\t{path}")
 
     return command
@@ -283,7 +278,6 @@ def _edit(kind: JobKind, title: str) -> Callable[..., None]:
         )
         saved = user_call(catalog.update, document.with_meta(document.meta))
         path = _job_path(saved)
-        _reconcile(root, agent, kind)
         typer.echo(str(path))
 
     return command
@@ -297,7 +291,6 @@ def _move(kind: JobKind, title: str, stage: JobStage) -> Callable[..., None]:
         root, agent = context_root(ctx), require_prefix_agent(ctx)
         moved = user_call(_jobs(root, agent).move, kind, id, stage)
         path = _job_path(moved)
-        _reconcile(root, agent, kind)
         verb = {"draft": "drafted", "ready": "ready", "archived": "archived"}[stage]
         typer.echo(f"{kind} {id} {verb}\t{path}")
 
@@ -323,17 +316,8 @@ def _reopen(kind: JobKind, title: str) -> Callable[..., None]:
     ) -> None:
         if kind != "task":
             raise click.ClickException("reopen is only supported for tasks")
-        root, agent = context_root(ctx), require_prefix_agent(ctx)
-        store = open_job_store(_layout(root, agent))
-        try:
-            record = user_call(
-                store.reopen_task,
-                jobs=_agent_jobs(root, agent),
-                task_id=id,
-            )
-        finally:
-            store.close()
-        typer.echo(f"task {record.job_id} reopened\t{record.status}")
+        runtime_post(ctx, f"/api/v1/tasks/{id}/reopen", payload={})
+        typer.echo(f"task {id} reopened")
 
     return command
 
@@ -356,28 +340,8 @@ def _cancel(kind: JobKind, title: str) -> Callable[..., None]:
         ctx: typer.Context,
         id: str = typer.Argument(..., help=f"{title} id", metavar="ID"),
     ) -> None:
-        root, agent = context_root(ctx), require_prefix_agent(ctx)
-        store = open_job_store(_layout(root, agent))
-        try:
-            store.reconcile(jobs=_agent_jobs(root, agent), kind=kind)
-            record = store.get(job_id=id, kind=kind)
-            if record is None:
-                raise click.ClickException(f"{kind} not found: {id}")
-            if record.status == "running" and record.last_run_id is not None:
-                runtime_post(
-                    ctx, f"/api/v1/runs/{record.last_run_id}/cancel", payload={}
-                )
-                typer.echo(f"{kind} {id} cancel requested\t{record.last_run_id}")
-                return
-            if kind == "task" and record.status == "todo":
-                updated = store.cancel_pending_task(task_id=id)
-                typer.echo(f"task {id} canceled\t{updated.status}")
-                return
-            raise click.ClickException(
-                f"{kind} cannot be canceled from status: {record.status}"
-            )
-        finally:
-            store.close()
+        runtime_post(ctx, f"/api/v1/{kind}s/{id}/cancel", payload={})
+        typer.echo(f"{kind} {id} cancel requested")
 
     return command
 
@@ -398,23 +362,9 @@ def _delete(kind: JobKind, title: str) -> Callable[..., None]:
         if entry is None:
             raise click.ClickException(f"archived {kind} not found: {id}")
         user_call(catalog.remove, kind, id)
-        _reconcile(root, agent, kind)
         typer.echo(f"{kind} {id} deleted")
 
     return command
-
-
-def _reconcile(root: Path, agent: str, kind: JobKind) -> None:
-    store = open_job_store(_layout(root, agent))
-    try:
-        store.reconcile(jobs=_agent_jobs(root, agent), kind=kind)
-    finally:
-        store.close()
-
-
-def _agent_jobs(root: Path, agent: str) -> AgentJobs:
-    program = read_authored_source(root, agent).load_program().parse()
-    return AgentJobs.load(_layout(root, agent), program)
 
 
 def _jobs(root: Path, agent: str) -> AuthoredJobs:

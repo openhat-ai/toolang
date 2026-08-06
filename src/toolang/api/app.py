@@ -15,6 +15,7 @@ from toolang.catalog import CapsManager, JobsManager
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.execution.executor import CeilingSpec
 from toolang.up import AgentCore
+from toolang.work.scheduler import JobScheduler
 
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:3000",
@@ -51,6 +52,12 @@ def get_jobs_manager(request: Request) -> JobsManager:
     return cast(JobsManager, request.app.state.jobs_manager)
 
 
+def get_job_scheduler(request: Request) -> JobScheduler:
+    """Return the runtime scheduler owned by the server lifespan."""
+
+    return cast(JobScheduler, request.app.state.job_scheduler)
+
+
 def get_live_events(request: Request) -> LiveEventRelay:
     """Return the process-local live event relay."""
 
@@ -66,6 +73,7 @@ def get_ceiling_spec(request: Request) -> CeilingSpec:
 AgentCoreDep = Annotated[AgentCore, Depends(get_agent_core)]
 CapsManagerDep = Annotated[CapsManager, Depends(get_caps_manager)]
 JobsManagerDep = Annotated[JobsManager, Depends(get_jobs_manager)]
+JobSchedulerDep = Annotated[JobScheduler, Depends(get_job_scheduler)]
 LiveEventRelayDep = Annotated[LiveEventRelay, Depends(get_live_events)]
 CeilingSpecDep = Annotated[CeilingSpec, Depends(get_ceiling_spec)]
 

@@ -21,7 +21,7 @@ def _job(kind, job_id: str, body: str, *, title: str | None = None) -> JobFile:
     )
 
 
-def test_task_runtime_projection_is_owned_by_work() -> None:
+def test_task_caller_projection_is_owned_by_work() -> None:
     job = _job(
         "task",
         "review",

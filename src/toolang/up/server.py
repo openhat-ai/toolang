@@ -47,14 +47,10 @@ from toolang.up.logging import (
     configure_logging,
 )
 from toolang.work import inbox as files
-from toolang.work.scheduler import DEFAULT_INTERVAL_MS as DEFAULT_SCHEDULER_INTERVAL_MS
-from toolang.work.scheduler import Scheduler
-from toolang.work.store import open_job_store
-from toolang.work.watcher import JobWatcher
+from toolang.work.scheduler import JobScheduler
 
 DEFAULT_TRIGGER_INTERVAL_MS: dict[str, float] = {
     "file": files.DEFAULT_INTERVAL_MS,
-    "pulse": DEFAULT_SCHEDULER_INTERVAL_MS,
 }
 DEFAULT_WATCH_DEBOUNCE_MS = state_watcher.DEFAULT_DEBOUNCE_MS
 DEFAULT_FILE_STABLE_MS = files.DEFAULT_STABLE_MS
@@ -192,10 +188,10 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
     jobs_manager = JobsManager(spec.layout)
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
+    async def lifespan(app: FastAPI):
         stop_signal = asyncio.Event()
         tasks: list[asyncio.Task[None]] = []
-        job_store = None
+        scheduler: JobScheduler | None = None
         try:
             agents.write_runtime_state(
                 spec.layout,
@@ -205,22 +201,18 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
                 models=ceiling.models or (),
                 sandbox=environ.get("TOOLANG_SANDBOX", "none"),
             )
-            job_store = open_job_store(spec.layout)
-            job_watcher = JobWatcher(spec.layout)
-            scheduler = Scheduler(
-                job_store=job_store,
+            scheduler = JobScheduler(
+                layout=spec.layout,
                 executor=core.executor,
+                ids=core.ids,
                 get_agent_setup=current_setup,
-                get_home_jobs=job_watcher.current,
                 get_agent_state=current_state,
                 ceiling=ceiling,
-                kinds=("task", "chore"),
-                interval_ms=DEFAULT_TRIGGER_INTERVAL_MS["pulse"],
             )
+            await scheduler.start()
+            app.state.job_scheduler = scheduler
             tasks.extend(
                 [
-                    job_watcher.start(stop_signal=stop_signal),
-                    scheduler.start(stop_signal=stop_signal),
                     asyncio.create_task(
                         core.state.run(
                             stop_signal=stop_signal,
@@ -244,7 +236,7 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
                         stable_ms=DEFAULT_FILE_STABLE_MS,
                         stop_signal=stop_signal,
                     )
-                )
+            )
             yield
         finally:
             agents.stop_runtime_state(
@@ -254,9 +246,11 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
             )
             stop_signal.set()
             await _finish_runtime_tasks(tasks)
-            if job_store is not None:
-                job_store.close()
+            if scheduler is not None:
+                await scheduler.pause()
             await core.close()
+            if scheduler is not None:
+                await scheduler.stop()
 
     app = create_app(
         core,
