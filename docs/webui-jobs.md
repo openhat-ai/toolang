@@ -69,7 +69,7 @@ Task list item:
   "id": "3nprht9x",
   "kind": "task",
   "stage": "ready",
-  "status": "todo",
+  "status": "pending",
   "title": "Review API changes",
   "path": "tasks/3nprht9x.md",
   "updated_at": "2026-04-23T10:10:00Z",
@@ -88,7 +88,7 @@ Chore list item:
   "id": "xy1234ab",
   "kind": "chore",
   "stage": "ready",
-  "status": "todo",
+  "status": "pending",
   "schedule": "FREQ=HOURLY;INTERVAL=6",
   "title": "Check stale PRs",
   "path": "chores/xy1234ab.md",
@@ -123,7 +123,7 @@ Task `status` values:
 
 | Value | Meaning |
 | --- | --- |
-| `todo` | Ready to be claimed |
+| `pending` | Ready to be claimed |
 | `running` | Claimed or currently being processed |
 | `done` | Completed successfully |
 | `failed` | Failed and not retried automatically |
@@ -133,7 +133,7 @@ Chore `status` values:
 
 | Value | Meaning |
 | --- | --- |
-| `todo` | Waiting for the next due or manual run |
+| `pending` | Waiting for the next due or manual run |
 | `running` | Claimed or currently being processed |
 | `done` | No future scheduled occurrences remain |
 
@@ -161,10 +161,10 @@ function jobPhase(job: Job): JobPhase {
 
   if (job.kind === "task" && job.status === "failed") return "failed";
   if (job.kind === "task" && job.status === "canceled") return "canceled";
-  if (job.kind === "task" && job.status === "todo") return "todo";
+  if (job.kind === "task" && job.status === "pending") return "todo";
   if (job.kind === "task" && job.status === "done") return "finished";
 
-  if (job.kind === "chore" && job.status === "todo" && job.runtime.next_run_at) return "scheduled";
+  if (job.kind === "chore" && job.status === "pending" && job.runtime.next_run_at) return "scheduled";
   if (job.kind === "chore" && job.status === "done") return "finished";
 
   return "ready";

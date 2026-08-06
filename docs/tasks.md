@@ -1,15 +1,17 @@
-# Job Model
+# Authored Jobs
 
-Toolang uses Markdown job documents for durable authored work.
+Toolang uses Markdown task and chore documents for durable authored jobs. The
+runtime scheduling and recovery model is defined in [work.md](./work.md).
 
-Current built-in job kinds are:
+Current job kinds are:
 
-- `task`
-- `chore`
+- `task`: one-shot work activated by publication or a body revision;
+- `chore`: recurring work activated by an RRULE or an explicit manual request.
 
-## Directory Structure
 
-Jobs live under one agent home:
+## Layout And Stage
+
+Jobs live below one agent home:
 
 ```text
 tasks/
@@ -32,130 +34,102 @@ archive/
   runs.db
 ```
 
-Rules:
+Stage is directory placement rather than frontmatter:
 
-- `tasks/` contains ready one-shot work.
-- `chores/` contains ready recurring work.
-- `drafts/tasks/` and `drafts/chores/` contain authored definitions that are not ready.
-- `archive/tasks/` and `archive/chores/` contain retired definitions.
-- `.runtime/ids.json` owns local id allocation state.
-- `.runtime/jobs.db` owns scheduler projection and atomic job claims.
-- `.runtime/runs.db` owns thread, run, step, input, and transcript truth.
+| Directory | Stage | Meaning |
+| --- | --- | --- |
+| `drafts/tasks/` | `draft` | Inactive task definition |
+| `drafts/chores/` | `draft` | Inactive chore definition |
+| `tasks/` | `ready` | Task visible to scheduling |
+| `chores/` | `ready` | Chore visible to scheduling |
+| `archive/tasks/` | `archived` | Retired task definition |
+| `archive/chores/` | `archived` | Retired chore definition |
 
-Only `tasks/` and `chores/` are scanned for execution. Draft and archived
-folders are cold folders; the CLI updates them directly, and listing may scan
-them lazily.
+Only ready directories are watched at runtime. Draft and archived directories
+are cold catalog storage and are read only by explicit catalog operations.
 
 
-## Definition And Stage
+## Identity And Fields
 
-Markdown files store stable job definitions only.
-
-Shared frontmatter fields:
+Shared frontmatter fields are:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `id` | required before publication | Globally unique stable local job id |
-| `name` | required for writes | Authored logical name, projected from the file name when omitted |
-| `title` | optional | Human-readable display title |
+| `id` | before publication | Globally unique stable job identity |
+| `title` | no | Human-readable display label |
 
-The CLI, API, and agent tools allocate `id` before passing a new job to
-`AuthoredJobs`. The catalog itself does not allocate ids. Job ids are unique
-across tasks, chores, and every stage. Moving a job between stage directories
-does not change `id`, `name`, or the Markdown file name. Editing `name` does not
-rename the file.
+Chores add:
 
-New jobs created by the CLI use the generated id as the file name:
-
-```text
-tasks/3nprht9x.md
-chores/xy1234ab.md
-```
-
-When a manually added Markdown file omits `name`, `JobFile` projects the file
-name as `meta["name"]`. When it omits `id`, `toolang.work` allocates an id and
-rewrites the frontmatter before publishing the next immutable home-job state.
-If a direct edit introduces a duplicate id, state publication fails and reports
-the last-modified conflicting file. Subsequent operations use `id` as the
-selector; `title` is only display text and may be changed freely.
-
-Stage is expressed by folder placement, not by frontmatter:
-
-| Folder | Stage | Meaning |
+| Field | Required | Meaning |
 | --- | --- | --- |
-| `drafts/tasks/` | `draft` | Task definition exists but is not ready |
-| `drafts/chores/` | `draft` | Chore definition exists but is not ready |
-| `tasks/` | `ready` | Task is visible to the runtime |
-| `chores/` | `ready` | Chore is visible to the runtime |
-| `archive/tasks/` | `archived` | Task is retired |
-| `archive/chores/` | `archived` | Chore is retired |
+| `schedule` | yes | RFC 5545 RRULE |
 
-Runtime fields such as status, last run, next run, counters, and errors are not
-written to Markdown.
+There is no separate job `name`. The id is the machine selector, title is the
+optional label, and path is the current source location. New catalog-created
+jobs use `<id>.md`; renaming that file does not change identity.
 
-The Markdown body is one `Submission` using
-[input-syntax.md](./input-syntax.md). It has no ambient template variables;
-includes resolve relative to the job document, and invoked prompt templates
-receive only their own explicit arguments and input. Task and chore profiles
-accept only `RunnableCall`; its evaluated content is passed to `RunSpec.input`,
-and the selected runnable sees its declared primary type such as the default
-`Part[]`.
+Job ids are unique across task and chore kinds and every stage. Both id and
+kind are immutable. Moving between stages, renaming a source file, editing the
+body, and changing a chore schedule preserve the id. Copying a job or changing
+its kind requires a new id.
 
-Job snapshots retain the authored body, not a parsed `RunnableCall`. The
-scheduler parses, binds, and validates the body only after the job is due and
-atomically claimed. A rejected submission records a failed occurrence without
-creating an execution run.
+The CLI, API, and agent tools allocate an id before catalog creation. A
+manually added ready file may omit it; `toolang.work` allocates and writes the
+id under the authored-job lock before publishing the next ready snapshot.
+Duplicate ids make the authored state invalid.
+
+Runtime fields such as status, run ids, errors, and schedule cursors are never
+written into authored Markdown.
 
 
-## Tasks
+## Body
 
-Tasks are one-shot work items.
+The body is one `Submission` defined by [input-syntax.md](./input-syntax.md).
+It has no ambient template variables. Includes resolve relative to the Markdown
+file, and prompt templates receive only explicit arguments and input.
 
-A minimal task document:
+The scheduler retains the body as source and parses it as a `RunnableCall` only
+when dispatching. The surface default is `task` or `chore`, falling back to
+`default` when that runnable is absent. The evaluated content becomes the root
+`RunSpec.input`.
+
+A scheduler-side parse or validation failure is retained on the job record and
+does not create a run.
+
+
+## Task Document
 
 ```md
 ---
 id: 3nprht9x
-name: 3nprht9x
 title: Review API changes
 ---
 
 Review the API changes and summarize risks.
 ```
 
-Task runtime status is stored in `.runtime/jobs.db`:
+A new ready task is pending immediately. Editing its executable body creates a
+new revision; title or path edits do not. Pending edits coalesce to the latest
+body. An edit during a run does not mutate that run and requests the latest
+revision afterward. An unchanged terminal task stays terminal until explicitly
+reopened.
+
+Task statuses are:
 
 | Status | Meaning |
 | --- | --- |
-| `todo` | Ready for a run |
-| `running` | Currently claimed by one run |
-| `done` | Latest run completed and the task is finished |
-| `failed` | Latest run failed |
-| `canceled` | Latest run was intentionally canceled |
-
-Task execution rules:
-
-- only ready tasks with scheduler status `todo` can be claimed
-- claim atomically sets job status to `running` and records `last_run_id`
-- run `finished` sets job status to `done`
-- run `failed` sets job status to `failed`
-- run `canceled` sets job status to `canceled`
-- `task reopen <id>` sets `done`, `failed`, or `canceled` tasks back to `todo`
-
-The task body is authored input. Runtime output is stored in execution records
-and projected through the job thread.
+| `pending` | A revision is ready to dispatch |
+| `running` | One captured revision has an active run |
+| `done` | The current revision finished successfully |
+| `failed` | The current revision failed |
+| `canceled` | The current revision was canceled |
 
 
-## Chores
-
-Chores are recurring local jobs.
-
-A minimal chore document:
+## Chore Document
 
 ```md
 ---
 id: xy1234ab
-name: xy1234ab
 title: Check stale PRs
 schedule: "FREQ=HOURLY;INTERVAL=6"
 ---
@@ -163,228 +137,91 @@ schedule: "FREQ=HOURLY;INTERVAL=6"
 Check stale PRs and report actionable items.
 ```
 
-Chore-specific frontmatter fields:
+The scheduler persists a stable anchor and the earliest RRULE occurrence not
+yet claimed. Body edits affect later runs without triggering an immediate run.
+Schedule edits establish a new cursor. Missed scheduled occurrences coalesce
+to the latest due occurrence, so downtime and long runs do not create an
+unbounded backlog or shift the recurrence.
 
-| Field | Required | Meaning |
-| --- | --- | --- |
-| `schedule` | required | RRULE schedule string |
+`chore run <id>` requests one manual occurrence without changing the schedule.
+Repeated pending manual requests coalesce. Scheduled and manual occurrences
+remain distinct and execute serially in the same thread.
 
-Chore runtime status is stored in `.runtime/jobs.db`:
+Chore statuses are:
 
 | Status | Meaning |
 | --- | --- |
-| `todo` | Waiting for the next scheduled or manual run |
-| `running` | Currently claimed by one run |
-| `done` | No future scheduled occurrences remain |
+| `pending` | Waiting for a schedule or manual activation |
+| `running` | One occurrence has an active run |
+| `done` | A finite schedule is exhausted with no manual request |
 
-Chore execution rules:
-
-- only ready chores with scheduler status `todo` can be claimed
-- scheduled claims require the RRULE to be due
-- `chore run <id>` creates one manual occurrence without changing `schedule`
-- any final run status updates `next_run_at`
-- if another occurrence exists, the chore returns to `todo`
-- if no future occurrence exists, the chore becomes `done`
-- failed or canceled chore runs do not make the chore itself failed or canceled
-
-The chore body is authored recurring work input. It is not rewritten by run
-output.
+A failed or canceled run remains execution history and does not disable later
+chore occurrences.
 
 
 ## Threads And Runs
 
-Job thread ids are runtime projections derived from job kind and id:
+Thread ids are derived from immutable job identity:
 
 ```text
 task_<id>
 chore_<id>
 ```
 
-Examples:
+All task revisions, reopens, manual chore runs, and scheduled chore runs reuse
+the same thread. Moving or archiving a job never deletes that thread or its run
+history.
 
-```text
-task_3nprht9x
-chore_xy1234ab
-```
-
-Run ids use the run id family with a `run_` prefix:
-
-```text
-run_<id>
-```
-
-Example:
-
-```text
-run_ppkp9e94
-```
-
-Job documents store only `id`. They do not store `thread_id`.
-
-Each execution creates one run under the job thread. `runs.db` keeps the
-history; future task retries, task reopens, and repeated chore occurrences all
-reuse the same job thread.
-
-
-## Runtime Projection
-
-The jobs API returns authored fields at the top level and runtime-derived state
-under `runtime`.
-
-Task projection:
+The stable job thread's create control stores minimal attribution without
+changing run context:
 
 ```json
 {
-  "id": "3nprht9x",
-  "kind": "task",
-  "stage": "ready",
-  "status": "todo",
-  "title": "Review API changes",
-  "path": "tasks/3nprht9x.md",
-  "updated_at": "2026-04-23T10:10:00Z",
-  "runtime": {
-    "thread_id": "task_3nprht9x",
-    "last_run": null,
-    "next_run_at": null
+  "job": {
+    "id": "3nprht9x",
+    "kind": "task"
   }
 }
 ```
 
-Chore projection:
+Revision, schedule cursors, and trigger details remain exclusively in
+`jobs.db`. A future root-run context change requires separate execution review.
+
+
+## Caller Projection
+
+The jobs API joins authored fields with the current scheduler checkpoint.
+Execution history is projected independently from the job thread.
 
 ```json
 {
   "id": "xy1234ab",
   "kind": "chore",
   "stage": "ready",
-  "status": "todo",
-  "schedule": "FREQ=HOURLY;INTERVAL=6",
+  "status": "pending",
   "title": "Check stale PRs",
+  "schedule": "FREQ=HOURLY;INTERVAL=6",
   "path": "chores/xy1234ab.md",
-  "updated_at": "2026-04-23T10:10:00Z",
   "runtime": {
     "thread_id": "chore_xy1234ab",
-    "last_run": {
-      "id": "run_ab12cd34",
-      "status": "finished",
-      "started_at": "2026-04-23T06:00:00Z",
-      "finished_at": "2026-04-23T06:02:00Z"
-    },
+    "last_run": null,
     "next_run_at": "2026-04-23T12:00:00Z"
   }
 }
 ```
 
-`runtime.last_run` is the latest known run for the job thread. If its status is
-`running`, it is also the active run. `runtime.next_run_at` is either `null` or
-the next scheduled chore timestamp.
-
-Runtime run statuses are:
-
-| Status | Meaning |
-| --- | --- |
-| `running` | The run is in progress |
-| `finished` | The run finished successfully |
-| `failed` | The run finished with an error |
-| `canceled` | The run was canceled |
+Ready jobs normally have scheduler records. Draft and archived jobs have no
+scheduler status. A ready job removed while running may retain one transient
+checkpoint until its run becomes terminal.
 
 
-## Scheduler Projection
+## API Shape
 
-`jobs.db` is an execution aid, not a second source of authored job definition.
-It stores one row per ready Markdown job:
+Unified `/jobs` routes are read-only. Writes use `/tasks` and `/chores` so kind
+semantics remain explicit.
 
-- `job_id`
-- `kind`
-- `path`
-- `definition_hash`
-- `thread_id`
-- `status`
-- `last_run_id`
-- `next_run_at`
-- `run_count`
-- `failed_count`
-- `canceled_count`
-- `created_at`
-- `updated_at`
-
-The scheduler reconciles `jobs.db` against ready folders before claiming jobs:
-
-- ready files missing in `jobs.db` are inserted
-- ready files whose path or definition hash changed are updated
-- rows whose ready files disappeared are removed
-- cold folders are not inserted into `jobs.db`
-
-Run creation uses an atomic claim:
-
-```text
-claim ready job where status = todo
-set job.status = running
-create run with status = running
-set job.last_run_id = run_id
-```
-
-If the claim fails, another scheduler or manual operation already claimed the
-job.
-
-Run completion is also atomic:
-
-```text
-set run.status = final_status
-set run.finished_at = now
-update job.status from kind and final_status
-update counters
-update next_run_at for chores
-```
-
-
-## HTTP API
-
-Current read endpoints:
-
-- `GET /api/v1/jobs`
-- `GET /api/v1/jobs/{job_id}`
-- `GET /api/v1/jobs/archived`
-- `GET /api/v1/jobs/archived/{job_id}`
-- `GET /api/v1/tasks`
-- `GET /api/v1/tasks/{task_id}`
-- `GET /api/v1/tasks/archived`
-- `GET /api/v1/tasks/archived/{task_id}`
-- `GET /api/v1/chores`
-- `GET /api/v1/chores/{chore_id}`
-- `GET /api/v1/chores/archived`
-- `GET /api/v1/chores/archived/{chore_id}`
-
-Default list endpoints return ready jobs. Archived jobs are returned only by
-explicit `/archived` routes.
-
-Current write endpoints:
-
-- `POST /api/v1/tasks`
-- `PATCH /api/v1/tasks/{task_id}`
-- `POST /api/v1/tasks/{task_id}/draft`
-- `POST /api/v1/tasks/{task_id}/ready`
-- `POST /api/v1/tasks/{task_id}/archive`
-- `POST /api/v1/tasks/{task_id}/reopen`
-- `POST /api/v1/tasks/{task_id}/cancel`
-- `PATCH /api/v1/tasks/archived/{task_id}`
-- `DELETE /api/v1/tasks/archived/{task_id}`
-- `POST /api/v1/chores`
-- `PATCH /api/v1/chores/{chore_id}`
-- `POST /api/v1/chores/{chore_id}/draft`
-- `POST /api/v1/chores/{chore_id}/ready`
-- `POST /api/v1/chores/{chore_id}/archive`
-- `POST /api/v1/chores/{chore_id}/run`
-- `POST /api/v1/chores/{chore_id}/cancel`
-- `PATCH /api/v1/chores/archived/{chore_id}`
-- `DELETE /api/v1/chores/archived/{chore_id}`
-
-Create and patch requests use structured JSON fields instead of raw
-frontmatter. Task writes accept `title` and `body`. Chore writes accept
-`title`, `body`, and `schedule`.
-
-The unified `/jobs` endpoints are read-only. Writes use the concrete `/tasks`
-or `/chores` collection so job-kind semantics remain explicit.
-
-Stage endpoints move definition files between folders. Execution endpoints
-operate on scheduler status and runs; they do not rewrite Markdown definitions.
+Read operations cover ready and archived job lists and details. Write
+operations cover creation, title/body/schedule edits, stage moves, task reopen
+and cancel, chore manual run, and archived deletion. Stage operations mutate
+catalog placement. Execution controls act on scheduler or run state and never
+rewrite job output into the authored document.

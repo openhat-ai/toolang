@@ -631,7 +631,7 @@ Chore items include:
 
 Task status values are:
 
-- `todo`
+- `pending`
 - `running`
 - `done`
 - `failed`
@@ -639,7 +639,7 @@ Task status values are:
 
 Chore status values are:
 
-- `todo`
+- `pending`
 - `running`
 - `done`
 
@@ -673,7 +673,7 @@ Task create requests accept:
 
 Task patch requests accept any subset of `title` and `body`. Stage actions
 use the task `draft`, `ready`, and `archive` endpoints. `task reopen` sets a
-completed, failed, or canceled task back to scheduler status `todo`.
+completed, failed, or canceled task back to scheduler status `pending`.
 Delete is destructive and is available only through archived routes.
 
 Chore create requests accept:
