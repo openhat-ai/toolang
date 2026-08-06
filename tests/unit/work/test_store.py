@@ -2,14 +2,25 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import sqlite3
 
 import pytest
 
+from toolang.work.errors import JobStoreSchemaError
 from toolang.work.state import Job
 from toolang.work.store import JobStore, next_activation
 
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def _schema_version(path: Path) -> int:
+    connection = sqlite3.connect(path)
+    try:
+        return int(connection.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        connection.close()
 
 
 def _task(revision: str = "one") -> Job:
@@ -40,6 +51,76 @@ def _chore(
         source="chores/maintain.md",
         path=None,
     )
+
+
+def test_job_store_rejects_a_newer_schema_without_modifying_it(tmp_path) -> None:
+    path = tmp_path / "jobs.db"
+    connection = sqlite3.connect(path)
+    connection.execute("CREATE TABLE future_state (value TEXT NOT NULL)")
+    connection.execute("INSERT INTO future_state VALUES ('preserved')")
+    connection.execute("PRAGMA user_version=4")
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(JobStoreSchemaError) as raised:
+        JobStore(path)
+
+    assert raised.value.version == 4
+    assert raised.value.current == 3
+    assert _schema_version(path) == 4
+    connection = sqlite3.connect(path)
+    try:
+        assert connection.execute("SELECT value FROM future_state").fetchone() == (
+            "preserved",
+        )
+    finally:
+        connection.close()
+
+
+def test_read_only_job_store_never_migrates_an_older_schema(tmp_path) -> None:
+    path = tmp_path / "jobs.db"
+    connection = sqlite3.connect(path)
+    connection.execute("CREATE TABLE jobs (legacy TEXT NOT NULL)")
+    connection.execute("INSERT INTO jobs VALUES ('preserved')")
+    connection.execute("PRAGMA user_version=2")
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(JobStoreSchemaError) as raised:
+        JobStore(path, read_only=True)
+
+    assert raised.value.read_only is True
+    assert _schema_version(path) == 2
+    connection = sqlite3.connect(path)
+    try:
+        assert connection.execute("SELECT legacy FROM jobs").fetchone() == (
+            "preserved",
+        )
+    finally:
+        connection.close()
+
+
+def test_job_store_upgrades_an_older_schema_forward(tmp_path) -> None:
+    path = tmp_path / "jobs.db"
+    connection = sqlite3.connect(path)
+    connection.execute("CREATE TABLE jobs (legacy TEXT NOT NULL)")
+    connection.execute("PRAGMA user_version=2")
+    connection.commit()
+    connection.close()
+
+    store = JobStore(path)
+    store.close()
+
+    assert _schema_version(path) == 3
+    connection = sqlite3.connect(path)
+    try:
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(jobs)")
+        }
+    finally:
+        connection.close()
+    assert "job_id" in columns
+    assert "legacy" not in columns
 
 
 def test_task_revisions_coalesce_and_run_serially(tmp_path) -> None:

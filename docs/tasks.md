@@ -190,8 +190,9 @@ Revision, schedule cursors, and trigger details remain exclusively in
 
 ## Caller Projection
 
-The jobs API joins authored fields with the current scheduler checkpoint.
-Execution history is projected independently from the job thread.
+The jobs API joins authored fields with the current scheduler checkpoint and a
+latest-run summary derived from the stable job thread. Full execution history
+remains an independent thread and run projection.
 
 ```json
 {
@@ -205,7 +206,8 @@ Execution history is projected independently from the job thread.
   "runtime": {
     "thread_id": "chore_xy1234ab",
     "last_run": null,
-    "next_run_at": "2026-04-23T12:00:00Z"
+    "next_run_at": "2026-04-23T12:00:00Z",
+    "error": null
   }
 }
 ```
@@ -213,6 +215,10 @@ Execution history is projected independently from the job thread.
 Ready jobs normally have scheduler records. Draft and archived jobs have no
 scheduler status. A ready job removed while running may retain one transient
 checkpoint until its run becomes terminal.
+
+`runtime.error` reports scheduler-side validation, dispatch, or recovery
+failures. When present, `last_run` includes its own `error` field for execution
+failure details. Neither value is written back to the authored Markdown.
 
 
 ## API Shape

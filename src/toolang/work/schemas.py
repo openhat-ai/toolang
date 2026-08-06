@@ -21,6 +21,7 @@ class LastRunInfo:
     status: str
     started_at: str | None
     finished_at: str | None
+    error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,7 @@ class JobRuntimeInfo:
     thread_id: str
     last_run: LastRunInfo | None
     next_run_at: str | None
+    error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +85,7 @@ class JobInfo:
                 thread_id=job_thread_id(job),
                 last_run=last_run,
                 next_run_at=record.next_run_at if record is not None else None,
+                error=record.error if record is not None else None,
             ),
         )
 

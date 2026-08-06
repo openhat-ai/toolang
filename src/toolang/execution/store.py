@@ -23,6 +23,7 @@ from toolang.base.types.message import (
 from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
 from toolang.common.time import utc_now
+from .errors import RunStoreSchemaError
 from .records import (
     RunControlRecord,
     RunControlRef,
@@ -49,22 +50,37 @@ from .types import (
 )
 
 _SCHEMA_VERSION = 19
+_MIGRATABLE_SCHEMA_VERSIONS = (13, 14, 15, 16, 17, 18, _SCHEMA_VERSION)
 
 
 class RunStore:
     """Durable thread and run truth for one agent."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, read_only: bool = False) -> None:
         self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(
-            db_path.as_posix(),
-            check_same_thread=False,
-            timeout=30,
-        )
+        self.read_only = read_only
+        if read_only:
+            target = f"{db_path.expanduser().resolve().as_uri()}?mode=ro"
+            self._conn = sqlite3.connect(
+                target,
+                uri=True,
+                check_same_thread=False,
+                timeout=30,
+            )
+        else:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(
+                db_path.as_posix(),
+                check_same_thread=False,
+                timeout=30,
+            )
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
-        self._init_schema()
+        try:
+            self._init_schema()
+        except BaseException:
+            self._conn.close()
+            raise
 
     def close(self) -> None:
         with self._lock:
@@ -1642,16 +1658,34 @@ class RunStore:
     def _init_schema(self) -> None:
         with self._lock:
             self._conn.execute("PRAGMA busy_timeout=30000;")
+            version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+            allowed = (
+                (_SCHEMA_VERSION,)
+                if self.read_only
+                else (0, *_MIGRATABLE_SCHEMA_VERSIONS)
+            )
+            if version not in allowed:
+                raise RunStoreSchemaError(
+                    version,
+                    current=_SCHEMA_VERSION,
+                    supported=_MIGRATABLE_SCHEMA_VERSIONS,
+                    read_only=self.read_only,
+                )
+            if self.read_only:
+                self._conn.execute("PRAGMA query_only=ON;")
+                return
             self._conn.execute("PRAGMA journal_mode=WAL;")
             self._conn.execute("PRAGMA synchronous=NORMAL;")
             self._conn.execute("PRAGMA foreign_keys=ON;")
             self._conn.execute("BEGIN IMMEDIATE")
             version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-            if version not in {0, 13, 14, 15, 16, 17, 18, _SCHEMA_VERSION}:
+            if version not in (0, *_MIGRATABLE_SCHEMA_VERSIONS):
                 self._conn.rollback()
-                raise RuntimeError(
-                    f"unsupported run store schema version: {version}; "
-                    f"expected 13, 14, 15, 16, 17, 18, or {_SCHEMA_VERSION}"
+                raise RunStoreSchemaError(
+                    version,
+                    current=_SCHEMA_VERSION,
+                    supported=_MIGRATABLE_SCHEMA_VERSIONS,
+                    read_only=False,
                 )
             if version == 13:
                 self._conn.execute("DROP INDEX IF EXISTS idx_run_controls_request")

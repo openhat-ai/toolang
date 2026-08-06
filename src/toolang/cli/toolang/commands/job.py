@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 import click
 import typer
@@ -16,15 +16,24 @@ from ....catalog.types import JobStage
 from toolang.common.layout import AgentLayout
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.errors import CatalogError
+from toolang.work.errors import JobStoreSchemaError
+from toolang.work.inspection import JobInspection, JobRun
+from toolang.work.schemas import JobInfo
 from toolang.work.authoring import (
     allocate_authored_job_id,
     assign_missing_authored_job_ids,
 )
-from toolang.work.state import job_display_title
 from ...common.client import runtime_post
-from ...common.context import context_root, require_prefix_agent, user_call
+from ...common.context import (
+    context_layout,
+    context_root,
+    require_prefix_agent,
+    user_call,
+)
+from ...common.execution import open_execution
 from ...common.output import echo_table
 from ...common.routing import PrefixAgentJobGroup, RequiredPrefixAgentCommand
+from ...common.version import toolang_version
 
 JobKind = Literal["task", "chore"]
 
@@ -145,9 +154,8 @@ def _list(kind: JobKind, title: str) -> Callable[..., None]:
             bool, typer.Option("--all", help="List ready, draft, and archived items.")
         ] = False,
     ) -> None:
-        agent = require_prefix_agent(ctx)
-        root = context_root(ctx)
-        catalog = _jobs(root, agent)
+        require_prefix_agent(ctx)
+        layout = context_layout(ctx)
         stages: tuple[JobStage, ...] = (
             ("ready", "draft", "archived")
             if all_items
@@ -157,45 +165,85 @@ def _list(kind: JobKind, title: str) -> Callable[..., None]:
             if archived
             else ("ready",)
         )
-        if kind == "task":
-            entries = tuple(
-                entry
-                for stage in stages
-                for entry in catalog.list(kind="task", stage=stage)
+        runs: Iterable[JobRun] = ()
+        try:
+            with open_execution(ctx) as resources:
+                if resources is not None:
+                    runs = cast(
+                        Iterable[JobRun],
+                        resources.store.list_runs(limit=None),
+                    )
+        except click.ClickException as exc:
+            typer.echo(f"warning: {exc.message}", err=True)
+        try:
+            inspection = JobInspection.load(
+                layout=layout,
+                runs=runs,
+                read_only=True,
             )
+        except JobStoreSchemaError as exc:
+            raise click.ClickException(
+                _job_store_schema_error(exc, path=layout.job_store)
+            ) from exc
+        entries = tuple(
+            entry
+            for stage in stages
+            for entry in inspection.list(kind=kind, stage=stage)
+        )
+        if kind == "task":
             if not entries:
                 typer.echo("No tasks found.")
                 return
             echo_table(
-                ("ID", title.upper(), "STAGE", "LOCATION"),
+                (
+                    "ID",
+                    title.upper(),
+                    "STAGE",
+                    "STATUS",
+                    "LAST RUN",
+                    "ERROR",
+                    "LOCATION",
+                ),
                 [
                     (
                         entry.id,
-                        job_display_title(entry, fallback=entry.id),
+                        entry.title,
                         entry.stage,
-                        _location(root, agent, _job_path(entry)),
+                        entry.status or "-",
+                        _last_run_status(entry),
+                        _runtime_error(entry),
+                        entry.path,
                     )
                     for entry in entries
                 ],
             )
             return
-        entries = tuple(
-            entry
-            for stage in stages
-            for entry in catalog.list(kind="chore", stage=stage)
-        )
         if not entries:
             typer.echo("No chores found.")
             return
         echo_table(
-            ("ID", title.upper(), "STAGE", "SCHEDULE", "LOCATION"),
+            (
+                "ID",
+                title.upper(),
+                "STAGE",
+                "STATUS",
+                "LAST RUN",
+                "NEXT RUN",
+                "SCHEDULE",
+                "ERROR",
+                "LOCATION",
+            ),
             [
                 (
                     entry.id,
-                    job_display_title(entry, fallback=entry.id),
+                    entry.title,
                     entry.stage,
-                    entry.schedule,
-                    _location(root, agent, _job_path(entry)),
+                    entry.status or "-",
+                    _last_run_status(entry),
+                    entry.runtime.next_run_at or "-",
+                    entry.schedule or "-",
+                    _runtime_error(entry),
+                    entry.path,
                 )
                 for entry in entries
             ],
@@ -385,11 +433,33 @@ def _job_path(job: JobFile) -> Path:
     return job.path
 
 
-def _location(root: Path, agent: str, path: Path) -> str:
-    try:
-        return str(path.relative_to(_layout(root, agent).home))
-    except ValueError:
-        return str(path)
+def _last_run_status(job: JobInfo) -> str:
+    run = job.runtime.last_run
+    if run is None:
+        return "-"
+    return "succeeded" if run.status == "finished" else run.status
+
+
+def _runtime_error(job: JobInfo) -> str:
+    run = job.runtime.last_run
+    error = job.runtime.error or (run.error if run is not None else None) or ""
+    compact = " ".join(error.split())
+    return compact if len(compact) <= 56 else f"{compact[:53].rstrip()}..."
+
+
+def _job_store_schema_error(error: JobStoreSchemaError, *, path: Path) -> str:
+    if error.version > error.current:
+        advice = "Upgrade this CLI before inspecting scheduler state."
+    else:
+        advice = (
+            "Start this agent once with the current Toolang runtime to upgrade "
+            "scheduler state, then retry."
+        )
+    return (
+        f"scheduler state is incompatible with toolang {toolang_version()}: "
+        f"{path} uses schema {error.version}, while this build requires schema "
+        f"{error.current}. {advice} The database was not changed."
+    )
 
 
 def _layout(root: Path, agent: str) -> AgentLayout:

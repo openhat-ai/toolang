@@ -149,6 +149,11 @@ may occur before a run exists.
 The checkpoint does not copy the job body, title, source path, thread id, run
 counters, occurrence history, or run results.
 
+`JobStore` upgrades older checkpoint schemas only in writable scheduler mode.
+It rejects a newer schema before changing journal mode or schema objects, so an
+older binary cannot downgrade future scheduler state. Read-only inspection
+requires the current schema and never migrates it.
+
 Normally the database has one row for each effective ready job. A job that
 leaves ready is removed immediately unless it has an active run. An active row
 is retained only until that run becomes terminal, preventing a stage move from
@@ -301,9 +306,11 @@ chore run.
 
 ## Inspection And Control
 
-Job inspection joins the authored/effective job with its scheduler record.
-Execution inspection independently reads run and thread history. The small
-control surface retains source meaning:
+Job inspection joins the authored/effective job with its scheduler record and
+the latest run summary for the stable job thread. This is an inspection path,
+not a scheduler dependency on `runs.db`. CLI job lists expose scheduler status,
+latest-run status, the next chore occurrence, and the most relevant scheduler
+or run error. The small control surface retains source meaning:
 
 - list and get jobs;
 - reopen or cancel a task;

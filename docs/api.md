@@ -648,10 +648,12 @@ Chore status values are:
 - `thread_id`
 - `last_run`
 - `next_run_at`
+- `error`
 
 `last_run` is the latest run object or `null`. If `last_run.status` is
 `running`, that run is the active run. `next_run_at` is the next scheduled
-chore timestamp or `null`.
+chore timestamp or `null`. `runtime.error` is the current scheduler-side error;
+`last_run.error` is the execution failure for that run.
 
 Default job list endpoints return ready jobs. Draft and archived jobs are
 available only through explicit `/archived` routes.

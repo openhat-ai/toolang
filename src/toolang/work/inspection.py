@@ -25,6 +25,7 @@ class JobRun(Protocol):
     created_at: str
     started_at: str | None
     finished_at: str | None
+    error: str | None
 
 
 class JobInspection:
@@ -49,6 +50,7 @@ class JobInspection:
         *,
         layout: AgentLayout,
         runs: Iterable[JobRun],
+        read_only: bool = False,
     ) -> JobInspection:
         """Load one consistent inspection snapshot from the owning stores."""
 
@@ -57,11 +59,14 @@ class JobInspection:
             layout,
             catalog=catalog,
         )
-        job_store = open_job_store(layout)
-        try:
-            records = job_store.list()
-        finally:
-            job_store.close()
+        if read_only and not layout.job_store.is_file():
+            records = ()
+        else:
+            job_store = open_job_store(layout, read_only=read_only)
+            try:
+                records = job_store.list()
+            finally:
+                job_store.close()
         latest_runs: dict[str, JobRun] = {}
         for run in runs:
             current = latest_runs.get(run.thread)
@@ -113,6 +118,7 @@ class JobInspection:
                 status=run.status,
                 started_at=run.started_at,
                 finished_at=run.finished_at,
+                error=run.error,
             )
             if run is not None
             else None

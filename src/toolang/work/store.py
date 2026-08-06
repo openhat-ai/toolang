@@ -17,6 +17,7 @@ from toolang.catalog.types import JobKind
 from toolang.common.layout import AgentLayout
 from toolang.execution.types import RunStatus
 
+from .errors import JobStoreSchemaError
 from .records import JobRecord
 from .state import Job, schedule_revision
 from .types import JobStatus, JobTrigger
@@ -37,15 +38,29 @@ class ClaimedJob:
 class JobStore:
     """Own durable scheduler transitions; due discovery stays in memory."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, read_only: bool = False) -> None:
         self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(
-            db_path.as_posix(), check_same_thread=False, timeout=30
-        )
+        self.read_only = read_only
+        if read_only:
+            target = f"{db_path.expanduser().resolve().as_uri()}?mode=ro"
+            self._conn = sqlite3.connect(
+                target,
+                uri=True,
+                check_same_thread=False,
+                timeout=30,
+            )
+        else:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(
+                db_path.as_posix(), check_same_thread=False, timeout=30
+            )
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
-        self._init_schema()
+        try:
+            self._init_schema()
+        except BaseException:
+            self._conn.close()
+            raise
 
     def close(self) -> None:
         with self._lock:
@@ -504,13 +519,33 @@ class JobStore:
 
     def _init_schema(self) -> None:
         with self._lock:
+            self._conn.execute("PRAGMA busy_timeout=30000;")
+            version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+            if version > _SCHEMA_VERSION or (
+                self.read_only and version != _SCHEMA_VERSION
+            ):
+                raise JobStoreSchemaError(
+                    version,
+                    current=_SCHEMA_VERSION,
+                    read_only=self.read_only,
+                )
+            if self.read_only:
+                self._conn.execute("PRAGMA query_only=ON;")
+                return
             self._conn.execute("PRAGMA journal_mode=WAL;")
             self._conn.execute("PRAGMA synchronous=NORMAL;")
-            self._conn.execute("PRAGMA busy_timeout=30000;")
             self._conn.execute("BEGIN IMMEDIATE")
             try:
-                version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
-                if version != _SCHEMA_VERSION:
+                version = int(
+                    self._conn.execute("PRAGMA user_version").fetchone()[0]
+                )
+                if version > _SCHEMA_VERSION:
+                    raise JobStoreSchemaError(
+                        version,
+                        current=_SCHEMA_VERSION,
+                        read_only=False,
+                    )
+                if version < _SCHEMA_VERSION:
                     self._conn.execute("DROP TABLE IF EXISTS jobs")
                 self._conn.execute(
                     """
@@ -566,10 +601,10 @@ def jobs_db_path(layout: AgentLayout) -> Path:
     return layout.job_store
 
 
-def open_job_store(layout: AgentLayout) -> JobStore:
+def open_job_store(layout: AgentLayout, *, read_only: bool = False) -> JobStore:
     """Open scheduler checkpoints for one agent."""
 
-    return JobStore(jobs_db_path(layout))
+    return JobStore(jobs_db_path(layout), read_only=read_only)
 
 
 def next_activation(record: JobRecord) -> tuple[datetime, JobTrigger] | None:
