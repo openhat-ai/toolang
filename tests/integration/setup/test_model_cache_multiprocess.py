@@ -46,10 +46,25 @@ class _SlowProvider:
         return target
 
 
-def _refresh(cache_dir: str, calls_path: str, start: Any) -> None:
-    start.wait()
+class _SynchronizedCache(ModelListCache):
+    """Synchronize workers after their initial cache observation."""
+
+    def __init__(self, directory: Path, observed: Any) -> None:
+        super().__init__(directory)
+        self._observed = observed
+        self._initial_read = True
+
+    def _read_path(self, path: Path):
+        record = super()._read_path(path)
+        if self._initial_read:
+            self._initial_read = False
+            self._observed.wait(timeout=10)
+        return record
+
+
+def _refresh(cache_dir: str, calls_path: str, observed: Any) -> None:
     asyncio.run(
-        ModelListCache(Path(cache_dir)).get(
+        _SynchronizedCache(Path(cache_dir), observed).get(
             _SlowProvider(Path(calls_path)),
             envs={},
             refresh=True,
@@ -61,19 +76,18 @@ def test_concurrent_force_refresh_is_coalesced_across_processes(
     tmp_path: Path,
 ) -> None:
     context = multiprocessing.get_context("spawn")
-    start = context.Event()
+    observed = context.Barrier(4)
     cache_dir = tmp_path / "models"
     calls_path = tmp_path / "calls.txt"
     processes = [
         context.Process(
             target=_refresh,
-            args=(str(cache_dir), str(calls_path), start),
+            args=(str(cache_dir), str(calls_path), observed),
         )
         for _ in range(4)
     ]
     for process in processes:
         process.start()
-    start.set()
     for process in processes:
         process.join(timeout=10)
 
