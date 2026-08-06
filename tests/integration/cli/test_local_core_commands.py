@@ -7,6 +7,7 @@ from collections.abc import Mapping
 import sqlite3
 from typing import Any
 
+import click
 import pytest
 from typer.testing import CliRunner
 
@@ -70,14 +71,17 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     connection.close()
 
     result = _invoke(root, "threads", "alice")
+    error_output = " ".join(
+        click.unstyle(result.stderr).replace("│", " ").split()
+    )
 
     assert result.exit_code == 1
-    assert "Traceback" not in result.stderr
-    assert "execution history is incompatible with toolang" in result.stderr
-    assert f"uses schema {schema_version}" in result.stderr
-    assert "requires schema 19" in result.stderr
-    assert advice in result.stderr
-    assert "database was not changed" in result.stderr.lower()
+    assert "Traceback" not in error_output
+    assert "execution history is incompatible with toolang" in error_output
+    assert f"uses schema {schema_version}" in error_output
+    assert "requires schema 19" in error_output
+    assert advice in error_output
+    assert "database was not changed" in error_output.lower()
     connection = sqlite3.connect(layout.run_store)
     try:
         assert (
