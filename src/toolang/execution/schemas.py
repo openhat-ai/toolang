@@ -374,6 +374,7 @@ class RunDetail(RunInfo):
     """One complete run detail schema."""
 
     input: Message | None
+    output: list[MessagePart] | None
     controls: list[RunControlInfo]
     steps: list[StepData] = field(default_factory=list)
 
@@ -393,6 +394,11 @@ class RunDetail(RunInfo):
         return cls(
             **{item.name: getattr(info, item.name) for item in fields(RunInfo)},
             input=start.input,
+            output=(
+                list(run.output.resolve(steps))
+                if run.output is not None
+                else None
+            ),
             controls=[RunControlInfo.from_record(run, item) for item in controls],
             steps=[
                 StepData.from_record(

@@ -129,7 +129,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         PartBegin(
             step=trace_child_path(run.run_id, step_index),
             part=0,
-            type_=part.type,
+            part_type=part.type,
         )
     )
     await state.emit(

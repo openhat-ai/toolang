@@ -390,7 +390,7 @@ async def _emit_part_begin(
         PartBegin(
             step=trace_child_path(state.prepared.run.run_id, stream.step),
             part=part_index,
-            type_=kind,
+            part_type=kind,
         )
     )
 

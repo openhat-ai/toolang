@@ -34,7 +34,7 @@ def event_labels(events: Sequence[RunEvent]) -> list[str]:
             )
         elif isinstance(event, PartBegin):
             labels.append(
-                f"part_begin:{event.step}:{event.part}:{event.type_}"
+                f"part_begin:{event.step}:{event.part}:{event.part_type}"
             )
         elif isinstance(event, PartDelta):
             labels.append(f"part_delta:{event.step}:{event.part}")
@@ -94,7 +94,7 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
             key = (event.step, event.part)
             begin = active_parts.pop(key, None)
             assert begin is not None, f"part end without begin at {where}"
-            assert begin.type_ == event.data.type, (
+            assert begin.part_type == event.data.type, (
                 f"part type changed before {where}"
             )
             assert key not in ended_parts, f"duplicate part end at {where}"

@@ -10,6 +10,7 @@ from typing import Any, cast
 
 from fastapi import Request
 from fastapi.testclient import TestClient
+from pydantic import TypeAdapter
 
 from toolang.api.app import create_app
 from toolang.api.common import LiveEventRelay, sse_stream
@@ -17,13 +18,17 @@ from toolang.base.types.message import DocumentPart, Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, JobsManager
 from toolang.execution.events import (
+    PartBegin,
     RunBegin,
     RunEnd,
     StepBegin,
     StepEnd,
     ThreadCreated,
+    run_event_from_data,
+    run_event_to_data,
 )
 from toolang.execution.records import RunControlRef, ThreadControlRef, ThreadPeer
+from toolang.execution.schemas import RunDetail, ThreadDetail
 from toolang.up import AgentCore
 from tests.support.execution_fixtures import project_run_start
 from tests.support.execution_harness import ExecutionHarness
@@ -83,6 +88,7 @@ agic answer(_: Part[]) -> Part[]:
                 },
             )
         events = _sse_events(response.text)
+        decoded = [run_event_from_data(data) for _event, data in events]
 
         assert created.status_code == 201
         assert thread_id.startswith("script_")
@@ -98,7 +104,15 @@ agic answer(_: Part[]) -> Part[]:
             "step_end",
             "run_end",
         ]
+        assert [event.type for event in decoded] == [
+            event for event, _data in events
+        ]
+        assert [run_event_to_data(event) for event in decoded] == [
+            data for _event, data in events
+        ]
         assert all(data["type"] == event for event, data in events)
+        assert isinstance(decoded[2], PartBegin)
+        assert decoded[2].part_type == "text"
         assert events[2][1]["part_type"] == "text"
         assert "type_" not in events[2][1]
         assert events[-1][1]["status"] == "finished"
@@ -159,10 +173,20 @@ agic chat(_: Part[]) -> Part[]:
                     "input": [{"type": "text", "text": "hello"}],
                 },
             )
-        events = _sse_events(response.text)
+            events = _sse_events(response.text)
+            run_id = str(events[0][1]["run"])
+            run_response = client.get(f"/api/v1/runs/{run_id}")
+            thread_response = client.get(f"/api/v1/threads/{thread_id}")
+
+        run_detail = TypeAdapter(RunDetail).validate_python(run_response.json())
+        thread_detail = TypeAdapter(ThreadDetail).validate_python(
+            thread_response.json()
+        )
 
         assert created.status_code == 201
         assert response.status_code == 200
+        assert run_response.status_code == 200
+        assert thread_response.status_code == 200
         assert events[0][0] == "run_begin"
         assert events[-1][0] == "run_end"
         assert {event for event, _data in events} <= {
@@ -174,6 +198,8 @@ agic chat(_: Part[]) -> Part[]:
             "step_end",
             "run_end",
         }
+        assert run_detail.output == [TextPart("chat reply")]
+        assert thread_detail.runs[0].output == [TextPart("chat reply")]
         threads = core.store.list_threads()
         assert len(threads) == 1
         assert threads[0].thread_id == thread_id

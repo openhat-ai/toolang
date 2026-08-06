@@ -62,6 +62,18 @@ class OutputRef:
             data["part"] = self.part
         return data
 
+    def resolve(self, steps: Sequence[StepRecord]) -> tuple[MessagePart, ...]:
+        """Resolve this durable output edge against available step records."""
+
+        step = next((item for item in steps if item.path == self.step), None)
+        if step is None:
+            return ()
+        if self.part is None:
+            return step.output
+        if 0 <= self.part < len(step.output):
+            return (step.output[self.part],)
+        return ()
+
 
 StepInputItem = RunControlRef | OutputRef | Message
 

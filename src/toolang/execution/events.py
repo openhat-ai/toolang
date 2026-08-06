@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Annotated, Any, Literal, cast
+
+from pydantic import Field, TypeAdapter
 
 from toolang.base.types.message import Delta, MessagePart, MessagePartType
 
@@ -27,7 +29,7 @@ class RunBegin:
     parent: StepPath | None = None
     context: dict[str, Any] = field(default_factory=dict)
     started_at: str = ""
-    type: str = "run_begin"
+    type: Literal["run_begin"] = field(default="run_begin", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +41,7 @@ class StepBegin:
     input: tuple[StepInputItem, ...] = ()
     given: dict[str, Any] = field(default_factory=dict)
     started_at: str = ""
-    type: str = "step_begin"
+    type: Literal["step_begin"] = field(default="step_begin", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,8 +50,8 @@ class PartBegin:
 
     step: StepPath
     part: int
-    type_: MessagePartType
-    type: str = "part_begin"
+    part_type: MessagePartType
+    type: Literal["part_begin"] = field(default="part_begin", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +61,7 @@ class PartDelta:
     step: StepPath
     part: int
     delta: Delta
-    type: str = "part_delta"
+    type: Literal["part_delta"] = field(default="part_delta", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +71,7 @@ class PartEnd:
     step: StepPath
     part: int
     data: MessagePart
-    type: str = "part_end"
+    type: Literal["part_end"] = field(default="part_end", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +85,7 @@ class StepEnd:
     noted: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     finished_at: str = ""
-    type: str = "step_end"
+    type: Literal["step_end"] = field(default="step_end", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,10 +98,13 @@ class RunEnd:
     output: OutputRef | None = None
     error: str | None = None
     finished_at: str = ""
-    type: str = "run_end"
+    type: Literal["run_end"] = field(default="run_end", init=False)
 
 
-RunEvent = RunBegin | StepBegin | PartBegin | PartDelta | PartEnd | StepEnd | RunEnd
+RunEvent = Annotated[
+    RunBegin | StepBegin | PartBegin | PartDelta | PartEnd | StepEnd | RunEnd,
+    Field(discriminator="type"),
+]
 
 
 class RunTracer(ABC):
@@ -119,7 +124,7 @@ class ThreadCreated:
     origin: str
     peer: ThreadPeer
     created_at: str
-    type: str = "thread_created"
+    type: Literal["thread_created"] = field(default="thread_created", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,7 +136,7 @@ class ThreadForked:
     source_thread: str
     anchor_run: str
     created_at: str
-    type: str = "thread_forked"
+    type: Literal["thread_forked"] = field(default="thread_forked", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,10 +148,41 @@ class ThreadRewound:
     anchor_run: str
     superseded_runs: tuple[str, ...]
     created_at: str
-    type: str = "thread_rewound"
+    type: Literal["thread_rewound"] = field(default="thread_rewound", init=False)
 
 
-ThreadEvent = ThreadCreated | ThreadForked | ThreadRewound
+ThreadEvent = Annotated[
+    ThreadCreated | ThreadForked | ThreadRewound,
+    Field(discriminator="type"),
+]
+ExecutionEvent = RunEvent | ThreadEvent
+
+_RUN_EVENT_ADAPTER = TypeAdapter(RunEvent)
+_EXECUTION_EVENT_ADAPTER = TypeAdapter(ExecutionEvent)
+
+
+def event_to_data(event: ExecutionEvent) -> dict[str, Any]:
+    """Serialize one canonical execution event for a protocol boundary."""
+
+    return cast(
+        dict[str, Any],
+        _EXECUTION_EVENT_ADAPTER.dump_python(event, mode="json"),
+    )
+
+
+def run_event_to_data(event: RunEvent) -> dict[str, Any]:
+    """Serialize one canonical run event."""
+
+    return cast(
+        dict[str, Any],
+        _RUN_EVENT_ADAPTER.dump_python(event, mode="json"),
+    )
+
+
+def run_event_from_data(data: object) -> RunEvent:
+    """Parse one canonical run event."""
+
+    return _RUN_EVENT_ADAPTER.validate_python(data)
 
 
 class ThreadListener(ABC):
