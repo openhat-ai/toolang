@@ -75,6 +75,21 @@ class _CollectorArgument(TyperArgument):
         return []
 
 
+class _IncompleteRunnableCall(Exception):
+    """A dynamic runnable command is missing required call input."""
+
+
+class _RunnableCommand(TyperCommand):
+    """Show runnable help when its collected call is incomplete."""
+
+    def invoke(self, ctx: click.Context) -> Any:
+        try:
+            return TyperCommand.invoke(self, ctx)
+        except _IncompleteRunnableCall:
+            click.echo(ctx.get_help())
+            ctx.exit(2)
+
+
 def dispatch(
     global_args: list[str],
     argv: list[str],
@@ -250,7 +265,7 @@ def _runnable_command(
             hidden=True,
         )
     )
-    return TyperCommand(
+    return _RunnableCommand(
         name=runnable.name,
         callback=callback,
         params=params,
@@ -344,15 +359,19 @@ def _collect_call(
         if input_source is None
         else parse_runnable_call(input_source)
     )
-    if not any(item.kind in {"agic", "flow"} for item in call.overrides):
+    has_runnable_override = any(
+        item.kind in {"agic", "flow"} for item in call.overrides
+    )
+    if not has_runnable_override:
         missing = [
             parameter.name
             for parameter in runnable.params
             if not parameter.optional and parameter.name not in raw_args
         ]
         if missing:
-            joined = ", ".join(f"{name}=..." for name in missing)
-            raise click.UsageError(f"missing required arguments: {joined}")
+            raise _IncompleteRunnableCall
+        if runnable.input is not None and not runnable.input.optional and not call.content:
+            raise _IncompleteRunnableCall
     return call, tuple(raw_args.items())
 
 

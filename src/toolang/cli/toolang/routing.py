@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -143,6 +143,33 @@ def validate_command_registration(names: set[str]) -> None:
         raise RuntimeError(
             f"command routing mismatch: missing={missing!r}, extra={extra!r}"
         )
+
+
+def select_target_help(
+    argv: list[str],
+    *,
+    residents: Collection[str],
+) -> tuple[str, AgentPlacement] | None:
+    """Select one unambiguous target that has no command yet."""
+
+    _global_args, body = extract_root_args(argv)
+    if not body or len(body) > 2:
+        return None
+    if len(body) == 2 and body[1] not in {"--help", "-h"}:
+        return None
+    target = body[0]
+    if target in COMMAND_SPECS or target.startswith("-"):
+        return None
+    if _source_path(target) is not None:
+        return None
+    explicit = explicit_agent(target)
+    if explicit is not None:
+        return target, "resident"
+    if _is_visiting(target):
+        return target, "visiting"
+    if target in residents:
+        return target, "resident"
+    return None
 
 
 def dispatch_roaming(

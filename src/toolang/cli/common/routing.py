@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
+
 import click
 from typer import rich_utils
 from typer.core import TyperArgument, TyperCommand, TyperGroup
@@ -33,6 +35,20 @@ def extract_root_args(argv: Sequence[str]) -> tuple[list[str], list[str]]:
         body.append(token)
         index += 1
     return root_args, body
+
+
+def explicit_root(args: Sequence[str]) -> Path | None:
+    """Return the last explicit root value from extracted global arguments."""
+
+    root: Path | None = None
+    index = 0
+    while index < len(args):
+        if args[index] in {"--root", "-r"} and index + 1 < len(args):
+            root = Path(args[index + 1])
+            index += 2
+            continue
+        index += 1
+    return root
 
 
 def explicit_agent(token: str) -> str | None:

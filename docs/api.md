@@ -133,6 +133,12 @@ local `.too` target, use `agic:NAME`, `flow:NAME`, or `runnable:NAME` to force a
 colliding runnable name. Once a command is selected, its remaining operands are
 parsed by that command and are not reclassified.
 
+A target without a command shows the commands accepted by that placement.
+Plain resident names are recognized from the selected root's agent catalog;
+explicit resident selectors and remote selectors are unambiguous. Showing
+remote target help does not resolve or fetch the agent. An incomplete selected
+command shows its own help before target existence or other runtime validation.
+
 Thread and run listing, inspection, retry, rerun, steering, cancellation,
 rewind, and fork open the selected agent's durable execution store directly.
 They do not start or call the agent HTTP server. A run id selects its owning
@@ -228,6 +234,9 @@ Behavior:
 - `toolang a.too --help` lists public runnables
 - `toolang a.too summarize --help` prints runnable-specific dynamic usage
 - `toolang a.too` shows usage instead of running a default agic
+- a runnable missing a required named argument or required primary input shows
+  its dynamic help and does not create a run; omitted input is first read from
+  stdin when available
 - script run reads the complete setup snapshot and resolves effective tools
   inside the executor from `CeilingSpec`, captured snapshots, and runnable
   directives

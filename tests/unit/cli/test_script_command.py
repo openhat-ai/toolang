@@ -241,11 +241,17 @@ def test_script_includes_an_image(
     assert call.content == "@sample.png"
 
 
-def test_script_rejects_missing_required_parameter(
+def test_script_shows_runnable_help_for_a_missing_required_parameter(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     capsys,
 ) -> None:
     source = _write_source(tmp_path)
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("an incomplete call must not run"),
+    )
 
     result = script.dispatch(
         [],
@@ -256,7 +262,42 @@ def test_script_rejects_missing_required_parameter(
     output = capsys.readouterr()
 
     assert result == 2
-    assert "missing required arguments: count=..." in output.err
+    assert "Usage:" in output.out
+    assert "count=Number" in output.out
+    assert "Run:" not in output.err
+
+
+def test_script_shows_runnable_help_for_missing_primary_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    source = _write_source(
+        tmp_path,
+        """
+agic demo(_: Part[]):
+  {{_}}
+""",
+    )
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("an incomplete call must not run"),
+    )
+
+    result = script.dispatch(
+        [],
+        [str(source), "demo"],
+        prog_name="toolang",
+        stdin=StringIO(),
+    )
+    output = capsys.readouterr()
+
+    assert result == 2
+    assert "Usage:" in output.out
+    assert "Primary Part[] input." in output.out
+    assert "requires primary input" not in output.err
+    assert "Run:" not in output.err
 
 
 def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> None:
