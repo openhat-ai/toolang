@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from toolang.base.types.message import Message
+from toolang.base.types.run import RunLimits
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer
@@ -49,6 +50,7 @@ class LocalChatSession:
         models: Sequence[str] = (),
         tools: Sequence[str] | None = None,
         caps: Sequence[str] = (),
+        limits: RunLimits | None = None,
     ) -> None:
         self.layout = layout
         self.ceiling = CeilingSpec(
@@ -56,6 +58,7 @@ class LocalChatSession:
             tools=tuple(tools) if tools is not None else None,
             caps=tuple(caps) or None,
         )
+        self.limits = limits
         self.store = RunStore(layout.run_store)
         self.ids = IdIssuer(layout.id_state)
         self.threads = ThreadManager(self.store, self.ids)
@@ -264,6 +267,7 @@ class LocalChatSession:
         )
         handle = self.executor.start(
             spec,
+            limits=self.limits,
             request_id=f"term_{uuid4().hex}",
             tracer=_CallbackTracer(on_event),
         )

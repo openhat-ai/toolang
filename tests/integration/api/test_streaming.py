@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from decimal import Decimal
 import json
 from pathlib import Path
 import threading
@@ -15,7 +17,7 @@ from pydantic import TypeAdapter
 from toolang.api.app import create_app
 from toolang.api.common import LiveEventRelay, sse_stream
 from toolang.base.types.message import DocumentPart, Message, TextPart
-from toolang.base.types.run import ModelCallResult
+from toolang.base.types.run import ModelCallResult, ModelUsage, RunLimits
 from toolang.catalog import CapsManager, JobsManager
 from toolang.execution.events import (
     PartBegin,
@@ -248,6 +250,104 @@ def test_stream_validation_fails_before_sse_headers(tmp_path: Path) -> None:
         assert missing_thread.status_code == 422
         assert core.store.list_threads()[0].thread_id == thread_id
         assert len(core.store.list_threads()) == 1
+    finally:
+        asyncio.run(core.close())
+
+
+def test_retry_and_rerun_api_accept_partial_limit_overrides(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic answer(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            RuntimeError("temporary failure"),
+            ModelCallResult(
+                message=Message.assistant("recovered"),
+                usage=ModelUsage(input_tokens=1, output_tokens=1),
+            ),
+            ModelCallResult(
+                message=Message.assistant("reran"),
+                usage=ModelUsage(input_tokens=1, output_tokens=1),
+            ),
+        ],
+    )
+    setup = replace(
+        harness.setup,
+        limits=RunLimits(tokens=100, cost=Decimal("5")),
+    )
+    harness.store.close()
+    core = AgentCore(setup.layout)
+    core.setup = _Snapshot(setup)
+    core.state = _Snapshot(harness.state)
+    app = create_app(
+        core,
+        CapsManager(core.layout),
+        JobsManager(core.layout),
+        cors_allowed_origins=(),
+    )
+
+    try:
+        with TestClient(app) as client:
+            created = client.post("/api/v1/threads", json={"client": "script"})
+            thread_id = created.json()["thread"]["id"]
+            started = client.post(
+                "/api/v1/runs/stream",
+                json={
+                    "thread": thread_id,
+                    "runnable": "answer",
+                    "input": [{"type": "text", "text": "hello"}],
+                },
+            )
+            source_id = str(_sse_events(started.text)[0][1]["run"])
+
+            retry = client.post(
+                f"/api/v1/runs/{source_id}/retry",
+                json={
+                    "request_id": "retry-request",
+                    "limits": {"tokens": 10, "cost": None},
+                },
+            )
+            _wait_for_terminal(core, source_id)
+            rerun = client.post(
+                f"/api/v1/runs/{source_id}/rerun",
+                json={
+                    "request_id": "rerun-request",
+                    "limits": {"cost": None, "time": 30},
+                },
+            )
+            rerun_id = str(rerun.json()["run"]["id"])
+            _wait_for_terminal(core, rerun_id)
+
+        assert started.status_code == 200
+        assert retry.status_code == 202
+        assert retry.json()["command"]["kind"] == "retry"
+        assert retry.json()["command"]["request_id"] == "retry-request"
+        assert rerun.status_code == 202
+        assert rerun.json()["command"]["kind"] == "rerun"
+        assert rerun.json()["command"]["source"] == source_id
+
+        retry_control = core.store.list_run_controls(run_id=source_id)[-1]
+        rerun_control = core.store.get_run_control(run_id=rerun_id, index=0)
+        assert retry_control.context["limits"] == {
+            "agic_model_calls": 200,
+            "agic_tool_calls": None,
+            "tokens": 10,
+            "cost": None,
+            "time": None,
+        }
+        assert rerun_control is not None
+        assert rerun_control.context["limits"] == {
+            "agic_model_calls": 200,
+            "agic_tool_calls": None,
+            "tokens": 100,
+            "cost": None,
+            "time": 30,
+        }
     finally:
         asyncio.run(core.close())
 
@@ -534,3 +634,13 @@ def _sse_events(source: str) -> list[tuple[str, dict[str, Any]]]:
             event_name = None
             data_lines = []
     return events
+
+
+def _wait_for_terminal(core: AgentCore, run_id: str) -> None:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        run = core.store.get_run(run_id=run_id)
+        if run is not None and run.status not in {"pending", "running"}:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"run did not become terminal: {run_id}")

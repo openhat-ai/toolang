@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from decimal import Decimal
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE
+from toolang.base.types.run import RunLimits
 from toolang.execution.schemas import (
     RunControlInfo,
     RunDetail,
     ThreadInfo,
 )
+from toolang.execution.types import StepPath
+
+
+NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]
 
 
 class ApiRequest(BaseModel):
@@ -165,6 +172,21 @@ class ChorePatchRequest(ApiRequest):
     schedule: str | None = None
 
 
+class RunLimitsPayload(ApiRequest):
+    """One partial run-limit override."""
+
+    agic_model_calls: NonNegativeInt | None = None
+    agic_tool_calls: NonNegativeInt | None = None
+    tokens: NonNegativeInt | None = None
+    cost: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
+    time: NonNegativeInt | None = None
+
+    def to_limits(self, base: RunLimits) -> RunLimits:
+        """Overlay explicitly supplied fields on one effective default."""
+
+        return replace(base, **self.model_dump(exclude_unset=True))
+
+
 class RunCreateRequest(ApiRequest):
     """One non-interactive agic or flow execution request."""
 
@@ -174,6 +196,21 @@ class RunCreateRequest(ApiRequest):
     input: list[InputPart] = Field(default_factory=list)
     model: str | None = None
     args: dict[str, object] | None = None
+    limits: RunLimitsPayload | None = None
+
+
+class RunRerunRequest(ApiRequest):
+    """Request a new run from one source invocation."""
+
+    request_id: str | None = Field(default=None, min_length=1)
+    model: str | None = None
+    limits: RunLimitsPayload | None = None
+
+
+class RunRetryRequest(RunRerunRequest):
+    """Request retry from one durable step boundary."""
+
+    anchor: StepPath | None = None
 
 
 class RunCancelRequest(ApiRequest):

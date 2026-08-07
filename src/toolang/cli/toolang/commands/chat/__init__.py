@@ -45,6 +45,13 @@ def chat_command(
             help="Execute the session in this sandbox.",
         ),
     ] = None,
+    limit: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--limit",
+            help="Override run limits as field=value pairs. Pass CSV or repeat.",
+        ),
+    ] = None,
 ) -> None:
     from .main import chat_command as run
 
@@ -58,6 +65,7 @@ def chat_command(
         agic=agic,
         flow=flow,
         sandbox=sandbox,
+        limit=limit,
     )
 
 
@@ -68,10 +76,17 @@ def send_command(
     model: Annotated[
         str | None, typer.Option("--model", help="Model selector.")
     ] = None,
+    limit: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--limit",
+            help="Override run limits as field=value pairs. Pass CSV or repeat.",
+        ),
+    ] = None,
 ) -> None:
     from .main import send_command as run
 
-    run(ctx, thread=thread, message=message, model=model)
+    run(ctx, thread=thread, message=message, model=model, limit=limit)
 
 
 def attach_command(

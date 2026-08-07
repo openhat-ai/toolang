@@ -11,6 +11,7 @@ import click
 import pytest
 
 from toolang.base.types.message import TextPart
+from toolang.base.types.run import RunLimits
 from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import ChatResult
 from toolang.common.layout import AgentLayout
@@ -295,6 +296,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
             "tools": ["shell/*"],
             "caps": ["skill/reviewer"],
         },
+        limit_options=["tokens=1000,time=60"],
     ) as client:
         assert isinstance(client, Session)
 
@@ -303,6 +305,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
         "models": ("test/model",),
         "tools": ("shell/*",),
         "caps": ("skill/reviewer",),
+        "limits": RunLimits(tokens=1000, time=60),
     }
     assert captured["closed"] is True
 

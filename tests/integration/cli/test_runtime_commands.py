@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from toolang.base.types.hosting import HostingRef
+from toolang.base.types.run import RunLimits
 import toolang.cli.toolang.main as cli
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import CeilingSpec
@@ -35,6 +36,7 @@ def _launch_spec(
     models: Sequence[str] | None,
     tools: Sequence[str] | None,
     caps: Sequence[str] | None,
+    limits: RunLimits | None,
     file_inboxes: Sequence[Path] | None,
     dev: Path | None,
     log_spec: str | None,
@@ -54,6 +56,7 @@ def _launch_spec(
                 tools=None if tools is None else tuple(tools),
                 caps=tuple(caps or ()) or None,
             ),
+            limits=limits,
             file_inboxes=tuple(file_inboxes or ()),
             log_spec=log_spec,
         ),
@@ -71,6 +74,14 @@ def test_run_resolves_hosting_inputs_and_runs_in_foreground(
 ) -> None:
     root = tmp_path / "toolang"
     layout = _create_agent(root)
+    (root / "config.toml").write_text(
+        "[run.limits]\ntokens = 1000\ncost = \"5\"\n",
+        encoding="utf-8",
+    )
+    layout.config.write_text(
+        "[run.limits]\ntokens = 2000\ntime = 120\n",
+        encoding="utf-8",
+    )
     captured: dict[str, Any] = {}
 
     async def resolve_launch(**kwargs: Any) -> hosting.LaunchSpec:
@@ -116,6 +127,10 @@ def test_run_resolves_hosting_inputs_and_runs_in_foreground(
             "filesystem,shell",
             "--caps",
             "skill/reviewer",
+            "--limit",
+            "tokens=3000,cost=none",
+            "--limit",
+            "agic_tool_calls=40",
         ],
         env={},
     )
@@ -129,6 +144,13 @@ def test_run_resolves_hosting_inputs_and_runs_in_foreground(
     assert resolved["models"] == ["openai/gpt-5[openai],o3"]
     assert resolved["tools"] == ["filesystem,shell"]
     assert resolved["caps"] == ["skill/reviewer"]
+    assert resolved["limits"] == RunLimits(
+        agic_model_calls=200,
+        agic_tool_calls=40,
+        tokens=3000,
+        cost=None,
+        time=120,
+    )
     assert resolved["log_path"] is None
     assert captured["run"] == _launch_spec(**resolved)
     assert result.stdout == ""

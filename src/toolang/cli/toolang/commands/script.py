@@ -42,6 +42,7 @@ from toolang.up import process as agents
 from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
 from ...common.progress import as_progress_sink, make_cli_progress
+from ...common.limits import apply_limit_options
 from ...common.script_progress import ConsoleRunTracer
 from ...common.version import toolang_version
 
@@ -183,6 +184,7 @@ def _runnable_command(
         models: tuple[str, ...],
         tools: tuple[str, ...],
         caps: tuple[str, ...],
+        limit: tuple[str, ...],
         quiet: bool,
         verbose: int,
     ) -> int:
@@ -204,6 +206,7 @@ def _runnable_command(
                 ),
                 caps=tuple(dict.fromkeys(split_cap_selectors(caps))) or None,
             ),
+            limit_options=limit,
             quiet=quiet,
             verbosity=verbose,
         )
@@ -236,6 +239,13 @@ def _runnable_command(
             multiple=True,
             default=(),
             help="Limit available caps. Pass CSV or repeat.",
+        ),
+        TyperOption(
+            param_decls=["--limit"],
+            type=str,
+            multiple=True,
+            default=(),
+            help="Set run limits as field=value pairs. Pass CSV or repeat.",
         ),
         TyperOption(
             param_decls=["--quiet", "-q"],
@@ -397,6 +407,7 @@ def _run(
     raw_args: Arguments,
     model: str | None,
     ceiling: CeilingSpec,
+    limit_options: tuple[str, ...],
     quiet: bool,
     verbosity: int,
 ) -> int:
@@ -436,6 +447,7 @@ def _run(
                 raw_args=raw_args,
                 model=model,
                 ceiling=ceiling,
+                limit_options=limit_options,
                 quiet=quiet,
                 verbosity=verbosity,
             )
@@ -499,6 +511,7 @@ async def _execute(
     ceiling: CeilingSpec,
     quiet: bool,
     verbosity: int,
+    limit_options: tuple[str, ...] = (),
 ) -> RunRecord:
     setup = await SetupWatcher(layout).refresh()
     executor = RunExecutor(store, ids)
@@ -535,6 +548,11 @@ async def _execute(
     )
     handle = executor.start(
         spec,
+        limits=(
+            apply_limit_options(setup.limits, limit_options)
+            if limit_options
+            else None
+        ),
         run_id=run_id,
         tracer=tracer,
     )
