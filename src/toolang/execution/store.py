@@ -121,6 +121,7 @@ class RunStore:
         context: Mapping[str, Any],
         request_id: str | None,
         created_at: str,
+        control_context: Mapping[str, Any] | None = None,
     ) -> tuple[RunRecord, RunControlRecord]:
         """Atomically insert one new run and its start control."""
 
@@ -186,7 +187,11 @@ class RunStore:
                         run_id,
                         _dump_json(input.to_data()),
                         request_id,
-                        _dump_json(dict(context)),
+                        _dump_json(
+                            dict(context)
+                            if control_context is None
+                            else dict(control_context)
+                        ),
                         created_at,
                         self._next_run_control_revision(),
                     ),

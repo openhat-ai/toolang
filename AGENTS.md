@@ -168,10 +168,10 @@
   environment values, and keeps the multi-process-safe model-list cache under
   `${TOOLANG_ROOT}/.setup/models/`. Agent-home setup overrides are not yet
   supported. `AgentSetup` carries that same layout plus `providers`, `adapters`,
-  `models`, `tools`, `envs`, and safe `AgentEnvironment` facts captured in the
-  actual process location; execution consumes that snapshot without hosting,
-  provider-discovery, or cache access. `refresh()` is the only watcher-owned
-  snapshot-construction path.
+  `models`, `tools`, `envs`, captured default `RunLimits`, and safe
+  `AgentEnvironment` facts captured in the actual process location; execution
+  consumes that snapshot without hosting, provider-discovery, or cache access.
+  `refresh()` is the only watcher-owned snapshot-construction path.
 - `toolang.state.schemas` owns caller-facing capability protocol types;
   its schema types construct themselves from prepared capability state;
   `toolang.state.types` owns capability-state vocabulary.
@@ -199,6 +199,11 @@
   coercion to initialize typed `_` while preserving the original `Percept` in
   the start control. Run and request identities are `start()` arguments rather
   than executable input.
+- `AgentSetup.limits` is the captured default `RunLimits` for new runs;
+  `RunExecutor.start(..., limits=...)` may override it for one root run tree.
+  Agic model/tool call limits reset per agic, while token, cost, and time
+  limits span the recursive tree. Only the root start control persists the
+  effective limits.
 - `CeilingSpec` stores the stable model/tool/cap selector lists merged by the
   caller from config, environment, and CLI inputs. At `start()`, the executor
   resolves it against the captured setup and state into a private

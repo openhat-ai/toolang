@@ -85,6 +85,20 @@ The index-zero start control and `RunRecord` are inserted in one transaction.
 Later control indexes are computed and inserted in one transaction; no API
 reserves an index independently.
 
+For a root run, the start control context stores the effective `RunLimits`:
+
+```text
+limits:
+  agic_model_calls
+  agic_tool_calls
+  tokens
+  cost
+  time
+```
+
+Child runs inherit root-tree limits during execution and do not repeat this
+context. `cost` is decimal USD text; the other values are integers or null.
+
 `runs.db` also stores an internal monotonic revision on every run-control
 insert and status change. The revision is a polling cursor, not part of
 `RunControlRecord`'s protocol shape. It lets an owning executor observe remote

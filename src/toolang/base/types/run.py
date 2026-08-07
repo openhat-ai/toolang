@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, cast
 
 from .message import Delta, Message, MessagePart, MessagePartType
@@ -38,6 +39,56 @@ class ModelUsage:
 
     input_tokens: int
     output_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class RunLimits:
+    """Limits applied to one root run tree."""
+
+    agic_model_calls: int | None = 200
+    agic_tool_calls: int | None = None
+    tokens: int | None = None
+    cost: Decimal | None = None
+    time: int | None = None
+
+    def __post_init__(self) -> None:
+        _validate_limit("agic_model_calls", self.agic_model_calls)
+        _validate_limit("agic_tool_calls", self.agic_tool_calls)
+        _validate_limit("tokens", self.tokens)
+        _validate_limit("time", self.time)
+        if self.cost is not None:
+            if not isinstance(self.cost, Decimal):
+                raise TypeError("run limit cost must be a Decimal")
+            if not self.cost.is_finite() or self.cost < 0:
+                raise ValueError("run limit cost must be finite and non-negative")
+
+    @classmethod
+    def from_data(cls, payload: Mapping[str, Any]) -> RunLimits:
+        """Build limits from their durable representation."""
+
+        raw_cost = payload.get("cost")
+        return cls(
+            agic_model_calls=_optional_limit(
+                "agic_model_calls", payload.get("agic_model_calls", 200)
+            ),
+            agic_tool_calls=_optional_limit(
+                "agic_tool_calls", payload.get("agic_tool_calls")
+            ),
+            tokens=_optional_limit("tokens", payload.get("tokens")),
+            cost=Decimal(str(raw_cost)) if raw_cost is not None else None,
+            time=_optional_limit("time", payload.get("time")),
+        )
+
+    def to_data(self) -> dict[str, int | str | None]:
+        """Return the stable durable representation of these limits."""
+
+        return {
+            "agic_model_calls": self.agic_model_calls,
+            "agic_tool_calls": self.agic_tool_calls,
+            "tokens": self.tokens,
+            "cost": str(self.cost) if self.cost is not None else None,
+            "time": self.time,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,3 +179,20 @@ class ModelPartEnd:
 
 ModelPartUpdate = ModelPartStart | ModelPartDelta | ModelPartEnd
 ModelStreamHandler = Callable[[ModelPartUpdate], Awaitable[None]]
+
+
+def _validate_limit(name: str, value: int | None) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"run limit {name} must be an integer")
+    if value < 0:
+        raise ValueError(f"run limit {name} must be non-negative")
+
+
+def _optional_limit(name: str, value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"run limit {name} must be an integer")
+    return value

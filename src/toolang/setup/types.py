@@ -11,6 +11,7 @@ from types import MappingProxyType
 from toolang.base.protocols.model import ModelAdapter, ModelProvider
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelInfo
+from toolang.base.types.run import RunLimits
 from toolang.common.layout import AgentLayout
 
 
@@ -60,11 +61,14 @@ class AgentSetup:
     tools: Mapping[str, AgentTool]
     envs: Mapping[str, str]
     environment: AgentEnvironment | None = None
+    limits: RunLimits = RunLimits()
 
     def __post_init__(self) -> None:
         providers = dict(self.providers)
         adapters = dict(self.adapters)
         models = tuple(self.models)
+        if not isinstance(self.limits, RunLimits):
+            raise TypeError("setup limits must be RunLimits")
         for key, provider in providers.items():
             if key != provider.name:
                 raise ValueError(

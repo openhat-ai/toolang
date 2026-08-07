@@ -76,7 +76,7 @@ execution of a run tree.
 `RunExecutor` is the public run entry point:
 
 ```text
-start(RunSpec, run_id?, request_id?, tracer?) -> RunHandle
+start(RunSpec, limits?, run_id?, request_id?, tracer?) -> RunHandle
 stop(run_id, timing, request_id?, reason?)     -> RunControlRecord
 steer(run_id, message, timing, request_id?)    -> RunControlRecord
 cancel_control(run_id, index)                  -> RunControlRecord
@@ -97,6 +97,11 @@ ready after construction and therefore has no separate `open()` method.
 `shutdown()` is terminal and cancels the run tasks owned by that executor
 instance. The process owner closes the shared `RunStore` after the executor
 shuts down.
+
+The captured `AgentSetup` supplies the default `RunLimits`; `start()` may
+replace it for one root run tree. Per-agic model and tool call limits reset on
+each agic invocation, while token, cost, and time limits are shared by all
+recursive runs. The effective limits are stored only on the root start control.
 
 `start()` requires an existing thread. Thread creation belongs to
 `ThreadManager` or to the package that owns a deterministic external thread id.
@@ -236,7 +241,9 @@ check; it is not part of the public manager API.
 
 `RunSpec` carries one explicit immutable `AgentState`,
 `toolang.setup.AgentSetup`, and `CeilingSpec`. `AgentSetup` supplies the
-immutable `AgentLayout` and root-scoped installed runtime implementations.
+immutable `AgentLayout`, root-scoped installed runtime implementations, and
+captured default `RunLimits`. Future config and CLI support resolves those
+defaults before constructing the setup snapshot.
 Execution uses that layout directly for the agent identity, home, and runtime
 rooms. Its primary input is one protocol-level `Percept`;
 after runnable resolution, input coercion exposes that value as `Part[]` or

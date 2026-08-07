@@ -60,7 +60,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
 
     prepared = state.prepared
     run = prepared.run
-    state.before_call()
+    state.before_model_call()
     step_index = state.next_step
     state.next_step += 1
     step_started = time.perf_counter()
@@ -225,6 +225,7 @@ async def _apply_response(
         )
     )
     state.last_step = step_index
+    state.record_usage(current.usage)
     usage = current.usage
     _LOGGER.info(
         "Step finished thread=%s run=%s step=%s kind=model status=finished input=%s output=%s tool_calls=%s duration_ms=%s",
