@@ -35,7 +35,7 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import RunControlRef, StepOutputRef
+from toolang.execution.records import RunInputRef, StepOutputRef
 from toolang.execution.types import StepPath
 from toolang.lang.submission import SettingCommand
 
@@ -355,7 +355,7 @@ def test_chat_failed_child_is_a_statement_diagnostic_fact() -> None:
     events.handle_run_event(
         RunBegin(
             run="run_child",
-            input=RunControlRef(index=0),
+            input=RunInputRef(index=0),
             parent=StepPath.parse("run_1/1"),
             context={
                 "origin": "chat",
@@ -563,7 +563,7 @@ def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
             RunBegin(
                 run=f"run_child_{item}",
                 parent=StepPath.parse("run_1/1"),
-                input=RunControlRef(),
+                input=RunInputRef(),
                 context={
                     "root": "run_1",
                     "runnable": {"kind": "agic", "name": "summarize"},
@@ -814,7 +814,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
         RunBegin(
             run="run_revise",
             parent=StepPath.parse("run_1/1/0"),
-            input=RunControlRef(),
+            input=RunInputRef(),
             context={
                 "root": "run_1",
                 "runnable": {"kind": "agic", "name": "revise"},
@@ -1521,7 +1521,7 @@ def _run_begin(
 ) -> RunBegin:
     return RunBegin(
         run=run_id,
-        input=RunControlRef(index=0),
+        input=RunInputRef(index=0),
         parent=(
             StepPath.parse(f"{parent_run_id}/2")
             if parent_run_id is not None

@@ -14,7 +14,7 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import RunControlRef, StepOutputRef
+from toolang.execution.records import RunInputRef, StepOutputRef
 from toolang.execution.types import StepPath
 
 
@@ -80,7 +80,7 @@ def test_verbose_root_block_aligns_description_and_input_paragraphs() -> None:
         [
             RunBegin(
                 run="run_one",
-                input=RunControlRef(index=3),
+                input=RunInputRef(index=3),
                 context={"runnable": {"kind": "agic", "name": "demo"}},
             ),
             RunEnd(run="run_one", status="finished"),
@@ -336,7 +336,7 @@ def test_flow_statement_uses_zero_based_index_and_natural_work_sentence() -> Non
             RunBegin(
                 run="run_review",
                 parent=StepPath.parse("run_one/0"),
-                input=RunControlRef(),
+                input=RunInputRef(),
                 context={"runnable": {"kind": "agic", "name": "review"}},
             ),
             RunEnd(run="run_review", status="finished"),
@@ -384,7 +384,7 @@ def test_scatter_keeps_work_and_semantic_result_separate() -> None:
             RunBegin(
                 run="run_queries",
                 parent=StepPath.parse("run_one/0"),
-                input=RunControlRef(),
+                input=RunInputRef(),
                 context={"runnable": {"kind": "agic", "name": "expand_queries"}},
             ),
             RunEnd(run="run_queries", status="finished"),
@@ -446,7 +446,7 @@ def test_statement_spacing_is_compact_at_every_verbosity() -> None:
         RunBegin(
             run="run_decompose",
             parent=StepPath.parse("run_one/1"),
-            input=RunControlRef(),
+            input=RunInputRef(),
             context={"runnable": {"kind": "agic", "name": "decompose"}},
         ),
         RunEnd(run="run_decompose", status="finished"),
@@ -532,7 +532,7 @@ def test_scatter_transform_failure_has_one_actionable_boundary() -> None:
             RunBegin(
                 run="run_queries",
                 parent=StepPath.parse("run_one/0"),
-                input=RunControlRef(),
+                input=RunInputRef(),
                 context={"runnable": {"kind": "agic", "name": "expand_queries"}},
             ),
             RunEnd(run="run_queries", status="finished"),
@@ -863,7 +863,7 @@ def test_one_item_and_one_item_list_are_distinct() -> None:
             RunBegin(
                 run="run_report",
                 parent=StepPath.parse("run_one/1"),
-                input=RunControlRef(),
+                input=RunInputRef(),
                 context={"runnable": {"kind": "agic", "name": "synthesize"}},
             ),
             RunEnd(run="run_report", status="finished"),
@@ -995,7 +995,7 @@ def test_default_flow_keeps_headers_and_work_lines_compact() -> None:
             RunBegin(
                 run="run_expand",
                 parent=StepPath.parse("run_one/0"),
-                input=RunControlRef(),
+                input=RunInputRef(),
                 context={"runnable": {"kind": "agic", "name": "expand_queries"}},
             ),
             RunEnd(run="run_expand", status="finished"),
@@ -1156,7 +1156,7 @@ def test_repeat_block_keeps_nested_iterations_in_the_live_area() -> None:
             RunBegin(
                 run="run_revise",
                 parent=StepPath.parse("run_one/3/0"),
-                input=RunControlRef(),
+                input=RunInputRef(),
                 context={
                     "runnable": {"kind": "agic", "name": "revise"},
                     "placement": {"loop": 0},
@@ -1294,7 +1294,7 @@ def test_complete_repeat_trace_resets_ordinals_and_renders_until_decisions() -> 
                 RunBegin(
                     run=body_run,
                     parent=StepPath.parse(body_step),
-                    input=RunControlRef(),
+                    input=RunInputRef(),
                     context={
                         "runnable": {"kind": "agic", "name": "review"},
                         "placement": {"loop": iteration},
@@ -1331,7 +1331,7 @@ def test_complete_repeat_trace_resets_ordinals_and_renders_until_decisions() -> 
                 RunBegin(
                     run=until_run,
                     parent=StepPath.parse("run_one/2"),
-                    input=RunControlRef(),
+                    input=RunInputRef(),
                     context={
                         "runnable": {"kind": "agic", "name": "<agic:42>"},
                         "placement": {"loop": iteration, "role": "until"},
@@ -1402,7 +1402,7 @@ def test_until_boolean_failure_has_no_control_decision() -> None:
             RunBegin(
                 run="run_until",
                 parent=StepPath.parse("run_one/0"),
-                input=RunControlRef(),
+                input=RunInputRef(),
                 context={
                     "runnable": {"kind": "agic", "name": "<agic:42>"},
                     "placement": {"loop": 0, "role": "until"},
@@ -1462,7 +1462,7 @@ def test_failed_until_run_uses_a_red_compact_summary_without_a_decision() -> Non
             RunBegin(
                 run="run_until",
                 parent=StepPath.parse("run_one/0"),
-                input=RunControlRef(),
+                input=RunInputRef(),
                 context={
                     "runnable": {"kind": "agic", "name": "<agic:42>"},
                     "placement": {"loop": 0, "role": "until"},
@@ -1508,7 +1508,7 @@ def test_failed_until_run_uses_a_red_compact_summary_without_a_decision() -> Non
 def _agic_begin(*, started_at: str = "") -> RunBegin:
     return RunBegin(
         run="run_one",
-        input=RunControlRef(),
+        input=RunInputRef(),
         context={"runnable": {"kind": "agic", "name": "demo"}},
         started_at=started_at,
     )
@@ -1517,7 +1517,7 @@ def _agic_begin(*, started_at: str = "") -> RunBegin:
 def _flow_begin(*, started_at: str = "") -> RunBegin:
     return RunBegin(
         run="run_one",
-        input=RunControlRef(),
+        input=RunInputRef(),
         context={"runnable": {"kind": "flow", "name": "research"}},
         started_at=started_at,
     )
@@ -1536,7 +1536,7 @@ def _parallel_run_begin(
     return RunBegin(
         run=run,
         parent=parent,
-        input=RunControlRef(),
+        input=RunInputRef(),
         context={
             "runnable": {"kind": "agic", "name": runnable},
             "placement": {
@@ -1553,7 +1553,7 @@ def _sequential_run_begin(run: str, *, item: int) -> RunBegin:
     return RunBegin(
         run=run,
         parent=StepPath.parse("run_one/4"),
-        input=RunControlRef(),
+        input=RunInputRef(),
         context={
             "runnable": {"kind": "agic", "name": "reducer"},
             "placement": {

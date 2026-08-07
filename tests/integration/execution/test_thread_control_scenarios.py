@@ -129,8 +129,8 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
         assert create_control[0].kind == "create"
         assert create_control[0].request_id == "thread-create-1"
         assert create_control[0].context == {"prefix": "web"}
-        assert create_control[0].source_thread is None
-        assert create_control[0].anchor_run is None
+        assert create_control[0].source is None
+        assert create_control[0].anchor is None
         assert create_control[0].expected_head is None
         assert create_control[0].status == "finished"
         assert create_control[0].finished_at == create_control[0].created_at
@@ -143,8 +143,8 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
         fork_control = reopened.list_thread_controls(thread_id=forked)
         assert len(fork_control) == 1
         assert fork_control[0].kind == "fork"
-        assert fork_control[0].source_thread == source
-        assert fork_control[0].anchor_run == first_run
+        assert fork_control[0].source == source
+        assert fork_control[0].anchor == first_run
         assert fork_control[0].request_id == "thread-fork-1"
         assert fork_control[0].expected_head is None
         assert fork_control[0].status == "finished"
@@ -224,7 +224,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                 ThreadControlRef(thread, 0),
                 ThreadControlRef(thread, 1),
             ]
-            assert [control.anchor_run for control in controls] == [
+            assert [control.anchor for control in controls] == [
                 None,
                 runs[1].id,
                 replacement.id,
@@ -250,13 +250,13 @@ def test_rewind_controls_form_a_monotonic_head_chain(
             replacement_record = harness.store.get_run(
                 run_id=replacement.id
             )
-            assert first is not None and first.superseded_by is None
+            assert first is not None and first.ejected is None
             assert second is not None
-            assert second.superseded_by == ThreadControlRef(thread, 1)
+            assert second.ejected == ThreadControlRef(thread, 1)
             assert third is not None
-            assert third.superseded_by == ThreadControlRef(thread, 1)
+            assert third.ejected == ThreadControlRef(thread, 1)
             assert replacement_record is not None
-            assert replacement_record.superseded_by == ThreadControlRef(
+            assert replacement_record.ejected == ThreadControlRef(
                 thread,
                 2,
             )
@@ -273,11 +273,11 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                 if isinstance(event, ThreadRewound)
             ]
             assert [event.control.index for event in rewinds] == [1, 2]
-            assert rewinds[0].superseded_runs == (
+            assert rewinds[0].ejected_runs == (
                 runs[1].id,
                 runs[2].id,
             )
-            assert rewinds[1].superseded_runs == (replacement.id,)
+            assert rewinds[1].ejected_runs == (replacement.id,)
 
     asyncio.run(scenario())
 
@@ -348,7 +348,7 @@ def test_fork_accepts_an_earlier_terminal_anchor_while_source_runs(
                 index=0,
             )
             assert fork_control is not None
-            assert fork_control.anchor_run == terminal.id
+            assert fork_control.anchor == terminal.id
             assert [event.type for event in listener.events] == [
                 "thread_created",
                 "thread_forked",
@@ -439,7 +439,7 @@ def test_rewind_rejects_a_running_thread_without_stopping_it(
                 index=1,
             )
             assert rewind is not None
-            assert rewind.anchor_run == stopped.id
+            assert rewind.anchor == stopped.id
             assert rewind.expected_head == ThreadControlRef(thread, 0)
             assert [
                 run.id
@@ -517,7 +517,7 @@ def test_failed_thread_controls_leave_no_record_or_event(
             assert len(harness.store.list_threads()) == 1
             stored_run = harness.store.get_run(run_id=run.id)
             assert stored_run is not None
-            assert stored_run.superseded_by is None
+            assert stored_run.ejected is None
             assert [event.type for event in listener.events] == [
                 "thread_created"
             ]

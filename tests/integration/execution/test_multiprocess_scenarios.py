@@ -146,7 +146,7 @@ def _race_rewind(
         start.wait()
         _thread, control, superseded = store.rewind_thread(
             thread_id="term_race",
-            anchor_run=None,
+            anchor=None,
             request_id="racing-rewind",
             expected_head=ThreadControlRef("term_race", 0),
             context={},
@@ -540,7 +540,7 @@ def test_concurrent_forks_preserve_one_terminal_anchor(
             ] == ["run_fork_anchor"]
         anchor = reopened.get_run(run_id="run_fork_anchor")
         assert anchor is not None
-        assert anchor.superseded_by is None
+        assert anchor.ejected is None
     finally:
         reopened.close()
 
@@ -572,7 +572,7 @@ def test_start_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
         new_run = reopened.get_run(run_id="run_racing_start")
         thread = reopened.get_thread(thread_id="term_race")
         assert new_run is not None
-        assert new_run.superseded_by is None
+        assert new_run.ejected is None
         assert thread is not None
 
         rewind = by_kind["rewind"]
@@ -581,7 +581,7 @@ def test_start_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
             assert thread.head == ThreadControlRef("term_race", 1)
             anchor = reopened.get_run(run_id="run_race_anchor")
             assert anchor is not None
-            assert anchor.superseded_by == (ThreadControlRef("term_race", 1))
+            assert anchor.ejected == (ThreadControlRef("term_race", 1))
             assert [
                 run.id
                 for run in reopened.list_thread_history_chronological(

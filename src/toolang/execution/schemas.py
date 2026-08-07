@@ -11,6 +11,7 @@ from toolang.base.types.run import ModelCall
 from .records import (
     RunControlRecord,
     RunControlRef,
+    RunInputRef,
     RunRecord,
     StepInput,
     StepOutputRef,
@@ -34,14 +35,14 @@ from .types import (
 
 
 @dataclass(frozen=True, slots=True)
-class RunControlRefData:
-    """One caller-facing run-control input reference."""
+class RunInputRefData:
+    """One caller-facing run input reference."""
 
     index: int = 0
     part: int | None = None
 
     @classmethod
-    def from_ref(cls, ref: RunControlRef) -> RunControlRefData:
+    def from_ref(cls, ref: RunInputRef) -> RunInputRefData:
         return cls(index=ref.index, part=ref.part)
 
 
@@ -58,6 +59,21 @@ class ThreadControlRefData:
 
 
 @dataclass(frozen=True, slots=True)
+class RunControlRefData:
+    """One caller-facing run-control reference."""
+
+    run: str
+    index: int
+
+    @classmethod
+    def from_ref(cls, ref: RunControlRef) -> RunControlRefData:
+        return cls(run=ref.run, index=ref.index)
+
+
+EjectionRefData = ThreadControlRefData | RunControlRefData
+
+
+@dataclass(frozen=True, slots=True)
 class StepOutputRefData:
     """One caller-facing step-output reference."""
 
@@ -69,7 +85,7 @@ class StepOutputRefData:
         return cls(step=ref.step, part=ref.part)
 
 
-StepInputData = RunControlRefData | StepOutputRefData | Message
+StepInputData = RunInputRefData | StepOutputRefData | Message
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,7 +241,7 @@ class RunInfo:
     summary: str
     status: RunStatus
     error: str | None
-    superseded_by: ThreadControlRefData | None
+    ejected: EjectionRefData | None
     failure: FailureDetail | None
     created_at: str
     started_at: str
@@ -278,11 +294,7 @@ class RunInfo:
             summary=summary,
             status=run.status,
             error=run.error,
-            superseded_by=(
-                ThreadControlRefData.from_ref(run.superseded_by)
-                if run.superseded_by is not None
-                else None
-            ),
+            ejected=_ejection_ref_data(run.ejected),
             failure=FailureDetail.from_run(
                 status=run.status,
                 error=run.error,
@@ -303,6 +315,8 @@ class RunControlInfo:
     index: int
     kind: RunControlKind
     timing: ControlTiming
+    source: str | None
+    anchor: StepPath | None
     request_id: str | None
     status: ControlStatus
     message: Message | None
@@ -318,6 +332,8 @@ class RunControlInfo:
             index=control.index,
             kind=control.kind,
             timing=control.timing,
+            source=control.source,
+            anchor=control.anchor,
             request_id=control.request_id,
             status=control.status,
             message=control.input,
@@ -340,6 +356,7 @@ class StepData:
     noted: dict[str, Any] = field(default_factory=dict)
     status: StepStatus = "running"
     error: str | None = None
+    ejected: RunControlRefData | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
@@ -363,6 +380,11 @@ class StepData:
             noted=dict(step.noted),
             status=step.status,
             error=step.error,
+            ejected=(
+                RunControlRefData.from_ref(step.ejected)
+                if step.ejected is not None
+                else None
+            ),
             created_at=step.created_at,
             started_at=step.started_at,
             finished_at=step.finished_at,
@@ -425,15 +447,15 @@ class ThreadDetail(ThreadInfo):
 
 
 def _step_input_data(item: StepInput) -> StepInputData:
-    if isinstance(item, RunControlRef):
-        return RunControlRefData.from_ref(item)
+    if isinstance(item, RunInputRef):
+        return RunInputRefData.from_ref(item)
     if isinstance(item, StepOutputRef):
         return StepOutputRefData.from_ref(item)
     return item
 
 
 def _resolve_value_ref(
-    ref: RunControlRef | StepOutputRef,
+    ref: RunInputRef | StepOutputRef,
     *,
     controls: Sequence[RunControlRecord],
     steps: Sequence[StepRecord],
@@ -463,6 +485,16 @@ def _thread_channel(thread_id: str, origin: str) -> str:
 
 def _start_control(controls: Sequence[RunControlRecord]) -> RunControlRecord:
     for control in controls:
-        if control.index == 0 and control.kind == "start":
+        if control.index == 0 and control.kind in {"start", "rerun"}:
             return control
     raise ValueError("run start input not found")
+
+
+def _ejection_ref_data(
+    ref: ThreadControlRef | RunControlRef | None,
+) -> EjectionRefData | None:
+    if isinstance(ref, ThreadControlRef):
+        return ThreadControlRefData.from_ref(ref)
+    if isinstance(ref, RunControlRef):
+        return RunControlRefData.from_ref(ref)
+    return None

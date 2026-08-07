@@ -41,6 +41,42 @@ class _RunLimitState:
     cost: Decimal = Decimal(0)
     error: str | None = None
 
+    def restore(
+        self,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cost: Decimal | None,
+    ) -> None:
+        """Restore one effective committed model call into root totals."""
+
+        if self.limits.tokens is not None:
+            if input_tokens is None or output_tokens is None:
+                self.error = "Model usage is required by the run token limit"
+                return
+            self.input_tokens += input_tokens
+            self.output_tokens += output_tokens
+        if self.limits.cost is not None:
+            if cost is None:
+                self.error = "Model pricing is required by the run cost limit"
+                return
+            self.cost += cost
+
+    def check_restored(self) -> None:
+        """Validate restored effective totals before resumed execution."""
+
+        if self.error is not None:
+            raise _RunLimitExceeded(self.error)
+        tokens = self.input_tokens + self.output_tokens
+        if self.limits.tokens is not None and tokens > self.limits.tokens:
+            raise _RunLimitExceeded(
+                f"Run token limit exceeded: {tokens} > {self.limits.tokens}"
+            )
+        if self.limits.cost is not None and self.cost > self.limits.cost:
+            raise _RunLimitExceeded(
+                f"Run cost limit exceeded: {self.cost} > {self.limits.cost} USD"
+            )
+
     def require_pricing(
         self,
         target: ModelTarget,

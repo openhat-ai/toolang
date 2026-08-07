@@ -41,7 +41,7 @@ from toolang.base.types.run import (
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
-from toolang.execution.records import run_limits_to_data
+from toolang.execution.records import RunControlRef, run_limits_to_data
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import perceive_input
 
@@ -96,6 +96,58 @@ agic reply(_: Part[], tone: Text) -> Part[]:
             ]
             assert isinstance(tracer.events[0], RunBegin)
             assert isinstance(tracer.events[-1], RunEnd)
+
+    asyncio.run(scenario())
+
+
+def test_retry_restarts_an_agic_cycle_with_a_fresh_step_index(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic reply(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            RuntimeError("temporary failure"),
+            ModelCallResult(message=Message.assistant("recovered")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            run = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    input=(TextPart("hello"),),
+                )
+            )
+            assert run.status == "failed"
+
+            run = await harness.executor.retry(
+                run.id,
+                setup=harness.setup,
+                state=harness.state,
+            )
+
+            assert run.status == "finished"
+            active = harness.store.list_steps(run_id=run.id)
+            assert [(step.path.index, step.status) for step in active] == [
+                (1, "finished")
+            ]
+            historical = harness.store.list_steps(
+                run_id=run.id,
+                include_ejected=True,
+            )
+            assert [step.path.index for step in historical] == [0, 1]
+            assert historical[0].ejected == RunControlRef(run.id, 1)
+            assert historical[1].ejected is None
 
     asyncio.run(scenario())
 

@@ -20,7 +20,7 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult, ToolCall
-from toolang.execution.records import RunControlRef, StepOutputRef
+from toolang.execution.records import RunInputRef, StepOutputRef
 from toolang.execution.types import ControlTiming, StepPath, ThreadPrefix
 from toolang.lang.input import perceive_input
 
@@ -142,7 +142,7 @@ agic revise(_: Part[]) -> Part[]:
             steps = harness.store.list_steps(run_id=record.id)
             assert steps[1].input == (
                 StepOutputRef(step=StepPath.parse(f"{record.id}/0")),
-                RunControlRef(index=control.index),
+                RunInputRef(index=control.index),
             )
             assert harness.store.run_output(run_id=record.id) == (
                 TextPart("revised"),
@@ -376,7 +376,7 @@ flow sequence(_: Text) -> Text:
                 step
                 for step in harness.store.list_steps(run_id=record.id)
                 if step.parent is None
-                and RunControlRef(index=control.index) in step.input
+                and RunInputRef(index=control.index) in step.input
             ]
             assert referencing_steps[0].index == consumer_index
             assert stored.finished_at == referencing_steps[0].started_at
@@ -445,9 +445,9 @@ agic revise(_: Text) -> Text:
             second_step = harness.store.list_steps(run_id=record.id)[1]
             assert second_step.input == (
                 StepOutputRef(step=StepPath.parse(f"{record.id}/0")),
-                RunControlRef(index=1),
-                RunControlRef(index=2),
-                RunControlRef(index=3),
+                RunInputRef(index=1),
+                RunInputRef(index=2),
+                RunInputRef(index=3),
             )
             stored_controls = [
                 harness.store.get_run_control(

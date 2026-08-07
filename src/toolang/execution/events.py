@@ -11,7 +11,7 @@ from pydantic import Field, TypeAdapter
 from toolang.base.types.message import Delta, MessagePart, MessagePartType
 
 from .records import (
-    RunControlRef,
+    RunInputRef,
     StepInput,
     ThreadControlRef,
     ThreadPeer,
@@ -25,7 +25,7 @@ class RunBegin:
     """A run started executing."""
 
     run: str
-    input: RunControlRef
+    input: RunInputRef
     parent: StepPath | None = None
     context: dict[str, Any] = field(default_factory=dict)
     started_at: str = ""
@@ -94,7 +94,7 @@ class RunEnd:
 
     run: str
     status: RunStatus
-    input: RunControlRef | None = None
+    input: RunInputRef | None = None
     output: ValueRef | None = None
     error: str | None = None
     finished_at: str = ""
@@ -146,7 +146,7 @@ class ThreadRewound:
     thread: str
     control: ThreadControlRef
     anchor_run: str
-    superseded_runs: tuple[str, ...]
+    ejected_runs: tuple[str, ...]
     created_at: str
     type: Literal["thread_rewound"] = field(default="thread_rewound", init=False)
 

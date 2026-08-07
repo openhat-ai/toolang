@@ -14,7 +14,7 @@ from tests.support.execution_fixtures import (
 from toolang.base.types.message import Message, TextPart
 from toolang.common.ids import IdIssuer
 from toolang.execution.history import RunHistory
-from toolang.execution.records import RunControlRef, StepOutputRef
+from toolang.execution.records import RunInputRef, StepOutputRef
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
@@ -178,15 +178,15 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
         project_run_end(
             store,
             run_id=run.id,
-            output=RunControlRef(index=0),
+            output=RunInputRef(index=0),
         )
 
         stored = store.get_run(run_id=run.id)
         detail = RunHistory(store).get_run(run.id)
 
         assert stored is not None
-        assert stored.input == RunControlRef(index=0)
-        assert stored.output == RunControlRef(index=0)
+        assert stored.input == RunInputRef(index=0)
+        assert stored.output == RunInputRef(index=0)
         assert store.run_output(run_id=run.id) == Message.user("unchanged").parts
         assert detail is not None
         assert detail.output == list(Message.user("unchanged").parts)

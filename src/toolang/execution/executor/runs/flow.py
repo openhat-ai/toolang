@@ -29,15 +29,19 @@ async def execute(
     binding: BoundRun,
     flow: FlowDecl,
     locals: dict[str, Local],
+    *,
+    statement_start: int = 0,
+    step_start: int = 0,
 ) -> Local:
     """Execute one complete flow body."""
 
     await execute_statements(
         execution,
         binding,
-        flow.stmts,
+        flow.stmts[statement_start:],
         locals,
         parent=None,
+        start=step_start,
     )
     result = locals.get("_", Local())
     if flow.output is not None:

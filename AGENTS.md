@@ -179,7 +179,8 @@
   response projection, execution storage, and agent-specific built-in tools.
 - `RunExecutor` owns run acceptance, control, and execution. It receives the
   process-owned `RunStore` and `IdIssuer`, constructs its mandatory internal
-  run-event projector, and may receive one optional `RunTracer` per `start()`.
+  run-event projector, and may receive one optional `RunTracer` per `start()`,
+  `rerun()`, or `retry()` attempt.
   `ThreadManager` shares the same store and issuer without depending on the
   executor. Persistence and control-status updates complete before the tracer
   observes an event. `RunTracer.on_event()` is async, serialized by the
@@ -247,6 +248,13 @@
   selected agent's `RunStore` directly, read through `RunHistory`, and submit
   controls through `RunExecutor` or `ThreadManager`; they do not require an
   agent HTTP server.
+- `RunExecutor.rerun()` loads a source root's invocation from durable truth,
+  starts a new root against explicitly supplied current setup and state, and
+  ejects the source tree through the new index-zero `rerun` control.
+  `RunExecutor.retry()` keeps the root id, ejects a structural step suffix
+  through an appended `retry` control, restores committed flow locals, and
+  appends fresh physical steps without rewriting history. Effective reads omit
+  ejected runs and steps; audit reads may include them.
   `toolang.execution.types` owns shared execution lifecycle and run-control
   vocabulary.
 - `toolang.plugin` owns generic entry point discovery, pure plugin configuration
