@@ -241,11 +241,12 @@ def test_cli_explicit_resident_target_preserves_selector_but_labels_the_agent(
 ) -> None:
     result = _call_main(["--root", str(tmp_path), "agent:alice"])
     output = capsys.readouterr()
+    stdout = click.unstyle(output.out)
 
     assert result == 0
-    assert "Usage: pytest agent:alice" in output.out
-    assert "Commands for resident agent alice." in output.out
-    assert "agent agent:alice" not in output.out
+    assert "Usage: pytest agent:alice" in stdout
+    assert "Commands for resident agent alice." in stdout
+    assert "agent agent:alice" not in stdout
 
 
 def test_cli_bare_visiting_target_shows_help_without_resolving_it(
