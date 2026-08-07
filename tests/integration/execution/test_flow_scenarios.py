@@ -23,7 +23,8 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.execution.events import RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
-from toolang.execution.records import run_limits_to_data
+from toolang.execution.history import RunHistory
+from toolang.execution.records import RunControlRef, run_limits_to_data
 from toolang.execution.types import StepPath, ThreadPrefix
 from toolang.lang.input import perceive_input
 
@@ -99,6 +100,276 @@ flow relay(_: Part[]) -> Part[]:
                 ("run_end", child.id),
                 ("run_end", root.id),
             ]
+
+    asyncio.run(scenario())
+
+
+def test_retry_reuses_committed_flow_prefix_and_keeps_the_root_run(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic worker(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow staged(_: Part[]) -> Part[]:
+  let note:
+    committed
+  run worker
+""",
+        responses=[
+            RuntimeError("temporary model failure"),
+            ModelCallResult(message=Message.assistant("recovered")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            failed = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="staged",
+                    input=perceive_input("hello"),
+                )
+            )
+            assert failed.status == "failed"
+            before = harness.store.list_steps(run_id=failed.id)
+            assert [(step.path.index, step.status) for step in before] == [
+                (0, "finished"),
+                (1, "failed"),
+            ]
+
+            retried = await harness.executor.retry(
+                failed.id,
+                setup=harness.setup,
+                state=harness.state,
+            )
+
+            assert retried.id == failed.id
+            assert retried.status == "finished"
+            assert harness.store.run_output(run_id=retried.id) == (
+                TextPart("recovered"),
+            )
+            active = harness.store.list_steps(run_id=retried.id)
+            assert [(step.path.index, step.status) for step in active] == [
+                (0, "finished"),
+                (2, "finished"),
+            ]
+            assert active[0].noted["value"] == [
+                {"type": "text", "text": "committed"}
+            ]
+            historical = harness.store.list_steps(
+                run_id=retried.id,
+                include_ejected=True,
+            )
+            assert [step.path.index for step in historical] == [0, 1, 2]
+            assert historical[1].ejected is not None
+            retry = harness.store.list_run_controls(run_id=retried.id)[-1]
+            assert retry.kind == "retry"
+            assert retry.anchor is not None
+            assert historical[1].ejected == RunControlRef(retried.id, retry.index)
+            visible_runs = harness.store.list_runs(thread_id=thread, limit=None)
+            assert all(
+                run.parent is None or run.parent != historical[1].path
+                for run in visible_runs
+            )
+            audit_runs = harness.store.list_runs(
+                thread_id=thread,
+                limit=None,
+                include_ejected=True,
+            )
+            assert any(run.parent == historical[1].path for run in audit_runs)
+            assert len(harness.adapter.invocations) == 2
+
+    asyncio.run(scenario())
+
+
+def test_rerun_reuses_source_invocation_in_a_new_root_run(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic reply(_: Part[], tone: Text) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: Reply to {{_}} in {{tone}}.
+""",
+        responses=[
+            ModelCallResult(message=Message.assistant("first")),
+            ModelCallResult(message=Message.assistant("second")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            source = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    input=perceive_input("hello"),
+                    args={"tone": "brief"},
+                )
+            )
+            rerun = await harness.executor.rerun(
+                source.id,
+                setup=harness.setup,
+                state=harness.state,
+            )
+
+            assert rerun.id != source.id
+            assert rerun.thread == source.thread
+            assert rerun.status == "finished"
+            assert harness.store.run_output(run_id=rerun.id) == (TextPart("second"),)
+            stored_source = harness.store.get_run(run_id=source.id)
+            assert stored_source is not None
+            assert stored_source.ejected == RunControlRef(rerun.id, 0)
+            visible = harness.store.list_runs(thread_id=thread, limit=None)
+            assert [run.id for run in visible] == [rerun.id]
+            rerun_control = harness.store.get_run_control(run_id=rerun.id, index=0)
+            assert rerun_control is not None
+            assert rerun_control.kind == "rerun"
+            assert rerun_control.source == source.id
+            projected = RunHistory(harness.store).get_thread(thread)
+            assert projected is not None
+            assert [run.id for run in projected.runs] == [rerun.id]
+            assert projected.runs[0].controls[0].source == source.id
+            assert [call.call.messages for call in harness.adapter.invocations] == [
+                [Message.user("Reply to hello in brief.")],
+                [Message.user("Reply to hello in brief.")],
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_repeated_retry_appends_steps_without_rewriting_prior_attempts(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic worker(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow staged(_: Part[]) -> Part[]:
+  let note:
+    committed
+  run worker
+""",
+        responses=[
+            RuntimeError("first failure"),
+            RuntimeError("second failure"),
+            ModelCallResult(message=Message.assistant("done")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            run = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="staged",
+                    input=perceive_input("hello"),
+                )
+            )
+            assert run.status == "failed"
+            run = await harness.executor.retry(
+                run.id,
+                setup=harness.setup,
+                state=harness.state,
+            )
+            assert run.status == "failed"
+            run = await harness.executor.retry(
+                run.id,
+                setup=harness.setup,
+                state=harness.state,
+            )
+
+            assert run.status == "finished"
+            assert [
+                step.path.index for step in harness.store.list_steps(run_id=run.id)
+            ] == [0, 3]
+            historical = harness.store.list_steps(
+                run_id=run.id,
+                include_ejected=True,
+            )
+            assert [step.path.index for step in historical] == [0, 1, 2, 3]
+            assert historical[1].ejected == RunControlRef(run.id, 1)
+            assert historical[2].ejected == RunControlRef(run.id, 2)
+            assert historical[3].ejected is None
+
+    asyncio.run(scenario())
+
+
+def test_retry_restores_effective_model_usage_before_enforcing_new_limits(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic worker(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow twice(_: Part[]) -> Part[]:
+  run worker
+  run worker
+""",
+        responses=[
+            ModelCallResult(
+                message=Message.assistant("first"),
+                usage=ModelUsage(input_tokens=1, output_tokens=1),
+            ),
+            RuntimeError("temporary failure"),
+            ModelCallResult(
+                message=Message.assistant("second"),
+                usage=ModelUsage(input_tokens=1, output_tokens=1),
+            ),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            run = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="twice",
+                    input=perceive_input("hello"),
+                )
+            )
+            assert run.status == "failed"
+
+            run = await harness.executor.retry(
+                run.id,
+                setup=harness.setup,
+                state=harness.state,
+                limits=RunLimits(tokens=2),
+            )
+
+            assert run.status == "failed"
+            assert run.error == "Run token limit exceeded: 4 > 2"
+            retry = harness.store.list_run_controls(run_id=run.id)[-1]
+            assert retry.context == {
+                "limits": {
+                    "agic_model_calls": 200,
+                    "agic_tool_calls": None,
+                    "tokens": 2,
+                    "cost": None,
+                    "time": None,
+                }
+            }
 
     asyncio.run(scenario())
 

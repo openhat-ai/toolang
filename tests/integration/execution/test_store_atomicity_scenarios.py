@@ -7,10 +7,15 @@ import sqlite3
 
 import pytest
 
+from tests.support.execution_fixtures import (
+    project_run_end,
+    project_run_start,
+    project_step,
+)
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
-from toolang.execution.records import RunControlRef
+from toolang.execution.records import RunControlRef, RunInputRef
 from toolang.execution.store import RunStore
 from toolang.execution.types import StepPath
 
@@ -68,6 +73,139 @@ def test_start_acceptance_rolls_back_the_run_when_control_insert_fails(
         store.close()
 
 
+def test_retry_reopens_root_and_ejects_the_failed_step_suffix(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_retry",
+            thread_id="term_retry",
+            origin="chat",
+            input=Message.user("hello"),
+            executable_kind="flow",
+        )
+        first = project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="system",
+            status="finished",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        failed = project_step(
+            store,
+            run_id=run.id,
+            step_index=1,
+            kind="tool",
+            status="failed",
+            input=(),
+            output=(),
+            error="temporary failure",
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        failure = project_step(
+            store,
+            run_id=run.id,
+            step_index=2,
+            kind="system",
+            status="failed",
+            input=(),
+            output=(),
+            error="temporary failure",
+            started_at="2026-01-01T00:00:02Z",
+            finished_at="2026-01-01T00:00:03Z",
+        )
+        project_run_end(
+            store,
+            run_id=run.id,
+            status="failed",
+            error="temporary failure",
+        )
+
+        reopened, control, ejected = store.accept_retry(
+            run_id=run.id,
+            anchor=None,
+            context={"limits": {"models": 400}},
+            request_id="retry-1",
+            created_at="2026-01-01T00:00:03Z",
+        )
+
+        assert reopened.status == "pending"
+        assert reopened.started_at == ""
+        assert reopened.finished_at is None
+        assert reopened.error is None
+        assert control.kind == "retry"
+        assert control.anchor == failed.path
+        assert control.status == "finished"
+        assert ejected == (failed.path, failure.path)
+        assert store.list_steps(run_id=run.id) == [first]
+        historical = store.list_steps(run_id=run.id, include_ejected=True)
+        assert [step.path for step in historical] == [
+            first.path,
+            failed.path,
+            failure.path,
+        ]
+        assert historical[0].ejected is None
+        assert historical[1].ejected is not None
+        assert historical[1].ejected.run == run.id
+        assert historical[1].ejected.index == control.index
+        assert historical[2].ejected == historical[1].ejected
+    finally:
+        store.close()
+
+
+def test_rerun_acceptance_ejects_the_source_with_the_new_start_control(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        source = project_run_start(
+            store,
+            run_id="run_source",
+            thread_id="term_rerun",
+            origin="chat",
+            input=Message.user("hello"),
+            created_at="2026-01-01T00:00:00Z",
+            started_at="2026-01-01T00:00:00Z",
+        )
+        project_run_end(
+            store,
+            run_id=source.id,
+            finished_at="2026-01-01T00:00:01Z",
+        )
+
+        rerun, control = store.accept_start(
+            run_id="run_rerun",
+            parent=None,
+            thread=source.thread,
+            input=Message.user("hello"),
+            context={"root": "run_rerun"},
+            request_id="rerun-1",
+            created_at="2026-01-01T00:00:02Z",
+            kind="rerun",
+            source=source.id,
+        )
+
+        stored_source = store.get_run(run_id=source.id)
+        assert stored_source is not None
+        assert stored_source.ejected == RunControlRef(rerun.id, 0)
+        assert control.kind == "rerun"
+        assert control.source == source.id
+        assert control.anchor is None
+        assert [run.id for run in store.list_runs(limit=None)] == [rerun.id]
+        assert [
+            run.id for run in store.list_runs(limit=None, include_ejected=True)
+        ] == [rerun.id, source.id]
+    finally:
+        store.close()
+
+
 def test_step_and_control_projection_roll_back_as_one_write_unit(
     tmp_path: Path,
 ) -> None:
@@ -109,7 +247,7 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
                 store.begin_step(
                     path=StepPath("run_atomic_event", (0,)),
                     kind="system",
-                    input=(RunControlRef(index=control.index),),
+                    input=(RunInputRef(index=control.index),),
                     given={},
                     started_at="2026-01-01T00:00:02Z",
                 )

@@ -19,8 +19,9 @@ run_abc123/0
 run_abc123/0/1
 ```
 
-`RunControlRef(index, part?)` references a control input in the current run.
+`RunInputRef(index, part?)` references a control input in the current run.
 `StepOutputRef(step, part?)` references step output. `ValueRef` is their union.
+`RunControlRef(run, index)` globally references a durable run mutation.
 `ThreadControlRef(thread, index)` references a durable thread mutation.
 
 
@@ -47,7 +48,7 @@ output
 context
 status
 error
-superseded_by
+ejected
 created_at
 started_at
 finished_at
@@ -57,7 +58,13 @@ finished_at
 the index-zero start control and remains persisted rather than inferred from
 the first step. `output` is a `ValueRef`, so a pass-through run may point
 directly to a control input while computed output points to a step.
-`superseded_by` is a `ThreadControlRef` when a rewind replaces this run.
+`ejected` identifies the thread or run control that removed this run from the
+effective projection.
+
+Retry does not write `RunRecord.ejected`: it ejects steps. A child run whose
+calling `StepPath` was ejected is consequently omitted from effective run and
+thread projections while its durable run record remains available to audit
+reads.
 
 
 ## RunControlRecord
@@ -68,6 +75,8 @@ index
 kind
 timing
 input
+source
+anchor
 request_id
 context
 status
@@ -76,16 +85,21 @@ created_at
 finished_at
 ```
 
-`(run, index)` is the durable identity. Kinds are `start`, `steer`, and `stop`.
+`(run, index)` is the durable identity. Kinds are `start`, `rerun`, `retry`,
+`steer`, and `stop`.
 Timing is `immediate`, `next_step`, or `next_call`. A non-null request ID is
 unique across the `run_controls` table. Duplicate request IDs are rejected;
 they do not replay a previous result.
 
-The index-zero start control and `RunRecord` are inserted in one transaction.
+The index-zero `start` or `rerun` control and `RunRecord` are inserted in one
+transaction. A rerun control references its source root through `source`.
+`retry` is appended to the existing root and records the resolved `StepPath` in
+`anchor`.
 Later control indexes are computed and inserted in one transaction; no API
 reserves an index independently.
 
-For a root run, the start control context stores the effective `RunLimits`:
+For a root run, its entry control and each retry control store the effective
+`RunLimits`:
 
 ```text
 limits:
@@ -118,6 +132,7 @@ given
 noted
 status
 error
+ejected
 created_at
 started_at
 finished_at
@@ -135,6 +150,12 @@ later persisted in step output.
 `given` contains information known when `StepBegin` is emitted. `noted`
 contains additional information recorded by `StepEnd`. Neither repeats the
 step's input, output, status, or error.
+
+A finished flow step also notes its typed local result (`shape`, `type`, and
+`value`). This makes the step a reusable commit boundary for retry without a
+separate checkpoint record. `ejected` is the `RunControlRef` of the retry that
+removed the step from the effective projection. Normal inspection excludes
+ejected steps; audit reads may include them.
 
 For a completed model step, `noted` stores its accounting facts:
 
@@ -184,8 +205,8 @@ concurrency.
 thread
 index
 kind
-source_thread
-anchor_run
+source
+anchor
 request_id
 expected_head
 context
@@ -207,7 +228,8 @@ must keep request IDs globally unique across both control tables or pass
 Control acceptance is not event projection:
 
 ```text
-RunExecutor.start/steer/stop/cancel_control -> RunStore -> RunControlRecord
+RunExecutor.start/rerun/retry/steer/stop/cancel_control
+    -> RunStore -> RunControlRecord
 ThreadManager operations     -> RunStore -> ThreadControlRecord
 ```
 
@@ -251,6 +273,6 @@ submissions are rejected rather than replayed. Index allocation and insertion us
 connection. A configured busy timeout allows concurrent local processes to
 serialize writes.
 
-The process that successfully inserts a start control owns execution. Toolang
-currently leaves records as-is if the owner process exits; it does not resume
-execution.
+The process that successfully inserts a run entry or retry control owns its
+execution attempt. Toolang currently leaves records as-is if that process
+exits; automatic owner-loss recovery remains separate from explicit retry.

@@ -20,6 +20,34 @@ class RunExecutor:
         tracer: RunTracer | None = None,
     ) -> RunHandle: ...
 
+    def rerun(
+        self,
+        source: str,
+        *,
+        setup: AgentSetup,
+        state: AgentState,
+        ceiling: CeilingSpec = CeilingSpec(),
+        model: str | None = None,
+        limits: RunLimits | None = None,
+        run_id: str | None = None,
+        request_id: str | None = None,
+        tracer: RunTracer | None = None,
+    ) -> RunHandle: ...
+
+    def retry(
+        self,
+        run_id: str,
+        *,
+        setup: AgentSetup,
+        state: AgentState,
+        anchor: StepPath | str | None = None,
+        ceiling: CeilingSpec = CeilingSpec(),
+        model: str | None = None,
+        limits: RunLimits | None = None,
+        request_id: str | None = None,
+        tracer: RunTracer | None = None,
+    ) -> RunHandle: ...
+
     def stop(
         self,
         *,
@@ -89,10 +117,16 @@ runnable's declared primary type.
 `start()` replaces that default for one root run tree. Config, CLI, and HTTP
 parsing remain caller concerns and are not part of the executor contract.
 
-There is no `run()`, `execute()`, or `spawn()` variant. `start()` creates the
-owner task and returns an awaitable `RunHandle`. The handle exposes its run ID,
-executor, and task, and delegates same-process `stop()`, `steer()`, and
-`cancel_control()` operations. Its await path shields the owner task so
+There is no `run()`, `execute()`, or `spawn()` variant. `start()`, `rerun()`,
+and `retry()` create an owner task and return an awaitable `RunHandle`.
+`rerun()` loads the source invocation from durable truth and starts a new root
+against the supplied current setup and state. `retry()` keeps the root ID,
+reopens a terminal run, and resumes after its effective committed prefix. An
+omitted retry anchor prefers the latest visible failed, canceled, or running
+non-system step and falls back to a runtime system-failure step. The handle
+exposes its run ID, executor, and task, and
+delegates same-process `stop()`, `steer()`, and `cancel_control()` operations.
+Its await path shields the owner task so
 canceling a waiting HTTP request or TUI action does not cancel the durable run.
 
 
@@ -119,6 +153,22 @@ Duplicate run IDs and duplicate non-null request IDs are rejected. Request IDs
 are unique within each control table. Clients that use them must keep them
 globally unique across both run and thread controls; `None` disables request
 identity without weakening the run or control primary keys.
+
+Rerun acceptance atomically inserts the new root and its index-zero `rerun`
+control, then marks the source root tree as ejected by that control. The source
+records remain available for audit but disappear from effective thread and run
+projection. The source must be the latest visible root in its thread.
+It must also be terminal, so rerun cannot detach a still-owned execution.
+
+Retry acceptance atomically appends a finished `retry` control to the existing
+root, resolves and records its anchor, ejects the invalid structural step
+suffix, fails stale pending controls, and reopens the root as pending. New
+steps use fresh physical indexes; ejected steps are never overwritten. A flow
+retry restores typed locals from the finished top-level prefix and begins at
+the first invalid statement. When a nested failed step is selected, its
+unfinished containing step is also invalidated because only a finished
+container is a reusable commit. Agic retry invalidates the agic step sequence
+and starts a fresh model-tool cycle under the same root.
 
 
 ## Active Ownership
@@ -201,10 +251,15 @@ usage, and a cost limit also requires captured input and output prices for every
 selected model. Time expiry cancels an in-flight operation while recording
 affected runs as failed rather than user-canceled.
 
-The effective value is persisted once in the root start control context. Child
-runs inherit the same in-memory value and their start controls do not duplicate
-it. Decimal cost is serialized as text so durable round trips do not lose
-precision.
+The effective value is persisted on the root entry control and on every retry
+control. Child runs inherit the same in-memory value and their start controls
+do not duplicate it. Decimal cost is serialized as text so durable round trips
+do not lose precision.
+
+A retry restores global token and cost accounting from effective, non-ejected
+finished model steps. Ejected attempts remain auditable but do not consume the
+retried execution's effective totals. Per-agic call counters restart only for
+agics that execute again.
 
 The `_Execution` object emits `RunBegin` and `RunEnd` and dispatches each
 accepted executable to the appropriate run body. Input coercion initializes the

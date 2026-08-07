@@ -17,14 +17,14 @@ from toolang.execution.events import (
     run_event_from_data,
     run_event_to_data,
 )
-from toolang.execution.records import RunControlRef, StepOutputRef
+from toolang.execution.records import RunInputRef, StepOutputRef
 from toolang.execution.types import StepPath
 
 
 _EVENTS: tuple[RunEvent, ...] = (
     RunBegin(
         run="run_root",
-        input=RunControlRef(index=0),
+        input=RunInputRef(index=0),
         context={"root": "run_root"},
         started_at="2026-01-01T00:00:00Z",
     ),
@@ -32,7 +32,7 @@ _EVENTS: tuple[RunEvent, ...] = (
         step=StepPath.parse("run_root/0"),
         kind="model",
         input=(
-            RunControlRef(index=0),
+            RunInputRef(index=0),
             StepOutputRef(step=StepPath.parse("run_root/1")),
             Message.user("steer"),
         ),
@@ -51,7 +51,7 @@ _EVENTS: tuple[RunEvent, ...] = (
     RunEnd(
         run="run_root",
         status="finished",
-        input=RunControlRef(index=0),
+        input=RunInputRef(index=0),
         output=StepOutputRef(step=StepPath.parse("run_root/0")),
         finished_at="2026-01-01T00:00:03Z",
     ),

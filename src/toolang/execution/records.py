@@ -25,14 +25,14 @@ from .types import (
 
 
 @dataclass(frozen=True, slots=True)
-class RunControlRef:
+class RunInputRef:
     """Reference one control input within the current run."""
 
     index: int = 0
     part: int | None = None
 
     @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> "RunControlRef":
+    def from_data(cls, payload: Mapping[str, Any]) -> "RunInputRef":
         return cls(
             index=int(payload.get("control", 0) or 0),
             part=_optional_int(payload.get("part")),
@@ -78,11 +78,27 @@ class StepOutputRef:
         return ()
 
 
-ValueRef = RunControlRef | StepOutputRef
+ValueRef = RunInputRef | StepOutputRef
 StepInput = ValueRef | Message
 
 _MODEL_CALL_ADAPTER = TypeAdapter(ModelCall)
 _RUN_LIMITS_ADAPTER = TypeAdapter(RunLimits)
+
+
+@dataclass(frozen=True, slots=True)
+class RunControlRef:
+    """Reference one globally addressed run control."""
+
+    run: RunId
+    index: int
+
+
+@dataclass(frozen=True, slots=True)
+class ThreadControlRef:
+    """Reference one durable thread control."""
+
+    thread: str
+    index: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,12 +108,12 @@ class RunRecord:
     id: RunId
     parent: StepPath | None
     thread: str
-    input: RunControlRef
+    input: RunInputRef
     output: ValueRef | None
     context: dict[str, Any] = field(default_factory=dict)
     status: RunStatus = "pending"
     error: str | None = None
-    superseded_by: ThreadControlRef | None = None
+    ejected: ThreadControlRef | RunControlRef | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
@@ -186,6 +202,7 @@ class StepRecord:
     noted: dict[str, Any] = field(default_factory=dict)
     status: StepStatus = "running"
     error: str | None = None
+    ejected: RunControlRef | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
@@ -212,6 +229,8 @@ class RunControlRecord:
     kind: RunControlKind
     timing: ControlTiming
     input: Message | None
+    source: RunId | None = None
+    anchor: StepPath | None = None
     request_id: str | None = None
     context: dict[str, Any] = field(default_factory=dict)
     status: ControlStatus = "pending"
@@ -221,22 +240,14 @@ class RunControlRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class ThreadControlRef:
-    """Reference one durable thread control."""
-
-    thread: str
-    index: int
-
-
-@dataclass(frozen=True, slots=True)
 class ThreadControlRecord:
     """One durable mutation applied to a thread."""
 
     thread: str
     index: int
     kind: ThreadControlKind
-    source_thread: str | None = None
-    anchor_run: str | None = None
+    source: str | None = None
+    anchor: str | None = None
     request_id: str | None = None
     expected_head: ThreadControlRef | None = None
     context: dict[str, Any] = field(default_factory=dict)
@@ -249,7 +260,7 @@ def value_ref_from_data(payload: Mapping[str, Any]) -> ValueRef:
     """Parse one durable value reference."""
 
     if "control" in payload:
-        return RunControlRef.from_data(payload)
+        return RunInputRef.from_data(payload)
     if "step" in payload:
         return StepOutputRef.from_data(payload)
     raise ValueError("unknown value reference shape")
@@ -284,7 +295,7 @@ def step_inputs_from_data(
 def step_input_to_data(item: StepInput) -> dict[str, Any]:
     """Return one serialized step input item."""
 
-    if isinstance(item, RunControlRef | StepOutputRef):
+    if isinstance(item, RunInputRef | StepOutputRef):
         return value_ref_to_data(item)
     return {"message": item.to_data()}
 

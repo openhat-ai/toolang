@@ -6,9 +6,10 @@ import asyncio
 from collections.abc import Awaitable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 import logging
+from decimal import Decimal, InvalidOperation
 import threading
 import time
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelInfo, ModelTarget
@@ -17,10 +18,12 @@ from toolang.base.types.message import (
     Message,
     Percept,
     TextPart,
+    part_from_data,
 )
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt, Parameter
+from toolang.lang.format import format_statement_head
 from toolang.lang.input import coerce_input, validate_value
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 from toolang.state.state import AgentState
@@ -29,8 +32,10 @@ from toolang.setup import AgentSetup
 from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin, StepEnd
 from ..records import (
     RunControlRecord,
-    RunControlRef,
+    RunInputRef,
     RunRecord,
+    StepOutputRef,
+    StepRecord,
     ValueRef,
     run_limits_to_data,
 )
@@ -41,6 +46,7 @@ from .common import (
     BoundRun,
     EventEmitter,
     Local,
+    Shape,
     control_text,
     initial_locals,
     json_value,
@@ -208,8 +214,146 @@ class RunExecutor:
             created_at=bound.created_at,
             control_context={"limits": run_limits_to_data(effective_limits)},
         )
+        return self._launch(bound, executable, loop=loop, tracer=tracer)
+
+    def rerun(
+        self,
+        source: str,
+        *,
+        setup: AgentSetup,
+        state: AgentState,
+        ceiling: CeilingSpec = CeilingSpec(),
+        model: str | None = None,
+        limits: RunLimits | None = None,
+        run_id: str | None = None,
+        request_id: str | None = None,
+        tracer: RunTracer | None = None,
+    ) -> RunHandle:
+        """Start a new root run from one visible source run's invocation."""
+
+        self._require_available()
+        loop = asyncio.get_running_loop()
+        spec = self._source_spec(
+            source,
+            setup=setup,
+            state=state,
+            ceiling=ceiling,
+            model=model,
+        )
+        executable, agent_ceiling = _validate_start_spec(spec)
+        effective_limits = limits if limits is not None else setup.limits
+        if not isinstance(effective_limits, RunLimits):
+            raise TypeError("run limits must be RunLimits")
+        bound = _bind_run(
+            spec,
+            run_id=run_id or self.ids.issue_run(),
+            agent_ceiling=agent_ceiling,
+            limits=effective_limits,
+        )
+        self.store.accept_start(
+            run_id=bound.run_id,
+            parent=None,
+            thread=bound.thread,
+            input=bound.input,
+            context=_run_context(bound, executable),
+            request_id=request_id,
+            created_at=bound.created_at,
+            control_context={"limits": run_limits_to_data(effective_limits)},
+            kind="rerun",
+            source=source,
+        )
+        return self._launch(bound, executable, loop=loop, tracer=tracer)
+
+    def retry(
+        self,
+        run_id: str,
+        *,
+        setup: AgentSetup,
+        state: AgentState,
+        anchor: StepPath | str | None = None,
+        ceiling: CeilingSpec = CeilingSpec(),
+        model: str | None = None,
+        limits: RunLimits | None = None,
+        request_id: str | None = None,
+        tracer: RunTracer | None = None,
+    ) -> RunHandle:
+        """Reopen one terminal root run from a durable step boundary."""
+
+        self._require_available()
+        loop = asyncio.get_running_loop()
+        spec = self._source_spec(
+            run_id,
+            setup=setup,
+            state=state,
+            ceiling=ceiling,
+            model=model,
+        )
+        executable, agent_ceiling = _validate_start_spec(spec)
+        effective_limits = limits if limits is not None else setup.limits
+        if not isinstance(effective_limits, RunLimits):
+            raise TypeError("run limits must be RunLimits")
+        bound = _bind_run(
+            spec,
+            run_id=run_id,
+            agent_ceiling=agent_ceiling,
+            limits=effective_limits,
+        )
+        _reopened, control, _ejected = self.store.accept_retry(
+            run_id=run_id,
+            anchor=StepPath.parse(anchor) if anchor is not None else None,
+            context={"limits": run_limits_to_data(effective_limits)},
+            request_id=request_id,
+            created_at=bound.created_at,
+        )
+        return self._launch(
+            bound,
+            executable,
+            loop=loop,
+            tracer=tracer,
+            retry=control,
+        )
+
+    def _source_spec(
+        self,
+        run_id: str,
+        *,
+        setup: AgentSetup,
+        state: AgentState,
+        ceiling: CeilingSpec,
+        model: str | None,
+    ) -> RunSpec:
+        run = self.store.get_run(run_id=run_id)
+        if run is None or run.parent is not None:
+            raise ValueError(f"root run not found: {run_id}")
+        control = self.store.get_run_control(run_id=run_id, index=0)
+        if control is None or control.input is None:
+            raise ValueError(f"run input not found: {run_id}")
+        runnable = run.runnable_name
+        if not runnable:
+            raise ValueError(f"run runnable not found: {run_id}")
+        executable = resolve_runnable(state.program, runnable)
+        return RunSpec(
+            setup=setup,
+            state=state,
+            thread=run.thread,
+            runnable=runnable,
+            ceiling=ceiling,
+            input=control.input.percept,
+            model=model if model is not None else _source_model(run),
+            args=_source_args(run, executable),
+        )
+
+    def _launch(
+        self,
+        bound: BoundRun,
+        executable: AgicDecl | FlowDecl,
+        *,
+        loop: asyncio.AbstractEventLoop,
+        tracer: RunTracer | None,
+        retry: RunControlRecord | None = None,
+    ) -> RunHandle:
         task = asyncio.create_task(
-            self._execute_owned(bound, executable, tracer=tracer),
+            self._execute_owned(bound, executable, tracer=tracer, retry=retry),
             name=f"toolang-run-{bound.run_id}",
         )
         active = _ActiveRun(task=task, tracer=tracer, loop=loop)
@@ -231,6 +375,7 @@ class RunExecutor:
         executable: AgicDecl | FlowDecl,
         *,
         tracer: RunTracer | None,
+        retry: RunControlRecord | None = None,
     ) -> RunRecord:
         task = asyncio.current_task()
         if task is None:
@@ -245,6 +390,7 @@ class RunExecutor:
             self,
             root=bound,
             emit=emit,
+            retry=retry,
         )
         timeout = execution.schedule_time_limit(task)
         try:
@@ -424,7 +570,7 @@ class RunExecutor:
             return
         if isinstance(event, StepBegin):
             indexes = tuple(
-                item.index for item in event.input if isinstance(item, RunControlRef)
+                item.index for item in event.input if isinstance(item, RunInputRef)
             )
             self.store.finish_run_controls(
                 run_id=event.step.run,
@@ -532,7 +678,7 @@ class RunExecutor:
         if isinstance(event, StepBegin):
             run_id = event.step.run
             indexes = {
-                item.index for item in event.input if isinstance(item, RunControlRef)
+                item.index for item in event.input if isinstance(item, RunInputRef)
             }
         elif isinstance(event, RunEnd):
             run_id = event.run
@@ -594,7 +740,7 @@ class RunExecutor:
             RunEnd(
                 run=run_id,
                 status=status,
-                input=RunControlRef(index=stop.index) if stop is not None else None,
+                input=RunInputRef(index=stop.index) if stop is not None else None,
                 error=error or control_text(stop) or status,
                 finished_at=utc_now(),
             )
@@ -610,6 +756,7 @@ class _Execution:
         *,
         root: BoundRun,
         emit: EventEmitter,
+        retry: RunControlRecord | None = None,
     ) -> None:
         self.executor = executor
         self.setup = root.setup
@@ -624,9 +771,58 @@ class _Execution:
         self.timezone = "UTC"
         self._emit_trace = emit
         self._limits = _RunLimitState(root.limits)
+        self._retry = retry
+        if retry is not None:
+            self._restore_model_limits(root.run_id)
         self._run_outputs: dict[str, ValueRef] = {}
         self._last_step_index: dict[str, int] = {}
         self._step_failures: dict[str, str | None] = {}
+
+    def next_step(self, run_id: str) -> int:
+        """Return the next unused top-level physical step index."""
+
+        steps = self.store.list_steps(run_id=run_id, include_ejected=True)
+        return max(
+            (step.index for step in steps if step.parent is None),
+            default=-1,
+        ) + 1
+
+    def _restore_model_limits(self, root_run_id: str) -> None:
+        runs = [
+            run
+            for run in self.store.list_runs(limit=None)
+            if run.root_run_id == root_run_id
+        ]
+        steps_by_run = self.store.list_steps_for_runs(
+            run_ids=tuple(run.id for run in runs)
+        )
+        for step in (
+            step
+            for steps in steps_by_run.values()
+            for step in steps
+            if step.kind == "model" and step.status == "finished"
+        ):
+            tokens = step.noted.get("tokens")
+            input_tokens = (
+                int(tokens["input"])
+                if isinstance(tokens, Mapping) and tokens.get("input") is not None
+                else None
+            )
+            output_tokens = (
+                int(tokens["output"])
+                if isinstance(tokens, Mapping) and tokens.get("output") is not None
+                else None
+            )
+            raw_cost = step.noted.get("cost")
+            try:
+                cost = Decimal(str(raw_cost)) if raw_cost is not None else None
+            except InvalidOperation:
+                cost = None
+            self._limits.restore(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost=cost,
+            )
 
     @property
     def store(self) -> RunStore:
@@ -714,21 +910,42 @@ class _Execution:
         current = (
             dict(locals) if locals is not None else initial_locals(binding, executable)
         )
+        statement_start = 0
+        step_start = self.next_step(binding.run_id)
         await self.emit(
             RunBegin(
                 run=binding.run_id,
-                input=RunControlRef(index=0),
+                input=RunInputRef(index=0),
                 parent=binding.parent,
                 context=_run_context(binding, executable),
                 started_at=utc_now(),
             )
         )
         try:
+            if (
+                self._retry is not None
+                and binding.run_id == self._retry.run
+                and isinstance(executable, FlowDecl)
+            ):
+                current, statement_start = self._resume_flow(
+                    binding,
+                    executable,
+                    current,
+                )
+            if self._retry is not None and binding.run_id == self._retry.run:
+                self._limits.check_restored()
             if isinstance(executable, AgicDecl):
                 result = await agic_run.execute(self, binding, executable, current)
                 current["_"] = result
             else:
-                result = await flow_run.execute(self, binding, executable, current)
+                result = await flow_run.execute(
+                    self,
+                    binding,
+                    executable,
+                    current,
+                    statement_start=statement_start,
+                    step_start=step_start,
+                )
         except asyncio.CancelledError as exc:
             if self._limits.error is not None:
                 error = self._limits.error
@@ -759,7 +976,7 @@ class _Execution:
                 RunEnd(
                     run=binding.run_id,
                     status="canceled",
-                    input=RunControlRef(index=control.index)
+                    input=RunInputRef(index=control.index)
                     if control is not None
                     else None,
                     output=self.run_output(binding.run_id),
@@ -790,6 +1007,38 @@ class _Execution:
             )
         )
         return result
+
+    def _resume_flow(
+        self,
+        binding: BoundRun,
+        flow: FlowDecl,
+        current: dict[str, Local],
+    ) -> tuple[dict[str, Local], int]:
+        committed = [
+            step
+            for step in self.store.list_steps(run_id=binding.run_id)
+            if step.parent is None
+        ]
+        if len(committed) > len(flow.stmts):
+            raise ValueError(f"retry prefix exceeds flow body: {binding.run_id}")
+        for index, step in enumerate(committed):
+            statement = flow.stmts[index]
+            source = step.given.get("source")
+            if not isinstance(source, Mapping) or (
+                source.get("line") != statement.span.line
+                or source.get("head") != format_statement_head(statement)
+            ):
+                raise ValueError(
+                    f"retry prefix no longer matches flow source: {step.path}"
+                )
+            if step.status != "finished":
+                raise ValueError(f"retry prefix step is not committed: {step.path}")
+            local = _step_local(step)
+            if statement.binding is not None:
+                current[statement.binding] = local
+            if statement.binding == "_":
+                self.record_output(binding.run_id, local.ref or StepOutputRef(step.path))
+        return current, len(committed)
 
     async def execute_child(
         self,
@@ -1116,6 +1365,8 @@ def _run_context(
         "runnable": {"kind": executable.kind, "name": executable.name},
         "call": binding.call,
     }
+    if binding.model is not None:
+        context["model"] = binding.model
     if binding.args:
         context["args"] = {
             name: json_value(value) for name, value in binding.args.items()
@@ -1142,6 +1393,64 @@ def _run_context(
     if binding.placement:
         context["placement"] = dict(binding.placement)
     return context
+
+
+def _source_model(run: RunRecord) -> str | None:
+    value = run.context.get("model")
+    return str(value) if value is not None else None
+
+
+def _source_args(
+    run: RunRecord,
+    executable: AgicDecl | FlowDecl,
+) -> dict[str, object]:
+    raw = run.context.get("args")
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"run arguments are invalid: {run.id}")
+    parameters = {parameter.name: parameter for parameter in executable.params}
+    return {
+        str(name): _stored_value(
+            value,
+            (parameters[str(name)].type_name or "Part[]")
+            if str(name) in parameters
+            else None,
+        )
+        for name, value in raw.items()
+    }
+
+
+def _stored_value(value: object, type_name: str | None) -> object:
+    if type_name == "Part" and isinstance(value, Mapping):
+        return part_from_data(cast(Mapping[str, Any], value))
+    if type_name == "Part[]" and isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes, bytearray)
+    ):
+        return tuple(
+            part_from_data(cast(Mapping[str, Any], item))
+            if isinstance(item, Mapping)
+            else item
+            for item in value
+        )
+    return value
+
+
+def _step_local(step: StepRecord) -> Local:
+    if "value" not in step.noted:
+        raise ValueError(f"retry step result snapshot is missing: {step.path}")
+    shape = str(step.noted.get("shape", "none"))
+    if shape not in {"none", "item", "list"}:
+        raise ValueError(f"retry step shape is invalid: {step.path}")
+    raw_type = step.noted.get("type")
+    type_name = str(raw_type) if raw_type is not None else None
+    value = _stored_value(step.noted.get("value"), type_name)
+    return Local(
+        value=value,
+        shape=cast(Shape, shape),
+        ref=StepOutputRef(step.path),
+        type_name=type_name,
+    )
 
 
 def _validate_call(spec: RunSpec, executable: AgicDecl | FlowDecl) -> None:

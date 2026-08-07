@@ -229,7 +229,7 @@ earlier terminal anchor even when the source thread has a later active run. A
 rewind discards its anchor and the visible suffix after it, and is rejected
 while any visible top-level run is pending or running. The caller must stop
 active runs before retrying; `ThreadManager` never writes run controls. Runs
-owned by the rewound thread are marked with `superseded_by`; an inherited
+owned by the rewound thread are marked with `ejected`; an inherited
 source run is never modified. Forks and rewinds are serialized across
 processes with an agent-local file lock. Anchor resolution, terminal checks,
 the rewind idle check, and control insertion occur in one SQLite write

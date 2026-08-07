@@ -122,7 +122,7 @@ StepKind = Literal[
     "system",
 ]
 ControlTiming = Literal["immediate", "next_step", "next_call"]
-RunControlKind = Literal["start", "steer", "stop"]
+RunControlKind = Literal["start", "rerun", "retry", "steer", "stop"]
 ThreadControlKind = Literal["create", "fork", "rewind"]
 ThreadPeerType = Literal["user", "agent"]
 

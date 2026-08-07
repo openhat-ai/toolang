@@ -15,7 +15,7 @@ from toolang.execution.events import (
 )
 from toolang.execution.records import (
     RunControlRecord,
-    RunControlRef,
+    RunInputRef,
     RunRecord,
     StepInput,
     StepRecord,
@@ -92,7 +92,7 @@ def project_run_start(
         RunBegin(
             run=run_id,
             parent=parent_path,
-            input=RunControlRef(index=0),
+            input=RunInputRef(index=0),
             context=run_context,
             started_at=started,
         ),

@@ -37,7 +37,6 @@ class RunHistory:
         )
         controls_by_run = self._store.list_run_controls_for_runs(
             run_ids=run_ids,
-            kind="start",
         )
         items = [
             ThreadInfo.from_records(

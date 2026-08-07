@@ -27,7 +27,7 @@ from toolang.execution.events import (
     run_event_from_data,
     run_event_to_data,
 )
-from toolang.execution.records import RunControlRef, ThreadControlRef, ThreadPeer
+from toolang.execution.records import RunInputRef, ThreadControlRef, ThreadPeer
 from toolang.execution.schemas import RunDetail, ThreadDetail
 from toolang.execution.types import StepPath
 from toolang.up import AgentCore
@@ -261,7 +261,7 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
         events = (
             RunBegin(
                 run="run_test",
-                input=RunControlRef(0),
+                input=RunInputRef(0),
                 started_at="2026-01-01T00:00:00Z",
             ),
             StepBegin(
@@ -271,7 +271,7 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
             ),
             RunBegin(
                 run="run_child",
-                input=RunControlRef(0),
+                input=RunInputRef(0),
                 started_at="2026-01-01T00:00:02Z",
             ),
             StepBegin(
@@ -381,7 +381,7 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
             await tracer.on_event(
                 RunBegin(
                     run="run_live",
-                    input=RunControlRef(0),
+                    input=RunInputRef(0),
                     started_at="2026-01-01T00:00:00Z",
                 )
             )
@@ -506,7 +506,7 @@ def test_sse_generator_close_removes_subscription() -> None:
         await tracer.on_event(
             RunBegin(
                 run="run_test",
-                input=RunControlRef(0),
+                input=RunInputRef(0),
                 started_at="2026-01-01T00:00:00Z",
             )
         )

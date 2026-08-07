@@ -12,7 +12,7 @@ from toolang.base.errors import ToolangError
 from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import script
 from toolang.execution.executor import CeilingSpec
-from toolang.execution.records import RunControlRef, RunRecord
+from toolang.execution.records import RunInputRef, RunRecord
 from toolang.lang.submission import RunnableCall, parse_runnable_call
 from tests.support.execution_harness import ExecutionHarness
 
@@ -426,7 +426,7 @@ def test_script_does_not_repeat_a_failure_reported_by_the_tracer(
             id="run_failed",
             parent=None,
             thread="script_thread",
-            input=RunControlRef(),
+            input=RunInputRef(),
             output=None,
             status="failed",
             error="output is not valid Number",

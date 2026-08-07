@@ -126,20 +126,20 @@ class ThreadManager:
         created_at = utc_now()
         thread, control = self.store.fork_thread(
             thread_id=result_thread_id,
-            source_thread=source.thread_id,
-            anchor_run=run_id,
+            source=source.thread_id,
+            anchor=run_id,
             request_id=request_id,
             context={},
             created_at=created_at,
         )
-        if control.anchor_run is None:
+        if control.anchor is None:
             raise RuntimeError(f"thread fork has no anchor: {thread.thread_id}")
         self._notify(
             ThreadForked(
                 thread=thread.thread_id,
                 control=ThreadControlRef(thread.thread_id, control.index),
                 source_thread=source.thread_id,
-                anchor_run=control.anchor_run,
+                anchor_run=control.anchor,
                 created_at=created_at,
             )
         )
@@ -154,22 +154,22 @@ class ThreadManager:
     ) -> None:
         thread = self._branchable_thread(thread_id)
         created_at = utc_now()
-        updated, control, superseded = self.store.rewind_thread(
+        updated, control, ejected = self.store.rewind_thread(
             thread_id=thread.thread_id,
-            anchor_run=run_id,
+            anchor=run_id,
             request_id=request_id,
             expected_head=thread.head,
             context={},
             created_at=created_at,
         )
-        if control.anchor_run is None:
+        if control.anchor is None:
             raise RuntimeError(f"thread rewind has no anchor: {updated.thread_id}")
         self._notify(
             ThreadRewound(
                 thread=updated.thread_id,
                 control=ThreadControlRef(updated.thread_id, control.index),
-                anchor_run=control.anchor_run,
-                superseded_runs=superseded,
+                anchor_run=control.anchor,
+                ejected_runs=ejected,
                 created_at=created_at,
             )
         )

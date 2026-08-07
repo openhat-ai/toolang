@@ -34,7 +34,7 @@ from toolang.common.time import elapsed_ms, utc_now
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...records import (
     RunControlRecord,
-    RunControlRef,
+    RunInputRef,
     StepInput,
     StepOutputRef,
     model_call_to_data,
@@ -71,7 +71,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
     consumed_inputs = _consume_pending_inputs(state)
     step_input = (
         *_step_input(state),
-        *(RunControlRef(index=item.index) for item in consumed_inputs),
+        *(RunInputRef(index=item.index) for item in consumed_inputs),
     )
     stream = _ModelStream(step=step_index)
     _LOGGER.info(
@@ -338,7 +338,7 @@ def _output_parts(
 
 def _step_input(state: _AgicState) -> tuple[StepInput, ...]:
     if state.last_step is None:
-        return (RunControlRef(),)
+        return (RunInputRef(),)
     return (
         StepOutputRef(
             step=StepPath(state.prepared.run.run_id, (state.last_step,)),

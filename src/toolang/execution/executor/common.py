@@ -45,7 +45,7 @@ from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
-from ..records import RunControlRecord, RunControlRef, StepInput, StepOutputRef, ValueRef
+from ..records import RunControlRecord, RunInputRef, StepInput, StepOutputRef, ValueRef
 from ..types import StepKind, StepPath
 from .ceiling import CeilingSpec, _AgentCeiling, _RunCeiling
 from .limits import RunLimits
@@ -103,7 +103,7 @@ async def execute_step(
     started_at = utc_now()
     inputs = _unique_step_inputs(
         (
-            *(RunControlRef(index=item.index) for item in controls),
+            *(RunInputRef(index=item.index) for item in controls),
             *(
                 local.ref
                 for _name, local in sorted(locals.items())
@@ -159,6 +159,8 @@ async def execute_step(
             output=output_parts(result),
             noted={
                 "shape": result.shape,
+                "type": result.type_name,
+                "value": json_value(result.value),
                 **(
                     {"reshape": reshape}
                     if (reshape := statement_reshape(statement)) is not None
@@ -181,7 +183,7 @@ def initial_locals(
 ) -> dict[str, Local]:
     """Build the initial locals for one executable run."""
 
-    start = RunControlRef()
+    start = RunInputRef()
     structs = program_structs(binding)
     params = {parameter.name: parameter for parameter in executable.params}
     locals: dict[str, Local] = {}
@@ -243,7 +245,7 @@ def apply_steer(
                     structs=structs,
                 ),
                 "item",
-                RunControlRef(index=control.index),
+                RunInputRef(index=control.index),
                 effective_type,
             )
 

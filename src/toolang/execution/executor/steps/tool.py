@@ -17,7 +17,7 @@ from toolang.common.layout import AgentLayout
 from toolang.common.time import elapsed_ms, utc_now
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
-from ...records import RunControlRef, StepInput, StepOutputRef
+from ...records import RunInputRef, StepInput, StepOutputRef
 from ...types import StepPath
 from ..diagnostics import log_tool_call_input, log_tool_call_output
 
@@ -52,7 +52,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             StepOutputRef(step=StepPath(run.run_id, (state.last_step,))),
         )
     else:
-        step_input = (RunControlRef(),)
+        step_input = (RunInputRef(),)
     _LOGGER.info(
         "Step started thread=%s run=%s step=%s kind=tool tool=%s",
         run.thread,

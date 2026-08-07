@@ -129,6 +129,7 @@ async def execute(
         limits=binding.limits,
         record_output=lambda ref: execution.record_output(binding.run_id, ref),
         messages=list(prepared.messages),
+        next_step=execution.next_step(binding.run_id),
     )
     message = await _execute(state)
     if state.output is None:

@@ -31,7 +31,7 @@ from toolang.execution.executor.common import BoundRun, Local
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.runs import agic as agic_run
 from toolang.execution.history import RunHistory
-from toolang.execution.records import RunControlRef, StepOutputRef, ThreadControlRef
+from toolang.execution.records import RunInputRef, StepOutputRef, ThreadControlRef
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
@@ -825,7 +825,7 @@ def test_flow_step_events_carry_complete_input_references(tmp_path: Path) -> Non
         if step.parent is None
     ]
     assert [step.input for step in steps] == [
-        (RunControlRef(),),
+        (RunInputRef(),),
         (StepOutputRef(step=StepPath.parse(f"{root.id}/0")),),
     ]
     assert [step.given["source"] for step in steps] == [
@@ -866,7 +866,7 @@ def test_steer_control_is_finished_when_step_consumes_it(tmp_path: Path) -> None
     control = store.get_run_control(run_id=record.id, index=tracer.control_index)
     assert control is not None and control.status == "finished"
     steps = store.list_steps(run_id=record.id)
-    assert steps[0].input == (RunControlRef(index=tracer.control_index),)
+    assert steps[0].input == (RunInputRef(index=tracer.control_index),)
     asyncio.run(executor.shutdown())
 
 
@@ -1011,7 +1011,7 @@ def test_internal_event_projection_does_not_update_control_status(
     sink.on_event(
         RunBegin(
             run="run_test",
-            input=RunControlRef(index=0),
+            input=RunInputRef(index=0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1106,7 +1106,7 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
     sink.on_event(
         RunBegin(
             run=anchor_id,
-            input=RunControlRef(index=0),
+            input=RunInputRef(index=0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1131,7 +1131,7 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
     rewound = store.get_thread(thread_id=created)
     anchor = store.get_run(run_id=anchor_id)
     assert anchor is not None and rewound is not None
-    assert anchor.superseded_by == rewound.head
+    assert anchor.ejected == rewound.head
     assert [event.type for event in listener.events] == [
         "thread_created",
         "thread_forked",
@@ -1161,7 +1161,7 @@ def test_thread_fork_rejects_duplicate_request_without_starting_runs(
     sink.on_event(
         RunBegin(
             run="run_anchor",
-            input=RunControlRef(index=0),
+            input=RunInputRef(index=0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1188,7 +1188,7 @@ def test_thread_fork_rejects_duplicate_request_without_starting_runs(
     )
 
     assert store.get_thread(thread_id=forked) is not None
-    assert [run.id for run in store.list_runs(limit=None, include_superseded=True)] == [
+    assert [run.id for run in store.list_runs(limit=None, include_ejected=True)] == [
         "run_anchor"
     ]
     assert [event.type for event in listener.events] == [
@@ -1221,7 +1221,7 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
         sink.on_event(
             RunBegin(
                 run=run_id,
-                input=RunControlRef(index=0),
+                input=RunInputRef(index=0),
                 started_at=timestamp,
             )
         )
@@ -1233,10 +1233,10 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
     anchor = store.get_run(run_id="run_anchor")
     after = store.get_run(run_id="run_after")
     rewound = store.get_thread(thread_id=created)
-    assert before is not None and before.superseded_by is None
+    assert before is not None and before.ejected is None
     assert rewound is not None
-    assert anchor is not None and anchor.superseded_by == rewound.head
-    assert after is not None and after.superseded_by == rewound.head
+    assert anchor is not None and anchor.ejected == rewound.head
+    assert after is not None and after.ejected == rewound.head
     asyncio.run(executor.shutdown())
 
 
@@ -1259,7 +1259,7 @@ def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
         sink.on_event(
             RunBegin(
                 run=run_id,
-                input=RunControlRef(index=0),
+                input=RunInputRef(index=0),
                 started_at="2026-01-01T00:00:01Z",
             )
         )
@@ -1278,7 +1278,7 @@ def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
         run.id for run in store.list_thread_history_chronological(thread_id=forked)
     ] == ["run_a"]
     source_anchor = store.get_run(run_id="run_b")
-    assert source_anchor is not None and source_anchor.superseded_by is None
+    assert source_anchor is not None and source_anchor.ejected is None
     asyncio.run(executor.shutdown())
 
 
@@ -1304,7 +1304,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
         sink.on_event(
             RunBegin(
                 run=run_id,
-                input=RunControlRef(index=0),
+                input=RunInputRef(index=0),
                 started_at="2026-01-01T00:00:01Z",
             )
         )
@@ -1319,7 +1319,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     forked = manager.fork(thread_id=source)
     control = store.get_thread_control(thread_id=forked, index=0)
 
-    assert control is not None and control.anchor_run == "run_root"
+    assert control is not None and control.anchor == "run_root"
     asyncio.run(executor.shutdown())
 
 
@@ -1387,7 +1387,7 @@ def _rewind_thread(db_path: str, request_id: str) -> int | None:
     try:
         _thread, control, _superseded = store.rewind_thread(
             thread_id="term_thread_controls",
-            anchor_run="run_thread_anchor",
+            anchor="run_thread_anchor",
             request_id=request_id,
             expected_head=ThreadControlRef("term_thread_controls", 0),
             context={},
@@ -1469,7 +1469,7 @@ def test_remote_process_can_stop_an_owned_run(
         await runtime.emit(
             RunBegin(
                 run=binding.run_id,
-                input=RunControlRef(index=0),
+                input=RunInputRef(index=0),
                 started_at="2026-01-01T00:00:00Z",
             )
         )
@@ -1524,7 +1524,7 @@ def test_executor_shutdown_cancels_and_persists_active_runs(
         await runtime.emit(
             RunBegin(
                 run=binding.run_id,
-                input=RunControlRef(index=0),
+                input=RunInputRef(index=0),
                 started_at="2026-01-01T00:00:00Z",
             )
         )
@@ -1602,7 +1602,7 @@ def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> Non
     sink.on_event(
         RunBegin(
             run="run_thread_anchor",
-            input=RunControlRef(index=0),
+            input=RunInputRef(index=0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1648,7 +1648,7 @@ def test_private_event_projector_persists_run_and_step_records(
     sink.on_event(
         RunBegin(
             run="run_test",
-            input=RunControlRef(index=0),
+            input=RunInputRef(index=0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1656,7 +1656,7 @@ def test_private_event_projector_persists_run_and_step_records(
         StepBegin(
             step=StepPath.parse("run_test/0"),
             kind="system",
-            input=(RunControlRef(index=0),),
+            input=(RunInputRef(index=0),),
             started_at="2026-01-01T00:00:02Z",
         )
     )
@@ -1868,7 +1868,13 @@ def test_run_store_migrates_v19_step_identity_without_losing_history(
     store.close()
 
     connection = sqlite3.connect(path)
-    rows = connection.execute("SELECT * FROM steps ORDER BY path").fetchall()
+    rows = connection.execute(
+        """
+        SELECT run, path, kind, input, output, given, noted, status, error,
+               created_at, started_at, finished_at
+        FROM steps ORDER BY path
+        """
+    ).fetchall()
     connection.execute("ALTER TABLE steps RENAME TO current_steps")
     connection.execute(
         """
@@ -1935,7 +1941,7 @@ def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
         sink.on_event(
             RunBegin(
                 run=run_id,
-                input=RunControlRef(index=0),
+                input=RunInputRef(index=0),
                 started_at="2026-01-01T00:00:01Z",
             )
         )
