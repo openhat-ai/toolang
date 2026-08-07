@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 from toolang.execution.executor import RunLimits
+from toolang.execution.records import run_limits_to_data
 
 
 def test_run_limits_have_one_compact_stable_shape() -> None:
@@ -19,7 +20,7 @@ def test_run_limits_have_one_compact_stable_shape() -> None:
     assert RunLimits() == RunLimits(agic_model_calls=200)
 
 
-def test_run_limits_round_trip_decimal_cost_without_precision_loss() -> None:
+def test_run_limits_serialize_decimal_cost_without_precision_loss() -> None:
     limits = RunLimits(
         agic_model_calls=None,
         agic_tool_calls=12,
@@ -28,8 +29,13 @@ def test_run_limits_round_trip_decimal_cost_without_precision_loss() -> None:
         time=90,
     )
 
-    assert RunLimits.from_data(limits.to_data()) == limits
-    assert limits.to_data()["cost"] == "1.2300"
+    assert run_limits_to_data(limits) == {
+        "agic_model_calls": None,
+        "agic_tool_calls": 12,
+        "tokens": 34_567,
+        "cost": "1.2300",
+        "time": 90,
+    }
 
 
 @pytest.mark.parametrize(

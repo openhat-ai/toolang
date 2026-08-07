@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from toolang.base.types.run import ModelCall
-
 from ..events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
+from ..records import model_call_from_data
 from ..store import RunStore
 
 
@@ -44,7 +43,7 @@ class _PersistSink:
                 raise ValueError("model step requires model and call objects")
             given = self._store.capture_model_call(
                 target=raw_model,
-                call=ModelCall.from_data(raw_call),
+                call=model_call_from_data(raw_call),
             )
         self._store.begin_step(
             path=event.step,

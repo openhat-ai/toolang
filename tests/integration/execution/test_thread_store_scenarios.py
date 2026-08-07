@@ -22,7 +22,7 @@ from toolang.base.types.message import (
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolDefinition
 from toolang.execution.history import RunHistory
-from toolang.execution.records import StepRecord
+from toolang.execution.records import StepRecord, model_call_to_data
 from toolang.execution.store import RunStore
 from toolang.execution.types import StepPath, ThreadPrefix
 from toolang.lang.input import perceive_input
@@ -109,7 +109,7 @@ agic chat(_: Part[]) -> Part[]:
         ]
         detail = RunHistory(reopened).get_run(run_id)
         assert detail is not None
-        assert detail.steps[0].given["call"] == expected_call.to_data()
+        assert detail.steps[0].given["call"] == model_call_to_data(expected_call)
     finally:
         reopened.close()
 

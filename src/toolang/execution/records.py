@@ -6,7 +6,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+from pydantic import TypeAdapter
+
 from toolang.base.types.message import Message, MessagePart, MessageRole
+from toolang.base.types.run import ModelCall, RunLimits
 from .types import (
     ControlStatus,
     ControlTiming,
@@ -77,6 +80,9 @@ class StepOutputRef:
 
 ValueRef = RunControlRef | StepOutputRef
 StepInput = ValueRef | Message
+
+_MODEL_CALL_ADAPTER = TypeAdapter(ModelCall)
+_RUN_LIMITS_ADAPTER = TypeAdapter(RunLimits)
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +293,32 @@ def step_inputs_to_data(items: tuple[StepInput, ...]) -> list[dict[str, Any]]:
     """Return serialized step input items."""
 
     return [step_input_to_data(item) for item in items]
+
+
+def model_call_from_data(data: object) -> ModelCall:
+    """Parse one normalized model call from durable data."""
+
+    return _MODEL_CALL_ADAPTER.validate_python(data)
+
+
+def model_call_to_data(call: ModelCall) -> dict[str, Any]:
+    """Serialize one normalized model call without protocol-only null fields."""
+
+    return {
+        "instructions": call.instructions,
+        "messages": [message.to_data() for message in call.messages],
+        "tools": [tool.to_data() for tool in call.tools],
+        "state": dict(call.state) if call.state is not None else None,
+    }
+
+
+def run_limits_to_data(limits: RunLimits) -> dict[str, Any]:
+    """Serialize effective limits for one root run tree."""
+
+    return cast(
+        dict[str, Any],
+        _RUN_LIMITS_ADAPTER.dump_python(limits, mode="json"),
+    )
 
 
 def step_message_role(kind: StepKind) -> MessageRole | None:

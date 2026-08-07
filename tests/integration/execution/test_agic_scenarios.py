@@ -41,6 +41,7 @@ from toolang.base.types.run import (
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
+from toolang.execution.records import run_limits_to_data
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import perceive_input
 
@@ -808,10 +809,10 @@ agic reply(_: Text) -> Text:
             assert rejected_start is not None
             assert accepted_start is not None
             assert rejected_start.context == {
-                "limits": RunLimits(agic_model_calls=0).to_data()
+                "limits": run_limits_to_data(RunLimits(agic_model_calls=0))
             }
             assert accepted_start.context == {
-                "limits": RunLimits(agic_model_calls=1).to_data()
+                "limits": run_limits_to_data(RunLimits(agic_model_calls=1))
             }
             assert "limits" not in rejected.context
             assert "limits" not in accepted.context

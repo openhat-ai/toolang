@@ -29,6 +29,7 @@ from toolang.execution.executor.common import BoundRun, Local, output_parts
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.prepare import prepare_agic
 from toolang.execution.history import RunHistory
+from toolang.execution.records import model_call_from_data, model_call_to_data
 from toolang.execution.schemas import RunDetail
 from toolang.execution.store import RunStore
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
@@ -494,7 +495,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert image in adapter.requests[0].messages[-1].parts
         assert store.rebuild_model_call(steps[0]) == adapter.requests[0]
         begin = next(event for event in tracer.events if isinstance(event, StepBegin))
-        assert begin.given["call"] == adapter.requests[0].to_data()
+        assert begin.given["call"] == model_call_to_data(adapter.requests[0])
         assert steps[0].given["call"] != begin.given["call"]
         assert steps[0].given["model"] == {
             "ref": "test/model",
@@ -517,13 +518,15 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert detail.input is not None
         assert detail.input.parts == (TextPart("hello"), image)
         assert detail.output == [audio]
-        assert detail.steps[0].given["call"] == adapter.requests[0].to_data()
+        assert detail.steps[0].given["call"] == model_call_to_data(
+            adapter.requests[0]
+        )
         payload = TypeAdapter(RunDetail).dump_python(detail, mode="json")
         serialized_call = cast(
             dict[str, Any],
             payload["steps"][0]["given"]["call"],
         )
-        assert ModelCall.from_data(serialized_call) == adapter.requests[0]
+        assert model_call_from_data(serialized_call) == adapter.requests[0]
         _PersistSink(store).on_event(begin)
         connection = sqlite3.connect(store.db_path)
         try:

@@ -23,6 +23,7 @@ from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.execution.events import RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
+from toolang.execution.records import run_limits_to_data
 from toolang.execution.types import StepPath, ThreadPrefix
 from toolang.lang.input import perceive_input
 
@@ -936,7 +937,7 @@ flow repeated(_: Text) -> Text:
             assert sorted(run.status for run in children) == ["failed", "finished"]
             root_start = harness.store.get_run_control(run_id=root.id, index=0)
             assert root_start is not None
-            assert root_start.context == {"limits": limits.to_data()}
+            assert root_start.context == {"limits": run_limits_to_data(limits)}
             for child in children:
                 child_start = harness.store.get_run_control(
                     run_id=child.id,

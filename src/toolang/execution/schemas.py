@@ -18,6 +18,7 @@ from .records import (
     ThreadControlRef,
     ThreadPeer,
     ThreadRecord,
+    model_call_to_data,
     step_message_role,
 )
 from .types import (
@@ -352,7 +353,7 @@ class StepData:
     ) -> StepData:
         given = dict(step.given)
         if call is not None:
-            given["call"] = call.to_data()
+            given["call"] = model_call_to_data(call)
         return cls(
             path=step.path,
             kind=step.kind,

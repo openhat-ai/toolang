@@ -36,6 +36,7 @@ from ...records import (
     RunControlRef,
     StepInput,
     StepOutputRef,
+    model_call_to_data,
 )
 from ...types import StepPath
 from ..diagnostics import log_model_request, log_model_result, log_model_target
@@ -98,7 +99,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             started_at=started_at,
             given={
                 "model": _model_target_data(prepared.model),
-                "call": request.to_data(),
+                "call": model_call_to_data(request),
             },
         )
     )

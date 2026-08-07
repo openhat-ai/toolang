@@ -32,6 +32,7 @@ from ..records import (
     RunControlRef,
     RunRecord,
     ValueRef,
+    run_limits_to_data,
 )
 from ..store import RunStore
 from ..types import ControlTiming, RunControlKind, StepPath
@@ -199,7 +200,7 @@ class RunExecutor:
             context=_run_context(bound, executable),
             request_id=request_id,
             created_at=bound.created_at,
-            control_context={"limits": effective_limits.to_data()},
+            control_context={"limits": run_limits_to_data(effective_limits)},
         )
         task = asyncio.create_task(
             self._execute_owned(bound, executable, tracer=tracer),
