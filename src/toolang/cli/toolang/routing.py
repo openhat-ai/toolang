@@ -33,6 +33,15 @@ class CommandSpec:
         return position in self.targets and placement in self.placements
 
 
+@dataclass(frozen=True, slots=True)
+class TargetHelp:
+    """One target-only route and its human-readable label."""
+
+    selector: str
+    label: str
+    placement: AgentPlacement
+
+
 _ALL_PLACEMENTS = frozenset[AgentPlacement]({"resident", "visiting", "roaming"})
 _RESIDENT = frozenset[AgentPlacement]({"resident"})
 
@@ -149,7 +158,7 @@ def select_target_help(
     argv: list[str],
     *,
     residents: Collection[str],
-) -> tuple[str, AgentPlacement] | None:
+) -> TargetHelp | None:
     """Select one unambiguous target that has no command yet."""
 
     _global_args, body = extract_root_args(argv)
@@ -164,11 +173,11 @@ def select_target_help(
         return None
     explicit = explicit_agent(target)
     if explicit is not None:
-        return target, "resident"
+        return TargetHelp(selector=target, label=explicit, placement="resident")
     if _is_visiting(target):
-        return target, "visiting"
+        return TargetHelp(selector=target, label=target, placement="visiting")
     if target in residents:
-        return target, "resident"
+        return TargetHelp(selector=target, label=target, placement="resident")
     return None
 
 

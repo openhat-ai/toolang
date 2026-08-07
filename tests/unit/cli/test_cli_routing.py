@@ -11,12 +11,13 @@ import typer
 
 import toolang.cli.caps.main as caps_cli
 import toolang.cli.toolang.main as cli
-from toolang.common.layout import AgentLayout, AgentPlacement
+from toolang.common.layout import AgentLayout
 from toolang.cli.toolang.commands import script
 from toolang.cli.toolang.commands.chat import main as chat_commands
 from toolang.cli.toolang.routing import (
     COMMAND_SPECS,
     RoutingError,
+    TargetHelp,
     dispatch_roaming,
     dispatch_visiting,
     normalize,
@@ -114,14 +115,42 @@ def test_cli_command_name_wins_without_explicit_agent_prefix() -> None:
 @pytest.mark.parametrize(
     ("arguments", "residents", "expected"),
     (
-        (["alice"], {"alice"}, ("alice", "resident")),
-        (["alice", "--help"], {"alice"}, ("alice", "resident")),
-        (["agent:missing"], set(), ("agent:missing", "resident")),
-        (["briceyan/dev"], set(), ("briceyan/dev", "visiting")),
+        (
+            ["alice"],
+            {"alice"},
+            TargetHelp(selector="alice", label="alice", placement="resident"),
+        ),
+        (
+            ["alice", "--help"],
+            {"alice"},
+            TargetHelp(selector="alice", label="alice", placement="resident"),
+        ),
+        (
+            ["agent:missing"],
+            set(),
+            TargetHelp(
+                selector="agent:missing",
+                label="missing",
+                placement="resident",
+            ),
+        ),
+        (
+            ["briceyan/dev"],
+            set(),
+            TargetHelp(
+                selector="briceyan/dev",
+                label="briceyan/dev",
+                placement="visiting",
+            ),
+        ),
         (
             ["https://toolang.ai/dev.too"],
             set(),
-            ("https://toolang.ai/dev.too", "visiting"),
+            TargetHelp(
+                selector="https://toolang.ai/dev.too",
+                label="https://toolang.ai/dev.too",
+                placement="visiting",
+            ),
         ),
         (["retry"], {"retry"}, None),
         (["unknown"], set(), None),
@@ -130,7 +159,7 @@ def test_cli_command_name_wins_without_explicit_agent_prefix() -> None:
 def test_cli_selects_only_unambiguous_targets_without_a_command(
     arguments: list[str],
     residents: set[str],
-    expected: tuple[str, AgentPlacement] | None,
+    expected: TargetHelp | None,
 ) -> None:
     assert select_target_help(arguments, residents=residents) == expected
 
@@ -204,6 +233,19 @@ def test_cli_bare_resident_target_shows_its_command_help(
     assert "Commands for resident agent alice." in output.out
     assert "steer" in output.out
     assert "No such command" not in output.err
+
+
+def test_cli_explicit_resident_target_preserves_selector_but_labels_the_agent(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = _call_main(["--root", str(tmp_path), "agent:alice"])
+    output = capsys.readouterr()
+
+    assert result == 0
+    assert "Usage: pytest agent:alice" in output.out
+    assert "Commands for resident agent alice." in output.out
+    assert "agent agent:alice" not in output.out
 
 
 def test_cli_bare_visiting_target_shows_help_without_resolving_it(

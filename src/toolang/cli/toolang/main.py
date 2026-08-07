@@ -15,7 +15,7 @@ from typer import rich_utils
 from typer.core import TyperGroup
 
 from ...catalog.agent import LocalAgents
-from ...common.layout import AgentLayout, AgentPlacement
+from ...common.layout import AgentLayout
 from ...up.logging import configure_logging
 from ..caps import commands as cap_commands
 from ..common.context import CliContext, resolve_root
@@ -461,8 +461,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         residents=_routing_residents(raw_args),
     )
     if target_help is not None:
-        target, placement = target_help
-        return _run_target_help(target, placement=placement, prog_name=prog_name)
+        return _run_target_help(target_help, prog_name=prog_name)
     routed = routing.dispatch_visiting(
         raw_args,
         run_app=lambda args, layout: _run_app(
@@ -484,9 +483,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _run_target_help(
-    target: str,
+    target: routing.TargetHelp,
     *,
-    placement: AgentPlacement,
     prog_name: str,
 ) -> int:
     root_command = typer.main.get_command(app)
@@ -496,19 +494,19 @@ def _run_target_help(
         name: command
         for name, command in root_command.commands.items()
         if not command.hidden
-        and routing.command_spec(name).accepts("before", placement)
+        and routing.command_spec(name).accepts("before", target.placement)
     }
     group = _ToolangGroup(
-        name=target,
+        name=target.selector,
         commands=commands,
-        help=f"Commands for {placement} agent {target}.",
+        help=f"Commands for {target.placement} agent {target.label}.",
         no_args_is_help=True,
         rich_markup_mode="rich",
     )
     try:
         group.main(
             args=["--help"],
-            prog_name=f"{prog_name} {target}",
+            prog_name=f"{prog_name} {target.selector}",
             standalone_mode=False,
         )
     except click.exceptions.Exit as exc:
