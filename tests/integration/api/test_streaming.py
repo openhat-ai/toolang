@@ -29,6 +29,7 @@ from toolang.execution.events import (
 )
 from toolang.execution.records import RunControlRef, ThreadControlRef, ThreadPeer
 from toolang.execution.schemas import RunDetail, ThreadDetail
+from toolang.execution.types import StepPath
 from toolang.up import AgentCore
 from tests.support.execution_fixtures import project_run_start
 from tests.support.execution_harness import ExecutionHarness
@@ -264,7 +265,7 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
                 started_at="2026-01-01T00:00:00Z",
             ),
             StepBegin(
-                step="run_test/0",
+                step=StepPath.parse("run_test/0"),
                 kind="run",
                 started_at="2026-01-01T00:00:01Z",
             ),
@@ -274,12 +275,12 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
                 started_at="2026-01-01T00:00:02Z",
             ),
             StepBegin(
-                step="run_child/0",
+                step=StepPath.parse("run_child/0"),
                 kind="system",
                 started_at="2026-01-01T00:00:03Z",
             ),
             StepEnd(
-                step="run_child/0",
+                step=StepPath.parse("run_child/0"),
                 kind="system",
                 status="finished",
                 finished_at="2026-01-01T00:00:04Z",
@@ -290,7 +291,7 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
                 finished_at="2026-01-01T00:00:05Z",
             ),
             StepEnd(
-                step="run_test/0",
+                step=StepPath.parse("run_test/0"),
                 kind="run",
                 status="finished",
                 finished_at="2026-01-01T00:00:06Z",
@@ -431,7 +432,7 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
         origin="script",
         input=Message.user("child"),
         root_run_id="run_root",
-        parent="run_root/0",
+        parent=StepPath.parse("run_root/0"),
     )
     app = create_app(
         core,

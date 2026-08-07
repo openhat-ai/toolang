@@ -25,21 +25,21 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.common.time import utc_now
 from .errors import RunStoreSchemaError
 from .records import (
+    ValueRef,
+    value_ref_from_data,
+    value_ref_to_data,
     RunControlRecord,
     RunControlRef,
-    OutputRef,
     RunRecord,
-    StepInputItem,
+    StepInput,
     StepRecord,
     ThreadPeer,
     ThreadControlRecord,
     ThreadControlRef,
     ThreadRecord,
     step_message_role,
-    step_input_items_from_data,
-    step_input_items_to_data,
-    trace_index,
-    trace_parent,
+    step_inputs_from_data,
+    step_inputs_to_data,
 )
 from .types import (
     RunControlKind,
@@ -47,10 +47,11 @@ from .types import (
     RunStatus,
     StepKind,
     StepStatus,
+    StepPath,
 )
 
-_SCHEMA_VERSION = 19
-_MIGRATABLE_SCHEMA_VERSIONS = (13, 14, 15, 16, 17, 18, _SCHEMA_VERSION)
+_SCHEMA_VERSION = 20
+_MIGRATABLE_SCHEMA_VERSIONS = (13, 14, 15, 16, 17, 18, 19, _SCHEMA_VERSION)
 
 
 class RunStore:
@@ -114,7 +115,7 @@ class RunStore:
         self,
         *,
         run_id: str,
-        parent: str | None,
+        parent: StepPath | None,
         thread: str,
         input: Message,
         context: Mapping[str, Any],
@@ -164,7 +165,7 @@ class RunStore:
                     """,
                     (
                         run_id,
-                        parent,
+                        str(parent) if parent is not None else None,
                         thread,
                         _dump_json(RunControlRef(index=0).to_data()),
                         _dump_json(dict(context)),
@@ -860,7 +861,7 @@ class RunStore:
         status: RunStatus = "finished",
         error: str | None = None,
         finished_at: str | None = None,
-        output: OutputRef | None = None,
+        output: ValueRef | None = None,
     ) -> RunRecord:
         now = finished_at or utc_now()
         with self.write_transaction():
@@ -873,7 +874,9 @@ class RunStore:
                 (
                     status,
                     error,
-                    _dump_json(output.to_data()) if output is not None else None,
+                    _dump_json(value_ref_to_data(output))
+                    if output is not None
+                    else None,
                     now,
                     run_id,
                 ),
@@ -910,18 +913,22 @@ class RunStore:
             raise ValueError(f"run not found: {run_id}")
         if run.output is None:
             return ()
-        parent = trace_parent(run.output.step)
-        index = trace_index(run.output.step)
-        if parent is None or index is None:
+        if isinstance(run.output, RunControlRef):
+            control = self.get_run_control(run_id=run_id, index=run.output.index)
+            if control is None or control.input is None:
+                return ()
+            parts = control.input.parts
+            if run.output.part is None:
+                return parts
+            if 0 <= run.output.part < len(parts):
+                return (parts[run.output.part],)
             return ()
         with self._lock:
             row = self._conn.execute(
-                'SELECT * FROM steps WHERE parent = ? AND "index" = ?',
-                (parent, index),
+                "SELECT * FROM steps WHERE run = ? AND path = ?",
+                (run.output.step.run, run.output.step.local),
             ).fetchone()
-        if row is None:
-            return ()
-        return run.output.resolve((_step_from_row(row),))
+        return run.output.resolve((_step_from_row(row),)) if row is not None else ()
 
     def run_output_text(self, *, run_id: str) -> str:
         """Return the text projection of one run's durable output."""
@@ -1155,10 +1162,9 @@ class RunStore:
     def begin_step(
         self,
         *,
-        parent: str,
-        index: int,
+        path: StepPath,
         kind: StepKind,
-        input: Sequence[StepInputItem],
+        input: Sequence[StepInput],
         given: Mapping[str, Any],
         started_at: str,
     ) -> StepRecord:
@@ -1168,27 +1174,27 @@ class RunStore:
             self._conn.execute(
                 """
                 INSERT INTO steps(
-                    parent, "index", kind, input, output, given, noted,
+                    run, path, kind, input, output, given, noted,
                     status, error, created_at, started_at, finished_at
                 ) VALUES (?, ?, ?, ?, '[]', ?, '{}', 'running', NULL, ?, ?, NULL)
-                ON CONFLICT(parent, "index") DO NOTHING
+                ON CONFLICT(run, path) DO NOTHING
                 """,
                 (
-                    parent,
-                    index,
+                    path.run,
+                    path.local,
                     kind,
-                    _dump_json(step_input_items_to_data(tuple(input))),
+                    _dump_json(step_inputs_to_data(tuple(input))),
                     _dump_json(dict(given)),
                     started_at,
                     started_at,
                 ),
             )
             row = self._conn.execute(
-                'SELECT * FROM steps WHERE parent = ? AND "index" = ?',
-                (parent, index),
+                "SELECT * FROM steps WHERE run = ? AND path = ?",
+                (path.run, path.local),
             ).fetchone()
         if row is None:
-            raise RuntimeError(f"step begin projection failed: {parent}/{index}")
+            raise RuntimeError(f"step begin projection failed: {path}")
         step = _step_from_row(row)
         if (
             step.kind != kind
@@ -1196,14 +1202,13 @@ class RunStore:
             or step.given != dict(given)
             or step.started_at != started_at
         ):
-            raise ValueError(f"conflicting step_begin event: {parent}/{index}")
+            raise ValueError(f"conflicting step_begin event: {path}")
         return step
 
     def finish_step(
         self,
         *,
-        parent: str,
-        index: int,
+        path: StepPath,
         kind: StepKind,
         status: StepStatus,
         output: Sequence[MessagePart],
@@ -1215,20 +1220,20 @@ class RunStore:
 
         with self.write_transaction():
             existing = self._conn.execute(
-                'SELECT * FROM steps WHERE parent = ? AND "index" = ?',
-                (parent, index),
+                "SELECT * FROM steps WHERE run = ? AND path = ?",
+                (path.run, path.local),
             ).fetchone()
             if existing is None:
-                raise ValueError(f"step not found: {parent}/{index}")
+                raise ValueError(f"step not found: {path}")
             existing_step = _step_from_row(existing)
             if existing_step.kind != kind:
-                raise ValueError(f"step kind changed: {parent}/{index}")
+                raise ValueError(f"step kind changed: {path}")
             if existing_step.status == "running":
                 self._conn.execute(
                     """
                     UPDATE steps
                     SET output = ?, noted = ?, status = ?, error = ?, finished_at = ?
-                    WHERE parent = ? AND "index" = ?
+                    WHERE run = ? AND path = ?
                     """,
                     (
                         _dump_json(parts_to_data(output)),
@@ -1236,16 +1241,16 @@ class RunStore:
                         status,
                         error,
                         finished_at,
-                        parent,
-                        index,
+                        path.run,
+                        path.local,
                     ),
                 )
             row = self._conn.execute(
-                'SELECT * FROM steps WHERE parent = ? AND "index" = ?',
-                (parent, index),
+                "SELECT * FROM steps WHERE run = ? AND path = ?",
+                (path.run, path.local),
             ).fetchone()
         if row is None:
-            raise RuntimeError(f"step end projection failed: {parent}/{index}")
+            raise RuntimeError(f"step end projection failed: {path}")
         step = _step_from_row(row)
         if (
             step.status != status
@@ -1254,21 +1259,19 @@ class RunStore:
             or step.error != error
             or step.finished_at != finished_at
         ):
-            raise ValueError(f"conflicting step_end event: {parent}/{index}")
+            raise ValueError(f"conflicting step_end event: {path}")
         return step
 
     def list_steps(self, *, run_id: str) -> list[StepRecord]:
-        prefix = _like_prefix(run_id)
         with self._lock:
             rows = self._conn.execute(
-                """
-                SELECT * FROM steps
-                WHERE parent = ? OR parent LIKE ? ESCAPE '\\'
-                ORDER BY parent ASC, "index" ASC
-                """,
-                (run_id, f"{prefix}/%"),
+                "SELECT * FROM steps WHERE run = ?",
+                (run_id,),
             ).fetchall()
-        return [_step_from_row(row) for row in rows]
+        return sorted(
+            (_step_from_row(row) for row in rows),
+            key=lambda step: step.path.indices,
+        )
 
     def list_steps_for_runs(
         self, *, run_ids: Sequence[str]
@@ -1276,26 +1279,21 @@ class RunStore:
         run_id_list = [item for item in run_ids if item]
         if not run_id_list:
             return {}
-        clauses = " OR ".join(
-            "(parent = ? OR parent LIKE ? ESCAPE '\\')" for _ in run_id_list
-        )
+        placeholders = ", ".join("?" for _ in run_id_list)
         with self._lock:
             rows = self._conn.execute(
                 f"""
                 SELECT * FROM steps
-                WHERE {clauses}
-                ORDER BY parent ASC, "index" ASC
+                WHERE run IN ({placeholders})
                 """,
-                tuple(
-                    item
-                    for run_id in run_id_list
-                    for item in (run_id, f"{_like_prefix(run_id)}/%")
-                ),
+                tuple(run_id_list),
             ).fetchall()
         grouped: dict[str, list[StepRecord]] = {run_id: [] for run_id in run_id_list}
         for row in rows:
             record = _step_from_row(row)
             grouped.setdefault(record.run_id, []).append(record)
+        for records in grouped.values():
+            records.sort(key=lambda step: step.path.indices)
         return grouped
 
     def get_model_text(self, *, text_hash: str) -> str | None:
@@ -1332,11 +1330,13 @@ class RunStore:
 
         return self.rebuild_model_calls((step,))[step.path]
 
-    def rebuild_model_calls(self, steps: Sequence[StepRecord]) -> dict[str, ModelCall]:
+    def rebuild_model_calls(
+        self, steps: Sequence[StepRecord]
+    ) -> dict[StepPath, ModelCall]:
         """Rebuild normalized model calls for several model steps in batches."""
 
         references: dict[
-            str,
+            StepPath,
             tuple[str, tuple[str, ...], str | None, dict[str, Any] | None],
         ] = {}
         instruction_hashes: set[str] = set()
@@ -1384,7 +1384,7 @@ class RunStore:
         texts = self._get_model_texts(instruction_hashes)
         messages = self._get_model_messages(message_hashes)
         toolsets = self._get_toolsets(toolset_hashes)
-        calls: dict[str, ModelCall] = {}
+        calls: dict[StepPath, ModelCall] = {}
         for path, (
             instruction_ref,
             message_refs,
@@ -1817,33 +1817,57 @@ class RunStore:
                 WHERE request_id IS NOT NULL
                 """
             )
-            self._conn.execute(
+            step_table = self._conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS steps (
-                    parent TEXT NOT NULL,
-                    "index" INTEGER NOT NULL,
-                    kind TEXT NOT NULL,
-                    input TEXT NOT NULL,
-                    output TEXT NOT NULL,
-                    given TEXT NOT NULL,
-                    noted TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    error TEXT,
-                    created_at TEXT NOT NULL,
-                    started_at TEXT NOT NULL,
-                    finished_at TEXT,
-                    PRIMARY KEY(parent, "index")
-                )
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'steps'
                 """
-            )
-            step_columns = {
-                str(row["name"])
-                for row in self._conn.execute("PRAGMA table_info(steps)").fetchall()
-            }
-            if "context" in step_columns and "given" not in step_columns:
-                self._conn.execute("ALTER TABLE steps RENAME COLUMN context TO given")
-            if "detail" in step_columns and "noted" not in step_columns:
-                self._conn.execute("ALTER TABLE steps RENAME COLUMN detail TO noted")
+            ).fetchone()
+            if step_table is None:
+                _create_steps_table(self._conn)
+            else:
+                step_columns = {
+                    str(row["name"])
+                    for row in self._conn.execute(
+                        "PRAGMA table_info(steps)"
+                    ).fetchall()
+                }
+                if "run" not in step_columns or "path" not in step_columns:
+                    given = "given" if "given" in step_columns else "context"
+                    noted = "noted" if "noted" in step_columns else "detail"
+                    self._conn.execute("ALTER TABLE steps RENAME TO legacy_steps")
+                    _create_steps_table(self._conn)
+                    self._conn.execute(
+                        f"""
+                        INSERT INTO steps(
+                            run, path, kind, input, output, given, noted,
+                            status, error, created_at, started_at, finished_at
+                        )
+                        SELECT
+                            CASE instr(parent, '/')
+                                WHEN 0 THEN parent
+                                ELSE substr(parent, 1, instr(parent, '/') - 1)
+                            END,
+                            CASE instr(parent, '/')
+                                WHEN 0 THEN CAST("index" AS TEXT)
+                                ELSE substr(parent, instr(parent, '/') + 1)
+                                     || '/' || "index"
+                            END,
+                            kind, input, output, {given}, {noted},
+                            status, error, created_at, started_at, finished_at
+                        FROM legacy_steps
+                        """
+                    )
+                    self._conn.execute("DROP TABLE legacy_steps")
+                else:
+                    if "context" in step_columns and "given" not in step_columns:
+                        self._conn.execute(
+                            "ALTER TABLE steps RENAME COLUMN context TO given"
+                        )
+                    if "detail" in step_columns and "noted" not in step_columns:
+                        self._conn.execute(
+                            "ALTER TABLE steps RENAME COLUMN detail TO noted"
+                        )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS model_texts (
@@ -1892,10 +1916,32 @@ class RunStore:
                 "CREATE INDEX IF NOT EXISTS idx_threads_updated ON threads(updated_at)"
             )
             self._conn.execute(
-                'CREATE INDEX IF NOT EXISTS idx_steps_parent_index ON steps(parent, "index")'
+                "CREATE INDEX IF NOT EXISTS idx_steps_run ON steps(run)"
             )
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
+
+
+def _create_steps_table(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE steps (
+            run TEXT NOT NULL,
+            path TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            input TEXT NOT NULL,
+            output TEXT NOT NULL,
+            given TEXT NOT NULL,
+            noted TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            PRIMARY KEY(run, path)
+        )
+        """
+    )
 
 
 def _dump_json(value: Any) -> str:
@@ -2020,12 +2066,6 @@ def _validate_request_id(request_id: str | None) -> None:
         raise ValueError(f"invalid request id: {request_id!r}")
 
 
-def _like_prefix(value: str) -> str:
-    """Escape one literal prefix for a SQLite LIKE expression."""
-
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 def _history_tail(
     runs: Sequence[RunRecord], *, limit: int | None
 ) -> tuple[RunRecord, ...]:
@@ -2043,13 +2083,17 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
     output_raw = _load_json(str(row["output"])) if row["output"] is not None else None
     return RunRecord(
         id=str(row["id"]),
-        parent=str(row["parent"]) if row["parent"] is not None else None,
+        parent=(
+            StepPath.parse(str(row["parent"]))
+            if row["parent"] is not None
+            else None
+        ),
         thread=str(row["thread"]),
         input=RunControlRef.from_data(
             cast(Mapping[str, Any], _load_json(str(row["input"])))
         ),
         output=(
-            OutputRef.from_data(cast(Mapping[str, Any], output_raw))
+            value_ref_from_data(cast(Mapping[str, Any], output_raw))
             if isinstance(output_raw, Mapping)
             else None
         ),
@@ -2110,10 +2154,9 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         else []
     )
     return StepRecord(
-        parent=str(raw["parent"]),
-        index=int(cast(int | str, raw["index"])),
+        path=StepPath.from_local(str(raw["run"]), str(raw["path"])),
         kind=cast(StepKind, raw["kind"]),
-        input=step_input_items_from_data(
+        input=step_inputs_from_data(
             [item for item in input_items if isinstance(item, Mapping)]
         ),
         output=parts_from_data(

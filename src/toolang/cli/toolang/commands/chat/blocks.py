@@ -548,7 +548,7 @@ class FlowStepBlock(MutableBlock):
             if begin.kind == "model":
                 label = "model completed"
                 facts = [
-                    end.step,
+                    str(end.step),
                     elapsed(begin.started_at, end.finished_at),
                     model_label(begin.given),
                     *usage_facts(end.noted),
@@ -558,13 +558,13 @@ class FlowStepBlock(MutableBlock):
                 label = f"{tool}: {tool_result(end) or 'completed'}"
                 code = tool_exit_code(end)
                 facts = [
-                    end.step,
+                    str(end.step),
                     elapsed(begin.started_at, end.finished_at),
                     f"exit {code}" if code is not None else "",
                 ]
             else:
                 label = f"{begin.kind} completed"
-                facts = [end.step, elapsed(begin.started_at, end.finished_at)]
+                facts = [str(end.step), elapsed(begin.started_at, end.finished_at)]
             lines.append(Text.from_markup(f"[dim]  · {escape(label)}[/]"))
             fact_text = " · ".join(fact for fact in facts if fact)
             if fact_text:
@@ -732,7 +732,7 @@ class ModelStepBlock(MutableBlock):
 
     def _with_facts(self, output: RenderableType) -> RenderableType:
         facts = [
-            self.step,
+            str(self.step),
             elapsed(self.started_at, self.finished_at),
             self.model or "model",
             *usage_facts(self.noted),
@@ -903,7 +903,7 @@ class ToolStepBlock(MutableBlock):
 
     def _with_facts(self, output: RenderableType) -> RenderableType:
         facts = [
-            self.step,
+            str(self.step),
             elapsed(self.started_at, self.finished_at),
             f"exit {self.exit_code}" if self.exit_code is not None else "",
         ]

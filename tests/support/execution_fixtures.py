@@ -14,14 +14,12 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.records import (
-    OutputRef,
     RunControlRecord,
     RunControlRef,
     RunRecord,
-    StepInputItem,
+    StepInput,
     StepRecord,
-    trace_child_path,
-    trace_run,
+    ValueRef,
 )
 from toolang.common.time import utc_now
 from toolang.execution.executor._persist import _PersistSink
@@ -32,6 +30,7 @@ from toolang.execution.types import (
     RunStatus,
     StepKind,
     StepStatus,
+    StepPath,
 )
 
 
@@ -60,7 +59,7 @@ def project_run_start(
     request_id: str | None = None,
     created_at: str | None = None,
     started_at: str | None = None,
-    parent: str | None = None,
+    parent: StepPath | str | None = None,
     context: Mapping[str, Any] | None = None,
 ) -> RunRecord:
     """Project accepted and begun run events, returning durable run truth."""
@@ -78,9 +77,10 @@ def project_run_start(
             origin=origin,
             created_at=created,
         )
+    parent_path = StepPath.parse(parent) if parent is not None else None
     store.accept_start(
         run_id=run_id,
-        parent=parent,
+        parent=parent_path,
         thread=thread_id,
         input=input,
         context=run_context,
@@ -91,6 +91,7 @@ def project_run_start(
         store,
         RunBegin(
             run=run_id,
+            parent=parent_path,
             input=RunControlRef(index=0),
             context=run_context,
             started_at=started,
@@ -136,11 +137,11 @@ def project_step(
     *,
     run_id: str | None = None,
     step_index: int | None = None,
-    parent: str | None = None,
+    parent: StepPath | str | None = None,
     index: int | None = None,
     kind: StepKind,
     status: StepStatus,
-    input: Sequence[StepInputItem],
+    input: Sequence[StepInput],
     output: Sequence[MessagePart],
     detail: Mapping[str, Any] | None = None,
     error: str | None = None,
@@ -150,11 +151,14 @@ def project_step(
 ) -> StepRecord:
     """Project step begin and, when terminal, step end events."""
 
-    step_parent = parent or run_id
     resolved_index = index if index is not None else step_index
-    if step_parent is None or resolved_index is None:
+    if run_id is None and parent is None or resolved_index is None:
         raise ValueError("project_step requires parent/index or run_id/step_index")
-    path = trace_child_path(step_parent, resolved_index)
+    path = (
+        StepPath.parse(parent).child(resolved_index)
+        if parent is not None
+        else StepPath(str(run_id), (resolved_index,))
+    )
     persist_event(
         store,
         StepBegin(
@@ -179,7 +183,7 @@ def project_step(
             ),
         )
     step = next(
-        (item for item in store.list_steps(run_id=trace_run(path)) if item.path == path),
+        (item for item in store.list_steps(run_id=path.run) if item.path == path),
         None,
     )
     if step is None:
@@ -194,7 +198,7 @@ def project_run_end(
     status: RunStatus = "finished",
     error: str | None = None,
     finished_at: str | None = None,
-    output: OutputRef | None = None,
+    output: ValueRef | None = None,
 ) -> RunRecord:
     """Project one terminal run event, returning durable run truth."""
 

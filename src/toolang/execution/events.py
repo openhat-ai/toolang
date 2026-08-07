@@ -11,11 +11,11 @@ from pydantic import Field, TypeAdapter
 from toolang.base.types.message import Delta, MessagePart, MessagePartType
 
 from .records import (
-    OutputRef,
     RunControlRef,
-    StepInputItem,
+    StepInput,
     ThreadControlRef,
     ThreadPeer,
+    ValueRef,
 )
 from .types import RunStatus, StepKind, StepPath, StepStatus
 
@@ -38,7 +38,7 @@ class StepBegin:
 
     step: StepPath
     kind: StepKind
-    input: tuple[StepInputItem, ...] = ()
+    input: tuple[StepInput, ...] = ()
     given: dict[str, Any] = field(default_factory=dict)
     started_at: str = ""
     type: Literal["step_begin"] = field(default="step_begin", init=False)
@@ -95,7 +95,7 @@ class RunEnd:
     run: str
     status: RunStatus
     input: RunControlRef | None = None
-    output: OutputRef | None = None
+    output: ValueRef | None = None
     error: str | None = None
     finished_at: str = ""
     type: Literal["run_end"] = field(default="run_end", init=False)

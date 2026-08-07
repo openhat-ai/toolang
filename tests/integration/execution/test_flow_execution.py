@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import pytest
 
-from toolang.base.types.message import ImagePart, Message, TextPart
+from toolang.base.types.message import ImagePart, Message, TextPart, message_text
 from toolang.base.types.run import ModelCall
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
@@ -31,11 +31,11 @@ from toolang.execution.executor.common import BoundRun, Local
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.runs import agic as agic_run
 from toolang.execution.history import RunHistory
-from toolang.execution.records import OutputRef, RunControlRef, ThreadControlRef
+from toolang.execution.records import RunControlRef, StepOutputRef, ThreadControlRef
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import StepPath, ThreadPrefix
 from toolang.lang.ast import (
     AgicDecl,
     Directive,
@@ -64,7 +64,7 @@ class _RecordingTracer(RunTracer):
         run_id = (
             event.run
             if isinstance(event, RunBegin | RunEnd)
-            else event.step.split("/", 1)[0]
+            else event.step.run
         )
         assert self.store.get_run(run_id=run_id) is not None
         self.thread_ids.add(threading.get_ident())
@@ -566,7 +566,7 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
 
     runs = store.list_runs(limit=None)
     child_run = next(run for run in runs if run.id != root.id)
-    assert child_run.parent == f"{root.id}/0"
+    assert child_run.parent == StepPath.parse(f"{root.id}/0")
     assert child_run.status == "finished"
     assert [event.type for event in tracer.events] == [
         "run_begin",
@@ -715,7 +715,7 @@ def test_parallel_children_preserve_input_and_output_types(
         execution.parallel_children(
             binding,
             {"_": Local(["one", "two"], "list", type_name="Text")},
-            "run_root/0",
+            StepPath.parse("run_root/0"),
             child.name,
             ["one", "two"],
             limit=2,
@@ -778,7 +778,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
             execution.parallel_children(
                 binding,
                 {"_": Local(list(range(5)), "list", type_name="Number")},
-                "run_root/0",
+                StepPath.parse("run_root/0"),
                 child.name,
                 list(range(5)),
                 limit=4,
@@ -822,11 +822,11 @@ def test_flow_step_events_carry_complete_input_references(tmp_path: Path) -> Non
     steps = [
         step
         for step in executor.store.list_steps(run_id=root.id)
-        if step.parent == root.id
+        if step.parent is None
     ]
     assert [step.input for step in steps] == [
         (RunControlRef(),),
-        (OutputRef(step=f"{root.id}/0"),),
+        (StepOutputRef(step=StepPath.parse(f"{root.id}/0")),),
     ]
     assert [step.given["source"] for step in steps] == [
         {"line": 4, "head": "run child"},
@@ -1288,7 +1288,10 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     manager = ThreadManager(store, executor.ids)
     source = manager.create(prefix=ThreadPrefix.TERM)
     sink = _PersistSink(store)
-    for run_id, parent in (("run_root", None), ("run_child", "run_root/0")):
+    for run_id, parent in (
+        ("run_root", None),
+        ("run_child", StepPath.parse("run_root/0")),
+    ):
         store.accept_start(
             run_id=run_id,
             parent=parent,
@@ -1651,7 +1654,7 @@ def test_private_event_projector_persists_run_and_step_records(
     )
     sink.on_event(
         StepBegin(
-            step="run_test/0",
+            step=StepPath.parse("run_test/0"),
             kind="system",
             input=(RunControlRef(index=0),),
             started_at="2026-01-01T00:00:02Z",
@@ -1659,7 +1662,7 @@ def test_private_event_projector_persists_run_and_step_records(
     )
     sink.on_event(
         StepEnd(
-            step="run_test/0",
+            step=StepPath.parse("run_test/0"),
             kind="system",
             status="finished",
             output=(TextPart(text="done"),),
@@ -1670,7 +1673,7 @@ def test_private_event_projector_persists_run_and_step_records(
         RunEnd(
             run="run_test",
             status="finished",
-            output=OutputRef(step="run_test/0"),
+            output=StepOutputRef(step=StepPath.parse("run_test/0")),
             finished_at="2026-01-01T00:00:04Z",
         )
     )
@@ -1771,7 +1774,7 @@ def test_run_store_migrates_step_and_model_text_names_in_place(
     sink = _PersistSink(store)
     sink.on_event(
         StepBegin(
-            step="run_test/0",
+            step=StepPath.parse("run_test/0"),
             kind="system",
             given={"runtime": "test"},
             started_at="2026-01-01T00:00:01Z",
@@ -1779,7 +1782,7 @@ def test_run_store_migrates_step_and_model_text_names_in_place(
     )
     sink.on_event(
         StepEnd(
-            step="run_test/0",
+            step=StepPath.parse("run_test/0"),
             kind="system",
             status="finished",
             noted={"shape": "item"},
@@ -1826,6 +1829,95 @@ def test_run_store_migrates_v16_model_texts_in_place(tmp_path: Path) -> None:
         reopened.close()
 
 
+def test_run_store_migrates_v19_step_identity_without_losing_history(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    store.create_thread(thread_id="term_test")
+    store.accept_start(
+        run_id="run_test",
+        parent=None,
+        thread="term_test",
+        input=Message.user("hello"),
+        context={},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
+    )
+    sink = _PersistSink(store)
+    for step_path in (
+        StepPath.parse("run_test/0"),
+        StepPath.parse("run_test/0/1"),
+    ):
+        sink.on_event(
+            StepBegin(
+                step=step_path,
+                kind="system",
+                started_at="2026-01-01T00:00:01Z",
+            )
+        )
+        sink.on_event(
+            StepEnd(
+                step=step_path,
+                kind="system",
+                status="finished",
+                output=(TextPart(text=step_path.local),),
+                finished_at="2026-01-01T00:00:02Z",
+            )
+        )
+    store.close()
+
+    connection = sqlite3.connect(path)
+    rows = connection.execute("SELECT * FROM steps ORDER BY path").fetchall()
+    connection.execute("ALTER TABLE steps RENAME TO current_steps")
+    connection.execute(
+        """
+        CREATE TABLE steps (
+            parent TEXT NOT NULL,
+            "index" INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            input TEXT NOT NULL,
+            output TEXT NOT NULL,
+            given TEXT NOT NULL,
+            noted TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            PRIMARY KEY(parent, "index")
+        )
+        """
+    )
+    for row in rows:
+        step_path = StepPath.from_local(str(row[0]), str(row[1]))
+        connection.execute(
+            "INSERT INTO steps VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(step_path.parent) if step_path.parent is not None else step_path.run,
+                step_path.index,
+                *row[2:],
+            ),
+        )
+    connection.execute("DROP TABLE current_steps")
+    connection.execute("PRAGMA user_version=19")
+    connection.commit()
+    connection.close()
+
+    reopened = RunStore(path)
+    try:
+        assert [step.path for step in reopened.list_steps(run_id="run_test")] == [
+            StepPath.parse("run_test/0"),
+            StepPath.parse("run_test/0/1"),
+        ]
+        assert [
+            message_text(step.output)
+            for step in reopened.list_steps(run_id="run_test")
+        ] == ["0", "0/1"]
+    finally:
+        reopened.close()
+
+
 def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     store.create_thread(thread_id="term_test")
@@ -1849,14 +1941,14 @@ def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
         )
         sink.on_event(
             StepBegin(
-                step=f"{run_id}/0",
+                step=StepPath.parse(f"{run_id}/0"),
                 kind="system",
                 started_at="2026-01-01T00:00:02Z",
             )
         )
         sink.on_event(
             StepEnd(
-                step=f"{run_id}/0",
+                step=StepPath.parse(f"{run_id}/0"),
                 kind="system",
                 status="finished",
                 output=(TextPart(text=text),),
@@ -1871,10 +1963,16 @@ def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
             )
         )
 
-    assert [step.parent for step in store.list_steps(run_id="run_%")] == ["run_%"]
+    assert [step.path for step in store.list_steps(run_id="run_%")] == [
+        StepPath.parse("run_%/0")
+    ]
     grouped = store.list_steps_for_runs(run_ids=("run_%", "run_ax"))
-    assert [step.parent for step in grouped["run_%"]] == ["run_%"]
-    assert [step.parent for step in grouped["run_ax"]] == ["run_ax"]
+    assert [step.path for step in grouped["run_%"]] == [
+        StepPath.parse("run_%/0")
+    ]
+    assert [step.path for step in grouped["run_ax"]] == [
+        StepPath.parse("run_ax/0")
+    ]
     with pytest.raises(ValueError, match="invalid run id"):
         store.accept_start(
             run_id="run/invalid",

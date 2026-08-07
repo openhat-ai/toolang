@@ -16,18 +16,18 @@ def test_run_store_rejects_a_newer_schema_without_modifying_it(
     connection = sqlite3.connect(path)
     connection.execute("CREATE TABLE future_state (value TEXT NOT NULL)")
     connection.execute("INSERT INTO future_state VALUES ('preserved')")
-    connection.execute("PRAGMA user_version=20")
+    connection.execute("PRAGMA user_version=21")
     connection.commit()
     connection.close()
 
     with pytest.raises(RunStoreSchemaError) as raised:
         RunStore(path)
 
-    assert raised.value.version == 20
-    assert raised.value.current == 19
+    assert raised.value.version == 21
+    assert raised.value.current == 20
     connection = sqlite3.connect(path)
     try:
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 20
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 21
         assert connection.execute("SELECT value FROM future_state").fetchone() == (
             "preserved",
         )

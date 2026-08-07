@@ -22,7 +22,7 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message, TextPart, message_text
 from toolang.base.types.run import ModelCallResult
 from toolang.execution.events import RunBegin, RunEnd
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import StepPath, ThreadPrefix
 from toolang.lang.input import perceive_input
 
 
@@ -37,7 +37,7 @@ def _root_step_kinds(
     return [
         step.kind
         for step in harness.store.list_steps(run_id=run_id)
-        if step.parent == run_id
+        if step.parent is None
     ]
 
 
@@ -76,7 +76,7 @@ flow relay(_: Part[]) -> Part[]:
             assert len(children) == 1
             child = children[0]
             assert child.status == "finished"
-            assert child.parent == f"{root.id}/0"
+            assert child.parent == StepPath.parse(f"{root.id}/0")
             assert child.root_run_id == root.id
             assert harness.store.run_output(run_id=root.id) == (
                 TextPart("relayed"),
@@ -280,7 +280,7 @@ flow mapped(_: Text) -> Text[]:
                     thread_id=thread,
                     limit=None,
                 )
-                if run.parent == f"{root.id}/1"
+                if run.parent == StepPath.parse(f"{root.id}/1")
             ]
             assert sorted(
                 run.context["placement"]["item"] for run in children
@@ -353,7 +353,7 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
             root_steps = [
                 step
                 for step in harness.store.list_steps(run_id=root.id)
-                if step.parent == root.id
+                if step.parent is None
             ]
             assert root_steps[3].noted["items"] == 3
             assert root_steps[4].noted["items"] == 3
@@ -928,7 +928,7 @@ flow repeated(_: Text) -> Text:
             loop = next(
                 step
                 for step in harness.store.list_steps(run_id=root.id)
-                if step.parent == root.id
+                if step.parent is None
             )
             assert loop.noted["shape"] == "item"
             assert harness.adapter.pending_responses == 0
@@ -984,7 +984,7 @@ flow invalid(_: Text) -> Text:
             steps = [
                 step
                 for step in harness.store.list_steps(run_id=root.id)
-                if step.parent == root.id
+                if step.parent is None
             ]
             assert [(step.kind, step.status, step.error) for step in steps] == [
                 (step_kind, "failed", error)
@@ -1037,7 +1037,7 @@ flow scattered(_: Text) -> Text[]:
             root_steps = [
                 step
                 for step in harness.store.list_steps(run_id=root.id)
-                if step.parent == root.id
+                if step.parent is None
             ]
             assert [(step.kind, step.status) for step in root_steps] == [
                 ("run", "finished")

@@ -27,14 +27,10 @@ from toolang.setup import AgentSetup
 
 from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin, StepEnd
 from ..records import (
-    OutputRef,
     RunControlRecord,
     RunControlRef,
     RunRecord,
-    trace_child_path,
-    trace_index,
-    trace_parent,
-    trace_run,
+    ValueRef,
 )
 from ..store import RunStore
 from ..types import ControlTiming, RunControlKind, StepPath
@@ -412,7 +408,7 @@ class RunExecutor:
                 item.index for item in event.input if isinstance(item, RunControlRef)
             )
             self.store.finish_run_controls(
-                run_id=trace_run(event.step),
+                run_id=event.step.run,
                 indexes=indexes,
                 finished_at=event.started_at,
             )
@@ -515,7 +511,7 @@ class RunExecutor:
         if isinstance(event, RunBegin):
             return
         if isinstance(event, StepBegin):
-            run_id = trace_run(event.step)
+            run_id = event.step.run
             indexes = {
                 item.index for item in event.input if isinstance(item, RunControlRef)
             }
@@ -608,7 +604,7 @@ class _Execution:
         self.date = root.created_at.partition("T")[0]
         self.timezone = "UTC"
         self._emit_trace = emit
-        self._run_outputs: dict[str, StepPath] = {}
+        self._run_outputs: dict[str, ValueRef] = {}
         self._last_step_index: dict[str, int] = {}
         self._step_failures: dict[str, str | None] = {}
 
@@ -715,7 +711,7 @@ class _Execution:
             RunEnd(
                 run=binding.run_id,
                 status="finished",
-                output=self.run_output(binding.run_id),
+                output=result.ref,
                 finished_at=utc_now(),
             )
         )
@@ -758,7 +754,7 @@ class _Execution:
         )
         self.executor._register_child_run(
             run_id=binding.run_id,
-            root_run_id=trace_run(step),
+            root_run_id=step.run,
         )
         return await self.execute(binding, executable)
 
@@ -894,29 +890,20 @@ class _Execution:
         if claimed:
             raise _RunStopped(claimed[0])
 
-    def record_output(self, run_id: str, path: StepPath) -> None:
-        self._run_outputs[run_id] = path
+    def record_output(self, run_id: str, ref: ValueRef) -> None:
+        self._run_outputs[run_id] = ref
 
-    def run_output(self, run_id: str) -> OutputRef | None:
-        path = self._run_outputs.get(run_id)
-        return OutputRef(step=path) if path is not None else None
+    def run_output(self, run_id: str) -> ValueRef | None:
+        return self._run_outputs.get(run_id)
 
     async def emit(self, event: RunEvent) -> None:
         await self._emit_trace(event)
-        if (
-            isinstance(event, StepEnd)
-            and event.kind == "model"
-            and event.status == "finished"
-        ):
-            self.record_output(trace_run(event.step), event.step)
         if isinstance(event, StepBegin | StepEnd):
-            run_id = trace_run(event.step)
-            parent = trace_parent(event.step)
-            index = trace_index(event.step)
-            if parent == run_id and index is not None:
+            run_id = event.step.run
+            if event.step.parent is None:
                 self._last_step_index[run_id] = max(
                     self._last_step_index.get(run_id, -1),
-                    index,
+                    event.step.index,
                 )
             if isinstance(event, StepEnd) and event.status == "failed":
                 self._step_failures[run_id] = event.error
@@ -924,7 +911,7 @@ class _Execution:
     async def _emit_system_failure(self, run_id: str, error: str) -> None:
         if self._step_failures.get(run_id) == error:
             return
-        path = trace_child_path(run_id, self._last_step_index.get(run_id, -1) + 1)
+        path = StepPath(run_id, (self._last_step_index.get(run_id, -1) + 1,))
         started_at = utc_now()
         await self.emit(
             StepBegin(
@@ -1151,4 +1138,4 @@ def _validate_inputs(
 def _run_event_id(event: RunEvent) -> str:
     if isinstance(event, RunBegin | RunEnd):
         return event.run
-    return trace_run(event.step)
+    return event.step.run

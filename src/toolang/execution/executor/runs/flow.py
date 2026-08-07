@@ -9,7 +9,7 @@ from toolang.common.errors import ToolangError
 from toolang.lang.ast import FlowDecl, FlowStmt
 from toolang.lang.input import coerce_output
 
-from ...records import StepPath, trace_child_path
+from ...types import StepPath
 from ..common import BoundRun
 from ..common import (
     Local,
@@ -37,7 +37,7 @@ async def execute(
         binding,
         flow.stmts,
         locals,
-        parent=binding.run_id,
+        parent=None,
     )
     result = locals.get("_", Local())
     if flow.output is not None:
@@ -50,7 +50,7 @@ async def execute(
                 structs=program_structs(binding),
             ),
             result.shape,
-            result.source,
+            result.ref,
             flow.output,
         )
     return result
@@ -62,7 +62,7 @@ async def execute_statements(
     statements: Sequence[FlowStmt],
     locals: dict[str, Local],
     *,
-    parent: StepPath,
+    parent: StepPath | None,
     start: int = 0,
     placement: Mapping[str, object] | None = None,
 ) -> int:
@@ -81,7 +81,11 @@ async def execute_statements(
             input_type=locals.get("_", Local()).type_name,
             structs=program_structs(binding),
         )
-        path = trace_child_path(parent, index)
+        path = (
+            StepPath(binding.run_id, (index,))
+            if parent is None
+            else parent.child(index)
+        )
         result = await stmts.execute(
             execution,
             binding,
@@ -92,7 +96,7 @@ async def execute_statements(
             placement=placement,
         )
         update_locals(locals, statement.binding, result)
-        if parent == binding.run_id and statement.binding == "_":
-            execution.record_output(binding.run_id, path)
+        if statement.binding == "_" and result.ref is not None:
+            execution.record_output(binding.run_id, result.ref)
         index += 1
     return index

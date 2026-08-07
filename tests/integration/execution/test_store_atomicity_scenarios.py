@@ -12,6 +12,7 @@ from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
 from toolang.execution.records import RunControlRef
 from toolang.execution.store import RunStore
+from toolang.execution.types import StepPath
 
 
 def _execute_sql(db_path: Path, sql: str) -> None:
@@ -106,8 +107,7 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
         with pytest.raises(sqlite3.IntegrityError):
             with store.write_transaction():
                 store.begin_step(
-                    parent="run_atomic_event",
-                    index=0,
+                    path=StepPath("run_atomic_event", (0,)),
                     kind="system",
                     input=(RunControlRef(index=control.index),),
                     given={},
@@ -175,8 +175,7 @@ def test_model_blobs_roll_back_when_the_model_step_cannot_be_inserted(
             with store.write_transaction():
                 given = store.capture_model_call(target=target, call=call)
                 store.begin_step(
-                    parent="run_atomic_model",
-                    index=0,
+                    path=StepPath("run_atomic_model", (0,)),
                     kind="model",
                     input=(),
                     given=given,

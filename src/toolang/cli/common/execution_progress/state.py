@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Self
 
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
+from toolang.execution.types import StepPath
 
 from .formatting import (
     active_step_label,
@@ -71,7 +72,7 @@ class RunState:
     """Semantic state for one root or recursive run."""
 
     run_id: str
-    parent: str | None
+    parent: StepPath | None
     kind: str
     name: str
     placement: Mapping[str, object]
@@ -149,7 +150,7 @@ class StatementState:
     active_run: str | None = None
     active_item: int | None = None
     active_activity: str = "starting…"
-    live_owner: str | None = None
+    live_owner: StepPath | None = None
     ordinal: int | None = None
     current_iteration: int | None = None
     next_ordinal: int = 0

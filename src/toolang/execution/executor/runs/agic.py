@@ -12,6 +12,8 @@ from toolang.common.layout import AgentLayout
 from toolang.lang.ast import AgicDecl
 from toolang.lang.input import coerce_output
 
+from ...records import RunControlRecord, StepOutputRef
+from ...types import StepPath
 from ..common import (
     BoundRun,
     EventEmitter,
@@ -23,7 +25,6 @@ from ..common import (
 from ..prepare import _AgicFrame, prepare_agic
 from ..steps import model as model_step
 from ..steps import tool as tool_step
-from ...records import RunControlRecord
 
 if TYPE_CHECKING:
     from ..executor import _Execution
@@ -41,6 +42,8 @@ class _AgicState:
     pending_inputs: Callable[[], tuple[RunControlRecord, ...]]
     before_call: Callable[[], None]
     messages: list[Message]
+    record_output: Callable[[StepOutputRef], None] = lambda _ref: None
+    output: StepOutputRef | None = None
     model_state: dict[str, Any] | None = None
     next_step: int = 0
     last_step: int | None = None
@@ -90,9 +93,12 @@ async def execute(
         emit=execution.emit,
         pending_inputs=lambda: execution.steer_controls_for_call(binding.run_id),
         before_call=lambda: execution.raise_if_stopping(binding.run_id, call=True),
+        record_output=lambda ref: execution.record_output(binding.run_id, ref),
         messages=list(prepared.messages),
     )
     message = await _execute(state)
+    if state.output is None:
+        raise RuntimeError("agic completed without a model output")
     return Local(
         coerce_output(
             message or Message(role="assistant"),
@@ -100,6 +106,7 @@ async def execute(
             structs=program_structs(binding),
         ),
         "item",
+        state.output,
         type_name=agic.output or "Part[]",
     )
 
@@ -107,6 +114,13 @@ async def execute(
 async def _execute(state: _AgicState) -> Message | None:
     for _ in range(_MAX_TOOL_ROUNDS):
         result = await model_step.execute(state)
+        if state.last_step is None:
+            raise RuntimeError("model step did not record its index")
+        ref = StepOutputRef(
+            step=StepPath(state.prepared.run.run_id, (state.last_step,))
+        )
+        state.output = ref
+        state.record_output(ref)
         if result.tool_calls:
             for call in result.tool_calls:
                 await tool_step.execute(state, call)

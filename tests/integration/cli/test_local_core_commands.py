@@ -79,7 +79,7 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     assert "Traceback" not in error_output
     assert "execution history is incompatible with toolang" in error_output
     assert f"uses schema {schema_version}" in error_output
-    assert "requires schema 19" in error_output
+    assert "requires schema 20" in error_output
     assert advice in error_output
     assert "database was not changed" in error_output.lower()
     connection = sqlite3.connect(layout.run_store)
@@ -226,7 +226,7 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
     document = json.loads(result.stdout)
     assert document["kind"] == "step"
     assert document["run"]["id"] == "run_inspect"
-    assert document["step"]["path"] == "0"
+    assert document["step"]["path"] == "run_inspect/0"
     assert document["step"]["kind"] == "system"
     assert document["step"]["output"] == [{"text": "prepared", "type": "text"}]
 

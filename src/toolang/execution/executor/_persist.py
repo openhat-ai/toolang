@@ -7,7 +7,6 @@ from collections.abc import Mapping
 from toolang.base.types.run import ModelCall
 
 from ..events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
-from ..records import trace_index, trace_parent
 from ..store import RunStore
 
 
@@ -37,10 +36,6 @@ class _PersistSink:
             self._finish_run(event)
 
     def _begin_step(self, event: StepBegin) -> None:
-        parent = trace_parent(event.step)
-        index = trace_index(event.step)
-        if parent is None or index is None:
-            raise ValueError(f"step_begin requires a step path: {event.step}")
         given = event.given
         if event.kind == "model" and "call" in given:
             raw_model = given.get("model")
@@ -52,8 +47,7 @@ class _PersistSink:
                 call=ModelCall.from_data(raw_call),
             )
         self._store.begin_step(
-            parent=parent,
-            index=index,
+            path=event.step,
             kind=event.kind,
             input=event.input,
             given=given,
@@ -61,13 +55,8 @@ class _PersistSink:
         )
 
     def _finish_step(self, event: StepEnd) -> None:
-        parent = trace_parent(event.step)
-        index = trace_index(event.step)
-        if parent is None or index is None:
-            raise ValueError(f"step_end requires a step path: {event.step}")
         self._store.finish_step(
-            parent=parent,
-            index=index,
+            path=event.step,
             kind=event.kind,
             status=event.status,
             output=event.output,
