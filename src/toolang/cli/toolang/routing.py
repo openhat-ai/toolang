@@ -7,11 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-import typer
-
 from toolang.common.layout import AgentLayout, AgentPlacement
 from toolang.up import process as agents
 from ..caps.commands import CAP_KINDS
+from ..common.output import echo_error
 from ..common.progress import as_progress_sink, make_cli_progress
 from ..common.routing import explicit_agent, extract_root_args
 from .commands import runtime, script
@@ -203,7 +202,7 @@ def dispatch_roaming(
         try:
             layout = _roaming_layout(source, spec.prepare)
         except (FileExistsError, FileNotFoundError, ValueError) as exc:
-            typer.echo(f"toolang error: {exc}", err=True)
+            echo_error(str(exc))
             return 1
         return run_app(
             _selected_command_args(body, position, target=layout.name),
@@ -248,7 +247,7 @@ def dispatch_visiting(
     except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
         if progress is not None:
             progress.finish(details=False)
-        typer.echo(f"toolang error: {exc}", err=True)
+        echo_error(str(exc))
         return 1
     if progress is not None:
         progress.finish(details=False)
@@ -395,13 +394,10 @@ def _unsupported_target(
         message = _target_order_error(spec)
     else:
         message = f"{command} does not support {placement} agents"
-    typer.echo(f"toolang error: {message}", err=True)
+    echo_error(message)
     return 2
 
 
 def _unsupported_global_options() -> int:
-    typer.echo(
-        "toolang error: too <path>.too does not support global CLI options",
-        err=True,
-    )
+    echo_error("too <path>.too does not support global CLI options")
     return 1

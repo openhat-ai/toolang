@@ -410,6 +410,36 @@ flow pipeline:
     assert "<agic:" not in stdout
 
 
+def test_script_formats_an_unknown_runnable_as_a_rich_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    source = _write_source(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = script.dispatch(
+        [],
+        [source.name, "missing"],
+        prog_name="toolang",
+        stdin=StringIO(),
+    )
+    output = capsys.readouterr()
+    stderr = strip_ansi(output.err)
+    lines = stderr.splitlines()
+
+    assert result == 2
+    assert lines[0].strip() == ""
+    assert lines[1].startswith(" Usage: toolang ")
+    assert lines[2].strip() == ""
+    assert lines[3].startswith(" Try '")
+    assert lines[4].strip() == ""
+    assert lines[5].startswith("╭─ Error ")
+    assert lines[-1].strip() == ""
+    assert "No such command 'missing'." in stderr
+    assert "\nError: No such command" not in stderr
+
+
 @pytest.mark.parametrize("selector", ("agic:demo", "runnable:demo"))
 def test_script_accepts_explicit_runnable_selectors(
     tmp_path: Path,

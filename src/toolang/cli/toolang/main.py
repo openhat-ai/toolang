@@ -20,6 +20,7 @@ from ...up.logging import configure_logging
 from ..caps import commands as cap_commands
 from ..common.context import CliContext, resolve_root
 from ..common import version as _version
+from ..common.output import echo_error
 from ..common.routing import (
     OptionalPrefixAgentGroup,
     OptionalPrefixAgentListCommand,
@@ -450,7 +451,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             args,
             layout.name,
             prog_name=prog_name,
-            catch_system_exit=True,
             layout=layout,
         ),
     )
@@ -468,7 +468,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             args,
             layout.name,
             prog_name=prog_name,
-            catch_system_exit=True,
             layout=layout,
         ),
     )
@@ -477,7 +476,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         args, prefix_agent = routing.normalize(raw_args)
     except routing.RoutingError as exc:
-        typer.echo(f"toolang error: {exc}", err=True)
+        echo_error(str(exc))
         return 2
     return _run_app(args, prefix_agent, prog_name=prog_name)
 
@@ -519,30 +518,29 @@ def _run_app(
     prefix_agent: str | None,
     *,
     prog_name: str,
-    catch_system_exit: bool = False,
     layout: AgentLayout | None = None,
 ) -> int:
     agent_token = _PREFIX_AGENT.set(prefix_agent)
     layout_token = _SELECTED_LAYOUT.set(layout)
     try:
-        app(
+        result = app(
             args=args,
             prog_name=prog_name,
-            standalone_mode=True,
+            standalone_mode=False,
         )
     except click.exceptions.Exit as exc:
         return exc.exit_code
-    except SystemExit as exc:
-        if not catch_system_exit:
-            raise
-        return exc.code if isinstance(exc.code, int) else 1
+    except click.ClickException as exc:
+        if exc.__class__.__name__ != "NoArgsIsHelpError":
+            echo_error(exc)
+        return exc.exit_code
     except (FileExistsError, FileNotFoundError, ValueError) as exc:
-        typer.echo(f"toolang error: {exc}", err=True)
+        echo_error(str(exc))
         return 1
     finally:
         _SELECTED_LAYOUT.reset(layout_token)
         _PREFIX_AGENT.reset(agent_token)
-    return 0
+    return result if isinstance(result, int) else 0
 
 
 def _prog_name(argv0: str) -> str:

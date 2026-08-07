@@ -101,6 +101,34 @@ def test_cli_normalize_rejects_an_invalid_target_order() -> None:
         normalize(["alice", "remove"])
 
 
+def test_cli_formats_a_routing_error_as_a_rich_panel(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = _call_main(["alice", "remove"])
+    output = capsys.readouterr()
+    stderr = click.unstyle(output.err)
+    lines = stderr.splitlines()
+
+    assert result == 2
+    assert lines[0].strip() == ""
+    assert lines[1].startswith("╭─ Error ")
+    assert lines[-1].strip() == ""
+    assert "remove requires TARGET after the command" in stderr
+
+
+def test_cli_no_args_still_shows_root_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = _call_main([])
+    output = capsys.readouterr()
+    stdout = click.unstyle(output.out)
+
+    assert result == 2
+    assert "Usage: pytest [OPTIONS] COMMAND [ARGS]..." in stdout
+    assert "Run and manage Toolang agents." in stdout
+    assert output.err == ""
+
+
 def test_cli_explicit_agent_prefix_resolves_command_name_collision() -> None:
     args, agent = normalize(["agent:retry", "info"])
 
@@ -174,6 +202,18 @@ def test_caps_cli_uses_command_priority_and_explicit_agent_prefix() -> None:
 
     assert (global_args, global_agent) == (["skill", "list"], None)
     assert (agent_args, agent) == (["skill", "list"], "skill")
+
+
+def test_caps_cli_formats_a_pre_dispatch_error_as_a_rich_panel(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = caps_cli.main(["agent:", "skill"])
+    output = capsys.readouterr()
+    stderr = click.unstyle(output.err)
+
+    assert result == 2
+    assert "╭─ Error " in stderr
+    assert "invalid resident agent target: agent:" in stderr
 
 
 @pytest.mark.parametrize(

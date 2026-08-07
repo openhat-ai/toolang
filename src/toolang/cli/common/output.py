@@ -7,11 +7,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
 
+import click
 from rich import box
 from rich.console import Console
+from rich.padding import Padding
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 import typer
+from typer import rich_utils
 
 from toolang.up import process as agents
 
@@ -101,6 +105,45 @@ def echo_block(text: str) -> None:
     typer.echo()
     typer.echo(text)
     typer.echo()
+
+
+def echo_error(error: str | click.ClickException) -> None:
+    """Render one terminal error with the shared Typer Rich presentation."""
+
+    exception = (
+        error
+        if isinstance(error, click.ClickException)
+        else click.ClickException(error)
+    )
+    console = rich_utils._get_rich_console(stderr=True)
+    ctx = getattr(exception, "ctx", None)
+    if isinstance(ctx, click.Context):
+        console.print(
+            Padding(rich_utils.highlighter(ctx.get_usage()), 1),
+            style=rich_utils.STYLE_USAGE_COMMAND,
+        )
+        if ctx.command.get_help_option(ctx) is not None:
+            console.print(
+                Padding(
+                    rich_utils.RICH_HELP.format(
+                        command_path=ctx.command_path,
+                        help_option=ctx.help_option_names[0],
+                    ),
+                    (0, 1, 1, 1),
+                ),
+                style=rich_utils.STYLE_ERRORS_SUGGESTION,
+            )
+    else:
+        console.print()
+    console.print(
+        Panel(
+            rich_utils.highlighter(exception.format_message()),
+            border_style=rich_utils.STYLE_ERRORS_PANEL_BORDER,
+            title=rich_utils.ERRORS_PANEL_TITLE,
+            title_align=rich_utils.ALIGN_ERRORS_PANEL,
+        )
+    )
+    console.print()
 
 
 def echo_table(

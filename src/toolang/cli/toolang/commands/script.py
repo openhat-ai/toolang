@@ -43,6 +43,7 @@ from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
 from ...common.progress import as_progress_sink, make_cli_progress
 from ...common.limits import apply_limit_options
+from ...common.output import echo_error
 from ...common.script_progress import ConsoleRunTracer
 from ...common.version import toolang_version
 
@@ -101,17 +102,14 @@ def dispatch(
     """Dispatch one path-based runnable invocation."""
 
     if global_args:
-        typer.echo(
-            "toolang error: too <path>.too does not support global CLI options",
-            err=True,
-        )
+        echo_error("too <path>.too does not support global CLI options")
         return 1
     if not argv:
-        typer.echo("toolang error: missing script path", err=True)
+        echo_error("missing script path")
         return 1
     source_path = _source_path(argv[0])
     if source_path is None:
-        typer.echo(f"toolang error: script not found: {argv[0]}", err=True)
+        echo_error(f"script not found: {argv[0]}")
         return 1
     try:
         program = Program.from_source(source_path.read_text(encoding="utf-8"))
@@ -131,7 +129,7 @@ def dispatch(
     except click.exceptions.Exit as exc:
         return exc.exit_code
     except click.ClickException as exc:
-        exc.show(file=sys.stderr)
+        echo_error(exc)
         return exc.exit_code
     except (OSError, UnicodeError, ValueError, ToolangError) as exc:
         _error(str(exc))
@@ -654,4 +652,4 @@ def _source_path(token: str) -> Path | None:
 
 
 def _error(message: str) -> None:
-    typer.echo(f"toolang error: {message}", err=True)
+    echo_error(message)
