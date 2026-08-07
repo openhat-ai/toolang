@@ -55,7 +55,13 @@ from .ceiling import (
     resolve_run_ceiling,
     validate_root_run_resources,
 )
-from .limits import RunLimits, _RunLimitExceeded, _RunLimitState
+from .limits import (
+    RunLimits,
+    _ModelAccounting,
+    _RunLimitExceeded,
+    _RunLimitState,
+    _model_accounting,
+)
 from ._persist import _PersistSink
 
 _LOGGER = logging.getLogger(__name__)
@@ -661,14 +667,23 @@ class _Execution:
 
         self._limits.require_pricing(target, self.models)
 
-    def record_model_usage(
+    def model_accounting(
         self,
         target: ModelTarget,
         usage: ModelUsage | None,
-    ) -> None:
-        """Add one model result to root-tree token and cost totals."""
+    ) -> _ModelAccounting:
+        """Build accounting facts for one completed model call."""
 
-        self._limits.record_model(target, self.models, usage)
+        return _model_accounting(target, self.models, usage)
+
+    def record_model_accounting(
+        self,
+        target: ModelTarget,
+        accounting: _ModelAccounting,
+    ) -> None:
+        """Add one model accounting result to root-tree totals."""
+
+        self._limits.record_model(target, accounting)
 
     async def execute(
         self,

@@ -43,9 +43,9 @@ class Metrics:
     def record_step(self, event: StepEnd) -> None:
         if event.kind == "model":
             self.model_calls += 1
-            usage = mapping(event.noted.get("usage"))
-            self.input_tokens += integer(usage.get("input_tokens")) or 0
-            self.output_tokens += integer(usage.get("output_tokens")) or 0
+            tokens = mapping(event.noted.get("tokens"))
+            self.input_tokens += integer(tokens.get("input")) or 0
+            self.output_tokens += integer(tokens.get("output")) or 0
         elif event.kind == "tool":
             self.tool_calls += 1
 

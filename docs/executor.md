@@ -193,11 +193,13 @@ run tree. `None` disables a limit and zero prohibits use of the corresponding
 resource.
 
 Call limits are checked before invoking a model or tool. Token and cost totals
-are charged from each completed model result; the model step remains finished
-when its reported usage crosses a total, then the owning run fails. A token or
-cost limit requires model usage, and a cost limit also requires captured input
-and output prices for every selected model. Time expiry cancels an in-flight
-operation while recording affected runs as failed rather than user-canceled.
+are charged from each completed model result. Every completed model step notes
+its input and output token counts, captured USD-per-token prices, and computed
+USD cost when available. The model step remains finished when its usage or cost
+crosses a total, then the owning run fails. A token or cost limit requires model
+usage, and a cost limit also requires captured input and output prices for every
+selected model. Time expiry cancels an in-flight operation while recording
+affected runs as failed rather than user-canceled.
 
 The effective value is persisted once in the root start control context. Child
 runs inherit the same in-memory value and their start controls do not duplicate

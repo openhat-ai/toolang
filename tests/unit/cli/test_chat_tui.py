@@ -1591,7 +1591,7 @@ def _model_step_end(
         output=(TextPart(text=output),),
         noted={
             "model_ref": "test/model",
-            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "tokens": {"input": 1, "output": 1},
         },
         finished_at=finished_at,
     )

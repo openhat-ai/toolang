@@ -337,8 +337,9 @@
 - Model steps persist a non-secret effective target snapshot and references
   that rebuild the normalized `ModelCall` accepted by `ModelAdapter`.
   Instructions, canonical messages, and toolsets are content-addressed in
-  `runs.db`; provider-specific HTTP payloads, API keys, and request headers are
-  not stored.
+  `runs.db`; completed model steps note input and output token counts, captured
+  USD-per-token prices, and computed USD cost. Provider-specific HTTP payloads,
+  API keys, and request headers are not stored.
 - Run and thread IDs use the shared file-backed allocator. Run-control and
   thread-control indexes are allocated and inserted in one SQLite transaction
   so all durable identities remain safe across local processes.

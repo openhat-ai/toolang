@@ -903,12 +903,31 @@ agic reply(_: Text) -> Text:
                 (step.kind, step.status)
                 for step in harness.store.list_steps(run_id=record.id)
             ] == [("model", "finished"), ("system", "failed")]
+            model_step = harness.store.list_steps(run_id=record.id)[0]
+            assert model_step.noted["tokens"] == {"input": 6, "output": 5}
+            assert model_step.noted["price"] is None
+            assert model_step.noted["cost"] is None
+            assert "usage" not in model_step.noted
 
     asyncio.run(scenario())
 
 
-def test_run_cost_limit_uses_captured_model_prices(
+@pytest.mark.parametrize(
+    ("cost_limit", "status", "error"),
+    [
+        (None, "finished", None),
+        (
+            Decimal("0.02"),
+            "failed",
+            "Run cost limit exceeded: 0.03 > 0.02 USD",
+        ),
+    ],
+)
+def test_model_step_records_cost_and_enforces_run_cost_limit(
     tmp_path: Path,
+    cost_limit: Decimal | None,
+    status: str,
+    error: str | None,
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
@@ -943,11 +962,18 @@ agic reply(_: Text) -> Text:
                     runnable="reply",
                     input=perceive_input("hello"),
                 ),
-                limits=RunLimits(cost=Decimal("0.02")),
+                limits=RunLimits(cost=cost_limit),
             )
 
-            assert record.status == "failed"
-            assert record.error == "Run cost limit exceeded: 0.03 > 0.02 USD"
+            assert record.status == status
+            assert record.error == error
+            model_step = harness.store.list_steps(run_id=record.id)[0]
+            assert model_step.noted["tokens"] == {"input": 1, "output": 1}
+            assert model_step.noted["price"] == {
+                "input": "0.01",
+                "output": "0.02",
+            }
+            assert model_step.noted["cost"] == "0.03"
 
     asyncio.run(scenario())
 
@@ -1021,6 +1047,10 @@ agic reply(_: Text) -> Text:
                 "test/scripted"
             )
             assert len(harness.adapter.invocations) == 1
+            model_step = harness.store.list_steps(run_id=record.id)[0]
+            assert model_step.noted["tokens"] is None
+            assert model_step.noted["price"] is None
+            assert model_step.noted["cost"] is None
 
     asyncio.run(scenario())
 

@@ -136,6 +136,24 @@ later persisted in step output.
 contains additional information recorded by `StepEnd`. Neither repeats the
 step's input, output, status, or error.
 
+For a completed model step, `noted` stores its accounting facts:
+
+```text
+tokens:
+  input
+  output
+price:
+  input
+  output
+cost
+```
+
+Token counts are integers. Input and output prices are decimal USD-per-token
+text captured from the run's `AgentSetup`; cost is the decimal USD total
+computed from those prices and counts. Missing usage or pricing is stored as
+null. These facts are recorded whether or not the root run has token or cost
+limits.
+
 Step kinds remain intentionally small:
 
 ```text

@@ -23,6 +23,7 @@ from ..common import (
     value_percept,
     value_text,
 )
+from ..limits import _ModelAccounting
 from ..prepare import _AgicFrame, prepare_agic
 from ..steps import model as model_step
 from ..steps import tool as tool_step
@@ -40,7 +41,12 @@ class _AgicState:
     pending_inputs: Callable[[], tuple[RunControlRecord, ...]]
     before_call: Callable[[], None]
     messages: list[Message]
-    record_usage: Callable[[ModelUsage | None], None] = lambda _usage: None
+    account_usage: Callable[[ModelUsage | None], _ModelAccounting] = (
+        lambda usage: _ModelAccounting(usage=usage)
+    )
+    record_accounting: Callable[[_ModelAccounting], None] = (
+        lambda _accounting: None
+    )
     limits: RunLimits = RunLimits()
     record_output: Callable[[StepOutputRef], None] = lambda _ref: None
     output: StepOutputRef | None = None
@@ -114,8 +120,11 @@ async def execute(
         emit=execution.emit,
         pending_inputs=lambda: execution.steer_controls_for_call(binding.run_id),
         before_call=lambda: execution.raise_if_stopping(binding.run_id, call=True),
-        record_usage=lambda usage: execution.record_model_usage(
+        account_usage=lambda usage: execution.model_accounting(
             prepared.model, usage
+        ),
+        record_accounting=lambda accounting: execution.record_model_accounting(
+            prepared.model, accounting
         ),
         limits=binding.limits,
         record_output=lambda ref: execution.record_output(binding.run_id, ref),
