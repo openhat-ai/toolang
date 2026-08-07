@@ -396,14 +396,18 @@ flow pipeline:
         stdin=StringIO(),
     )
     output = capsys.readouterr()
+    stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert "visible" in output.out
-    assert "Run the visible command." in output.out
-    assert "pipeline" in output.out
-    assert "Run the pipeline." in output.out
-    assert "default" not in output.out
-    assert "<agic:" not in output.out
+    assert "Usage: toolang demo.too [OPTIONS] RUNNABLE [ARGS]..." in stdout
+    assert "Runnables" in stdout
+    assert "Commands" not in stdout
+    assert "visible" in stdout
+    assert "Run the visible command." in stdout
+    assert "pipeline" in stdout
+    assert "Run the pipeline." in stdout
+    assert "default" not in stdout
+    assert "<agic:" not in stdout
 
 
 @pytest.mark.parametrize("selector", ("agic:demo", "runnable:demo"))

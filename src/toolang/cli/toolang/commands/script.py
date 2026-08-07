@@ -49,6 +49,7 @@ from ...common.version import toolang_version
 Runnable = AgicDecl | FlowDecl
 _LITERAL_ITEM_PREFIX = "\ue002"
 _UNPERSISTED_THREAD = "<unpersisted-script-thread>"
+_RUNNABLES_PANEL = "Runnables"
 
 
 class _HelpArgument(TyperArgument):
@@ -149,6 +150,7 @@ def _program_command(
         help=f"Run an agic or flow from {source_label}.",
         no_args_is_help=True,
         rich_markup_mode="rich",
+        subcommand_metavar="RUNNABLE [ARGS]...",
     )
     for runnable in _public_runnables(program):
         group.add_command(
@@ -271,6 +273,7 @@ def _runnable_command(
         params=params,
         help=help_text,
         short_help=None,
+        rich_help_panel=_RUNNABLES_PANEL,
         rich_markup_mode="rich",
     )
 
