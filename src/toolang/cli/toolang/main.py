@@ -26,8 +26,6 @@ from ..common.routing import (
     RunAgentCommand,
     RuntimeAgentCommand,
     StartAgentCommand,
-    explicit_root,
-    extract_root_args,
 )
 from . import routing
 from .commands import agent as agent_commands
@@ -468,10 +466,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if routed is not None:
         return routed
     try:
-        args, prefix_agent = routing.normalize(
-            raw_args,
-            root=_routing_root(raw_args),
-        )
+        args, prefix_agent = routing.normalize(raw_args)
     except routing.RoutingError as exc:
         typer.echo(f"toolang error: {exc}", err=True)
         return 2
@@ -512,11 +507,6 @@ def _run_app(
 def _prog_name(argv0: str) -> str:
     text = Path(argv0).name.strip()
     return text or "toolang"
-
-
-def _routing_root(argv: Sequence[str]) -> Path:
-    root_args, _body = extract_root_args(argv)
-    return resolve_root(explicit_root(root_args))
 
 
 if __name__ == "__main__":

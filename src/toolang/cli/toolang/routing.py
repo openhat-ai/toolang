@@ -9,7 +9,6 @@ from typing import Literal
 
 import typer
 
-from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout, AgentPlacement
 from toolang.up import process as agents
 from ..caps.commands import CAP_KINDS
@@ -226,12 +225,12 @@ def dispatch_visiting(
     )
 
 
-def normalize(argv: list[str], *, root: Path) -> tuple[list[str], str | None]:
+def normalize(argv: list[str]) -> tuple[list[str], str | None]:
     """Normalize resident target-first syntax after non-resident routing."""
 
     global_args, body = extract_root_args(argv)
     try:
-        rewritten_body, agent = _rewrite_resident(body, root=root)
+        rewritten_body, agent = _rewrite_resident(body)
     except RoutingError:
         raise
     except ValueError as exc:
@@ -239,7 +238,7 @@ def normalize(argv: list[str], *, root: Path) -> tuple[list[str], str | None]:
     return [*global_args, *rewritten_body], agent
 
 
-def _rewrite_resident(body: list[str], *, root: Path) -> tuple[list[str], str | None]:
+def _rewrite_resident(body: list[str]) -> tuple[list[str], str | None]:
     if not body:
         return body, None
     first = body[0]
@@ -251,8 +250,6 @@ def _rewrite_resident(body: list[str], *, root: Path) -> tuple[list[str], str | 
             if not first_spec.accepts("after", "resident"):
                 raise RoutingError(_target_order_error(first_spec))
             return [first, explicit_agent(body[1]) or "", *body[2:]], None
-        if "after" not in first_spec.targets and "none" not in first_spec.targets:
-            raise RoutingError(_target_order_error(first_spec))
         return body, None
     if len(body) < 2:
         return body, None
@@ -261,12 +258,7 @@ def _rewrite_resident(body: list[str], *, root: Path) -> tuple[list[str], str | 
     if spec is None:
         return body, None
     explicit = explicit_agent(first)
-    residents = frozenset(LocalAgents(root / "agents").list())
     agent = explicit or first
-    if agent not in residents:
-        if spec.accepts("before", "resident"):
-            raise RoutingError(f"Agent {agent} not found")
-        raise RoutingError(_target_order_error(spec))
     if not spec.accepts("before", "resident"):
         raise RoutingError(_target_order_error(spec))
     if "after" in spec.targets:

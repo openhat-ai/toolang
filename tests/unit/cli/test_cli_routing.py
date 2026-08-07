@@ -11,7 +11,6 @@ import typer
 
 import toolang.cli.caps.main as caps_cli
 import toolang.cli.toolang.main as cli
-from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout
 from toolang.cli.toolang.commands import script
 from toolang.cli.toolang.commands.chat import main as chat_commands
@@ -24,6 +23,13 @@ from toolang.cli.toolang.routing import (
 )
 from toolang.cli.common.routing import extract_root_args
 from toolang.up import process as agents
+
+
+def _call_main(arguments: list[str]) -> int:
+    try:
+        return cli.main(arguments)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 1
 
 
 def test_extract_root_args_supports_short_option_and_stops_at_separator() -> None:
@@ -64,80 +70,98 @@ def test_cli_command_registry_declares_target_grammar(
     assert spec.placements == placements
 
 
-def test_cli_normalize_routes_resident_target_before_command(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "root"
-    LocalAgents(root / "agents").create("alice", content="")
+def test_cli_normalize_routes_resident_target_before_command() -> None:
     args, agent = normalize(
-        ["-r", str(root), "alice", "retry", "run_1"],
-        root=root,
+        ["-r", "/tmp/root", "alice", "retry", "run_1"],
     )
 
-    assert args == ["-r", str(root), "retry", "run_1"]
+    assert args == ["-r", "/tmp/root", "retry", "run_1"]
     assert agent == "alice"
 
 
-def test_cli_normalize_allows_both_orders_for_agent_self_commands(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "root"
-    LocalAgents(root / "agents").create("alice", content="")
-
-    prefix_args, prefix_agent = normalize(["alice", "info"], root=root)
-    postfix_args, postfix_agent = normalize(["info", "alice"], root=root)
+def test_cli_normalize_allows_both_orders_for_agent_self_commands() -> None:
+    prefix_args, prefix_agent = normalize(["alice", "info"])
+    postfix_args, postfix_agent = normalize(["info", "alice"])
 
     assert (prefix_args, prefix_agent) == (["info", "alice"], None)
     assert (postfix_args, postfix_agent) == (["info", "alice"], None)
 
 
-def test_cli_normalize_requires_declared_target_order(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    LocalAgents(root / "agents").create("alice", content="")
+def test_cli_normalize_defers_missing_target_to_command_help() -> None:
+    assert normalize(["retry", "alice", "run_1"]) == (
+        ["retry", "alice", "run_1"],
+        None,
+    )
 
-    with pytest.raises(RoutingError, match="retry requires TARGET before"):
-        normalize(["retry", "alice", "run_1"], root=root)
+
+def test_cli_normalize_rejects_an_invalid_target_order() -> None:
     with pytest.raises(RoutingError, match="remove requires TARGET after"):
-        normalize(["alice", "remove"], root=root)
+        normalize(["alice", "remove"])
 
 
-def test_cli_explicit_agent_prefix_resolves_command_name_collision(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "root"
-    LocalAgents(root / "agents").create("retry", content="")
-
-    args, agent = normalize(["agent:retry", "info"], root=root)
+def test_cli_explicit_agent_prefix_resolves_command_name_collision() -> None:
+    args, agent = normalize(["agent:retry", "info"])
 
     assert args == ["info", "retry"]
     assert agent is None
 
 
-def test_cli_command_name_wins_without_explicit_agent_prefix(tmp_path: Path) -> None:
-    root = tmp_path / "root"
-    LocalAgents(root / "agents").create("retry", content="")
-
-    with pytest.raises(RoutingError, match="retry requires TARGET before"):
-        normalize(["retry", "info"], root=root)
+def test_cli_command_name_wins_without_explicit_agent_prefix() -> None:
+    assert normalize(["retry", "info"]) == (["retry", "info"], None)
 
 
-def test_caps_cli_uses_command_priority_and_explicit_agent_prefix(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "root"
-    LocalAgents(root / "agents").create("skill", content="")
-
+def test_caps_cli_uses_command_priority_and_explicit_agent_prefix() -> None:
     global_args, global_agent = caps_cli._rewrite_agent_shortcuts(
         ["skill", "list"],
-        root=root,
     )
     agent_args, agent = caps_cli._rewrite_agent_shortcuts(
         ["agent:skill", "skill", "list"],
-        root=root,
     )
 
     assert (global_args, global_agent) == (["skill", "list"], None)
     assert (agent_args, agent) == (["skill", "list"], "skill")
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        ["steer"],
+        ["alice", "steer"],
+        ["agent:alice", "steer"],
+        ["alice", "steer", "run_1"],
+    ),
+)
+def test_cli_incomplete_command_shows_help_before_target_validation(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    arguments: list[str],
+) -> None:
+    _call_main(["--root", str(tmp_path), *arguments])
+    output = capsys.readouterr()
+
+    assert "Usage:" in output.out
+    assert "Steer an active run." in output.out
+    assert "Agent alice not found" not in output.err
+
+
+def test_cli_complete_command_validates_the_resident_target(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = _call_main(
+        [
+            "--root",
+            str(tmp_path),
+            "alice",
+            "steer",
+            "run_1",
+            "Change direction",
+        ]
+    )
+    output = capsys.readouterr()
+
+    assert result == 1
+    assert "Agent alice not found" in output.err
 
 
 def test_cli_prefix_agent_context_is_isolated_between_threads(

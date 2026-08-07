@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from pathlib import Path
-
 import click
 from typer import rich_utils
 from typer.core import TyperArgument, TyperCommand, TyperGroup
@@ -35,20 +33,6 @@ def extract_root_args(argv: Sequence[str]) -> tuple[list[str], list[str]]:
         body.append(token)
         index += 1
     return root_args, body
-
-
-def explicit_root(args: Sequence[str]) -> Path | None:
-    """Return the last explicit root value from extracted global arguments."""
-
-    root: Path | None = None
-    index = 0
-    while index < len(args):
-        if args[index] in {"--root", "-r"} and index + 1 < len(args):
-            root = Path(args[index + 1])
-            index += 2
-            continue
-        index += 1
-    return root
 
 
 def explicit_agent(token: str) -> str | None:
@@ -89,6 +73,13 @@ class PrefixAgentCommand(TyperCommand):
 
     def get_params(self, ctx: click.Context) -> list[click.Parameter]:
         return [self._prefix_agent_argument(), *self._real_params(ctx)]
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        try:
+            return TyperCommand.parse_args(self, ctx, args)
+        except click.MissingParameter:
+            click.echo(ctx.get_help())
+            ctx.exit()
 
     def format_usage(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         command_path = _strip_help_only_agent_metavars(ctx.command_path)
@@ -186,12 +177,10 @@ class RequiredPrefixAgentCommand(PrefixAgentCommand):
         state = ctx.obj
         if not isinstance(state, CliContext):
             raise TypeError("missing CLI context")
-        if args and not args[0].startswith("-") and not state.agent:
-            state.agent = args.pop(0)
         if not state.agent and "--help" not in args:
             click.echo(ctx.get_help())
             ctx.exit()
-        return TyperCommand.parse_args(self, ctx, args)
+        return PrefixAgentCommand.parse_args(self, ctx, args)
 
 
 class RuntimeAgentCommand(TyperCommand):
