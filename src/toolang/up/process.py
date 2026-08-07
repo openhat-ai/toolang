@@ -78,6 +78,11 @@ def parse_agent_selector(text: str) -> AgentSelector:
     raw = text.strip()
     if not raw:
         raise ValueError("agent selector cannot be empty")
+    if raw.startswith("agent:") and not raw.startswith("agent://"):
+        name = raw.removeprefix("agent:").strip()
+        if not name or name in {".", ".."} or "/" in name or "\\" in name:
+            raise ValueError(f"invalid resident agent selector: {text}")
+        return AgentSelector(form="name", text=raw, name=name)
     if "://" in raw:
         return AgentSelector(form="ref", text=raw, ref=_parse_agent_ref(raw))
     slash_count = raw.count("/")

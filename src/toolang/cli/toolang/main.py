@@ -14,6 +14,7 @@ import typer
 from typer import rich_utils
 from typer.core import TyperGroup
 
+from ...catalog.agent import LocalAgents
 from ...common.layout import AgentLayout
 from ...up.logging import configure_logging
 from ..caps import commands as cap_commands
@@ -26,6 +27,8 @@ from ..common.routing import (
     RunAgentCommand,
     RuntimeAgentCommand,
     StartAgentCommand,
+    explicit_root,
+    extract_root_args,
 )
 from . import routing
 from .commands import agent as agent_commands
@@ -33,7 +36,6 @@ from .commands import chat as chat_commands
 from .commands import plugin as plugin_commands
 from .commands import program as program_commands
 from .commands import runtime as runtime_commands
-from .commands import script as script_commands
 from .commands import job as job_commands
 from .commands import thread as thread_commands
 
@@ -73,7 +75,7 @@ _THREAD_PANEL_COMMAND_ORDER = (
     "threads",
 )
 _RUNTIME_PANEL_COMMAND_ORDER = ("model", "tool", "channel", "sandbox")
-_HIDDEN_ALIAS_COMMANDS = frozenset({"send", "attach"})
+_REGISTERED_COMMANDS: set[str] = set()
 
 
 class _ToolangGroup(TyperGroup):
@@ -133,6 +135,22 @@ app = typer.Typer(
 )
 
 
+def _registered_command(name: str, **kwargs: Any) -> Any:
+    routing.command_spec(name)
+    if name in _REGISTERED_COMMANDS:
+        raise RuntimeError(f"top-level command registered more than once: {name}")
+    _REGISTERED_COMMANDS.add(name)
+    return app.command(name, **kwargs)
+
+
+def _registered_group(group: typer.Typer, *, name: str, **kwargs: Any) -> None:
+    routing.command_spec(name)
+    if name in _REGISTERED_COMMANDS:
+        raise RuntimeError(f"top-level command registered more than once: {name}")
+    _REGISTERED_COMMANDS.add(name)
+    app.add_typer(group, name=name, **kwargs)
+
+
 @app.callback()
 def callback(
     ctx: typer.Context,
@@ -165,7 +183,7 @@ def callback(
     )
 
 
-@app.command("hidden", help="Show hidden commands.", hidden=True)
+@_registered_command("hidden", help="Show hidden commands.", hidden=True)
 def hidden_commands(ctx: typer.Context) -> None:
     console = rich_utils._get_rich_console()
     console.print(
@@ -179,14 +197,9 @@ def hidden_commands(ctx: typer.Context) -> None:
     hidden_commands = [
         command
         for name, command in group.commands.items()
-        if command.hidden and name not in {"hidden", *_HIDDEN_ALIAS_COMMANDS}
+        if command.hidden and name != "hidden"
     ]
-    alias_commands = [
-        command
-        for name, command in group.commands.items()
-        if command.hidden and name in _HIDDEN_ALIAS_COMMANDS
-    ]
-    if not hidden_commands and not alias_commands:
+    if not hidden_commands:
         typer.echo("No hidden commands.")
         return
     command_name = ctx.command_path.split()[0] if ctx.command_path else "toolang"
@@ -200,7 +213,6 @@ def hidden_commands(ctx: typer.Context) -> None:
         )
     )
     _print_hidden_command_panel(console, "Advanced Commands", hidden_commands)
-    _print_hidden_command_panel(console, "Alias Commands", alias_commands)
 
 
 def _print_hidden_command_panel(
@@ -217,143 +229,131 @@ def _print_hidden_command_panel(
     )
 
 
-app.command(
+_registered_command(
     "new",
     help="Create an agent.",
     no_args_is_help=True,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )(agent_commands.new_agent)
-app.command(
+_registered_command(
     "clone",
     help="Clone an agent.",
     no_args_is_help=True,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )(agent_commands.clone_agent)
-app.command(
+_registered_command(
     "remove",
     help="Remove an agent.",
     no_args_is_help=True,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )(agent_commands.remove_agent)
-app.command(
+_registered_command(
     "list",
     help="Show agents and their status.",
     rich_help_panel=AGENT_COMMAND_PANEL,
 )(agent_commands.list_agents)
-app.command(
+_registered_command(
     "info",
     help="Show agent info.",
     no_args_is_help=True,
     cls=RuntimeAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )(agent_commands.info_agent)
-app.command(
+_registered_command(
     "run",
     help="Run an agent in the foreground.",
     no_args_is_help=True,
     cls=RunAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )(runtime_commands.run)
-app.command(
+_registered_command(
     "start",
     help="Start an agent.",
     no_args_is_help=True,
     cls=StartAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )(runtime_commands.start)
-app.command(
+_registered_command(
     "stop",
     help="Stop an agent.",
     no_args_is_help=True,
     cls=RuntimeAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )(runtime_commands.stop)
-app.add_typer(
+_registered_group(
     job_commands.chore_app,
     name="chore",
     no_args_is_help=True,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
-app.add_typer(
+_registered_group(
     job_commands.task_app,
     name="task",
     no_args_is_help=True,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )
 
-app.command(
+_registered_command(
     "chat",
     help="Open a terminal chat session.",
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(chat_commands.chat_command)
-app.command(
-    "send",
-    help="Send one message to a thread.",
-    hidden=True,
-    cls=RequiredPrefixAgentCommand,
-)(chat_commands.send_command)
-app.command(
-    "attach",
-    help="Open chat on a thread.",
-    hidden=True,
-    cls=RequiredPrefixAgentCommand,
-)(chat_commands.attach_command)
-app.command(
+_registered_command(
     "threads",
     help="List threads.",
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.threads_command)
-app.command(
+_registered_command(
     "runs",
     help="List runs.",
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.runs_command)
-app.command(
+_registered_command(
     "inspect",
     help="Inspect a thread or run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.inspect_command)
-app.command(
+_registered_command(
     "steer",
     help="Steer an active run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.steer_command)
-app.command(
+_registered_command(
     "cancel",
     help="Cancel an active run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.cancel_command)
-app.command(
+_registered_command(
     "retry",
     help="Retry a terminal run from a durable step boundary.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.retry_command)
-app.command(
+_registered_command(
     "rerun",
     help="Start a new run from a prior invocation.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.rerun_command)
-app.command(
+_registered_command(
     "rewind",
     help="Rewind a thread to an earlier point.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.rewind_command)
-app.command(
+_registered_command(
     "fork",
     help="Fork a thread from a branch point.",
     no_args_is_help=True,
@@ -361,25 +361,25 @@ app.command(
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.fork_command)
 
-app.add_typer(
+_registered_group(
     plugin_commands.model_app,
     name="model",
     no_args_is_help=True,
     rich_help_panel=RUNTIME_COMMAND_PANEL,
 )
-app.add_typer(
+_registered_group(
     plugin_commands.tool_app,
     name="tool",
     no_args_is_help=True,
     rich_help_panel=RUNTIME_COMMAND_PANEL,
 )
-app.add_typer(
+_registered_group(
     plugin_commands.channel_app,
     name="channel",
     no_args_is_help=True,
     rich_help_panel=RUNTIME_COMMAND_PANEL,
 )
-app.add_typer(
+_registered_group(
     plugin_commands.sandbox_app,
     name="sandbox",
     no_args_is_help=True,
@@ -387,62 +387,57 @@ app.add_typer(
 )
 
 _cap_apps = cap_commands.create_cap_apps(group_cls=OptionalPrefixAgentGroup)
-app.add_typer(
+_registered_group(
     _cap_apps["psyche"],
     name="psyche",
     no_args_is_help=True,
     rich_help_panel=CAPS_COMMAND_PANEL,
 )
-app.add_typer(
+_registered_group(
     _cap_apps["skill"],
     name="skill",
     no_args_is_help=True,
     rich_help_panel=CAPS_COMMAND_PANEL,
 )
-app.add_typer(
+_registered_group(
     _cap_apps["service"],
     name="service",
     no_args_is_help=True,
     rich_help_panel=CAPS_COMMAND_PANEL,
 )
-app.add_typer(
+_registered_group(
     _cap_apps["prompt"],
     name="prompt",
     no_args_is_help=True,
     rich_help_panel=CAPS_COMMAND_PANEL,
 )
-app.command(
+_registered_command(
     "caps",
     help="Inspect available caps.",
     cls=OptionalPrefixAgentListCommand,
     rich_help_panel=CAPS_COMMAND_PANEL,
 )(cap_commands.list_caps)
 
-app.command(
+_registered_command(
     "fmt",
     help="Format .too files.",
     hidden=True,
     no_args_is_help=True,
 )(program_commands.fmt)
-app.command(
+_registered_command(
     "parse",
     help="Parse a .too file and print its AST.",
     hidden=True,
     no_args_is_help=True,
 )(program_commands.parse_program)
-app.command(
-    "script",
-    help="Show local Toolang script usage.",
-    hidden=True,
-    cls=script_commands.ScriptHelpCommand,
-    context_settings={"allow_interspersed_args": False},
-)(script_commands.script_command)
-app.command(
+_registered_command(
     "serve",
     help="Run an AgentServer process.",
     hidden=True,
     no_args_is_help=True,
 )(runtime_commands.serve)
+
+routing.validate_command_registration(_REGISTERED_COMMANDS)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -461,6 +456,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if routed is not None:
         return routed
+    target_help = routing.select_target_help(
+        raw_args,
+        residents=_routing_residents(raw_args),
+    )
+    if target_help is not None:
+        return _run_target_help(target_help, prog_name=prog_name)
     routed = routing.dispatch_visiting(
         raw_args,
         run_app=lambda args, layout: _run_app(
@@ -473,8 +474,44 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if routed is not None:
         return routed
-    args, prefix_agent = routing.normalize(raw_args)
+    try:
+        args, prefix_agent = routing.normalize(raw_args)
+    except routing.RoutingError as exc:
+        typer.echo(f"toolang error: {exc}", err=True)
+        return 2
     return _run_app(args, prefix_agent, prog_name=prog_name)
+
+
+def _run_target_help(
+    target: routing.TargetHelp,
+    *,
+    prog_name: str,
+) -> int:
+    root_command = typer.main.get_command(app)
+    if not isinstance(root_command, click.Group):
+        raise TypeError("Toolang CLI root must be a command group")
+    commands = {
+        name: command
+        for name, command in root_command.commands.items()
+        if not command.hidden
+        and routing.command_spec(name).accepts("before", target.placement)
+    }
+    group = _ToolangGroup(
+        name=target.selector,
+        commands=commands,
+        help=f"Commands for {target.placement} agent {target.label}.",
+        no_args_is_help=True,
+        rich_markup_mode="rich",
+    )
+    try:
+        group.main(
+            args=["--help"],
+            prog_name=f"{prog_name} {target.selector}",
+            standalone_mode=False,
+        )
+    except click.exceptions.Exit as exc:
+        return exc.exit_code
+    return 0
 
 
 def _run_app(
@@ -511,6 +548,12 @@ def _run_app(
 def _prog_name(argv0: str) -> str:
     text = Path(argv0).name.strip()
     return text or "toolang"
+
+
+def _routing_residents(argv: Sequence[str]) -> frozenset[str]:
+    root_args, _body = extract_root_args(argv)
+    root = resolve_root(explicit_root(root_args))
+    return frozenset(LocalAgents(root / "agents").list())
 
 
 if __name__ == "__main__":

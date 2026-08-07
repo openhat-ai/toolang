@@ -314,17 +314,21 @@
 - A one-shot `SCRIPT RUNNABLE` command constructs `RunSpec` and calls
   `RunExecutor.start()` directly in the CLI process, creating a fresh
   `script_*` thread. Script, task, chore, and chat are execution origins, not
-  separate execution abstractions. The script command does not use the HTTP API
-  or sandbox hosting. Stdout is reserved for the final result, a shared CLI
+  separate execution abstractions. The script invocation does not use the HTTP
+  API or sandbox hosting. Stdout is reserved for the final result, a shared CLI
   `RunTracer` writes concise progress to stderr, and `PY_LOG` diagnostics go to
   the per-run log file.
-- A roaming `.too` source path may select `chat`, `threads`, `runs`, or `inspect`.
-  Routing binds its exact `AgentLayout` into `CliContext`; it must not rewrite
-  the roaming target into a resident `--root` and agent-name pair. Other
-  roaming management commands remain unsupported for now. A visiting selector
-  may select `chat` or `inspect`: chat resolves and materializes the remote
-  source, while inspect derives the stable visiting layout without fetching it.
-  Other visiting management commands remain unsupported for now.
+- Top-level CLI routing is declared once alongside command registration.
+  Catalog commands are command-first, agent-self commands accept either target
+  order, and commands for an agent's subordinate resources require the target
+  first. Command names take priority over dynamic names; `agent:`, `agic:`,
+  `flow:`, and `runnable:` explicitly resolve collisions.
+- Roaming and visiting targets support `info`, `run`, `chat`, `threads`, `runs`,
+  `inspect`, `steer`, `cancel`, `retry`, `rerun`, `rewind`, and `fork`. Routing
+  binds the exact `AgentLayout` into `CliContext`; it must not rewrite a
+  non-resident target into a resident `--root` and agent-name pair. `info`,
+  `run`, `chat`, `retry`, and `rerun` prepare the current program. History-only
+  commands derive the stable layout without fetching or materializing source.
 - Define module loggers with `logging.getLogger(__name__)` so logger names
   always match their package and module paths. Configure logging with package
   prefixes such as `toolang.execution`, `toolang.execution.executor`,

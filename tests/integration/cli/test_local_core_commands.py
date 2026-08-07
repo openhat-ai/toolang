@@ -6,11 +6,11 @@ import json
 from pathlib import Path
 from collections.abc import Mapping
 import sqlite3
-from typing import Any
+from typing import Any, cast
 
 import click
 import pytest
-from typer.testing import CliRunner
+from click.testing import CliRunner
 
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult, ModelUsage
@@ -46,9 +46,10 @@ def test_read_only_thread_commands_do_not_create_execution_store(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "toolang"
+    _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
 
-    result = _invoke(root, "threads", "alice")
+    result = _invoke(root, "alice", "threads")
 
     assert result.exit_code == 0
     assert not layout.run_store.exists()
@@ -67,6 +68,7 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     advice: str,
 ) -> None:
     root = tmp_path / "toolang"
+    _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
     layout.run_store.parent.mkdir(parents=True)
     connection = sqlite3.connect(layout.run_store)
@@ -76,7 +78,7 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     connection.commit()
     connection.close()
 
-    result = _invoke(root, "threads", "alice")
+    result = _invoke(root, "alice", "threads")
     error_output = " ".join(
         click.unstyle(result.stderr).replace("│", " ").split()
     )
@@ -103,6 +105,7 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
 
 def test_thread_and_run_lists_read_local_history(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
+    _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
     store = RunStore(layout.run_store)
     try:
@@ -128,11 +131,11 @@ def test_thread_and_run_lists_read_local_history(tmp_path: Path) -> None:
     finally:
         store.close()
 
-    threads = _invoke(root, "threads", "alice")
+    threads = _invoke(root, "alice", "threads")
     runs = _invoke(
         root,
-        "runs",
         "alice",
+        "runs",
         "--thread",
         "term_main",
         "--status",
@@ -150,6 +153,7 @@ def test_thread_and_run_lists_read_local_history(tmp_path: Path) -> None:
 
 def test_chore_list_shows_scheduler_and_latest_run_state(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
+    _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
     AuthoredJobs(layout.home).create(
         JobFile.parse(
@@ -187,7 +191,7 @@ Maintain the knowledge base.
     finally:
         runs.close()
 
-    result = _invoke(root, "chore", "list", "alice")
+    result = _invoke(root, "alice", "chore", "list")
 
     assert result.exit_code == 0, result.stderr
     assert "STATUS" in result.stdout
@@ -202,6 +206,7 @@ Maintain the knowledge base.
 
 def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
+    _create_agent(root)
     store = RunStore(AgentLayout.resident(root, "alice").run_store)
     try:
         run = project_run_start(
@@ -226,7 +231,7 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
     finally:
         store.close()
 
-    result = _invoke(root, "inspect", "alice", "run_inspect:0", "--json")
+    result = _invoke(root, "alice", "inspect", "run_inspect:0", "--json")
 
     assert result.exit_code == 0
     document = json.loads(result.stdout)
@@ -340,6 +345,7 @@ def test_visiting_selector_reads_inspection_without_fetching(
 
 def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
+    _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
     store = RunStore(layout.run_store)
     try:
@@ -353,8 +359,8 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
     finally:
         store.close()
 
-    steer = _invoke(root, "steer", "alice", "term_active", "Focus on tests")
-    cancel = _invoke(root, "cancel", "alice", "run_active")
+    steer = _invoke(root, "alice", "steer", "term_active", "Focus on tests")
+    cancel = _invoke(root, "alice", "cancel", "run_active")
 
     assert steer.exit_code == 0
     assert steer.stdout.strip() == "steered run_active"
@@ -395,6 +401,7 @@ agic reply(_: Part[]) -> Part[]:
             ModelCallResult(message=Message.assistant("reran")),
         ],
     )
+    _create_agent(harness.setup.layout.root)
 
     class _SetupSnapshot:
         def __init__(self, _layout: AgentLayout) -> None:
@@ -431,8 +438,8 @@ agic reply(_: Part[]) -> Part[]:
 
         retry = _invoke(
             harness.setup.layout.root,
-            "retry",
             "alice",
+            "retry",
             source.id,
             "--limit",
             "tokens=10",
@@ -448,8 +455,8 @@ agic reply(_: Part[]) -> Part[]:
         )
         rerun = _invoke(
             harness.setup.layout.root,
-            "rerun",
             "alice",
+            "rerun",
             source.id,
             "--limit",
             "time=30",
@@ -477,6 +484,7 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "toolang"
+    _create_agent(root)
     layout = AgentLayout.resident(root, "alice")
     store = RunStore(layout.run_store)
     try:
@@ -499,7 +507,7 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
     finally:
         store.close()
 
-    fork = _invoke(root, "fork", "alice", "term_source")
+    fork = _invoke(root, "alice", "fork", "term_source")
 
     assert fork.exit_code == 0
     words = fork.stdout.strip().split()
@@ -514,7 +522,7 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
     assert forked is not None
     assert [run.id for run in forked.runs] == ["run_first", "run_second"]
 
-    rewind = _invoke(root, "rewind", "alice", "term_source")
+    rewind = _invoke(root, "alice", "rewind", "term_source")
 
     assert rewind.exit_code == 0
     assert rewind.stdout.strip() == "rewound term_source before run_second"
@@ -594,8 +602,119 @@ def test_agent_info_builds_state_and_setup_without_server(
     assert "stopped" in result.stdout
 
 
+def test_roaming_agent_info_uses_the_source_layout(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text(
+        templates.render_template("agent", agent_name="demo", name="demo"),
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+    monkeypatch.setattr(
+        agent_commands,
+        "echo_pairs_table",
+        lambda rows, *, avatar, title: captured.update(
+            rows=dict(rows),
+            avatar=avatar,
+            title=title,
+        ),
+    )
+
+    result = cli.main([str(source), "info"])
+    capsys.readouterr()
+
+    assert result == 0
+    assert captured["title"] == "DEMO"
+    rows = cast(dict[str, str], captured["rows"])
+    assert rows["Home"] == str(AgentLayout.roaming(source).home)
+
+
+def test_visiting_agent_info_uses_the_materialized_layout(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    selector = "brice/researcher"
+    layout = AgentLayout(
+        root=tmp_path / "visiting",
+        name="researcher",
+        placement="visiting",
+    )
+    layout.home.mkdir(parents=True)
+    layout.program.write_text(
+        templates.render_template(
+            "agent",
+            agent_name="researcher",
+            name="researcher",
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        agent_commands,
+        "echo_pairs_table",
+        lambda rows, *, avatar, title: captured.update(
+            rows=dict(rows),
+            avatar=avatar,
+            title=title,
+        ),
+    )
+    monkeypatch.setattr(
+        agents,
+        "resolve_visiting_layout",
+        lambda *_args, **_kwargs: layout,
+    )
+
+    result = cli.main(["info", selector])
+    capsys.readouterr()
+
+    assert result == 0
+    assert captured["title"] == "RESEARCHER"
+    rows = cast(dict[str, str], captured["rows"])
+    assert rows["Home"] == str(layout.home)
+
+
 def _invoke(root: Path, *args: str):
-    return runner.invoke(cli.app, ["--root", str(root), *args], env={})
+    @click.command(
+        context_settings={"ignore_unknown_options": True, "allow_extra_args": True}
+    )
+    @click.argument("arguments", nargs=-1, type=click.UNPROCESSED)
+    def public_cli(arguments: tuple[str, ...]) -> None:
+        raise click.exceptions.Exit(
+            cli.main(["--root", str(root), *arguments])
+        )
+
+    return runner.invoke(public_cli, list(args), env={})
+
+
+def _create_agent(root: Path, name: str = "alice") -> None:
+    agents = LocalAgents(root / "agents")
+    content = templates.render_template("agent", agent_name=name, name=name)
+    if agents.get(name) is not None:
+        return
+    home = agents.path(name)
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "agent.too").write_text(content, encoding="utf-8")
+
+
+class _EmptySetupWatcher:
+    def __init__(self, layout: AgentLayout) -> None:
+        self.layout = layout
+
+    async def refresh(self) -> AgentSetup:
+        return AgentSetup(
+            layout=self.layout,
+            providers={},
+            adapters={},
+            models=(),
+            tools={},
+            envs={},
+        )
 
 
 class _FakeTool:

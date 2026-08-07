@@ -6,10 +6,8 @@ from pathlib import Path
 
 import pytest
 from click.utils import strip_ansi
-from typer.testing import CliRunner
 
 from toolang.base.errors import ToolangError
-from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import script
 from toolang.execution.executor import CeilingSpec
 from toolang.execution.records import RunInputRef, RunRecord
@@ -243,11 +241,17 @@ def test_script_includes_an_image(
     assert call.content == "@sample.png"
 
 
-def test_script_rejects_missing_required_parameter(
+def test_script_shows_runnable_help_for_a_missing_required_parameter(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     capsys,
 ) -> None:
     source = _write_source(tmp_path)
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("an incomplete call must not run"),
+    )
 
     result = script.dispatch(
         [],
@@ -258,7 +262,42 @@ def test_script_rejects_missing_required_parameter(
     output = capsys.readouterr()
 
     assert result == 2
-    assert "missing required arguments: count=..." in output.err
+    assert "Usage:" in output.out
+    assert "count=Number" in output.out
+    assert "Run:" not in output.err
+
+
+def test_script_shows_runnable_help_for_missing_primary_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    source = _write_source(
+        tmp_path,
+        """
+agic demo(_: Part[]):
+  {{_}}
+""",
+    )
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("an incomplete call must not run"),
+    )
+
+    result = script.dispatch(
+        [],
+        [str(source), "demo"],
+        prog_name="toolang",
+        stdin=StringIO(),
+    )
+    output = capsys.readouterr()
+
+    assert result == 2
+    assert "Usage:" in output.out
+    assert "Primary Part[] input." in output.out
+    assert "requires primary input" not in output.err
+    assert "Run:" not in output.err
 
 
 def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> None:
@@ -357,36 +396,64 @@ flow pipeline:
         stdin=StringIO(),
     )
     output = capsys.readouterr()
+    stdout = strip_ansi(output.out)
 
     assert result == 0
-    assert "visible" in output.out
-    assert "Run the visible command." in output.out
-    assert "pipeline" in output.out
-    assert "Run the pipeline." in output.out
-    assert "default" not in output.out
-    assert "<agic:" not in output.out
+    assert "Usage: toolang demo.too [OPTIONS] RUNNABLE [ARGS]..." in stdout
+    assert "Runnables" in stdout
+    assert "Commands" not in stdout
+    assert "visible" in stdout
+    assert "Run the visible command." in stdout
+    assert "pipeline" in stdout
+    assert "Run the pipeline." in stdout
+    assert "default" not in stdout
+    assert "<agic:" not in stdout
 
 
-def test_hidden_script_command_exposes_generic_usage() -> None:
-    result = CliRunner().invoke(cli.app, ["script"])
-
-    assert result.exit_code == 0
-    assert "Usage:" in result.stdout
-    assert "SCRIPT [RUNNABLE [ARGUMENTS]...]" in result.stdout
-    assert "RUNNABLE [ARGUMENTS]..." in result.stdout
-
-
-def test_hidden_script_command_rejects_a_script_path(tmp_path: Path) -> None:
+@pytest.mark.parametrize("selector", ("agic:demo", "runnable:demo"))
+def test_script_accepts_explicit_runnable_selectors(
+    tmp_path: Path,
+    monkeypatch,
+    selector: str,
+) -> None:
     source = _write_source(tmp_path)
-
-    result = CliRunner().invoke(
-        cli.app,
-        ["script", str(source), "demo", "--help"],
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda source_path, **kwargs: captured.update(
+            source_path=source_path,
+            **kwargs,
+        )
+        or 0,
     )
 
-    assert result.exit_code == 2
-    assert "Got unexpected extra arguments" in result.stderr
-    assert source.name in result.stderr
+    result = script.dispatch(
+        [],
+        [str(source), selector, "count=2", "hello"],
+        prog_name="toolang",
+        stdin=StringIO(),
+    )
+
+    assert result == 0
+    assert captured["runnable"] == "demo"
+
+
+def test_script_rejects_an_explicit_runnable_kind_mismatch(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    source = _write_source(tmp_path)
+
+    result = script.dispatch(
+        [],
+        [str(source), "flow:demo", "count=2", "hello"],
+        prog_name="toolang",
+        stdin=StringIO(),
+    )
+
+    assert result == 1
+    assert "runnable is not a flow: demo" in capsys.readouterr().err
 
 
 def test_script_rejects_sandbox_option(

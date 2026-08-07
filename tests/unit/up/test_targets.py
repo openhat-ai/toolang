@@ -14,6 +14,7 @@ from toolang.common.github import GitHubRef
 
 def test_agent_selector_parsing_supports_name_shorthand_and_ref() -> None:
     local = agents.parse_agent_selector("alice")
+    explicit_local = agents.parse_agent_selector("agent:alice")
     github_short = agents.parse_agent_selector("brice/alice")
     host_short = agents.parse_agent_selector("toolang.ai/alice")
     github_ref = agents.parse_agent_selector(
@@ -22,6 +23,8 @@ def test_agent_selector_parsing_supports_name_shorthand_and_ref() -> None:
 
     assert local.form == "name"
     assert local.name == "alice"
+    assert explicit_local.form == "name"
+    assert explicit_local.name == "alice"
     assert github_short.github_owner == "brice"
     assert github_short.name == "alice"
     assert host_short.resolved_ref().render() == "https://toolang.ai/alice.too"

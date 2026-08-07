@@ -49,6 +49,7 @@ from ...common.version import toolang_version
 Runnable = AgicDecl | FlowDecl
 _LITERAL_ITEM_PREFIX = "\ue002"
 _UNPERSISTED_THREAD = "<unpersisted-script-thread>"
+_RUNNABLES_PANEL = "Runnables"
 
 
 class _HelpArgument(TyperArgument):
@@ -75,29 +76,19 @@ class _CollectorArgument(TyperArgument):
         return []
 
 
-class ScriptHelpCommand(TyperCommand):
-    """Render generic path-based script usage for the hidden help command."""
-
-    def format_usage(
-        self,
-        ctx: click.Context,
-        formatter: click.HelpFormatter,
-    ) -> None:
-        command_path = (
-            ctx.parent.command_path
-            if ctx.parent is not None
-            else ctx.command_path
-        )
-        formatter.write_usage(
-            command_path,
-            "SCRIPT [RUNNABLE [ARGUMENTS]...]",
-        )
+class _IncompleteRunnableCall(Exception):
+    """A dynamic runnable command is missing required call input."""
 
 
-def script_command(ctx: typer.Context) -> None:
-    """Show how to run an agic or flow from a local Toolang script."""
+class _RunnableCommand(TyperCommand):
+    """Show runnable help when its collected call is incomplete."""
 
-    typer.echo(ctx.get_help())
+    def invoke(self, ctx: click.Context) -> Any:
+        try:
+            return TyperCommand.invoke(self, ctx)
+        except _IncompleteRunnableCall:
+            click.echo(ctx.get_help())
+            ctx.exit(2)
 
 
 def dispatch(
@@ -107,7 +98,7 @@ def dispatch(
     prog_name: str,
     stdin: TextIO | None = None,
 ) -> int:
-    """Dispatch the path shorthand or hidden script command."""
+    """Dispatch one path-based runnable invocation."""
 
     if global_args:
         typer.echo(
@@ -130,8 +121,9 @@ def dispatch(
             source_label=argv[0],
             stdin=stdin or sys.stdin,
         )
+        command_args = _typed_runnable_args(program, argv[1:])
         result = command.main(
-            args=_protect_literal_items(argv[1:] or ["--help"]),
+            args=_protect_literal_items(command_args or ["--help"]),
             prog_name=f"{prog_name} {argv[0]}",
             standalone_mode=False,
         )
@@ -158,6 +150,7 @@ def _program_command(
         help=f"Run an agic or flow from {source_label}.",
         no_args_is_help=True,
         rich_markup_mode="rich",
+        subcommand_metavar="RUNNABLE [ARGS]...",
     )
     for runnable in _public_runnables(program):
         group.add_command(
@@ -274,12 +267,13 @@ def _runnable_command(
             hidden=True,
         )
     )
-    return TyperCommand(
+    return _RunnableCommand(
         name=runnable.name,
         callback=callback,
         params=params,
         help=help_text,
         short_help=None,
+        rich_help_panel=_RUNNABLES_PANEL,
         rich_markup_mode="rich",
     )
 
@@ -315,6 +309,30 @@ def _public_runnables(program: Program) -> tuple[Runnable, ...]:
     )
 
 
+def _typed_runnable_args(program: Program, args: list[str]) -> list[str]:
+    """Remove one explicit runnable-kind prefix and validate its declaration."""
+
+    if not args:
+        return args
+    kind, separator, name = args[0].partition(":")
+    if not separator or kind not in {"agic", "flow", "runnable"}:
+        return args
+    name = name.strip()
+    if not name:
+        raise ValueError(f"{kind} selector cannot be empty")
+    matches = tuple(
+        runnable for runnable in _public_runnables(program) if runnable.name == name
+    )
+    if not matches:
+        raise ValueError(f"runnable not found: {name}")
+    runnable = matches[0]
+    if kind == "agic" and not isinstance(runnable, AgicDecl):
+        raise ValueError(f"runnable is not an agic: {name}")
+    if kind == "flow" and not isinstance(runnable, FlowDecl):
+        raise ValueError(f"runnable is not a flow: {name}")
+    return [name, *args[1:]]
+
+
 def _collect_call(
     runnable: Runnable,
     *,
@@ -344,15 +362,19 @@ def _collect_call(
         if input_source is None
         else parse_runnable_call(input_source)
     )
-    if not any(item.kind in {"agic", "flow"} for item in call.overrides):
+    has_runnable_override = any(
+        item.kind in {"agic", "flow"} for item in call.overrides
+    )
+    if not has_runnable_override:
         missing = [
             parameter.name
             for parameter in runnable.params
             if not parameter.optional and parameter.name not in raw_args
         ]
         if missing:
-            joined = ", ".join(f"{name}=..." for name in missing)
-            raise click.UsageError(f"missing required arguments: {joined}")
+            raise _IncompleteRunnableCall
+        if runnable.input is not None and not runnable.input.optional and not call.content:
+            raise _IncompleteRunnableCall
     return call, tuple(raw_args.items())
 
 

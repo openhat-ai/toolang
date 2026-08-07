@@ -17,6 +17,7 @@ from ..common.context import CliContext, resolve_root
 from ..common.routing import (
     OptionalPrefixAgentGroup,
     OptionalPrefixAgentListCommand,
+    explicit_agent,
     extract_root_args,
 )
 from ..common.version import toolang_version
@@ -82,7 +83,11 @@ app.add_typer(_cap_apps["prompt"], name="prompt", no_args_is_help=True)
 def main(argv: Sequence[str] | None = None) -> int:
     raw_args = list(argv) if argv is not None else sys.argv[1:]
     global_args, body = extract_root_args(raw_args)
-    rewritten_body, prefix_agent = _rewrite_agent_shortcuts(body)
+    try:
+        rewritten_body, prefix_agent = _rewrite_agent_shortcuts(body)
+    except ValueError as exc:
+        typer.echo(f"caps error: {exc}", err=True)
+        return 2
     token = _PREFIX_AGENT.set(prefix_agent)
     try:
         app(
@@ -101,17 +106,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _rewrite_agent_shortcuts(body: list[str]) -> tuple[list[str], str | None]:
-    if (
-        len(body) >= 2
-        and _looks_like_agent_name(body[0])
-        and body[1] in CAP_TOP_LEVEL_COMMANDS
-    ):
-        return [body[1], *body[2:]], body[0]
-    return body, None
-
-
-def _looks_like_agent_name(token: str) -> bool:
-    return bool(token) and not token.startswith("-") and token not in CAP_TOP_LEVEL_COMMANDS
+    if not body or body[0] in CAP_TOP_LEVEL_COMMANDS or len(body) < 2:
+        return body, None
+    if body[1] not in CAP_TOP_LEVEL_COMMANDS:
+        return body, None
+    explicit = explicit_agent(body[0])
+    agent = explicit or body[0]
+    return [body[1], *body[2:]], agent
 
 
 def _version_callback(value: bool) -> None:

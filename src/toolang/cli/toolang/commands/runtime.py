@@ -25,6 +25,7 @@ from ....up.logging import (
     resolve_agent_logging,
 )
 from ...common.context import (
+    cli_context,
     context_root,
     require_runtime_agent,
     load_runtime_environ,
@@ -282,10 +283,15 @@ def run(
     progress = make_cli_progress()
     finished = False
     try:
-        target = agents.resolve_run_layout(
-            context_root(ctx),
-            selector,
-            progress=as_progress_sink(progress),
+        selected_layout = cli_context(ctx).layout
+        target = (
+            selected_layout
+            if selected_layout is not None
+            else agents.resolve_run_layout(
+                context_root(ctx),
+                selector,
+                progress=as_progress_sink(progress),
+            )
         )
         launch = resolve_startup(
             ctx,

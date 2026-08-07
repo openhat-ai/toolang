@@ -12,6 +12,7 @@ import click
 import typer
 from dotenv import dotenv_values
 
+from ...catalog.agent import LocalAgents
 from ...common.errors import ToolangError
 from ...common.config import resolve_ui_base_url
 from ...common.layout import AgentLayout
@@ -37,7 +38,15 @@ def context_root(ctx: typer.Context) -> Path:
 
 
 def context_agent(ctx: typer.Context) -> str | None:
-    return cli_context(ctx).agent
+    state = cli_context(ctx)
+    agent = state.agent
+    if (
+        agent is not None
+        and state.layout is None
+        and LocalAgents(state.root / "agents").get(agent) is None
+    ):
+        raise click.ClickException(f"Agent {agent} not found")
+    return agent
 
 
 def require_prefix_agent(ctx: typer.Context) -> str:
@@ -57,8 +66,9 @@ def context_layout(ctx: typer.Context) -> AgentLayout:
 
 
 def require_runtime_agent(ctx: typer.Context, agent: str | None) -> str:
-    if agent:
-        return agent
+    selected = agent or context_agent(ctx)
+    if selected:
+        return selected
     typer.echo(ctx.get_help())
     raise typer.Exit()
 

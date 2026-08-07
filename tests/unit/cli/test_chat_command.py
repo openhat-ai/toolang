@@ -162,23 +162,6 @@ def test_scripted_chat_reports_a_failed_run(
     assert "provider failed" in capsys.readouterr().err
 
 
-def test_send_rejects_a_failed_run(monkeypatch: Any) -> None:
-    client = _FailedRunClient()
-
-    @contextmanager
-    def runtime(*_args: object, **_kwargs: object) -> Iterator[_FailedRunClient]:
-        yield client
-
-    monkeypatch.setattr(chat, "_chat_runtime", runtime)
-
-    with pytest.raises(click.ClickException, match="provider failed"):
-        chat.send_command(
-            object(),  # type: ignore[arg-type]
-            thread="term_existing",
-            message="hello",
-        )
-
-
 def test_scripted_renderer_uses_model_step_output_without_deltas(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

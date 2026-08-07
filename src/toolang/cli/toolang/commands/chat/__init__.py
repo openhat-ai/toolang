@@ -67,32 +67,3 @@ def chat_command(
         sandbox=sandbox,
         limit=limit,
     )
-
-
-def send_command(
-    ctx: typer.Context,
-    thread: Annotated[str, typer.Argument(help="Thread id.")],
-    message: Annotated[str, typer.Argument(help="Message text.")],
-    model: Annotated[
-        str | None, typer.Option("--model", help="Model selector.")
-    ] = None,
-    limit: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--limit",
-            help="Override run limits as field=value pairs. Pass CSV or repeat.",
-        ),
-    ] = None,
-) -> None:
-    from .main import send_command as run
-
-    run(ctx, thread=thread, message=message, model=model, limit=limit)
-
-
-def attach_command(
-    ctx: typer.Context,
-    thread: Annotated[str, typer.Argument(help="Thread id.")],
-) -> None:
-    from .main import attach_command as run
-
-    run(ctx, thread=thread)
