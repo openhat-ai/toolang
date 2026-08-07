@@ -14,6 +14,7 @@ import typer
 
 from ...up.logging import configure_logging
 from ..common.context import CliContext, resolve_root
+from ..common.output import echo_error
 from ..common.routing import (
     OptionalPrefixAgentGroup,
     OptionalPrefixAgentListCommand,
@@ -86,23 +87,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         rewritten_body, prefix_agent = _rewrite_agent_shortcuts(body)
     except ValueError as exc:
-        typer.echo(f"caps error: {exc}", err=True)
+        echo_error(str(exc))
         return 2
     token = _PREFIX_AGENT.set(prefix_agent)
     try:
-        app(
+        result = app(
             args=[*global_args, *rewritten_body],
             prog_name=_prog_name(sys.argv[0] if sys.argv else ""),
-            standalone_mode=True,
+            standalone_mode=False,
         )
     except click.exceptions.Exit as exc:
         return exc.exit_code
+    except click.ClickException as exc:
+        if exc.__class__.__name__ != "NoArgsIsHelpError":
+            echo_error(exc)
+        return exc.exit_code
     except (FileExistsError, FileNotFoundError, ValueError) as exc:
-        typer.echo(f"caps error: {exc}", err=True)
+        echo_error(str(exc))
         return 1
     finally:
         _PREFIX_AGENT.reset(token)
-    return 0
+    return result if isinstance(result, int) else 0
 
 
 def _rewrite_agent_shortcuts(body: list[str]) -> tuple[list[str], str | None]:

@@ -32,7 +32,7 @@ from ...common.context import (
     ui_base_url,
     user_call,
 )
-from ...common.output import active_agent_error
+from ...common.output import active_agent_error, echo_error
 
 if TYPE_CHECKING:
     from toolang.up.hosting import HostingState, LaunchSpec
@@ -130,7 +130,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
         click.ClickException,
     ) as exc:
         message = exc.message if isinstance(exc, click.ClickException) else str(exc)
-        typer.echo(f"toolang error: {message}", err=True)
+        echo_error(message)
         return 1
 
 
