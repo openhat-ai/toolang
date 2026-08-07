@@ -364,10 +364,10 @@ class ConsoleRunTracer(RunTracer):
             return
         if event.kind == "model":
             run.metrics.model_calls += 1
-            usage = event.noted.get("usage")
-            if isinstance(usage, Mapping):
-                run.metrics.input_tokens += integer(usage.get("input_tokens")) or 0
-                run.metrics.output_tokens += integer(usage.get("output_tokens")) or 0
+            tokens = event.noted.get("tokens")
+            if isinstance(tokens, Mapping):
+                run.metrics.input_tokens += integer(tokens.get("input")) or 0
+                run.metrics.output_tokens += integer(tokens.get("output")) or 0
         elif event.kind == "tool":
             run.metrics.tool_calls += 1
 

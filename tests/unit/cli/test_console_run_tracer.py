@@ -119,9 +119,9 @@ def test_model_preview_and_facts_follow_verbosity() -> None:
             status="finished",
             output=(TextPart("A concise answer."),),
             noted={
-                "usage": {
-                    "input_tokens": 34_000,
-                    "output_tokens": 1_500_000,
+                "tokens": {
+                    "input": 34_000,
+                    "output": 1_500_000,
                 }
             },
             finished_at="2026-07-26T01:00:01.500Z",

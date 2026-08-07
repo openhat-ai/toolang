@@ -20,8 +20,10 @@ from tests.support.execution_harness import (
     ScriptedModelTurn,
 )
 from toolang.base.types.message import Message, TextPart, message_text
-from toolang.base.types.run import ModelCallResult
+from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.execution.events import RunBegin, RunEnd
+from toolang.execution.executor import RunLimits
+from toolang.execution.records import run_limits_to_data
 from toolang.execution.types import StepPath, ThreadPrefix
 from toolang.lang.input import perceive_input
 
@@ -882,6 +884,67 @@ flow repeated(_: Text) -> Text:
                 Message.user("one"),
                 Message.user("two"),
             ]
+
+    asyncio.run(scenario())
+
+
+def test_run_limits_reset_agic_calls_but_share_root_token_usage(
+    tmp_path: Path,
+) -> None:
+    limits = RunLimits(agic_model_calls=1, tokens=8)
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic echo(_: Text) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow repeated(_: Text) -> Text:
+  repeat 2:
+    run echo
+""",
+        responses=[
+            ModelCallResult(
+                message=Message.assistant(value),
+                usage=ModelUsage(input_tokens=3, output_tokens=2),
+            )
+            for value in ("one", "two")
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="repeated",
+                    input=perceive_input("hello"),
+                ),
+                limits=limits,
+            )
+
+            children = [
+                run
+                for run in harness.store.list_runs(thread_id=thread, limit=None)
+                if run.parent is not None
+            ]
+            assert root.status == "failed"
+            assert root.error == "Run token limit exceeded: 10 > 8"
+            assert len(harness.adapter.invocations) == 2
+            assert sorted(run.status for run in children) == ["failed", "finished"]
+            root_start = harness.store.get_run_control(run_id=root.id, index=0)
+            assert root_start is not None
+            assert root_start.context == {"limits": run_limits_to_data(limits)}
+            for child in children:
+                child_start = harness.store.get_run_control(
+                    run_id=child.id,
+                    index=0,
+                )
+                assert child_start is not None
+                assert child_start.context == {}
 
     asyncio.run(scenario())
 

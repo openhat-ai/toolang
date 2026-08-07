@@ -14,6 +14,7 @@ class RunExecutor:
         self,
         spec: RunSpec,
         *,
+        limits: RunLimits | None = None,
         run_id: str | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
@@ -83,6 +84,10 @@ both before accepting the run and constructs the user message internally. It
 keeps the original canonical `Percept` for the start control and durable
 history, while language-owned input coercion initializes `_` with the
 runnable's declared primary type.
+
+`AgentSetup.limits` is the captured default for a new run. Passing `limits` to
+`start()` replaces that default for one root run tree. Config, CLI, and HTTP
+parsing remain caller concerns and are not part of the executor contract.
 
 There is no `run()`, `execute()`, or `spawn()` variant. `start()` creates the
 owner task and returns an awaitable `RunHandle`. The handle exposes its run ID,
@@ -166,6 +171,40 @@ Agic and flow bodies run natively on the owner event loop. Model adapters,
 tool invocation, step emission, and run tracing are asynchronous. A wrapper
 may move an explicitly synchronous Python tool callable to a worker thread,
 but the agic loop itself never moves between threads.
+
+
+## Run Limits
+
+`RunLimits` has one compact shape:
+
+```python
+@dataclass(frozen=True, slots=True)
+class RunLimits:
+    agic_model_calls: int | None = 200
+    agic_tool_calls: int | None = None
+    tokens: int | None = None
+    cost: Decimal | None = None
+    time: int | None = None
+```
+
+`agic_model_calls` and `agic_tool_calls` reset for every agic invocation.
+`tokens`, USD `cost`, and wall-clock `time` cover the complete recursive root
+run tree. `None` disables a limit and zero prohibits use of the corresponding
+resource.
+
+Call limits are checked before invoking a model or tool. Token and cost totals
+are charged from each completed model result. Every completed model step notes
+its input and output token counts, captured USD-per-token prices, and computed
+USD cost when available. The model step remains finished when its usage or cost
+crosses a total, then the owning run fails. A token or cost limit requires model
+usage, and a cost limit also requires captured input and output prices for every
+selected model. Time expiry cancels an in-flight operation while recording
+affected runs as failed rather than user-canceled.
+
+The effective value is persisted once in the root start control context. Child
+runs inherit the same in-memory value and their start controls do not duplicate
+it. Decimal cost is serialized as text so durable round trips do not lose
+precision.
 
 The `_Execution` object emits `RunBegin` and `RunEnd` and dispatches each
 accepted executable to the appropriate run body. Input coercion initializes the

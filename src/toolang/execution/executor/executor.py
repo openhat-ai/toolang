@@ -11,7 +11,8 @@ import time
 from typing import Any, Literal
 
 from toolang.base.protocols.model import ModelProvider
-from toolang.base.types.model import ModelInfo
+from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import (
     Message,
     Percept,
@@ -31,6 +32,7 @@ from ..records import (
     RunControlRef,
     RunRecord,
     ValueRef,
+    run_limits_to_data,
 )
 from ..store import RunStore
 from ..types import ControlTiming, RunControlKind, StepPath
@@ -52,6 +54,13 @@ from .ceiling import (
     resolve_agent_ceiling,
     resolve_run_ceiling,
     validate_root_run_resources,
+)
+from .limits import (
+    RunLimits,
+    _ModelAccounting,
+    _RunLimitExceeded,
+    _RunLimitState,
+    _model_accounting,
 )
 from ._persist import _PersistSink
 
@@ -170,6 +179,7 @@ class RunExecutor:
         self,
         spec: RunSpec,
         *,
+        limits: RunLimits | None = None,
         run_id: str | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
@@ -179,10 +189,14 @@ class RunExecutor:
         self._require_available()
         loop = asyncio.get_running_loop()
         executable, agent_ceiling = _validate_start_spec(spec)
+        effective_limits = limits if limits is not None else spec.setup.limits
+        if not isinstance(effective_limits, RunLimits):
+            raise TypeError("run limits must be RunLimits")
         bound = _bind_run(
             spec,
             run_id=run_id or self.ids.issue_run(),
             agent_ceiling=agent_ceiling,
+            limits=effective_limits,
         )
         self.store.accept_start(
             run_id=bound.run_id,
@@ -192,6 +206,7 @@ class RunExecutor:
             context=_run_context(bound, executable),
             request_id=request_id,
             created_at=bound.created_at,
+            control_context={"limits": run_limits_to_data(effective_limits)},
         )
         task = asyncio.create_task(
             self._execute_owned(bound, executable, tracer=tracer),
@@ -226,12 +241,14 @@ class RunExecutor:
             raise RuntimeError(f"run ownership missing: {bound.run_id}")
         started_at = time.perf_counter()
         emit = self._handler(active)
+        execution = _Execution(
+            self,
+            root=bound,
+            emit=emit,
+        )
+        timeout = execution.schedule_time_limit(task)
         try:
-            await _Execution(
-                self,
-                root=bound,
-                emit=emit,
-            ).execute(
+            await execution.execute(
                 bound,
                 executable,
             )
@@ -245,6 +262,8 @@ class RunExecutor:
                 error=str(exc) or type(exc).__name__,
             )
         finally:
+            if timeout is not None:
+                timeout.cancel()
             with self._active_lock:
                 for run_id in tuple(self._active):
                     if self._active.get(run_id) is active:
@@ -604,6 +623,7 @@ class _Execution:
         self.date = root.created_at.partition("T")[0]
         self.timezone = "UTC"
         self._emit_trace = emit
+        self._limits = _RunLimitState(root.limits)
         self._run_outputs: dict[str, ValueRef] = {}
         self._last_step_index: dict[str, int] = {}
         self._step_failures: dict[str, str | None] = {}
@@ -623,6 +643,47 @@ class _Execution:
     @property
     def envs(self) -> Mapping[str, str]:
         return self.setup.envs
+
+    def schedule_time_limit(
+        self,
+        task: asyncio.Task[RunRecord],
+    ) -> asyncio.TimerHandle | None:
+        """Cancel the owner task when its root-tree wall-time limit expires."""
+
+        limit = self._limits.limits.time
+        if limit is None:
+            return None
+
+        def expire() -> None:
+            if task.done():
+                return
+            self._limits.expire_time()
+            task.cancel()
+
+        return asyncio.get_running_loop().call_later(limit, expire)
+
+    def require_model_pricing(self, target: ModelTarget) -> None:
+        """Require price metadata before a cost-limited model call."""
+
+        self._limits.require_pricing(target, self.models)
+
+    def model_accounting(
+        self,
+        target: ModelTarget,
+        usage: ModelUsage | None,
+    ) -> _ModelAccounting:
+        """Build accounting facts for one completed model call."""
+
+        return _model_accounting(target, self.models, usage)
+
+    def record_model_accounting(
+        self,
+        target: ModelTarget,
+        accounting: _ModelAccounting,
+    ) -> None:
+        """Add one model accounting result to root-tree totals."""
+
+        self._limits.record_model(target, accounting)
 
     async def execute(
         self,
@@ -669,6 +730,19 @@ class _Execution:
             else:
                 result = await flow_run.execute(self, binding, executable, current)
         except asyncio.CancelledError as exc:
+            if self._limits.error is not None:
+                error = self._limits.error
+                await self._emit_system_failure(binding.run_id, error)
+                await self.emit(
+                    RunEnd(
+                        run=binding.run_id,
+                        status="failed",
+                        output=self.run_output(binding.run_id),
+                        error=error,
+                        finished_at=utc_now(),
+                    )
+                )
+                raise _RunLimitExceeded(error) from exc
             control = (
                 exc.control
                 if isinstance(exc, _RunStopped)
@@ -751,6 +825,7 @@ class _Execution:
             context=context,
             request_id=None,
             created_at=binding.created_at,
+            control_context={},
         )
         self.executor._register_child_run(
             run_id=binding.run_id,
@@ -981,6 +1056,7 @@ def _child_binding(
         model=parent.model,
         state=parent.state,
         setup=parent.setup,
+        limits=parent.limits,
         ceiling_spec=parent.ceiling_spec,
         agent_ceiling=parent.agent_ceiling,
         ceiling=None,
@@ -1008,6 +1084,7 @@ def _bind_run(
     *,
     run_id: str,
     agent_ceiling: _AgentCeiling,
+    limits: RunLimits,
 ) -> BoundRun:
     if not spec.thread or spec.thread != spec.thread.strip():
         raise ValueError("run spec requires a canonical thread id")
@@ -1020,6 +1097,7 @@ def _bind_run(
         model=spec.model,
         state=spec.state,
         setup=spec.setup,
+        limits=limits,
         ceiling_spec=spec.ceiling,
         agent_ceiling=agent_ceiling,
         ceiling=None,

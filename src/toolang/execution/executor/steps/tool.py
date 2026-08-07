@@ -32,7 +32,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
 
     prepared = state.prepared
     run = prepared.run
-    state.before_call()
+    state.before_tool_call()
     step_index = state.next_step
     state.next_step += 1
     step_started = time.perf_counter()

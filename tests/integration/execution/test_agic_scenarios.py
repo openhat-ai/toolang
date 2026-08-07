@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -33,10 +35,13 @@ from toolang.base.types.run import (
     ModelPartDelta,
     ModelPartEnd,
     ModelPartStart,
+    ModelUsage,
     ToolCall,
 )
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd
+from toolang.execution.executor import RunLimits
+from toolang.execution.records import run_limits_to_data
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import perceive_input
 
@@ -685,7 +690,7 @@ agic calculate(_: Text) -> Number:
     asyncio.run(scenario())
 
 
-def test_tool_round_limit_emits_one_terminal_system_failure(
+def test_agic_model_call_limit_emits_one_terminal_system_failure(
     tmp_path: Path,
 ) -> None:
     tool = RecordingTool("loop__again", output={"continue": True})
@@ -724,13 +729,12 @@ agic loop(_: Text) -> Text:
                     runnable="loop",
                     input=perceive_input("continue"),
                 ),
+                limits=RunLimits(agic_model_calls=8),
                 tracer=tracer,
             )
 
             assert record.status == "failed"
-            assert record.error == (
-                "Model tool loop exceeded the maximum number of rounds."
-            )
+            assert record.error == "Agic model call limit exceeded: 8"
             steps = harness.store.list_steps(run_id=record.id)
             assert [(step.kind, step.status) for step in steps[:-1]] == [
                 item
@@ -748,6 +752,349 @@ agic loop(_: Text) -> Text:
             assert len(tool.calls) == 8
             assert harness.adapter.pending_responses == 0
             assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+
+
+def test_agent_setup_limits_are_used_and_start_can_override_them(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic reply(_: Text) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[ModelCallResult(message=Message.assistant("done"))],
+    )
+    harness.setup = replace(
+        harness.setup,
+        limits=RunLimits(agic_model_calls=0),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            rejected = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    input=perceive_input("first"),
+                )
+            )
+            accepted = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    input=perceive_input("second"),
+                ),
+                limits=RunLimits(agic_model_calls=1),
+            )
+
+            assert rejected.status == "failed"
+            assert rejected.error == "Agic model call limit exceeded: 0"
+            assert accepted.status == "finished"
+            assert len(harness.adapter.invocations) == 1
+            rejected_start = harness.store.get_run_control(
+                run_id=rejected.id,
+                index=0,
+            )
+            accepted_start = harness.store.get_run_control(
+                run_id=accepted.id,
+                index=0,
+            )
+            assert rejected_start is not None
+            assert accepted_start is not None
+            assert rejected_start.context == {
+                "limits": run_limits_to_data(RunLimits(agic_model_calls=0))
+            }
+            assert accepted_start.context == {
+                "limits": run_limits_to_data(RunLimits(agic_model_calls=1))
+            }
+            assert "limits" not in rejected.context
+            assert "limits" not in accepted.context
+
+    asyncio.run(scenario())
+
+
+def test_agic_tool_call_limit_counts_each_emitted_call(
+    tmp_path: Path,
+) -> None:
+    tool = RecordingTool("loop__again", output={"continue": True})
+    calls = tuple(
+        ToolCall(
+            tool_call_id=f"tool-{index}",
+            call_id=f"call-{index}",
+            name=tool.name,
+            input={"index": index},
+        )
+        for index in range(2)
+    )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic loop(_: Text) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[ModelCallResult(tool_calls=calls)],
+        tools={tool.name: tool},
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            record = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="loop",
+                    input=perceive_input("continue"),
+                ),
+                limits=RunLimits(agic_tool_calls=1),
+            )
+
+            assert record.status == "failed"
+            assert record.error == "Agic tool call limit exceeded: 1"
+            assert len(tool.calls) == 1
+
+    asyncio.run(scenario())
+
+
+def test_run_token_limit_uses_model_usage(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic reply(_: Text) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            ModelCallResult(
+                message=Message.assistant("done"),
+                usage=ModelUsage(input_tokens=6, output_tokens=5),
+            )
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            record = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    input=perceive_input("hello"),
+                ),
+                limits=RunLimits(tokens=10),
+            )
+
+            assert record.status == "failed"
+            assert record.error == "Run token limit exceeded: 11 > 10"
+            assert [
+                (step.kind, step.status)
+                for step in harness.store.list_steps(run_id=record.id)
+            ] == [("model", "finished"), ("system", "failed")]
+            model_step = harness.store.list_steps(run_id=record.id)[0]
+            assert model_step.noted["tokens"] == {"input": 6, "output": 5}
+            assert model_step.noted["price"] is None
+            assert model_step.noted["cost"] is None
+            assert "usage" not in model_step.noted
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("cost_limit", "status", "error"),
+    [
+        (None, "finished", None),
+        (
+            Decimal("0.02"),
+            "failed",
+            "Run cost limit exceeded: 0.03 > 0.02 USD",
+        ),
+    ],
+)
+def test_model_step_records_cost_and_enforces_run_cost_limit(
+    tmp_path: Path,
+    cost_limit: Decimal | None,
+    status: str,
+    error: str | None,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic reply(_: Text) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            ModelCallResult(
+                message=Message.assistant("done"),
+                usage=ModelUsage(input_tokens=1, output_tokens=1),
+            )
+        ],
+    )
+    harness.setup = replace(
+        harness.setup,
+        models=tuple(
+            replace(model, input_price=0.01, output_price=0.02)
+            for model in harness.setup.models
+        ),
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            record = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    input=perceive_input("hello"),
+                ),
+                limits=RunLimits(cost=cost_limit),
+            )
+
+            assert record.status == status
+            assert record.error == error
+            model_step = harness.store.list_steps(run_id=record.id)[0]
+            assert model_step.noted["tokens"] == {"input": 1, "output": 1}
+            assert model_step.noted["price"] == {
+                "input": "0.01",
+                "output": "0.02",
+            }
+            assert model_step.noted["cost"] == "0.03"
+
+    asyncio.run(scenario())
+
+
+def test_run_cost_limit_rejects_unknown_pricing_before_model_call(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic reply(_: Text) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[ModelCallResult(message=Message.assistant("unused"))],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            record = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    input=perceive_input("hello"),
+                ),
+                limits=RunLimits(cost=Decimal("1")),
+            )
+
+            assert record.status == "failed"
+            assert record.error == (
+                "Model pricing is required by the run cost limit: test/scripted"
+            )
+            assert harness.adapter.invocations == []
+
+    asyncio.run(scenario())
+
+
+def test_run_token_limit_requires_provider_usage(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic reply(_: Text) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[ModelCallResult(message=Message.assistant("done"))],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            record = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    input=perceive_input("hello"),
+                ),
+                limits=RunLimits(tokens=100),
+            )
+
+            assert record.status == "failed"
+            assert record.error == (
+                "Model usage is required by run token or cost limits: "
+                "test/scripted"
+            )
+            assert len(harness.adapter.invocations) == 1
+            model_step = harness.store.list_steps(run_id=record.id)[0]
+            assert model_step.noted["tokens"] is None
+            assert model_step.noted["price"] is None
+            assert model_step.noted["cost"] is None
+
+    asyncio.run(scenario())
+
+
+def test_run_time_limit_cancels_an_inflight_model_as_failure(
+    tmp_path: Path,
+) -> None:
+    gate = AsyncGate()
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic reply(_: Text) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("unused")),
+                gate=gate,
+            )
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            record = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    input=perceive_input("hello"),
+                ),
+                limits=RunLimits(time=0),
+            )
+
+            assert gate.entered
+            assert record.status == "failed"
+            assert record.error == "Run time limit exceeded: 0s"
+            assert [
+                (step.kind, step.status)
+                for step in harness.store.list_steps(run_id=record.id)
+            ] == [("model", "canceled"), ("system", "failed")]
 
     asyncio.run(scenario())
 

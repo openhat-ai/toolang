@@ -86,9 +86,9 @@ def token_fact(input_tokens: int, output_tokens: int) -> str:
 
 
 def usage_facts(noted: Mapping[str, Any]) -> list[str]:
-    usage = mapping(noted.get("usage"))
-    input_tokens = integer(usage.get("input_tokens"))
-    output_tokens = integer(usage.get("output_tokens"))
+    tokens = mapping(noted.get("tokens"))
+    input_tokens = integer(tokens.get("input"))
+    output_tokens = integer(tokens.get("output"))
     if input_tokens is None and output_tokens is None:
         return []
     return [token_fact(input_tokens or 0, output_tokens or 0)]

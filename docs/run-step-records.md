@@ -85,6 +85,20 @@ The index-zero start control and `RunRecord` are inserted in one transaction.
 Later control indexes are computed and inserted in one transaction; no API
 reserves an index independently.
 
+For a root run, the start control context stores the effective `RunLimits`:
+
+```text
+limits:
+  agic_model_calls
+  agic_tool_calls
+  tokens
+  cost
+  time
+```
+
+Child runs inherit root-tree limits during execution and do not repeat this
+context. `cost` is decimal USD text; the other values are integers or null.
+
 `runs.db` also stores an internal monotonic revision on every run-control
 insert and status change. The revision is a polling cursor, not part of
 `RunControlRecord`'s protocol shape. It lets an owning executor observe remote
@@ -121,6 +135,24 @@ later persisted in step output.
 `given` contains information known when `StepBegin` is emitted. `noted`
 contains additional information recorded by `StepEnd`. Neither repeats the
 step's input, output, status, or error.
+
+For a completed model step, `noted` stores its accounting facts:
+
+```text
+tokens:
+  input
+  output
+price:
+  input
+  output
+cost
+```
+
+Token counts are integers. Input and output prices are decimal USD-per-token
+text captured from the run's `AgentSetup`; cost is the decimal USD total
+computed from those prices and counts. Missing usage or pricing is stored as
+null. These facts are recorded whether or not the root run has token or cost
+limits.
 
 Step kinds remain intentionally small:
 

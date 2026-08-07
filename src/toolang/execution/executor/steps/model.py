@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -36,9 +37,11 @@ from ...records import (
     RunControlRef,
     StepInput,
     StepOutputRef,
+    model_call_to_data,
 )
 from ...types import StepPath
 from ..diagnostics import log_model_request, log_model_result, log_model_target
+from ..limits import _ModelAccounting
 
 if TYPE_CHECKING:
     from ..runs.agic import _AgicState
@@ -60,7 +63,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
 
     prepared = state.prepared
     run = prepared.run
-    state.before_call()
+    state.before_model_call()
     step_index = state.next_step
     state.next_step += 1
     step_started = time.perf_counter()
@@ -98,7 +101,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             started_at=started_at,
             given={
                 "model": _model_target_data(prepared.model),
-                "call": request.to_data(),
+                "call": model_call_to_data(request),
             },
         )
     )
@@ -203,6 +206,7 @@ async def _apply_response(
     if current.message is not None:
         state.messages.append(current.message)
     state.model_state = current.state
+    accounting = state.account_usage(current.usage)
     await state.emit(
         StepEnd(
             step=StepPath(run.run_id, (step_index,)),
@@ -210,14 +214,7 @@ async def _apply_response(
             status="finished",
             output=output,
             noted={
-                "usage": {
-                    "input_tokens": current.usage.input_tokens
-                    if current.usage is not None
-                    else 0,
-                    "output_tokens": current.usage.output_tokens
-                    if current.usage is not None
-                    else 0,
-                },
+                **_accounting_data(accounting),
                 "reasoning_content": _message_reasoning_content(current.message),
                 "state": dict(current.state) if current.state is not None else None,
             },
@@ -225,6 +222,7 @@ async def _apply_response(
         )
     )
     state.last_step = step_index
+    state.record_accounting(accounting)
     usage = current.usage
     _LOGGER.info(
         "Step finished thread=%s run=%s step=%s kind=model status=finished input=%s output=%s tool_calls=%s duration_ms=%s",
@@ -408,6 +406,31 @@ def _message_reasoning_content(message: Message | None) -> str | None:
         ),
         None,
     )
+
+
+def _accounting_data(accounting: _ModelAccounting) -> dict[str, object]:
+    usage = accounting.usage
+    price = accounting.price
+    return {
+        "tokens": (
+            {"input": usage.input_tokens, "output": usage.output_tokens}
+            if usage is not None
+            else None
+        ),
+        "price": (
+            {
+                "input": _decimal_text(price.input),
+                "output": _decimal_text(price.output),
+            }
+            if price is not None
+            else None
+        ),
+        "cost": _decimal_text(accounting.cost),
+    }
+
+
+def _decimal_text(value: Decimal | None) -> str | None:
+    return format(value, "f") if value is not None else None
 
 
 def _model_target_data(target: ModelTarget) -> dict[str, object]:

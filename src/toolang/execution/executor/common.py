@@ -48,6 +48,7 @@ from ..events import RunEvent, StepBegin, StepEnd
 from ..records import RunControlRecord, RunControlRef, StepInput, StepOutputRef, ValueRef
 from ..types import StepKind, StepPath
 from .ceiling import CeilingSpec, _AgentCeiling, _RunCeiling
+from .limits import RunLimits
 
 Shape = Literal["none", "item", "list"]
 EventEmitter = Callable[[RunEvent], Awaitable[None]]
@@ -66,6 +67,7 @@ class BoundRun:
     state: AgentState
     setup: AgentSetup
     created_at: str
+    limits: RunLimits = RunLimits()
     ceiling_spec: CeilingSpec = CeilingSpec()
     agent_ceiling: _AgentCeiling | None = None
     ceiling: _RunCeiling | None = None

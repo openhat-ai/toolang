@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from toolang.base.types.message import Message, TextPart
+from toolang.base.types.run import ModelUsage, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import AgicDecl
@@ -22,15 +23,13 @@ from ..common import (
     value_percept,
     value_text,
 )
+from ..limits import _ModelAccounting
 from ..prepare import _AgicFrame, prepare_agic
 from ..steps import model as model_step
 from ..steps import tool as tool_step
 
 if TYPE_CHECKING:
     from ..executor import _Execution
-
-_MAX_TOOL_ROUNDS = 8
-
 
 @dataclass(slots=True)
 class _AgicState:
@@ -42,12 +41,39 @@ class _AgicState:
     pending_inputs: Callable[[], tuple[RunControlRecord, ...]]
     before_call: Callable[[], None]
     messages: list[Message]
+    account_usage: Callable[[ModelUsage | None], _ModelAccounting] = (
+        lambda usage: _ModelAccounting(usage=usage)
+    )
+    record_accounting: Callable[[_ModelAccounting], None] = (
+        lambda _accounting: None
+    )
+    limits: RunLimits = RunLimits()
     record_output: Callable[[StepOutputRef], None] = lambda _ref: None
     output: StepOutputRef | None = None
     model_state: dict[str, Any] | None = None
     next_step: int = 0
     last_step: int | None = None
+    model_calls: int = 0
+    tool_calls: int = 0
     tool_call_sources: dict[str, tuple[int, int]] = field(default_factory=dict)
+
+    def before_model_call(self) -> None:
+        """Apply one model-call checkpoint and reserve its agic-local count."""
+
+        self.before_call()
+        limit = self.limits.agic_model_calls
+        if limit is not None and self.model_calls >= limit:
+            raise ToolangError(f"Agic model call limit exceeded: {limit}")
+        self.model_calls += 1
+
+    def before_tool_call(self) -> None:
+        """Apply one tool-call checkpoint and reserve its agic-local count."""
+
+        self.before_call()
+        limit = self.limits.agic_tool_calls
+        if limit is not None and self.tool_calls >= limit:
+            raise ToolangError(f"Agic tool call limit exceeded: {limit}")
+        self.tool_calls += 1
 
 
 async def execute(
@@ -87,12 +113,20 @@ async def execute(
             name: local.value for name, local in locals.items() if local.shape != "none"
         },
     )
+    execution.require_model_pricing(prepared.model)
     state = _AgicState(
         prepared,
         layout=execution.layout,
         emit=execution.emit,
         pending_inputs=lambda: execution.steer_controls_for_call(binding.run_id),
         before_call=lambda: execution.raise_if_stopping(binding.run_id, call=True),
+        account_usage=lambda usage: execution.model_accounting(
+            prepared.model, usage
+        ),
+        record_accounting=lambda accounting: execution.record_model_accounting(
+            prepared.model, accounting
+        ),
+        limits=binding.limits,
         record_output=lambda ref: execution.record_output(binding.run_id, ref),
         messages=list(prepared.messages),
     )
@@ -112,7 +146,7 @@ async def execute(
 
 
 async def _execute(state: _AgicState) -> Message | None:
-    for _ in range(_MAX_TOOL_ROUNDS):
+    while True:
         result = await model_step.execute(state)
         if state.last_step is None:
             raise RuntimeError("model step did not record its index")
@@ -128,4 +162,3 @@ async def _execute(state: _AgicState) -> Message | None:
         if state.pending_inputs():
             continue
         return result.message
-    raise ToolangError("Model tool loop exceeded the maximum number of rounds.")
