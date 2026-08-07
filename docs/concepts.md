@@ -217,7 +217,9 @@ models. `=` is a keep-only filter, not a traditional assignment.
 selection. Model/tool call limits apply to each agic invocation; token, USD
 cost, and time limits apply to the complete recursive root run tree. The
 captured `AgentSetup` supplies defaults and one start operation may override
-them without changing the setup snapshot.
+them without changing the setup snapshot. Defaults resolve from root config,
+agent-home config, and an optional AgentServer override; a specific run is the
+highest-precedence layer.
 
 
 ## Step

@@ -11,7 +11,10 @@ from typing import Annotated, TYPE_CHECKING
 import click
 import typer
 
+from toolang.base.types.run import RunLimits
 from toolang.common.layout import AgentLayout
+from toolang.cli.common.limits import apply_limit_options
+from toolang.setup.config import load_run_limits
 from toolang.up import process as agents
 from toolang.state.state import split_cap_selectors
 from toolang.plugin.models.resolution import split_model_selectors
@@ -49,6 +52,7 @@ class _RoamingFileOptions:
     models: tuple[str, ...]
     tools: tuple[str, ...] | None
     caps: tuple[str, ...]
+    limits: tuple[str, ...]
     host: str
     endpoint_host: str | None
     port: int | None
@@ -95,6 +99,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                 models=options.models,
                 tools=options.tools,
                 caps=options.caps,
+                limits=_explicit_limits(layout, options.limits),
                 file_inboxes=options.inboxes,
                 dev=options.dev,
                 log_spec=log_plan.spec,
@@ -133,6 +138,7 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
     models: list[str] = []
     tools: list[str] | None = None
     caps: list[str] = []
+    limits: list[str] = []
     host = "127.0.0.1"
     endpoint_host: str | None = None
     port: int | None = None
@@ -147,6 +153,7 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
             "--models",
             "--tools",
             "--caps",
+            "--limit",
             "--host",
             "--endpoint-host",
             "--port",
@@ -166,6 +173,8 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
                 tools.extend(split_tool_selectors((value,)))
             elif option == "--caps":
                 caps.extend(split_cap_selectors((value,)))
+            elif option == "--limit":
+                limits.append(value)
             elif option == "--host":
                 host = value
             elif option == "--endpoint-host":
@@ -196,6 +205,7 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
         models=tuple(dict.fromkeys(models)),
         tools=None if tools is None else tuple(dict.fromkeys(tools)),
         caps=tuple(dict.fromkeys(caps)),
+        limits=tuple(limits),
         host=host,
         endpoint_host=endpoint_host,
         port=port,
@@ -232,6 +242,13 @@ def run(
     caps: Annotated[
         list[str] | None,
         typer.Option("--caps", help="Allow selected caps. Pass CSV or repeat."),
+    ] = None,
+    limits: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--limit",
+            help="Set run defaults as field=value pairs. Pass CSV or repeat.",
+        ),
     ] = None,
     host: Annotated[
         str, typer.Option(help="Bind the agent API to this host.")
@@ -277,6 +294,7 @@ def run(
             models=models,
             tools=tools,
             caps=caps,
+            limits=limits,
             inboxes=inboxes,
             port=port,
             host=host,
@@ -345,6 +363,13 @@ def start(
         list[str] | None,
         typer.Option("--caps", help="Allow selected caps. Pass CSV or repeat."),
     ] = None,
+    limits: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--limit",
+            help="Set run defaults as field=value pairs. Pass CSV or repeat.",
+        ),
+    ] = None,
     host: Annotated[
         str, typer.Option(help="Bind the agent API to this host.")
     ] = "127.0.0.1",
@@ -392,6 +417,7 @@ def start(
             models=models,
             tools=tools,
             caps=caps,
+            limits=limits,
             inboxes=inboxes,
             port=port,
             host=host,
@@ -464,6 +490,13 @@ def serve(
         list[str] | None,
         typer.Option("--caps", help="Allow selected caps. Pass CSV or repeat."),
     ] = None,
+    limits: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--limit",
+            help="Set run defaults as field=value pairs. Pass CSV or repeat.",
+        ),
+    ] = None,
     inboxes: Annotated[
         list[Path] | None,
         typer.Option("--inbox", help="Watch a file inbox. Repeat to watch more."),
@@ -489,6 +522,7 @@ def serve(
         models=models,
         tools=tools,
         caps=caps,
+        limits=_explicit_limits(layout, limits),
         file_inboxes=inboxes,
         log_spec=log_spec,
     )
@@ -503,6 +537,7 @@ def resolve_startup(
     models: list[str] | None,
     tools: list[str] | None,
     caps: list[str] | None,
+    limits: list[str] | None,
     inboxes: list[Path] | None,
     port: int | None,
     host: str,
@@ -540,6 +575,7 @@ def resolve_startup(
             models=models,
             tools=tools,
             caps=caps,
+            limits=_explicit_limits(target, limits),
             file_inboxes=inboxes,
             dev=dev,
             log_spec=log_plan.spec,
@@ -549,3 +585,12 @@ def resolve_startup(
         ),
     )
     return RuntimeStartup(target, startup, log_plan.environ, log_plan)
+
+
+def _explicit_limits(
+    layout: AgentLayout,
+    values: list[str] | tuple[str, ...] | None,
+) -> RunLimits | None:
+    if not values:
+        return None
+    return user_call(apply_limit_options, load_run_limits(layout), values)

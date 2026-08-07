@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 import json
@@ -11,13 +12,18 @@ import click
 import typer
 
 from toolang.base.types.message import Message
+from toolang.cli.common.limits import apply_limit_options
+from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
+from toolang.execution.records import RunRecord
 from toolang.execution.schemas import RunDetail, StepData
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import RunStatus, StepPath
+from toolang.setup import SetupWatcher
+from toolang.state.watcher import StateWatcher
 
-from ...common.context import user_call
+from ...common.context import context_layout, user_call
 from ...common.execution import ExecutionResources, open_execution
 from ...common.output import echo_table, executable_label, parse_utc_timestamp
 
@@ -195,6 +201,97 @@ def cancel_command(
             run_id=run_id,
         )
     typer.echo(f"canceled {run_id}")
+
+
+def retry_command(
+    ctx: typer.Context,
+    run: str = typer.Argument(
+        ...,
+        help="Run id to retry. Thread id means its latest visible run.",
+    ),
+    anchor: Annotated[
+        str | None,
+        typer.Option(
+            "--anchor",
+            help="Retry from this canonical or run-local step path.",
+        ),
+    ] = None,
+    model: Annotated[
+        str | None,
+        typer.Option("--model", help="Use this model selector for retried work."),
+    ] = None,
+    limit: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--limit",
+            help="Override run limits as field=value pairs. Pass CSV or repeat.",
+        ),
+    ] = None,
+) -> None:
+    """Retry one terminal root run from a durable step boundary."""
+
+    with open_execution(ctx, required=True, writable=True) as resources:
+        if resources is None:  # pragma: no cover
+            raise RuntimeError("execution resources were not opened")
+        _thread_id, run_id = _anchor(RunHistory(resources.store), run)
+        result = user_call(
+            asyncio.run,
+            _restart_run(
+                resources,
+                layout=context_layout(ctx),
+                kind="retry",
+                source=run_id,
+                anchor=user_call(_retry_anchor, run_id, anchor),
+                model=model,
+                limit_options=limit,
+            ),
+        )
+    status = _display_status(result.status)
+    typer.echo(f"retried {result.id}: {status}")
+    if result.status != "finished":
+        raise typer.Exit(1)
+
+
+def rerun_command(
+    ctx: typer.Context,
+    run: str = typer.Argument(
+        ...,
+        help="Run id to rerun. Thread id means its latest visible run.",
+    ),
+    model: Annotated[
+        str | None,
+        typer.Option("--model", help="Use this model selector for the new run."),
+    ] = None,
+    limit: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--limit",
+            help="Override run limits as field=value pairs. Pass CSV or repeat.",
+        ),
+    ] = None,
+) -> None:
+    """Start a new root run from one terminal source invocation."""
+
+    with open_execution(ctx, required=True, writable=True) as resources:
+        if resources is None:  # pragma: no cover
+            raise RuntimeError("execution resources were not opened")
+        _thread_id, source = _anchor(RunHistory(resources.store), run)
+        result = user_call(
+            asyncio.run,
+            _restart_run(
+                resources,
+                layout=context_layout(ctx),
+                kind="rerun",
+                source=source,
+                anchor=None,
+                model=model,
+                limit_options=limit,
+            ),
+        )
+    status = _display_status(result.status)
+    typer.echo(f"reran {source} as {result.id}: {status}")
+    if result.status != "finished":
+        raise typer.Exit(1)
 
 
 def rewind_command(
@@ -584,6 +681,59 @@ def _open_chat(ctx: typer.Context, thread_id: str) -> None:
     from .chat import chat_command
 
     chat_command(ctx, thread=thread_id)
+
+
+async def _restart_run(
+    resources: ExecutionResources,
+    *,
+    layout: AgentLayout,
+    kind: Literal["retry", "rerun"],
+    source: str,
+    anchor: StepPath | None,
+    model: str | None,
+    limit_options: list[str] | None,
+) -> RunRecord:
+    setup = await SetupWatcher(layout).refresh()
+    state = await StateWatcher(layout).refresh()
+    limits = (
+        apply_limit_options(setup.limits, limit_options)
+        if limit_options
+        else None
+    )
+    executor = RunExecutor(resources.store, resources.ids)
+    try:
+        handle = (
+            executor.retry(
+                source,
+                setup=setup,
+                state=state,
+                anchor=anchor,
+                model=model,
+                limits=limits,
+            )
+            if kind == "retry"
+            else executor.rerun(
+                source,
+                setup=setup,
+                state=state,
+                model=model,
+                limits=limits,
+            )
+        )
+        return await handle
+    finally:
+        await executor.shutdown()
+
+
+def _retry_anchor(run_id: str, value: str | None) -> StepPath | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        raise click.ClickException("--anchor requires a step path")
+    if text.startswith("run_"):
+        return StepPath.parse(text)
+    return StepPath.from_local(run_id, text.replace(".", "/"))
 
 
 def _parse_step_path(value: str) -> tuple[int, ...]:

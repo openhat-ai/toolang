@@ -62,6 +62,8 @@ _AGENT_PANEL_COMMAND_ORDER = (
 )
 _THREAD_PANEL_COMMAND_ORDER = (
     "chat",
+    "retry",
+    "rerun",
     "cancel",
     "steer",
     "rewind",
@@ -330,6 +332,20 @@ app.command(
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.cancel_command)
+app.command(
+    "retry",
+    help="Retry a terminal run from a durable step boundary.",
+    no_args_is_help=True,
+    cls=RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)(thread_commands.retry_command)
+app.command(
+    "rerun",
+    help="Start a new run from a prior invocation.",
+    no_args_is_help=True,
+    cls=RequiredPrefixAgentCommand,
+    rich_help_panel=THREAD_COMMAND_PANEL,
+)(thread_commands.rerun_command)
 app.command(
     "rewind",
     help="Rewind a thread to an earlier point.",

@@ -7,13 +7,14 @@ from collections.abc import AsyncIterator
 
 from toolang.base.protocols.model import ModelAdapter, ModelProvider
 from toolang.base.protocols.tool import AgentTool
+from toolang.base.types.run import RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import merge_named_configs
 from toolang.plugin.models.config import parse_model_provider_configs
 from toolang.plugin.models.loading import load_model_adapters, load_model_providers
 from toolang.plugin.tools.loading import load_runtime_tools
 
-from .config import load_setup_config, load_setup_envs
+from .config import load_run_limits, load_setup_config, load_setup_envs
 from .models import ModelListCache, discover_models
 from .types import AgentEnvironment, AgentSetup
 
@@ -23,8 +24,14 @@ DEFAULT_INTERVAL_MS = 1_000.0
 class SetupWatcher:
     """Publish setup snapshots when envs or available models change."""
 
-    def __init__(self, layout: AgentLayout) -> None:
+    def __init__(
+        self,
+        layout: AgentLayout,
+        *,
+        limits: RunLimits | None = None,
+    ) -> None:
         self.layout = layout
+        self._explicit_limits = limits
         self._config: dict[str, object] | None = None
         self._providers: dict[str, ModelProvider] = {}
         self._adapters: dict[str, ModelAdapter] = {}
@@ -79,6 +86,11 @@ class SetupWatcher:
                 environment=AgentEnvironment.capture(
                     self.layout,
                     envs=envs,
+                ),
+                limits=(
+                    self._explicit_limits
+                    if self._explicit_limits is not None
+                    else load_run_limits(self.layout)
                 ),
             )
             self._config = config

@@ -58,6 +58,10 @@ def test_script_binds_options_arguments_and_primary_input(
             "filesystem/*,shell/*",
             "--caps",
             "skill/reviewer,service/github",
+            "--limit",
+            "tokens=1000,cost=2.5",
+            "--limit",
+            "time=60",
             "-vv",
             "count=2.5",
             "enabled=true",
@@ -78,6 +82,10 @@ def test_script_binds_options_arguments_and_primary_input(
         caps=("skill/reviewer", "service/github"),
     )
     assert captured["verbosity"] == 2
+    assert captured["limit_options"] == (
+        "tokens=1000,cost=2.5",
+        "time=60",
+    )
     assert captured["raw_args"] == (("count", "2.5"), ("enabled", "true"))
     call = captured["call"]
     assert isinstance(call, RunnableCall)

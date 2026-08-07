@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -12,16 +13,20 @@ import pytest
 from typer.testing import CliRunner
 
 from toolang.base.types.message import Message, TextPart
+from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.catalog import templates
 from toolang.catalog.agent import LocalAgents
 from toolang.catalog.job import AuthoredJobs, JobFile
 import toolang.cli.toolang.commands.agent as agent_commands
 import toolang.cli.toolang.commands.plugin as plugin_commands
+import toolang.cli.toolang.commands.thread as thread_commands
 import toolang.cli.toolang.main as cli
 from toolang.common.layout import AgentLayout
 from toolang.execution.history import RunHistory
 from toolang.execution.store import RunStore
+from toolang.execution.types import ThreadPrefix
+from toolang.lang.input import perceive_input
 from toolang.setup import AgentSetup
 from toolang.up import process as agents
 from toolang.work.state import load_ready_jobs
@@ -31,6 +36,7 @@ from tests.support.execution_fixtures import (
     project_run_start,
     project_step,
 )
+from tests.support.execution_harness import ExecutionHarness
 
 
 runner = CliRunner()
@@ -365,6 +371,106 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
         ("stop", "immediate", "pending"),
     ]
     assert controls[1].input == Message.user("Focus on tests")
+
+
+def test_retry_and_rerun_execute_locally_with_limit_overrides(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path / "toolang",
+        source="""
+agic reply(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            RuntimeError("temporary failure"),
+            ModelCallResult(
+                message=Message.assistant("recovered"),
+                usage=ModelUsage(input_tokens=1, output_tokens=1),
+            ),
+            ModelCallResult(message=Message.assistant("reran")),
+        ],
+    )
+
+    class _SetupSnapshot:
+        def __init__(self, _layout: AgentLayout) -> None:
+            pass
+
+        async def refresh(self) -> AgentSetup:
+            return harness.setup
+
+    class _StateSnapshot:
+        def __init__(self, _layout: AgentLayout) -> None:
+            pass
+
+        async def refresh(self):
+            return harness.state
+
+    monkeypatch.setattr(thread_commands, "SetupWatcher", _SetupSnapshot)
+    monkeypatch.setattr(thread_commands, "StateWatcher", _StateSnapshot)
+
+    async def start_source():
+        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        source = await harness.executor.start(
+            harness.run_spec(
+                thread=thread,
+                runnable="reply",
+                input=perceive_input("hello"),
+            )
+        )
+        await harness.executor.shutdown()
+        return source
+
+    try:
+        source = asyncio.run(start_source())
+        assert source.status == "failed"
+
+        retry = _invoke(
+            harness.setup.layout.root,
+            "retry",
+            "alice",
+            source.id,
+            "--limit",
+            "tokens=10",
+        )
+        retried = harness.store.get_run(run_id=source.id)
+        assert retry.exit_code == 0, (
+            retry.stdout,
+            retry.stderr,
+            repr(retry.exception),
+            retried.status if retried is not None else None,
+            retried.error if retried is not None else None,
+            harness.adapter.pending_responses,
+        )
+        rerun = _invoke(
+            harness.setup.layout.root,
+            "rerun",
+            "alice",
+            source.id,
+            "--limit",
+            "time=30",
+        )
+
+        assert retry.stdout.strip() == f"retried {source.id}: succeeded"
+        assert rerun.exit_code == 0, rerun.stderr
+        words = rerun.stdout.strip().split()
+        rerun_id = words[3].removesuffix(":")
+        assert words == ["reran", source.id, "as", f"{rerun_id}:", "succeeded"]
+
+        retry_control = harness.store.list_run_controls(run_id=source.id)[-1]
+        rerun_control = harness.store.get_run_control(run_id=rerun_id, index=0)
+        assert retry_control.kind == "retry"
+        assert retry_control.context["limits"]["tokens"] == 10
+        assert rerun_control is not None
+        assert rerun_control.kind == "rerun"
+        assert rerun_control.source == source.id
+        assert rerun_control.context["limits"]["time"] == 30
+    finally:
+        harness.store.close()
 
 
 def test_thread_fork_and_rewind_use_thread_manager_semantics(

@@ -25,6 +25,8 @@ Top-level commands are:
 - `list`
 - `info`
 - `chat`
+- `retry`
+- `rerun`
 - `steer`
 - `cancel`
 - `rewind`
@@ -105,6 +107,8 @@ toolang alice chat --sandbox docker
 toolang alice threads
 toolang alice runs --thread term_3nprht9x
 toolang alice inspect run_ppkp9e94
+toolang alice retry run_ppkp9e94 --limit tokens=200000,time=900
+toolang alice rerun run_ppkp9e94 --model openai/gpt-5
 toolang alice steer run_ppkp9e94 "Use the smaller patch"
 toolang alice cancel term_3nprht9x
 toolang alice rewind run_ppkp9e94
@@ -112,12 +116,14 @@ toolang alice fork run_ppkp9e94
 toolang model list
 ```
 
-Thread and run listing, inspection, steering, cancellation, rewind, and fork
-open the selected agent's durable execution store directly. They do not start
-or call the agent HTTP server. A run id selects its owning thread; a thread id
-selects its active run for steering or cancellation and its latest terminal run
-for rewind or fork. Fork retains the anchor run, while rewind removes it and the
-following visible suffix.
+Thread and run listing, inspection, retry, rerun, steering, cancellation,
+rewind, and fork open the selected agent's durable execution store directly.
+They do not start or call the agent HTTP server. A run id selects its owning
+thread; a thread id selects its active run for steering or cancellation and its
+latest terminal run for retry, rerun, rewind, or fork. Retry reopens the same
+root run and optionally starts at `--anchor`; rerun starts a new root run from
+the source invocation. Fork retains the anchor run, while rewind removes it and
+the following visible suffix.
 
 
 ## Agent Selectors
@@ -191,6 +197,7 @@ Behavior:
 - `-q` or `--quiet` suppresses progress messages
 - `-v` or `--verbose` shows execution boundaries even when stderr is not a TTY
 - `--model SELECTOR` chooses one model for the run
+- `--limit FIELD=VALUE,...` overrides run limits; it may be repeated
 - `--models SELECTOR-LIST` defines the model allow list for the script invocation
 - `--tools SELECTOR-LIST` and `--caps SELECTOR-LIST` set the remaining
   `CeilingSpec` selector lists
@@ -294,6 +301,27 @@ same hosting lifecycle. A hidden `toolang serve` command is the only
 AgentServer process entrypoint. The hosting implementation launches that
 entrypoint locally, in Docker, or in another environment; the server and
 executor do not branch on hosting.
+
+Both commands accept repeatable `--limit FIELD=VALUE,...` options. These values
+become AgentServer defaults; a more specific script, chat, retry, rerun, or HTTP
+run override may replace them.
+
+Run-limit defaults use the following TOML shape in root and agent-home
+`config.toml` files:
+
+```toml
+[run.limits]
+agic_model_calls = 200
+agic_tool_calls = "none"
+tokens = 200000
+cost = "2.50"
+time = 900
+```
+
+Fields are non-negative. Quoted `"none"` disables a config or CLI limit. The
+precedence order is built-in defaults, root config, agent-home config,
+AgentServer `--limit`, then the specific execution override. `--limit` is
+singular because each occurrence contributes fields to one effective value.
 
 When `--sandbox` is omitted, resident run/start commands use the effective
 root/home `[sandbox]` binding, falling back to `none` when no binding exists.
@@ -546,7 +574,7 @@ WebUI that needs another protocol adapts these events client-side; the API does
 not maintain a second chat event vocabulary.
 
 The CLI command for interactive chat is
-`toolang <agent> chat [thread] [--sandbox <selector>]`.
+`toolang <agent> chat [thread] [--sandbox <selector>] [--limit FIELD=VALUE,...]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
 a thread id, it continues that thread. The TUI runs in its own process, assembles
 the same core objects, calls `RunExecutor` directly, and observes native
@@ -700,6 +728,8 @@ Delete is destructive and is available only through archived routes.
 - `GET /api/v1/runs`
 - `GET /api/v1/runs/{run_id}`
 - `GET /api/v1/runs/{run_id}/stream`
+- `POST /api/v1/runs/{run_id}/retry`
+- `POST /api/v1/runs/{run_id}/rerun`
 - `POST /api/v1/runs/{run_id}/steer`
 - `POST /api/v1/runs/{run_id}/cancel`
 - `POST /api/v1/threads`
@@ -719,10 +749,17 @@ no separate `RunSummary` response type.
 run's durable output edge. It is `null` until the run has an output edge and
 may be an empty array when the resolved runnable result is empty.
 
-`steer` and `cancel` operate on running runs. Thread `rewind` and `fork` request
-bodies take an optional `run_id` anchor and `request_id`. An omitted run id
-selects the last visible run. Task and chore threads cannot be rewound or forked
-because their thread ids are derived from job ids.
+`steer` and `cancel` operate on running runs. `retry` and `rerun` accept a
+terminal root run. Retry reopens that run from an optional canonical step-path
+`anchor`; omitting it selects the latest retryable step. Rerun starts a new root
+run from the source invocation and replaces the source in the visible thread
+projection. Both accept optional `request_id`, `model`, and partial `limits`,
+return `202 Accepted`, and execute on the server's owner event loop.
+
+Thread `rewind` and `fork` request bodies take an optional `run_id` anchor and
+`request_id`. An omitted run id selects the last visible run. Task and chore
+threads cannot be rewound or forked because their thread ids are derived from
+job ids.
 
 `steer` and `cancel` return the accepted `RunControlInfo`. An accepted manual
 chore start returns its `RunInfo`. Thread create and fork return the created
@@ -732,11 +769,16 @@ these thread operations starts a follow-up run.
 `POST /api/v1/runs/stream` accepts:
 
 - `thread`: required existing thread id
-- `request_id`: optional globally unique idempotency key
+- `request_id`: optional globally unique caller-supplied control identifier
 - `runnable`: required unique agic or flow name
 - `input`: canonical percept-part array
 - `model`: optional model selector
 - `args`: optional runnable argument mapping
+- `limits`: optional partial run-limit mapping
+
+HTTP limit fields are `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`,
+and `time`. Omitted fields inherit the server default; an explicit JSON `null`
+disables that field for the run.
 
 Clients create a thread explicitly with `POST /api/v1/threads` before the first
 run. The thread request accepts `web`, `term`, `tui`, `chat`, or `script` as its

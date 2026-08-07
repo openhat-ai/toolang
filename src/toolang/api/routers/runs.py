@@ -13,11 +13,13 @@ from toolang.api.schemas import (
     RunCancelRequest,
     RunCommandResult,
     RunCreateRequest,
+    RunRerunRequest,
+    RunRetryRequest,
     RunSteerRequest,
 )
 from toolang.common.errors import ToolangError
 from toolang.execution.executor import RunHandle, RunSpec
-from toolang.execution.records import RunRecord
+from toolang.execution.records import RunControlRecord, RunRecord
 from toolang.execution.schemas import RunControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
 from toolang.up import AgentCore
@@ -33,10 +35,11 @@ async def _start_run_stream(
     payload: RunCreateRequest,
 ) -> AsyncIterator[_StartedRunStream]:
     thread_id = _run_thread(core, payload)
+    setup = core.setup.current()
     try:
         handle = core.executor.start(
             RunSpec(
-                setup=core.setup.current(),
+                setup=setup,
                 state=core.state.current(),
                 ceiling=ceiling,
                 thread=thread_id,
@@ -44,6 +47,11 @@ async def _start_run_stream(
                 input=parse_percept(payload.input),
                 model=payload.model,
                 args=payload.args,
+            ),
+            limits=(
+                payload.limits.to_limits(setup.limits)
+                if payload.limits is not None
+                else None
             ),
             request_id=payload.request_id,
             tracer=live.trace(thread_id=thread_id),
@@ -181,6 +189,83 @@ def steer_run(
     return _control_result(core, run.id, control)
 
 
+@router.post(
+    "/{run_id}/retry",
+    summary="Retry Run",
+    status_code=202,
+    response_model=RunCommandResult,
+)
+async def retry_run(
+    core: AgentCoreDep,
+    ceiling: CeilingSpecDep,
+    live: LiveEventRelayDep,
+    run_id: str,
+    payload: RunRetryRequest | None = None,
+) -> RunCommandResult:
+    source = _terminal_root_or_409(core, run_id)
+    request = payload or RunRetryRequest()
+    setup = core.setup.current()
+    try:
+        handle = core.executor.retry(
+            source.id,
+            setup=setup,
+            state=core.state.current(),
+            anchor=request.anchor,
+            ceiling=ceiling,
+            model=request.model,
+            limits=(
+                request.limits.to_limits(setup.limits)
+                if request.limits is not None
+                else None
+            ),
+            request_id=request.request_id,
+            tracer=live.trace(thread_id=source.thread),
+        )
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    control = core.store.list_run_controls(run_id=handle.run_id)[-1]
+    return _control_result(core, handle.run_id, control)
+
+
+@router.post(
+    "/{run_id}/rerun",
+    summary="Rerun Run",
+    status_code=202,
+    response_model=RunCommandResult,
+)
+async def rerun_run(
+    core: AgentCoreDep,
+    ceiling: CeilingSpecDep,
+    live: LiveEventRelayDep,
+    run_id: str,
+    payload: RunRerunRequest | None = None,
+) -> RunCommandResult:
+    source = _terminal_root_or_409(core, run_id)
+    request = payload or RunRerunRequest()
+    setup = core.setup.current()
+    try:
+        handle = core.executor.rerun(
+            source.id,
+            setup=setup,
+            state=core.state.current(),
+            ceiling=ceiling,
+            model=request.model,
+            limits=(
+                request.limits.to_limits(setup.limits)
+                if request.limits is not None
+                else None
+            ),
+            request_id=request.request_id,
+            tracer=live.trace(thread_id=source.thread),
+        )
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    control = core.store.get_run_control(run_id=handle.run_id, index=0)
+    if control is None:  # pragma: no cover - executor acceptance is atomic
+        raise HTTPException(status_code=500, detail="rerun control not found")
+    return _control_result(core, handle.run_id, control)
+
+
 def _run_or_404(core: AgentCore, run_id: str) -> RunRecord:
     run = core.store.get_run(run_id=run_id)
     if run is None:
@@ -195,7 +280,20 @@ def _running_run_or_409(core: AgentCore, run_id: str) -> RunRecord:
     return run
 
 
-def _control_result(core: AgentCore, run_id: str, control) -> RunCommandResult:
+def _terminal_root_or_409(core: AgentCore, run_id: str) -> RunRecord:
+    run = _run_or_404(core, run_id)
+    if run.parent is not None:
+        raise HTTPException(status_code=409, detail=f"run is not a root: {run_id}")
+    if run.status in {"pending", "running"}:
+        raise HTTPException(status_code=409, detail=f"run is not terminal: {run_id}")
+    return run
+
+
+def _control_result(
+    core: AgentCore,
+    run_id: str,
+    control: RunControlRecord,
+) -> RunCommandResult:
     run = _run_or_404(core, run_id)
     detail = core.history.get_run(run_id)
     if detail is None:

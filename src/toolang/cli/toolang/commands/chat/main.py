@@ -10,6 +10,7 @@ import click
 import typer
 
 from toolang.base.types.message import TextDelta, TextPart, message_text
+from toolang.cli.common.limits import apply_limit_options
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.history import RunHistory
@@ -18,8 +19,9 @@ from toolang.lang.submission import QuickCommand, RunnableCall, parse_submission
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
 from toolang.state.state import split_cap_selectors
+from toolang.setup.config import load_run_limits
 
-from toolang.cli.common.context import context_layout
+from toolang.cli.common.context import context_layout, user_call
 from toolang.cli.common.execution import open_execution
 from . import slashes as chat_slashes
 from .base import ChatClient, chat_status_label, friendly_error as chat_friendly_error
@@ -38,6 +40,7 @@ def chat_command(
     agic: str | None = None,
     flow: str | None = None,
     sandbox: str | None = None,
+    limit: list[str] | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
     selectors = _chat_selector_payload(
@@ -53,6 +56,7 @@ def chat_command(
         thread_id=thread_id,
         selector_payload=selectors,
         sandbox=sandbox,
+        limit_options=limit,
     )
 
 
@@ -61,6 +65,7 @@ def send_command(
     thread: str,
     message: str,
     model: str | None = None,
+    limit: list[str] | None = None,
 ) -> None:
     target = _target_thread_id(ctx, thread)
     if target is None:  # pragma: no cover - the CLI argument is required
@@ -70,7 +75,12 @@ def send_command(
         selectors["model"] = model
     renderer = _ScriptedRunRenderer()
     errors: list[str] = []
-    with _chat_runtime(ctx, sandbox=None, selector_payload=selectors) as client:
+    with _chat_runtime(
+        ctx,
+        sandbox=None,
+        selector_payload=selectors,
+        limit_options=limit,
+    ) as client:
         client.start_run(
             target,
             message,
@@ -127,12 +137,14 @@ def _chat_interactive(
     thread_id: str | None,
     selector_payload: dict[str, object] | None = None,
     sandbox: str | None = None,
+    limit_options: list[str] | None = None,
 ) -> None:
     selectors = dict(selector_payload or {})
     with _chat_runtime(
         ctx,
         sandbox=sandbox,
         selector_payload=selectors,
+        limit_options=limit_options,
     ) as client:
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             _chat_interactive_scripted_local(
@@ -155,6 +167,7 @@ def _chat_runtime(
     *,
     sandbox: str | None,
     selector_payload: Mapping[str, object] | None = None,
+    limit_options: list[str] | None = None,
 ) -> Iterator[ChatClient]:
     """Own one process-local execution session for this chat command."""
 
@@ -164,11 +177,17 @@ def _chat_runtime(
         )
     layout = context_layout(ctx)
     selectors = selector_payload or {}
+    limits = (
+        user_call(apply_limit_options, load_run_limits(layout), limit_options)
+        if limit_options
+        else None
+    )
     local = LocalChatSession(
         layout,
         models=_strings(selectors.get("models")),
         tools=(_strings(selectors.get("tools")) if "tools" in selectors else None),
         caps=_strings(selectors.get("caps")),
+        limits=limits,
     )
     try:
         yield local

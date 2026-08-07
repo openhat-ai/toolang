@@ -166,9 +166,11 @@
   and provider discovery. `SetupWatcher` receives one `AgentLayout`, loads
   root-scoped model and tool configuration, snapshots root dotenv plus process
   environment values, and keeps the multi-process-safe model-list cache under
-  `${TOOLANG_ROOT}/.setup/models/`. Agent-home setup overrides are not yet
-  supported. `AgentSetup` carries that same layout plus `providers`, `adapters`,
-  `models`, `tools`, `envs`, captured default `RunLimits`, and safe
+  `${TOOLANG_ROOT}/.setup/models/`. Model, tool, and environment setup remains
+  root-scoped; run-limit defaults overlay root and agent-home `[run.limits]`
+  config and may be replaced by one explicit AgentServer value. `AgentSetup`
+  carries that same layout plus `providers`, `adapters`, `models`, `tools`,
+  `envs`, captured default `RunLimits`, and safe
   `AgentEnvironment` facts captured in the actual process location; execution
   consumes that snapshot without hosting, provider-discovery, or cache access.
   `refresh()` is the only watcher-owned snapshot-construction path.

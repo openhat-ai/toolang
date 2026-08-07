@@ -101,7 +101,8 @@ shuts down.
 The captured `AgentSetup` supplies the default `RunLimits`; `start()` may
 replace it for one root run tree. Per-agic model and tool call limits reset on
 each agic invocation, while token, cost, and time limits are shared by all
-recursive runs. The effective limits are stored only on the root start control.
+recursive runs. Effective limits are stored on the root start control and on
+each retry control.
 
 `start()` requires an existing thread. Thread creation belongs to
 `ThreadManager` or to the package that owns a deterministic external thread id.
@@ -242,8 +243,9 @@ check; it is not part of the public manager API.
 `RunSpec` carries one explicit immutable `AgentState`,
 `toolang.setup.AgentSetup`, and `CeilingSpec`. `AgentSetup` supplies the
 immutable `AgentLayout`, root-scoped installed runtime implementations, and
-captured default `RunLimits`. Future config and CLI support resolves those
-defaults before constructing the setup snapshot.
+captured default `RunLimits`. `SetupWatcher` resolves root and agent-home
+`[run.limits]` config before constructing the setup snapshot; a server launch
+may provide a complete explicit default instead.
 Execution uses that layout directly for the agent identity, home, and runtime
 rooms. Its primary input is one protocol-level `Percept`;
 after runnable resolution, input coercion exposes that value as `Part[]` or

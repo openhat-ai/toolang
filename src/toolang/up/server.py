@@ -22,6 +22,7 @@ import uvicorn
 from uvicorn.main import STARTUP_FAILURE
 
 from toolang.api.app import create_app
+from toolang.base.types.run import RunLimits
 from toolang.catalog import CapsManager, JobsManager
 from toolang.common.config import resolve_ui_base_url
 from toolang.common.env_logger import PY_LOG_ENV_VAR
@@ -70,6 +71,7 @@ class ServeSpec:
     endpoint_host: str
     port: int
     ceiling: CeilingSpec = CeilingSpec()
+    limits: RunLimits | None = None
     file_inboxes: tuple[Path, ...] = ()
     log_spec: str | None = None
 
@@ -87,6 +89,7 @@ def resolve_serve(
     models: Sequence[str] | None = None,
     tools: Sequence[str] | None = None,
     caps: Sequence[str] | None = None,
+    limits: RunLimits | None = None,
     file_inboxes: Sequence[Path] | None = None,
     log_spec: str | None = None,
     temporary_port: bool = False,
@@ -109,6 +112,7 @@ def resolve_serve(
             tools=_normalize_tool_selectors(tools),
             caps=_normalize_cap_selectors(caps) or None,
         ),
+        limits=limits,
         file_inboxes=resolved_inboxes,
         log_spec=log_spec.strip()
         if isinstance(log_spec, str) and log_spec.strip()
@@ -142,6 +146,8 @@ def build_serve_argv(
         command.extend(["--tools", selector])
     for selector in spec.ceiling.caps or ():
         command.extend(["--caps", selector])
+    if spec.limits is not None:
+        command.extend(["--limit", _format_limits(spec.limits)])
     for inbox in spec.file_inboxes:
         command.extend(["--inbox", str(inbox)])
     if spec.log_spec is not None:
@@ -159,7 +165,7 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
         if interval_ms <= 0:
             raise ValueError(f"trigger interval must be positive: {name}")
 
-    core = AgentCore(spec.layout)
+    core = AgentCore(spec.layout, limits=spec.limits)
     asyncio.run(core.state.refresh())
     asyncio.run(core.setup.refresh())
     state = core.state.current()
@@ -288,6 +294,19 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
         on_stopped=lambda: logger.info("Agent stopped"),
     )
     return 0
+
+
+def _format_limits(limits: RunLimits) -> str:
+    values = (
+        ("agic_model_calls", limits.agic_model_calls),
+        ("agic_tool_calls", limits.agic_tool_calls),
+        ("tokens", limits.tokens),
+        ("cost", limits.cost),
+        ("time", limits.time),
+    )
+    return ",".join(
+        f"{name}={'none' if value is None else value}" for name, value in values
+    )
 
 
 def _validate_file_agic(state: AgentState, *, enabled: bool) -> None:

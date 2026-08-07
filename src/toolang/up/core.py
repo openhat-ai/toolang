@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
+from toolang.base.types.run import RunLimits
 from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
 from toolang.execution.store import RunStore
@@ -26,14 +27,19 @@ class AgentCore:
         "threads",
     )
 
-    def __init__(self, layout: AgentLayout) -> None:
+    def __init__(
+        self,
+        layout: AgentLayout,
+        *,
+        limits: RunLimits | None = None,
+    ) -> None:
         self.layout = layout
         self.store = RunStore(layout.run_store)
         self.ids = IdIssuer(layout.id_state)
         self.executor = RunExecutor(self.store, self.ids)
         self.threads = ThreadManager(self.store, self.ids)
         self.history = RunHistory(self.store)
-        self.setup = SetupWatcher(layout)
+        self.setup = SetupWatcher(layout, limits=limits)
         self.state = StateWatcher(layout)
 
     async def close(self) -> None:
