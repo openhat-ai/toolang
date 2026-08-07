@@ -14,7 +14,7 @@ from tests.support.execution_fixtures import (
 from toolang.base.types.message import Message, TextPart
 from toolang.common.ids import IdIssuer
 from toolang.execution.history import RunHistory
-from toolang.execution.records import OutputRef
+from toolang.execution.records import RunControlRef, StepOutputRef
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
@@ -149,7 +149,7 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
         project_run_end(
             store,
             run_id=run.id,
-            output=OutputRef(step=step.path, part=1),
+            output=StepOutputRef(step=step.path, part=1),
         )
 
         history = RunHistory(store)
@@ -161,5 +161,34 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
         assert detail.output == [TextPart("result")]
         assert thread is not None
         assert thread.runs[0].output == [TextPart("result")]
+    finally:
+        store.close()
+
+
+def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_passthrough",
+            thread_id="term_passthrough",
+            origin="chat",
+            input=Message.user("unchanged"),
+        )
+        project_run_end(
+            store,
+            run_id=run.id,
+            output=RunControlRef(index=0),
+        )
+
+        stored = store.get_run(run_id=run.id)
+        detail = RunHistory(store).get_run(run.id)
+
+        assert stored is not None
+        assert stored.input == RunControlRef(index=0)
+        assert stored.output == RunControlRef(index=0)
+        assert store.run_output(run_id=run.id) == Message.user("unchanged").parts
+        assert detail is not None
+        assert detail.output == list(Message.user("unchanged").parts)
     finally:
         store.close()

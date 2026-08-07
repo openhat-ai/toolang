@@ -24,7 +24,7 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.execution.history import RunHistory
 from toolang.execution.records import StepRecord
 from toolang.execution.store import RunStore
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import StepPath, ThreadPrefix
 from toolang.lang.input import perceive_input
 
 
@@ -56,8 +56,7 @@ def _capture_replayable_model_step(store: RunStore) -> StepRecord:
         ),
     )
     return store.begin_step(
-        parent="run_replayable_model",
-        index=0,
+        path=StepPath("run_replayable_model", (0,)),
         kind="model",
         input=(),
         given=given,

@@ -17,6 +17,7 @@ from toolang.base.types.message import (
     message_text,
 )
 from toolang.execution.events import StepBegin, StepEnd
+from toolang.execution.types import StepPath
 
 from ..output import parse_utc_timestamp
 
@@ -205,11 +206,8 @@ def runnable_label(value: str) -> str:
     return f"<agic:L{match.group(1)}>" if match is not None else value
 
 
-def statement_index(step: str) -> int:
-    try:
-        return int(step.rsplit("/", 1)[-1])
-    except ValueError:
-        return 0
+def statement_index(step: StepPath) -> int:
+    return step.index
 
 
 def shape_label(event: StepEnd) -> str:

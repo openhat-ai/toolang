@@ -6,23 +6,22 @@ project run and step truth.
 
 ## Paths And References
 
-`StepPath` identifies a position in one run tree:
+`StepPath` globally identifies one step within its owning run:
 
 ```text
-run_id[/step_index/...]
+run_id/step_index[/step_index...]
 ```
 
 Examples:
 
 ```text
-run_abc123
 run_abc123/0
 run_abc123/0/1
 ```
 
 `RunControlRef(index, part?)` references a control input in the current run.
-`OutputRef(step, part?)` references step output. `ThreadControlRef(thread,
-index)` references a durable thread mutation.
+`StepOutputRef(step, part?)` references step output. `ValueRef` is their union.
+`ThreadControlRef(thread, index)` references a durable thread mutation.
 
 
 ## Statuses
@@ -55,8 +54,10 @@ finished_at
 ```
 
 `parent` is the calling `StepPath` for a child run. `input` normally references
-the index-zero start control. `superseded_by` is a `ThreadControlRef` when a
-rewind replaces this run.
+the index-zero start control and remains persisted rather than inferred from
+the first step. `output` is a `ValueRef`, so a pass-through run may point
+directly to a control input while computed output points to a step.
+`superseded_by` is a `ThreadControlRef` when a rewind replaces this run.
 
 
 ## RunControlRecord
@@ -95,8 +96,7 @@ cross-process cancellation; it is not another `ControlStatus`.
 ## StepRecord
 
 ```text
-parent
-index
+path
 kind
 input
 output
@@ -109,8 +109,9 @@ started_at
 finished_at
 ```
 
-`(parent, index)` is the durable identity. A step path is `parent / index`.
-Step input may contain run-control references, output references, and inline
+`path` is the complete `StepPath`. SQLite stores its owning `run` and local
+index path separately and uses `(run, path)` as the durable identity. Step
+input may contain run-control references, step-output references, and inline
 messages. Step output is ordered `MessagePart[]`: ordinary content uses
 `PerceptPart` values (the runtime representation of language `Part`), model
 steps may add `ToolCallPart`, and tool steps emit `ToolResultPart`. The

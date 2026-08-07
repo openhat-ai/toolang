@@ -14,7 +14,8 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import trace_run
+from toolang.execution.records import StepOutputRef
+from toolang.execution.types import StepPath
 
 
 def event_labels(events: Sequence[RunEvent]) -> list[str]:
@@ -50,10 +51,10 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
 
     active_runs: set[str] = set()
     ended_runs: set[str] = set()
-    active_steps: dict[str, StepBegin] = {}
-    ended_steps: dict[str, StepEnd] = {}
-    active_parts: dict[tuple[str, int], PartBegin] = {}
-    ended_parts: dict[tuple[str, int], PartEnd] = {}
+    active_steps: dict[StepPath, StepBegin] = {}
+    ended_steps: dict[StepPath, StepEnd] = {}
+    active_parts: dict[tuple[StepPath, int], PartBegin] = {}
+    ended_parts: dict[tuple[StepPath, int], PartEnd] = {}
 
     for position, event in enumerate(events):
         where = f"event {position} ({event.type})"
@@ -64,7 +65,7 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
             continue
 
         if isinstance(event, StepBegin):
-            run_id = trace_run(event.step)
+            run_id = event.step.run
             assert run_id in active_runs, f"step outside active run at {where}"
             assert event.step not in active_steps, (
                 f"duplicate step begin at {where}"
@@ -119,7 +120,14 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
                 )
                 parts = tuple(
                     ended.data
-                    for key, ended in sorted(ended_parts.items())
+                    for key, ended in sorted(
+                        ended_parts.items(),
+                        key=lambda item: (
+                            item[0][0].run,
+                            item[0][0].indices,
+                            item[0][1],
+                        ),
+                    )
                     if key[0] == event.step
                 )
                 if parts:
@@ -136,9 +144,9 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
         assert event.run in active_runs, f"run end without begin at {where}"
         assert event.run not in ended_runs, f"duplicate run end at {where}"
         assert not any(
-            trace_run(step) == event.run for step in active_steps
+            step.run == event.run for step in active_steps
         ), f"run ended with active steps at {where}"
-        if event.output is not None:
+        if isinstance(event.output, StepOutputRef):
             assert event.output.step in ended_steps, (
                 f"run output references an incomplete step at {where}"
             )

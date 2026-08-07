@@ -201,7 +201,7 @@ class CallBlock(CallState):
     ) -> None:
         model = model_label(self.begin.given)
         duration = elapsed(self.begin.started_at, event.finished_at)
-        facts = [event.step, duration, model, *usage_facts(event.noted)]
+        facts = [str(event.step), duration, model, *usage_facts(event.noted)]
         if event.status != "finished":
             if not error:
                 return
@@ -241,7 +241,7 @@ class CallBlock(CallState):
         duration = elapsed(self.begin.started_at, event.finished_at)
         exit_code = tool_exit_code(event)
         facts = [
-            event.step,
+            str(event.step),
             duration,
             f"exit {exit_code}" if exit_code is not None else "",
         ]

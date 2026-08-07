@@ -32,12 +32,12 @@ from toolang.common.time import elapsed_ms, utc_now
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...records import (
-    OutputRef,
     RunControlRecord,
     RunControlRef,
-    StepInputItem,
-    trace_child_path,
+    StepInput,
+    StepOutputRef,
 )
+from ...types import StepPath
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 
 if TYPE_CHECKING:
@@ -92,7 +92,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
     )
     await state.emit(
         StepBegin(
-            step=trace_child_path(run.run_id, step_index),
+            step=StepPath(run.run_id, (step_index,)),
             kind="model",
             input=step_input,
             started_at=started_at,
@@ -126,7 +126,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
     except asyncio.CancelledError:
         await state.emit(
             StepEnd(
-                step=trace_child_path(run.run_id, step_index),
+                step=StepPath(run.run_id, (step_index,)),
                 kind="model",
                 status="canceled",
                 finished_at=utc_now(),
@@ -136,7 +136,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
     except Exception as exc:
         await state.emit(
             StepEnd(
-                step=trace_child_path(run.run_id, step_index),
+                step=StepPath(run.run_id, (step_index,)),
                 kind="model",
                 status="failed",
                 error=str(exc) or type(exc).__name__,
@@ -192,7 +192,7 @@ async def _apply_response(
         )
         await state.emit(
             PartEnd(
-                step=trace_child_path(run.run_id, step_index),
+                step=StepPath(run.run_id, (step_index,)),
                 part=part_index,
                 data=part,
             )
@@ -205,7 +205,7 @@ async def _apply_response(
     state.model_state = current.state
     await state.emit(
         StepEnd(
-            step=trace_child_path(run.run_id, step_index),
+            step=StepPath(run.run_id, (step_index,)),
             kind="model",
             status="finished",
             output=output,
@@ -265,7 +265,7 @@ async def _handle_event(
             if event.delta.text:
                 await state.emit(
                     PartDelta(
-                        step=trace_child_path(state.prepared.run.run_id, stream.step),
+                        step=StepPath(state.prepared.run.run_id, (stream.step,)),
                         part=part_index,
                         delta=event.delta,
                     )
@@ -282,7 +282,7 @@ async def _handle_event(
             if event.delta.text:
                 await state.emit(
                     PartDelta(
-                        step=trace_child_path(state.prepared.run.run_id, stream.step),
+                        step=StepPath(state.prepared.run.run_id, (stream.step,)),
                         part=part_index,
                         delta=event.delta,
                     )
@@ -338,11 +338,13 @@ def _output_parts(
     return items
 
 
-def _step_input(state: _AgicState) -> tuple[StepInputItem, ...]:
+def _step_input(state: _AgicState) -> tuple[StepInput, ...]:
     if state.last_step is None:
         return (RunControlRef(),)
     return (
-        OutputRef(step=trace_child_path(state.prepared.run.run_id, state.last_step)),
+        StepOutputRef(
+            step=StepPath(state.prepared.run.run_id, (state.last_step,)),
+        ),
     )
 
 
@@ -388,7 +390,7 @@ async def _emit_part_begin(
     stream.started_parts.add(part_index)
     await state.emit(
         PartBegin(
-            step=trace_child_path(state.prepared.run.run_id, stream.step),
+            step=StepPath(state.prepared.run.run_id, (stream.step,)),
             part=part_index,
             part_type=kind,
         )

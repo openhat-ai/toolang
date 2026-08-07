@@ -66,8 +66,9 @@ Runs within one thread use their durable SQLite acceptance order for history,
 fork, and rewind boundaries. Wall-clock timestamps remain display metadata and
 are not used to decide which runs follow an anchor.
 
-Step indexes are local to their parent step path and are protected by the
-`(parent, index)` primary key. One process owns execution of a run tree.
+Each `StepPath` includes its owning run. SQLite stores the run and local index
+path separately and protects the `(run, path)` primary key. One process owns
+execution of a run tree.
 
 
 ## Run Execution

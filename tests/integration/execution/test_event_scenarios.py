@@ -17,7 +17,7 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import StepPath, ThreadPrefix
 from toolang.lang.input import perceive_input
 
 
@@ -181,7 +181,7 @@ flow parallel(_: Text) -> Text[]:
             ]
 
             assert_run_event_integrity(tracer.events)
-            root_step = f"{root.id}/0"
+            root_step = StepPath.parse(f"{root.id}/0")
             parent_begin = tracer.events.index(
                 next(
                     event

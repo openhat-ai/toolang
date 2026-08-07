@@ -20,8 +20,8 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult, ToolCall
-from toolang.execution.records import OutputRef, RunControlRef
-from toolang.execution.types import ControlTiming, ThreadPrefix
+from toolang.execution.records import RunControlRef, StepOutputRef
+from toolang.execution.types import ControlTiming, StepPath, ThreadPrefix
 from toolang.lang.input import perceive_input
 
 
@@ -141,7 +141,7 @@ agic revise(_: Part[]) -> Part[]:
             assert stored_control.status == "finished"
             steps = harness.store.list_steps(run_id=record.id)
             assert steps[1].input == (
-                OutputRef(step=f"{record.id}/0"),
+                StepOutputRef(step=StepPath.parse(f"{record.id}/0")),
                 RunControlRef(index=control.index),
             )
             assert harness.store.run_output(run_id=record.id) == (
@@ -302,7 +302,7 @@ flow sequence(_: Text) -> Text:
             root_steps = [
                 (step.kind, step.status)
                 for step in harness.store.list_steps(run_id=record.id)
-                if step.parent == record.id
+                if step.parent is None
             ]
             assert root_steps == expected_steps
             assert harness.adapter.pending_responses == 1
@@ -375,7 +375,7 @@ flow sequence(_: Text) -> Text:
             referencing_steps = [
                 step
                 for step in harness.store.list_steps(run_id=record.id)
-                if step.parent == record.id
+                if step.parent is None
                 and RunControlRef(index=control.index) in step.input
             ]
             assert referencing_steps[0].index == consumer_index
@@ -444,7 +444,7 @@ agic revise(_: Text) -> Text:
             assert [control.index for control in controls] == [1, 2, 3]
             second_step = harness.store.list_steps(run_id=record.id)[1]
             assert second_step.input == (
-                OutputRef(step=f"{record.id}/0"),
+                StepOutputRef(step=StepPath.parse(f"{record.id}/0")),
                 RunControlRef(index=1),
                 RunControlRef(index=2),
                 RunControlRef(index=3),

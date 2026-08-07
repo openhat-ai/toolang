@@ -17,7 +17,8 @@ from toolang.common.layout import AgentLayout
 from toolang.common.time import elapsed_ms, utc_now
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
-from ...records import OutputRef, RunControlRef, StepInputItem, trace_child_path
+from ...records import RunControlRef, StepInput, StepOutputRef
+from ...types import StepPath
 from ..diagnostics import log_tool_call_input, log_tool_call_output
 
 if TYPE_CHECKING:
@@ -38,16 +39,18 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     started_at = utc_now()
     plugin_name = _plugin_name(prepared.tools.get(call.name))
     source = state.tool_call_sources.get(call.tool_call_id)
-    step_input: tuple[StepInputItem, ...]
+    step_input: tuple[StepInput, ...]
     if source is not None:
         step_input = (
-            OutputRef(
-                step=trace_child_path(run.run_id, source[0]),
+            StepOutputRef(
+                step=StepPath(run.run_id, (source[0],)),
                 part=source[1],
             ),
         )
     elif state.last_step is not None:
-        step_input = (OutputRef(step=trace_child_path(run.run_id, state.last_step)),)
+        step_input = (
+            StepOutputRef(step=StepPath(run.run_id, (state.last_step,))),
+        )
     else:
         step_input = (RunControlRef(),)
     _LOGGER.info(
@@ -66,7 +69,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     )
     await state.emit(
         StepBegin(
-            step=trace_child_path(run.run_id, step_index),
+            step=StepPath(run.run_id, (step_index,)),
             kind="tool",
             input=step_input,
             given={
@@ -89,7 +92,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     except asyncio.CancelledError:
         await state.emit(
             StepEnd(
-                step=trace_child_path(run.run_id, step_index),
+                step=StepPath(run.run_id, (step_index,)),
                 kind="tool",
                 status="canceled",
                 finished_at=utc_now(),
@@ -100,7 +103,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         error = str(exc) or type(exc).__name__
         await state.emit(
             StepEnd(
-                step=trace_child_path(run.run_id, step_index),
+                step=StepPath(run.run_id, (step_index,)),
                 kind="tool",
                 status="failed",
                 error=error,
@@ -127,14 +130,14 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     )
     await state.emit(
         PartBegin(
-            step=trace_child_path(run.run_id, step_index),
+            step=StepPath(run.run_id, (step_index,)),
             part=0,
             part_type=part.type,
         )
     )
     await state.emit(
         PartEnd(
-            step=trace_child_path(run.run_id, step_index),
+            step=StepPath(run.run_id, (step_index,)),
             part=0,
             data=part,
         )
@@ -149,7 +152,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     )
     await state.emit(
         StepEnd(
-            step=trace_child_path(run.run_id, step_index),
+            step=StepPath(run.run_id, (step_index,)),
             kind="tool",
             status=status,
             output=(part,),

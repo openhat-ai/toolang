@@ -43,21 +43,21 @@ class RunControlRef:
 
 
 @dataclass(frozen=True, slots=True)
-class OutputRef:
+class StepOutputRef:
     """Reference one step output or one step output part."""
 
     step: StepPath
     part: int | None = None
 
     @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> "OutputRef":
+    def from_data(cls, payload: Mapping[str, Any]) -> StepOutputRef:
         return cls(
-            step=str(payload.get("step", "")),
+            step=StepPath.parse(str(payload.get("step", ""))),
             part=_optional_int(payload.get("part")),
         )
 
     def to_data(self) -> dict[str, Any]:
-        data: dict[str, Any] = {"step": self.step}
+        data: dict[str, Any] = {"step": str(self.step)}
         if self.part is not None:
             data["part"] = self.part
         return data
@@ -75,7 +75,8 @@ class OutputRef:
         return ()
 
 
-StepInputItem = RunControlRef | OutputRef | Message
+ValueRef = RunControlRef | StepOutputRef
+StepInput = ValueRef | Message
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +87,7 @@ class RunRecord:
     parent: StepPath | None
     thread: str
     input: RunControlRef
-    output: OutputRef | None
+    output: ValueRef | None
     context: dict[str, Any] = field(default_factory=dict)
     status: RunStatus = "pending"
     error: str | None = None
@@ -171,10 +172,9 @@ class ThreadRecord:
 class StepRecord:
     """One durable execution step."""
 
-    parent: StepPath
-    index: int
+    path: StepPath
     kind: StepKind
-    input: tuple[StepInputItem, ...]
+    input: tuple[StepInput, ...]
     output: tuple[MessagePart, ...]
     given: dict[str, Any] = field(default_factory=dict)
     noted: dict[str, Any] = field(default_factory=dict)
@@ -185,12 +185,16 @@ class StepRecord:
     finished_at: str | None = None
 
     @property
-    def path(self) -> StepPath:
-        return trace_child_path(self.parent, self.index)
+    def run_id(self) -> str:
+        return self.path.run
 
     @property
-    def run_id(self) -> str:
-        return trace_run(self.parent)
+    def parent(self) -> StepPath | None:
+        return self.path.parent
+
+    @property
+    def index(self) -> int:
+        return self.path.index
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,44 +239,27 @@ class ThreadControlRecord:
     finished_at: str | None = None
 
 
-def trace_run(path: StepPath) -> RunId:
-    """Return the run id component of one trace path."""
-
-    return path.split("/", 1)[0]
-
-
-def trace_parent(path: StepPath) -> StepPath | None:
-    """Return the parent trace path for a step path."""
-
-    if "/" not in path:
-        return None
-    return path.rsplit("/", 1)[0]
-
-
-def trace_index(path: StepPath) -> int | None:
-    """Return the leaf step index for a step path."""
-
-    if "/" not in path:
-        return None
-    try:
-        return int(path.rsplit("/", 1)[1])
-    except ValueError:
-        return None
-
-
-def trace_child_path(parent: StepPath, index: int) -> StepPath:
-    """Return a child step path under one trace path."""
-
-    return f"{parent}/{index}"
-
-
-def step_input_item_from_data(payload: Mapping[str, Any]) -> StepInputItem:
-    """Return one step input item from one serialized payload."""
+def value_ref_from_data(payload: Mapping[str, Any]) -> ValueRef:
+    """Parse one durable value reference."""
 
     if "control" in payload:
         return RunControlRef.from_data(payload)
     if "step" in payload:
-        return OutputRef.from_data(payload)
+        return StepOutputRef.from_data(payload)
+    raise ValueError("unknown value reference shape")
+
+
+def value_ref_to_data(ref: ValueRef) -> dict[str, Any]:
+    """Serialize one durable value reference."""
+
+    return ref.to_data()
+
+
+def step_input_from_data(payload: Mapping[str, Any]) -> StepInput:
+    """Return one step input item from one serialized payload."""
+
+    if "control" in payload or "step" in payload:
+        return value_ref_from_data(payload)
     if "message" in payload:
         return Message.from_data(_mapping(payload.get("message")))
     if "role" in payload and "parts" in payload:
@@ -280,28 +267,26 @@ def step_input_item_from_data(payload: Mapping[str, Any]) -> StepInputItem:
     raise ValueError("unknown step input item shape")
 
 
-def step_input_items_from_data(
+def step_inputs_from_data(
     payloads: Sequence[Mapping[str, Any]],
-) -> tuple[StepInputItem, ...]:
+) -> tuple[StepInput, ...]:
     """Return step input items from one serialized sequence."""
 
-    return tuple(step_input_item_from_data(item) for item in payloads)
+    return tuple(step_input_from_data(item) for item in payloads)
 
 
-def step_input_item_to_data(item: StepInputItem) -> dict[str, Any]:
+def step_input_to_data(item: StepInput) -> dict[str, Any]:
     """Return one serialized step input item."""
 
-    if isinstance(item, RunControlRef):
-        return item.to_data()
-    if isinstance(item, OutputRef):
-        return item.to_data()
+    if isinstance(item, RunControlRef | StepOutputRef):
+        return value_ref_to_data(item)
     return {"message": item.to_data()}
 
 
-def step_input_items_to_data(items: tuple[StepInputItem, ...]) -> list[dict[str, Any]]:
+def step_inputs_to_data(items: tuple[StepInput, ...]) -> list[dict[str, Any]]:
     """Return serialized step input items."""
 
-    return [step_input_item_to_data(item) for item in items]
+    return [step_input_to_data(item) for item in items]
 
 
 def step_message_role(kind: StepKind) -> MessageRole | None:

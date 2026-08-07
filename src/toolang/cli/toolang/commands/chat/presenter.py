@@ -15,7 +15,8 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import trace_parent, trace_run
+from toolang.execution.records import StepOutputRef
+from toolang.execution.types import StepPath
 
 from toolang.cli.common.execution_progress.formatting import (
     integer,
@@ -41,10 +42,10 @@ class ChatRunPresenter:
     def __init__(self) -> None:
         self._root_run_id: str | None = None
         self._runs: dict[str, RunState] = {}
-        self._statements: dict[str, StatementState] = {}
-        self._calls: dict[str, CallState] = {}
-        self._outcomes: dict[str, StepEnd] = {}
-        self._blocks: dict[str, blocks.MutableBlock] = {}
+        self._statements: dict[StepPath, StatementState] = {}
+        self._calls: dict[StepPath, CallState] = {}
+        self._outcomes: dict[StepPath, StepEnd] = {}
+        self._blocks: dict[StepPath, blocks.MutableBlock] = {}
         self._reported_errors: set[str] = set()
 
     def handle(self, event: RunEvent, app: AppContext) -> None:
@@ -116,7 +117,7 @@ class ChatRunPresenter:
             self._append_tail(stop, app)
             return
 
-        owner = self._statements.get(event.parent or "")
+        owner = self._statements.get(event.parent) if event.parent is not None else None
         if owner is None:
             return
         owner.child_started(run)
@@ -141,9 +142,9 @@ class ChatRunPresenter:
             return
         call = CallState(event)
         self._calls[event.step] = call
-        owner = self._activity_owner(trace_run(event.step))
+        owner = self._activity_owner(event.step.run)
         if owner is not None:
-            owner.set_activity(trace_run(event.step), call.active_label)
+            owner.set_activity(event.step.run, call.active_label)
             if not owner.batched:
                 block = self._blocks.get(owner.begin.step)
                 if isinstance(block, blocks.FlowStepBlock):
@@ -154,7 +155,7 @@ class ChatRunPresenter:
         self._insert_before_run(block, app)
 
     def _begin_statement(self, event: StepBegin, app: AppContext) -> None:
-        run = self._runs.get(trace_run(event.step))
+        run = self._runs.get(event.step.run)
         direct_repeat = self._direct_repeat_owner(event.step)
         live_owner = direct_repeat or self._repeat_owner(run)
         ordinal: int | None = None
@@ -186,10 +187,10 @@ class ChatRunPresenter:
         if call is None:
             return
         preview = call.append_delta(event.delta.text)
-        owner = self._activity_owner(trace_run(event.step))
+        owner = self._activity_owner(event.step.run)
         if owner is not None:
             owner.set_activity(
-                trace_run(event.step),
+                event.step.run,
                 truncate(one_line(preview), 100) or "responding…",
             )
             return
@@ -199,7 +200,7 @@ class ChatRunPresenter:
 
     def _end_step(self, event: StepEnd, app: AppContext) -> None:
         self._outcomes[event.step] = event
-        run = self._runs.get(trace_run(event.step))
+        run = self._runs.get(event.step.run)
         if run is not None:
             run.metrics.record_step(event)
         if state := self._statements.get(event.step):
@@ -209,9 +210,9 @@ class ChatRunPresenter:
         if call is None:
             return
         call.finish(event)
-        owner = self._activity_owner(trace_run(event.step))
+        owner = self._activity_owner(event.step.run)
         if owner is not None:
-            owner.set_activity(trace_run(event.step), call.completed_label(event))
+            owner.set_activity(event.step.run, call.completed_label(event))
             return
         block = self._blocks.get(event.step)
         if block is None:
@@ -251,7 +252,7 @@ class ChatRunPresenter:
         if event.run == self._root_run_id:
             self._end_root(run, event, app)
             return
-        owner = self._statements.get(run.parent or "")
+        owner = self._statements.get(run.parent) if run.parent is not None else None
         if owner is None:
             return
         owner.child_finished(run)
@@ -259,7 +260,7 @@ class ChatRunPresenter:
             block = self._blocks.get(owner.begin.step)
             if isinstance(block, blocks.FlowStepBlock):
                 block.note_child_run(run)
-        parent_run = self._runs.get(trace_run(owner.begin.step))
+        parent_run = self._runs.get(owner.begin.step.run)
         if parent_run is not None:
             parent_run.metrics.add(run.metrics)
         if self._is_until(run, owner) and run.status == "finished":
@@ -276,7 +277,9 @@ class ChatRunPresenter:
         event: RunEnd,
         app: AppContext,
     ) -> None:
-        output_step = event.output.step if event.output is not None else None
+        output_step = (
+            event.output.step if isinstance(event.output, StepOutputRef) else None
+        )
         show_inline_result = run.kind != "flow"
         output_finalized = False
         for step, block in list(self._blocks.items()):
@@ -341,8 +344,8 @@ class ChatRunPresenter:
         live_owner = self._live_owner(owner)
         return live_owner if live_owner.statement == "repeat" else None
 
-    def _direct_repeat_owner(self, step: str) -> StatementState | None:
-        parent = trace_parent(step)
+    def _direct_repeat_owner(self, step: StepPath) -> StatementState | None:
+        parent = step.parent
         owner = self._statements.get(parent) if parent is not None else None
         return owner if owner is not None and owner.statement == "repeat" else None
 
@@ -352,7 +355,7 @@ class ChatRunPresenter:
         return self._statements.get(statement.live_owner, statement)
 
     def _until_decision(self, event: RunEnd) -> bool | None:
-        if event.output is None:
+        if not isinstance(event.output, StepOutputRef):
             return None
         outcome = self._outcomes.get(event.output.step)
         value = output_preview(outcome).strip() if outcome is not None else ""
@@ -366,12 +369,12 @@ class ChatRunPresenter:
     def _is_until(run: RunState, owner: StatementState) -> bool:
         return owner.statement == "repeat" and run.placement.get("role") == "until"
 
-    def _discard_pending_models(self, next_step: str, app: AppContext) -> None:
-        next_run = trace_run(next_step)
+    def _discard_pending_models(self, next_step: StepPath, app: AppContext) -> None:
+        next_run = next_step.run
         for step, block in list(self._blocks.items()):
             if (
                 step != next_step
-                and trace_run(step) == next_run
+                and step.run == next_run
                 and isinstance(block, blocks.ModelStepBlock)
                 and self._calls.get(step) is not None
                 and self._calls[step].end is not None
@@ -381,7 +384,7 @@ class ChatRunPresenter:
 
     def _discard_run_models(self, run_id: str, app: AppContext) -> None:
         for step, block in list(self._blocks.items()):
-            if trace_run(step) == run_id and isinstance(block, blocks.ModelStepBlock):
+            if step.run == run_id and isinstance(block, blocks.ModelStepBlock):
                 self._discard(block, app)
                 self._blocks.pop(step, None)
 
@@ -404,7 +407,7 @@ class ChatRunPresenter:
         ):
             block.error = error
 
-    def _finalize(self, step: str, app: AppContext) -> None:
+    def _finalize(self, step: StepPath, app: AppContext) -> None:
         block = self._blocks.pop(step, None)
         if block is not None:
             app.finalize_block(block)
@@ -444,7 +447,7 @@ class ChatRunPresenter:
         target_run = (
             event.run
             if isinstance(event, (RunBegin, RunEnd))
-            else trace_run(event.step)
+            else event.step.run
         )
         for block in list(app.get_live_blocks()):
             if not isinstance(block, block_type):

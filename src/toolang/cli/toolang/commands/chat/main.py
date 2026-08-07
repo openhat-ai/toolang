@@ -13,6 +13,7 @@ from toolang.base.types.message import TextDelta, TextPart, message_text
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.history import RunHistory
+from toolang.execution.types import StepPath
 from toolang.lang.submission import QuickCommand, RunnableCall, parse_submission
 from toolang.plugin.models.resolution import split_model_selectors
 from toolang.plugin.tools.registry import split_tool_selectors
@@ -334,7 +335,7 @@ class _ScriptedRunRenderer:
 
     def __init__(self) -> None:
         self._assistant_open = False
-        self._text_delta_steps: set[str] = set()
+        self._text_delta_steps: set[StepPath] = set()
         self._terminal: RunEnd | None = None
 
     @property

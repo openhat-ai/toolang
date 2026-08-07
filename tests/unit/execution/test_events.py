@@ -17,7 +17,8 @@ from toolang.execution.events import (
     run_event_from_data,
     run_event_to_data,
 )
-from toolang.execution.records import OutputRef, RunControlRef
+from toolang.execution.records import RunControlRef, StepOutputRef
+from toolang.execution.types import StepPath
 
 
 _EVENTS: tuple[RunEvent, ...] = (
@@ -28,20 +29,20 @@ _EVENTS: tuple[RunEvent, ...] = (
         started_at="2026-01-01T00:00:00Z",
     ),
     StepBegin(
-        step="run_root/0",
+        step=StepPath.parse("run_root/0"),
         kind="model",
         input=(
             RunControlRef(index=0),
-            OutputRef(step="run_root/1"),
+            StepOutputRef(step=StepPath.parse("run_root/1")),
             Message.user("steer"),
         ),
         started_at="2026-01-01T00:00:01Z",
     ),
-    PartBegin(step="run_root/0", part=0, part_type="text"),
-    PartDelta(step="run_root/0", part=0, delta=TextDelta("hello")),
-    PartEnd(step="run_root/0", part=0, data=TextPart("hello")),
+    PartBegin(step=StepPath.parse("run_root/0"), part=0, part_type="text"),
+    PartDelta(step=StepPath.parse("run_root/0"), part=0, delta=TextDelta("hello")),
+    PartEnd(step=StepPath.parse("run_root/0"), part=0, data=TextPart("hello")),
     StepEnd(
-        step="run_root/0",
+        step=StepPath.parse("run_root/0"),
         kind="model",
         status="finished",
         output=(TextPart("hello"),),
@@ -51,7 +52,7 @@ _EVENTS: tuple[RunEvent, ...] = (
         run="run_root",
         status="finished",
         input=RunControlRef(index=0),
-        output=OutputRef(step="run_root/0"),
+        output=StepOutputRef(step=StepPath.parse("run_root/0")),
         finished_at="2026-01-01T00:00:03Z",
     ),
 )

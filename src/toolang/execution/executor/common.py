@@ -45,7 +45,7 @@ from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
-from ..records import OutputRef, RunControlRecord, RunControlRef, StepInputItem
+from ..records import RunControlRecord, RunControlRef, StepInput, StepOutputRef, ValueRef
 from ..types import StepKind, StepPath
 from .ceiling import CeilingSpec, _AgentCeiling, _RunCeiling
 
@@ -81,7 +81,7 @@ class Local:
 
     value: Any = None
     shape: Shape = "none"
-    source: RunControlRef | OutputRef | None = None
+    ref: ValueRef | None = None
     type_name: str | None = None
 
 
@@ -103,9 +103,9 @@ async def execute_step(
         (
             *(RunControlRef(index=item.index) for item in controls),
             *(
-                local.source
+                local.ref
                 for _name, local in sorted(locals.items())
-                if not isinstance(statement, LetStmt) and local.source is not None
+                if not isinstance(statement, LetStmt) and local.ref is not None
             ),
         )
     )
@@ -171,7 +171,7 @@ async def execute_step(
             finished_at=utc_now(),
         )
     )
-    return replace(result, source=OutputRef(step=path))
+    return replace(result, ref=StepOutputRef(step=path))
 
 
 def initial_locals(
@@ -211,7 +211,7 @@ def initial_locals(
             executable.input.type_name or "Part[]",
         )
     else:
-        locals.setdefault("_", Local(source=start))
+        locals.setdefault("_", Local(ref=start))
     return locals
 
 
@@ -413,8 +413,8 @@ def control_text(control: RunControlRecord | None) -> str:
     return message_text(control.input.parts)
 
 
-def _unique_step_inputs(items: Sequence[StepInputItem]) -> tuple[StepInputItem, ...]:
-    result: list[StepInputItem] = []
+def _unique_step_inputs(items: Sequence[StepInput]) -> tuple[StepInput, ...]:
+    result: list[StepInput] = []
     for item in items:
         if item not in result:
             result.append(item)

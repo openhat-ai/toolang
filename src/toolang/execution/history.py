@@ -8,7 +8,7 @@ from toolang.base.types.run import ModelCall
 from .records import StepRecord
 from .schemas import RunDetail, RunInfo, ThreadDetail, ThreadInfo
 from .store import RunStore
-from .types import RunStatus
+from .types import RunStatus, StepPath
 
 
 class RunHistory:
@@ -141,7 +141,7 @@ class RunHistory:
 
     def _model_calls(
         self, steps_by_run: Mapping[str, Sequence[StepRecord]]
-    ) -> dict[str, ModelCall]:
+    ) -> dict[StepPath, ModelCall]:
         return self._store.rebuild_model_calls(
             tuple(
                 step for steps in steps_by_run.values() for step in _model_steps(steps)

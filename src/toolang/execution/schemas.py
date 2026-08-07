@@ -9,10 +9,11 @@ from typing import Any
 from toolang.base.types.message import Message, MessagePart, message_summary
 from toolang.base.types.run import ModelCall
 from .records import (
-    OutputRef,
     RunControlRecord,
     RunControlRef,
     RunRecord,
+    StepInput,
+    StepOutputRef,
     StepRecord,
     ThreadControlRef,
     ThreadPeer,
@@ -56,18 +57,18 @@ class ThreadControlRefData:
 
 
 @dataclass(frozen=True, slots=True)
-class OutputRefData:
+class StepOutputRefData:
     """One caller-facing step-output reference."""
 
     step: StepPath
     part: int | None = None
 
     @classmethod
-    def from_ref(cls, ref: OutputRef) -> OutputRefData:
+    def from_ref(cls, ref: StepOutputRef) -> StepOutputRefData:
         return cls(step=ref.step, part=ref.part)
 
 
-StepInputData = RunControlRefData | OutputRefData | Message
+StepInputData = RunControlRefData | StepOutputRefData | Message
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,7 +213,7 @@ class RunInfo:
     """One caller-facing run summary and identity schema."""
 
     id: str
-    parent: str | None
+    parent: StepPath | None
     thread_id: str
     root_run_id: str
     runnable_kind: str
@@ -330,8 +331,7 @@ class RunControlInfo:
 class StepData:
     """One caller-facing execution step."""
 
-    parent: StepPath
-    index: int
+    path: StepPath
     kind: StepKind
     input: list[StepInputData]
     output: list[MessagePart]
@@ -354,8 +354,7 @@ class StepData:
         if call is not None:
             given["call"] = call.to_data()
         return cls(
-            parent=step.parent,
-            index=step.index,
+            path=step.path,
             kind=step.kind,
             input=[_step_input_data(item) for item in step.input],
             output=list(step.output),
@@ -395,7 +394,7 @@ class RunDetail(RunInfo):
             **{item.name: getattr(info, item.name) for item in fields(RunInfo)},
             input=start.input,
             output=(
-                list(run.output.resolve(steps))
+                list(_resolve_value_ref(run.output, controls=controls, steps=steps))
                 if run.output is not None
                 else None
             ),
@@ -424,12 +423,31 @@ class ThreadDetail(ThreadInfo):
         )
 
 
-def _step_input_data(item: RunControlRef | OutputRef | Message) -> StepInputData:
+def _step_input_data(item: StepInput) -> StepInputData:
     if isinstance(item, RunControlRef):
         return RunControlRefData.from_ref(item)
-    if isinstance(item, OutputRef):
-        return OutputRefData.from_ref(item)
+    if isinstance(item, StepOutputRef):
+        return StepOutputRefData.from_ref(item)
     return item
+
+
+def _resolve_value_ref(
+    ref: RunControlRef | StepOutputRef,
+    *,
+    controls: Sequence[RunControlRecord],
+    steps: Sequence[StepRecord],
+) -> tuple[MessagePart, ...]:
+    if isinstance(ref, StepOutputRef):
+        return ref.resolve(steps)
+    control = next((item for item in controls if item.index == ref.index), None)
+    if control is None or control.input is None:
+        return ()
+    parts = control.input.parts
+    if ref.part is None:
+        return parts
+    if 0 <= ref.part < len(parts):
+        return (parts[ref.part],)
+    return ()
 
 
 def _thread_channel(thread_id: str, origin: str) -> str:

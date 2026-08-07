@@ -68,7 +68,7 @@ run_abc123
 A step is one durable execution operation. Its full `StepPath` is:
 
 ```text
-run_id[/step_index/...]
+run_id/step_index[/step_index...]
 ```
 
 Examples:

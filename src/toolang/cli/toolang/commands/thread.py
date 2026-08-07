@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, fields, is_dataclass
 import json
 from typing import Annotated, Any, Literal, cast
 
@@ -15,7 +15,7 @@ from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
 from toolang.execution.schemas import RunDetail, StepData
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import RunStatus
+from toolang.execution.types import RunStatus, StepPath
 
 from ...common.context import user_call
 from ...common.execution import ExecutionResources, open_execution
@@ -285,7 +285,7 @@ def _inspect(
         return {
             "kind": "thread",
             "target": target.identifier,
-            "thread": asdict(thread),
+            "thread": _inspect_data(thread),
         }
 
     run = history.get_run(target.identifier)
@@ -318,20 +318,19 @@ def _run_nodes(
     run: RunDetail,
     *,
     run_by_id: Mapping[str, RunDetail],
-    parent: str | None = None,
+    parent: StepPath | None = None,
     path: tuple[int, ...] = (),
     visited_runs: frozenset[str] = frozenset(),
 ) -> tuple[_StepNode, ...]:
     if run.id in visited_runs:
         return ()
     visited = visited_runs | {run.id}
-    expected_parent = parent or run.id
     nodes: list[_StepNode] = []
     for step in run.steps:
-        if step.parent != expected_parent:
+        if step.path.parent != parent:
             continue
-        step_path = f"{step.parent}/{step.index}"
-        node_path = (*path, step.index)
+        step_path = step.path
+        node_path = (*path, step.path.index)
         children = list(
             _run_nodes(
                 run,
@@ -375,19 +374,37 @@ def _find_node(nodes: Sequence[_StepNode], path: tuple[int, ...]) -> _StepNode |
 
 
 def _node_data(node: _StepNode) -> dict[str, Any]:
-    return {
-        "path": ".".join(str(item) for item in node.path),
+    return _inspect_data({
         "run_id": node.run_id,
-        **asdict(node.step),
+        **_record_data(node.step),
         "children": [_node_data(child) for child in node.children],
-    }
+    })
 
 
 def _run_data(run: RunDetail, *, include_steps: bool) -> dict[str, Any]:
-    data = asdict(run)
+    data = _record_data(run)
     if not include_steps:
         data.pop("steps", None)
     return data
+
+
+def _inspect_data(value: Any) -> Any:
+    if isinstance(value, StepPath):
+        return str(value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return _record_data(value)
+    if isinstance(value, dict):
+        return {key: _inspect_data(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_inspect_data(item) for item in value]
+    return value
+
+
+def _record_data(value: Any) -> dict[str, Any]:
+    return {
+        field.name: _inspect_data(getattr(value, field.name))
+        for field in fields(value)
+    }
 
 
 def _render_inspect(document: Mapping[str, Any]) -> None:

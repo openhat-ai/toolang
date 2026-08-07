@@ -16,7 +16,8 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import trace_parent, trace_run
+from toolang.execution.records import StepOutputRef
+from toolang.execution.types import StepPath
 
 from .blocks import CallBlock, RunBlock, StatementBlock
 from .console import ProgressConsole
@@ -53,9 +54,9 @@ class ConsoleRunTracer(RunTracer):
         self.args = dict(args or {})
         self.console = ProgressConsole(stream or sys.stderr, width=width)
         self._runs: dict[str, RunBlock] = {}
-        self._statements: dict[str, StatementBlock] = {}
-        self._calls: dict[str, CallBlock] = {}
-        self._outcomes: dict[str, StepEnd] = {}
+        self._statements: dict[StepPath, StatementBlock] = {}
+        self._calls: dict[StepPath, CallBlock] = {}
+        self._outcomes: dict[StepPath, StepEnd] = {}
         self._reported_errors: set[str] = set()
 
     async def on_event(self, event: RunEvent) -> None:
@@ -76,7 +77,7 @@ class ConsoleRunTracer(RunTracer):
         self.console.close()
 
     def _begin_run(self, event: RunBegin) -> None:
-        owner = self._statements.get(event.parent or "")
+        owner = self._statements.get(event.parent) if event.parent is not None else None
         until = owner is not None and self._is_until(event, owner)
         indent = owner.content_indent + (2 if until else 0) if owner is not None else 0
         run = RunBlock.from_event(event)
@@ -123,7 +124,11 @@ class ConsoleRunTracer(RunTracer):
             return
         run.finish(event)
         if event.run == self.run_id:
-            output = self._outcomes.get(event.output.step) if event.output else None
+            output = (
+                self._outcomes.get(event.output.step)
+                if isinstance(event.output, StepOutputRef)
+                else None
+            )
             run.render_result(
                 self.console,
                 event,
@@ -131,12 +136,12 @@ class ConsoleRunTracer(RunTracer):
                 error=self._new_error(event.error),
             )
             return
-        owner = self._statements.get(run.parent or "")
+        owner = self._statements.get(run.parent) if run.parent is not None else None
         if owner is None:
             return
         until = self._is_until_run(run, owner)
         owner.child_finished(run)
-        parent_run = self._runs.get(trace_run(owner.begin.step))
+        parent_run = self._runs.get(owner.begin.step.run)
         if parent_run is not None:
             parent_run.metrics.add(run.metrics)
         individual = not owner.batched or until
@@ -167,8 +172,8 @@ class ConsoleRunTracer(RunTracer):
             return
         statement = event.given.get("statement")
         if isinstance(statement, str) and statement:
-            run = self._runs.get(trace_run(event.step))
-            nesting = max(event.step.count("/") - 1, 0) * 2
+            run = self._runs.get(event.step.run)
+            nesting = max(len(event.step.indices) - 1, 0) * 2
             base_indent = (run.indent if run is not None else 0) + nesting
             direct_repeat = self._direct_repeat_owner(event.step)
             live_owner = self._repeat_owner(event.step, run)
@@ -200,7 +205,7 @@ class ConsoleRunTracer(RunTracer):
             return
         block = CallBlock(event)
         self._calls[event.step] = block
-        run = self._runs.get(trace_run(event.step))
+        run = self._runs.get(event.step.run)
         owner = self._activity_owner(run)
         block.render_begin(
             self.console,
@@ -208,7 +213,7 @@ class ConsoleRunTracer(RunTracer):
             batched=owner.batched if owner is not None else False,
         )
         if owner is not None and owner.batched:
-            owner.set_activity(trace_run(event.step), block.active_label)
+            owner.set_activity(event.step.run, block.active_label)
             self._show_statement_live(owner, event.started_at)
 
     def _part_delta(self, event: PartDelta) -> None:
@@ -217,7 +222,7 @@ class ConsoleRunTracer(RunTracer):
         block = self._calls.get(event.step)
         if block is None:
             return
-        run = self._runs.get(trace_run(event.step))
+        run = self._runs.get(event.step.run)
         owner = self._activity_owner(run)
         value = block.render_delta(
             self.console,
@@ -226,12 +231,12 @@ class ConsoleRunTracer(RunTracer):
             batched=owner.batched if owner is not None else False,
         )
         if owner is not None and owner.batched:
-            owner.set_activity(trace_run(event.step), value or "responding…")
+            owner.set_activity(event.step.run, value or "responding…")
             self._show_statement_live(owner, "")
 
     def _end_step(self, event: StepEnd) -> None:
         self._outcomes[event.step] = event
-        run = self._runs.get(trace_run(event.step))
+        run = self._runs.get(event.step.run)
         self._record_metrics(run, event)
         if statement := self._statements.get(event.step):
             statement.render_end(
@@ -254,7 +259,7 @@ class ConsoleRunTracer(RunTracer):
             return
         owner = self._activity_owner(run)
         if owner is not None and owner.batched:
-            owner.set_activity(trace_run(event.step), call.completed_label(event))
+            owner.set_activity(event.step.run, call.completed_label(event))
             self._show_statement_live(owner, event.finished_at)
         immediate_owner = self._owner_statement(run)
         deferred_batch_failure = (
@@ -296,7 +301,7 @@ class ConsoleRunTracer(RunTracer):
 
     def _repeat_owner(
         self,
-        step: str,
+        step: StepPath,
         run: RunBlock | None,
     ) -> StatementBlock | None:
         if direct := self._direct_repeat_owner(step):
@@ -307,8 +312,8 @@ class ConsoleRunTracer(RunTracer):
         live_owner = self._live_owner(owner)
         return live_owner if live_owner.statement == "repeat" else None
 
-    def _direct_repeat_owner(self, step: str) -> StatementBlock | None:
-        parent = trace_parent(step)
+    def _direct_repeat_owner(self, step: StepPath) -> StatementBlock | None:
+        parent = step.parent
         owner = self._statements.get(parent) if parent is not None else None
         return owner if owner is not None and owner.statement == "repeat" else None
 
@@ -328,7 +333,7 @@ class ConsoleRunTracer(RunTracer):
             self.console.show_live(lines)
 
     def _until_decision(self, event: RunEnd) -> bool | None:
-        if event.output is None:
+        if not isinstance(event.output, StepOutputRef):
             return None
         outcome = self._outcomes.get(event.output.step)
         if outcome is None:
