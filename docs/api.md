@@ -101,6 +101,8 @@ toolang start alice
 toolang start alice --sandbox docker
 toolang stop alice
 toolang info alice
+toolang alice info
+toolang ./examples/deep_search.too info
 toolang alice chat
 toolang alice chat term_3nprht9x
 toolang alice chat --sandbox docker
@@ -115,6 +117,21 @@ toolang alice rewind run_ppkp9e94
 toolang alice fork run_ppkp9e94
 toolang model list
 ```
+
+Top-level routing uses three command shapes:
+
+- catalog commands are command-first only: `new`, `clone`, `list`, and
+  `remove AGENT`
+- agent-self commands accept either order: `info`, `run`, `start`, and `stop`
+- commands for an agent's threads, runs, caps, tasks, or chores require the
+  target first, such as `toolang alice retry RUN` or
+  `toolang alice skill list`
+
+A command name wins whenever an unassigned token could be either a command or
+a dynamic name. Use `agent:NAME` to force a colliding resident target. After a
+local `.too` target, use `agic:NAME`, `flow:NAME`, or `runnable:NAME` to force a
+colliding runnable name. Once a command is selected, its remaining operands are
+parsed by that command and are not reclassified.
 
 Thread and run listing, inspection, retry, rerun, steering, cancellation,
 rewind, and fork open the selected agent's durable execution store directly.
@@ -133,6 +150,7 @@ Runtime commands accept these selector forms:
 | Form | Meaning |
 | --- | --- |
 | `name` | A local managed agent such as `alice` |
+| `agent:name` | An explicit local managed agent, including a name that collides with a command |
 | `shorthand` | A convention-based remote selector such as `brice/alice` or `toolang.ai/alice` |
 | `ref` | A canonical remote ref such as `github://brice/agents/alice.too@main` or `https://toolang.ai/alice.too` |
 
@@ -188,8 +206,8 @@ Arguments:
 Behavior:
 
 - a local `.too` path enters script-run mode
-- the hidden `toolang script` command displays the generic path-based usage;
-  it is not a prefix and does not accept a script path
+- `agic:NAME`, `flow:NAME`, and `runnable:NAME` explicitly select a runnable
+  when its name collides with a top-level command
 - default agics and generated internal agics are not exposed as script commands
 - runnable command descriptions come only from their authored `doc`
 - stdout is reserved for the final runnable result
@@ -230,30 +248,37 @@ Behavior:
 - key execution events are recorded in `runs.db` for script runs just like chat,
   task, and chore runs
 
-The same roaming source path selects direct chat or its durable execution
-history:
+The same roaming source path can select agent commands:
 
 ```bash
+toolang SCRIPT info
+toolang SCRIPT run
 toolang SCRIPT chat [THREAD]
 toolang SCRIPT threads
 toolang SCRIPT runs [--thread THREAD]
 toolang SCRIPT inspect TARGET
+toolang SCRIPT retry RUN [--anchor STEP]
+toolang SCRIPT rerun RUN
 ```
 
-These four command names immediately following a local `.too` source are
-interpreted as agent-management commands. They are the only agent-management
-commands currently routed for roaming sources.
+It also supports `steer`, `cancel`, `rewind`, and `fork`. These command names
+immediately following the source are interpreted as agent commands. Prefix a
+same-named executable with `agic:`, `flow:`, or `runnable:` to invoke it.
 
-Visiting selectors support direct chat and read-only inspection:
+Visiting selectors support the same agent-self and execution-history commands:
 
 ```bash
+toolang brice/alice info
+toolang brice/alice run
 toolang brice/alice chat [THREAD]
 toolang brice/alice inspect TARGET
+toolang brice/alice retry RUN
 ```
 
-Visiting chat resolves and materializes the remote program using the same
-stable visiting layout as `run`. Visiting inspection only derives that layout
-and reads an existing `runs.db`; it does not resolve or fetch the remote source.
+Commands that execute or inspect current program state (`info`, `run`, `chat`,
+`retry`, and `rerun`) resolve and materialize the remote program. History-only
+commands derive the stable visiting layout and read its existing `runs.db`
+without fetching the source.
 
 ## File Request Runtime
 

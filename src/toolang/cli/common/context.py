@@ -57,8 +57,9 @@ def context_layout(ctx: typer.Context) -> AgentLayout:
 
 
 def require_runtime_agent(ctx: typer.Context, agent: str | None) -> str:
-    if agent:
-        return agent
+    selected = agent or context_agent(ctx)
+    if selected:
+        return selected
     typer.echo(ctx.get_help())
     raise typer.Exit()
 

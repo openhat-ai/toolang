@@ -21,6 +21,7 @@ from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState, PreparedCap
 from ...common.context import (
+    cli_context,
     context_root,
     require_runtime_agent,
     ui_base_url,
@@ -145,8 +146,8 @@ def info_agent(
     agent: str | None = typer.Argument(None, help="Agent name", hidden=True),
 ) -> None:
     agent_name = require_runtime_agent(ctx, agent)
-    root = context_root(ctx)
-    layout = AgentLayout.resident(root, agent_name)
+    selected_layout = cli_context(ctx).layout
+    layout = selected_layout or AgentLayout.resident(context_root(ctx), agent_name)
     process = agents.AgentProcess(layout)
     status = user_call(process.status, ui_base_url=ui_base_url())
     if status is None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
 import click
 from typer import rich_utils
@@ -34,6 +35,32 @@ def extract_root_args(argv: Sequence[str]) -> tuple[list[str], list[str]]:
         body.append(token)
         index += 1
     return root_args, body
+
+
+def explicit_root(args: Sequence[str]) -> Path | None:
+    """Return the last explicit root value from extracted global arguments."""
+
+    root: Path | None = None
+    index = 0
+    while index < len(args):
+        if args[index] in {"--root", "-r"} and index + 1 < len(args):
+            root = Path(args[index + 1])
+            index += 2
+            continue
+        index += 1
+    return root
+
+
+def explicit_agent(token: str) -> str | None:
+    """Parse one explicit resident target used to escape command names."""
+
+    prefix, separator, name = token.partition(":")
+    if prefix != "agent" or not separator:
+        return None
+    name = name.strip()
+    if not name or name in {".", ".."} or "/" in name or "\\" in name:
+        raise ValueError(f"invalid resident agent target: {token}")
+    return name
 
 # Typer renders command help text dim by default. Normal weight keeps usage
 # notes readable across terminal themes.

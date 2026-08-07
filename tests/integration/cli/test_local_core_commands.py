@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from collections.abc import Mapping
 import sqlite3
-from typing import Any
+from typing import Any, cast
 
 import click
 import pytest
@@ -594,8 +594,100 @@ def test_agent_info_builds_state_and_setup_without_server(
     assert "stopped" in result.stdout
 
 
+def test_roaming_agent_info_uses_the_source_layout(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text(
+        templates.render_template("agent", agent_name="demo", name="demo"),
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+    monkeypatch.setattr(
+        agent_commands,
+        "echo_pairs_table",
+        lambda rows, *, avatar, title: captured.update(
+            rows=dict(rows),
+            avatar=avatar,
+            title=title,
+        ),
+    )
+
+    result = cli.main([str(source), "info"])
+    capsys.readouterr()
+
+    assert result == 0
+    assert captured["title"] == "DEMO"
+    rows = cast(dict[str, str], captured["rows"])
+    assert rows["Home"] == str(AgentLayout.roaming(source).home)
+
+
+def test_visiting_agent_info_uses_the_materialized_layout(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    selector = "brice/researcher"
+    layout = AgentLayout(
+        root=tmp_path / "visiting",
+        name="researcher",
+        placement="visiting",
+    )
+    layout.home.mkdir(parents=True)
+    layout.program.write_text(
+        templates.render_template(
+            "agent",
+            agent_name="researcher",
+            name="researcher",
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        agent_commands,
+        "echo_pairs_table",
+        lambda rows, *, avatar, title: captured.update(
+            rows=dict(rows),
+            avatar=avatar,
+            title=title,
+        ),
+    )
+    monkeypatch.setattr(
+        agents,
+        "resolve_visiting_layout",
+        lambda *_args, **_kwargs: layout,
+    )
+
+    result = cli.main(["info", selector])
+    capsys.readouterr()
+
+    assert result == 0
+    assert captured["title"] == "RESEARCHER"
+    rows = cast(dict[str, str], captured["rows"])
+    assert rows["Home"] == str(layout.home)
+
+
 def _invoke(root: Path, *args: str):
     return runner.invoke(cli.app, ["--root", str(root), *args], env={})
+
+
+class _EmptySetupWatcher:
+    def __init__(self, layout: AgentLayout) -> None:
+        self.layout = layout
+
+    async def refresh(self) -> AgentSetup:
+        return AgentSetup(
+            layout=self.layout,
+            providers={},
+            adapters={},
+            models=(),
+            tools={},
+            envs={},
+        )
 
 
 class _FakeTool:

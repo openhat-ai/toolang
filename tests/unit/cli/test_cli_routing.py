@@ -5,13 +5,23 @@ from pathlib import Path
 from threading import Barrier
 from typing import Any, cast
 
+import click
 import pytest
+import typer
 
+import toolang.cli.caps.main as caps_cli
 import toolang.cli.toolang.main as cli
+from toolang.catalog.agent import LocalAgents
 from toolang.common.layout import AgentLayout
 from toolang.cli.toolang.commands import script
 from toolang.cli.toolang.commands.chat import main as chat_commands
-from toolang.cli.toolang.routing import dispatch_roaming, dispatch_visiting, normalize
+from toolang.cli.toolang.routing import (
+    COMMAND_SPECS,
+    RoutingError,
+    dispatch_roaming,
+    dispatch_visiting,
+    normalize,
+)
 from toolang.cli.common.routing import extract_root_args
 from toolang.up import process as agents
 
@@ -25,11 +35,109 @@ def test_extract_root_args_supports_short_option_and_stops_at_separator() -> Non
     assert body == ["alice", "chat", "--", "--root", "message"]
 
 
-def test_cli_normalize_routes_agent_shortcut_with_short_root_option() -> None:
-    args, agent = normalize(["-r", "/tmp/root", "alice", "chat"])
+def test_cli_command_registry_matches_the_typer_surface() -> None:
+    group = typer.main.get_command(cli.app)
 
-    assert args == ["-r", "/tmp/root", "chat", "alice"]
+    assert isinstance(group, click.Group)
+    assert set(group.commands) == set(COMMAND_SPECS)
+
+
+@pytest.mark.parametrize(
+    ("command", "targets", "placements"),
+    (
+        ("new", {"none"}, set()),
+        ("remove", {"after"}, {"resident"}),
+        ("info", {"before", "after"}, {"resident", "roaming", "visiting"}),
+        ("retry", {"before"}, {"resident", "roaming", "visiting"}),
+        ("task", {"before"}, {"resident"}),
+        ("skill", {"none", "before"}, {"resident"}),
+    ),
+)
+def test_cli_command_registry_declares_target_grammar(
+    command: str,
+    targets: set[str],
+    placements: set[str],
+) -> None:
+    spec = COMMAND_SPECS[command]
+
+    assert spec.targets == targets
+    assert spec.placements == placements
+
+
+def test_cli_normalize_routes_resident_target_before_command(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    LocalAgents(root / "agents").create("alice", content="")
+    args, agent = normalize(
+        ["-r", str(root), "alice", "retry", "run_1"],
+        root=root,
+    )
+
+    assert args == ["-r", str(root), "retry", "run_1"]
+    assert agent == "alice"
+
+
+def test_cli_normalize_allows_both_orders_for_agent_self_commands(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    LocalAgents(root / "agents").create("alice", content="")
+
+    prefix_args, prefix_agent = normalize(["alice", "info"], root=root)
+    postfix_args, postfix_agent = normalize(["info", "alice"], root=root)
+
+    assert (prefix_args, prefix_agent) == (["info", "alice"], None)
+    assert (postfix_args, postfix_agent) == (["info", "alice"], None)
+
+
+def test_cli_normalize_requires_declared_target_order(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    LocalAgents(root / "agents").create("alice", content="")
+
+    with pytest.raises(RoutingError, match="retry requires TARGET before"):
+        normalize(["retry", "alice", "run_1"], root=root)
+    with pytest.raises(RoutingError, match="remove requires TARGET after"):
+        normalize(["alice", "remove"], root=root)
+
+
+def test_cli_explicit_agent_prefix_resolves_command_name_collision(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    LocalAgents(root / "agents").create("retry", content="")
+
+    args, agent = normalize(["agent:retry", "info"], root=root)
+
+    assert args == ["info", "retry"]
     assert agent is None
+
+
+def test_cli_command_name_wins_without_explicit_agent_prefix(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    LocalAgents(root / "agents").create("retry", content="")
+
+    with pytest.raises(RoutingError, match="retry requires TARGET before"):
+        normalize(["retry", "info"], root=root)
+
+
+def test_caps_cli_uses_command_priority_and_explicit_agent_prefix(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    LocalAgents(root / "agents").create("skill", content="")
+
+    global_args, global_agent = caps_cli._rewrite_agent_shortcuts(
+        ["skill", "list"],
+        root=root,
+    )
+    agent_args, agent = caps_cli._rewrite_agent_shortcuts(
+        ["agent:skill", "skill", "list"],
+        root=root,
+    )
+
+    assert (global_args, global_agent) == (["skill", "list"], None)
+    assert (agent_args, agent) == (["skill", "list"], "skill")
 
 
 def test_cli_prefix_agent_context_is_isolated_between_threads(
@@ -100,11 +208,15 @@ def test_cli_routes_local_script_to_script_command(
 @pytest.mark.parametrize(
     "arguments",
     (
+        ["info"],
         ["chat"],
         ["chat", "term_1"],
         ["threads"],
         ["runs", "--thread", "script_1"],
         ["inspect", "run_1"],
+        ["steer", "run_1", "change direction"],
+        ["retry", "run_1"],
+        ["rerun", "run_1"],
     ),
 )
 def test_cli_routes_roaming_agent_command_to_its_exact_layout(
@@ -127,7 +239,7 @@ def test_cli_routes_roaming_agent_command_to_its_exact_layout(
 
     assert result == 9
     assert captured == {
-        "args": arguments,
+        "args": ["info", source.stem] if arguments == ["info"] else arguments,
         "layout": AgentLayout.roaming(source),
     }
 
@@ -229,6 +341,42 @@ def test_cli_routes_visiting_inspect_without_materialization(
     }
 
 
+def test_cli_routes_command_before_visiting_info_through_materialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selector = "brice/researcher"
+    layout = AgentLayout(
+        root=tmp_path / "visiting",
+        name="researcher",
+        placement="visiting",
+    )
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        agents,
+        "resolve_visiting_layout",
+        lambda source, *, progress: captured.update(
+            source=source,
+            progress=progress,
+        )
+        or layout,
+    )
+
+    result = dispatch_visiting(
+        ["info", selector],
+        run_app=lambda args, selected: captured.update(
+            args=args,
+            layout=selected,
+        )
+        or 14,
+    )
+
+    assert result == 14
+    assert captured["source"] == selector
+    assert captured["args"] == ["info", "researcher"]
+    assert captured["layout"] == layout
+
+
 def test_cli_opens_visiting_chat_with_its_exact_layout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -263,7 +411,7 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
     }
 
 
-def test_cli_does_not_route_roaming_run_controls_as_history_commands(
+def test_cli_typed_runnable_prefix_escapes_a_roaming_command_name(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -287,15 +435,14 @@ def test_cli_does_not_route_roaming_run_controls_as_history_commands(
     monkeypatch.setattr(script, "dispatch", fake_dispatch)
 
     result = dispatch_roaming(
-        [str(source), "steer", "run_1", "change direction"],
+        [str(source), "runnable:steer", "change direction"],
         prog_name="too",
-        run_app=lambda *_args: pytest.fail("history command should not run"),
+        run_app=lambda *_args: pytest.fail("typed runnable should not be a command"),
     )
 
     assert result == 11
     assert captured["argv"] == [
         str(source),
-        "steer",
-        "run_1",
+        "runnable:steer",
         "change direction",
     ]

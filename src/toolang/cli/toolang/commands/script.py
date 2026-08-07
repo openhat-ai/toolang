@@ -75,31 +75,6 @@ class _CollectorArgument(TyperArgument):
         return []
 
 
-class ScriptHelpCommand(TyperCommand):
-    """Render generic path-based script usage for the hidden help command."""
-
-    def format_usage(
-        self,
-        ctx: click.Context,
-        formatter: click.HelpFormatter,
-    ) -> None:
-        command_path = (
-            ctx.parent.command_path
-            if ctx.parent is not None
-            else ctx.command_path
-        )
-        formatter.write_usage(
-            command_path,
-            "SCRIPT [RUNNABLE [ARGUMENTS]...]",
-        )
-
-
-def script_command(ctx: typer.Context) -> None:
-    """Show how to run an agic or flow from a local Toolang script."""
-
-    typer.echo(ctx.get_help())
-
-
 def dispatch(
     global_args: list[str],
     argv: list[str],
@@ -107,7 +82,7 @@ def dispatch(
     prog_name: str,
     stdin: TextIO | None = None,
 ) -> int:
-    """Dispatch the path shorthand or hidden script command."""
+    """Dispatch one path-based runnable invocation."""
 
     if global_args:
         typer.echo(
@@ -130,8 +105,9 @@ def dispatch(
             source_label=argv[0],
             stdin=stdin or sys.stdin,
         )
+        command_args = _typed_runnable_args(program, argv[1:])
         result = command.main(
-            args=_protect_literal_items(argv[1:] or ["--help"]),
+            args=_protect_literal_items(command_args or ["--help"]),
             prog_name=f"{prog_name} {argv[0]}",
             standalone_mode=False,
         )
@@ -313,6 +289,30 @@ def _public_runnables(program: Program) -> tuple[Runnable, ...]:
         for runnable in (*program.agics, *program.flows)
         if runnable.name != "default" and not runnable.name.startswith("<")
     )
+
+
+def _typed_runnable_args(program: Program, args: list[str]) -> list[str]:
+    """Remove one explicit runnable-kind prefix and validate its declaration."""
+
+    if not args:
+        return args
+    kind, separator, name = args[0].partition(":")
+    if not separator or kind not in {"agic", "flow", "runnable"}:
+        return args
+    name = name.strip()
+    if not name:
+        raise ValueError(f"{kind} selector cannot be empty")
+    matches = tuple(
+        runnable for runnable in _public_runnables(program) if runnable.name == name
+    )
+    if not matches:
+        raise ValueError(f"runnable not found: {name}")
+    runnable = matches[0]
+    if kind == "agic" and not isinstance(runnable, AgicDecl):
+        raise ValueError(f"runnable is not an agic: {name}")
+    if kind == "flow" and not isinstance(runnable, FlowDecl):
+        raise ValueError(f"runnable is not a flow: {name}")
+    return [name, *args[1:]]
 
 
 def _collect_call(

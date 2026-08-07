@@ -60,47 +60,6 @@ def chat_command(
     )
 
 
-def send_command(
-    ctx: typer.Context,
-    thread: str,
-    message: str,
-    model: str | None = None,
-    limit: list[str] | None = None,
-) -> None:
-    target = _target_thread_id(ctx, thread)
-    if target is None:  # pragma: no cover - the CLI argument is required
-        raise click.ClickException("thread id is required")
-    selectors: dict[str, object] = {}
-    if model not in {None, "default"}:
-        selectors["model"] = model
-    renderer = _ScriptedRunRenderer()
-    errors: list[str] = []
-    with _chat_runtime(
-        ctx,
-        sandbox=None,
-        selector_payload=selectors,
-        limit_options=limit,
-    ) as client:
-        client.start_run(
-            target,
-            message,
-            selectors,
-            renderer.render,
-            errors.append,
-        )
-    if errors:
-        raise click.ClickException(chat_friendly_error(errors[-1]))
-    if renderer.failure:
-        raise click.ClickException(chat_friendly_error(renderer.failure))
-
-
-def attach_command(
-    ctx: typer.Context,
-    thread: str,
-) -> None:
-    _chat_interactive(ctx, thread_id=_target_thread_id(ctx, thread))
-
-
 def _chat_selector_payload(
     *,
     models: list[str] | None,

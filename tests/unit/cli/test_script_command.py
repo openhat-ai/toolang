@@ -6,10 +6,8 @@ from pathlib import Path
 
 import pytest
 from click.utils import strip_ansi
-from typer.testing import CliRunner
 
 from toolang.base.errors import ToolangError
-from toolang.cli.toolang import main as cli
 from toolang.cli.toolang.commands import script
 from toolang.execution.executor import CeilingSpec
 from toolang.execution.records import RunInputRef, RunRecord
@@ -367,26 +365,50 @@ flow pipeline:
     assert "<agic:" not in output.out
 
 
-def test_hidden_script_command_exposes_generic_usage() -> None:
-    result = CliRunner().invoke(cli.app, ["script"])
-
-    assert result.exit_code == 0
-    assert "Usage:" in result.stdout
-    assert "SCRIPT [RUNNABLE [ARGUMENTS]...]" in result.stdout
-    assert "RUNNABLE [ARGUMENTS]..." in result.stdout
-
-
-def test_hidden_script_command_rejects_a_script_path(tmp_path: Path) -> None:
+@pytest.mark.parametrize("selector", ("agic:demo", "runnable:demo"))
+def test_script_accepts_explicit_runnable_selectors(
+    tmp_path: Path,
+    monkeypatch,
+    selector: str,
+) -> None:
     source = _write_source(tmp_path)
-
-    result = CliRunner().invoke(
-        cli.app,
-        ["script", str(source), "demo", "--help"],
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda source_path, **kwargs: captured.update(
+            source_path=source_path,
+            **kwargs,
+        )
+        or 0,
     )
 
-    assert result.exit_code == 2
-    assert "Got unexpected extra arguments" in result.stderr
-    assert source.name in result.stderr
+    result = script.dispatch(
+        [],
+        [str(source), selector, "count=2", "hello"],
+        prog_name="toolang",
+        stdin=StringIO(),
+    )
+
+    assert result == 0
+    assert captured["runnable"] == "demo"
+
+
+def test_script_rejects_an_explicit_runnable_kind_mismatch(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    source = _write_source(tmp_path)
+
+    result = script.dispatch(
+        [],
+        [str(source), "flow:demo", "count=2", "hello"],
+        prog_name="toolang",
+        stdin=StringIO(),
+    )
+
+    assert result == 1
+    assert "runnable is not a flow: demo" in capsys.readouterr().err
 
 
 def test_script_rejects_sandbox_option(
