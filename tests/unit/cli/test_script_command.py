@@ -501,7 +501,7 @@ def test_script_rejects_sandbox_option(
     output = capsys.readouterr()
 
     assert result == 2
-    assert "No such option: --sandbox" in output.err
+    assert "No such option: --sandbox" in strip_ansi(output.err)
 
 
 def test_script_rejects_stdin_marker_mixed_with_input(
