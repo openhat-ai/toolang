@@ -130,8 +130,10 @@ Top-level routing uses three command shapes:
 A command name wins whenever an unassigned token could be either a command or
 a dynamic name. Use `agent:NAME` to force a colliding resident target. After a
 local `.too` target, use `agic:NAME`, `flow:NAME`, or `runnable:NAME` to force a
-colliding runnable name. Once a command is selected, its remaining operands are
-parsed by that command and are not reclassified.
+colliding runnable name. A token ending in `.too` selects a local source path
+even when that path does not exist; use `agent:NAME` for a resident name ending
+in `.too`. Once a command is selected, its remaining operands are parsed by
+that command and are not reclassified.
 
 A target without a command shows the commands accepted by that placement.
 Plain resident names are recognized from the selected root's agent catalog;

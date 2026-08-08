@@ -163,6 +163,15 @@ def test_cli_command_name_wins_without_explicit_agent_prefix() -> None:
             ),
         ),
         (
+            ["agent:alice.too"],
+            set(),
+            TargetHelp(
+                selector="agent:alice.too",
+                label="alice.too",
+                placement="resident",
+            ),
+        ),
+        (
             ["briceyan/dev"],
             set(),
             TargetHelp(
@@ -306,6 +315,25 @@ def test_cli_bare_visiting_target_shows_help_without_resolving_it(
     assert "Commands for visiting agent briceyan/dev." in output.out
     assert "chat" in output.out
     assert "No such command" not in output.err
+
+
+@pytest.mark.parametrize("target", ("missing.too", "./missing.too"))
+def test_cli_missing_local_source_syntax_reports_a_script_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    target: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = _call_main([target])
+    output = capsys.readouterr()
+    stderr = click.unstyle(output.err)
+
+    assert result == 1
+    assert f"script not found: {target}" in stderr
+    assert "No such command" not in stderr
+    assert "Commands for visiting agent" not in output.out
 
 
 def test_cli_prefix_agent_context_is_isolated_between_threads(
