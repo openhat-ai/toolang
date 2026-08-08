@@ -360,13 +360,17 @@ def _roaming_layout(source: Path, prepare: Preparation | None) -> AgentLayout:
 
 def _source_path(token: str) -> Path | None:
     text = token.strip()
-    if not text or text.startswith("-"):
+    if (
+        not text
+        or text.startswith(("-", "agent:", "agic:", "flow:", "runnable:"))
+        or "://" in text
+    ):
         return None
     try:
         source = Path(text).expanduser().resolve()
     except OSError:
         return None
-    return source if source.is_file() and source.suffix == ".too" else None
+    return source if source.suffix == ".too" else None
 
 
 def _is_visiting(token: str) -> bool:
