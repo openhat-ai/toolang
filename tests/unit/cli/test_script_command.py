@@ -363,6 +363,7 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "Arguments" in stdout
     assert "count=Number" in stdout
     assert "enabled=Boolean" in stdout
+    assert "[enabled=Boolean]" in stdout.partition("Arguments")[2]
     assert "Primary Part[] input." in stdout
 
 

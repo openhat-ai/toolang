@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from copy import copy
 from pathlib import Path
+from typing import Literal, cast
 
 import click
+from rich.console import Console
 from typer import rich_utils
 from typer.core import TyperArgument, TyperCommand, TyperGroup
 
@@ -65,6 +68,57 @@ def explicit_agent(token: str) -> str | None:
 # Typer renders command help text dim by default. Normal weight keeps usage
 # notes readable across terminal themes.
 setattr(rich_utils, "STYLE_HELPTEXT", "")
+
+_typer_print_options_panel = rich_utils._print_options_panel
+
+
+def _print_options_panel(
+    *,
+    name: str,
+    params: list[click.Option] | list[click.Argument],
+    ctx: click.Context,
+    markup_mode: Literal["markdown", "rich"],
+    console: Console,
+) -> None:
+    """Render ordinary argument names as types without changing usage syntax."""
+
+    _typer_print_options_panel(
+        name=name,
+        params=_argument_panel_params(params, ctx),
+        ctx=ctx,
+        markup_mode=markup_mode,
+        console=console,
+    )
+
+
+def _argument_panel_params(
+    params: list[click.Option] | list[click.Argument],
+    ctx: click.Context,
+) -> list[click.Option] | list[click.Argument]:
+    if not params or isinstance(params[0], click.Option):
+        return cast(list[click.Option], params)
+    return [
+        _argument_panel_param(param, ctx)
+        for param in cast(list[click.Argument], params)
+    ]
+
+
+def _argument_panel_param(
+    param: click.Argument,
+    ctx: click.Context,
+) -> click.Argument:
+    name = (param.name or "").upper()
+    if (param.metavar or name).upper() != name:
+        return param
+    metavar = param.type.get_metavar(param, ctx) or param.type.name.upper()
+    if param.nargs != 1:
+        metavar += "..."
+    display = copy(param)
+    setattr(display, "make_metavar", lambda ctx=None: metavar)
+    return display
+
+
+setattr(rich_utils, "_print_options_panel", _print_options_panel)
 
 
 class PrefixAgentCommand(TyperCommand):

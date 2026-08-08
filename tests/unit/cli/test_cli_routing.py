@@ -129,6 +129,54 @@ def test_cli_no_args_still_shows_root_help(
     assert output.err == ""
 
 
+@pytest.mark.parametrize(
+    ("arguments", "usage", "argument", "argument_type", "syntax_metavar"),
+    (
+        (
+            ["clone"],
+            "Usage: pytest clone [OPTIONS] SOURCE [TARGET]",
+            "target",
+            "TEXT",
+            "[TARGET]",
+        ),
+        (
+            ["chat"],
+            "Usage: pytest AGENT chat [OPTIONS] [THREAD]",
+            "thread",
+            "TEXT",
+            "[THREAD]",
+        ),
+        (
+            ["fmt"],
+            "Usage: pytest fmt [OPTIONS] [PATHS]...",
+            "paths",
+            "PATH...",
+            "[PATHS]...",
+        ),
+    ),
+)
+def test_cli_argument_panels_show_types_without_changing_usage(
+    capsys: pytest.CaptureFixture[str],
+    arguments: list[str],
+    usage: str,
+    argument: str,
+    argument_type: str,
+    syntax_metavar: str,
+) -> None:
+    result = _call_main([*arguments, "--help"])
+    stdout = click.unstyle(capsys.readouterr().out)
+    row = next(
+        line
+        for line in stdout.splitlines()
+        if "│" in line and argument in line.split()
+    )
+
+    assert result == 0
+    assert usage in stdout
+    assert argument_type in row
+    assert syntax_metavar not in row
+
+
 def test_cli_explicit_agent_prefix_resolves_command_name_collision() -> None:
     args, agent = normalize(["agent:retry", "info"])
 
