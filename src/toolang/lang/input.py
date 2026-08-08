@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import json
 import re
 import shlex
-from typing import cast
+from typing import TypeAlias, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import (
@@ -25,7 +25,9 @@ from toolang.common.template import render_text_template
 from .ast import Parameter, Program, StructDecl
 
 IncludeResolver = Callable[[str], PerceptPart]
+NamedInputSources: TypeAlias = tuple[tuple[str, str], ...]
 
+_ARGUMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PROMPT_CALL_RE = re.compile(r"^/([A-Za-z_][\w-]*)(?:\s+(.*))?$")
 _SLOT_RE = re.compile(r"\ue000(\d+)\ue001")
 _MARKDOWN_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
@@ -33,6 +35,44 @@ _JSON_OUTPUT_FENCE_RE = re.compile(
     r"```[ \t]*json[ \t]*\r?\n(?P<value>.*?)\r?\n?```",
     re.IGNORECASE | re.DOTALL,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class RunnableInput:
+    """Syntax-valid primary and named sources for one runnable invocation."""
+
+    primary: str | None = None
+    named: NamedInputSources = ()
+
+
+def parse_input(
+    source: str | None,
+    *,
+    named: NamedInputSources = (),
+) -> RunnableInput:
+    """Parse runnable input without resolving includes or declared types."""
+
+    primary = source if source and source.strip() else None
+    if primary is not None:
+        first = primary.splitlines()[0]
+        if first.startswith(":") and not first.startswith("::"):
+            raise ValueError("primary input must escape a leading colon as ::")
+
+    parsed_named: list[tuple[str, str]] = []
+    names: set[str] = set()
+    for item in named:
+        if not isinstance(item, tuple) or len(item) != 2:
+            raise TypeError("named input sources must be name/source pairs")
+        name, value = item
+        if not isinstance(name, str) or not _ARGUMENT_NAME_RE.fullmatch(name):
+            raise ValueError("named input must use a canonical name")
+        if not isinstance(value, str):
+            raise TypeError("named input source must be a string")
+        if name in names:
+            raise ValueError(f"duplicate named input: {name}")
+        names.add(name)
+        parsed_named.append((name, value))
+    return RunnableInput(primary=primary, named=tuple(parsed_named))
 
 
 def perceive_input(

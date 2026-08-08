@@ -16,6 +16,7 @@ from typing import Self
 
 import pytest
 
+from toolang.base.types.policy import RunBindings
 from toolang.common.ids import IdIssuer
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.store import RunStore
@@ -86,8 +87,9 @@ class _LiveExecution:
                     setup=self.setup,
                     state=self.state,
                     thread=thread,
-                    runnable=runnable,
-                    input=perceive_input(marker),
+                    bindings=RunBindings(runnable=runnable),
+                    limits=self.setup.limits,
+                    primary=perceive_input(marker),
                 )
             ),
             timeout=180,

@@ -11,6 +11,7 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.types.message import ImagePart, Message, TextPart, message_text
+from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCall
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
@@ -128,6 +129,28 @@ def _model_setup() -> AgentSetup:
     )
 
 
+def _spec(
+    *,
+    setup: AgentSetup,
+    state: Any,
+    thread: str,
+    runnable: str,
+    ceiling: AgentCeiling | None = None,
+    primary: tuple[Any, ...] = (),
+    named: dict[str, object] | None = None,
+) -> RunSpec:
+    return RunSpec(
+        setup=setup,
+        state=state,
+        thread=thread,
+        bindings=RunBindings(runnable=runnable),
+        limits=setup.limits,
+        ceilings=(ceiling,) if ceiling is not None else (),
+        primary=primary,
+        named=named,
+    )
+
+
 def _capture_model_text(store: RunStore, body: str) -> str:
     captured = store.capture_model_call(
         target={
@@ -157,7 +180,7 @@ async def _start(
     tracer: RunTracer | None = None,
 ) -> Any:
     return await executor.start(
-        RunSpec(
+        _spec(
             setup=setup,
             state=state,
             thread=thread_id,
@@ -221,35 +244,35 @@ def test_run_executor_validates_args_against_runnable_params(
     state = _state(flow)
 
     async def scenario() -> None:
-        with pytest.raises(ValueError, match="missing arguments.*focus"):
+        with pytest.raises(ValueError, match="missing named inputs.*focus"):
             executor.start(
-                RunSpec(
+                _spec(
                     setup=setup,
                     state=state,
                     thread="term_test",
                     runnable=flow.name,
                 )
             )
-        with pytest.raises(ValueError, match="unknown arguments.*other"):
+        with pytest.raises(ValueError, match="unknown named inputs.*other"):
             executor.start(
-                RunSpec(
+                _spec(
                     setup=setup,
                     state=state,
                     thread="term_test",
                     runnable=flow.name,
-                    args={
+                    named={
                         "focus": (TextPart("events"),),
                         "other": True,
                     },
                 )
             )
         record = await executor.start(
-            RunSpec(
+            _spec(
                 setup=setup,
                 state=state,
                 thread="term_test",
                 runnable=flow.name,
-                args={"focus": (TextPart("events"),)},
+                named={"focus": (TextPart("events"),)},
             )
         )
         assert record.status == "finished"
@@ -275,12 +298,12 @@ def test_run_executor_rejects_lossy_input_before_acceptance(
     async def scenario() -> None:
         with pytest.raises(ToolangError, match="non-text parts"):
             executor.start(
-                RunSpec(
+                _spec(
                     setup=_setup(),
                     state=_state(flow),
                     thread="term_test",
                     runnable=flow.name,
-                    input=(ImagePart(file_id="image-1"),),
+                    primary=(ImagePart(file_id="image-1"),),
                 )
             )
 
@@ -298,7 +321,7 @@ def test_run_executor_rejects_invalid_ceiling_before_acceptance(
     async def scenario() -> None:
         with pytest.raises(ValueError, match="tool selector matched no tools"):
             executor.start(
-                RunSpec(
+                _spec(
                     setup=_setup(),
                     state=_state(flow),
                     thread="term_test",
@@ -434,7 +457,7 @@ def test_start_rejects_ambiguous_runnable_name(tmp_path: Path) -> None:
     async def scenario() -> None:
         with pytest.raises(ToolangError, match="Runnable name is not unique"):
             executor.start(
-                RunSpec(
+                _spec(
                     setup=_setup(),
                     state=state,
                     thread="term_test",
@@ -478,7 +501,7 @@ def test_run_handle_shields_execution_from_waiter_cancellation(
 
     async def scenario() -> Any:
         handle = executor.start(
-            RunSpec(
+            _spec(
                 setup=_setup(),
                 state=_state(flow),
                 thread="term_test",
@@ -1479,7 +1502,7 @@ def test_remote_process_can_stop_an_owned_run(
 
     async def scenario() -> Any:
         handle = executor.start(
-            RunSpec(
+            _spec(
                 setup=_setup(),
                 state=_state(flow),
                 thread="term_test",
@@ -1534,7 +1557,7 @@ def test_executor_shutdown_cancels_and_persists_active_runs(
 
     async def scenario() -> Any:
         handle = executor.start(
-            RunSpec(
+            _spec(
                 setup=_setup(),
                 state=_state(flow),
                 thread="term_test",
@@ -1567,7 +1590,7 @@ def test_executor_shutdown_persists_run_before_owner_task_starts(
 
     async def scenario() -> Any:
         handle = executor.start(
-            RunSpec(
+            _spec(
                 setup=_setup(),
                 state=_state(flow),
                 thread="term_test",

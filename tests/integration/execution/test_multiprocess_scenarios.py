@@ -257,7 +257,7 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    input=perceive_input("initial input"),
+                    primary=perceive_input("initial input"),
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
@@ -307,7 +307,7 @@ def test_remote_process_can_cancel_a_pending_steer(tmp_path: Path) -> None:
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    input=perceive_input("initial input"),
+                    primary=perceive_input("initial input"),
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)

@@ -17,6 +17,7 @@ from toolang.api.schemas import (
     RunRetryRequest,
     RunSteerRequest,
 )
+from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
 from toolang.execution.executor import RunHandle, RunSpec
 from toolang.execution.records import RunControlRecord, RunRecord
@@ -35,25 +36,28 @@ async def _start_run_stream(
 ) -> AsyncIterator[_StartedRunStream]:
     thread_id = _run_thread(core, payload)
     setup = core.setup.current()
+    limits = (
+        payload.limits.to_limits(setup.limits)
+        if payload.limits is not None
+        else setup.limits
+    )
     try:
         handle = core.executor.start(
             RunSpec(
                 setup=setup,
                 state=core.state.current(),
                 thread=thread_id,
-                runnable=payload.runnable,
-                input=parse_percept(payload.input),
-                model=(
-                    payload.model
-                    if payload.model is not None
-                    else setup.bindings.model
+                bindings=RunBindings(
+                    runnable=payload.runnable,
+                    model=(
+                        payload.model
+                        if payload.model is not None
+                        else setup.bindings.model
+                    ),
                 ),
-                args=payload.args,
-            ),
-            limits=(
-                payload.limits.to_limits(setup.limits)
-                if payload.limits is not None
-                else None
+                limits=limits,
+                primary=parse_percept(payload.input),
+                named=payload.args,
             ),
             request_id=payload.request_id,
             tracer=live.trace(thread_id=thread_id),

@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+from toolang.base.types.policy import RunBindings
 from toolang.execution.executor import RunSpec
 from toolang.common.layout import AgentLayout
 from toolang.setup import AgentSetup
@@ -28,22 +29,32 @@ def test_run_spec_has_minimal_execution_contract() -> None:
         "setup",
         "state",
         "thread",
-        "runnable",
-        "ceiling",
-        "input",
-        "model",
-        "args",
+        "bindings",
+        "limits",
+        "ceilings",
+        "primary",
+        "named",
     )
 
 
 def test_run_spec_defaults_are_immutable() -> None:
+    first_setup = _setup()
     first = RunSpec(
-        setup=_setup(), state=_state(), thread="term_first", runnable="chat"
+        setup=first_setup,
+        state=_state(),
+        thread="term_first",
+        bindings=RunBindings(runnable="chat"),
+        limits=first_setup.limits,
     )
+    second_setup = _setup()
     second = RunSpec(
-        setup=_setup(), state=_state(), thread="term_second", runnable="chat"
+        setup=second_setup,
+        state=_state(),
+        thread="term_second",
+        bindings=RunBindings(runnable="chat"),
+        limits=second_setup.limits,
     )
 
-    assert first.input == ()
-    assert first.args is None
-    assert second.args is None
+    assert first.primary == ()
+    assert first.named is None
+    assert second.named is None

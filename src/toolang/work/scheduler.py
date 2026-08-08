@@ -14,13 +14,13 @@ import threading
 from typing import Literal, TypeAlias, cast
 
 from toolang.base.errors import ToolangError
+from toolang.base.types.policy import RunBindings
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.execution.calls import bind_runnable_call
+from toolang.execution.calls import parse_call, resolve_spec
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.submission import parse_runnable_call
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 
@@ -478,14 +478,16 @@ class JobScheduler:
             or state.program.find_flow(job.kind) is not None
             else "default"
         )
-        call = parse_runnable_call(job.body)
+        commands, input = parse_call(job.body)
         base = job.path.parent if job.path is not None else setup.layout.home
-        spec = bind_runnable_call(
-            call,
+        spec = resolve_spec(
+            commands,
+            input,
             setup=setup,
             state=state,
             thread=job.thread_id,
             default_runnable=runnable,
+            surface=RunBindings(runnable=runnable),
             include=lambda reference: resolve_file_include(reference, base=base),
         )
         return spec

@@ -182,7 +182,7 @@ def test_script_cancellation_stops_its_owned_run(tmp_path: Path) -> None:
                 harness.run_spec(
                     thread=thread,
                     runnable="echo",
-                    input=perceive_input("wait"),
+                    primary=perceive_input("wait"),
                 )
             )
             waiter = asyncio.create_task(script._await_script_run(handle))

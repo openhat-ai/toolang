@@ -506,10 +506,10 @@ chore   chore, else default
 file    file, else default
 ```
 
-Every run surface must resolve a complete `RunnableCall`, including all
-required named arguments, before execution. Script derives its CLI from the
-selected signature; chat, task, and chore calls may supply initial `RunOverride`
-lines with `name=value` arguments.
+Every run surface must resolve one `RunnableInput`, including all required
+named inputs, before execution. Script derives its CLI from the selected
+signature; chat, task, and chore input may begin with `PolicyCommand` lines,
+and runnable shortcuts may carry `name=value` named sources.
 
 Content evaluation turns interactive or authored `Content` into a
 protocol-level `Percept` before execution. That value corresponds to language

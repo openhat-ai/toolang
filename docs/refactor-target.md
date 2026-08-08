@@ -238,8 +238,8 @@ Startup repairs only checkpointed active run ids from `runs.db`.
 
 The public execution concepts are:
 
-- `RunSpec`: immutable setup, state, thread, runnable, primary `Percept` input,
-  model, and call args
+- `RunSpec`: immutable setup, state, thread, effective bindings and limits,
+  ceiling restrictions, primary `Percept`, and named inputs
 - `RunHandle`: an awaitable locally started run with control conveniences
 - `RunExecutor`: run acceptance, control, and agic/flow execution
 - `ThreadManager`: synchronous thread creation, rewind, and fork orchestration

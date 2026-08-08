@@ -20,6 +20,7 @@ from toolang.base.types.message import (
     message_text,
     parts_to_data,
 )
+from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
@@ -28,20 +29,16 @@ from toolang.cli.common.policy import (
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
-from toolang.execution.calls import bind_runnable_call
+from toolang.execution.calls import parse_call, resolve_spec
 from toolang.execution.executor import RunExecutor, RunHandle
 from toolang.execution.records import RunRecord
-from toolang.execution.runnables import resolve_runnable
+from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import PolicyCommand, ThreadPrefix
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.submission import (
-    Arguments,
-    RunnableCall,
-    parse_runnable_call,
-)
+from toolang.lang.input import NamedInputSources, RunnableInput
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState
@@ -84,8 +81,8 @@ class _CollectorArgument(TyperArgument):
         return []
 
 
-class _IncompleteRunnableCall(Exception):
-    """A dynamic runnable command is missing required call input."""
+class _IncompleteRunnableInput(Exception):
+    """A dynamic runnable command is missing required input."""
 
 
 class _RunnableCommand(TyperCommand):
@@ -94,7 +91,7 @@ class _RunnableCommand(TyperCommand):
     def invoke(self, ctx: click.Context) -> Any:
         try:
             return TyperCommand.invoke(self, ctx)
-        except _IncompleteRunnableCall:
+        except _IncompleteRunnableInput:
             click.echo(ctx.get_help())
             ctx.exit(2)
 
@@ -184,7 +181,7 @@ def _runnable_command(
         quiet: bool,
         verbose: int,
     ) -> int:
-        call, raw_args = _collect_call(
+        commands, input, raw_named = _collect_call(
             runnable,
             items=items,
             stdin=stdin,
@@ -192,8 +189,9 @@ def _runnable_command(
         return _run(
             source_path,
             runnable=runnable.name,
-            call=call,
-            raw_args=raw_args,
+            commands=commands,
+            input=input,
+            raw_named=raw_named,
             allow_options=allow,
             default_options=default,
             limit_options=limit,
@@ -322,7 +320,7 @@ def _collect_call(
     *,
     items: tuple[str, ...],
     stdin: TextIO,
-) -> tuple[RunnableCall, Arguments]:
+) -> tuple[tuple[PolicyCommand, ...], RunnableInput, NamedInputSources]:
     params = {parameter.name: parameter for parameter in runnable.params}
     raw_args: dict[str, str] = {}
     input_items: list[str] = []
@@ -341,13 +339,10 @@ def _collect_call(
         input_items.append(item)
 
     input_source = _input_source(input_items, stdin=stdin)
-    call = (
-        RunnableCall(overrides=(), content="")
-        if input_source is None
-        else parse_runnable_call(input_source)
-    )
+    commands, input = parse_call(input_source or "")
     has_runnable_override = any(
-        item.kind in {"agic", "flow"} for item in call.overrides
+        command.group == "default" and command.field == "runnable"
+        for command in commands
     )
     if not has_runnable_override:
         missing = [
@@ -356,10 +351,10 @@ def _collect_call(
             if not parameter.optional and parameter.name not in raw_args
         ]
         if missing:
-            raise _IncompleteRunnableCall
-        if runnable.input is not None and not runnable.input.optional and not call.content:
-            raise _IncompleteRunnableCall
-    return call, tuple(raw_args.items())
+            raise _IncompleteRunnableInput
+        if runnable.input is not None and not runnable.input.optional and input.primary is None:
+            raise _IncompleteRunnableInput
+    return commands, input, tuple(raw_args.items())
 
 
 def _input_source(items: list[str], *, stdin: TextIO) -> str | None:
@@ -409,8 +404,9 @@ def _run(
     source_path: Path,
     *,
     runnable: str,
-    call: RunnableCall,
-    raw_args: Arguments,
+    commands: tuple[PolicyCommand, ...],
+    input: RunnableInput,
+    raw_named: NamedInputSources,
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
     limit_options: tuple[str, ...],
@@ -449,8 +445,9 @@ def _run(
                 ids=ids,
                 run_id=run_id,
                 runnable=runnable,
-                call=call,
-                raw_args=raw_args,
+                commands=commands,
+                input=input,
+                raw_named=raw_named,
                 allow_options=allow_options,
                 default_options=default_options,
                 limit_options=limit_options,
@@ -511,8 +508,9 @@ async def _execute(
     ids: IdIssuer,
     run_id: str,
     runnable: str,
-    call: RunnableCall,
-    raw_args: Arguments,
+    commands: tuple[PolicyCommand, ...],
+    input: RunnableInput,
+    raw_named: NamedInputSources,
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
     quiet: bool,
@@ -535,14 +533,15 @@ async def _execute(
         limit_overrides=resolve_limit_overrides(environ, limit_options),
     ).refresh()
     executor = RunExecutor(store, ids)
-    spec = bind_runnable_call(
-        call,
+    spec = resolve_spec(
+        commands,
+        input,
         setup=setup,
         state=state,
         thread=_UNPERSISTED_THREAD,
         default_runnable=runnable,
-        selected_runnable=runnable,
-        default_raw_args=raw_args,
+        surface=RunBindings(runnable=runnable),
+        surface_named_sources=raw_named,
         include=lambda reference: resolve_file_include(
             reference,
             base=Path.cwd(),
@@ -551,7 +550,14 @@ async def _execute(
     executor.validate(spec)
     thread = ThreadManager(store, ids).create(prefix=ThreadPrefix.SCRIPT)
     spec = replace(spec, thread=thread)
-    selected = resolve_runnable(state.program, spec.runnable)
+    if spec.bindings.runnable is None:
+        raise RuntimeError("resolved script spec has no runnable binding")
+    selected_name, selected_kind = parse_runnable_ref(spec.bindings.runnable)
+    selected = resolve_runnable(
+        state.program,
+        selected_name,
+        kind=selected_kind,
+    )
     tracer = (
         ConsoleRunTracer(
             run_id=run_id,
@@ -559,8 +565,8 @@ async def _execute(
             runnable_kind=selected.kind,
             runnable_name=selected.name,
             runnable_doc=selected.doc,
-            input_value=spec.input,
-            args=dict(spec.args or {}),
+            input_value=spec.primary,
+            args=dict(spec.named or {}),
         )
         if not quiet and (sys.stderr.isatty() or verbosity > 0)
         else None

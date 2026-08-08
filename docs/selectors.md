@@ -314,14 +314,14 @@ CLI. Cap-kind fields are converted to cap selectors only after all field
 overlays complete.
 
 `--default FIELD=VALUE` and `TOOLANG_DEFAULT_<FIELD>` set singular `model` or
-`runnable` bindings. `none` clears an inherited binding. A request or chat
-setting may select a different value, and authored run overrides remain the
-highest selection layer.
+`runnable` bindings. `none` clears an inherited binding. A surface selection,
+chat session policy, or run policy may select a different value; run policy is
+the highest binding layer.
 
 At `RunExecutor.start()`, the captured `AgentSetup.ceiling` resolves to a
-private concrete `_ResolvedAgentCeiling`. A request-level `AgentCeiling`
-restriction is then intersected with it and cannot restore resources excluded
-by setup policy.
+private concrete `_ResolvedAgentCeiling`. Session and run `AgentCeiling`
+restrictions are then intersected with it in order and cannot restore
+resources excluded by setup policy or an earlier restriction.
 
 
 ## List Filters

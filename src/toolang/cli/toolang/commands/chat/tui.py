@@ -28,7 +28,6 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.common.errors import ToolangError
-from toolang.lang.submission import QuickCommand, RunnableCall, parse_submission
 
 from toolang.cli.common.version import toolang_version
 from . import blocks
@@ -45,6 +44,13 @@ from .base import (
 )
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
+from .input import (
+    QuickCommand,
+    is_policy_commands,
+    is_runnable_input,
+    normalize_chat_input,
+    parse_chat_input,
+)
 from .presenter import ChatRunPresenter
 
 _RUN_EVENT_TYPES = (
@@ -400,13 +406,14 @@ class ChatTuiApp:
     def handle_submit(self, message: str) -> None:
         self.interrupt_exit_pending = False
         self.status_bar.clear_error()
+        source = normalize_chat_input(message)
         try:
-            submission = parse_submission(message)
+            chat_input = parse_chat_input(source)
         except ValueError as exc:
             self.status_bar.set_error(friendly_error(str(exc)))
             return
-        if isinstance(submission, QuickCommand):
-            slash_result = slashes.handle(self.app_context, submission)
+        if isinstance(chat_input, QuickCommand):
+            slash_result = slashes.handle(self.app_context, chat_input)
             if slash_result.result is not None:
                 result = slash_result.result
                 rendering.write_renderables(
@@ -424,10 +431,10 @@ class ChatTuiApp:
                     blocks.SlashBlock(message, slash_result.lines).render()
                 )
             return
-        if isinstance(submission, tuple):
+        if is_policy_commands(chat_input):
             try:
                 updated = self.client.apply_settings(
-                    submission,
+                    chat_input,
                     self.selects,
                 )
             except (ToolangError, ValueError) as exc:
@@ -435,13 +442,16 @@ class ChatTuiApp:
                 return
             self.selects.clear()
             self.selects.update(updated)
-            if any(command.kind == "model" for command in submission):
+            if any(
+                command.group == "default" and command.field == "model"
+                for command in chat_input
+            ):
                 self.actual_model = None
             self.status_bar.set_status(self._status_label())
             return
-        if not isinstance(submission, RunnableCall):
-            raise AssertionError("unknown submission value")
-        queued = QueuedCall(message, dict(self.selects))
+        if not is_runnable_input(chat_input):
+            raise AssertionError("unknown chat input value")
+        queued = QueuedCall(source, dict(self.selects))
         if self.active_run_id is not None or self.run_in_flight.is_set():
             self.queue.append(queued)
         else:

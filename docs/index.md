@@ -27,7 +27,7 @@ Use this directory for:
 | [ids.md](./ids.md) | Toolang-owned id families, reversible encoding, and durable allocator model |
 | [program.md](./program.md) | Program declarations, executable signatures, agics, flows, directives, and surface rules |
 | [flow-syntax.md](./flow-syntax.md) | Flow declarations, statements, result binding, and clauses |
-| [input-syntax.md](./input-syntax.md) | Submissions, commands, runnable calls, Content syntax, evaluation, and coercion |
+| [input-syntax.md](./input-syntax.md) | Policy commands, chat and runnable input, Content evaluation, and coercion |
 | [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
 | [prepared-state.md](./prepared-state.md) | Immutable prepared generations, versioning, publication, and watching |
 | [caps.md](./caps.md) | Capability model, including form, scope, origin, refs, precedence, and effective-cap rules |

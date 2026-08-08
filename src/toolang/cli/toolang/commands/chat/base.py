@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from toolang.base.types.message import MessagePart
 from toolang.execution.events import RunEvent
-from toolang.lang.submission import SettingCommand
+from toolang.execution.types import PolicyCommand
 
 if TYPE_CHECKING:
     from .blocks import MutableBlock
@@ -42,7 +42,7 @@ class ChatClient(Protocol):
 
     def apply_settings(
         self,
-        settings: tuple[SettingCommand, ...],
+        commands: tuple[PolicyCommand, ...],
         selects: Mapping[str, object],
     ) -> Mapping[str, object]: ...
 
@@ -117,9 +117,18 @@ def chat_status_label(selects: Mapping[str, object]) -> str:
     model_label = model or "default"
     flow = as_text(selects.get("flow"))
     agic = as_text(selects.get("agic"))
+    runnable = as_text(selects.get("runnable"))
     if agic == "default":
         agic = None
-    executable = f"flow:{flow}" if flow else f"agic:{agic}" if agic else ""
+    executable = (
+        f"flow:{flow}"
+        if flow
+        else f"agic:{agic}"
+        if agic
+        else f"runnable:{runnable}"
+        if runnable
+        else ""
+    )
     return f"{model_label}  {executable}" if executable else model_label
 
 

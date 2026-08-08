@@ -68,7 +68,7 @@ class BoundRun:
     setup: AgentSetup
     created_at: str
     limits: RunLimits = RunLimits()
-    ceiling_restriction: AgentCeiling = AgentCeiling()
+    ceiling_restrictions: tuple[AgentCeiling, ...] = ()
     agent_ceiling: _ResolvedAgentCeiling | None = None
     ceiling: _RunCeiling | None = None
     flow_ceiling: _RunCeiling | None = None

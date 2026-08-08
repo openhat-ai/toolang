@@ -2,11 +2,10 @@
 
 This document defines the public CLI and local agent HTTP API.
 
-Interactive CLI, TUI, and WebUI surfaces resolve `Submission` text according
-to their declared submission profile. Chat surfaces may apply `QuickCommand`
-and `SettingCommand` results locally; every execution surface turns an
-accepted `RunnableCall` into the structured run request defined by
-[input-syntax.md](./input-syntax.md).
+Interactive CLI, TUI, and WebUI surfaces may parse the `ChatInput` forms
+defined by [input-syntax.md](./input-syntax.md). Quick commands remain local to
+the interaction surface. Execution surfaces resolve `PolicyCommand` and
+`RunnableInput` values into the structured run request described here.
 
 
 ## CLI
@@ -208,8 +207,8 @@ Arguments:
 - `SCRIPT` is the local Toolang script or agent file
 - `RUNNABLE` is the uniquely named public agic or flow to run
 - `ARGS` provide named runnable parameters, written as `NAME=VALUE`
-- `INPUT` values form the content portion of one `Submission`; script mode
-  accepts only a resolved `RunnableCall` and uses its evaluated content
+- `INPUT` values form the primary source of one `RunnableInput`; script mode
+  parses policy prefixes but does not accept chat quick commands
 
 Behavior:
 
@@ -587,8 +586,9 @@ agent's authored caps. Read payloads expose runtime `form`, `scope`, and
 
 ## Chat Client Orchestration
 
-The HTTP API has no separate chat submission endpoint. A chat client creates a
-thread when needed and then starts each turn through the canonical run stream:
+The HTTP API has no endpoint that accepts terminal `ChatInput` text. A chat
+client creates a thread when needed, resolves interaction input on the client,
+and starts each turn through the canonical run stream:
 
 1. `POST /api/v1/threads` with the client and optional peer descriptor.
 2. `POST /api/v1/runs/stream` with the returned thread id, runnable, input,

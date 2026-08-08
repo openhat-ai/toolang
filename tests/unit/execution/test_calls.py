@@ -8,9 +8,8 @@ import pytest
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import TextPart
 from toolang.base.types.policy import RunBindings
-from toolang.execution.calls import bind_runnable_call
-from toolang.lang.submission import SettingCommand, parse_runnable_call
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.calls import parse_call, resolve_spec
+from toolang.execution.types import PolicyCommand, ThreadPrefix
 from tests.support.execution_harness import ExecutionHarness
 
 
@@ -26,114 +25,123 @@ agic bound(_: Part[]):
 """
 
 
-def test_bind_runnable_call_resolves_overrides_content_and_typed_args(
+def test_resolve_spec_binds_policy_primary_and_typed_named_inputs(
     tmp_path,
 ) -> None:
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
     try:
-        spec = bind_runnable_call(
-            parse_runnable_call(
-                ":model test/scripted\n"
-                ":agic review count=2\n\n"
-                "Review this."
-            ),
+        commands, input = parse_call(
+            ":model test/scripted\n"
+            ":agic review count=2\n\n"
+            "Review this."
+        )
+        spec = resolve_spec(
+            commands,
+            input,
             setup=harness.setup,
             state=harness.state,
             thread="term_test",
             default_runnable="default",
         )
 
-        assert spec.runnable == "review"
-        assert spec.model == "test/scripted"
-        assert spec.args == {"count": 2}
-        assert spec.input == (TextPart("Review this."),)
+        assert spec.bindings == RunBindings(
+            model="test/scripted",
+            runnable="agic:review",
+        )
+        assert spec.named == {"count": 2}
+        assert spec.primary == (TextPart("Review this."),)
         harness.executor.validate(spec)
     finally:
         harness.store.close()
 
 
-def test_run_override_default_returns_to_surface_default_not_session_setting(
+def test_run_default_returns_to_surface_binding_not_session_binding(
     tmp_path,
 ) -> None:
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
     try:
-        spec = bind_runnable_call(
-            parse_runnable_call(":agic default\nInput"),
+        commands, input = parse_call(":agic default\nInput")
+        spec = resolve_spec(
+            commands,
+            input,
             setup=harness.setup,
             state=harness.state,
             thread="term_test",
             default_runnable="default",
-            settings=(
-                SettingCommand(
-                    kind="agic",
-                    selector="review",
-                    args=(("count", "2"),),
-                ),
+            surface=RunBindings(runnable="agic:default"),
+            session_commands=(
+                PolicyCommand("default", "runnable", "agic:review"),
             ),
         )
 
-        assert spec.runnable == "default"
-        assert spec.args is None
+        assert spec.bindings.runnable == "agic:default"
+        assert spec.named is None
     finally:
         harness.store.close()
 
 
-def test_setup_bindings_are_below_session_and_authored_selections(tmp_path) -> None:
+def test_setup_bindings_are_below_surface_session_and_run_selections(
+    tmp_path,
+) -> None:
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
     setup = replace(
         harness.setup,
         bindings=RunBindings(model="test/scripted", runnable="agic:bound"),
     )
-    try:
-        bound = bind_runnable_call(
-            parse_runnable_call("Input"),
+
+    def resolve(
+        source: str,
+        *,
+        surface: RunBindings = RunBindings(),
+        session: tuple[PolicyCommand, ...] = (),
+        named: tuple[tuple[str, str], ...] = (),
+    ):
+        commands, input = parse_call(source)
+        return resolve_spec(
+            commands,
+            input,
             setup=setup,
             state=harness.state,
             thread="term_test",
             default_runnable="default",
-        )
-        session = bind_runnable_call(
-            parse_runnable_call("Input"),
-            setup=setup,
-            state=harness.state,
-            thread="term_test",
-            default_runnable="default",
-            settings=(
-                SettingCommand(
-                    kind="agic",
-                    selector="review",
-                    args=(("count", "2"),),
-                ),
-            ),
-        )
-        authored = bind_runnable_call(
-            parse_runnable_call(":agic default\nInput"),
-            setup=setup,
-            state=harness.state,
-            thread="term_test",
-            default_runnable="default",
-            settings=(
-                SettingCommand(
-                    kind="agic",
-                    selector="review",
-                    args=(("count", "2"),),
-                ),
-            ),
-        )
-        selected = bind_runnable_call(
-            parse_runnable_call(":agic default\nInput"),
-            setup=setup,
-            state=harness.state,
-            thread="term_test",
-            default_runnable="default",
-            selected_runnable="default",
-            settings=(SettingCommand(kind="agic", selector="bound"),),
+            surface=surface,
+            session_commands=session,
+            surface_named_sources=named,
         )
 
-        assert (bound.runnable, bound.model) == ("bound", "test/scripted")
-        assert (session.runnable, session.args) == ("review", {"count": 2})
-        assert authored.runnable == "bound"
-        assert selected.runnable == "default"
+    try:
+        bound = resolve("Input")
+        session = resolve(
+            "Input",
+            session=(
+                PolicyCommand("default", "runnable", "agic:review"),
+            ),
+            named=(("count", "2"),),
+        )
+        authored = resolve(
+            ":agic default\nInput",
+            session=(
+                PolicyCommand("default", "runnable", "agic:review"),
+            ),
+        )
+        selected = resolve(
+            ":agic default\nInput",
+            surface=RunBindings(runnable="agic:default"),
+            session=(
+                PolicyCommand("default", "runnable", "agic:bound"),
+            ),
+        )
+
+        assert bound.bindings == RunBindings(
+            model="test/scripted",
+            runnable="agic:bound",
+        )
+        assert (session.bindings.runnable, session.named) == (
+            "agic:review",
+            {"count": 2},
+        )
+        assert authored.bindings.runnable == "agic:bound"
+        assert selected.bindings.runnable == "agic:default"
     finally:
         harness.store.close()
 
@@ -143,8 +151,10 @@ def test_invalid_explicit_model_is_rejected_before_run_persistence(tmp_path) -> 
 
     async def scenario() -> None:
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-        spec = bind_runnable_call(
-            parse_runnable_call(":model missing\nInput"),
+        commands, input = parse_call(":model missing\nInput")
+        spec = resolve_spec(
+            commands,
+            input,
             setup=harness.setup,
             state=harness.state,
             thread=thread,
@@ -175,8 +185,10 @@ def test_missing_default_model_is_rejected_before_run_persistence(tmp_path) -> N
 
     async def scenario() -> None:
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-        spec = bind_runnable_call(
-            parse_runnable_call("Input"),
+        commands, input = parse_call("Input")
+        spec = resolve_spec(
+            commands,
+            input,
             setup=setup,
             state=harness.state,
             thread=thread,

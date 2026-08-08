@@ -9,8 +9,8 @@ from typing import Any, cast
 import click
 
 from toolang.common.errors import ToolangError
-from toolang.lang.submission import QuickCommand
 from .base import AppContext, ChatResult, as_text, friendly_error
+from .input import QuickCommand
 
 SlashOutput = str | Sequence[str] | ChatResult | None
 
@@ -83,10 +83,19 @@ def _executable(app: AppContext, command: str, argument: str) -> SlashOutput:
     selects = app.get_selects()
     del argument
     selected = as_text(selects.get(command))
+    if command == "runnable" and selected is None:
+        for kind in ("agic", "flow"):
+            if (name := as_text(selects.get(kind))) is not None:
+                selected = f"{kind}:{name}"
+                break
     return [
-        f"Available {command.title()}s",
+        "Available Runnables"
+        if command == "runnable"
+        else f"Available {command.title()}s",
         *_chat_executable_list_lines(
-            client.list_executables(command), selected=selected
+            client.list_executables(command),
+            selected=selected,
+            show_kind=command == "runnable",
         ),
     ]
 
@@ -153,6 +162,7 @@ SLASHES: tuple[SlashCommand, ...] = (
     ),
     SlashCommand(("agic",), "List agics.", _executable, ":agic"),
     SlashCommand(("flow",), "List flows.", _executable, ":flow"),
+    SlashCommand(("runnable",), "List runnables.", _executable, ":runnable"),
     SlashCommand(
         ("steer", "s"),
         "Steer the active run.",
@@ -293,7 +303,10 @@ def _chat_model_list_lines(payload: Mapping[str, Any]) -> list[str]:
 
 
 def _chat_executable_list_lines(
-    payload: Mapping[str, Any], *, selected: str | None
+    payload: Mapping[str, Any],
+    *,
+    selected: str | None,
+    show_kind: bool = False,
 ) -> list[str]:
     default = as_text(payload.get("default"))
     lines: list[str] = []
@@ -301,15 +314,17 @@ def _chat_executable_list_lines(
         name = as_text(item.get("name"))
         if name is None:
             continue
+        kind = as_text(item.get("kind"))
+        ref = f"{kind}:{name}" if show_kind and kind is not None else name
         labels = [
             label
             for enabled, label in (
-                (name == selected, "current"),
-                (name == default, "default"),
+                (ref == selected or name == selected, "current"),
+                (ref == default or name == default, "default"),
             )
             if enabled
         ]
-        lines.append(f"{name}  {' '.join(labels)}" if labels else name)
+        lines.append(f"{ref}  {' '.join(labels)}" if labels else ref)
     return lines or ["No available items."]
 
 

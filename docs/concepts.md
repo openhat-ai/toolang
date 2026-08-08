@@ -193,8 +193,8 @@ and CLI overrides captured at process startup. Each completed setup snapshot is
 stable; the next root run observes the latest valid snapshot.
 
 At root-run start, the executor resolves `AgentSetup.ceiling` against the
-captured `AgentSetup` and `AgentState`, then intersects any request-level
-`RunSpec.ceiling` restriction. The resulting private ceiling is the absolute
+captured `AgentSetup` and `AgentState`, then intersects every session or
+request restriction in `RunSpec.ceilings`. The resulting private ceiling is the absolute
 resource limit for that recursive run tree. Request restrictions can narrow
 the setup ceiling but cannot expand it.
 
@@ -219,14 +219,15 @@ models. `=` is a keep-only filter, not a traditional assignment.
 `RunLimits` bound execution quantity and duration rather than resource
 selection. Model/tool call limits apply to each agic invocation; token, USD
 cost, and time limits apply to the complete recursive root run tree. The
-captured `AgentSetup` supplies defaults and one start operation may override
-them without changing the setup snapshot. Defaults resolve from root `[limit]`,
-agent `[limit]`, frozen environment/CLI fields, and finally request fields.
+captured `AgentSetup` supplies defaults; session and run policy resolve them
+into `RunSpec.limits` without changing the setup snapshot. Defaults resolve
+from root `[limit]`, agent `[limit]`, and frozen environment/CLI fields before
+the per-session and per-run layers.
 
-`RunBindings` provides optional default `model` and `runnable` values for new
-runs. It uses the same dynamic setup pipeline through `[default]`. A session or
-canonical request selection overrides setup bindings, and authored input
-overrides both.
+`RunBindings` provides optional `model` and `runnable` values. `AgentSetup`
+captures their dynamic defaults through `[default]`; policy resolution then
+produces the effective bindings stored in `RunSpec`. Surface selections,
+session policy, and run policy overlay in that order.
 
 
 ## Step
@@ -263,17 +264,20 @@ part of a local.
 
 ## Content Evaluation And Coercion
 
-Toolang uses four operations at runnable boundaries:
+Toolang uses six operations at runnable boundaries:
 
-- submission resolution produces a command or one `RunnableCall`
+- policy parsing produces canonical `PolicyCommand` values
+- runnable-input parsing produces `RunnableInput(primary, named)`
+- policy and runnable resolution produces one immutable `RunSpec`
 - content evaluation produces one ordered canonical `Percept`
 - input coercion converts that percept to the runnable's declared primary type
 - output coercion converts the runnable's final value to its declared output
   type
 
 Content evaluation applies equally to plain text, authored bodies with runtime
-values, and multimodal caller input. Submission resolution, input coercion,
-and output coercion are language-owned operations; they do not define transport
+values, and multimodal caller input. Runnable-input parsing, input coercion,
+and output coercion are language-owned operations. Policy parsing and
+`RunSpec` resolution are execution-owned. None defines transport
 serialization.
 
 

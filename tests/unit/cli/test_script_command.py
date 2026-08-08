@@ -9,8 +9,10 @@ from click.utils import strip_ansi
 
 from toolang.base.errors import ToolangError
 from toolang.cli.toolang.commands import script
+from toolang.execution.calls import parse_call
 from toolang.execution.records import RunInputRef, RunRecord
-from toolang.lang.submission import RunnableCall, parse_runnable_call
+from toolang.execution.types import PolicyCommand
+from toolang.lang.input import RunnableInput
 from tests.support.execution_harness import ExecutionHarness
 
 
@@ -87,10 +89,10 @@ def test_script_binds_options_arguments_and_primary_input(
         "cost=2.5",
         "time=60",
     )
-    assert captured["raw_args"] == (("count", "2.5"), ("enabled", "true"))
-    call = captured["call"]
-    assert isinstance(call, RunnableCall)
-    assert call.content == "hello world"
+    assert captured["raw_named"] == (("count", "2.5"), ("enabled", "true"))
+    input = captured["input"]
+    assert isinstance(input, RunnableInput)
+    assert input.primary == "hello world"
 
 
 def test_script_reads_primary_input_from_stdin(
@@ -114,9 +116,9 @@ def test_script_reads_primary_input_from_stdin(
     )
 
     assert result == 0
-    call = captured["call"]
-    assert isinstance(call, RunnableCall)
-    assert call.content == "from stdin"
+    input = captured["input"]
+    assert isinstance(input, RunnableInput)
+    assert input.primary == "from stdin"
 
 
 def test_script_stdin_can_override_the_cli_runnable(
@@ -149,11 +151,13 @@ agic alternate(_: Part[]):
     )
 
     assert result == 0
-    call = captured["call"]
-    assert isinstance(call, RunnableCall)
-    assert call.overrides[0].selector == "alternate"
-    assert call.content == "from stdin"
-    assert captured["raw_args"] == ()
+    assert captured["commands"] == (
+        PolicyCommand("default", "runnable", "agic:alternate"),
+    )
+    input = captured["input"]
+    assert isinstance(input, RunnableInput)
+    assert input.primary == "from stdin"
+    assert captured["raw_named"] == ()
 
 
 def test_script_supports_explicit_stdin_marker(
@@ -177,9 +181,9 @@ def test_script_supports_explicit_stdin_marker(
     )
 
     assert result == 0
-    call = captured["call"]
-    assert isinstance(call, RunnableCall)
-    assert call.content == "from stdin"
+    input = captured["input"]
+    assert isinstance(input, RunnableInput)
+    assert input.primary == "from stdin"
 
 
 def test_script_keeps_assignments_after_separator_as_input(
@@ -209,10 +213,10 @@ agic demo(_: Part[], count?: Number):
     )
 
     assert result == 0
-    assert captured["raw_args"] == ()
-    call = captured["call"]
-    assert isinstance(call, RunnableCall)
-    assert call.content == "count=2"
+    assert captured["raw_named"] == ()
+    input = captured["input"]
+    assert isinstance(input, RunnableInput)
+    assert input.primary == "count=2"
 
 
 def test_script_includes_an_image(
@@ -239,9 +243,9 @@ def test_script_includes_an_image(
     )
 
     assert result == 0
-    call = captured["call"]
-    assert isinstance(call, RunnableCall)
-    assert call.content == "@sample.png"
+    input = captured["input"]
+    assert isinstance(input, RunnableInput)
+    assert input.primary == "@sample.png"
 
 
 def test_script_shows_runnable_help_for_a_missing_required_parameter(
@@ -314,6 +318,7 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
         return harness.setup
 
     monkeypatch.setattr(script.SetupWatcher, "refresh", current_setup)
+    commands, input = parse_call(":agic missing\nInput")
     try:
         with pytest.raises(ToolangError, match="Runnable not found: missing"):
             asyncio.run(
@@ -324,8 +329,9 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
                     ids=harness.ids,
                     run_id="run_test",
                     runnable="demo",
-                    call=parse_runnable_call(":agic missing\nInput"),
-                    raw_args=(("count", "1"),),
+                    commands=commands,
+                    input=input,
+                    raw_named=(("count", "1"),),
                     allow_options=(),
                     default_options=(),
                     quiet=True,
