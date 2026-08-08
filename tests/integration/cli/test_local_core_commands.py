@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -404,11 +405,23 @@ agic reply(_: Part[]) -> Part[]:
     _create_agent(harness.setup.layout.root)
 
     class _SetupSnapshot:
-        def __init__(self, _layout: AgentLayout) -> None:
-            pass
+        def __init__(
+            self,
+            _layout: AgentLayout,
+            *,
+            limit_overrides: Mapping[str, object] | None = None,
+            **_kwargs: object,
+        ) -> None:
+            self.setup = replace(
+                harness.setup,
+                limits=replace(
+                    harness.setup.limits,
+                    **dict(limit_overrides or {}),
+                ),
+            )
 
         async def refresh(self) -> AgentSetup:
-            return harness.setup
+            return self.setup
 
     class _StateSnapshot:
         def __init__(self, _layout: AgentLayout) -> None:

@@ -17,7 +17,8 @@ from pydantic import TypeAdapter
 from toolang.api.app import create_app
 from toolang.api.common import LiveEventRelay, sse_stream
 from toolang.base.types.message import DocumentPart, Message, TextPart
-from toolang.base.types.run import ModelCallResult, ModelUsage, RunLimits
+from toolang.base.types.policy import RunBindings, RunLimits
+from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.catalog import CapsManager, JobsManager
 from toolang.execution.events import (
     PartBegin,
@@ -57,9 +58,16 @@ agic answer(_: Part[]) -> Part[]:
 """,
         responses=[ModelCallResult(message=Message.assistant("hello back"))],
     )
+    setup = replace(
+        harness.setup,
+        bindings=RunBindings(
+            model="test/scripted",
+            runnable="agic:answer",
+        ),
+    )
     harness.store.close()
-    core = AgentCore(harness.setup.layout)
-    core.setup = _Snapshot(harness.setup)
+    core = AgentCore(setup.layout)
+    core.setup = _Snapshot(setup)
     core.state = _Snapshot(harness.state)
     app = create_app(
         core,
@@ -70,6 +78,9 @@ agic answer(_: Part[]) -> Part[]:
 
     try:
         with TestClient(app) as client:
+            models = client.get("/api/v1/models")
+            agics = client.get("/api/v1/agics")
+            flows = client.get("/api/v1/flows")
             created = client.post(
                 "/api/v1/threads",
                 json={"client": "script"},
@@ -94,6 +105,9 @@ agic answer(_: Part[]) -> Part[]:
         decoded = [run_event_from_data(data) for _event, data in events]
 
         assert created.status_code == 201
+        assert models.json()["default"] == "test/scripted"
+        assert agics.json()["default"] == "answer"
+        assert flows.json()["default"] is None
         assert thread_id.startswith("script_")
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")

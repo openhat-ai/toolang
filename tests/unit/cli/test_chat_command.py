@@ -11,7 +11,6 @@ import click
 import pytest
 
 from toolang.base.types.message import TextPart
-from toolang.base.types.run import RunLimits
 from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import ChatResult
 from toolang.common.layout import AgentLayout
@@ -225,32 +224,6 @@ def test_interactive_tty_passes_the_unmodified_thread_to_the_tui(
     assert client.created == 0
 
 
-def test_chat_selector_payload_deduplicates_all_selector_families() -> None:
-    assert chat._chat_selector_payload(
-        models=["openai/gpt-5,openai/o3", "openai/gpt-5"],
-        model="openai/o3",
-        tools=["filesystem,shell", "shell"],
-        caps=["skill/reviewer,service/*[home]", "skill/reviewer"],
-        agic="summarize",
-    ) == {
-        "models": ["openai/gpt-5", "openai/o3"],
-        "model": "openai/o3",
-        "tools": ["filesystem", "shell"],
-        "caps": ["skill/reviewer", "service/*[home]"],
-        "agic": "summarize",
-    }
-
-
-def test_chat_selector_payload_omits_default_model_and_agic() -> None:
-    assert chat._chat_selector_payload(
-        models=None,
-        model="default",
-        tools=None,
-        caps=None,
-        agic="default",
-    ) == {}
-
-
 def test_chat_runtime_builds_process_local_execution_resources(
     tmp_path: Path,
     monkeypatch: Any,
@@ -269,26 +242,42 @@ def test_chat_runtime_builds_process_local_execution_resources(
             captured["closed"] = True
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(
+        chat,
+        "load_runtime_environ",
+        lambda _layout, *, base_environ: {
+            **base_environ,
+            "TOOLANG_ALLOW_MODELS": "env/*",
+            "TOOLANG_LIMIT_TIME": "30",
+        },
+    )
     monkeypatch.setattr(chat, "LocalChatSession", Session)
 
     with chat._chat_runtime(
         object(),  # type: ignore[arg-type]
         sandbox="none",
-        selector_payload={
-            "models": ["test/model"],
-            "tools": ["shell/*"],
-            "caps": ["skill/reviewer"],
-        },
-        limit_options=["tokens=1000,time=60"],
+        allow_options=[
+            "models=test/model",
+            "tools=shell/*",
+            "caps=skill/reviewer",
+        ],
+        default_options=["model=test/model", "runnable=agic:chat"],
+        limit_options=["tokens=1000", "time=60"],
     ) as client:
         assert isinstance(client, Session)
 
     assert captured["layout"] == layout
     assert captured["kwargs"] == {
-        "models": ("test/model",),
-        "tools": ("shell/*",),
-        "caps": ("skill/reviewer",),
-        "limits": RunLimits(tokens=1000, time=60),
+        "ceiling_overrides": {
+            "models": ("test/model",),
+            "tools": ("shell/*",),
+            "caps": ("skill/reviewer",),
+        },
+        "binding_overrides": {
+            "model": "test/model",
+            "runnable": "agic:chat",
+        },
+        "limit_overrides": {"tokens": 1000, "time": 60},
     }
     assert captured["closed"] is True
 

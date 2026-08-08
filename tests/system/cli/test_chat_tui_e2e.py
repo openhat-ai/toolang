@@ -89,11 +89,11 @@ def test_chat_tui_reopens_a_durable_flow_result(
         session.send(b"hello flow\r")
         output = session.wait_for(
             "[0] run chat",
+            "1 run",
             "succeeded",
             "result saved",
             ":show run_",
         )
-        assert "1 run" in output
         assert "Window too small" not in output
         show_index = output.rfind(":show run_")
         run_id = output[show_index + len(":show ") :].split()[0]

@@ -213,9 +213,10 @@ preparation:
 3. materializes runtime-ready artifacts when needed
 4. selects the winning definition for each `(kind, name)`
 
-At root-run start, `CeilingSpec.caps` limits that captured set to the private
-agent ceiling. Flow and agic directives may narrow it further, but cannot
-restore caps outside the agent ceiling.
+At root-run start, `AgentSetup.ceiling.caps` limits that captured set to the
+private agent ceiling. Any request-level cap restriction is intersected with
+that result. Flow and agic directives may narrow it further, but cannot restore
+caps outside the agent ceiling.
 
 
 ## HTTP API

@@ -105,7 +105,7 @@ agic chat(_: Part[]) -> Part[]:
     harness.store.close()
 
     class SetupWatcher:
-        def __init__(self, _layout: object) -> None:
+        def __init__(self, _layout: object, **_kwargs: object) -> None:
             pass
 
         def current(self):
@@ -198,7 +198,7 @@ def test_chat_session_does_not_create_a_thread_on_open(
     harness.store.close()
 
     class SetupWatcher:
-        def __init__(self, _layout: object) -> None:
+        def __init__(self, _layout: object, **_kwargs: object) -> None:
             pass
 
         def current(self):

@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
+from decimal import Decimal
 import json
 from pathlib import Path
 import threading
@@ -16,7 +17,6 @@ from weakref import WeakKeyDictionary
 
 from toolang.base.protocols.hosting import Hosting
 from toolang.base.types.hosting import HostingRef, HostingRequest
-from toolang.base.types.run import RunLimits
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import (
@@ -109,10 +109,9 @@ async def resolve_launch(
     host: str = "127.0.0.1",
     endpoint_host: str | None = None,
     port: int | None = None,
-    models: Sequence[str] | None = None,
-    tools: Sequence[str] | None = None,
-    caps: Sequence[str] | None = None,
-    limits: RunLimits | None = None,
+    ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+    binding_overrides: Mapping[str, str | None] | None = None,
+    limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     file_inboxes: Sequence[Path] | None = None,
     dev: Path | None = None,
     log_spec: str | None = None,
@@ -133,10 +132,9 @@ async def resolve_launch(
         host=host,
         endpoint_host=endpoint_host,
         port=port,
-        models=models,
-        tools=tools,
-        caps=caps,
-        limits=limits,
+        ceiling_overrides=ceiling_overrides,
+        binding_overrides=binding_overrides,
+        limit_overrides=limit_overrides,
         file_inboxes=file_inboxes,
         log_spec=log_spec,
         temporary_port=temporary_port,

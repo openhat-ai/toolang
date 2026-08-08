@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from decimal import Decimal
 import logging
 import os
 from pathlib import Path
@@ -13,7 +14,7 @@ import signal
 import socket
 import threading
 import time
-from types import FrameType
+from types import FrameType, MappingProxyType
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -22,23 +23,18 @@ import uvicorn
 from uvicorn.main import STARTUP_FAILURE
 
 from toolang.api.app import create_app
-from toolang.base.types.run import RunLimits
+from toolang.base.types.policy import AgentCeiling
 from toolang.catalog import CapsManager, JobsManager
 from toolang.common.config import resolve_ui_base_url
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor import CeilingSpec
 from toolang.execution.executor.ceiling import (
     agent_model_targets,
-    validate_ceiling_spec,
+    validate_agent_ceiling,
 )
-from toolang.plugin.models.resolution import (
-    split_model_selectors,
-)
-from toolang.plugin.tools.registry import split_tool_selectors
 from toolang.setup import AgentSetup
 from toolang.state import watcher as state_watcher
-from toolang.state.state import AgentState, split_cap_selectors
+from toolang.state.state import AgentState
 from toolang.up import process as agents
 from toolang.up.config import resolve_cors_allowed_origins
 from toolang.up.core import AgentCore
@@ -70,10 +66,32 @@ class ServeSpec:
     host: str
     endpoint_host: str
     port: int
-    ceiling: CeilingSpec = CeilingSpec()
-    limits: RunLimits | None = None
+    ceiling_overrides: Mapping[str, tuple[str, ...] | None] = field(
+        default_factory=dict
+    )
+    binding_overrides: Mapping[str, str | None] = field(default_factory=dict)
+    limit_overrides: Mapping[str, int | Decimal | None] = field(
+        default_factory=dict
+    )
     file_inboxes: tuple[Path, ...] = ()
     log_spec: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "ceiling_overrides",
+            MappingProxyType(dict(self.ceiling_overrides)),
+        )
+        object.__setattr__(
+            self,
+            "binding_overrides",
+            MappingProxyType(dict(self.binding_overrides)),
+        )
+        object.__setattr__(
+            self,
+            "limit_overrides",
+            MappingProxyType(dict(self.limit_overrides)),
+        )
 
     @property
     def endpoint(self) -> str:
@@ -86,10 +104,9 @@ def resolve_serve(
     host: str = "127.0.0.1",
     endpoint_host: str | None = None,
     port: int | None = None,
-    models: Sequence[str] | None = None,
-    tools: Sequence[str] | None = None,
-    caps: Sequence[str] | None = None,
-    limits: RunLimits | None = None,
+    ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+    binding_overrides: Mapping[str, str | None] | None = None,
+    limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     file_inboxes: Sequence[Path] | None = None,
     log_spec: str | None = None,
     temporary_port: bool = False,
@@ -107,12 +124,9 @@ def resolve_serve(
             layout=layout,
             temporary=temporary_port,
         ),
-        ceiling=CeilingSpec(
-            models=_normalize_model_selectors(models) or None,
-            tools=_normalize_tool_selectors(tools),
-            caps=_normalize_cap_selectors(caps) or None,
-        ),
-        limits=limits,
+        ceiling_overrides=dict(ceiling_overrides or {}),
+        binding_overrides=dict(binding_overrides or {}),
+        limit_overrides=dict(limit_overrides or {}),
         file_inboxes=resolved_inboxes,
         log_spec=log_spec.strip()
         if isinstance(log_spec, str) and log_spec.strip()
@@ -140,14 +154,12 @@ def build_serve_argv(
         "--port",
         str(spec.port),
     ]
-    for selector in spec.ceiling.models or ():
-        command.extend(["--models", selector])
-    for selector in spec.ceiling.tools or ():
-        command.extend(["--tools", selector])
-    for selector in spec.ceiling.caps or ():
-        command.extend(["--caps", selector])
-    if spec.limits is not None:
-        command.extend(["--limit", _format_limits(spec.limits)])
+    for name, selectors in spec.ceiling_overrides.items():
+        command.extend(["--allow", f"{name}={_format_allow(selectors)}"])
+    for name, value in spec.binding_overrides.items():
+        command.extend(["--default", f"{name}={_format_value(value)}"])
+    for name, value in spec.limit_overrides.items():
+        command.extend(["--limit", f"{name}={_format_value(value)}"])
     for inbox in spec.file_inboxes:
         command.extend(["--inbox", str(inbox)])
     if spec.log_spec is not None:
@@ -165,13 +177,18 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
         if interval_ms <= 0:
             raise ValueError(f"trigger interval must be positive: {name}")
 
-    core = AgentCore(spec.layout, limits=spec.limits)
+    core = AgentCore(
+        spec.layout,
+        ceiling_overrides=spec.ceiling_overrides,
+        binding_overrides=spec.binding_overrides,
+        limit_overrides=spec.limit_overrides,
+    )
     asyncio.run(core.state.refresh())
     asyncio.run(core.setup.refresh())
     state = core.state.current()
-    ceiling = spec.ceiling
+    ceiling = core.setup.current().ceiling
     _validate_file_agic(state, enabled=bool(spec.file_inboxes))
-    validate_ceiling_spec(core.setup.current(), state, ceiling)
+    validate_agent_ceiling(core.setup.current(), state, ceiling)
     cors_allowed_origins = resolve_cors_allowed_origins(
         state.root_config,
         environ=environ,
@@ -213,7 +230,6 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
                 ids=core.ids,
                 get_agent_setup=current_setup,
                 get_agent_state=current_state,
-                ceiling=ceiling,
             )
             await scheduler.start()
             app.state.job_scheduler = scheduler
@@ -236,7 +252,6 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
                         executor=core.executor,
                         get_agent_setup=current_setup,
                         get_agent_state=current_state,
-                        ceiling=ceiling,
                         inboxes=spec.file_inboxes,
                         interval_ms=DEFAULT_TRIGGER_INTERVAL_MS["file"],
                         stable_ms=DEFAULT_FILE_STABLE_MS,
@@ -262,7 +277,6 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
         core,
         caps_manager,
         jobs_manager,
-        ceiling=ceiling,
         lifespan=lifespan,
         cors_allowed_origins=cors_allowed_origins,
     )
@@ -296,17 +310,16 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
     return 0
 
 
-def _format_limits(limits: RunLimits) -> str:
-    values = (
-        ("agic_model_calls", limits.agic_model_calls),
-        ("agic_tool_calls", limits.agic_tool_calls),
-        ("tokens", limits.tokens),
-        ("cost", limits.cost),
-        ("time", limits.time),
-    )
-    return ",".join(
-        f"{name}={'none' if value is None else value}" for name, value in values
-    )
+def _format_allow(values: tuple[str, ...] | None) -> str:
+    if values is None:
+        return "all"
+    if not values:
+        return "none"
+    return ",".join(values)
+
+
+def _format_value(value: object | None) -> str:
+    return "none" if value is None else str(value)
 
 
 def _validate_file_agic(state: AgentState, *, enabled: bool) -> None:
@@ -349,7 +362,7 @@ def _log_state_loaded(
     setup: AgentSetup,
     state: AgentState,
     *,
-    ceiling: CeilingSpec,
+    ceiling: AgentCeiling,
 ) -> None:
     logger.info(
         "Agent loaded state=%s models=%s tools=%s psyches=%s skills=%s services=%s",
@@ -366,7 +379,7 @@ def _model_count(
     setup: AgentSetup,
     state: AgentState,
     *,
-    ceiling: CeilingSpec,
+    ceiling: AgentCeiling,
 ) -> int:
     _default, targets = agent_model_targets(setup, state, ceiling)
     return len(targets)
@@ -500,28 +513,6 @@ def _normalize_file_inboxes(
         if path not in result:
             result.append(path)
     return tuple(result)
-
-
-def _normalize_model_selectors(
-    models: Sequence[str] | None,
-) -> tuple[str, ...]:
-    values = tuple(models) if models is not None else ()
-    return tuple(dict.fromkeys(split_model_selectors(values)))
-
-
-def _normalize_tool_selectors(
-    tools: Sequence[str] | None,
-) -> tuple[str, ...] | None:
-    if tools is None:
-        return None
-    return tuple(dict.fromkeys(split_tool_selectors(tuple(tools))))
-
-
-def _normalize_cap_selectors(
-    caps: Sequence[str] | None,
-) -> tuple[str, ...]:
-    values = tuple(caps) if caps is not None else ()
-    return tuple(dict.fromkeys(split_cap_selectors(values)))
 
 
 def _default_endpoint_host(host: str) -> str:

@@ -6,13 +6,18 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 import json
+import os
 from typing import Annotated, Any, Literal, cast
 
 import click
 import typer
 
 from toolang.base.types.message import Message
-from toolang.cli.common.limits import apply_limit_options
+from toolang.cli.common.policy import (
+    resolve_binding_overrides,
+    resolve_ceiling_overrides,
+    resolve_limit_overrides,
+)
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
@@ -23,7 +28,7 @@ from toolang.execution.types import RunStatus, StepPath
 from toolang.setup import SetupWatcher
 from toolang.state.watcher import StateWatcher
 
-from ...common.context import context_layout, user_call
+from ...common.context import context_layout, load_runtime_environ, user_call
 from ...common.execution import ExecutionResources, open_execution
 from ...common.output import echo_table, executable_label, parse_utc_timestamp
 
@@ -216,16 +221,20 @@ def retry_command(
             help="Retry from this canonical or run-local step path.",
         ),
     ] = None,
-    model: Annotated[
-        str | None,
-        typer.Option("--model", help="Use this model selector for retried work."),
+    allows: Annotated[
+        list[str] | None,
+        typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
     ] = None,
     limit: Annotated[
         list[str] | None,
         typer.Option(
             "--limit",
-            help="Override run limits as field=value pairs. Pass CSV or repeat.",
+            help="Set FIELD=VALUE. Repeat for another field.",
         ),
+    ] = None,
+    defaults: Annotated[
+        list[str] | None,
+        typer.Option("--default", help="Set model=VALUE for retried work."),
     ] = None,
 ) -> None:
     """Retry one terminal root run from a durable step boundary."""
@@ -242,7 +251,8 @@ def retry_command(
                 kind="retry",
                 source=run_id,
                 anchor=user_call(_retry_anchor, run_id, anchor),
-                model=model,
+                allow_options=allows,
+                default_options=defaults,
                 limit_options=limit,
             ),
         )
@@ -258,16 +268,20 @@ def rerun_command(
         ...,
         help="Run id to rerun. Thread id means its latest visible run.",
     ),
-    model: Annotated[
-        str | None,
-        typer.Option("--model", help="Use this model selector for the new run."),
+    allows: Annotated[
+        list[str] | None,
+        typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
     ] = None,
     limit: Annotated[
         list[str] | None,
         typer.Option(
             "--limit",
-            help="Override run limits as field=value pairs. Pass CSV or repeat.",
+            help="Set FIELD=VALUE. Repeat for another field.",
         ),
+    ] = None,
+    defaults: Annotated[
+        list[str] | None,
+        typer.Option("--default", help="Set model=VALUE for the new run."),
     ] = None,
 ) -> None:
     """Start a new root run from one terminal source invocation."""
@@ -284,7 +298,8 @@ def rerun_command(
                 kind="rerun",
                 source=source,
                 anchor=None,
-                model=model,
+                allow_options=allows,
+                default_options=defaults,
                 limit_options=limit,
             ),
         )
@@ -690,16 +705,27 @@ async def _restart_run(
     kind: Literal["retry", "rerun"],
     source: str,
     anchor: StepPath | None,
-    model: str | None,
+    allow_options: list[str] | None,
+    default_options: list[str] | None,
     limit_options: list[str] | None,
 ) -> RunRecord:
-    setup = await SetupWatcher(layout).refresh()
+    environ = load_runtime_environ(layout, base_environ=os.environ)
+    cli_bindings = resolve_binding_overrides({}, default_options)
+    if "runnable" in cli_bindings:
+        raise ValueError(
+            "--default runnable does not apply to a persisted source run"
+        )
+    binding_overrides = {
+        **resolve_binding_overrides(environ),
+        **cli_bindings,
+    }
+    setup = await SetupWatcher(
+        layout,
+        ceiling_overrides=resolve_ceiling_overrides(environ, allow_options or ()),
+        binding_overrides=binding_overrides,
+        limit_overrides=resolve_limit_overrides(environ, limit_options or ()),
+    ).refresh()
     state = await StateWatcher(layout).refresh()
-    limits = (
-        apply_limit_options(setup.limits, limit_options)
-        if limit_options
-        else None
-    )
     executor = RunExecutor(resources.store, resources.ids)
     try:
         handle = (
@@ -708,16 +734,14 @@ async def _restart_run(
                 setup=setup,
                 state=state,
                 anchor=anchor,
-                model=model,
-                limits=limits,
+                model=setup.bindings.model,
             )
             if kind == "retry"
             else executor.rerun(
                 source,
                 setup=setup,
                 state=state,
-                model=model,
-                limits=limits,
+                model=setup.bindings.model,
             )
         )
         return await handle

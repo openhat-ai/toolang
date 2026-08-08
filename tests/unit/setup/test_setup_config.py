@@ -4,9 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from toolang.base.types.run import RunLimits
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.layout import AgentLayout
-from toolang.setup.config import load_run_limits, load_setup_config, load_setup_envs
+from toolang.setup.config import (
+    load_agent_config,
+    load_setup_config,
+    load_setup_envs,
+    resolve_agent_ceiling,
+    resolve_run_bindings,
+    resolve_run_limits,
+)
 
 
 def test_setup_config_reads_only_the_toolang_root(tmp_path: Path) -> None:
@@ -26,6 +33,10 @@ def test_setup_config_reads_only_the_toolang_root(tmp_path: Path) -> None:
 
     assert config == {
         "models": {"providers": {"gateway": {"endpoint": "https://root.example/v1"}}}
+    }
+
+    assert load_agent_config(AgentLayout.resident(root, "alice")) == {
+        "models": {"providers": {"gateway": {"endpoint": "https://home.example/v1"}}}
     }
 
 
@@ -49,30 +60,61 @@ def test_setup_envs_overlay_process_values_on_root_dotenv(
     assert envs["PROCESS_ONLY"] == "from-process"
 
 
-def test_run_limits_overlay_agent_config_on_root_defaults(tmp_path: Path) -> None:
-    root = tmp_path / "toolang"
-    home = root / "agents" / "alice"
-    home.mkdir(parents=True)
-    (root / "config.toml").write_text(
-        """
-[run.limits]
-agic_model_calls = 50
-tokens = 1000
-cost = "2.5"
-""",
-        encoding="utf-8",
+def test_setup_policy_overlays_root_agent_and_frozen_overrides() -> None:
+    root = {
+        "allow": {
+            "models": ["gateway/*"],
+            "caps": ["service/*"],
+            "skills": ["reviewer"],
+        },
+        "default": {"model": "gateway/chat", "runnable": "agic:chat"},
+        "limit": {
+            "agic_model_calls": 50,
+            "tokens": 1000,
+            "cost": "2.5",
+        },
+    }
+    agent = {
+        "allow": {"models": [], "skills": ["editor"]},
+        "default": {"model": "none"},
+        "limit": {"tokens": 2000, "cost": "none", "time": 60},
+    }
+
+    assert resolve_agent_ceiling(
+        (root, agent),
+        overrides={"models": ("local/*",), "caps": None},
+    ) == AgentCeiling(
+        models=("local/*",),
+        caps=("skill/editor",),
     )
-    (home / "config.toml").write_text(
-        """
-[run.limits]
-tokens = 2000
-cost = "none"
-time = 60
-""",
-        encoding="utf-8",
+    assert resolve_run_bindings(
+        (root, agent),
+        overrides={"runnable": None},
+    ) == RunBindings(model=None, runnable=None)
+    assert resolve_run_limits(
+        (root, agent),
+        overrides={"time": None},
+    ) == RunLimits(
+        agic_model_calls=50,
+        tokens=2000,
+        cost=None,
+        time=None,
     )
 
-    limits = load_run_limits(AgentLayout.resident(root, "alice"))
+
+def test_run_limits_use_limit_table() -> None:
+    limits = resolve_run_limits(
+        (
+            {
+                "limit": {
+                    "agic_model_calls": 50,
+                    "tokens": 1000,
+                    "cost": "2.5",
+                }
+            },
+            {"limit": {"tokens": 2000, "cost": "none", "time": 60}},
+        )
+    )
 
     assert limits == RunLimits(
         agic_model_calls=50,
@@ -82,21 +124,22 @@ time = 60
     )
 
 
-def test_run_limits_reject_unknown_and_negative_fields(tmp_path: Path) -> None:
-    root = tmp_path / "toolang"
-    root.mkdir()
-    layout = AgentLayout.resident(root, "alice")
-    (root / "config.toml").write_text(
-        "[run.limits]\nturns = 1\n",
-        encoding="utf-8",
-    )
-
+def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
+    with pytest.raises(ValueError, match="unknown allow field: channels"):
+        resolve_agent_ceiling(({"allow": {"channels": ["web"]}},))
+    with pytest.raises(TypeError, match="allow models must be an array"):
+        resolve_agent_ceiling(({"allow": {"models": "gateway"}},))
+    with pytest.raises(ValueError, match="unknown default field: tool"):
+        resolve_run_bindings(({"default": {"tool": "shell"}},))
     with pytest.raises(ValueError, match="unknown run limit: turns"):
-        load_run_limits(layout)
-
-    (root / "config.toml").write_text(
-        "[run.limits]\ncost = -1.0\n",
-        encoding="utf-8",
-    )
+        resolve_run_limits(({"limit": {"turns": 1}},))
     with pytest.raises(ValueError, match="cost must be non-negative"):
-        load_run_limits(layout)
+        resolve_run_limits(({"limit": {"cost": -1.0}},))
+
+
+def test_old_nested_run_limits_are_not_interpreted() -> None:
+    limits = resolve_run_limits(
+        ({"run": {"limits": {"tokens": 1000}}},)
+    )
+
+    assert limits == RunLimits()

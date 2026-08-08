@@ -129,6 +129,29 @@ def test_cli_no_args_still_shows_root_help(
     assert output.err == ""
 
 
+def test_cli_thread_commands_have_consistent_order_and_descriptions() -> None:
+    group = typer.main.get_command(cli.app)
+    expected = {
+        "chat": "Open or continue a terminal chat.",
+        "steer": "Steer an active run.",
+        "cancel": "Cancel an active run.",
+        "retry": "Retry a run from a failed step.",
+        "rerun": "Rerun a prior invocation.",
+        "rewind": "Rewind a thread to an earlier run.",
+        "fork": "Fork a thread from an earlier run.",
+        "inspect": "Inspect a thread or run.",
+        "runs": "List runs.",
+        "threads": "List threads.",
+    }
+
+    assert isinstance(group, click.Group)
+    context = click.Context(group)
+    order = tuple(name for name in group.list_commands(context) if name in expected)
+
+    assert order == tuple(expected)
+    assert {name: group.commands[name].help for name in expected} == expected
+
+
 @pytest.mark.parametrize(
     ("arguments", "usage", "argument", "argument_type", "syntax_metavar"),
     (

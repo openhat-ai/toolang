@@ -2,26 +2,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from contextlib import contextmanager
+import os
 import sys
 
 import click
 import typer
 
 from toolang.base.types.message import TextDelta, TextPart, message_text
-from toolang.cli.common.limits import apply_limit_options
+from toolang.cli.common.policy import (
+    resolve_binding_overrides,
+    resolve_ceiling_overrides,
+    resolve_limit_overrides,
+)
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.history import RunHistory
 from toolang.execution.types import StepPath
 from toolang.lang.submission import QuickCommand, RunnableCall, parse_submission
-from toolang.plugin.models.resolution import split_model_selectors
-from toolang.plugin.tools.registry import split_tool_selectors
-from toolang.state.state import split_cap_selectors
-from toolang.setup.config import load_run_limits
-
-from toolang.cli.common.context import context_layout, user_call
+from toolang.cli.common.context import context_layout, load_runtime_environ, user_call
 from toolang.cli.common.execution import open_execution
 from . import slashes as chat_slashes
 from .base import ChatClient, chat_status_label, friendly_error as chat_friendly_error
@@ -33,61 +33,20 @@ from .tui import ChatTuiApp
 def chat_command(
     ctx: typer.Context,
     thread: str | None = None,
-    models: list[str] | None = None,
-    model: str | None = None,
-    tools: list[str] | None = None,
-    caps: list[str] | None = None,
-    agic: str | None = None,
-    flow: str | None = None,
+    allows: list[str] | None = None,
+    defaults: list[str] | None = None,
     sandbox: str | None = None,
-    limit: list[str] | None = None,
+    limits: list[str] | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
-    selectors = _chat_selector_payload(
-        models=models,
-        model=model,
-        tools=tools,
-        caps=caps,
-        agic=agic,
-        flow=flow,
-    )
     _chat_interactive(
         ctx,
         thread_id=thread_id,
-        selector_payload=selectors,
         sandbox=sandbox,
-        limit_options=limit,
+        allow_options=allows,
+        default_options=defaults,
+        limit_options=limits,
     )
-
-
-def _chat_selector_payload(
-    *,
-    models: list[str] | None,
-    model: str | None = None,
-    tools: list[str] | None,
-    caps: list[str] | None,
-    agic: str | None = None,
-    flow: str | None = None,
-) -> dict[str, object]:
-    payload: dict[str, object] = {}
-    if agic is not None and flow is not None:
-        raise click.ClickException("--agic and --flow cannot be used together")
-    model_selectors = tuple(dict.fromkeys(split_model_selectors(tuple(models or ()))))
-    if model_selectors:
-        payload["models"] = list(model_selectors)
-    if model not in {None, "default"}:
-        payload["model"] = model
-    if tools is not None:
-        tool_selectors = tuple(dict.fromkeys(split_tool_selectors(tuple(tools))))
-        payload["tools"] = list(tool_selectors)
-    cap_selectors = tuple(dict.fromkeys(split_cap_selectors(tuple(caps or ()))))
-    if cap_selectors:
-        payload["caps"] = list(cap_selectors)
-    if agic not in {None, "default"}:
-        payload["agic"] = agic
-    if flow is not None:
-        payload["flow"] = flow
-    return payload
 
 
 def _chat_interactive(
@@ -96,13 +55,16 @@ def _chat_interactive(
     thread_id: str | None,
     selector_payload: dict[str, object] | None = None,
     sandbox: str | None = None,
+    allow_options: list[str] | None = None,
+    default_options: list[str] | None = None,
     limit_options: list[str] | None = None,
 ) -> None:
     selectors = dict(selector_payload or {})
     with _chat_runtime(
         ctx,
         sandbox=sandbox,
-        selector_payload=selectors,
+        allow_options=allow_options,
+        default_options=default_options,
         limit_options=limit_options,
     ) as client:
         if not sys.stdin.isatty() or not sys.stdout.isatty():
@@ -125,7 +87,8 @@ def _chat_runtime(
     ctx: typer.Context,
     *,
     sandbox: str | None,
-    selector_payload: Mapping[str, object] | None = None,
+    allow_options: list[str] | None = None,
+    default_options: list[str] | None = None,
     limit_options: list[str] | None = None,
 ) -> Iterator[ChatClient]:
     """Own one process-local execution session for this chat command."""
@@ -135,18 +98,24 @@ def _chat_runtime(
             "direct chat execution currently supports only the none sandbox"
         )
     layout = context_layout(ctx)
-    selectors = selector_payload or {}
-    limits = (
-        user_call(apply_limit_options, load_run_limits(layout), limit_options)
-        if limit_options
-        else None
-    )
+    environ = load_runtime_environ(layout, base_environ=os.environ)
     local = LocalChatSession(
         layout,
-        models=_strings(selectors.get("models")),
-        tools=(_strings(selectors.get("tools")) if "tools" in selectors else None),
-        caps=_strings(selectors.get("caps")),
-        limits=limits,
+        ceiling_overrides=user_call(
+            resolve_ceiling_overrides,
+            environ,
+            allow_options,
+        ),
+        binding_overrides=user_call(
+            resolve_binding_overrides,
+            environ,
+            default_options,
+        ),
+        limit_overrides=user_call(
+            resolve_limit_overrides,
+            environ,
+            limit_options,
+        ),
     )
     try:
         yield local
@@ -376,12 +345,6 @@ def _target_thread_id(ctx: typer.Context, target: str | None) -> str | None:
             raise click.ClickException(f"run not found: {target}")
         return run.thread_id
     return target
-
-
-def _strings(value: object) -> tuple[str, ...]:
-    if not isinstance(value, list | tuple):
-        return ()
-    return tuple(str(item) for item in value if str(item).strip())
 
 
 def _text(value: object) -> str | None:

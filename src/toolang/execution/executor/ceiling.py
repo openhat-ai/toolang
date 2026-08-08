@@ -10,6 +10,7 @@ from typing import Protocol, TypeVar
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
+from toolang.base.types.policy import AgentCeiling
 from toolang.common.errors import ToolangError
 from toolang.lang.ast import AgicDecl, Directive, FlowDecl
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
@@ -29,21 +30,7 @@ _T = TypeVar("_T")
 
 
 @dataclass(frozen=True, slots=True)
-class CeilingSpec:
-    """Stable selector lists used to resolve one execution-tree ceiling."""
-
-    models: tuple[str, ...] | None = None
-    tools: tuple[str, ...] | None = None
-    caps: tuple[str, ...] | None = None
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "models", _normalize(self.models, name="model"))
-        object.__setattr__(self, "tools", _normalize(self.tools, name="tool"))
-        object.__setattr__(self, "caps", _normalize(self.caps, name="cap"))
-
-
-@dataclass(frozen=True, slots=True)
-class _AgentCeiling:
+class _ResolvedAgentCeiling:
     """Concrete absolute resources available to one execution tree."""
 
     models: tuple[str, ...]
@@ -80,7 +67,7 @@ class _SnapshotModelSelection:
 def agent_model_targets(
     setup: AgentSetup,
     state: AgentState,
-    spec: CeilingSpec,
+    spec: AgentCeiling,
 ) -> tuple[str | None, tuple[tuple[str, ModelTarget], ...]]:
     """Return the default and selectable targets within one agent ceiling."""
 
@@ -100,12 +87,12 @@ def agent_model_targets(
     return (selectors[0] if selectors else None), targets
 
 
-def validate_ceiling_spec(
+def validate_agent_ceiling(
     setup: AgentSetup,
     state: AgentState,
-    spec: CeilingSpec,
+    spec: AgentCeiling,
 ) -> None:
-    """Validate one ceiling spec without exposing its resolved form."""
+    """Validate one agent ceiling without exposing its resolved form."""
 
     resolve_agent_ceiling(setup, state, spec)
 
@@ -113,8 +100,8 @@ def validate_ceiling_spec(
 def resolve_agent_ceiling(
     setup: AgentSetup,
     state: AgentState,
-    spec: CeilingSpec,
-) -> _AgentCeiling:
+    spec: AgentCeiling,
+) -> _ResolvedAgentCeiling:
     """Resolve one ceiling spec against complete immutable snapshots."""
 
     selection = _snapshot_model_selection(setup, state)
@@ -145,7 +132,63 @@ def resolve_agent_ceiling(
             if spec.caps
             else ()
         )
-    return _AgentCeiling(
+    return _ResolvedAgentCeiling(
+        models,
+        MappingProxyType(dict(tools)),
+        caps,
+    )
+
+
+def restrict_agent_ceiling(
+    setup: AgentSetup,
+    state: AgentState,
+    agent: _ResolvedAgentCeiling,
+    restriction: AgentCeiling,
+) -> _ResolvedAgentCeiling:
+    """Resolve one caller restriction strictly within an agent ceiling."""
+
+    selection = _snapshot_model_selection(setup, state)
+    if restriction.models is None:
+        models = agent.models
+    elif not restriction.models:
+        models = ()
+    elif not agent.models:
+        raise ToolangError("model restriction matched no allowed models")
+    else:
+        models = select_model_selectors(
+            selection,
+            directive_selectors=restriction.models,
+            allowed_selectors=agent.models,
+        )
+
+    validate_tool_selectors(dict(agent.tools), restriction.tools)
+    tools = select_tools(dict(agent.tools), restriction.tools)
+
+    caps = tuple(agent.caps)
+    if restriction.caps is not None:
+        missing = [
+            selector
+            for selector in restriction.caps
+            if not select_cap_entries(
+                caps,
+                (selector,),
+                agent_name=setup.layout.name,
+            )
+        ]
+        if missing:
+            raise ToolangError(
+                f"cap restriction matched no allowed caps: {', '.join(missing)}"
+            )
+        caps = (
+            select_cap_entries(
+                caps,
+                restriction.caps,
+                agent_name=setup.layout.name,
+            )
+            if restriction.caps
+            else ()
+        )
+    return _ResolvedAgentCeiling(
         models,
         MappingProxyType(dict(tools)),
         caps,
@@ -157,7 +200,7 @@ def validate_root_run_resources(
     state: AgentState,
     *,
     executable: _Executable,
-    agent: _AgentCeiling,
+    agent: _ResolvedAgentCeiling,
     model: str | None,
 ) -> None:
     """Validate root runnable directives and model selection before acceptance."""
@@ -183,7 +226,7 @@ def resolve_run_ceiling(
     selection: _ModelSelection,
     *,
     executable: _Executable,
-    agent: _AgentCeiling,
+    agent: _ResolvedAgentCeiling,
     flow: _RunCeiling | None,
     agent_name: str,
 ) -> _RunCeiling:
@@ -298,23 +341,6 @@ def _select_values(
     return tuple(current)
 
 
-def _normalize(
-    values: tuple[str, ...] | None,
-    *,
-    name: str,
-) -> tuple[str, ...] | None:
-    if values is None:
-        return None
-    normalized: list[str] = []
-    for value in values:
-        text = value.strip()
-        if not text:
-            raise ValueError(f"{name} ceiling selectors must not be empty")
-        if text not in normalized:
-            normalized.append(text)
-    return tuple(normalized)
-
-
 def _snapshot_model_selection(
     setup: AgentSetup,
     state: AgentState,
@@ -331,7 +357,7 @@ def _snapshot_model_selection(
 
 def _select_agent_model_selectors(
     selection: _ModelSelection,
-    spec: CeilingSpec,
+    spec: AgentCeiling,
 ) -> tuple[str, ...]:
     if spec.models == ():
         return ()

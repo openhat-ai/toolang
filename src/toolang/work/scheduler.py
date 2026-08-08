@@ -17,7 +17,7 @@ from toolang.base.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.calls import bind_runnable_call
-from toolang.execution.executor import CeilingSpec, RunExecutor, RunSpec
+from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
 from toolang.lang.includes import resolve_file_include
 from toolang.lang.submission import parse_runnable_call
@@ -63,7 +63,6 @@ class JobScheduler:
         ids: IdIssuer,
         get_agent_setup: Callable[[], AgentSetup],
         get_agent_state: Callable[[], AgentState],
-        ceiling: CeilingSpec = CeilingSpec(),
         safety_refresh_seconds: float = DEFAULT_SAFETY_REFRESH_SECONDS,
         state_poll_seconds: float = DEFAULT_STATE_POLL_SECONDS,
     ) -> None:
@@ -72,7 +71,6 @@ class JobScheduler:
         self.ids = ids
         self.get_agent_setup = get_agent_setup
         self.get_agent_state = get_agent_state
-        self.ceiling = ceiling
         self.safety_refresh_seconds = safety_refresh_seconds
         self.state_poll_seconds = state_poll_seconds
         self._execution_loop: asyncio.AbstractEventLoop | None = None
@@ -486,7 +484,6 @@ class JobScheduler:
             call,
             setup=setup,
             state=state,
-            ceiling=self.ceiling,
             thread=job.thread_id,
             default_runnable=runnable,
             include=lambda reference: resolve_file_include(reference, base=base),

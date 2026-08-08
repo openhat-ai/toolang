@@ -125,7 +125,8 @@
 - `toolang.base` owns the shared plugin-facing protocols, value types, and
   helper utilities used across tool, channel, sandbox, model provider,
   and model adapter plugins, including canonical `PerceptPart`, `Percept`,
-  `MessagePart`, and `Message` values and the shared Toolang error type.
+  `MessagePart`, and `Message` values, shared `AgentCeiling`, `RunBindings`, and
+  `RunLimits` policy values, and the shared Toolang error type.
 - `toolang.common` owns package-neutral filesystem, immutable-container, and
   text-template helpers, progress events, selectors, Toolang-owned id allocation,
   shared GitHub source-reference parsing and rendering, and the immutable
@@ -167,13 +168,16 @@
   root-scoped model and tool configuration, snapshots root dotenv plus process
   environment values, and keeps the multi-process-safe model-list cache under
   `${TOOLANG_ROOT}/.setup/models/`. Model, tool, and environment setup remains
-  root-scoped; run-limit defaults overlay root and agent-home `[run.limits]`
-  config and may be replaced by one explicit AgentServer value. `AgentSetup`
+  root-scoped. On every refresh, `[allow]`, `[default]`, and `[limit]` policy
+  fields overlay root and agent-home config, then receive process-frozen
+  environment/CLI field overrides. `AgentSetup`
   carries that same layout plus `providers`, `adapters`, `models`, `tools`,
-  `envs`, captured default `RunLimits`, and safe
+  `envs`, captured `AgentCeiling`, `RunBindings`, `RunLimits`, and safe
   `AgentEnvironment` facts captured in the actual process location; execution
   consumes that snapshot without hosting, provider-discovery, or cache access.
-  `refresh()` is the only watcher-owned snapshot-construction path.
+  `refresh()` is the only watcher-owned snapshot-construction path. A failed
+  initial refresh publishes nothing; a later failed refresh retains the last
+  valid setup and reports the error.
 - `toolang.state.schemas` owns caller-facing capability protocol types;
   its schema types construct themselves from prepared capability state;
   `toolang.state.types` owns capability-state vocabulary.
@@ -192,8 +196,8 @@
   and bounded diagnostics. Durable records, events, storage, inspection,
   schemas, and thread management remain at the `toolang.execution` package
   level.
-- `RunSpec` carries the captured `AgentSetup` and `AgentState`, immutable
-  caller-provided `CeilingSpec`, existing thread id, unique runnable name,
+- `RunSpec` carries the captured `AgentSetup` and `AgentState`, an optional
+  caller-provided `AgentCeiling` restriction, existing thread id, unique runnable name,
   canonical primary `Percept` input, optional singular model choice, and
   optional runnable `args`. `AgentSetup` and `AgentState` remain complete
   snapshots; callers never replace them with ceiling-filtered copies. Runnable
@@ -207,13 +211,14 @@
   Agic model/tool call limits reset per agic, while token, cost, and time
   limits span the recursive tree. Only the root start control persists the
   effective limits.
-- `CeilingSpec` stores the stable model/tool/cap selector lists merged by the
-  caller from config, environment, and CLI inputs. At `start()`, the executor
-  resolves it against the captured setup and state into a private
-  `_AgentCeiling`, the absolute limit for one root run tree. Every flow
-  invocation resets its private `_RunCeiling` from `_AgentCeiling`, while each
+- `AgentSetup.ceiling` stores stable model/tool/cap selector lists resolved by
+  `SetupWatcher` from dynamic config and frozen process overrides. At `start()`,
+  the executor resolves it against the captured setup and state, then intersects
+  any `RunSpec.ceiling` request restriction, into a private
+  `_ResolvedAgentCeiling`, the absolute limit for one root run tree. Every flow
+  invocation resets its private `_RunCeiling` from `_ResolvedAgentCeiling`, while each
   agic applies its directives to the nearest flow ceiling or directly to
-  `_AgentCeiling`. Flow corrections do not propagate through nested flow calls,
+  `_ResolvedAgentCeiling`. Flow corrections do not propagate through nested flow calls,
   and sibling agics never mutate one another's ceiling.
 - Within `toolang.execution.executor`, `runs` owns complete agic and flow run
   bodies, `stmts` owns lowered flow-statement semantics, and `steps` owns step
@@ -305,6 +310,10 @@
 
 - The CLI is responsible for resolving `TOOLANG_ROOT` and command-specific
   environment variables. `SetupWatcher` reads root setup environment values.
+- The CLI parses `TOOLANG_ALLOW_*`, `TOOLANG_DEFAULT_*`, and `TOOLANG_LIMIT_*`
+  plus repeatable `--allow DOMAIN=SELECTORS`, `--default FIELD=VALUE`, and
+  `--limit FIELD=VALUE` inputs into explicit frozen field mappings. Core
+  packages never read these policy environment variables.
 - The CLI is responsible for resolving channel config environment references
   such as `token_env` before constructing long-lived runtime inputs.
 - The CLI resolves `agent_ref` values into explicit runtime inputs before

@@ -241,11 +241,12 @@ check; it is not part of the public manager API.
 ## State Capture
 
 `RunSpec` carries one explicit immutable `AgentState`,
-`toolang.setup.AgentSetup`, and `CeilingSpec`. `AgentSetup` supplies the
+`toolang.setup.AgentSetup`, and `AgentCeiling`. `AgentSetup` supplies the
 immutable `AgentLayout`, root-scoped installed runtime implementations, and
-captured default `RunLimits`. `SetupWatcher` resolves root and agent-home
-`[run.limits]` config before constructing the setup snapshot; a server launch
-may provide a complete explicit default instead.
+captured `AgentCeiling`, `RunBindings`, and `RunLimits`. `SetupWatcher` resolves
+root and agent-home `[allow]`, `[default]`, and `[limit]` config on every
+refresh, then applies frozen field-level environment/CLI overrides before
+publishing the setup snapshot.
 Execution uses that layout directly for the agent identity, home, and runtime
 rooms. Its primary input is one protocol-level `Percept`;
 after runnable resolution, input coercion exposes that value as `Part[]` or
@@ -253,4 +254,5 @@ another explicitly declared primary type. Output coercion validates the final
 run value against the runnable's declared output type. Setup and state remain
 complete snapshots; the executor computes private run ceilings instead of
 receiving filtered copies. Child runs inherit setup and state. Source changes
-affect only runs accepted after the new state is observed.
+affect only runs accepted after the new state is observed. Invalid later setup
+config does not replace the last valid snapshot.

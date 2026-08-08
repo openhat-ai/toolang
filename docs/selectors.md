@@ -18,7 +18,8 @@ filter        := key ":" value | shorthand
 Repeated CLI flags append to the same selector list. For example:
 
 ```bash
-too run alice --tools "shell/*,filesystem/read" --tools "service_use/*"
+too run alice --allow "tools=shell/*,filesystem/read" \
+  --allow "tools=service_use/*"
 ```
 
 is equivalent to one selector list:
@@ -283,46 +284,44 @@ All-kind cap surfaces do not have an implicit family, so `family/name` is valid:
 
 ```bash
 caps list --filter "skill/reviewer,service/github[home]"
-too run alice --caps "skill/reviewer,service/github[home]"
+too run alice --allow "caps=skill/reviewer,service/github[home]"
 ```
 
 
-## Runtime Allow Lists
+## Runtime Policy Selectors
 
-Runtime flags accept selector lists that act as model, tool, and cap allow
-lists for a server, chat session, or script invocation:
+Runtime commands expose one field-oriented syntax:
 
 ```bash
-too run alice --models SELECTOR-LIST --tools SELECTOR-LIST --caps SELECTOR-LIST
-too start alice --models SELECTOR-LIST --tools SELECTOR-LIST --caps SELECTOR-LIST
-too script.too --models SELECTOR-LIST --tools SELECTOR-LIST --caps SELECTOR-LIST
+too run alice \
+  --allow models=MODEL-SELECTORS \
+  --allow tools=TOOL-SELECTORS \
+  --allow caps=CAP-SELECTORS \
+  --default model=MODEL-SELECTOR \
+  --default runnable=agic:chat
 ```
 
-Each flag uses its matching domain:
+`--allow DOMAIN=SELECTORS` supports `models`, `tools`, `caps`, `psyches`,
+`skills`, `services`, and `prompts`. Repeating one domain accumulates selectors
+inside the CLI layer. A later precedence layer replaces the complete field.
+`none` means an explicitly empty allowed set; `all` removes that field's
+restriction. Empty text is invalid.
 
-| Flag | Domain | Meaning |
-| --- | --- | --- |
-| `--models` | `model` | Allowed model routes |
-| `--tools` | `tool` | Allowed model-facing tools |
-| `--caps` | `cap` | Allowed caps across all cap kinds |
+Root and agent `[allow]` tables use arrays, including a native empty array for
+an empty set. Environment fields use `TOOLANG_ALLOW_<DOMAIN>`. The fixed
+precedence is built-in, root config, agent config, process environment, then
+CLI. Cap-kind fields are converted to cap selectors only after all field
+overlays complete.
 
-If a flag is repeated, all values are appended to one selector list.
-When a caller supports equivalent environment or config settings, it
-normalizes and combines those values into an immutable `CeilingSpec`. An
-explicit CLI value has higher priority. The spec does not filter `AgentSetup`
-or invalidate the setup model cache.
+`--default FIELD=VALUE` and `TOOLANG_DEFAULT_<FIELD>` set singular `model` or
+`runnable` bindings. `none` clears an inherited binding. A request or chat
+setting may select a different value, and authored run overrides remain the
+highest selection layer.
 
-`--models` and `--model` are intentionally different:
-
-- `--models SELECTOR-LIST` contributes the model allow list to `CeilingSpec`;
-- `--model SELECTOR` selects one model for a specific `RunSpec`.
-
-A WebUI connected to a server may choose a different `model` for every run,
-but every choice must remain within the server's `--models` allow list.
-
-At `RunExecutor.start()`, the captured `AgentSetup`, `AgentState`, and
-`CeilingSpec` resolve to a private concrete `_AgentCeiling`. The selector lists
-belong to the spec; the ceiling contains only resolved resources.
+At `RunExecutor.start()`, the captured `AgentSetup.ceiling` resolves to a
+private concrete `_ResolvedAgentCeiling`. A request-level `AgentCeiling`
+restriction is then intersected with it and cannot restore resources excluded
+by setup policy.
 
 
 ## List Filters

@@ -13,6 +13,7 @@ from typing import Any, Literal, cast
 
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.policy import AgentCeiling, RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import (
     Message,
@@ -55,14 +56,13 @@ from .common import (
     value_text,
 )
 from .ceiling import (
-    CeilingSpec,
-    _AgentCeiling,
+    _ResolvedAgentCeiling,
+    restrict_agent_ceiling,
     resolve_agent_ceiling,
     resolve_run_ceiling,
     validate_root_run_resources,
 )
 from .limits import (
-    RunLimits,
     _ModelAccounting,
     _RunLimitExceeded,
     _RunLimitState,
@@ -101,7 +101,7 @@ class RunSpec:
     state: AgentState
     thread: str
     runnable: str
-    ceiling: CeilingSpec = field(default_factory=CeilingSpec)
+    ceiling: AgentCeiling = field(default_factory=AgentCeiling)
     input: Percept = ()
     model: str | None = None
     args: Mapping[str, object] | None = None
@@ -222,7 +222,7 @@ class RunExecutor:
         *,
         setup: AgentSetup,
         state: AgentState,
-        ceiling: CeilingSpec = CeilingSpec(),
+        ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         limits: RunLimits | None = None,
         run_id: str | None = None,
@@ -271,7 +271,7 @@ class RunExecutor:
         setup: AgentSetup,
         state: AgentState,
         anchor: StepPath | str | None = None,
-        ceiling: CeilingSpec = CeilingSpec(),
+        ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         limits: RunLimits | None = None,
         request_id: str | None = None,
@@ -319,7 +319,7 @@ class RunExecutor:
         *,
         setup: AgentSetup,
         state: AgentState,
-        ceiling: CeilingSpec,
+        ceiling: AgentCeiling,
         model: str | None,
     ) -> RunSpec:
         run = self.store.get_run(run_id=run_id)
@@ -1306,7 +1306,7 @@ def _child_binding(
         state=parent.state,
         setup=parent.setup,
         limits=parent.limits,
-        ceiling_spec=parent.ceiling_spec,
+        ceiling_restriction=parent.ceiling_restriction,
         agent_ceiling=parent.agent_ceiling,
         ceiling=None,
         flow_ceiling=parent.flow_ceiling,
@@ -1332,7 +1332,7 @@ def _bind_run(
     spec: RunSpec,
     *,
     run_id: str,
-    agent_ceiling: _AgentCeiling,
+    agent_ceiling: _ResolvedAgentCeiling,
     limits: RunLimits,
 ) -> BoundRun:
     if not spec.thread or spec.thread != spec.thread.strip():
@@ -1347,7 +1347,7 @@ def _bind_run(
         state=spec.state,
         setup=spec.setup,
         limits=limits,
-        ceiling_spec=spec.ceiling,
+        ceiling_restriction=spec.ceiling,
         agent_ceiling=agent_ceiling,
         ceiling=None,
         flow_ceiling=None,
@@ -1374,20 +1374,20 @@ def _run_context(
     if any(
         value is not None
         for value in (
-            binding.ceiling_spec.models,
-            binding.ceiling_spec.tools,
-            binding.ceiling_spec.caps,
+            binding.ceiling_restriction.models,
+            binding.ceiling_restriction.tools,
+            binding.ceiling_restriction.caps,
         )
     ):
         context["ceiling"] = {
-            "models": list(binding.ceiling_spec.models)
-            if binding.ceiling_spec.models is not None
+            "models": list(binding.ceiling_restriction.models)
+            if binding.ceiling_restriction.models is not None
             else None,
-            "tools": list(binding.ceiling_spec.tools)
-            if binding.ceiling_spec.tools is not None
+            "tools": list(binding.ceiling_restriction.tools)
+            if binding.ceiling_restriction.tools is not None
             else None,
-            "caps": list(binding.ceiling_spec.caps)
-            if binding.ceiling_spec.caps is not None
+            "caps": list(binding.ceiling_restriction.caps)
+            if binding.ceiling_restriction.caps is not None
             else None,
         }
     if binding.placement:
@@ -1464,12 +1464,18 @@ def _validate_call(spec: RunSpec, executable: AgicDecl | FlowDecl) -> None:
 
 def _validate_start_spec(
     spec: RunSpec,
-) -> tuple[AgicDecl | FlowDecl, _AgentCeiling]:
+) -> tuple[AgicDecl | FlowDecl, _ResolvedAgentCeiling]:
     executable = resolve_runnable(spec.state.program, spec.runnable)
     _validate_call(spec, executable)
-    agent_ceiling = resolve_agent_ceiling(
+    setup_ceiling = resolve_agent_ceiling(
         spec.setup,
         spec.state,
+        spec.setup.ceiling,
+    )
+    agent_ceiling = restrict_agent_ceiling(
+        spec.setup,
+        spec.state,
+        setup_ceiling,
         spec.ceiling,
     )
     validate_root_run_resources(

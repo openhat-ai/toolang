@@ -57,7 +57,7 @@ def test_local_script_runs_through_execution_and_persists_script_thread(
     setup = replace(harness.setup, layout=layout)
 
     class _SetupWatcher:
-        def __init__(self, actual_layout) -> None:
+        def __init__(self, actual_layout, **_kwargs) -> None:
             assert actual_layout == layout
 
         async def refresh(self):
@@ -119,7 +119,7 @@ def test_local_script_renders_composite_flow_progress(
     setup = replace(harness.setup, layout=layout)
 
     class _SetupWatcher:
-        def __init__(self, actual_layout) -> None:
+        def __init__(self, actual_layout, **_kwargs) -> None:
             assert actual_layout == layout
 
         async def refresh(self):

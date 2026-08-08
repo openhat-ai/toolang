@@ -5,9 +5,9 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 
-from toolang.api.app import AgentCoreDep, CeilingSpecDep
+from toolang.api.app import AgentCoreDep
 from toolang.common.errors import ToolangError
-from toolang.execution.runnables import effective_agics
+from toolang.execution.runnables import effective_agics, runnable_binding_defaults
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.executor.ceiling import agent_model_targets
 from toolang.up import AgentCore, process as agents
@@ -32,18 +32,15 @@ def profile(core: AgentCoreDep) -> dict[str, object]:
 
 
 @router.get("/models", summary="List Agent Models")
-def models(
-    core: AgentCoreDep,
-    ceiling: CeilingSpecDep,
-) -> dict[str, object]:
+def models(core: AgentCoreDep) -> dict[str, object]:
     try:
         setup = core.setup.current()
         state = core.state.current()
-        default, targets = agent_model_targets(setup, state, ceiling)
-    except ToolangError as exc:
+        resolved_default, targets = agent_model_targets(setup, state, setup.ceiling)
+    except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {
-        "default": default,
+        "default": setup.bindings.model or resolved_default,
         "items": [
             _model_item(selector=selector, target=target)
             for selector, target in targets
@@ -53,18 +50,22 @@ def models(
 
 @router.get("/agics", summary="List Agent Agics")
 def agics(core: AgentCoreDep) -> dict[str, object]:
+    setup = core.setup.current()
     program = core.state.current().program
+    default, _flow = _runnable_defaults(program, setup.bindings.runnable)
     return {
-        "default": _default_agic_name(program, origin="chat"),
+        "default": default,
         "items": [{"name": agic.name} for agic in effective_agics(program)],
     }
 
 
 @router.get("/flows", summary="List Agent Flows")
 def flows(core: AgentCoreDep) -> dict[str, object]:
+    setup = core.setup.current()
     program = core.state.current().program
+    _agic, default = _runnable_defaults(program, setup.bindings.runnable)
     return {
-        "default": None,
+        "default": default,
         "items": [{"name": flow.name} for flow in program.flows],
     }
 
@@ -161,8 +162,15 @@ def _model_item(*, selector: str, target: Any) -> dict[str, object]:
     }
 
 
-def _default_agic_name(program: Any, *, origin: str) -> str | None:
-    del origin
-    if program.find_agic("chat") is not None:
-        return "chat"
-    return "default"
+def _runnable_defaults(
+    program: Any,
+    binding: str | None,
+) -> tuple[str | None, str | None]:
+    try:
+        return runnable_binding_defaults(
+            program,
+            binding,
+            fallback_agic="chat",
+        )
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

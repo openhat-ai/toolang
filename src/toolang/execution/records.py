@@ -9,7 +9,8 @@ from typing import Any, cast
 from pydantic import TypeAdapter
 
 from toolang.base.types.message import Message, MessagePart, MessageRole
-from toolang.base.types.run import ModelCall, RunLimits
+from toolang.base.types.policy import RunLimits
+from toolang.base.types.run import ModelCall
 from .types import (
     ControlStatus,
     ControlTiming,
