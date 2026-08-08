@@ -65,10 +65,10 @@ _AGENT_PANEL_COMMAND_ORDER = (
 )
 _THREAD_PANEL_COMMAND_ORDER = (
     "chat",
+    "steer",
+    "cancel",
     "retry",
     "rerun",
-    "cancel",
-    "steer",
     "rewind",
     "fork",
     "inspect",
@@ -296,7 +296,7 @@ _registered_group(
 
 _registered_command(
     "chat",
-    help="Open a terminal chat session.",
+    help="Open or continue a terminal chat.",
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(chat_commands.chat_command)
@@ -335,28 +335,28 @@ _registered_command(
 )(thread_commands.cancel_command)
 _registered_command(
     "retry",
-    help="Retry a terminal run from a durable step boundary.",
+    help="Retry a run from a failed step.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.retry_command)
 _registered_command(
     "rerun",
-    help="Start a new run from a prior invocation.",
+    help="Rerun a prior invocation.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.rerun_command)
 _registered_command(
     "rewind",
-    help="Rewind a thread to an earlier point.",
+    help="Rewind a thread to an earlier run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.rewind_command)
 _registered_command(
     "fork",
-    help="Fork a thread from a branch point.",
+    help="Fork a thread from an earlier run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=THREAD_COMMAND_PANEL,
