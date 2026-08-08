@@ -368,6 +368,10 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "enabled=Boolean" in stdout
     assert "[enabled=Boolean]" in stdout.partition("Arguments")[2]
     assert "Primary Part[] input." in stdout
+    positions = tuple(
+        stdout.index(option) for option in ("--allow", "--limit", "--default")
+    )
+    assert positions == tuple(sorted(positions))
 
 
 def test_script_hides_default_and_generated_agics(

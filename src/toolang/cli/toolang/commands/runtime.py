@@ -242,16 +242,16 @@ def run(
         list[str] | None,
         typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
     ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
-    ] = None,
     limits: Annotated[
         list[str] | None,
         typer.Option(
             "--limit",
             help="Set FIELD=VALUE. Repeat for another field.",
         ),
+    ] = None,
+    defaults: Annotated[
+        list[str] | None,
+        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
     ] = None,
     host: Annotated[
         str, typer.Option(help="Bind the agent API to this host.")
@@ -362,16 +362,16 @@ def start(
         list[str] | None,
         typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
     ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
-    ] = None,
     limits: Annotated[
         list[str] | None,
         typer.Option(
             "--limit",
             help="Set FIELD=VALUE. Repeat for another field.",
         ),
+    ] = None,
+    defaults: Annotated[
+        list[str] | None,
+        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
     ] = None,
     host: Annotated[
         str, typer.Option(help="Bind the agent API to this host.")
@@ -484,16 +484,16 @@ def serve(
         list[str] | None,
         typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
     ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
-    ] = None,
     limits: Annotated[
         list[str] | None,
         typer.Option(
             "--limit",
             help="Set FIELD=VALUE. Repeat for another field.",
         ),
+    ] = None,
+    defaults: Annotated[
+        list[str] | None,
+        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
     ] = None,
     inboxes: Annotated[
         list[Path] | None,

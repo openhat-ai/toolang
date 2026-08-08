@@ -16,14 +16,6 @@ def chat_command(
             metavar="THREAD",
         ),
     ] = None,
-    allows: Annotated[
-        list[str] | None,
-        typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
-    ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
-    ] = None,
     sandbox: Annotated[
         str | None,
         typer.Option(
@@ -31,12 +23,20 @@ def chat_command(
             help="Execute the session in this sandbox.",
         ),
     ] = None,
+    allows: Annotated[
+        list[str] | None,
+        typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
+    ] = None,
     limits: Annotated[
         list[str] | None,
         typer.Option(
             "--limit",
             help="Set FIELD=VALUE. Repeat for another field.",
         ),
+    ] = None,
+    defaults: Annotated[
+        list[str] | None,
+        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
     ] = None,
 ) -> None:
     from .main import chat_command as run

@@ -338,7 +338,7 @@ entrypoint locally, in Docker, or in another environment; the server and
 executor do not branch on hosting.
 
 Both commands accept repeatable `--allow DOMAIN=SELECTORS`,
-`--default FIELD=VALUE`, and `--limit FIELD=VALUE` options. The CLI parses these
+`--limit FIELD=VALUE`, and `--default FIELD=VALUE` options. The CLI parses these
 with `TOOLANG_ALLOW_*`, `TOOLANG_DEFAULT_*`, and `TOOLANG_LIMIT_*` into frozen
 field overrides passed to `SetupWatcher`.
 
@@ -627,8 +627,8 @@ WebUI that needs another protocol adapts these events client-side; the API does
 not maintain a second chat event vocabulary.
 
 The CLI command for interactive chat is `toolang <agent> chat [thread]
-[--sandbox <selector>] [--allow DOMAIN=SELECTORS] [--default FIELD=VALUE]
-[--limit FIELD=VALUE]`.
+[--sandbox <selector>] [--allow DOMAIN=SELECTORS] [--limit FIELD=VALUE]
+[--default FIELD=VALUE]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
 a thread id, it continues that thread. The TUI runs in its own process, assembles
 the same core objects, calls `RunExecutor` directly, and observes native

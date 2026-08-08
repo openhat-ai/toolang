@@ -225,16 +225,16 @@ def retry_command(
         list[str] | None,
         typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
     ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", help="Set model=VALUE for retried work."),
-    ] = None,
     limit: Annotated[
         list[str] | None,
         typer.Option(
             "--limit",
             help="Set FIELD=VALUE. Repeat for another field.",
         ),
+    ] = None,
+    defaults: Annotated[
+        list[str] | None,
+        typer.Option("--default", help="Set model=VALUE for retried work."),
     ] = None,
 ) -> None:
     """Retry one terminal root run from a durable step boundary."""
@@ -272,16 +272,16 @@ def rerun_command(
         list[str] | None,
         typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
     ] = None,
-    defaults: Annotated[
-        list[str] | None,
-        typer.Option("--default", help="Set model=VALUE for the new run."),
-    ] = None,
     limit: Annotated[
         list[str] | None,
         typer.Option(
             "--limit",
             help="Set FIELD=VALUE. Repeat for another field.",
         ),
+    ] = None,
+    defaults: Annotated[
+        list[str] | None,
+        typer.Option("--default", help="Set model=VALUE for the new run."),
     ] = None,
 ) -> None:
     """Start a new root run from one terminal source invocation."""

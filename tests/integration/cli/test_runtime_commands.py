@@ -18,6 +18,30 @@ from toolang.up.server import ServeSpec
 runner = CliRunner()
 
 
+@pytest.mark.parametrize(
+    ("args", "options"),
+    [
+        (["run", "--help"], ("--sandbox", "--allow", "--limit", "--default")),
+        (["start", "--help"], ("--sandbox", "--allow", "--limit", "--default")),
+        (
+            ["chat", "alice", "--help"],
+            ("--sandbox", "--allow", "--limit", "--default"),
+        ),
+        (["retry", "alice", "--help"], ("--allow", "--limit", "--default")),
+        (["rerun", "alice", "--help"], ("--allow", "--limit", "--default")),
+    ],
+)
+def test_policy_options_follow_cli_display_order(
+    args: list[str],
+    options: tuple[str, ...],
+) -> None:
+    result = runner.invoke(cli.app, args)
+
+    assert result.exit_code == 0, result.stderr
+    positions = tuple(result.stdout.index(option) for option in options)
+    assert positions == tuple(sorted(positions))
+
+
 def _create_agent(root: Path, name: str = "alice") -> AgentLayout:
     layout = AgentLayout.resident(root, name)
     layout.home.mkdir(parents=True)

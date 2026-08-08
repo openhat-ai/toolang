@@ -211,14 +211,14 @@ def _runnable_command(
             help="Set DOMAIN=SELECTORS. Repeat by domain.",
         ),
         TyperOption(
-            param_decls=["--default"],
+            param_decls=["--limit"],
             type=str,
             multiple=True,
             default=(),
             help="Set FIELD=VALUE. Repeat for another field.",
         ),
         TyperOption(
-            param_decls=["--limit"],
+            param_decls=["--default"],
             type=str,
             multiple=True,
             default=(),
