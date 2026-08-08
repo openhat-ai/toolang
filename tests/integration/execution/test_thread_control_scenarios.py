@@ -85,14 +85,14 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
                 harness.run_spec(
                     thread=source,
                     runnable="chat",
-                    input=perceive_input("first"),
+                    primary=perceive_input("first"),
                 )
             )
             second = await harness.executor.start(
                 harness.run_spec(
                     thread=source,
                     runnable="chat",
-                    input=perceive_input("second"),
+                    primary=perceive_input("second"),
                 )
             )
             forked = manager.fork(
@@ -190,7 +190,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                         harness.run_spec(
                             thread=thread,
                             runnable="chat",
-                            input=perceive_input(prompt),
+                            primary=perceive_input(prompt),
                         )
                     )
                 )
@@ -204,7 +204,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    input=perceive_input("replacement"),
+                    primary=perceive_input("replacement"),
                 )
             )
             assert manager.rewind(
@@ -309,14 +309,14 @@ def test_fork_accepts_an_earlier_terminal_anchor_while_source_runs(
                 harness.run_spec(
                     thread=source,
                     runnable="chat",
-                    input=perceive_input("first"),
+                    primary=perceive_input("first"),
                 )
             )
             active = harness.executor.start(
                 harness.run_spec(
                     thread=source,
                     runnable="chat",
-                    input=perceive_input("second"),
+                    primary=perceive_input("second"),
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
@@ -388,14 +388,14 @@ def test_rewind_rejects_a_running_thread_without_stopping_it(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    input=perceive_input("first"),
+                    primary=perceive_input("first"),
                 )
             )
             active = harness.executor.start(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    input=perceive_input("second"),
+                    primary=perceive_input("second"),
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
@@ -474,7 +474,7 @@ def test_failed_thread_controls_leave_no_record_or_event(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    input=perceive_input("question"),
+                    primary=perceive_input("question"),
                 )
             )
 

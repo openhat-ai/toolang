@@ -20,12 +20,18 @@ from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.history import RunHistory
 from toolang.execution.types import StepPath
-from toolang.lang.submission import QuickCommand, RunnableCall, parse_submission
 from toolang.cli.common.context import context_layout, load_runtime_environ, user_call
 from toolang.cli.common.execution import open_execution
 from . import slashes as chat_slashes
 from .base import ChatClient, chat_status_label, friendly_error as chat_friendly_error
 from .history import ChatInputHistoryStore
+from .input import (
+    QuickCommand,
+    is_policy_commands,
+    is_runnable_input,
+    normalize_chat_input,
+    parse_chat_input,
+)
 from .local import LocalChatSession
 from .tui import ChatTuiApp
 
@@ -196,7 +202,7 @@ def _chat_interactive_scripted_local(
         renderer.reset()
         client.start_run(
             ensure_thread_id(),
-            text,
+            normalize_chat_input(text),
             selectors,
             renderer.render,
             errors.append,
@@ -212,16 +218,17 @@ def _chat_handle_scripted_command(
     *,
     client: ChatClient,
 ) -> bool:
+    source = normalize_chat_input(message)
     try:
-        submission = parse_submission(message)
+        chat_input = parse_chat_input(source)
     except ValueError as exc:
         typer.echo(chat_friendly_error(str(exc)), err=True)
         return True
-    if isinstance(submission, RunnableCall):
+    if is_runnable_input(chat_input):
         return False
-    if isinstance(submission, tuple):
+    if is_policy_commands(chat_input):
         try:
-            updated = client.apply_settings(submission, selector_payload)
+            updated = client.apply_settings(chat_input, selector_payload)
         except (click.ClickException, ToolangError, ValueError) as exc:
             detail = exc.message if isinstance(exc, click.ClickException) else str(exc)
             typer.echo(chat_friendly_error(detail), err=True)
@@ -230,14 +237,14 @@ def _chat_handle_scripted_command(
         selector_payload.update(updated)
         typer.echo(chat_status_label(selector_payload))
         return True
-    if not isinstance(submission, QuickCommand):
-        raise AssertionError("unknown submission value")
-    command = submission.name
+    if not isinstance(chat_input, QuickCommand):
+        raise AssertionError("unknown chat input value")
+    command = chat_input.name
     if command in {"help", "?"}:
         for line in chat_slashes._chat_help_lines():
             typer.echo(line)
         return True
-    if command in {"agic", "flow"}:
+    if command in {"agic", "flow", "runnable"}:
         return _chat_handle_scripted_executable_command(
             command,
             selector_payload,
@@ -271,8 +278,19 @@ def _chat_handle_scripted_executable_command(
         typer.echo(chat_friendly_error(message))
         return True
     selected = _text(selector_payload.get(command))
-    typer.echo(f"available {command}s")
-    for line in chat_slashes._chat_executable_list_lines(payload, selected=selected):
+    if command == "runnable" and selected is None:
+        for kind in ("agic", "flow"):
+            if (name := _text(selector_payload.get(kind))) is not None:
+                selected = f"{kind}:{name}"
+                break
+    typer.echo(
+        "available runnables" if command == "runnable" else f"available {command}s"
+    )
+    for line in chat_slashes._chat_executable_list_lines(
+        payload,
+        selected=selected,
+        show_kind=command == "runnable",
+    ):
         typer.echo(line)
     return True
 

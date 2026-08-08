@@ -85,7 +85,7 @@ agic chat(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread_id,
                     runnable="chat",
-                    input=perceive_input("question"),
+                    primary=perceive_input("question"),
                 )
             )
             return (
@@ -139,14 +139,14 @@ agic chat(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    input=perceive_input("first question"),
+                    primary=perceive_input("first question"),
                 )
             )
             second = await harness.executor.start(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    input=perceive_input("second question"),
+                    primary=perceive_input("second question"),
                 )
             )
             assert harness.adapter.invocations[1].call.messages == [
@@ -163,7 +163,7 @@ agic chat(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=branch,
                     runnable="chat",
-                    input=perceive_input("branch question"),
+                    primary=perceive_input("branch question"),
                 )
             )
             assert harness.adapter.invocations[2].call.messages == [
@@ -236,7 +236,7 @@ agic calculate(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    input=perceive_input("double three"),
+                    primary=perceive_input("double three"),
                 )
             )
 

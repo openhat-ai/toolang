@@ -84,14 +84,15 @@ written into authored Markdown.
 
 ## Body
 
-The body is one `Submission` defined by [input-syntax.md](./input-syntax.md).
-It has no ambient template variables. Includes resolve relative to the Markdown
-file, and prompt templates receive only explicit arguments and input.
+The body is run-only input defined by [input-syntax.md](./input-syntax.md): a
+`PolicyCommand` prefix and one `RunnableInput`. It has no ambient template
+variables. Includes resolve relative to the Markdown file, and prompt templates
+receive only explicit arguments and input.
 
-The scheduler retains the body as source and parses it as a `RunnableCall` only
-when dispatching. The surface default is `task` or `chore`, falling back to
-`default` when that runnable is absent. The evaluated content becomes the root
-`RunSpec.input`.
+The scheduler retains the body as source and parses it only when dispatching.
+The surface default is `task` or `chore`, falling back to `default` when that
+runnable is absent. Resolution evaluates the primary source into
+`RunSpec.primary` and binds named sources into `RunSpec.named`.
 
 A scheduler-side parse or validation failure is retained on the job record and
 does not create a run.

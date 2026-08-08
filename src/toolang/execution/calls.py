@@ -1,25 +1,26 @@
-"""Bind textual runnable calls to immutable executor inputs."""
+"""Parse caller input and resolve immutable run specifications."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from toolang.base.types.message import PerceptPart
-from toolang.base.types.policy import AgentCeiling
+from toolang.base.types.policy import RunBindings
 from toolang.lang.ast import AgicDecl, FlowDecl
-from toolang.lang.input import coerce_input, perceive_input
-from toolang.lang.submission import (
-    Arguments,
-    RunnableCall,
-    RunOverride,
-    SettingCommand,
+from toolang.lang.input import (
+    NamedInputSources,
+    RunnableInput,
+    coerce_input,
+    parse_input,
+    perceive_input,
 )
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 
+from .policy import parse_policy_prefix, resolve_commands
 from .runnables import parse_runnable_ref, resolve_runnable
+from .types import PolicyCommand
 
 if TYPE_CHECKING:
     from .executor.executor import RunSpec
@@ -28,205 +29,129 @@ IncludeResolver = Callable[[str], PerceptPart]
 Runnable = AgicDecl | FlowDecl
 
 
-@dataclass(frozen=True, slots=True)
-class _Selection:
-    runnable: Runnable
-    model: str | None
-    args: Mapping[str, object]
+def parse_call(source: str) -> tuple[tuple[PolicyCommand, ...], RunnableInput]:
+    """Parse one run-only source into policy commands and runnable input."""
+
+    body = _strip_final_line_break(source)
+    commands, named, primary = parse_policy_prefix(body)
+    return commands, parse_input(primary or None, named=named)
 
 
-def bind_runnable_call(
-    call: RunnableCall,
+def resolve_spec(
+    commands: Sequence[PolicyCommand],
+    input: RunnableInput,
     *,
     setup: AgentSetup,
     state: AgentState,
     thread: str,
     default_runnable: str,
-    selected_runnable: str | None = None,
-    ceiling: AgentCeiling | None = None,
-    default_model: str | None = None,
-    default_args: Mapping[str, object] | None = None,
-    default_raw_args: Arguments = (),
-    settings: tuple[SettingCommand, ...] = (),
+    surface: RunBindings = RunBindings(),
+    session_commands: Sequence[PolicyCommand] = (),
+    surface_named: Mapping[str, object] | None = None,
+    surface_named_sources: NamedInputSources = (),
     include: IncludeResolver | None = None,
 ) -> RunSpec:
-    """Resolve one call against explicit surface defaults and snapshots."""
+    """Resolve structured caller input against current immutable snapshots."""
 
     from .executor.executor import RunSpec
-    resolved_ceiling = ceiling or AgentCeiling()
-    bound_runnable, bound_kind = parse_runnable_ref(
-        selected_runnable or setup.bindings.runnable or default_runnable
-    )
 
-    selection = _resolve_selection(
-        state=state,
-        default_runnable=bound_runnable,
-        default_runnable_kind=bound_kind,
-        default_model=(
-            default_model if default_model is not None else setup.bindings.model
-        ),
-        default_args=default_args,
-        default_raw_args=default_raw_args,
-        settings=settings,
-        overrides=call.overrides,
-        include=include,
+    restrictions, bindings, limits = resolve_commands(
+        setup,
+        surface=surface,
+        session=session_commands,
+        run=commands,
     )
-    percept = perceive_input(
-        call.content,
+    runnable_ref = bindings.runnable or default_runnable
+    runnable_name, runnable_kind = parse_runnable_ref(runnable_ref)
+    runnable = resolve_runnable(
+        state.program,
+        runnable_name,
+        kind=runnable_kind,
+    )
+    if surface_named and surface_named_sources:
+        raise ValueError("surface named inputs cannot be both bound and sourced")
+    if input.named and (surface_named or surface_named_sources):
+        raise ValueError("named inputs cannot be supplied by both source and surface")
+    raw_named = input.named or surface_named_sources
+    named = (
+        _bind_named_sources(
+            raw_named,
+            runnable=runnable,
+            state=state,
+            include=include,
+        )
+        if raw_named
+        else dict(surface_named or {})
+    )
+    _validate_named(runnable, named)
+    primary = perceive_input(
+        input.primary or "",
         program=state.program,
         include=include,
     )
     return RunSpec(
         setup=setup,
         state=state,
-        ceiling=resolved_ceiling,
         thread=thread,
-        runnable=selection.runnable.name,
-        input=percept,
-        model=selection.model,
-        args=selection.args or None,
+        bindings=RunBindings(
+            model=bindings.model,
+            runnable=f"{runnable.kind}:{runnable.name}",
+        ),
+        limits=limits,
+        ceilings=restrictions,
+        primary=primary,
+        named=named or None,
     )
 
 
-def validate_setting_commands(
-    settings: tuple[SettingCommand, ...],
+def validate_commands(
+    commands: Sequence[PolicyCommand],
     *,
     setup: AgentSetup,
     state: AgentState,
     default_runnable: str,
-    selected_runnable: str | None = None,
-    ceiling: AgentCeiling | None = None,
-    default_model: str | None = None,
-    default_args: Mapping[str, object] | None = None,
-    default_raw_args: Arguments = (),
-    include: IncludeResolver | None = None,
+    surface: RunBindings = RunBindings(),
 ) -> None:
-    """Validate one complete prospective chat setting state atomically."""
+    """Validate one prospective session policy without requiring run input."""
 
-    bound_runnable, bound_kind = parse_runnable_ref(
-        selected_runnable or setup.bindings.runnable or default_runnable
-    )
-    selection = _resolve_selection(
-        state=state,
-        default_runnable=bound_runnable,
-        default_runnable_kind=bound_kind,
-        default_model=(
-            default_model if default_model is not None else setup.bindings.model
-        ),
-        default_args=default_args,
-        default_raw_args=default_raw_args,
-        settings=settings,
-        overrides=(),
-        include=include,
-    )
     from .executor.ceiling import (
         restrict_agent_ceiling,
         resolve_agent_ceiling,
         validate_root_run_resources,
     )
-    resolved_ceiling = ceiling or AgentCeiling()
-    base = resolve_agent_ceiling(setup, state, setup.ceiling)
-    agent = restrict_agent_ceiling(setup, state, base, resolved_ceiling)
+
+    restrictions, bindings, _limits = resolve_commands(
+        setup,
+        surface=surface,
+        session=commands,
+    )
+    runnable_name, runnable_kind = parse_runnable_ref(
+        bindings.runnable or default_runnable
+    )
+    runnable = resolve_runnable(
+        state.program,
+        runnable_name,
+        kind=runnable_kind,
+    )
+    ceiling = resolve_agent_ceiling(setup, state, setup.ceiling)
+    for restriction in restrictions:
+        ceiling = restrict_agent_ceiling(
+            setup,
+            state,
+            ceiling,
+            restriction,
+        )
     validate_root_run_resources(
         setup,
         state,
-        executable=selection.runnable,
-        agent=agent,
-        model=selection.model,
+        executable=runnable,
+        agent=ceiling,
+        model=bindings.model,
     )
 
 
-def _resolve_selection(
-    *,
-    state: AgentState,
-    default_runnable: str,
-    default_runnable_kind: str | None,
-    default_model: str | None,
-    default_args: Mapping[str, object] | None,
-    default_raw_args: Arguments,
-    settings: tuple[SettingCommand, ...],
-    overrides: tuple[RunOverride, ...],
-    include: IncludeResolver | None,
-) -> _Selection:
-    runnable_name = default_runnable
-    runnable_kind = default_runnable_kind
-    model = default_model
-    if default_args and default_raw_args:
-        raise ValueError("default arguments cannot be both bound and raw")
-    typed_args = dict(default_args or {})
-    raw_args: Arguments | None = default_raw_args or None
-
-    for command in settings:
-        if command.kind == "model":
-            model = (
-                default_model
-                if command.selector == "default"
-                else command.selector
-            )
-            continue
-        runnable_name = (
-            default_runnable
-            if command.kind == "agic" and command.selector == "default"
-            else command.selector
-        )
-        runnable_kind = (
-            default_runnable_kind
-            if command.selector == "default"
-            else command.kind
-        )
-        typed_args = (
-            dict(default_args or {}) if command.selector == "default" else {}
-        )
-        raw_args = (
-            default_raw_args or None
-            if command.selector == "default"
-            else command.args
-        )
-
-    for command in overrides:
-        if command.kind == "model":
-            model = (
-                default_model
-                if command.selector == "default"
-                else command.selector
-            )
-            continue
-        runnable_name = (
-            default_runnable
-            if command.kind == "agic" and command.selector == "default"
-            else command.selector
-        )
-        runnable_kind = (
-            default_runnable_kind
-            if command.selector == "default"
-            else command.kind
-        )
-        typed_args = (
-            dict(default_args or {}) if command.selector == "default" else {}
-        )
-        raw_args = (
-            default_raw_args or None
-            if command.selector == "default"
-            else command.args
-        )
-
-    runnable = resolve_runnable(state.program, runnable_name, kind=runnable_kind)
-    bound_args = (
-        _bind_raw_args(
-            raw_args,
-            runnable=runnable,
-            state=state,
-            include=include,
-        )
-        if raw_args is not None
-        else typed_args
-    )
-    _validate_argument_names(runnable, bound_args)
-    return _Selection(runnable=runnable, model=model, args=bound_args)
-
-
-def _bind_raw_args(
-    args: Arguments,
+def _bind_named_sources(
+    sources: NamedInputSources,
     *,
     runnable: Runnable,
     state: AgentState,
@@ -235,10 +160,10 @@ def _bind_raw_args(
     params = {parameter.name: parameter for parameter in runnable.params}
     structs = {struct.name: struct for struct in state.program.structs}
     result: dict[str, object] = {}
-    for name, source in args:
+    for name, source in sources:
         parameter = params.get(name)
         if parameter is None:
-            raise ValueError(f"unknown arguments for {runnable.name}: {name}")
+            raise ValueError(f"unknown named inputs for {runnable.name}: {name}")
         percept = perceive_input(
             source,
             program=state.program,
@@ -252,22 +177,30 @@ def _bind_raw_args(
     return result
 
 
-def _validate_argument_names(
+def _validate_named(
     runnable: Runnable,
-    args: Mapping[str, object],
+    named: Mapping[str, object],
 ) -> None:
     params = {parameter.name: parameter for parameter in runnable.params}
-    unknown = sorted(set(args) - set(params))
+    unknown = sorted(set(named) - set(params))
     if unknown:
         raise ValueError(
-            f"unknown arguments for {runnable.name}: {', '.join(unknown)}"
+            f"unknown named inputs for {runnable.name}: {', '.join(unknown)}"
         )
     missing = sorted(
         name
         for name, parameter in params.items()
-        if not parameter.optional and name not in args
+        if not parameter.optional and name not in named
     )
     if missing:
         raise ValueError(
-            f"missing arguments for {runnable.name}: {', '.join(missing)}"
+            f"missing named inputs for {runnable.name}: {', '.join(missing)}"
         )
+
+
+def _strip_final_line_break(source: str) -> str:
+    if source.endswith("\r\n"):
+        return source[:-2]
+    if source.endswith("\n"):
+        return source[:-1]
+    return source

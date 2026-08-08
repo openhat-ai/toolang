@@ -68,7 +68,7 @@ flow relay(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="relay",
-                    input=perceive_input("hello"),
+                    primary=perceive_input("hello"),
                 ),
                 tracer=tracer,
             )
@@ -134,7 +134,7 @@ flow staged(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="staged",
-                    input=perceive_input("hello"),
+                    primary=perceive_input("hello"),
                 )
             )
             assert failed.status == "failed"
@@ -212,8 +212,8 @@ agic reply(_: Part[], tone: Text) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    input=perceive_input("hello"),
-                    args={"tone": "brief"},
+                    primary=perceive_input("hello"),
+                    named={"tone": "brief"},
                 )
             )
             rerun = await harness.executor.rerun(
@@ -278,7 +278,7 @@ flow staged(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="staged",
-                    input=perceive_input("hello"),
+                    primary=perceive_input("hello"),
                 )
             )
             assert run.status == "failed"
@@ -346,7 +346,7 @@ flow twice(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="twice",
-                    input=perceive_input("hello"),
+                    primary=perceive_input("hello"),
                 )
             )
             assert run.status == "failed"
@@ -409,7 +409,7 @@ flow parallel(_: Part[]):
                 harness.run_spec(
                     thread=thread,
                     runnable="parallel",
-                    input=perceive_input("work"),
+                    primary=perceive_input("work"),
                 ),
                 tracer=tracer,
             )
@@ -472,7 +472,7 @@ flow fail(_: Part[]) -> Number:
                 harness.run_spec(
                     thread=thread,
                     runnable="fail",
-                    input=perceive_input("not a number"),
+                    primary=perceive_input("not a number"),
                 ),
                 tracer=tracer,
             )
@@ -536,7 +536,7 @@ flow mapped(_: Text) -> Text[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="mapped",
-                    input=perceive_input("split this"),
+                    primary=perceive_input("split this"),
                 )
             )
 
@@ -608,7 +608,7 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
                 harness.run_spec(
                     thread=thread,
                     runnable="research",
-                    input=perceive_input("agent framework/sdk"),
+                    primary=perceive_input("agent framework/sdk"),
                 )
             )
 
@@ -690,14 +690,14 @@ flow select(_: Text) -> Text[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="remember",
-                    input=perceive_input("remember this"),
+                    primary=perceive_input("remember this"),
                 )
             )
             selected = await harness.executor.start(
                 harness.run_spec(
                     thread=thread,
                     runnable="select",
-                    input=perceive_input("candidate"),
+                    primary=perceive_input("candidate"),
                 )
             )
 
@@ -749,7 +749,7 @@ flow fanout(_: Text) -> Text[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="fanout",
-                    input=perceive_input("work"),
+                    primary=perceive_input("work"),
                 )
             )
             await asyncio.wait_for(
@@ -813,7 +813,7 @@ flow summary(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="summary",
-                    input=perceive_input("summarize"),
+                    primary=perceive_input("summarize"),
                 )
             )
 
@@ -864,7 +864,7 @@ flow folded(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="folded",
-                    input=perceive_input("fold"),
+                    primary=perceive_input("fold"),
                 )
             )
 
@@ -916,7 +916,7 @@ flow folded(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="folded",
-                    input=perceive_input("fold"),
+                    primary=perceive_input("fold"),
                 ),
                 tracer=tracer,
             )
@@ -986,7 +986,7 @@ flow selected(_: Text) -> Text[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="selected",
-                    input=perceive_input("select"),
+                    primary=perceive_input("select"),
                 )
             )
 
@@ -1043,7 +1043,7 @@ flow selected(_: Text) -> Text[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="selected",
-                    input=perceive_input("select"),
+                    primary=perceive_input("select"),
                 )
             )
 
@@ -1101,7 +1101,7 @@ flow ranked(_: Text) -> Text[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="ranked",
-                    input=perceive_input("rank"),
+                    primary=perceive_input("rank"),
                 )
             )
 
@@ -1140,7 +1140,7 @@ flow repeated(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="repeated",
-                    input=perceive_input("zero"),
+                    primary=perceive_input("zero"),
                 )
             )
 
@@ -1192,9 +1192,9 @@ flow repeated(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="repeated",
-                    input=perceive_input("hello"),
+                    primary=perceive_input("hello"),
+                    limits=limits,
                 ),
-                limits=limits,
             )
 
             children = [
@@ -1251,7 +1251,7 @@ flow repeated(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="repeated",
-                    input=perceive_input("zero"),
+                    primary=perceive_input("zero"),
                 )
             )
 
@@ -1307,7 +1307,7 @@ flow invalid(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="invalid",
-                    input=perceive_input("not a list"),
+                    primary=perceive_input("not a list"),
                 ),
                 tracer=tracer,
             )
@@ -1362,7 +1362,7 @@ flow scattered(_: Text) -> Text[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="scattered",
-                    input=perceive_input("split"),
+                    primary=perceive_input("split"),
                 )
             )
 
@@ -1417,8 +1417,8 @@ flow relay(_: Text, suffix: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="relay",
-                    input=perceive_input("hello"),
-                    args={"suffix": "!"},
+                    primary=perceive_input("hello"),
+                    named={"suffix": "!"},
                 )
             )
 

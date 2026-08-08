@@ -18,6 +18,7 @@ from toolang.base.types.message import (
     message_text,
 )
 from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
+from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.ids import IdIssuer
@@ -474,9 +475,10 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                     setup=setup,
                     state=state,
                     thread="term_1",
-                    runnable="chat",
-                    input=(TextPart(text="hello"), image),
-                    args={"focus": "events"},
+                    bindings=RunBindings(runnable="chat"),
+                    limits=setup.limits,
+                    primary=(TextPart(text="hello"), image),
+                    named={"focus": "events"},
                 ),
                 tracer=tracer,
             )

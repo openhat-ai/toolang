@@ -15,9 +15,11 @@ Chat uses the same runtime units as the rest of Toolang:
 | `run` | One handling attempt inside that thread |
 | `step` | One execution unit inside the run |
 
-One chat `Submission` resolves to a `QuickCommand`, `SettingCommand`, or
-`RunnableCall`. Only `RunnableCall` creates one start control and one run in an
-existing thread. A client creates the thread explicitly before the first call.
+One terminal `ChatInput` resolves to one `QuickCommand`, one or more
+`PolicyCommand` values, or a policy-command sequence paired with
+`RunnableInput`. Only the runnable-input branch creates a start control and a
+run in an existing thread. A client creates the thread explicitly before the
+first run.
 
 Thread ids use one underscore-delimited normalized form:
 
@@ -208,8 +210,8 @@ language and the TUI's existing control-bar, streaming, alignment, and
 scrollback constraints.
 
 The input-box status bar is for transient editor and control feedback that has
-no submitted timeline owner. A runnable submission owns a scrollback block as
-soon as it is submitted. If it is rejected before `RunBegin`, its diagnostic is
+no submitted timeline owner. Runnable input owns a scrollback block as soon as
+it is submitted. If it is rejected before `RunBegin`, its diagnostic is
 finalized in scrollback without a run id or run-status summary. After
 `RunBegin`, terminal diagnostics and status summaries belong to the accepted
 run and are finalized through its native events.

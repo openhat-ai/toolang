@@ -282,7 +282,7 @@ One agic run resolves exactly one model target before execution starts.
 
 Resolution proceeds in this order:
 
-1. authored input model override or an explicit session/request model
+1. explicit run or session policy model binding
 2. captured `AgentSetup.bindings.model`, from `[default]`, environment, or CLI
 3. default model route or selector from root config
 4. built-in default selector

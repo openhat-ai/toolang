@@ -82,7 +82,7 @@ async def _close_scheduler(
     await scheduler.stop()
 
 
-def test_scheduler_rejects_invalid_submission_without_creating_a_run(
+def test_scheduler_rejects_invalid_input_without_creating_a_run(
     tmp_path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -104,7 +104,7 @@ def test_scheduler_rejects_invalid_submission_without_creating_a_run(
 
             assert record.active_run_id is None
             assert record.error is not None
-            assert "submission is not a runnable call" in record.error
+            assert "primary input must escape a leading colon" in record.error
             assert not harness.store.list_runs(limit=None)
             assert not harness.store.list_threads()
         finally:

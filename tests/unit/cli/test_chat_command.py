@@ -15,7 +15,7 @@ from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import ChatResult
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEnd, RunEvent, StepEnd
-from toolang.execution.types import StepPath
+from toolang.execution.types import PolicyCommand, StepPath
 
 
 class _Client:
@@ -34,8 +34,12 @@ class _Client:
         self.created += 1
         return "term_created"
 
-    def apply_settings(self, settings, selects):
-        del settings
+    def apply_settings(
+        self,
+        commands: tuple[PolicyCommand, ...],
+        selects: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        del commands
         return dict(selects)
 
     def get_result(

@@ -7,8 +7,8 @@ from toolang.base.types.message import TextPart
 from toolang.common.errors import ToolangError
 from toolang.cli.toolang.commands.chat import slashes
 from toolang.cli.toolang.commands.chat.base import ChatResult, QueuedCall
+from toolang.cli.toolang.commands.chat.input import QuickCommand
 from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
-from toolang.lang.submission import QuickCommand
 
 
 class _Client:
@@ -27,6 +27,13 @@ class _Client:
         self.executables: dict[str, Mapping[str, Any]] = {
             "agic": {"default": "chat", "items": [{"name": "chat"}]},
             "flow": {"default": None, "items": [{"name": "review"}]},
+            "runnable": {
+                "default": "agic:chat",
+                "items": [
+                    {"kind": "agic", "name": "chat"},
+                    {"kind": "flow", "name": "review"},
+                ],
+            },
         }
         self.error: Exception | None = None
         self.results = {
@@ -163,6 +170,19 @@ def test_quick_executable_lists_without_changing_settings() -> None:
     assert result.lines == ["Available Agics", "chat  default"]
     assert app.selects == {"flow": "review"}
     assert app.status_refreshes == 0
+
+
+def test_quick_runnable_lists_qualified_agics_and_flows() -> None:
+    app = _App()
+    app.selects["flow"] = "review"
+
+    result = slashes.handle(app, QuickCommand("runnable"))
+
+    assert result.lines == [
+        "Available Runnables",
+        "agic:chat  default",
+        "flow:review  current",
+    ]
 
 
 def test_quick_show_loads_an_explicit_or_latest_durable_result() -> None:

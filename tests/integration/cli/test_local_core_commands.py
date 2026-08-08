@@ -439,7 +439,7 @@ agic reply(_: Part[]) -> Part[]:
             harness.run_spec(
                 thread=thread,
                 runnable="reply",
-                input=perceive_input("hello"),
+                primary=perceive_input("hello"),
             )
         )
         await harness.executor.shutdown()

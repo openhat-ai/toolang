@@ -14,7 +14,6 @@ class RunExecutor:
         self,
         spec: RunSpec,
         *,
-        limits: RunLimits | None = None,
         run_id: str | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
@@ -93,30 +92,29 @@ class RunSpec:
     setup: AgentSetup
     state: AgentState
     thread: str
-    runnable: str
-    ceiling: AgentCeiling = AgentCeiling()
-    input: Percept = ()
-    model: str | None = None
-    args: Mapping[str, object] | None = None
+    bindings: RunBindings
+    limits: RunLimits
+    ceilings: tuple[AgentCeiling, ...] = ()
+    primary: Percept = ()
+    named: Mapping[str, object] | None = None
 ```
 
-`runnable` is required and resolves to exactly one agic or flow in the captured
-program. The spec does not carry an origin, executable kind, run identity,
-request identity, or arbitrary transport context. The optional singular model
-selector is the caller's per-run model choice; aliases and defaults are parsed
-from the captured state config. `ceiling` is the caller's immutable
-selector-based restriction inside `setup.ceiling` for the complete root run
-tree. `input` is the
-primary multimodal input; `args`
-contains values for the runnable's declared `params`. The executor validates
-both before accepting the run and constructs the user message internally. It
+`bindings.runnable` is required and resolves to exactly one agic or flow in the
+captured program. `bindings.model` is the effective singular model choice.
+The spec does not carry an origin, run identity, request identity, or arbitrary
+transport context. Each item in `ceilings` is one independently resolved
+selector-based restriction inside `setup.ceiling`; retaining separate session
+and run restrictions preserves intersection semantics when selector lists use
+OR matching. `primary` is the primary multimodal input; `named` contains values
+for the runnable's declared `params`. The executor validates both before
+accepting the run and constructs the user message internally. It
 keeps the original canonical `Percept` for the start control and durable
 history, while language-owned input coercion initializes `_` with the
 runnable's declared primary type.
 
-`AgentSetup.limits` is the captured default for a new run. Passing `limits` to
-`start()` replaces that default for one root run tree. Config, CLI, and HTTP
-parsing remain caller concerns and are not part of the executor contract.
+`AgentSetup.limits` is the captured default for a new run. Policy resolution
+produces the effective `RunSpec.limits` before `start()`. Config, CLI, chat, and
+HTTP parsing remain caller concerns and are not part of the executor contract.
 
 There is no `run()`, `execute()`, or `spawn()` variant. `start()`, `rerun()`,
 and `retry()` create an owner task and return an awaitable `RunHandle`.
@@ -209,7 +207,7 @@ layers.
 
 `AgentSetup.ceiling` contains stable selector lists, not resolved resources. At
 `start()`, the executor resolves it against the captured `AgentSetup` and
-`AgentState`, intersects the `RunSpec.ceiling` request restriction, and creates
+`AgentState`, intersects every `RunSpec.ceilings` restriction, and creates
 `_ResolvedAgentCeiling`, the absolute resource limit for a recursive run tree.
 A request cannot expand the setup ceiling. Invalid selectors or empty
 intersections are rejected before the run is durably accepted.

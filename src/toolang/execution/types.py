@@ -3,13 +3,73 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from pydantic_core import core_schema
 
 
 RunId = str
+PolicyGroup = Literal["allow", "default", "limit"]
+PolicyValue: TypeAlias = tuple[str, ...] | str | int | Decimal | None
+ALLOW_POLICY_FIELDS = frozenset(
+    {
+        "models",
+        "tools",
+        "caps",
+        "psyches",
+        "skills",
+        "services",
+        "prompts",
+    }
+)
+DEFAULT_POLICY_FIELDS = frozenset({"model", "runnable"})
+LIMIT_POLICY_FIELDS = frozenset(
+    {"agic_model_calls", "agic_tool_calls", "tokens", "cost", "time"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyCommand:
+    """One canonical caller command applied to execution policy."""
+
+    group: PolicyGroup
+    field: str
+    value: PolicyValue
+
+    def __post_init__(self) -> None:
+        if self.group not in {"allow", "default", "limit"}:
+            raise ValueError(f"unknown policy command group: {self.group}")
+        if not self.field or self.field != self.field.strip():
+            raise ValueError("policy command requires a canonical field")
+        fields = {
+            "allow": ALLOW_POLICY_FIELDS,
+            "default": DEFAULT_POLICY_FIELDS,
+            "limit": LIMIT_POLICY_FIELDS,
+        }[self.group]
+        if self.field not in fields:
+            raise ValueError(f"unknown {self.group} field: {self.field}")
+        if self.group == "allow":
+            if self.value is not None and not (
+                isinstance(self.value, tuple)
+                and all(isinstance(item, str) for item in self.value)
+            ):
+                raise TypeError("allow policy value must be selectors, all, or none")
+            return
+        if self.group == "default":
+            if self.value is not None and not isinstance(self.value, str):
+                raise TypeError("default policy value must be a string or none")
+            return
+        if self.field == "cost":
+            if self.value is not None and not isinstance(self.value, Decimal):
+                raise TypeError("limit cost policy value must be a decimal or none")
+        elif self.value is not None and (
+            isinstance(self.value, bool) or not isinstance(self.value, int)
+        ):
+            raise TypeError(
+                f"limit {self.field} policy value must be an integer or none"
+            )
 
 
 @dataclass(frozen=True, slots=True)

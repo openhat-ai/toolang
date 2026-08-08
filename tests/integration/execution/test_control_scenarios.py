@@ -54,7 +54,7 @@ agic wait(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="wait",
-                    input=perceive_input("wait"),
+                    primary=perceive_input("wait"),
                 ),
                 tracer=tracer,
             )
@@ -115,7 +115,7 @@ agic revise(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="revise",
-                    input=perceive_input("write"),
+                    primary=perceive_input("write"),
                 ),
                 tracer=tracer,
             )
@@ -195,7 +195,7 @@ agic calculate(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    input=perceive_input("slow calculation"),
+                    primary=perceive_input("slow calculation"),
                 ),
                 tracer=tracer,
             )
@@ -279,7 +279,7 @@ flow sequence(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="sequence",
-                    input=perceive_input("start"),
+                    primary=perceive_input("start"),
                 ),
                 tracer=tracer,
             )
@@ -357,7 +357,7 @@ flow sequence(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="sequence",
-                    input=perceive_input("start"),
+                    primary=perceive_input("start"),
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
@@ -414,7 +414,7 @@ agic revise(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="revise",
-                    input=perceive_input("start"),
+                    primary=perceive_input("start"),
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)

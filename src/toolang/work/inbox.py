@@ -10,6 +10,7 @@ from pathlib import Path
 from collections.abc import Callable
 
 from toolang.base.types.message import Message
+from toolang.base.types.policy import RunBindings
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
@@ -109,13 +110,16 @@ async def run(
                         setup=setup,
                         state=state,
                         thread=submission.record.thread_id,
-                        runnable=(
-                            "file"
-                            if state.program.find_agic("file") is not None
-                            else "default"
+                        bindings=RunBindings(
+                            runnable=(
+                                "agic:file"
+                                if state.program.find_agic("file") is not None
+                                else "agic:default"
+                            ),
+                            model=setup.bindings.model,
                         ),
-                        input=submission.input.percept,
-                        model=setup.bindings.model,
+                        limits=setup.limits,
+                        primary=submission.input.percept,
                     )
                 )
                 try:

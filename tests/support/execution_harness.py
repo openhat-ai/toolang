@@ -14,6 +14,7 @@ from typing import Any, Self
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Percept
 from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -319,8 +320,11 @@ class ExecutionHarness:
         *,
         thread: str,
         runnable: str,
-        input: Percept = (),
-        args: Mapping[str, object] | None = None,
+        primary: Percept = (),
+        named: Mapping[str, object] | None = None,
+        model: str | None = None,
+        limits: RunLimits | None = None,
+        ceilings: tuple[AgentCeiling, ...] = (),
     ) -> RunSpec:
         """Build a run spec while keeping scenario tests focused on behavior."""
 
@@ -328,9 +332,11 @@ class ExecutionHarness:
             setup=self.setup,
             state=self.state,
             thread=thread,
-            runnable=runnable,
-            input=input,
-            args=args,
+            bindings=RunBindings(model=model, runnable=runnable),
+            limits=limits if limits is not None else self.setup.limits,
+            ceilings=ceilings,
+            primary=primary,
+            named=named,
         )
 
     async def __aenter__(self) -> Self:

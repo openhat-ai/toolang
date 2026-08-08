@@ -55,7 +55,7 @@ agic calculate(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    input=perceive_input("double three"),
+                    primary=perceive_input("double three"),
                 ),
                 tracer=tracer,
             )
@@ -107,7 +107,7 @@ flow relay(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="relay",
-                    input=perceive_input("hello"),
+                    primary=perceive_input("hello"),
                 ),
                 tracer=tracer,
             )
@@ -167,7 +167,7 @@ flow parallel(_: Text) -> Text[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="parallel",
-                    input=perceive_input("work"),
+                    primary=perceive_input("work"),
                 ),
                 tracer=tracer,
             )

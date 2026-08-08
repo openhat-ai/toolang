@@ -239,8 +239,8 @@ when a job changes; due jobs are not discovered by scanning SQLite.
 The scheduler wakes for a ready snapshot, state snapshot, run completion,
 manual control, the nearest heap timer, or the safety refresh. It captures the
 latest setup and state snapshots when constructing a dispatch. The job body is
-parsed as one `RunnableCall`; the default runnable is the job kind and falls
-back to `default`.
+parsed into a policy-command prefix and `RunnableInput`; the default runnable
+is the job kind and falls back to `default`.
 
 One job is always serial. Different jobs may run concurrently. `JobScheduler`
 adds no separate bandwidth pool or limit. Any future process-wide admission

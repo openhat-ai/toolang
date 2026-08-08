@@ -1,129 +1,141 @@
-# Submission And Input Syntax
+# Input Syntax
 
-This document defines the shared text syntax for chat, script, task, chore,
-agic, flow, and prompt input.
+This document defines runnable input, execution policy commands, terminal-chat
+input, shared `Content` syntax, and runnable-boundary coercion.
 
-## Submission
+## Input Layers
 
-```text
-Submission   = QuickCommand | SettingCommand* | RunnableCall
-RunnableCall = RunOverride* + InputContent?
-```
-
-- `QuickCommand` performs one immediate chat operation.
-- `SettingCommand` changes settings used by later chat runs.
-- `RunnableCall` supplies overrides and content for one run.
-
-| Source | QuickCommand | SettingCommand* | RunnableCall |
-| --- | ---: | ---: | ---: |
-| chat TUI | yes | yes | yes |
-| chat WebUI | not yet | not yet | not yet |
-| script | no | no | yes |
-| task/chore | no | no | yes |
-
-Agic, flow, and prompt bodies are `Content`, not `Submission`.
-
-### Lines And Resolution
+The layers are independent values with separate parsers:
 
 ```text
-LineBreak = "\n" | "\r\n"
-Space     = (" " | "\t")+
-BlankLine = (" " | "\t")* LineBreak
+RunnableInput = PrimaryInput? + NamedInput*
+
+ChatInput
+    = QuickCommand
+    | PolicyCommand+
+    | PolicyCommand* + RunnableInput
 ```
 
-Discard at most one final `LineBreak`, then resolve the remaining body:
+- `RunnableInput` is language-owned syntax-valid input. It contains only one
+  optional primary source and zero or more named sources.
+- `PolicyCommand` is execution-owned policy input. It changes `allow`,
+  `default`, or `limit` fields but contains no runnable input.
+- `QuickCommand` and the `ChatInput` classification are terminal-chat
+  concepts. Only one `QuickCommand` is accepted, and it must occupy the whole
+  chat input.
+- The runnable branch is valid only when it contains a primary or named input.
+  A policy-only branch updates later chat runs; the same policy prefix on a
+  runnable branch applies only to that run.
 
-1. A complete quick-command line, followed only by blank lines, is a
-   `QuickCommand`.
-2. Read consecutive setting-shaped lines from the start.
-3. If only blank lines remain, parse each line independently as a
-   `SettingCommand`.
-4. Otherwise parse each line independently as a `RunOverride`. Discard the
-   line break after the last override and at most one following `BlankLine`;
-   the exact remainder is `InputContent`.
-5. With no leading setting-shaped lines, the complete body is `InputContent`
-   and there are no `RunOverride` values.
+Script, task, and chore surfaces parse the run-only pair of policy commands and
+`RunnableInput`; they do not parse `QuickCommand`. Agic, flow, and prompt
+bodies are `Content` sources rather than caller-input envelopes.
 
-On a run-only source, `InputContent` may be absent. Selector lines with no
-following content are `RunOverride` values, not `SettingCommand` values. An
-empty call is also valid when the surface already selects the runnable. In
-either case, the selected runnable must accept no primary input.
+Parsing and resolution are separate. Parsing produces `PolicyCommand` and
+`RunnableInput` without loading an agent. Execution resolution later overlays
+the current `AgentSetup`, session policy, and run policy; selects the runnable;
+evaluates content; coerces named inputs; and constructs `RunSpec`.
 
-When present, `InputContent` must contain a non-whitespace item. Until its first
-item, an unescaped `:` at line start enters the command namespace. A quick
-command cannot be combined with other lines; an unknown or malformed command
-is an error, not text. Use `::` to start input with a literal colon. After
-content starts, `:` is ordinary text.
+## Policy Commands
 
-Parsing is atomic. Any invalid command, override, argument, include, prompt,
-or value rejects the complete submission.
-
-### Quick Commands
+Canonical commands map directly to execution policy fields:
 
 ```text
-:help                 :show [RUN_ID]
-:?                    :queue [ACTION]
-:model                :steer MESSAGE
-:models               :quit
-:agic                 :exit
-:flow
+:allow DOMAIN=SELECTORS
+:default FIELD=VALUE
+:limit FIELD=VALUE
 ```
 
-`:model`, `:agic`, and `:flow` without a value are quick commands. With a
-value, they are settings or overrides.
+Supported fields are:
 
-### Setting Commands
+| Group | Fields |
+| --- | --- |
+| `allow` | `models`, `tools`, `caps`, `psyches`, `skills`, `services`, `prompts` |
+| `default` | `model`, `runnable` |
+| `limit` | `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`, `time` |
+
+`allow` selector lists may use `all` or `none`. `all` removes that field's
+restriction; `none` permits no value in the resulting domain. Cap-kind
+shortcuts normalize to cap selectors only after the complete policy layer is
+parsed, matching setup config and process overrides. `default ...=none` clears an explicit binding, while
+`limit ...=none` disables that limit. These values have group-specific meanings
+and are not accepted as ordinary names.
+
+The common default shortcuts are:
 
 ```text
-SettingCommand
-    = ":model" Space (ModelSelector | "default")
-    | ":agic" Space ("default" | AgicName (Space Argument)*)
-    | ":flow" Space FlowName (Space Argument)*
-
-Argument = Name "=" Value
+:model MODEL
+:agic AGIC [NAME=VALUE ...]
+:flow FLOW [NAME=VALUE ...]
+:runnable RUNNABLE [NAME=VALUE ...]
 ```
 
-### Runnable Calls
+They map to `default model=...` or `default runnable=...`. `:agic` and `:flow`
+qualify the runnable kind. The reserved value `default` clears that explicit
+binding and returns to the surface binding. Named values on a runnable
+shortcut belong to `RunnableInput`, so the line starts a run even when there
+is no primary input.
+
+The allow shortcuts are:
 
 ```text
-RunOverride
-    = ":model" Space (ModelSelector | "default")
-    | ":agic" Space ("default" | AgicName (Space Argument)*)
-    | ":flow" Space FlowName (Space Argument)*
+:models SELECTORS       :psyches SELECTORS
+:tools SELECTORS        :skills SELECTORS
+:caps SELECTORS         :services SELECTORS
+                        :prompts SELECTORS
 ```
 
-`SettingCommand` and `RunOverride` are intentionally separate definitions.
-The first affects later chat runs; the second belongs only to one
-`RunnableCall`.
-Each occupies one complete line. Consecutive values are separated by
-`LineBreak`; the final override and `InputContent` are separated as specified
-by the resolution rules above.
-
-`default` is the reserved model and agic selector that restores the surface
-default. It is not a model or agic name in this position. `auto` has no special
-meaning and may be used as an ordinary model, agic, or flow name.
-
-Both enforce:
-
-- at most one model line and one runnable line
-- mutual exclusion of `:agic` and `:flow`
-- no arguments after `:agic default`; no `:flow default` form
-- unique, signature-checked arguments, including every required argument
-- no primary input on a setting or override line
-
-Lines use POSIX shell word quoting and backslash escaping, without expansion,
-substitution, or globbing. Trailing horizontal whitespace is ignored.
+Each command occupies one complete line and uses POSIX shell word quoting and
+backslash escaping without expansion, substitution, or globbing. Repeated
+`allow` commands for one field accumulate and deduplicate selectors. Repeated
+`default` or `limit` fields in one input are invalid. Blank lines may appear
+between policy commands and between the policy prefix and primary input; they
+are structural and are not part of the primary source.
 
 ```text
 :model openai/gpt-5
+:skills reviewer
 :agic review focus=security
 
 Review this API.
 @./api.md
 ```
 
-Inline primary input, such as
-`:agic review focus=security -- Review this API.`, is invalid.
+## Terminal Chat Input
+
+The no-argument forms `:model`, `:models`, `:agic`, `:flow`, and `:runnable`
+are quick commands that list available choices. Other quick commands include:
+
+```text
+:help                 :show [RUN_ID]
+:?                    :queue [ACTION]
+:steer MESSAGE        :quit
+                      :exit
+```
+
+A quick command cannot be combined with policy or runnable input. Chat removes
+leading and trailing blank lines, then removes horizontal whitespace from the
+end of the final line. It preserves indentation on the first nonblank line and
+all internal runnable-input whitespace.
+
+Until primary input starts, an unescaped `:` at column zero enters the command
+namespace. An unknown or malformed command is an error, not text. Use `::` to
+start primary input with a literal colon. After primary input starts, `:` is
+ordinary text.
+
+## Runnable Input
+
+`RunnableInput.primary` is an optional `Content` source.
+`RunnableInput.named` is an ordered set of unique `Name=Content` sources.
+Chat obtains named sources from runnable shortcuts; script obtains them from
+its generated CLI. Resolution evaluates each source and coerces it against the
+selected runnable signature. Missing, duplicate, or unknown named inputs are
+rejected before a run is accepted.
+
+Run-only parsing permits an empty `RunnableInput` when the selected runnable
+accepts no primary or named input. Parsing is atomic: any invalid policy
+command, named input, include, prompt, or coerced value rejects the complete
+input.
 
 ## Content
 

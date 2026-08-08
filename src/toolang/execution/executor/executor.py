@@ -13,7 +13,7 @@ from typing import Any, Literal, cast
 
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.base.types.policy import AgentCeiling, RunLimits
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import (
     Message,
@@ -42,7 +42,7 @@ from ..records import (
 )
 from ..store import RunStore
 from ..types import ControlTiming, RunControlKind, StepPath
-from ..runnables import resolve_runnable
+from ..runnables import parse_runnable_ref, resolve_runnable
 from .common import (
     BoundRun,
     EventEmitter,
@@ -100,11 +100,11 @@ class RunSpec:
     setup: AgentSetup
     state: AgentState
     thread: str
-    runnable: str
-    ceiling: AgentCeiling = field(default_factory=AgentCeiling)
-    input: Percept = ()
-    model: str | None = None
-    args: Mapping[str, object] | None = None
+    bindings: RunBindings
+    limits: RunLimits
+    ceilings: tuple[AgentCeiling, ...] = ()
+    primary: Percept = ()
+    named: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,7 +185,6 @@ class RunExecutor:
         self,
         spec: RunSpec,
         *,
-        limits: RunLimits | None = None,
         run_id: str | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
@@ -195,14 +194,12 @@ class RunExecutor:
         self._require_available()
         loop = asyncio.get_running_loop()
         executable, agent_ceiling = _validate_start_spec(spec)
-        effective_limits = limits if limits is not None else spec.setup.limits
-        if not isinstance(effective_limits, RunLimits):
+        if not isinstance(spec.limits, RunLimits):
             raise TypeError("run limits must be RunLimits")
         bound = _bind_run(
             spec,
             run_id=run_id or self.ids.issue_run(),
             agent_ceiling=agent_ceiling,
-            limits=effective_limits,
         )
         self.store.accept_start(
             run_id=bound.run_id,
@@ -212,7 +209,7 @@ class RunExecutor:
             context=_run_context(bound, executable),
             request_id=request_id,
             created_at=bound.created_at,
-            control_context={"limits": run_limits_to_data(effective_limits)},
+            control_context={"limits": run_limits_to_data(spec.limits)},
         )
         return self._launch(bound, executable, loop=loop, tracer=tracer)
 
@@ -239,16 +236,13 @@ class RunExecutor:
             state=state,
             ceiling=ceiling,
             model=model,
+            limits=limits if limits is not None else setup.limits,
         )
         executable, agent_ceiling = _validate_start_spec(spec)
-        effective_limits = limits if limits is not None else setup.limits
-        if not isinstance(effective_limits, RunLimits):
-            raise TypeError("run limits must be RunLimits")
         bound = _bind_run(
             spec,
             run_id=run_id or self.ids.issue_run(),
             agent_ceiling=agent_ceiling,
-            limits=effective_limits,
         )
         self.store.accept_start(
             run_id=bound.run_id,
@@ -258,7 +252,7 @@ class RunExecutor:
             context=_run_context(bound, executable),
             request_id=request_id,
             created_at=bound.created_at,
-            control_context={"limits": run_limits_to_data(effective_limits)},
+            control_context={"limits": run_limits_to_data(spec.limits)},
             kind="rerun",
             source=source,
         )
@@ -287,21 +281,18 @@ class RunExecutor:
             state=state,
             ceiling=ceiling,
             model=model,
+            limits=limits if limits is not None else setup.limits,
         )
         executable, agent_ceiling = _validate_start_spec(spec)
-        effective_limits = limits if limits is not None else setup.limits
-        if not isinstance(effective_limits, RunLimits):
-            raise TypeError("run limits must be RunLimits")
         bound = _bind_run(
             spec,
             run_id=run_id,
             agent_ceiling=agent_ceiling,
-            limits=effective_limits,
         )
         _reopened, control, _ejected = self.store.accept_retry(
             run_id=run_id,
             anchor=StepPath.parse(anchor) if anchor is not None else None,
-            context={"limits": run_limits_to_data(effective_limits)},
+            context={"limits": run_limits_to_data(spec.limits)},
             request_id=request_id,
             created_at=bound.created_at,
         )
@@ -321,6 +312,7 @@ class RunExecutor:
         state: AgentState,
         ceiling: AgentCeiling,
         model: str | None,
+        limits: RunLimits,
     ) -> RunSpec:
         run = self.store.get_run(run_id=run_id)
         if run is None or run.parent is not None:
@@ -336,11 +328,21 @@ class RunExecutor:
             setup=setup,
             state=state,
             thread=run.thread,
-            runnable=runnable,
-            ceiling=ceiling,
-            input=control.input.percept,
-            model=model if model is not None else _source_model(run),
-            args=_source_args(run, executable),
+            bindings=RunBindings(
+                runnable=f"{executable.kind}:{runnable}",
+                model=model if model is not None else _source_model(run),
+            ),
+            limits=limits,
+            ceilings=(
+                (ceiling,)
+                if any(
+                    value is not None
+                    for value in (ceiling.models, ceiling.tools, ceiling.caps)
+                )
+                else ()
+            ),
+            primary=control.input.percept,
+            named=_source_args(run, executable),
         )
 
     def _launch(
@@ -1306,7 +1308,7 @@ def _child_binding(
         state=parent.state,
         setup=parent.setup,
         limits=parent.limits,
-        ceiling_restriction=parent.ceiling_restriction,
+        ceiling_restrictions=parent.ceiling_restrictions,
         agent_ceiling=parent.agent_ceiling,
         ceiling=None,
         flow_ceiling=parent.flow_ceiling,
@@ -1333,7 +1335,6 @@ def _bind_run(
     *,
     run_id: str,
     agent_ceiling: _ResolvedAgentCeiling,
-    limits: RunLimits,
 ) -> BoundRun:
     if not spec.thread or spec.thread != spec.thread.strip():
         raise ValueError("run spec requires a canonical thread id")
@@ -1341,13 +1342,13 @@ def _bind_run(
         run_id=run_id,
         root_run_id=run_id,
         thread=spec.thread,
-        input=Message(role="user", parts=tuple(spec.input)),
-        args=dict(spec.args or {}),
-        model=spec.model,
+        input=Message(role="user", parts=tuple(spec.primary)),
+        args=dict(spec.named or {}),
+        model=spec.bindings.model,
         state=spec.state,
         setup=spec.setup,
-        limits=limits,
-        ceiling_restriction=spec.ceiling,
+        limits=spec.limits,
+        ceiling_restrictions=spec.ceilings,
         agent_ceiling=agent_ceiling,
         ceiling=None,
         flow_ceiling=None,
@@ -1371,25 +1372,21 @@ def _run_context(
         context["args"] = {
             name: json_value(value) for name, value in binding.args.items()
         }
-    if any(
-        value is not None
-        for value in (
-            binding.ceiling_restriction.models,
-            binding.ceiling_restriction.tools,
-            binding.ceiling_restriction.caps,
-        )
-    ):
-        context["ceiling"] = {
-            "models": list(binding.ceiling_restriction.models)
-            if binding.ceiling_restriction.models is not None
-            else None,
-            "tools": list(binding.ceiling_restriction.tools)
-            if binding.ceiling_restriction.tools is not None
-            else None,
-            "caps": list(binding.ceiling_restriction.caps)
-            if binding.ceiling_restriction.caps is not None
-            else None,
-        }
+    if binding.ceiling_restrictions:
+        context["ceilings"] = [
+            {
+                "models": list(restriction.models)
+                if restriction.models is not None
+                else None,
+                "tools": list(restriction.tools)
+                if restriction.tools is not None
+                else None,
+                "caps": list(restriction.caps)
+                if restriction.caps is not None
+                else None,
+            }
+            for restriction in binding.ceiling_restrictions
+        ]
     if binding.placement:
         context["placement"] = dict(binding.placement)
     return context
@@ -1457,33 +1454,42 @@ def _validate_call(spec: RunSpec, executable: AgicDecl | FlowDecl) -> None:
     _validate_inputs(
         state=spec.state,
         executable=executable,
-        input=tuple(spec.input),
-        args=dict(spec.args or {}),
+        input=tuple(spec.primary),
+        args=dict(spec.named or {}),
     )
 
 
 def _validate_start_spec(
     spec: RunSpec,
 ) -> tuple[AgicDecl | FlowDecl, _ResolvedAgentCeiling]:
-    executable = resolve_runnable(spec.state.program, spec.runnable)
+    if spec.bindings.runnable is None:
+        raise ValueError("run spec requires a runnable binding")
+    runnable_name, runnable_kind = parse_runnable_ref(spec.bindings.runnable)
+    executable = resolve_runnable(
+        spec.state.program,
+        runnable_name,
+        kind=runnable_kind,
+    )
     _validate_call(spec, executable)
     setup_ceiling = resolve_agent_ceiling(
         spec.setup,
         spec.state,
         spec.setup.ceiling,
     )
-    agent_ceiling = restrict_agent_ceiling(
-        spec.setup,
-        spec.state,
-        setup_ceiling,
-        spec.ceiling,
-    )
+    agent_ceiling = setup_ceiling
+    for restriction in spec.ceilings:
+        agent_ceiling = restrict_agent_ceiling(
+            spec.setup,
+            spec.state,
+            agent_ceiling,
+            restriction,
+        )
     validate_root_run_resources(
         spec.setup,
         spec.state,
         executable=executable,
         agent=agent_ceiling,
-        model=spec.model,
+        model=spec.bindings.model,
     )
     return executable, agent_ceiling
 
@@ -1500,7 +1506,7 @@ def _validate_inputs(
     unknown = sorted(set(args) - set(params))
     if unknown:
         joined = ", ".join(unknown)
-        raise ValueError(f"unknown arguments for {executable.name}: {joined}")
+        raise ValueError(f"unknown named inputs for {executable.name}: {joined}")
     missing = sorted(
         name
         for name, param in params.items()
@@ -1508,7 +1514,7 @@ def _validate_inputs(
     )
     if missing:
         joined = ", ".join(missing)
-        raise ValueError(f"missing arguments for {executable.name}: {joined}")
+        raise ValueError(f"missing named inputs for {executable.name}: {joined}")
     if executable.input is None and input:
         raise ValueError(f"{executable.name} does not accept primary input")
     if executable.input is not None and not executable.input.optional and not input:
@@ -1524,7 +1530,7 @@ def _validate_inputs(
             value,
             params[name].type_name or "Part[]",
             structs=structs,
-            path=f"argument {name}",
+            path=f"named input {name}",
         )
 
 

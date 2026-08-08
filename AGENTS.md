@@ -91,9 +91,9 @@
 - `docs/program.md` defines `.too` declarations, executable signatures,
   agics, flows, directives, and surface rules.
 - `docs/flow-syntax.md` defines flow statements, bindings, and clauses.
-- `docs/input-syntax.md` defines submissions, quick and setting commands,
-  runnable calls and overrides, shared `Content` syntax, content evaluation, and
-  input/output coercion.
+- `docs/input-syntax.md` defines policy commands, terminal-chat input,
+  `RunnableInput`, shared `Content` syntax, content evaluation, and input/output
+  coercion.
 - `docs/layout.md` defines Toolang root, agent home, and agent room layout.
 - `docs/caps.md` defines cap kinds, scopes, sources, and effective-cap rules.
 - `docs/work.md` defines task and chore scheduling, checkpoints, event-loop
@@ -134,10 +134,11 @@
   `toolang.common.errors` is a compatibility export of the error type owned by
   `toolang.base`.
 - `toolang.lang` owns `.too` parsing, authored source semantics, source
-  editing, pure `Submission` and `Content` parsing, content evaluation,
-  input coercion, and output coercion. The language and its AST retain the
-  concise `Part` and `Part[]` type names; they map to package-level
-  `PerceptPart` and `Percept` values respectively.
+  editing, pure `RunnableInput` and `Content` parsing, content evaluation,
+  input coercion, and output coercion. `RunnableInput` contains only primary
+  and named sources; it does not contain execution policy. The language and
+  its AST retain the concise `Part` and `Part[]` type names; they map to
+  package-level `PerceptPart` and `Percept` values respectively.
 - `toolang.up` owns remote agent target resolution, runtime-state files,
   managed processes, visiting and roaming materialization, sandbox filesystem
   assembly, hosting lifecycle orchestration, and AgentServer assembly.
@@ -181,8 +182,11 @@
 - `toolang.state.schemas` owns caller-facing capability protocol types;
   its schema types construct themselves from prepared capability state;
   `toolang.state.types` owns capability-state vocabulary.
-- `toolang.execution` owns run binding, execution trace, durable run truth,
-  response projection, execution storage, and agent-specific built-in tools.
+- `toolang.execution` owns `PolicyCommand`, policy parsing and resolution, run
+  binding, execution trace, durable run truth, response projection, execution
+  storage, and agent-specific built-in tools. `toolang.execution.calls`
+  composes the independently parsed policy prefix and `RunnableInput`, then
+  resolves them against current snapshots into `RunSpec`.
 - `RunExecutor` owns run acceptance, control, and execution. It receives the
   process-owned `RunStore` and `IdIssuer`, constructs its mandatory internal
   run-event projector, and may receive one optional `RunTracer` per `start()`,
@@ -196,25 +200,25 @@
   and bounded diagnostics. Durable records, events, storage, inspection,
   schemas, and thread management remain at the `toolang.execution` package
   level.
-- `RunSpec` carries the captured `AgentSetup` and `AgentState`, an optional
-  caller-provided `AgentCeiling` restriction, existing thread id, unique runnable name,
-  canonical primary `Percept` input, optional singular model choice, and
-  optional runnable `args`. `AgentSetup` and `AgentState` remain complete
-  snapshots; callers never replace them with ceiling-filtered copies. Runnable
-  declarations call their formal arguments `params`; runtime calls provide
-  `args`. After runnable resolution, the executor uses language-owned input
-  coercion to initialize typed `_` while preserving the original `Percept` in
-  the start control. Run and request identities are `start()` arguments rather
-  than executable input.
-- `AgentSetup.limits` is the captured default `RunLimits` for new runs;
-  `RunExecutor.start(..., limits=...)` may override it for one root run tree.
-  Agic model/tool call limits reset per agic, while token, cost, and time
-  limits span the recursive tree. Only the root start control persists the
-  effective limits.
+- `RunSpec` carries the captured `AgentSetup` and `AgentState`, existing thread
+  id, effective `RunBindings` and `RunLimits`, zero or more caller-provided
+  `AgentCeiling` restrictions, canonical primary `Percept`, and optional named
+  inputs. `AgentSetup` and `AgentState` remain complete snapshots; callers
+  never replace them with ceiling-filtered copies. Runnable declarations call
+  their formal arguments `params`; runtime calls provide named inputs. After
+  runnable resolution, the executor uses language-owned input coercion to
+  initialize typed `_` while preserving the original `Percept` in the start
+  control. Run and request identities are `start()` arguments rather than
+  executable input.
+- `AgentSetup.limits` is the captured default `RunLimits` for new runs. The
+  caller resolves setup, session, and run policy into `RunSpec.limits` before
+  `RunExecutor.start()`. Agic model/tool call limits reset per agic, while
+  token, cost, and time limits span the recursive tree. Only the root start
+  control persists the effective limits.
 - `AgentSetup.ceiling` stores stable model/tool/cap selector lists resolved by
   `SetupWatcher` from dynamic config and frozen process overrides. At `start()`,
-  the executor resolves it against the captured setup and state, then intersects
-  any `RunSpec.ceiling` request restriction, into a private
+  the executor resolves it against the captured setup and state, then
+  intersects every `RunSpec.ceilings` session or run restriction into a private
   `_ResolvedAgentCeiling`, the absolute limit for one root run tree. Every flow
   invocation resets its private `_RunCeiling` from `_ResolvedAgentCeiling`, while each
   agic applies its directives to the nearest flow ceiling or directly to
@@ -289,10 +293,11 @@
   `AgentLayout`. Catalog mutation remains outside it: `CapsManager` groups
   root/home authoring and wiring, while `JobsManager` owns home job authoring.
 - `toolang.cli` owns CLI orchestration, command-specific environment
-  resolution, and process-level Web and logging call sites. `SetupWatcher` owns
-  the root-scoped setup environment snapshot. Immutable root and home config
-  layers are carried by `AgentState`; plugin packages own pure parsing of their
-  explicit config sections.
+  resolution, terminal `QuickCommand` and `ChatInput` classification, and
+  process-level Web and logging call sites. `SetupWatcher` owns the root-scoped
+  setup environment snapshot. Immutable root and home config layers are
+  carried by `AgentState`; plugin packages own pure parsing of their explicit
+  config sections.
 
 
 ## Agent Identity

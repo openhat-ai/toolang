@@ -11,7 +11,41 @@ from toolang.base.types.message import (
     TextPart,
 )
 from toolang.lang.ast import Field, Span, StructDecl
-from toolang.lang.input import coerce_input, coerce_output, perceive_input
+from toolang.lang.input import (
+    RunnableInput,
+    coerce_input,
+    coerce_output,
+    parse_input,
+    perceive_input,
+)
+
+
+def test_parse_input_preserves_primary_and_validates_named_sources() -> None:
+    assert parse_input(
+        "  Review this.\n",
+        named=(("focus", "security"), ("count", "2")),
+    ) == RunnableInput(
+        primary="  Review this.\n",
+        named=(("focus", "security"), ("count", "2")),
+    )
+    assert parse_input(" \t\n") == RunnableInput()
+
+
+@pytest.mark.parametrize(
+    ("source", "named", "message"),
+    [
+        (":model literal", (), "escape a leading colon"),
+        (None, (("1focus", "value"),), "canonical name"),
+        (None, (("focus", "one"), ("focus", "two")), "duplicate"),
+    ],
+)
+def test_parse_input_rejects_invalid_sources(
+    source: str | None,
+    named: tuple[tuple[str, str], ...],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        parse_input(source, named=named)
 
 
 def test_plain_input_is_one_text_part_without_rendering_unknown_tags() -> None:

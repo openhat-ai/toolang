@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 import threading
 from types import SimpleNamespace
@@ -18,26 +19,26 @@ from toolang.base.types.message import (
 from toolang.cli.toolang.commands.chat import (
     blocks,
     events,
-    local,
     rendering,
     slashes,
     tui,
     widgets,
 )
+from toolang.cli.toolang.commands.chat.policy import apply_session_commands
 from toolang.cli.toolang.commands.chat.events import ChatUIEvent
-from toolang.cli.toolang.commands.chat.base import ChatResult, QueuedCall
+from toolang.cli.toolang.commands.chat.base import ChatClient, ChatResult, QueuedCall
 from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
 from toolang.cli.common.execution_progress.state import Metrics
 from toolang.execution.events import (
     PartDelta,
     RunBegin,
     RunEnd,
+    RunEvent,
     StepBegin,
     StepEnd,
 )
 from toolang.execution.records import RunInputRef, StepOutputRef
-from toolang.execution.types import StepPath
-from toolang.lang.submission import SettingCommand
+from toolang.execution.types import PolicyCommand, StepPath
 
 
 def test_chat_run_events_keep_run_stop_block_until_run_end() -> None:
@@ -1218,14 +1219,13 @@ def test_chat_default_settings_clear_explicit_model_and_runnable() -> None:
     selects = {
         "model": "openai/o3[openai]",
         "agic": "review",
-        "runnable_args": (("focus", "security"),),
     }
 
-    updated = local._apply_settings(
+    updated = apply_session_commands(
         selects,
         (
-            SettingCommand(kind="model", selector="default"),
-            SettingCommand(kind="agic", selector="default"),
+            PolicyCommand("default", "model", None),
+            PolicyCommand("default", "runnable", None),
         ),
     )
 
@@ -1301,9 +1301,13 @@ def test_chat_thread_creation_error_is_a_submission_error_in_scrollback(
 
 def test_chat_queue_captures_settings_at_submission_time() -> None:
     class SettingsClient(FakeClient):
-        def apply_settings(self, settings, selects):
+        def apply_settings(
+            self,
+            commands: tuple[PolicyCommand, ...],
+            selects: Mapping[str, object],
+        ) -> Mapping[str, object]:
             result = dict(selects)
-            result["model"] = settings[0].selector
+            result["model"] = commands[0].value
             return result
 
     app = tui.ChatTuiApp(
@@ -1751,7 +1755,7 @@ class FakeApp:
         pass
 
 
-class FakeClient:
+class FakeClient(ChatClient):
     def list_models(self) -> dict[str, object]:
         return {
             "default": "openai/gpt-5[openai]",
@@ -1772,8 +1776,12 @@ class FakeClient:
     def create_thread(self) -> str:
         return "thread_1"
 
-    def apply_settings(self, settings, selects):
-        del settings
+    def apply_settings(
+        self,
+        commands: tuple[PolicyCommand, ...],
+        selects: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        del commands
         return dict(selects)
 
     def get_result(
@@ -1788,11 +1796,27 @@ class FakeClient:
             output=(TextPart("durable result"),),
         )
 
-    def start_run(self, *args: object, **kwargs: object) -> None:
-        del args, kwargs
+    def start_run(
+        self,
+        thread_id: str,
+        message: str,
+        selects: Mapping[str, object],
+        on_event: Callable[[RunEvent], None],
+        on_error: Callable[[str], None],
+    ) -> None:
+        del thread_id, message, selects, on_event, on_error
 
-    def stop_run(self, *args: object, **kwargs: object) -> None:
-        del args, kwargs
+    def stop_run(
+        self,
+        run_id: str,
+        on_error: Callable[[str], None],
+    ) -> None:
+        del run_id, on_error
 
-    def steer_run(self, *args: object, **kwargs: object) -> None:
-        del args, kwargs
+    def steer_run(
+        self,
+        run_id: str,
+        message: str,
+        on_error: Callable[[str], None],
+    ) -> None:
+        del run_id, message, on_error

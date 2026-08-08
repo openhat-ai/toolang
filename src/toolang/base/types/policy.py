@@ -22,7 +22,7 @@ class AgentCeiling:
 
 @dataclass(frozen=True, slots=True)
 class RunBindings:
-    """Default model and runnable references for new root runs."""
+    """Model and runnable references bound to an execution policy."""
 
     model: str | None = None
     runnable: str | None = None

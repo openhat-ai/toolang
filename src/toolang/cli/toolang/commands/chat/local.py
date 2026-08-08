@@ -15,7 +15,7 @@ from toolang.base.types.message import Message
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer
-from toolang.execution.calls import bind_runnable_call, validate_setting_commands
+from toolang.execution.calls import parse_call, resolve_spec, validate_commands
 from toolang.execution.executor import RunExecutor
 from toolang.execution.runnables import runnable_binding_defaults
 from toolang.execution.executor.ceiling import (
@@ -24,13 +24,13 @@ from toolang.execution.executor.ceiling import (
 )
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import PolicyCommand, ThreadPrefix
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.submission import Arguments, SettingCommand, parse_runnable_call
 from toolang.setup import SetupWatcher
 from toolang.state.state import AgentState
 from toolang.state.watcher import StateWatcher
 from .base import ChatResult
+from .policy import apply_session_commands, commands_from_selects
 
 
 @dataclass(slots=True)
@@ -122,6 +122,18 @@ class LocalChatSession:
                 "default": default_flow,
                 "items": [{"name": flow.name} for flow in program.flows],
             }
+        if kind == "runnable":
+            return {
+                "default": setup.bindings.runnable or f"agic:{default_agic}",
+                "items": [
+                    {"kind": "agic", "name": agic.name}
+                    for agic in program.agics
+                ]
+                + [
+                    {"kind": "flow", "name": flow.name}
+                    for flow in program.flows
+                ],
+            }
         raise ValueError(f"unknown executable kind: {kind}")
 
     def create_thread(self) -> str:
@@ -129,14 +141,14 @@ class LocalChatSession:
 
     def apply_settings(
         self,
-        settings: tuple[SettingCommand, ...],
+        commands: tuple[PolicyCommand, ...],
         selects: Mapping[str, object],
     ) -> Mapping[str, object]:
-        candidate = _apply_settings(selects, settings)
+        candidate = apply_session_commands(selects, commands)
         state = self.state_watcher.current()
         setup = self.setup_watcher.current()
-        validate_setting_commands(
-            _settings(candidate),
+        validate_commands(
+            commands_from_selects(candidate),
             setup=setup,
             state=state,
             default_runnable=_default_runnable(state),
@@ -254,19 +266,20 @@ class LocalChatSession:
     ) -> None:
         state = self.state_watcher.current()
         setup = self.setup_watcher.current()
-        call = parse_runnable_call(message)
+        commands, input = parse_call(message)
         base = (
             setup.environment.working_directory
             if setup.environment is not None
             else self.layout.home
         )
-        spec = bind_runnable_call(
-            call,
+        spec = resolve_spec(
+            commands,
+            input,
             setup=setup,
             state=state,
             thread=thread_id,
             default_runnable=_default_runnable(state),
-            settings=_settings(selects),
+            session_commands=commands_from_selects(selects),
             include=lambda reference: resolve_file_include(reference, base=base),
         )
         handle = self.executor.start(
@@ -317,65 +330,6 @@ def _close_event_loop(loop: asyncio.AbstractEventLoop) -> None:
 
 def _default_runnable(state: AgentState) -> str:
     return "chat" if state.program.find_agic("chat") is not None else "default"
-
-
-def _settings(selects: Mapping[str, object]) -> tuple[SettingCommand, ...]:
-    result: list[SettingCommand] = []
-    model = _text(selects.get("model"))
-    if model is not None:
-        result.append(SettingCommand(kind="model", selector=model))
-    for kind in ("agic", "flow"):
-        selector = _text(selects.get(kind))
-        if selector is None:
-            continue
-        args = selects.get("runnable_args")
-        result.append(
-            SettingCommand(
-                kind=kind,
-                selector=selector,
-                args=_raw_args(args),
-            )
-        )
-    return tuple(result)
-
-
-def _raw_args(value: object) -> Arguments:
-    if not isinstance(value, list | tuple):
-        return ()
-    result: list[tuple[str, str]] = []
-    for item in value:
-        if isinstance(item, list | tuple) and len(item) == 2:
-            result.append((str(item[0]), str(item[1])))
-    return tuple(result)
-
-
-def _apply_settings(
-    selects: Mapping[str, object],
-    settings: tuple[SettingCommand, ...],
-) -> dict[str, object]:
-    result = dict(selects)
-    for command in settings:
-        if command.kind == "model":
-            if command.selector == "default":
-                result.pop("model", None)
-            else:
-                result["model"] = command.selector
-            continue
-        result.pop("agic", None)
-        result.pop("flow", None)
-        result.pop("runnable_args", None)
-        if command.kind == "agic" and command.selector == "default":
-            continue
-        result[command.kind] = command.selector
-        if command.args:
-            result["runnable_args"] = command.args
-    return result
-
-
-def _text(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    return value.strip() or None
 
 
 def _error_message(exc: Exception) -> str:
