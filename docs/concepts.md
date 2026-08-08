@@ -187,13 +187,16 @@ Toolang-owned run ids may also use one dedicated short generated id family. See
 ## Resource Ceilings
 
 Runtime resources such as models, tools, and caps are selected through ordered
-sets. Config, environment, and CLI inputs contribute selector-list allow lists
-to one immutable `CeilingSpec`. The spec remains stable for the lifetime of its
-server, chat session, or script invocation.
+sets. `SetupWatcher` rebuilds an immutable `AgentSetup.ceiling` from root and
+agent `[allow]` config on every refresh, then applies field-level environment
+and CLI overrides captured at process startup. Each completed setup snapshot is
+stable; the next root run observes the latest valid snapshot.
 
-At root-run start, the executor resolves `CeilingSpec` against the captured
-`AgentSetup` and `AgentState`. The resulting agent ceiling is the absolute
-resource limit for that recursive run tree.
+At root-run start, the executor resolves `AgentSetup.ceiling` against the
+captured `AgentSetup` and `AgentState`, then intersects any request-level
+`RunSpec.ceiling` restriction. The resulting private ceiling is the absolute
+resource limit for that recursive run tree. Request restrictions can narrow
+the setup ceiling but cannot expand it.
 
 Flow and agic directives compute narrower run ceilings:
 
@@ -217,9 +220,13 @@ models. `=` is a keep-only filter, not a traditional assignment.
 selection. Model/tool call limits apply to each agic invocation; token, USD
 cost, and time limits apply to the complete recursive root run tree. The
 captured `AgentSetup` supplies defaults and one start operation may override
-them without changing the setup snapshot. Defaults resolve from root config,
-agent-home config, and an optional AgentServer override; a specific run is the
-highest-precedence layer.
+them without changing the setup snapshot. Defaults resolve from root `[limit]`,
+agent `[limit]`, frozen environment/CLI fields, and finally request fields.
+
+`RunBindings` provides optional default `model` and `runnable` values for new
+runs. It uses the same dynamic setup pipeline through `[default]`. A session or
+canonical request selection overrides setup bindings, and authored input
+overrides both.
 
 
 ## Step

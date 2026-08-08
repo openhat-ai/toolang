@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import logging
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,6 +12,7 @@ import pytest
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.config import ModelProviderConfig
 from toolang.setup import AgentSetup, SetupWatcher
@@ -69,6 +71,11 @@ def _watcher(
         watcher_module,
         "load_setup_config",
         lambda _root: {},
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "load_agent_config",
+        lambda _layout: {},
     )
     monkeypatch.setattr(
         watcher_module,
@@ -278,6 +285,145 @@ def test_setup_watcher_rebuilds_snapshot_when_envs_change(
     current = asyncio.run(watcher.refresh())
 
     assert current.envs == {"TEST_API_KEY": "second"}
+
+
+def test_setup_watcher_rebuilds_dynamic_policy_with_frozen_overrides(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider((_model("one"),))
+    watcher = _watcher(
+        monkeypatch,
+        tmp_path,
+        provider,
+        {"TEST_API_KEY": "secret"},
+    )
+    agent_config: dict[str, object] = {
+        "allow": {"models": ["test/one"], "tools": ["shell/*"]},
+        "default": {"model": "test/one"},
+        "limit": {"tokens": 100},
+    }
+    monkeypatch.setattr(
+        watcher_module,
+        "load_agent_config",
+        lambda _layout: agent_config,
+    )
+    watcher = SetupWatcher(
+        watcher.layout,
+        ceiling_overrides={"tools": ()},
+        binding_overrides={"runnable": "agic:chat"},
+        limit_overrides={"time": 60},
+    )
+
+    first = asyncio.run(watcher.refresh())
+    agent_config["allow"] = {"models": []}
+    agent_config["default"] = {"model": "none"}
+    agent_config["limit"] = {"tokens": 200}
+    second = asyncio.run(watcher.refresh())
+
+    assert first.ceiling == AgentCeiling(models=("test/one",), tools=())
+    assert first.bindings == RunBindings(
+        model="test/one",
+        runnable="agic:chat",
+    )
+    assert first.limits == RunLimits(tokens=100, time=60)
+    assert second.ceiling == AgentCeiling(models=(), tools=())
+    assert second.bindings == RunBindings(runnable="agic:chat")
+    assert second.limits == RunLimits(tokens=200, time=60)
+
+
+def test_setup_watcher_failed_refresh_keeps_last_valid_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider((_model("one"),))
+    watcher = _watcher(
+        monkeypatch,
+        tmp_path,
+        provider,
+        {"TEST_API_KEY": "secret"},
+    )
+    config: dict[str, object] = {"limit": {"tokens": 100}}
+    monkeypatch.setattr(
+        watcher_module,
+        "load_agent_config",
+        lambda _layout: config,
+    )
+    valid = asyncio.run(watcher.refresh())
+    config["limit"] = {"tokens": -1}
+
+    with pytest.raises(ValueError, match="non-negative"):
+        asyncio.run(watcher.refresh())
+
+    assert watcher.current() is valid
+
+
+def test_setup_watcher_initial_invalid_policy_is_not_published(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    watcher = _watcher(
+        monkeypatch,
+        tmp_path,
+        _Provider((_model("one"),)),
+        {"TEST_API_KEY": "secret"},
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "load_agent_config",
+        lambda _layout: {"allow": {"models": "test/one"}},
+    )
+
+    with pytest.raises(TypeError, match="must be an array"):
+        asyncio.run(watcher.refresh())
+    with pytest.raises(RuntimeError, match="has not been refreshed"):
+        watcher.current()
+
+
+def test_setup_watcher_updates_reports_failure_and_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    watcher = _watcher(
+        monkeypatch,
+        tmp_path,
+        _Provider((_model("one"),)),
+        {"TEST_API_KEY": "secret"},
+    )
+    initial = asyncio.run(watcher.refresh())
+    recovered = replace(
+        initial,
+        bindings=RunBindings(model="test/one"),
+    )
+    refreshes = 0
+
+    async def refresh(*, force: bool = False) -> AgentSetup:
+        nonlocal refreshes
+        del force
+        refreshes += 1
+        if refreshes == 1:
+            raise ValueError("invalid dynamic setup")
+        watcher._setup = recovered
+        return recovered
+
+    monkeypatch.setattr(watcher, "refresh", refresh)
+
+    async def observe() -> AgentSetup:
+        stop = asyncio.Event()
+        updates = watcher.updates(stop_signal=stop, interval_ms=1)
+        try:
+            return await asyncio.wait_for(anext(updates), timeout=1)
+        finally:
+            stop.set()
+            await updates.aclose()
+
+    with caplog.at_level(logging.ERROR, logger=watcher_module.__name__):
+        observed = asyncio.run(observe())
+
+    assert observed is recovered
+    assert watcher.current() is recovered
+    assert "setup.refresh_failed agent=alice" in caplog.text
 
 
 def test_setup_watcher_publishes_changed_snapshot(

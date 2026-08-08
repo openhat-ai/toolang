@@ -25,7 +25,7 @@ from toolang.execution.events import (
     ThreadEvent,
     ThreadListener,
 )
-from toolang.execution.executor import CeilingSpec, RunExecutor, RunSpec
+from toolang.execution.executor import AgentCeiling, RunExecutor, RunSpec
 from toolang.execution.executor.ceiling import resolve_agent_ceiling
 from toolang.execution.executor.common import BoundRun, Local
 from toolang.execution.executor.executor import _Execution
@@ -303,7 +303,7 @@ def test_run_executor_rejects_invalid_ceiling_before_acceptance(
                     state=_state(flow),
                     thread="term_test",
                     runnable=flow.name,
-                    ceiling=CeilingSpec(tools=("missing/*",)),
+                    ceiling=AgentCeiling(tools=("missing/*",)),
                 )
             )
 
@@ -689,7 +689,7 @@ def test_parallel_children_preserve_input_and_output_types(
         model=None,
         state=state,
         setup=setup,
-        agent_ceiling=resolve_agent_ceiling(setup, state, CeilingSpec()),
+        agent_ceiling=resolve_agent_ceiling(setup, state, AgentCeiling()),
         created_at="2026-01-01T00:00:00Z",
     )
 
@@ -745,7 +745,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
         model=None,
         state=state,
         setup=setup,
-        agent_ceiling=resolve_agent_ceiling(setup, state, CeilingSpec()),
+        agent_ceiling=resolve_agent_ceiling(setup, state, AgentCeiling()),
         created_at="2026-01-01T00:00:00Z",
     )
 

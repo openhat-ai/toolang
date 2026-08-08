@@ -16,27 +16,13 @@ def chat_command(
             metavar="THREAD",
         ),
     ] = None,
-    models: Annotated[
+    allows: Annotated[
         list[str] | None,
-        typer.Option("--models", help="Limit available models. Pass CSV or repeat."),
+        typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
     ] = None,
-    model: Annotated[
-        str | None,
-        typer.Option("--model", help="Select the initial model for new runs."),
-    ] = None,
-    tools: Annotated[
+    defaults: Annotated[
         list[str] | None,
-        typer.Option("--tools", help="Allow selected tools. Pass CSV or repeat."),
-    ] = None,
-    caps: Annotated[
-        list[str] | None,
-        typer.Option("--caps", help="Allow selected caps. Pass CSV or repeat."),
-    ] = None,
-    agic: Annotated[
-        str | None, typer.Option("--agic", help="Use an agic for new runs.")
-    ] = None,
-    flow: Annotated[
-        str | None, typer.Option("--flow", help="Use a flow for new runs.")
+        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
     ] = None,
     sandbox: Annotated[
         str | None,
@@ -45,11 +31,11 @@ def chat_command(
             help="Execute the session in this sandbox.",
         ),
     ] = None,
-    limit: Annotated[
+    limits: Annotated[
         list[str] | None,
         typer.Option(
             "--limit",
-            help="Override run limits as field=value pairs. Pass CSV or repeat.",
+            help="Set FIELD=VALUE. Repeat for another field.",
         ),
     ] = None,
 ) -> None:
@@ -58,12 +44,8 @@ def chat_command(
     run(
         ctx,
         thread=thread,
-        models=models,
-        model=model,
-        tools=tools,
-        caps=caps,
-        agic=agic,
-        flow=flow,
+        allows=allows,
+        defaults=defaults,
         sandbox=sandbox,
-        limit=limit,
+        limits=limits,
     )

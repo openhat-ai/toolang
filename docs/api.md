@@ -109,8 +109,8 @@ toolang alice chat --sandbox docker
 toolang alice threads
 toolang alice runs --thread term_3nprht9x
 toolang alice inspect run_ppkp9e94
-toolang alice retry run_ppkp9e94 --limit tokens=200000,time=900
-toolang alice rerun run_ppkp9e94 --model openai/gpt-5
+toolang alice retry run_ppkp9e94 --limit tokens=200000 --limit time=900
+toolang alice rerun run_ppkp9e94 --default model=openai/gpt-5
 toolang alice steer run_ppkp9e94 "Use the smaller patch"
 toolang alice cancel term_3nprht9x
 toolang alice rewind run_ppkp9e94
@@ -222,11 +222,10 @@ Behavior:
 - progress messages are written to stderr only when stderr is a TTY
 - `-q` or `--quiet` suppresses progress messages
 - `-v` or `--verbose` shows execution boundaries even when stderr is not a TTY
-- `--model SELECTOR` chooses one model for the run
-- `--limit FIELD=VALUE,...` overrides run limits; it may be repeated
-- `--models SELECTOR-LIST` defines the model allow list for the script invocation
-- `--tools SELECTOR-LIST` and `--caps SELECTOR-LIST` set the remaining
-  `CeilingSpec` selector lists
+- `--default model=SELECTOR` supplies the invocation's setup model binding
+- `--limit FIELD=VALUE` overrides one run-limit field; it may be repeated
+- `--allow DOMAIN=SELECTORS` sets model, tool, cap, or cap-kind allow fields and
+  may be repeated
 - execution happens directly in the current CLI process; script run does not
   currently accept `--sandbox`
 - `PY_LOG=toolang.execution=info toolang a.too summarize ...` writes runtime logs
@@ -239,8 +238,8 @@ Behavior:
 - a runnable missing a required named argument or required primary input shows
   its dynamic help and does not create a run; omitted input is first read from
   stdin when available
-- script run reads the complete setup snapshot and resolves effective tools
-  inside the executor from `CeilingSpec`, captured snapshots, and runnable
+- script run reads the complete setup snapshot and resolves effective resources
+  inside the executor from `AgentSetup.ceiling`, captured state, and runnable
   directives
 - `NAME=VALUE` supplies one named argument and is coerced using its declared
   parameter type
@@ -338,15 +337,25 @@ AgentServer process entrypoint. The hosting implementation launches that
 entrypoint locally, in Docker, or in another environment; the server and
 executor do not branch on hosting.
 
-Both commands accept repeatable `--limit FIELD=VALUE,...` options. These values
-become AgentServer defaults; a more specific script, chat, retry, rerun, or HTTP
-run override may replace them.
+Both commands accept repeatable `--allow DOMAIN=SELECTORS`,
+`--default FIELD=VALUE`, and `--limit FIELD=VALUE` options. The CLI parses these
+with `TOOLANG_ALLOW_*`, `TOOLANG_DEFAULT_*`, and `TOOLANG_LIMIT_*` into frozen
+field overrides passed to `SetupWatcher`.
 
-Run-limit defaults use the following TOML shape in root and agent-home
-`config.toml` files:
+Setup policy uses the following TOML shape in root and agent-home `config.toml`
+files:
 
 ```toml
-[run.limits]
+[allow]
+models = ["gateway/*"]
+tools = ["shell/*"]
+skills = ["reviewer"]
+
+[default]
+model = "gateway/chat"
+runnable = "agic:chat"
+
+[limit]
 agic_model_calls = 200
 agic_tool_calls = "none"
 tokens = 200000
@@ -354,10 +363,17 @@ cost = "2.50"
 time = 900
 ```
 
-Fields are non-negative. Quoted `"none"` disables a config or CLI limit. The
-precedence order is built-in defaults, root config, agent-home config,
-AgentServer `--limit`, then the specific execution override. `--limit` is
-singular because each occurrence contributes fields to one effective value.
+Limit fields are non-negative. Quoted `"none"` disables a limit. Empty allow
+arrays deny all resources in that field; `"none"` clears a default binding.
+Text CLI/environment values use `none` for an empty allow set, a cleared
+binding, or an unlimited limit, according to the target field. `all` removes
+an allow restriction. Empty text is always invalid.
+
+The precedence order is built-in values, root config, agent-home config,
+runtime environment, CLI, then any request-level binding or limit fields.
+Config is re-read dynamically; environment and CLI mappings remain fixed for
+the process lifetime. Each `--default` or `--limit` field may occur once;
+repeated `--allow` values for the same domain accumulate within the CLI layer.
 
 When `--sandbox` is omitted, resident run/start commands use the effective
 root/home `[sandbox]` binding, falling back to `none` when no binding exists.
@@ -397,9 +413,9 @@ ephemeral port.
 - profile details such as streaming, tool support, context window, output limits, and price metadata
 - a summary count after the table
 
-Pass `--models` to preview selector filtering, for example
-`toolang model list --models "[remote]"` or
-`toolang model list --models "openai/*[openrouter]"`.
+Pass `--filter` to preview selector filtering, for example
+`toolang model list --filter "[remote]"` or
+`toolang model list --filter "openai/*[openrouter]"`.
 
 `toolang model providers` shows provider and alias config health,
 including missing key environment variables and endpoints. `toolang model
@@ -446,7 +462,8 @@ Core endpoints are grouped as:
 Non-interactive execution uses `POST /api/v1/runs/stream`. It accepts an agic
 or flow's unique `runnable` name, primary input, optional model, and optional
 declared arguments, and returns the canonical trace event stream for HTTP
-clients. CLI script runs and TUI execution do not consume this endpoint.
+clients. An omitted model uses the current `AgentSetup.bindings.model`. CLI
+script runs and TUI execution do not consume this endpoint.
 
 
 ## Agent Endpoints
@@ -470,8 +487,8 @@ clients. CLI script runs and TUI execution do not consume this endpoint.
 | `tokens` | Aggregated input, output, and total token usage |
 
 `GET /api/v1/models` returns the selectable model routes inside the server's
-current `CeilingSpec`. Runnable `models` directives are applied when a run
-starts, not by this inspection endpoint. The response includes:
+current `AgentSetup.ceiling`. Runnable `models` directives are applied when a
+run starts, not by this inspection endpoint. The response includes:
 
 - `default`
 - `items`
@@ -609,8 +626,9 @@ For multipart payload details:
 WebUI that needs another protocol adapts these events client-side; the API does
 not maintain a second chat event vocabulary.
 
-The CLI command for interactive chat is
-`toolang <agent> chat [thread] [--sandbox <selector>] [--limit FIELD=VALUE,...]`.
+The CLI command for interactive chat is `toolang <agent> chat [thread]
+[--sandbox <selector>] [--allow DOMAIN=SELECTORS] [--default FIELD=VALUE]
+[--limit FIELD=VALUE]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
 a thread id, it continues that thread. The TUI runs in its own process, assembles
 the same core objects, calls `RunExecutor` directly, and observes native
@@ -808,13 +826,13 @@ these thread operations starts a follow-up run.
 - `request_id`: optional globally unique caller-supplied control identifier
 - `runnable`: required unique agic or flow name
 - `input`: canonical percept-part array
-- `model`: optional model selector
+- `model`: optional model selector; omission uses the current setup binding
 - `args`: optional runnable argument mapping
 - `limits`: optional partial run-limit mapping
 
 HTTP limit fields are `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`,
-and `time`. Omitted fields inherit the server default; an explicit JSON `null`
-disables that field for the run.
+and `time`. Omitted fields inherit the latest valid setup snapshot; an explicit
+JSON `null` disables that field for the run.
 
 Clients create a thread explicitly with `POST /api/v1/threads` before the first
 run. The thread request accepts `web`, `term`, `tui`, `chat`, or `script` as its

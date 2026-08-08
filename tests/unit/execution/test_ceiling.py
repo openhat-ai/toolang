@@ -8,9 +8,11 @@ from typing import Any, cast
 import pytest
 
 from toolang.base.types.tool import ToolContext, ToolDefinition
+from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor import CeilingSpec
+from toolang.execution.executor import AgentCeiling
 from toolang.execution.executor.ceiling import (
+    restrict_agent_ceiling,
     resolve_agent_ceiling,
     resolve_run_ceiling,
 )
@@ -91,17 +93,17 @@ def test_agent_ceiling_never_filters_setup_snapshot(tmp_path: Path) -> None:
     alpha = resolve_agent_ceiling(
         setup,
         state,
-        CeilingSpec(tools=("alpha/*",)),
+        AgentCeiling(tools=("alpha/*",)),
     )
     beta = resolve_agent_ceiling(
         setup,
         state,
-        CeilingSpec(tools=("beta/*",)),
+        AgentCeiling(tools=("beta/*",)),
     )
     no_models = resolve_agent_ceiling(
         setup,
         state,
-        CeilingSpec(models=()),
+        AgentCeiling(models=()),
     )
 
     assert tuple(setup.tools) == ("alpha__one", "beta__two")
@@ -113,8 +115,8 @@ def test_agent_ceiling_never_filters_setup_snapshot(tmp_path: Path) -> None:
         cast(Any, alpha.tools)["beta__two"] = setup.tools["beta__two"]
 
 
-def test_ceiling_spec_normalizes_stable_selector_lists() -> None:
-    spec = CeilingSpec(
+def test_agent_ceiling_normalizes_stable_selector_lists() -> None:
+    spec = AgentCeiling(
         models=(" openai/gpt-5 ", "openai/gpt-5"),
         tools=None,
         caps=(),
@@ -125,6 +127,25 @@ def test_ceiling_spec_normalizes_stable_selector_lists() -> None:
     assert spec.caps == ()
 
 
+def test_run_restriction_cannot_expand_an_empty_agent_ceiling(
+    tmp_path: Path,
+) -> None:
+    setup, state, _selection = _snapshots(tmp_path)
+    agent = resolve_agent_ceiling(
+        setup,
+        state,
+        AgentCeiling(models=()),
+    )
+
+    with pytest.raises(ToolangError, match="no allowed models"):
+        restrict_agent_ceiling(
+            setup,
+            state,
+            agent,
+            AgentCeiling(models=("test/scripted",)),
+        )
+
+
 def test_flow_resets_ceiling_while_agics_use_current_flow(
     tmp_path: Path,
 ) -> None:
@@ -132,7 +153,7 @@ def test_flow_resets_ceiling_while_agics_use_current_flow(
     agent = resolve_agent_ceiling(
         setup,
         state,
-        CeilingSpec(),
+        AgentCeiling(),
     )
     outer = resolve_run_ceiling(
         selection,

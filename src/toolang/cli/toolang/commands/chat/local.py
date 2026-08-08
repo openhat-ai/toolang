@@ -3,23 +3,24 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass
+from decimal import Decimal
 import threading
 from typing import Any
 from uuid import uuid4
 
 from toolang.base.types.message import Message
-from toolang.base.types.run import RunLimits
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.calls import bind_runnable_call, validate_setting_commands
-from toolang.execution.executor import CeilingSpec, RunExecutor
+from toolang.execution.executor import RunExecutor
+from toolang.execution.runnables import runnable_binding_defaults
 from toolang.execution.executor.ceiling import (
     agent_model_targets,
-    validate_ceiling_spec,
+    validate_agent_ceiling,
 )
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
@@ -47,23 +48,21 @@ class LocalChatSession:
         self,
         layout: AgentLayout,
         *,
-        models: Sequence[str] = (),
-        tools: Sequence[str] | None = None,
-        caps: Sequence[str] = (),
-        limits: RunLimits | None = None,
+        ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+        binding_overrides: Mapping[str, str | None] | None = None,
+        limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     ) -> None:
         self.layout = layout
-        self.ceiling = CeilingSpec(
-            models=tuple(models) or None,
-            tools=tuple(tools) if tools is not None else None,
-            caps=tuple(caps) or None,
-        )
-        self.limits = limits
         self.store = RunStore(layout.run_store)
         self.ids = IdIssuer(layout.id_state)
         self.threads = ThreadManager(self.store, self.ids)
         self.executor = RunExecutor(self.store, self.ids)
-        self.setup_watcher = SetupWatcher(layout)
+        self.setup_watcher = SetupWatcher(
+            layout,
+            ceiling_overrides=ceiling_overrides,
+            binding_overrides=binding_overrides,
+            limit_overrides=limit_overrides,
+        )
         self.state_watcher = StateWatcher(layout)
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
@@ -82,7 +81,8 @@ class LocalChatSession:
     def list_models(self) -> Mapping[str, Any]:
         setup = self.setup_watcher.current()
         state = self.state_watcher.current()
-        default, targets = agent_model_targets(setup, state, self.ceiling)
+        default, targets = agent_model_targets(setup, state, setup.ceiling)
+        default = setup.bindings.model or default
         return {
             "default": default,
             "items": [
@@ -101,10 +101,16 @@ class LocalChatSession:
         }
 
     def list_executables(self, kind: str) -> Mapping[str, Any]:
+        setup = self.setup_watcher.current()
         program = self.state_watcher.current().program
+        default_agic, default_flow = runnable_binding_defaults(
+            program,
+            setup.bindings.runnable,
+            fallback_agic="chat",
+        )
         if kind == "agic":
             names = [agic.name for agic in program.agics]
-            default = "chat" if program.find_agic("chat") is not None else "default"
+            default = default_agic
             if "default" not in names:
                 names.append("default")
             return {
@@ -113,7 +119,7 @@ class LocalChatSession:
             }
         if kind == "flow":
             return {
-                "default": None,
+                "default": default_flow,
                 "items": [{"name": flow.name} for flow in program.flows],
             }
         raise ValueError(f"unknown executable kind: {kind}")
@@ -133,7 +139,6 @@ class LocalChatSession:
             _settings(candidate),
             setup=setup,
             state=state,
-            ceiling=self.ceiling,
             default_runnable=_default_runnable(state),
         )
         return candidate
@@ -226,7 +231,7 @@ class LocalChatSession:
     async def _initialize(self) -> None:
         state = await self.state_watcher.refresh()
         setup = await self.setup_watcher.refresh()
-        validate_ceiling_spec(setup, state, self.ceiling)
+        validate_agent_ceiling(setup, state, setup.ceiling)
         if self._stop_signal is None:
             raise RuntimeError("local chat event loop was not initialized")
         self._watch_tasks = (
@@ -259,7 +264,6 @@ class LocalChatSession:
             call,
             setup=setup,
             state=state,
-            ceiling=self.ceiling,
             thread=thread_id,
             default_runnable=_default_runnable(state),
             settings=_settings(selects),
@@ -267,7 +271,6 @@ class LocalChatSession:
         )
         handle = self.executor.start(
             spec,
-            limits=self.limits,
             request_id=f"term_{uuid4().hex}",
             tracer=_CallbackTracer(on_event),
         )

@@ -7,7 +7,8 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from toolang.base.types.message import Message, TextPart
-from toolang.base.types.run import ModelUsage, RunLimits
+from toolang.base.types.policy import RunLimits
+from toolang.base.types.run import ModelUsage
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import AgicDecl

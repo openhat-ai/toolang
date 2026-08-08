@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from decimal import Decimal
+
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.base.types.run import RunLimits
 from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
 from toolang.execution.store import RunStore
@@ -31,7 +33,9 @@ class AgentCore:
         self,
         layout: AgentLayout,
         *,
-        limits: RunLimits | None = None,
+        ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+        binding_overrides: Mapping[str, str | None] | None = None,
+        limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     ) -> None:
         self.layout = layout
         self.store = RunStore(layout.run_store)
@@ -39,7 +43,12 @@ class AgentCore:
         self.executor = RunExecutor(self.store, self.ids)
         self.threads = ThreadManager(self.store, self.ids)
         self.history = RunHistory(self.store)
-        self.setup = SetupWatcher(layout, limits=limits)
+        self.setup = SetupWatcher(
+            layout,
+            ceiling_overrides=ceiling_overrides,
+            binding_overrides=binding_overrides,
+            limit_overrides=limit_overrides,
+        )
         self.state = StateWatcher(layout)
 
     async def close(self) -> None:

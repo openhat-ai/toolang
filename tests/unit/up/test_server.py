@@ -3,9 +3,12 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
-from toolang.base.types.run import RunLimits
+from toolang.cli.common.policy import (
+    resolve_binding_overrides,
+    resolve_ceiling_overrides,
+    resolve_limit_overrides,
+)
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor import CeilingSpec
 from toolang.up.server import build_serve_argv, resolve_serve
 
 
@@ -16,15 +19,18 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
         host="127.0.0.1",
         endpoint_host="localhost",
         port=8123,
-        models=("openai/gpt-5",),
-        tools=("shell",),
-        caps=("skill:search",),
-        limits=RunLimits(
-            agic_model_calls=25,
-            tokens=1000,
-            cost=Decimal("1.5"),
-            time=60,
-        ),
+        ceiling_overrides={
+            "models": ("openai/gpt-5",),
+            "tools": (),
+            "caps": None,
+        },
+        binding_overrides={"model": "openai/gpt-5", "runnable": None},
+        limit_overrides={
+            "agic_model_calls": 25,
+            "tokens": 1000,
+            "cost": Decimal("1.5"),
+            "time": None,
+        },
         log_spec="toolang.up=debug",
     )
 
@@ -34,11 +40,11 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
         host="0.0.0.0",
     )
 
-    assert spec.ceiling == CeilingSpec(
-        models=("openai/gpt-5",),
-        tools=("shell",),
-        caps=("skill:search",),
-    )
+    assert spec.ceiling_overrides == {
+        "models": ("openai/gpt-5",),
+        "tools": (),
+        "caps": None,
+    }
     assert argv[:9] == (
         "--root",
         "/root/.toolang",
@@ -52,8 +58,32 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
     )
     assert "--sandbox" not in argv
     assert "--sandbox-child" not in argv
-    limit_index = argv.index("--limit")
-    assert argv[limit_index + 1] == (
-        "agic_model_calls=25,agic_tool_calls=none,tokens=1000,cost=1.5,time=60"
+    assert _option_values(argv, "--allow") == [
+        "models=openai/gpt-5",
+        "tools=none",
+        "caps=all",
+    ]
+    assert _option_values(argv, "--default") == [
+        "model=openai/gpt-5",
+        "runnable=none",
+    ]
+    assert _option_values(argv, "--limit") == [
+        "agic_model_calls=25",
+        "tokens=1000",
+        "cost=1.5",
+        "time=none",
+    ]
+    assert resolve_ceiling_overrides({}, _option_values(argv, "--allow")) == dict(
+        spec.ceiling_overrides
+    )
+    assert resolve_binding_overrides(
+        {}, _option_values(argv, "--default")
+    ) == dict(spec.binding_overrides)
+    assert resolve_limit_overrides({}, _option_values(argv, "--limit")) == dict(
+        spec.limit_overrides
     )
     assert argv[-2:] == ("--log", "toolang.up=debug")
+
+
+def _option_values(argv: tuple[str, ...], name: str) -> list[str]:
+    return [argv[index + 1] for index, item in enumerate(argv) if item == name]

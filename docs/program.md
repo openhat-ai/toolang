@@ -432,7 +432,7 @@ Flows use the same parameters, output declaration, directives, and executable
 namespace as agics. Statement syntax, bindings, inline agics, and result shapes
 are defined in [flow-syntax.md](./flow-syntax.md).
 
-Each flow invocation resets its resource ceiling from the `_AgentCeiling`
+Each flow invocation resets its resource ceiling from the `_ResolvedAgentCeiling`
 resolved at root-run start. Its directives establish the ceiling used by agics
 executed in that flow. Nested flow calls reset again, even when the nested flow
 has no directives, so a flow's correction does not implicitly constrain

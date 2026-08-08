@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 
-from toolang.api.app import AgentCoreDep, CeilingSpecDep, LiveEventRelayDep
+from toolang.api.app import AgentCoreDep, LiveEventRelayDep
 from toolang.api.common import EventSubscription, sse_stream
 from toolang.api.conversion import parse_percept, parse_user_message
 from toolang.api.schemas import (
@@ -30,7 +30,6 @@ _StartedRunStream = tuple[RunHandle, EventSubscription]
 
 async def _start_run_stream(
     core: AgentCoreDep,
-    ceiling: CeilingSpecDep,
     live: LiveEventRelayDep,
     payload: RunCreateRequest,
 ) -> AsyncIterator[_StartedRunStream]:
@@ -41,11 +40,14 @@ async def _start_run_stream(
             RunSpec(
                 setup=setup,
                 state=core.state.current(),
-                ceiling=ceiling,
                 thread=thread_id,
                 runnable=payload.runnable,
                 input=parse_percept(payload.input),
-                model=payload.model,
+                model=(
+                    payload.model
+                    if payload.model is not None
+                    else setup.bindings.model
+                ),
                 args=payload.args,
             ),
             limits=(
@@ -197,7 +199,6 @@ def steer_run(
 )
 async def retry_run(
     core: AgentCoreDep,
-    ceiling: CeilingSpecDep,
     live: LiveEventRelayDep,
     run_id: str,
     payload: RunRetryRequest | None = None,
@@ -211,8 +212,11 @@ async def retry_run(
             setup=setup,
             state=core.state.current(),
             anchor=request.anchor,
-            ceiling=ceiling,
-            model=request.model,
+            model=(
+                request.model
+                if request.model is not None
+                else setup.bindings.model
+            ),
             limits=(
                 request.limits.to_limits(setup.limits)
                 if request.limits is not None
@@ -235,7 +239,6 @@ async def retry_run(
 )
 async def rerun_run(
     core: AgentCoreDep,
-    ceiling: CeilingSpecDep,
     live: LiveEventRelayDep,
     run_id: str,
     payload: RunRerunRequest | None = None,
@@ -248,8 +251,11 @@ async def rerun_run(
             source.id,
             setup=setup,
             state=core.state.current(),
-            ceiling=ceiling,
-            model=request.model,
+            model=(
+                request.model
+                if request.model is not None
+                else setup.bindings.model
+            ),
             limits=(
                 request.limits.to_limits(setup.limits)
                 if request.limits is not None

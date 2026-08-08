@@ -9,7 +9,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE
-from toolang.base.types.run import RunLimits
+from toolang.base.types.policy import RunLimits
 from toolang.execution.schemas import (
     RunControlInfo,
     RunDetail,

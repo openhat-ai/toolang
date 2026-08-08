@@ -23,8 +23,13 @@ from toolang.base.types.message import (
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
+from toolang.cli.common.policy import (
+    resolve_binding_overrides,
+    resolve_ceiling_overrides,
+    resolve_limit_overrides,
+)
 from toolang.execution.calls import bind_runnable_call
-from toolang.execution.executor import CeilingSpec, RunExecutor, RunHandle
+from toolang.execution.executor import RunExecutor, RunHandle
 from toolang.execution.records import RunRecord
 from toolang.execution.runnables import resolve_runnable
 from toolang.execution.store import RunStore
@@ -32,17 +37,19 @@ from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.submission import Arguments, RunnableCall, parse_runnable_call
-from toolang.plugin.models.resolution import split_model_selectors
-from toolang.plugin.tools.registry import split_tool_selectors
+from toolang.lang.submission import (
+    Arguments,
+    RunnableCall,
+    parse_runnable_call,
+)
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.state import AgentState, split_cap_selectors
+from toolang.state.state import AgentState
 from toolang.up import process as agents
 from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
+from ...common.context import load_runtime_environ
 from ...common.progress import as_progress_sink, make_cli_progress
-from ...common.limits import apply_limit_options
 from ...common.output import echo_error
 from ...common.script_progress import ConsoleRunTracer
 from ...common.version import toolang_version
@@ -171,10 +178,8 @@ def _runnable_command(
 ) -> TyperCommand:
     def callback(
         items: tuple[str, ...],
-        model: str | None,
-        models: tuple[str, ...],
-        tools: tuple[str, ...],
-        caps: tuple[str, ...],
+        allow: tuple[str, ...],
+        default: tuple[str, ...],
         limit: tuple[str, ...],
         quiet: bool,
         verbose: int,
@@ -189,14 +194,8 @@ def _runnable_command(
             runnable=runnable.name,
             call=call,
             raw_args=raw_args,
-            model=model,
-            ceiling=CeilingSpec(
-                models=tuple(dict.fromkeys(split_model_selectors(models))) or None,
-                tools=(
-                    tuple(dict.fromkeys(split_tool_selectors(tools))) if tools else None
-                ),
-                caps=tuple(dict.fromkeys(split_cap_selectors(caps))) or None,
-            ),
+            allow_options=allow,
+            default_options=default,
             limit_options=limit,
             quiet=quiet,
             verbosity=verbose,
@@ -205,38 +204,25 @@ def _runnable_command(
     help_text = runnable.doc.strip() if runnable.doc else None
     params: list[click.Parameter] = [
         TyperOption(
-            param_decls=["--model"],
-            type=str,
-            default=None,
-            help="Use this model selector for the run.",
-        ),
-        TyperOption(
-            param_decls=["--models"],
+            param_decls=["--allow"],
             type=str,
             multiple=True,
             default=(),
-            help="Limit available models. Pass CSV or repeat.",
+            help="Set DOMAIN=SELECTORS. Repeat by domain.",
         ),
         TyperOption(
-            param_decls=["--tools"],
+            param_decls=["--default"],
             type=str,
             multiple=True,
             default=(),
-            help="Limit available tools. Pass CSV or repeat.",
-        ),
-        TyperOption(
-            param_decls=["--caps"],
-            type=str,
-            multiple=True,
-            default=(),
-            help="Limit available caps. Pass CSV or repeat.",
+            help="Set FIELD=VALUE. Repeat for another field.",
         ),
         TyperOption(
             param_decls=["--limit"],
             type=str,
             multiple=True,
             default=(),
-            help="Set run limits as field=value pairs. Pass CSV or repeat.",
+            help="Set FIELD=VALUE. Repeat for another field.",
         ),
         TyperOption(
             param_decls=["--quiet", "-q"],
@@ -425,8 +411,8 @@ def _run(
     runnable: str,
     call: RunnableCall,
     raw_args: Arguments,
-    model: str | None,
-    ceiling: CeilingSpec,
+    allow_options: tuple[str, ...],
+    default_options: tuple[str, ...],
     limit_options: tuple[str, ...],
     quiet: bool,
     verbosity: int,
@@ -465,8 +451,8 @@ def _run(
                 runnable=runnable,
                 call=call,
                 raw_args=raw_args,
-                model=model,
-                ceiling=ceiling,
+                allow_options=allow_options,
+                default_options=default_options,
                 limit_options=limit_options,
                 quiet=quiet,
                 verbosity=verbosity,
@@ -527,22 +513,35 @@ async def _execute(
     runnable: str,
     call: RunnableCall,
     raw_args: Arguments,
-    model: str | None,
-    ceiling: CeilingSpec,
+    allow_options: tuple[str, ...],
+    default_options: tuple[str, ...],
     quiet: bool,
     verbosity: int,
     limit_options: tuple[str, ...] = (),
 ) -> RunRecord:
-    setup = await SetupWatcher(layout).refresh()
+    environ = load_runtime_environ(layout, base_environ=os.environ)
+    cli_bindings = resolve_binding_overrides({}, default_options)
+    if "runnable" in cli_bindings:
+        raise ValueError(
+            "--default runnable does not apply when a script runnable is explicit"
+        )
+    setup = await SetupWatcher(
+        layout,
+        ceiling_overrides=resolve_ceiling_overrides(environ, allow_options),
+        binding_overrides={
+            **resolve_binding_overrides(environ),
+            **cli_bindings,
+        },
+        limit_overrides=resolve_limit_overrides(environ, limit_options),
+    ).refresh()
     executor = RunExecutor(store, ids)
     spec = bind_runnable_call(
         call,
         setup=setup,
         state=state,
-        ceiling=ceiling,
         thread=_UNPERSISTED_THREAD,
         default_runnable=runnable,
-        default_model=model,
+        selected_runnable=runnable,
         default_raw_args=raw_args,
         include=lambda reference: resolve_file_include(
             reference,
@@ -568,11 +567,6 @@ async def _execute(
     )
     handle = executor.start(
         spec,
-        limits=(
-            apply_limit_options(setup.limits, limit_options)
-            if limit_options
-            else None
-        ),
         run_id=run_id,
         tracer=tracer,
     )

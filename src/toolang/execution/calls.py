@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from toolang.base.types.message import PerceptPart
+from toolang.base.types.policy import AgentCeiling
 from toolang.lang.ast import AgicDecl, FlowDecl
 from toolang.lang.input import coerce_input, perceive_input
 from toolang.lang.submission import (
@@ -18,10 +19,9 @@ from toolang.lang.submission import (
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 
-from .runnables import resolve_runnable
+from .runnables import parse_runnable_ref, resolve_runnable
 
 if TYPE_CHECKING:
-    from .executor.ceiling import CeilingSpec
     from .executor.executor import RunSpec
 
 IncludeResolver = Callable[[str], PerceptPart]
@@ -42,7 +42,8 @@ def bind_runnable_call(
     state: AgentState,
     thread: str,
     default_runnable: str,
-    ceiling: CeilingSpec | None = None,
+    selected_runnable: str | None = None,
+    ceiling: AgentCeiling | None = None,
     default_model: str | None = None,
     default_args: Mapping[str, object] | None = None,
     default_raw_args: Arguments = (),
@@ -52,14 +53,18 @@ def bind_runnable_call(
     """Resolve one call against explicit surface defaults and snapshots."""
 
     from .executor.executor import RunSpec
-    from .executor.ceiling import CeilingSpec
-
-    resolved_ceiling = ceiling or CeilingSpec()
+    resolved_ceiling = ceiling or AgentCeiling()
+    bound_runnable, bound_kind = parse_runnable_ref(
+        selected_runnable or setup.bindings.runnable or default_runnable
+    )
 
     selection = _resolve_selection(
         state=state,
-        default_runnable=default_runnable,
-        default_model=default_model,
+        default_runnable=bound_runnable,
+        default_runnable_kind=bound_kind,
+        default_model=(
+            default_model if default_model is not None else setup.bindings.model
+        ),
         default_args=default_args,
         default_raw_args=default_raw_args,
         settings=settings,
@@ -89,7 +94,8 @@ def validate_setting_commands(
     setup: AgentSetup,
     state: AgentState,
     default_runnable: str,
-    ceiling: CeilingSpec | None = None,
+    selected_runnable: str | None = None,
+    ceiling: AgentCeiling | None = None,
     default_model: str | None = None,
     default_args: Mapping[str, object] | None = None,
     default_raw_args: Arguments = (),
@@ -97,10 +103,16 @@ def validate_setting_commands(
 ) -> None:
     """Validate one complete prospective chat setting state atomically."""
 
+    bound_runnable, bound_kind = parse_runnable_ref(
+        selected_runnable or setup.bindings.runnable or default_runnable
+    )
     selection = _resolve_selection(
         state=state,
-        default_runnable=default_runnable,
-        default_model=default_model,
+        default_runnable=bound_runnable,
+        default_runnable_kind=bound_kind,
+        default_model=(
+            default_model if default_model is not None else setup.bindings.model
+        ),
         default_args=default_args,
         default_raw_args=default_raw_args,
         settings=settings,
@@ -108,13 +120,13 @@ def validate_setting_commands(
         include=include,
     )
     from .executor.ceiling import (
-        CeilingSpec,
+        restrict_agent_ceiling,
         resolve_agent_ceiling,
         validate_root_run_resources,
     )
-
-    resolved_ceiling = ceiling or CeilingSpec()
-    agent = resolve_agent_ceiling(setup, state, resolved_ceiling)
+    resolved_ceiling = ceiling or AgentCeiling()
+    base = resolve_agent_ceiling(setup, state, setup.ceiling)
+    agent = restrict_agent_ceiling(setup, state, base, resolved_ceiling)
     validate_root_run_resources(
         setup,
         state,
@@ -128,6 +140,7 @@ def _resolve_selection(
     *,
     state: AgentState,
     default_runnable: str,
+    default_runnable_kind: str | None,
     default_model: str | None,
     default_args: Mapping[str, object] | None,
     default_raw_args: Arguments,
@@ -136,7 +149,7 @@ def _resolve_selection(
     include: IncludeResolver | None,
 ) -> _Selection:
     runnable_name = default_runnable
-    runnable_kind: str | None = None
+    runnable_kind = default_runnable_kind
     model = default_model
     if default_args and default_raw_args:
         raise ValueError("default arguments cannot be both bound and raw")
@@ -156,7 +169,11 @@ def _resolve_selection(
             if command.kind == "agic" and command.selector == "default"
             else command.selector
         )
-        runnable_kind = None if command.selector == "default" else command.kind
+        runnable_kind = (
+            default_runnable_kind
+            if command.selector == "default"
+            else command.kind
+        )
         typed_args = (
             dict(default_args or {}) if command.selector == "default" else {}
         )
@@ -179,7 +196,11 @@ def _resolve_selection(
             if command.kind == "agic" and command.selector == "default"
             else command.selector
         )
-        runnable_kind = None if command.selector == "default" else command.kind
+        runnable_kind = (
+            default_runnable_kind
+            if command.selector == "default"
+            else command.kind
+        )
         typed_args = (
             dict(default_args or {}) if command.selector == "default" else {}
         )

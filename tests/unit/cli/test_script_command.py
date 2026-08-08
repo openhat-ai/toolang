@@ -9,7 +9,6 @@ from click.utils import strip_ansi
 
 from toolang.base.errors import ToolangError
 from toolang.cli.toolang.commands import script
-from toolang.execution.executor import CeilingSpec
 from toolang.execution.records import RunInputRef, RunRecord
 from toolang.lang.submission import RunnableCall, parse_runnable_call
 from tests.support.execution_harness import ExecutionHarness
@@ -46,18 +45,20 @@ def test_script_binds_options_arguments_and_primary_input(
         [
             str(source),
             "demo",
-            "--model",
-            "openai/gpt",
-            "--models",
-            "openai/*,deepseek/*",
-            "--models",
-            "openai/*",
-            "--tools",
-            "filesystem/*,shell/*",
-            "--caps",
-            "skill/reviewer,service/github",
+            "--default",
+            "model=openai/gpt",
+            "--allow",
+            "models=openai/*,deepseek/*",
+            "--allow",
+            "models=openai/*",
+            "--allow",
+            "tools=filesystem/*,shell/*",
+            "--allow",
+            "caps=skill/reviewer,service/github",
             "--limit",
-            "tokens=1000,cost=2.5",
+            "tokens=1000",
+            "--limit",
+            "cost=2.5",
             "--limit",
             "time=60",
             "-vv",
@@ -73,15 +74,17 @@ def test_script_binds_options_arguments_and_primary_input(
     assert result == 0
     assert captured["source_path"] == source.resolve()
     assert captured["runnable"] == "demo"
-    assert captured["model"] == "openai/gpt"
-    assert captured["ceiling"] == CeilingSpec(
-        models=("openai/*", "deepseek/*"),
-        tools=("filesystem/*", "shell/*"),
-        caps=("skill/reviewer", "service/github"),
+    assert captured["default_options"] == ("model=openai/gpt",)
+    assert captured["allow_options"] == (
+        "models=openai/*,deepseek/*",
+        "models=openai/*",
+        "tools=filesystem/*,shell/*",
+        "caps=skill/reviewer,service/github",
     )
     assert captured["verbosity"] == 2
     assert captured["limit_options"] == (
-        "tokens=1000,cost=2.5",
+        "tokens=1000",
+        "cost=2.5",
         "time=60",
     )
     assert captured["raw_args"] == (("count", "2.5"), ("enabled", "true"))
@@ -323,8 +326,8 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
                     runnable="demo",
                     call=parse_runnable_call(":agic missing\nInput"),
                     raw_args=(("count", "1"),),
-                    model=None,
-                    ceiling=CeilingSpec(),
+                    allow_options=(),
+                    default_options=(),
                     quiet=True,
                     verbosity=0,
                 )

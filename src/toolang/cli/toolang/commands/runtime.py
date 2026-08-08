@@ -11,14 +11,13 @@ from typing import Annotated, TYPE_CHECKING
 import click
 import typer
 
-from toolang.base.types.run import RunLimits
 from toolang.common.layout import AgentLayout
-from toolang.cli.common.limits import apply_limit_options
-from toolang.setup.config import load_run_limits
+from toolang.cli.common.policy import (
+    resolve_binding_overrides,
+    resolve_ceiling_overrides,
+    resolve_limit_overrides,
+)
 from toolang.up import process as agents
-from toolang.state.state import split_cap_selectors
-from toolang.plugin.models.resolution import split_model_selectors
-from toolang.plugin.tools.registry import split_tool_selectors
 from ....up.logging import (
     LoggingPlan,
     configure_logging_plan,
@@ -50,9 +49,8 @@ class RuntimeStartup:
 @dataclass(frozen=True, slots=True)
 class _RoamingFileOptions:
     inboxes: tuple[Path, ...]
-    models: tuple[str, ...]
-    tools: tuple[str, ...] | None
-    caps: tuple[str, ...]
+    allows: tuple[str, ...]
+    defaults: tuple[str, ...]
     limits: tuple[str, ...]
     host: str
     endpoint_host: str | None
@@ -89,6 +87,21 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
             agent_log_path=layout.runtime_log,
         )
         configure_logging_plan(log_plan)
+        ceiling_overrides = user_call(
+            resolve_ceiling_overrides,
+            log_plan.environ,
+            options.allows,
+        )
+        binding_overrides = user_call(
+            resolve_binding_overrides,
+            log_plan.environ,
+            options.defaults,
+        )
+        limit_overrides = user_call(
+            resolve_limit_overrides,
+            log_plan.environ,
+            options.limits,
+        )
         startup = user_call(
             asyncio.run,
             hosting.resolve_launch(
@@ -97,10 +110,9 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                 endpoint_host=options.endpoint_host,
                 port=options.port,
                 sandbox=options.sandbox,
-                models=options.models,
-                tools=options.tools,
-                caps=options.caps,
-                limits=_explicit_limits(layout, options.limits),
+                ceiling_overrides=ceiling_overrides,
+                binding_overrides=binding_overrides,
+                limit_overrides=limit_overrides,
                 file_inboxes=options.inboxes,
                 dev=options.dev,
                 log_spec=log_plan.spec,
@@ -136,9 +148,8 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
 
 def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
     inboxes: list[Path] = []
-    models: list[str] = []
-    tools: list[str] | None = None
-    caps: list[str] = []
+    allows: list[str] = []
+    defaults: list[str] = []
     limits: list[str] = []
     host = "127.0.0.1"
     endpoint_host: str | None = None
@@ -151,9 +162,8 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
         option, separator, inline = token.partition("=")
         if option in {
             "--inbox",
-            "--models",
-            "--tools",
-            "--caps",
+            "--allow",
+            "--default",
             "--limit",
             "--host",
             "--endpoint-host",
@@ -167,13 +177,10 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
             index += 1 if separator else 2
             if option == "--inbox":
                 inboxes.append(Path(value))
-            elif option == "--models":
-                models.extend(split_model_selectors((value,)))
-            elif option == "--tools":
-                tools = [] if tools is None else tools
-                tools.extend(split_tool_selectors((value,)))
-            elif option == "--caps":
-                caps.extend(split_cap_selectors((value,)))
+            elif option == "--allow":
+                allows.append(value)
+            elif option == "--default":
+                defaults.append(value)
             elif option == "--limit":
                 limits.append(value)
             elif option == "--host":
@@ -203,9 +210,8 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
         raise click.ClickException("--inbox is required")
     return _RoamingFileOptions(
         inboxes=tuple(inboxes),
-        models=tuple(dict.fromkeys(models)),
-        tools=None if tools is None else tuple(dict.fromkeys(tools)),
-        caps=tuple(dict.fromkeys(caps)),
+        allows=tuple(allows),
+        defaults=tuple(defaults),
         limits=tuple(limits),
         host=host,
         endpoint_host=endpoint_host,
@@ -232,23 +238,19 @@ def run(
         str | None,
         typer.Option(help="Run in this sandbox; defaults to agent config or none."),
     ] = None,
-    models: Annotated[
+    allows: Annotated[
         list[str] | None,
-        typer.Option("--models", help="Limit available models. Pass CSV or repeat."),
+        typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
     ] = None,
-    tools: Annotated[
+    defaults: Annotated[
         list[str] | None,
-        typer.Option("--tools", help="Allow selected tools. Pass CSV or repeat."),
-    ] = None,
-    caps: Annotated[
-        list[str] | None,
-        typer.Option("--caps", help="Allow selected caps. Pass CSV or repeat."),
+        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
     ] = None,
     limits: Annotated[
         list[str] | None,
         typer.Option(
             "--limit",
-            help="Set run defaults as field=value pairs. Pass CSV or repeat.",
+            help="Set FIELD=VALUE. Repeat for another field.",
         ),
     ] = None,
     host: Annotated[
@@ -297,9 +299,8 @@ def run(
             ctx,
             target,
             sandbox=sandbox,
-            models=models,
-            tools=tools,
-            caps=caps,
+            allows=allows,
+            defaults=defaults,
             limits=limits,
             inboxes=inboxes,
             port=port,
@@ -357,23 +358,19 @@ def start(
         str | None,
         typer.Option(help="Run in this sandbox; defaults to agent config or none."),
     ] = None,
-    models: Annotated[
+    allows: Annotated[
         list[str] | None,
-        typer.Option("--models", help="Limit available models. Pass CSV or repeat."),
+        typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
     ] = None,
-    tools: Annotated[
+    defaults: Annotated[
         list[str] | None,
-        typer.Option("--tools", help="Allow selected tools. Pass CSV or repeat."),
-    ] = None,
-    caps: Annotated[
-        list[str] | None,
-        typer.Option("--caps", help="Allow selected caps. Pass CSV or repeat."),
+        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
     ] = None,
     limits: Annotated[
         list[str] | None,
         typer.Option(
             "--limit",
-            help="Set run defaults as field=value pairs. Pass CSV or repeat.",
+            help="Set FIELD=VALUE. Repeat for another field.",
         ),
     ] = None,
     host: Annotated[
@@ -420,9 +417,8 @@ def start(
             ctx,
             target,
             sandbox=sandbox,
-            models=models,
-            tools=tools,
-            caps=caps,
+            allows=allows,
+            defaults=defaults,
             limits=limits,
             inboxes=inboxes,
             port=port,
@@ -484,23 +480,19 @@ def serve(
         typer.Option("--endpoint-host", help="Externally visible endpoint host."),
     ] = None,
     port: Annotated[int, typer.Option(help="API bind port.")] = 7001,
-    models: Annotated[
+    allows: Annotated[
         list[str] | None,
-        typer.Option("--models", help="Limit available models. Pass CSV or repeat."),
+        typer.Option("--allow", help="Set DOMAIN=SELECTORS. Repeat by domain."),
     ] = None,
-    tools: Annotated[
+    defaults: Annotated[
         list[str] | None,
-        typer.Option("--tools", help="Allow selected tools. Pass CSV or repeat."),
-    ] = None,
-    caps: Annotated[
-        list[str] | None,
-        typer.Option("--caps", help="Allow selected caps. Pass CSV or repeat."),
+        typer.Option("--default", help="Set FIELD=VALUE. Repeat for another field."),
     ] = None,
     limits: Annotated[
         list[str] | None,
         typer.Option(
             "--limit",
-            help="Set run defaults as field=value pairs. Pass CSV or repeat.",
+            help="Set FIELD=VALUE. Repeat for another field.",
         ),
     ] = None,
     inboxes: Annotated[
@@ -525,10 +517,9 @@ def serve(
         host=host,
         endpoint_host=endpoint_host,
         port=port,
-        models=models,
-        tools=tools,
-        caps=caps,
-        limits=_explicit_limits(layout, limits),
+        ceiling_overrides=user_call(resolve_ceiling_overrides, {}, allows),
+        binding_overrides=user_call(resolve_binding_overrides, {}, defaults),
+        limit_overrides=user_call(resolve_limit_overrides, {}, limits),
         file_inboxes=inboxes,
         log_spec=log_spec,
     )
@@ -540,9 +531,8 @@ def resolve_startup(
     target: AgentLayout,
     *,
     sandbox: str | None,
-    models: list[str] | None,
-    tools: list[str] | None,
-    caps: list[str] | None,
+    allows: list[str] | None,
+    defaults: list[str] | None,
     limits: list[str] | None,
     inboxes: list[Path] | None,
     port: int | None,
@@ -570,6 +560,21 @@ def resolve_startup(
     )
     if not background:
         configure_logging_plan(log_plan)
+    ceiling_overrides = user_call(
+        resolve_ceiling_overrides,
+        log_plan.environ,
+        allows,
+    )
+    binding_overrides = user_call(
+        resolve_binding_overrides,
+        log_plan.environ,
+        defaults,
+    )
+    limit_overrides = user_call(
+        resolve_limit_overrides,
+        log_plan.environ,
+        limits,
+    )
     startup = user_call(
         asyncio.run,
         hosting.resolve_launch(
@@ -578,10 +583,9 @@ def resolve_startup(
             endpoint_host=endpoint_host,
             port=port,
             sandbox=sandbox,
-            models=models,
-            tools=tools,
-            caps=caps,
-            limits=_explicit_limits(target, limits),
+            ceiling_overrides=ceiling_overrides,
+            binding_overrides=binding_overrides,
+            limit_overrides=limit_overrides,
             file_inboxes=inboxes,
             dev=dev,
             log_spec=log_plan.spec,
@@ -591,12 +595,3 @@ def resolve_startup(
         ),
     )
     return RuntimeStartup(target, startup, log_plan.environ, log_plan)
-
-
-def _explicit_limits(
-    layout: AgentLayout,
-    values: list[str] | tuple[str, ...] | None,
-) -> RunLimits | None:
-    if not values:
-        return None
-    return user_call(apply_limit_options, load_run_limits(layout), values)

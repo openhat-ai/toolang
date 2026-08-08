@@ -184,8 +184,8 @@ chat/default runnable. Persisted state is read through the normal thread and run
 detail endpoints.
 
 `GET /api/v1/models` returns model selectors inside the server's current
-`CeilingSpec` and the default selector. A run applies its selected runnable's
-`models` directive after it starts.
+`AgentSetup.ceiling` and reports `AgentSetup.bindings.model` when one is set.
+A run applies its selected runnable's `models` directive after it starts.
 
 
 ## Streaming Rule

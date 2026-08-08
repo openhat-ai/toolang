@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.base.types.run import ModelUsage, RunLimits
+from toolang.base.types.policy import RunLimits
+from toolang.base.types.run import ModelUsage
 from toolang.common.errors import ToolangError
 
 

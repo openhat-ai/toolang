@@ -26,7 +26,7 @@ class RunExecutor:
         *,
         setup: AgentSetup,
         state: AgentState,
-        ceiling: CeilingSpec = CeilingSpec(),
+        ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         limits: RunLimits | None = None,
         run_id: str | None = None,
@@ -41,7 +41,7 @@ class RunExecutor:
         setup: AgentSetup,
         state: AgentState,
         anchor: StepPath | str | None = None,
-        ceiling: CeilingSpec = CeilingSpec(),
+        ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         limits: RunLimits | None = None,
         request_id: str | None = None,
@@ -94,7 +94,7 @@ class RunSpec:
     state: AgentState
     thread: str
     runnable: str
-    ceiling: CeilingSpec = CeilingSpec()
+    ceiling: AgentCeiling = AgentCeiling()
     input: Percept = ()
     model: str | None = None
     args: Mapping[str, object] | None = None
@@ -105,7 +105,8 @@ program. The spec does not carry an origin, executable kind, run identity,
 request identity, or arbitrary transport context. The optional singular model
 selector is the caller's per-run model choice; aliases and defaults are parsed
 from the captured state config. `ceiling` is the caller's immutable
-selector-based specification for the complete root run tree. `input` is the
+selector-based restriction inside `setup.ceiling` for the complete root run
+tree. `input` is the
 primary multimodal input; `args`
 contains values for the runnable's declared `params`. The executor validates
 both before accepting the run and constructs the user message internally. It
@@ -189,7 +190,7 @@ private `_Execution` that carries the state shared by its recursive run tree.
 The implementation is divided by semantic level:
 
 - `executor.py` binds `RunSpec` to immutable execution state and durable IDs;
-- `ceiling.py` resolves the public `CeilingSpec` into private `_AgentCeiling`
+- `ceiling.py` resolves the public `AgentCeiling` into private `_ResolvedAgentCeiling`
   and per-run `_RunCeiling` values;
 - `prepare.py` resolves an agic's model, tools, caps, prompt, history, and
   adapter in one pass;
@@ -206,14 +207,16 @@ There is no loop plugin or public run-context protocol, and there are no
 separate effective-resource, invocation, model-call assembly, or tool-snapshot
 layers.
 
-`CeilingSpec` contains stable selector lists, not resolved resources. At
-`start()`, the executor resolves the spec against the captured `AgentSetup` and
-`AgentState` into `_AgentCeiling`, the absolute resource limit for a recursive
-run tree. An invalid spec is rejected before the run is durably accepted.
+`AgentSetup.ceiling` contains stable selector lists, not resolved resources. At
+`start()`, the executor resolves it against the captured `AgentSetup` and
+`AgentState`, intersects the `RunSpec.ceiling` request restriction, and creates
+`_ResolvedAgentCeiling`, the absolute resource limit for a recursive run tree.
+A request cannot expand the setup ceiling. Invalid selectors or empty
+intersections are rejected before the run is durably accepted.
 Every flow invocation resets its `_RunCeiling` from
-`_AgentCeiling`, whether or not that flow declares directives. Agics derive
+`_ResolvedAgentCeiling`, whether or not that flow declares directives. Agics derive
 their `_RunCeiling` from the nearest containing flow ceiling, or directly from
-`_AgentCeiling` at the root. Agic directives affect only that agic. A nested
+`_ResolvedAgentCeiling` at the root. Agic directives affect only that agic. A nested
 flow does not inherit its caller's flow correction; returning from it naturally
 restores the caller's immutable flow ceiling.
 
@@ -255,6 +258,10 @@ The effective value is persisted on the root entry control and on every retry
 control. Child runs inherit the same in-memory value and their start controls
 do not duplicate it. Decimal cost is serialized as text so durable round trips
 do not lose precision.
+
+`AgentSetup.limits` is rebuilt from dynamic root and agent `[limit]` config plus
+frozen process overrides. A request may overlay individual fields for one root
+run without changing the setup snapshot.
 
 A retry restores global token and cost accounting from effective, non-ejected
 finished model steps. Ejected attempts remain auditable but do not consume the

@@ -18,6 +18,7 @@ from toolang.base.types.message import (
     TextPart,
     message_text,
 )
+from toolang.base.types.policy import AgentCeiling, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.time import utc_now
 from toolang.lang.ast import (
@@ -47,8 +48,7 @@ from toolang.setup import AgentSetup
 from ..events import RunEvent, StepBegin, StepEnd
 from ..records import RunControlRecord, RunInputRef, StepInput, StepOutputRef, ValueRef
 from ..types import StepKind, StepPath
-from .ceiling import CeilingSpec, _AgentCeiling, _RunCeiling
-from .limits import RunLimits
+from .ceiling import _ResolvedAgentCeiling, _RunCeiling
 
 Shape = Literal["none", "item", "list"]
 EventEmitter = Callable[[RunEvent], Awaitable[None]]
@@ -68,8 +68,8 @@ class BoundRun:
     setup: AgentSetup
     created_at: str
     limits: RunLimits = RunLimits()
-    ceiling_spec: CeilingSpec = CeilingSpec()
-    agent_ceiling: _AgentCeiling | None = None
+    ceiling_restriction: AgentCeiling = AgentCeiling()
+    agent_ceiling: _ResolvedAgentCeiling | None = None
     ceiling: _RunCeiling | None = None
     flow_ceiling: _RunCeiling | None = None
     call: Literal["top", "run"] = "top"

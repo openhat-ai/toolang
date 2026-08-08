@@ -45,3 +45,43 @@ def resolve_runnable(
     if len(matches) > 1:
         raise ToolangError(f"Runnable name is not unique: {name}")
     return matches[0]
+
+
+def parse_runnable_ref(value: str) -> tuple[str, str | None]:
+    """Split one optional kind-qualified runnable reference."""
+
+    kind, separator, name = value.partition(":")
+    if not separator:
+        return value, None
+    if (
+        kind not in {"agic", "flow"}
+        or not name
+        or name != name.strip()
+        or ":" in name
+    ):
+        raise ValueError(f"invalid default runnable: {value}")
+    return name, kind
+
+
+def runnable_binding_defaults(
+    program: Program,
+    binding: str | None,
+    *,
+    fallback_agic: str,
+) -> tuple[str | None, str | None]:
+    """Project one runnable binding into exclusive agic and flow defaults."""
+
+    if binding is None:
+        agic = (
+            fallback_agic
+            if program.find_agic(fallback_agic) is not None
+            else "default"
+        )
+        return agic, None
+    name, kind = parse_runnable_ref(binding)
+    runnable = resolve_runnable(program, name, kind=kind)
+    return (
+        (runnable.name, None)
+        if isinstance(runnable, AgicDecl)
+        else (None, runnable.name)
+    )

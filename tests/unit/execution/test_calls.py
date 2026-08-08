@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 import pytest
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import TextPart
+from toolang.base.types.policy import RunBindings
 from toolang.execution.calls import bind_runnable_call
 from toolang.lang.submission import SettingCommand, parse_runnable_call
 from toolang.execution.types import ThreadPrefix
@@ -17,6 +19,9 @@ agic default(_: Part[]):
   {{_}}
 
 agic review(_: Part[], count: Number):
+  {{_}}
+
+agic bound(_: Part[]):
   {{_}}
 """
 
@@ -69,6 +74,66 @@ def test_run_override_default_returns_to_surface_default_not_session_setting(
 
         assert spec.runnable == "default"
         assert spec.args is None
+    finally:
+        harness.store.close()
+
+
+def test_setup_bindings_are_below_session_and_authored_selections(tmp_path) -> None:
+    harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
+    setup = replace(
+        harness.setup,
+        bindings=RunBindings(model="test/scripted", runnable="agic:bound"),
+    )
+    try:
+        bound = bind_runnable_call(
+            parse_runnable_call("Input"),
+            setup=setup,
+            state=harness.state,
+            thread="term_test",
+            default_runnable="default",
+        )
+        session = bind_runnable_call(
+            parse_runnable_call("Input"),
+            setup=setup,
+            state=harness.state,
+            thread="term_test",
+            default_runnable="default",
+            settings=(
+                SettingCommand(
+                    kind="agic",
+                    selector="review",
+                    args=(("count", "2"),),
+                ),
+            ),
+        )
+        authored = bind_runnable_call(
+            parse_runnable_call(":agic default\nInput"),
+            setup=setup,
+            state=harness.state,
+            thread="term_test",
+            default_runnable="default",
+            settings=(
+                SettingCommand(
+                    kind="agic",
+                    selector="review",
+                    args=(("count", "2"),),
+                ),
+            ),
+        )
+        selected = bind_runnable_call(
+            parse_runnable_call(":agic default\nInput"),
+            setup=setup,
+            state=harness.state,
+            thread="term_test",
+            default_runnable="default",
+            selected_runnable="default",
+            settings=(SettingCommand(kind="agic", selector="bound"),),
+        )
+
+        assert (bound.runnable, bound.model) == ("bound", "test/scripted")
+        assert (session.runnable, session.args) == ("review", {"count": 2})
+        assert authored.runnable == "bound"
+        assert selected.runnable == "default"
     finally:
         harness.store.close()
 

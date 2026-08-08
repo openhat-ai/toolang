@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 
+from toolang.base.types.policy import AgentCeiling
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
 from toolang.setup import AgentSetup
@@ -20,8 +22,11 @@ def run_chat_tui(
 ) -> None:
     """Run a local chat TUI with fixed setup and state snapshots."""
 
+    if models:
+        setup = replace(setup, ceiling=AgentCeiling(models=tuple(models)))
+
     class SetupWatcher:
-        def __init__(self, _layout: object) -> None:
+        def __init__(self, _layout: object, **_kwargs: object) -> None:
             pass
 
         def current(self) -> AgentSetup:
@@ -50,7 +55,7 @@ def run_chat_tui(
 
     local.SetupWatcher = SetupWatcher  # type: ignore[invalid-assignment]
     local.StateWatcher = StateWatcher  # type: ignore[invalid-assignment]
-    session = local.LocalChatSession(setup.layout, models=models)
+    session = local.LocalChatSession(setup.layout)
     try:
         ChatTuiApp.run(
             thread_id=None,

@@ -11,7 +11,7 @@ from types import MappingProxyType
 from toolang.base.protocols.model import ModelAdapter, ModelProvider
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelInfo
-from toolang.base.types.run import RunLimits
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.layout import AgentLayout
 
 
@@ -52,7 +52,7 @@ class AgentEnvironment:
 
 @dataclass(frozen=True, slots=True)
 class AgentSetup:
-    """Installed implementations and models fixed for one agent run."""
+    """Effective immutable runtime setup fixed for one root run."""
 
     layout: AgentLayout
     providers: Mapping[str, ModelProvider]
@@ -61,12 +61,18 @@ class AgentSetup:
     tools: Mapping[str, AgentTool]
     envs: Mapping[str, str]
     environment: AgentEnvironment | None = None
+    ceiling: AgentCeiling = AgentCeiling()
+    bindings: RunBindings = RunBindings()
     limits: RunLimits = RunLimits()
 
     def __post_init__(self) -> None:
         providers = dict(self.providers)
         adapters = dict(self.adapters)
         models = tuple(self.models)
+        if not isinstance(self.ceiling, AgentCeiling):
+            raise TypeError("setup ceiling must be AgentCeiling")
+        if not isinstance(self.bindings, RunBindings):
+            raise TypeError("setup bindings must be RunBindings")
         if not isinstance(self.limits, RunLimits):
             raise TypeError("setup limits must be RunLimits")
         for key, provider in providers.items():
