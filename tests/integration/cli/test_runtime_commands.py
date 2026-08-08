@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from toolang.base.types.hosting import HostingRef
@@ -38,7 +39,8 @@ def test_policy_options_follow_cli_display_order(
     result = runner.invoke(cli.app, args)
 
     assert result.exit_code == 0, result.stderr
-    positions = tuple(result.stdout.index(option) for option in options)
+    output = strip_ansi(result.stdout)
+    positions = tuple(output.index(option) for option in options)
     assert positions == tuple(sorted(positions))
 
 
