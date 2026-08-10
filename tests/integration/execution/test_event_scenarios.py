@@ -186,16 +186,14 @@ flow parallel(_: Text) -> Text[]:
                 next(
                     event
                     for event in tracer.events
-                    if isinstance(event, StepBegin)
-                    and event.step == root_step
+                    if isinstance(event, StepBegin) and event.step == root_step
                 )
             )
             parent_end = tracer.events.index(
                 next(
                     event
                     for event in tracer.events
-                    if isinstance(event, StepEnd)
-                    and event.step == root_step
+                    if isinstance(event, StepEnd) and event.step == root_step
                 )
             )
             parent_event = tracer.events[parent_begin]
@@ -216,11 +214,7 @@ flow parallel(_: Text) -> Text[]:
                 assert len(begin) == len(end) == 1
                 assert begin_event.parent == child.parent == root_step
                 assert parent_begin < begin[0] < end[0] < parent_end
-            assert sum(
-                isinstance(event, RunBegin) for event in tracer.events
-            ) == 4
-            assert sum(
-                isinstance(event, RunEnd) for event in tracer.events
-            ) == 4
+            assert sum(isinstance(event, RunBegin) for event in tracer.events) == 4
+            assert sum(isinstance(event, RunEnd) for event in tracer.events) == 4
 
     asyncio.run(scenario())

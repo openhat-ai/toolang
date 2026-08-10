@@ -61,9 +61,7 @@ def resolve_file_include(reference: str, *, base: Path) -> PerceptPart:
         try:
             return TextPart(path.read_text(encoding="utf-8"))
         except UnicodeDecodeError as exc:
-            raise ToolangError(
-                f"included text is not UTF-8: {reference}"
-            ) from exc
+            raise ToolangError(f"included text is not UTF-8: {reference}") from exc
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     if media_type is not None and media_type.startswith("image/"):
         return ImagePart(
@@ -97,10 +95,7 @@ def resolve_file_include(reference: str, *, base: Path) -> PerceptPart:
 def _is_text(media_type: str | None) -> bool:
     return bool(
         media_type
-        and (
-            media_type.startswith("text/")
-            or media_type in _TEXT_MEDIA_TYPES
-        )
+        and (media_type.startswith("text/") or media_type in _TEXT_MEDIA_TYPES)
     )
 
 

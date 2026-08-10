@@ -62,11 +62,7 @@ class _RecordingTracer(RunTracer):
     async def on_event(self, event: RunEvent) -> None:
         assert not self._handling
         self._handling = True
-        run_id = (
-            event.run
-            if isinstance(event, RunBegin | RunEnd)
-            else event.step.run
-        )
+        run_id = event.run if isinstance(event, RunBegin | RunEnd) else event.step.run
         assert self.store.get_run(run_id=run_id) is not None
         self.thread_ids.add(threading.get_ident())
         try:
@@ -818,9 +814,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
                 gate.set()
         return await task
 
-    assert asyncio.run(scenario()) == Local(
-        list(range(5)), "list", type_name="Number"
-    )
+    assert asyncio.run(scenario()) == Local(list(range(5)), "list", type_name="Number")
     asyncio.run(executor.shutdown())
 
 
@@ -1923,7 +1917,9 @@ def test_run_store_migrates_v19_step_identity_without_losing_history(
         connection.execute(
             "INSERT INTO steps VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                str(step_path.parent) if step_path.parent is not None else step_path.run,
+                str(step_path.parent)
+                if step_path.parent is not None
+                else step_path.run,
                 step_path.index,
                 *row[2:],
             ),
@@ -1940,8 +1936,7 @@ def test_run_store_migrates_v19_step_identity_without_losing_history(
             StepPath.parse("run_test/0/1"),
         ]
         assert [
-            message_text(step.output)
-            for step in reopened.list_steps(run_id="run_test")
+            message_text(step.output) for step in reopened.list_steps(run_id="run_test")
         ] == ["0", "0/1"]
     finally:
         reopened.close()
@@ -1996,12 +1991,8 @@ def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
         StepPath.parse("run_%/0")
     ]
     grouped = store.list_steps_for_runs(run_ids=("run_%", "run_ax"))
-    assert [step.path for step in grouped["run_%"]] == [
-        StepPath.parse("run_%/0")
-    ]
-    assert [step.path for step in grouped["run_ax"]] == [
-        StepPath.parse("run_ax/0")
-    ]
+    assert [step.path for step in grouped["run_%"]] == [StepPath.parse("run_%/0")]
+    assert [step.path for step in grouped["run_ax"]] == [StepPath.parse("run_ax/0")]
     with pytest.raises(ValueError, match="invalid run id"):
         store.accept_start(
             run_id="run/invalid",

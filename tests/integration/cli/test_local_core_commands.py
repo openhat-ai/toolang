@@ -80,9 +80,7 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     connection.close()
 
     result = _invoke(root, "alice", "threads")
-    error_output = " ".join(
-        click.unstyle(result.stderr).replace("│", " ").split()
-    )
+    error_output = " ".join(click.unstyle(result.stderr).replace("│", " ").split())
 
     assert result.exit_code == 1
     assert "Traceback" not in error_output
@@ -698,9 +696,7 @@ def _invoke(root: Path, *args: str):
     )
     @click.argument("arguments", nargs=-1, type=click.UNPROCESSED)
     def public_cli(arguments: tuple[str, ...]) -> None:
-        raise click.exceptions.Exit(
-            cli.main(["--root", str(root), *arguments])
-        )
+        raise click.exceptions.Exit(cli.main(["--root", str(root), *arguments]))
 
     return runner.invoke(public_cli, list(args), env={})
 

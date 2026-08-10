@@ -275,10 +275,14 @@ class ChatTuiApp:
         default_selected = selected_model in {"", "default"}
         try:
             label = slashes.chat_model_label(self.client.list_models(), self.selects)
-            return self.actual_model if default_selected and self.actual_model else label
+            return (
+                self.actual_model if default_selected and self.actual_model else label
+            )
         except (click.ClickException, ToolangError, ValueError):
             label = chat_status_label(self.selects)
-            return self.actual_model if default_selected and self.actual_model else label
+            return (
+                self.actual_model if default_selected and self.actual_model else label
+            )
 
     def _status_label(self) -> str:
         model_label = self._header_model_label()

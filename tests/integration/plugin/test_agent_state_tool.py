@@ -10,7 +10,9 @@ from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.tool import ToolContext
 from toolang.catalog import cap as caps
 from toolang.catalog.job import AuthoredJobs
-from toolang.execution.tools.agent_state import create_tool_set as create_agent_state_tool
+from toolang.execution.tools.agent_state import (
+    create_tool_set as create_agent_state_tool,
+)
 
 
 def _tool_context(toolang_root: Path, agent_name: str = "alice") -> ToolContext:

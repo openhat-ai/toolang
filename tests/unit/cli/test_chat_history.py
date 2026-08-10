@@ -13,7 +13,7 @@ def test_chat_history_round_trips_recent_inputs_and_skips_bad_records(
 ) -> None:
     path = tmp_path / "history.jsonl"
     path.write_text(
-        '\n'.join(("not json", "[]", '{"text":""}', '{"text":"old"}')) + "\n",
+        "\n".join(("not json", "[]", '{"text":""}', '{"text":"old"}')) + "\n",
         encoding="utf-8",
     )
     history = ChatInputHistoryStore(path, limit=2)
@@ -31,7 +31,9 @@ def test_chat_history_compacts_to_recent_limit(tmp_path: Path) -> None:
     for text in ("one", "two", "three", "four"):
         history.append(text)
 
-    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    records = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+    ]
     assert [record["text"] for record in records] == ["three", "four"]
     assert history.load() == ["three", "four"]
 

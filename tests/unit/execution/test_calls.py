@@ -31,9 +31,7 @@ def test_resolve_spec_binds_policy_primary_and_typed_named_inputs(
     harness = ExecutionHarness.create(tmp_path, source=_SOURCE, responses=[])
     try:
         commands, input = parse_call(
-            ":model test/scripted\n"
-            ":agic review count=2\n\n"
-            "Review this."
+            ":model test/scripted\n:agic review count=2\n\nReview this."
         )
         spec = resolve_spec(
             commands,
@@ -69,9 +67,7 @@ def test_run_default_returns_to_surface_binding_not_session_binding(
             thread="term_test",
             default_runnable="default",
             surface=RunBindings(runnable="agic:default"),
-            session_commands=(
-                PolicyCommand("default", "runnable", "agic:review"),
-            ),
+            session_commands=(PolicyCommand("default", "runnable", "agic:review"),),
         )
 
         assert spec.bindings.runnable == "agic:default"
@@ -113,23 +109,17 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
         bound = resolve("Input")
         session = resolve(
             "Input",
-            session=(
-                PolicyCommand("default", "runnable", "agic:review"),
-            ),
+            session=(PolicyCommand("default", "runnable", "agic:review"),),
             named=(("count", "2"),),
         )
         authored = resolve(
             ":agic default\nInput",
-            session=(
-                PolicyCommand("default", "runnable", "agic:review"),
-            ),
+            session=(PolicyCommand("default", "runnable", "agic:review"),),
         )
         selected = resolve(
             ":agic default\nInput",
             surface=RunBindings(runnable="agic:default"),
-            session=(
-                PolicyCommand("default", "runnable", "agic:bound"),
-            ),
+            session=(PolicyCommand("default", "runnable", "agic:bound"),),
         )
 
         assert bound.bindings == RunBindings(

@@ -60,9 +60,7 @@ PACKAGE_IMPORT_RULES: dict[str, frozenset[str] | None] = {
 
 
 def _source_packages() -> frozenset[str]:
-    return frozenset(
-        path.parent.name for path in SOURCE_ROOT.glob("*/__init__.py")
-    )
+    return frozenset(path.parent.name for path in SOURCE_ROOT.glob("*/__init__.py"))
 
 
 def _module_context(path: Path) -> str:
@@ -96,7 +94,10 @@ def _package_imports(package: str) -> dict[str, tuple[str, ...]]:
                 if not target.startswith("toolang."):
                     continue
                 imported_package = target.split(".", 2)[1]
-                if imported_package == package or imported_package not in known_packages:
+                if (
+                    imported_package == package
+                    or imported_package not in known_packages
+                ):
                     continue
                 reference = f"{path.relative_to(SOURCE_ROOT)}:{node.lineno}"
                 references.setdefault(imported_package, []).append(reference)
@@ -130,9 +131,7 @@ def test_package_boundary_coverage() -> None:
     }
     allowed_targets = frozenset().union(*reviewed_rules.values())
     self_import_rules = sorted(
-        package
-        for package, allowed in reviewed_rules.items()
-        if package in allowed
+        package for package, allowed in reviewed_rules.items() if package in allowed
     )
 
     assert declared_packages == source_packages, (

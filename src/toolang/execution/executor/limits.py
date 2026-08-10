@@ -171,14 +171,10 @@ def _model_price(
         return None
     return _TokenPrice(
         input=(
-            Decimal(str(info.input_price))
-            if info.input_price is not None
-            else None
+            Decimal(str(info.input_price)) if info.input_price is not None else None
         ),
         output=(
-            Decimal(str(info.output_price))
-            if info.output_price is not None
-            else None
+            Decimal(str(info.output_price)) if info.output_price is not None else None
         ),
     )
 
@@ -187,14 +183,6 @@ def _model_cost(
     usage: ModelUsage | None,
     price: _TokenPrice | None,
 ) -> Decimal | None:
-    if (
-        usage is None
-        or price is None
-        or price.input is None
-        or price.output is None
-    ):
+    if usage is None or price is None or price.input is None or price.output is None:
         return None
-    return (
-        price.input * usage.input_tokens
-        + price.output * usage.output_tokens
-    )
+    return price.input * usage.input_tokens + price.output * usage.output_tokens

@@ -76,15 +76,12 @@ agic reply(_: Part[], tone: Text) -> Part[]:
             )
 
             assert record.status == "finished"
-            assert harness.store.run_output(run_id=record.id) == (
-                TextPart("done"),
-            )
+            assert harness.store.run_output(run_id=record.id) == (TextPart("done"),)
             assert harness.adapter.invocations[0].call.messages == [
                 Message.user("Reply to hello in brief.")
             ]
             assert [
-                step.kind
-                for step in harness.store.list_steps(run_id=record.id)
+                step.kind for step in harness.store.list_steps(run_id=record.id)
             ] == ["model"]
             assert [event.type for event in tracer.events] == [
                 "run_begin",
@@ -168,11 +165,7 @@ agic inspect(_: Part[]) -> Part[]:
   instruct: none
   user: {{_}}
 """,
-        responses=[
-            ModelCallResult(
-                message=Message(role="assistant", parts=(audio,))
-            )
-        ],
+        responses=[ModelCallResult(message=Message(role="assistant", parts=(audio,)))],
     )
 
     async def scenario() -> None:
@@ -236,9 +229,7 @@ agic stream(_: Part[]) -> Part[]:
             )
 
             assert record.status == "finished"
-            assert harness.store.run_output(run_id=record.id) == (
-                TextPart("hello"),
-            )
+            assert harness.store.run_output(run_id=record.id) == (TextPart("hello"),)
             assert [event.type for event in tracer.events] == [
                 "run_begin",
                 "step_begin",
@@ -293,12 +284,8 @@ agic calculate(_: Text) -> Text:
                 ),
                 updates=(
                     ModelPartStart(kind="tool_call"),
-                    ModelPartDelta(
-                        delta=ToolCallDelta('{"value":', call.tool_call_id)
-                    ),
-                    ModelPartDelta(
-                        delta=ToolCallDelta("3}", call.tool_call_id)
-                    ),
+                    ModelPartDelta(delta=ToolCallDelta('{"value":', call.tool_call_id)),
+                    ModelPartDelta(delta=ToolCallDelta("3}", call.tool_call_id)),
                     ModelPartEnd(data=call_part),
                 ),
             ),
@@ -329,15 +316,17 @@ agic calculate(_: Text) -> Text:
                 and isinstance(event.delta, ToolCallDelta)
             ]
             assert [delta.text for delta in deltas] == ['{"value":', "3}"]
-            assert {delta.tool_call_id for delta in deltas} == {
-                call.tool_call_id
-            }
-            assert event_labels(tracer.events).count(
-                f"part_begin:{record.id}/0:0:tool_call"
-            ) == 1
-            assert event_labels(tracer.events).count(
-                f"part_end:{record.id}/0:0:tool_call"
-            ) == 1
+            assert {delta.tool_call_id for delta in deltas} == {call.tool_call_id}
+            assert (
+                event_labels(tracer.events).count(
+                    f"part_begin:{record.id}/0:0:tool_call"
+                )
+                == 1
+            )
+            assert (
+                event_labels(tracer.events).count(f"part_end:{record.id}/0:0:tool_call")
+                == 1
+            )
             assert harness.store.run_output_text(run_id=record.id) == "six"
             assert_run_event_integrity(tracer.events)
 
@@ -581,8 +570,7 @@ agic calculate(_: Part[]) -> Part[]:
             assert arguments == {"value": 3}
             assert context.run_id == record.id
             assert [
-                step.kind
-                for step in harness.store.list_steps(run_id=record.id)
+                step.kind for step in harness.store.list_steps(run_id=record.id)
             ] == ["model", "tool", "model"]
             followup = harness.adapter.invocations[1].call.messages
             assert [message.role for message in followup] == [
@@ -592,9 +580,7 @@ agic calculate(_: Part[]) -> Part[]:
             ]
             assert isinstance(followup[-1].parts[0], ToolResultPart)
             assert followup[-1].parts[0].output == {"value": 6}
-            assert harness.store.run_output(run_id=record.id) == (
-                TextPart("six"),
-            )
+            assert harness.store.run_output(run_id=record.id) == (TextPart("six"),)
 
     asyncio.run(scenario())
 
@@ -677,9 +663,7 @@ agic calculate(_: Text) -> Text:
                 "calculator unavailable",
                 "unknown tool call: missing__tool",
             ]
-            assert harness.store.run_output_text(run_id=record.id) == (
-                "recovered"
-            )
+            assert harness.store.run_output_text(run_id=record.id) == ("recovered")
             assert_run_event_integrity(tracer.events)
 
     asyncio.run(scenario())
@@ -764,10 +748,7 @@ agic loop(_: Text) -> Text:
   instruct: none
   user: {{_}}
 """,
-        responses=[
-            ModelCallResult(tool_calls=(call,))
-            for call in calls
-        ],
+        responses=[ModelCallResult(tool_calls=(call,)) for call in calls],
         tools={tool.name: tool},
     )
     tracer = RecordingRunTracer()
@@ -1095,8 +1076,7 @@ agic reply(_: Text) -> Text:
 
             assert record.status == "failed"
             assert record.error == (
-                "Model usage is required by run token or cost limits: "
-                "test/scripted"
+                "Model usage is required by run token or cost limits: test/scripted"
             )
             assert len(harness.adapter.invocations) == 1
             model_step = harness.store.list_steps(run_id=record.id)[0]
@@ -1216,9 +1196,7 @@ agic fail(_: Part[]) -> Part[]:
             assert record.status == "failed"
             assert record.error == "provider unavailable"
             steps = harness.store.list_steps(run_id=record.id)
-            assert [(step.kind, step.status) for step in steps] == [
-                ("model", "failed")
-            ]
+            assert [(step.kind, step.status) for step in steps] == [("model", "failed")]
             assert steps[0].error == "provider unavailable"
             assert harness.store.run_output(run_id=record.id) == ()
             assert_run_event_integrity(tracer.events)

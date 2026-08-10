@@ -144,16 +144,10 @@ agic revise(_: Part[]) -> Part[]:
                 StepOutputRef(step=StepPath.parse(f"{record.id}/0")),
                 RunInputRef(index=control.index),
             )
-            assert harness.store.run_output(run_id=record.id) == (
-                TextPart("revised"),
-            )
+            assert harness.store.run_output(run_id=record.id) == (TextPart("revised"),)
             assert_run_event_integrity(tracer.events)
-            assert [
-                event.type for event in tracer.events
-            ].count("run_begin") == 1
-            assert [
-                event.type for event in tracer.events
-            ].count("run_end") == 1
+            assert [event.type for event in tracer.events].count("run_begin") == 1
+            assert [event.type for event in tracer.events].count("run_end") == 1
 
     asyncio.run(scenario())
 
@@ -458,9 +452,7 @@ agic revise(_: Text) -> Text:
             ]
             assert all(control is not None for control in stored_controls)
             assert [
-                control.status
-                for control in stored_controls
-                if control is not None
+                control.status for control in stored_controls if control is not None
             ] == ["finished", "finished", "finished"]
 
     asyncio.run(scenario())

@@ -10,6 +10,8 @@ from typing import Annotated
 
 import click
 import typer
+
+
 def fmt(
     paths: Annotated[
         list[Path] | None,
@@ -48,9 +50,13 @@ def fmt(
         if path_args and stdin_path_arg is None:
             raise click.ClickException("--stdin-filepath can only be combined with '-'")
         if check:
-            raise click.ClickException("--check cannot be combined with stdin formatting")
+            raise click.ClickException(
+                "--check cannot be combined with stdin formatting"
+            )
         label = stdin_filepath or stdin_path_arg or Path("<stdin>")
-        _format_stdin(label, format_source=format_too_source, error_type=ToolangFormatError)
+        _format_stdin(
+            label, format_source=format_too_source, error_type=ToolangFormatError
+        )
         return
 
     source_paths = _collect_format_paths(path_args)
@@ -108,7 +114,9 @@ def _collect_format_paths(paths: list[Path]) -> list[Path]:
     for path in paths:
         candidate = path.expanduser()
         if candidate.is_dir():
-            candidates = sorted(item for item in candidate.rglob("*.too") if item.is_file())
+            candidates = sorted(
+                item for item in candidate.rglob("*.too") if item.is_file()
+            )
         elif candidate.is_file():
             if candidate.suffix != ".too":
                 raise click.ClickException(f"not a .too file: {candidate}")

@@ -21,9 +21,7 @@ def test_policy_options_overlay_environment_by_field() -> None:
         "models": ("local/*", "test/*"),
         "tools": (),
     }
-    assert resolve_binding_overrides(environ, ("model=none",)) == {
-        "model": None
-    }
+    assert resolve_binding_overrides(environ, ("model=none",)) == {"model": None}
     assert resolve_limit_overrides(
         environ,
         ("tokens=500", "agic_tool_calls=none", "time=60"),

@@ -55,10 +55,13 @@ def test_encode_decode_round_trip_for_run_ids() -> None:
 def test_archive_prefix_matches_decoded_prefix() -> None:
     value = encode_id(family=LOCAL_ID_FAMILY, tick=88, seq=4)
 
-    assert archive_prefix(value, family=LOCAL_ID_FAMILY) == decode_id(
-        value,
-        family=LOCAL_ID_FAMILY,
-    ).archive_prefix
+    assert (
+        archive_prefix(value, family=LOCAL_ID_FAMILY)
+        == decode_id(
+            value,
+            family=LOCAL_ID_FAMILY,
+        ).archive_prefix
+    )
 
 
 def test_reserve_next_id_advances_seq_within_one_tick() -> None:
@@ -79,7 +82,9 @@ def test_reserve_next_id_resets_seq_for_next_tick() -> None:
     first_now = datetime(2026, 1, 2, 3, 0, tzinfo=UTC)
     second_now = first_now + timedelta(hours=1)
 
-    _first, state = reserve_next_id(AllocatorState(), family=LOCAL_ID_FAMILY, now=first_now)
+    _first, state = reserve_next_id(
+        AllocatorState(), family=LOCAL_ID_FAMILY, now=first_now
+    )
     second, next_state = reserve_next_id(state, family=LOCAL_ID_FAMILY, now=second_now)
 
     assert second.seq == 0
@@ -115,8 +120,12 @@ def test_allocate_id_persists_state_by_family(tmp_path: Path) -> None:
     assert first.seq == 0
     assert second.seq == 1
     assert run.seq == 0
-    assert snapshot.state_for(LOCAL_ID_FAMILY) == AllocatorState(last_tick=first.tick, last_seq=1)
-    assert snapshot.state_for(RUN_ID_FAMILY) == AllocatorState(last_tick=run.tick, last_seq=0)
+    assert snapshot.state_for(LOCAL_ID_FAMILY) == AllocatorState(
+        last_tick=first.tick, last_seq=1
+    )
+    assert snapshot.state_for(RUN_ID_FAMILY) == AllocatorState(
+        last_tick=run.tick, last_seq=0
+    )
 
 
 def test_id_issuer_uses_explicit_canonical_prefixes(tmp_path: Path) -> None:
@@ -135,16 +144,15 @@ def test_allocate_id_is_process_safe(tmp_path: Path) -> None:
 
     with ProcessPoolExecutor(max_workers=4, mp_context=process_context) as pool:
         batches = tuple(
-            pool.submit(_allocate_local_ids, str(state_path), 8, now)
-            for _ in range(4)
+            pool.submit(_allocate_local_ids, str(state_path), 8, now) for _ in range(4)
         )
         values = [value for batch in batches for value in batch.result()]
 
     assert len(values) == 32
     assert len(set(values)) == 32
-    assert sorted(decode_id(value, family=LOCAL_ID_FAMILY).seq for value in values) == list(
-        range(32)
-    )
+    assert sorted(
+        decode_id(value, family=LOCAL_ID_FAMILY).seq for value in values
+    ) == list(range(32))
 
 
 def test_allocator_snapshot_rejects_invalid_persisted_state() -> None:
@@ -187,7 +195,9 @@ def test_allocator_snapshot_copies_and_freezes_family_state() -> None:
     snapshot = AllocatorSnapshot(families=families)
     families.clear()
 
-    assert snapshot.state_for(LOCAL_ID_FAMILY) == AllocatorState(last_tick=1, last_seq=2)
+    assert snapshot.state_for(LOCAL_ID_FAMILY) == AllocatorState(
+        last_tick=1, last_seq=2
+    )
     with pytest.raises(TypeError):
         operator.setitem(cast(Any, snapshot.families), "run", AllocatorState())
 

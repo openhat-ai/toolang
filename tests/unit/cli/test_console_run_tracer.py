@@ -571,9 +571,7 @@ def test_parallel_block_is_bounded_and_uses_zero_based_positions() -> None:
                     "count": 8,
                     "par": 2,
                     "binding": "findings",
-                    "source": {
-                        "head": "let findings = rank relevance top 8 par 2"
-                    },
+                    "source": {"head": "let findings = rank relevance top 8 par 2"},
                 },
                 started_at="2026-07-26T01:00:00Z",
             ),
@@ -673,9 +671,7 @@ def test_parallel_failure_reports_counts_without_a_statement_result() -> None:
                     "count": 8,
                     "par": 4,
                     "binding": "findings",
-                    "source": {
-                        "head": "let findings = rank relevance top 8 par 4"
-                    },
+                    "source": {"head": "let findings = rank relevance top 8 par 4"},
                 },
                 started_at="2026-07-26T01:00:00Z",
             ),

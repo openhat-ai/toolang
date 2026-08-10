@@ -59,6 +59,7 @@ class LocalAgents:
         _validate_name(name)
         return self.directory / name
 
+
 def _validate_name(name: str) -> None:
     if not name.strip() or name in {".", ".."} or "/" in name or "\\" in name:
         raise ValueError(f"invalid agent name: {name!r}")

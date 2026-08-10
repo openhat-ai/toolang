@@ -29,7 +29,9 @@ class ReplyTarget:
         return cls(
             channel=str(data["channel"]),
             address=str(data["address"]),
-            thread_id=str(data["thread_id"]) if data.get("thread_id") is not None else None,
+            thread_id=str(data["thread_id"])
+            if data.get("thread_id") is not None
+            else None,
             meta=dict(cast(dict[str, Any], data.get("meta", {}))),
         )
 
@@ -53,7 +55,9 @@ class InboundDelivery:
             "sender": self.sender,
             "thread_id": self.thread_id,
             "text": self.text,
-            "reply_target": self.reply_target.to_data() if self.reply_target is not None else None,
+            "reply_target": self.reply_target.to_data()
+            if self.reply_target is not None
+            else None,
             "meta": dict(self.meta),
         }
 

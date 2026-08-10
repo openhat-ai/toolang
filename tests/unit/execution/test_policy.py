@@ -79,9 +79,7 @@ def test_runnable_shortcut_returns_named_input_sources() -> None:
 
 def test_parse_prefix_allows_structural_blank_lines() -> None:
     commands, named, primary = parse_policy_prefix(
-        ":model openai/gpt-5\n\n"
-        ":agic review focus=security\n\n\n"
-        "  Review this."
+        ":model openai/gpt-5\n\n:agic review focus=security\n\n\n  Review this."
     )
 
     assert commands == (

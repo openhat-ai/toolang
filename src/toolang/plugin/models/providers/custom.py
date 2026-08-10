@@ -30,6 +30,7 @@ class CustomModelProvider(ModelProvider):
         del environ
         return ()
 
+
 def create_model_provider(config: Mapping[str, object]) -> ModelProvider:
     """Create the built-in custom alias provider."""
 

@@ -17,7 +17,13 @@ from toolang.up.logging import (
     configure_logging_plan,
     resolve_agent_logging,
 )
-from toolang.common.env_logger import OFF_LOG_LEVEL, PY_LOG_ENV_VAR, parse_log_level, parse_log_spec, resolve_log_spec
+from toolang.common.env_logger import (
+    OFF_LOG_LEVEL,
+    PY_LOG_ENV_VAR,
+    parse_log_level,
+    parse_log_spec,
+    resolve_log_spec,
+)
 
 
 def test_httpx_log_filter_redacts_telegram_token_and_demotes_to_debug() -> None:
@@ -45,10 +51,15 @@ def test_httpx_log_filter_redacts_telegram_token_and_demotes_to_debug() -> None:
     args = cast(tuple[object, ...], record.args)
     assert args[1] == "https://api.telegram.org/bot<redacted>/getUpdates"
     assert args[3] == 200
-    assert record.getMessage() == 'HTTP Request: POST https://api.telegram.org/bot<redacted>/getUpdates "HTTP/1.1 200 OK"'
+    assert (
+        record.getMessage()
+        == 'HTTP Request: POST https://api.telegram.org/bot<redacted>/getUpdates "HTTP/1.1 200 OK"'
+    )
 
 
-def test_build_uvicorn_log_config_registers_httpx_filter_and_keeps_http_debug_off_by_default() -> None:
+def test_build_uvicorn_log_config_registers_httpx_filter_and_keeps_http_debug_off_by_default() -> (
+    None
+):
     config = build_uvicorn_log_config()
 
     filters = cast(dict[str, object], config["filters"])
@@ -61,7 +72,9 @@ def test_build_uvicorn_log_config_registers_httpx_filter_and_keeps_http_debug_of
     assert handlers["default"]["level"] == "ERROR"
 
 
-def test_build_uvicorn_log_config_keeps_http_debug_off_when_toolang_debug_is_enabled() -> None:
+def test_build_uvicorn_log_config_keeps_http_debug_off_when_toolang_debug_is_enabled() -> (
+    None
+):
     config = build_uvicorn_log_config(
         spec=parse_log_spec("toolang=debug", default_root_level=logging.ERROR)
     )
@@ -179,7 +192,9 @@ def test_configure_logging_disables_colors_for_file_logs(monkeypatch, tmp_path) 
 
     monkeypatch.setattr(logging.config, "dictConfig", fake_dict_config)
 
-    configure_logging(spec="toolang.execution=debug", environ={}, log_path=tmp_path / "agent.log")
+    configure_logging(
+        spec="toolang.execution=debug", environ={}, log_path=tmp_path / "agent.log"
+    )
 
     config = cast(dict[str, object], captured["config"])
     formatters = cast(dict[str, dict[str, object]], config["formatters"])
@@ -190,8 +205,12 @@ def test_configure_logging_disables_colors_for_file_logs(monkeypatch, tmp_path) 
 def test_resolve_agent_logging_defaults_run_and_start_to_agent_spec(tmp_path) -> None:
     agent_log_path = tmp_path / "agent.log"
 
-    run_plan = resolve_agent_logging(mode="run", environ={}, agent_log_path=agent_log_path)
-    start_plan = resolve_agent_logging(mode="start", environ={}, agent_log_path=agent_log_path)
+    run_plan = resolve_agent_logging(
+        mode="run", environ={}, agent_log_path=agent_log_path
+    )
+    start_plan = resolve_agent_logging(
+        mode="start", environ={}, agent_log_path=agent_log_path
+    )
 
     assert run_plan.destination == "stderr"
     assert run_plan.path is None

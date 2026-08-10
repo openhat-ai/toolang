@@ -76,9 +76,9 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
     assert resolve_ceiling_overrides({}, _option_values(argv, "--allow")) == dict(
         spec.ceiling_overrides
     )
-    assert resolve_binding_overrides(
-        {}, _option_values(argv, "--default")
-    ) == dict(spec.binding_overrides)
+    assert resolve_binding_overrides({}, _option_values(argv, "--default")) == dict(
+        spec.binding_overrides
+    )
     assert resolve_limit_overrides({}, _option_values(argv, "--limit")) == dict(
         spec.limit_overrides
     )

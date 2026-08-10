@@ -25,9 +25,7 @@ DEFAULT_LOG_LEVEL = "ERROR"
 DEFAULT_AGENT_LOG_SPEC = "error,toolang.up.server=info,toolang.state=info,toolang.execution=info,httpx=off,httpcore=off"
 DEFAULT_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 DEFAULT_LOG_FORMAT = "%(asctime)s %(levelprefix)s [%(name)s] %(message)s"
-DEFAULT_ACCESS_LOG_FORMAT = (
-    '%(asctime)s %(levelprefix)s [%(name)s] %(client_addr)s - "%(request_line)s" %(status_code)s'
-)
+DEFAULT_ACCESS_LOG_FORMAT = '%(asctime)s %(levelprefix)s [%(name)s] %(client_addr)s - "%(request_line)s" %(status_code)s'
 _TELEGRAM_BOT_URL_PATTERN = re.compile(r"(https://api\.telegram\.org/bot)[^/]+")
 LogMode = Literal["run", "start", "script"]
 LogDestination = Literal["stderr", "agent_log", "run_log", "none"]
@@ -83,11 +81,21 @@ def build_uvicorn_log_config(
     """Build one logging config shared by Uvicorn and runtime loggers."""
 
     ensure_custom_levels()
-    log_spec = spec or resolve_log_spec(cli_value=level, environ={}, default=DEFAULT_LOG_LEVEL)
+    log_spec = spec or resolve_log_spec(
+        cli_value=level, environ={}, default=DEFAULT_LOG_LEVEL
+    )
     root_level = level_name(log_spec.root_level)
     handler_level = level_name(log_spec.handler_level)
-    default_colors = _stream_uses_colors(sys.stderr) if default_use_colors is None else default_use_colors
-    access_colors = _stream_uses_colors(sys.stdout) if access_use_colors is None else access_use_colors
+    default_colors = (
+        _stream_uses_colors(sys.stderr)
+        if default_use_colors is None
+        else default_use_colors
+    )
+    access_colors = (
+        _stream_uses_colors(sys.stdout)
+        if access_use_colors is None
+        else access_use_colors
+    )
     return {
         "version": 1,
         "disable_existing_loggers": False,
@@ -130,22 +138,30 @@ def build_uvicorn_log_config(
         },
         "loggers": {
             "uvicorn": {
-                "level": _logger_level_name("uvicorn", log_spec, default=log_spec.root_level),
+                "level": _logger_level_name(
+                    "uvicorn", log_spec, default=log_spec.root_level
+                ),
                 "handlers": ["default"],
                 "propagate": False,
             },
             "uvicorn.error": {
-                "level": _logger_level_name("uvicorn.error", log_spec, default=log_spec.root_level),
+                "level": _logger_level_name(
+                    "uvicorn.error", log_spec, default=log_spec.root_level
+                ),
                 "handlers": ["default"],
                 "propagate": False,
             },
             "uvicorn.access": {
-                "level": _logger_level_name("uvicorn.access", log_spec, default=log_spec.root_level),
+                "level": _logger_level_name(
+                    "uvicorn.access", log_spec, default=log_spec.root_level
+                ),
                 "handlers": ["access"],
                 "propagate": False,
             },
             "watchfiles.main": {
-                "level": _logger_level_name("watchfiles.main", log_spec, default=logging.WARNING),
+                "level": _logger_level_name(
+                    "watchfiles.main", log_spec, default=logging.WARNING
+                ),
                 "handlers": ["default"],
                 "propagate": False,
             },
@@ -156,7 +172,9 @@ def build_uvicorn_log_config(
                 "propagate": False,
             },
             "httpcore": {
-                "level": _logger_level_name("httpcore", log_spec, default=OFF_LOG_LEVEL),
+                "level": _logger_level_name(
+                    "httpcore", log_spec, default=OFF_LOG_LEVEL
+                ),
                 "handlers": ["default"],
                 "filters": ["httpx"],
                 "propagate": False,
@@ -215,16 +233,30 @@ def resolve_agent_logging(
             spec = DEFAULT_AGENT_LOG_SPEC
             resolved_environ[PY_LOG_ENV_VAR] = spec
         if mode == "run":
-            return LoggingPlan(spec=spec, destination="stderr", path=None, environ=resolved_environ)
+            return LoggingPlan(
+                spec=spec, destination="stderr", path=None, environ=resolved_environ
+            )
         if agent_log_path is None:
             raise ValueError("agent_log path is required for start logging")
-        return LoggingPlan(spec=spec, destination="agent_log", path=agent_log_path, environ=resolved_environ)
+        return LoggingPlan(
+            spec=spec,
+            destination="agent_log",
+            path=agent_log_path,
+            environ=resolved_environ,
+        )
     if spec:
         if run_log_path is None:
             raise ValueError("run_log path is required for script logging")
-        return LoggingPlan(spec=spec, destination="run_log", path=run_log_path, environ=resolved_environ)
+        return LoggingPlan(
+            spec=spec,
+            destination="run_log",
+            path=run_log_path,
+            environ=resolved_environ,
+        )
     resolved_environ.pop(PY_LOG_ENV_VAR, None)
-    return LoggingPlan(spec=None, destination="none", path=None, environ=resolved_environ)
+    return LoggingPlan(
+        spec=None, destination="none", path=None, environ=resolved_environ
+    )
 
 
 def configure_logging_plan(plan: LoggingPlan) -> None:
@@ -264,7 +296,14 @@ def _install_message_filter(filter_obj: MessageRegexFilter) -> None:
             continue
         handler.addFilter(filter_obj)
         seen.add(id(handler))
-    for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access", "watchfiles.main", "httpx", "httpcore"):
+    for logger_name in (
+        "uvicorn",
+        "uvicorn.error",
+        "uvicorn.access",
+        "watchfiles.main",
+        "httpx",
+        "httpcore",
+    ):
         for handler in logging.getLogger(logger_name).handlers:
             if id(handler) in seen:
                 continue

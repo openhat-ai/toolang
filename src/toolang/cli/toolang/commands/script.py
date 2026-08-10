@@ -331,9 +331,7 @@ def _collect_call(
         name, separator, value = item.partition("=")
         if separator and name in params:
             if name in raw_args:
-                raise click.BadParameter(
-                    f"argument {name} was provided more than once"
-                )
+                raise click.BadParameter(f"argument {name} was provided more than once")
             raw_args[name] = value
             continue
         input_items.append(item)
@@ -352,7 +350,11 @@ def _collect_call(
         ]
         if missing:
             raise _IncompleteRunnableInput
-        if runnable.input is not None and not runnable.input.optional and input.primary is None:
+        if (
+            runnable.input is not None
+            and not runnable.input.optional
+            and input.primary is None
+        ):
             raise _IncompleteRunnableInput
     return commands, input, tuple(raw_args.items())
 
@@ -393,10 +395,7 @@ def _protect_literal_items(argv: list[str]) -> list[str]:
         return argv
     return [
         *argv[: separator + 1],
-        *(
-            f"{_LITERAL_ITEM_PREFIX}{item}"
-            for item in argv[separator + 1 :]
-        ),
+        *(f"{_LITERAL_ITEM_PREFIX}{item}" for item in argv[separator + 1 :]),
     ]
 
 
@@ -466,9 +465,7 @@ def _run(
             and (sys.stderr.isatty() or verbosity > 0)
         ):
             record = store.get_run(run_id=run_id)
-            interruption_reported = (
-                record is not None and record.status == "canceled"
-            )
+            interruption_reported = record is not None and record.status == "canceled"
         if not interruption_reported:
             typer.echo("toolang interrupted", err=True)
         if run_id is not None:
@@ -494,9 +491,7 @@ def _run(
         result,
         store_path=layout.run_store,
         log_path=log_path,
-        error_reported=(
-            not quiet and (sys.stderr.isatty() or verbosity > 0)
-        ),
+        error_reported=(not quiet and (sys.stderr.isatty() or verbosity > 0)),
     )
 
 

@@ -69,7 +69,9 @@ def project_run_start(
     run_context = dict(context or metadata or {})
     run_context.setdefault("origin", origin)
     run_context.setdefault("root", root_run_id or run_id)
-    run_context.setdefault("runnable", {"kind": executable_kind, "name": executable_name})
+    run_context.setdefault(
+        "runnable", {"kind": executable_kind, "name": executable_name}
+    )
     run_context.setdefault("call", call_kind)
     if store.get_thread(thread_id=thread_id) is None:
         store.create_thread(

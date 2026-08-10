@@ -50,9 +50,7 @@ class ImagePart:
 
     def __post_init__(self) -> None:
         if sum(value is not None for value in (self.image_url, self.file_id)) != 1:
-            raise ValueError(
-                "image part requires exactly one of image_url or file_id"
-            )
+            raise ValueError("image part requires exactly one of image_url or file_id")
 
     @classmethod
     def from_data(cls, payload: Mapping[str, Any]) -> ImagePart:
@@ -157,10 +155,7 @@ class DocumentPart:
     type: Literal["document"] = "document"
 
     def __post_init__(self) -> None:
-        if sum(
-            value is not None
-            for value in (self.data, self.url, self.file_id)
-        ) != 1:
+        if sum(value is not None for value in (self.data, self.url, self.file_id)) != 1:
             raise ValueError(
                 "document part requires exactly one of data, url, or file_id"
             )
@@ -215,7 +210,9 @@ class ToolCallPart:
         return cls(
             tool_call_id=str(payload.get("tool_call_id", "")),
             tool_name=str(payload.get("tool_name", "")),
-            tool_family=str(payload.get("tool_family") or payload.get("tool_name") or ""),
+            tool_family=str(
+                payload.get("tool_family") or payload.get("tool_name") or ""
+            ),
             input=_json_object(payload.get("input")),
             call_id=_optional_text(payload.get("call_id")),
             reasoning=_optional_text(payload.get("reasoning")),
@@ -253,7 +250,9 @@ class ToolResultPart:
         return cls(
             tool_call_id=str(payload.get("tool_call_id", "")),
             tool_name=str(payload.get("tool_name", "")),
-            tool_family=str(payload.get("tool_family") or payload.get("tool_name") or ""),
+            tool_family=str(
+                payload.get("tool_family") or payload.get("tool_name") or ""
+            ),
             output=_json_object(payload.get("output")),
             call_id=_optional_text(payload.get("call_id")),
             error=_optional_text(payload.get("error")),
@@ -387,16 +386,17 @@ class Message:
             not self.parts
             or not all(isinstance(part, ToolResultPart) for part in self.parts)
         ):
-            raise ValueError(
-                "tool messages require one or more tool-result parts"
-            )
+            raise ValueError("tool messages require one or more tool-result parts")
 
     @classmethod
     def from_data(cls, payload: Mapping[str, Any]) -> Message:
         parts_payload = payload.get("parts")
         parts = (
-            parts_from_data([item for item in parts_payload if isinstance(item, Mapping)])
-            if isinstance(parts_payload, Sequence) and not isinstance(parts_payload, (str, bytes, bytearray))
+            parts_from_data(
+                [item for item in parts_payload if isinstance(item, Mapping)]
+            )
+            if isinstance(parts_payload, Sequence)
+            and not isinstance(parts_payload, (str, bytes, bytearray))
             else ()
         )
         return cls(
@@ -463,7 +463,9 @@ def _tool_output_payload(content: str) -> dict[str, Any]:
         parsed = json.loads(content)
     except json.JSONDecodeError:
         return {"output": {"content": content}}
-    return dict(parsed) if isinstance(parsed, Mapping) else {"output": {"content": parsed}}
+    return (
+        dict(parsed) if isinstance(parsed, Mapping) else {"output": {"content": parsed}}
+    )
 
 
 def _json_object(raw: object) -> dict[str, Any]:
@@ -509,7 +511,9 @@ def _audio_format(value: object, *, media_type: str | None = None) -> AudioForma
     inferred = _audio_format_from_media_type(media_type)
     if inferred is not None:
         return inferred
-    raise ValueError("audio part requires format=mp3|wav or one inferable from media_type/data_url")
+    raise ValueError(
+        "audio part requires format=mp3|wav or one inferable from media_type/data_url"
+    )
 
 
 def _audio_format_from_media_type(media_type: str | None) -> AudioFormat | None:

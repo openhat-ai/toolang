@@ -25,9 +25,7 @@ def _job(kind, job_id: str, body: str, *, stage="ready") -> JobFile:
 def test_job_watcher_current_returns_published_snapshot_without_rescanning(
     tmp_path: Path, monkeypatch
 ) -> None:
-    watcher = JobWatcher(
-        AgentLayout.resident(tmp_path / "toolang", "alice")
-    )
+    watcher = JobWatcher(AgentLayout.resident(tmp_path / "toolang", "alice"))
     published = watcher.current()
     monkeypatch.setattr(
         "toolang.work.watcher.load_ready_jobs",
@@ -141,10 +139,7 @@ def test_job_store_claims_once_across_connections(tmp_path: Path) -> None:
         with lock:
             claims.append(claimed)
 
-    threads = [
-        threading.Thread(target=claim, args=(store,))
-        for store in stores
-    ]
+    threads = [threading.Thread(target=claim, args=(store,)) for store in stores]
     for thread in threads:
         thread.start()
     barrier.wait()

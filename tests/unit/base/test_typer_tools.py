@@ -112,7 +112,9 @@ def test_typer_tool_invocation_returns_cli_error_payload(tmp_path) -> None:
     assert "Missing argument 'LOCATOR'" in result["stderr"]
 
 
-def test_typer_tool_invocation_runs_inside_tool_context_working_directory(tmp_path: Path) -> None:
+def test_typer_tool_invocation_runs_inside_tool_context_working_directory(
+    tmp_path: Path,
+) -> None:
     app = typer.Typer(add_completion=False)
 
     @app.command("pwd", help="Print the current working directory.")
@@ -142,7 +144,9 @@ def test_typer_tool_definition_uses_custom_click_schema() -> None:
 
     @app.command("push", help="Push a JSON payload.")
     def push(
-        payload: str = typer.Option(..., "--payload", click_type=_JsonType(), help="JSON payload."),
+        payload: str = typer.Option(
+            ..., "--payload", click_type=_JsonType(), help="JSON payload."
+        ),
     ) -> None:
         typer.echo(payload)
 
@@ -170,8 +174,12 @@ def test_typer_tool_config_can_prepare_hidden_arguments_once(tmp_path: Path) -> 
                 hidden_params=frozenset({"secret"}),
                 param_aliases={"payload": "input"},
                 param_schemas={"input": {"type": "object"}},
-                prepare=lambda path, arguments, context: prepared_values.append(context.room.name) or "runtime-secret",
-                inject_arguments=lambda path, arguments, context, prepared: {"secret": prepared},
+                prepare=lambda path, arguments, context: (
+                    prepared_values.append(context.room.name) or "runtime-secret"
+                ),
+                inject_arguments=lambda path, arguments, context, prepared: {
+                    "secret": prepared
+                },
                 transform_result=lambda path, payload, arguments, context, prepared: {
                     "prepared": prepared,
                     "json": json.loads(payload["stdout"]),

@@ -24,7 +24,9 @@ class WebSearchPlugin:
 
     config: dict[str, Any]
     name: str = "web_search"
-    description: str | None = "Search the public web and return concise result snippets."
+    description: str | None = (
+        "Search the public web and return concise result snippets."
+    )
     _top_k: int = field(init=False, repr=False)
     _timeout: int = field(init=False, repr=False)
     _tools: dict[str, AgentTool] = field(init=False, repr=False)
@@ -65,7 +67,9 @@ class WebSearchPlugin:
                 href = _normalized_text(item.get("href"))
                 if href is None:
                     continue
-                if normalized_domains and not _matches_domains(href, normalized_domains):
+                if normalized_domains and not _matches_domains(
+                    href, normalized_domains
+                ):
                     continue
                 filtered.append(
                     {
@@ -152,7 +156,9 @@ def _domains(value: object) -> list[str]:
 
 def _matches_domains(url: str, domains: list[str]) -> bool:
     hostname = (urlparse(url).hostname or "").lower()
-    return any(hostname == domain or hostname.endswith(f".{domain}") for domain in domains)
+    return any(
+        hostname == domain or hostname.endswith(f".{domain}") for domain in domains
+    )
 
 
 def _normalized_text(value: object) -> str | None:

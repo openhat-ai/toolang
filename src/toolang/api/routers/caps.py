@@ -55,9 +55,7 @@ def put_file_cap(
     if payload.content is None:
         raise HTTPException(status_code=400, detail="missing cap content")
 
-    catalog = _authored_caps(
-        manager.home_authoring, manager.root_authoring, visibility
-    )
+    catalog = _authored_caps(manager.home_authoring, manager.root_authoring, visibility)
     cap = _wrap_user_error(
         caps.CapFile.parse,
         payload.content or "",
@@ -65,9 +63,7 @@ def put_file_cap(
         name=name,
     )
     _wrap_user_error(catalog.upsert, cap)
-    entry = _find_authored_entry(
-        core, visibility=visibility, kind=kind, name=name
-    )
+    entry = _find_authored_entry(core, visibility=visibility, kind=kind, name=name)
     return CapDetail.from_cap(entry, agent_name=core.layout.name)
 
 
@@ -90,14 +86,10 @@ def put_wired_cap(
             status_code=400,
             detail=f"Wired {kind} ref {payload.ref!r} does not match requested name {name!r}.",
         )
-    catalog = _wired_caps(
-        manager.home_wiring, manager.root_wiring, visibility
-    )
+    catalog = _wired_caps(manager.home_wiring, manager.root_wiring, visibility)
     cap = cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
     _wrap_user_error(catalog.upsert, cap)
-    entry = _find_authored_entry(
-        core, visibility=visibility, kind=kind, name=name
-    )
+    entry = _find_authored_entry(core, visibility=visibility, kind=kind, name=name)
     return CapDetail.from_cap(entry, agent_name=core.layout.name)
 
 
@@ -244,9 +236,7 @@ def cap_template_list(request: Request) -> list[dict[str, object]]:
 @router.get("/services/templates/{template_name}", summary="Get Service Template")
 @router.get("/skills/templates/{template_name}", summary="Get Skill Template")
 @router.get("/psyches/templates/{template_name}", summary="Get Psyche Template")
-def cap_template_detail(
-    request: Request, template_name: str
-) -> dict[str, object]:
+def cap_template_detail(request: Request, template_name: str) -> dict[str, object]:
     collection = str(request.url.path).split("/")[3]
     kind = _collection_kind(collection)
     try:

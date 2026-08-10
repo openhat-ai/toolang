@@ -31,7 +31,9 @@ def create_example_tool_plugins(
     return {
         "echo": create_echo_tool_set(plugin_config.get("echo", {})),
         "math_add": create_math_add_tool_set(plugin_config.get("math_add", {})),
-        "working_tree": create_working_tree_tool_set(plugin_config.get("working_tree", {})),
+        "working_tree": create_working_tree_tool_set(
+            plugin_config.get("working_tree", {})
+        ),
     }
 
 
@@ -40,7 +42,9 @@ def create_echo_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
 
     prefix = str(config.get("prefix", ""))
 
-    @tool(name="echo", description="Echo input text with an optional configured prefix.")
+    @tool(
+        name="echo", description="Echo input text with an optional configured prefix."
+    )
     def echo(text: str, context: ToolContext) -> dict[str, Any]:
         output = f"{prefix}{text}"
         return {

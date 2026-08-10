@@ -361,9 +361,11 @@ def program_structs(binding: BoundRun) -> dict[str, StructDecl]:
 def output_parts(local: Local) -> tuple[MessagePart, ...]:
     if local.shape == "none":
         return ()
-    if local.shape == "item" and (
-        percept := value_percept(local.value, type_name=local.type_name)
-    ) is not None:
+    if (
+        local.shape == "item"
+        and (percept := value_percept(local.value, type_name=local.type_name))
+        is not None
+    ):
         return tuple(percept)
     return (TextPart(text=value_text(local.value)),)
 

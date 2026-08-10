@@ -19,8 +19,7 @@ def load_model_providers(
         load_plugins(
             group="toolang.model_provider",
             config={
-                key: _provider_config(value)
-                for key, value in (configs or {}).items()
+                key: _provider_config(value) for key, value in (configs or {}).items()
             },
         ),
     )

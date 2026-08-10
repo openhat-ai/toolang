@@ -109,6 +109,7 @@ class OpenAIModelProvider(ModelProvider):
             for model in _KNOWN_MODELS
         )
 
+
 def create_model_provider(config: Mapping[str, object]) -> ModelProvider:
     """Create the built-in OpenAI model provider."""
 

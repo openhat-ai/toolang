@@ -49,16 +49,12 @@ def _create_same_job(directory: str, kind: JobKind) -> str:
 
 
 def _assign_manual_job(root: str) -> None:
-    assign_missing_authored_job_ids(
-        AgentLayout.resident(Path(root), "alice")
-    )
+    assign_missing_authored_job_ids(AgentLayout.resident(Path(root), "alice"))
 
 
 def _allocate_and_create_job(root: str) -> None:
     root_path = Path(root)
-    job_id = allocate_authored_job_id(
-        AgentLayout.resident(root_path, "alice")
-    )
+    job_id = allocate_authored_job_id(AgentLayout.resident(root_path, "alice"))
     AuthoredJobs(root_path / "agents" / "alice").create(
         new_job_file(
             kind="task",

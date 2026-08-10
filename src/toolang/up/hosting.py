@@ -30,9 +30,9 @@ from toolang.up.mounts import prepare_root_mounts
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
 
 HOSTING_READY_TIMEOUT_SEC = 30.0
-_TASK_LOCKS: WeakKeyDictionary[
-    asyncio.AbstractEventLoop, dict[Path, asyncio.Lock]
-] = WeakKeyDictionary()
+_TASK_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[Path, asyncio.Lock]] = (
+    WeakKeyDictionary()
+)
 _TASK_LOCKS_MUTEX = threading.Lock()
 
 

@@ -115,9 +115,7 @@ class ScriptedModelAdapter:
         if turn.gate is not None:
             await turn.gate.wait()
         if turn.updates:
-            raise AssertionError(
-                "streaming updates require a streaming test model"
-            )
+            raise AssertionError("streaming updates require a streaming test model")
         if turn.error is not None:
             raise turn.error
         return turn.result

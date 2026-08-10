@@ -48,9 +48,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             ),
         )
     elif state.last_step is not None:
-        step_input = (
-            StepOutputRef(step=StepPath(run.run_id, (state.last_step,))),
-        )
+        step_input = (StepOutputRef(step=StepPath(run.run_id, (state.last_step,))),)
     else:
         step_input = (RunInputRef(),)
     _LOGGER.info(

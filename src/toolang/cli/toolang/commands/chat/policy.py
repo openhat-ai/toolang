@@ -34,9 +34,7 @@ def commands_from_selects(
     for kind in ("flow", "agic"):
         name = _text(selects.get(kind))
         if name is not None:
-            commands.append(
-                PolicyCommand("default", "runnable", f"{kind}:{name}")
-            )
+            commands.append(PolicyCommand("default", "runnable", f"{kind}:{name}"))
             break
     return tuple(commands)
 

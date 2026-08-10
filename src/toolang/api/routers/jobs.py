@@ -34,9 +34,7 @@ def create_task(
     scheduler: JobSchedulerDep,
     payload: TaskCreateRequest,
 ) -> JobDetail:
-    saved = manager.home_authoring.create(
-        _new_job(core, kind="task", payload=payload)
-    )
+    saved = manager.home_authoring.create(_new_job(core, kind="task", payload=payload))
     _refresh_jobs(scheduler)
     return _job_detail(core, saved)
 
@@ -156,9 +154,7 @@ def create_chore(
     scheduler: JobSchedulerDep,
     payload: ChoreCreateRequest,
 ) -> JobDetail:
-    saved = manager.home_authoring.create(
-        _new_job(core, kind="chore", payload=payload)
-    )
+    saved = manager.home_authoring.create(_new_job(core, kind="chore", payload=payload))
     _refresh_jobs(scheduler)
     return _job_detail(core, saved)
 

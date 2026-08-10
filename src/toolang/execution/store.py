@@ -175,7 +175,9 @@ class RunStore:
                         raise ValueError(f"source root run not found: {source}")
                     source_record = _run_from_row(source_row)
                     if source_record.thread != thread:
-                        raise ValueError("rerun source must belong to the target thread")
+                        raise ValueError(
+                            "rerun source must belong to the target thread"
+                        )
                     if source_record.ejected is not None:
                         raise ValueError(f"rerun source is not visible: {source}")
                     if source_record.status not in {"finished", "failed", "canceled"}:
@@ -190,7 +192,9 @@ class RunStore:
                         (thread,),
                     ).fetchone()
                     if latest is None or str(latest["id"]) != source:
-                        raise ValueError("rerun source must be the latest visible root run")
+                        raise ValueError(
+                            "rerun source must be the latest visible root run"
+                        )
                 self._conn.execute(
                     """
                     INSERT INTO runs(
@@ -432,10 +436,7 @@ class RunStore:
                     SET ejected_run = ?, ejected_index = ?
                     WHERE run = ? AND path = ? AND ejected_run IS NULL
                     """,
-                    (
-                        (run_id, index, path.run, path.local)
-                        for path in ejected
-                    ),
+                    ((run_id, index, path.run, path.local) for path in ejected),
                 )
                 self._conn.execute(
                     """
@@ -1256,9 +1257,7 @@ class RunStore:
         for row in run_rows:
             run = _run_from_row(row)
             runs_by_thread.setdefault(run.thread, []).append(run)
-        ejected_steps = {
-            f'{row["run"]}/{row["path"]}' for row in ejected_step_rows
-        }
+        ejected_steps = {f"{row['run']}/{row['path']}" for row in ejected_step_rows}
         cache: dict[tuple[str, bool], tuple[RunRecord, ...]] = {}
 
         def history(
@@ -1314,8 +1313,7 @@ class RunStore:
                         cuts = tuple(
                             positions[control.anchor]
                             for control in controls
-                            if control.kind == "rewind"
-                            and control.anchor in positions
+                            if control.kind == "rewind" and control.anchor in positions
                         )
                         if cuts:
                             prefix = prefix[: min(cuts)]
@@ -1325,9 +1323,7 @@ class RunStore:
                     if include_hidden
                     or (
                         run.ejected is None
-                        and (
-                            run.parent is None or str(run.parent) not in ejected_steps
-                        )
+                        and (run.parent is None or str(run.parent) not in ejected_steps)
                     )
                 ]
                 result = [*prefix, *own]
@@ -1426,7 +1422,9 @@ class RunStore:
                 None,
             )
             if match is None:
-                raise ValueError(f"retry anchor is not visible in run {run_id}: {anchor}")
+                raise ValueError(
+                    f"retry anchor is not visible in run {run_id}: {anchor}"
+                )
             return anchor
         retryable = tuple(
             row
@@ -1434,11 +1432,7 @@ class RunStore:
             if str(row["status"]) in {"running", "failed", "canceled"}
         )
         candidate = next(
-            (
-                row
-                for row in reversed(retryable)
-                if str(row["kind"]) != "system"
-            ),
+            (row for row in reversed(retryable) if str(row["kind"]) != "system"),
             retryable[-1] if retryable else None,
         )
         if candidate is None:
@@ -1463,8 +1457,7 @@ class RunStore:
             tuple(tree_runs),
         ).fetchall()
         keyed = {
-            StepPath.from_local(str(row["run"]), str(row["path"])): row
-            for row in rows
+            StepPath.from_local(str(row["run"]), str(row["path"])): row for row in rows
         }
         anchor_row = keyed.get(anchor)
         if anchor_row is None:
@@ -2226,9 +2219,7 @@ class RunStore:
             else:
                 step_columns = {
                     str(row["name"])
-                    for row in self._conn.execute(
-                        "PRAGMA table_info(steps)"
-                    ).fetchall()
+                    for row in self._conn.execute("PRAGMA table_info(steps)").fetchall()
                 }
                 if "run" not in step_columns or "path" not in step_columns:
                     given = "given" if "given" in step_columns else "context"
@@ -2323,9 +2314,7 @@ class RunStore:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_threads_updated ON threads(updated_at)"
             )
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_steps_run ON steps(run)"
-            )
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_steps_run ON steps(run)")
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
 
@@ -2494,9 +2483,7 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
     return RunRecord(
         id=str(row["id"]),
         parent=(
-            StepPath.parse(str(row["parent"]))
-            if row["parent"] is not None
-            else None
+            StepPath.parse(str(row["parent"])) if row["parent"] is not None else None
         ),
         thread=str(row["thread"]),
         input=RunInputRef.from_data(
@@ -2594,9 +2581,7 @@ def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
         input=Message.from_data(input_raw) if isinstance(input_raw, Mapping) else None,
         source=str(row["source"]) if row["source"] is not None else None,
         anchor=(
-            StepPath.parse(str(row["anchor"]))
-            if row["anchor"] is not None
-            else None
+            StepPath.parse(str(row["anchor"])) if row["anchor"] is not None else None
         ),
         request_id=str(row["request_id"]) if row["request_id"] is not None else None,
         context=dict(context_raw) if isinstance(context_raw, Mapping) else {},

@@ -30,19 +30,13 @@ def event_labels(events: Sequence[RunEvent]) -> list[str]:
         elif isinstance(event, StepBegin):
             labels.append(f"step_begin:{event.step}:{event.kind}")
         elif isinstance(event, StepEnd):
-            labels.append(
-                f"step_end:{event.step}:{event.kind}:{event.status}"
-            )
+            labels.append(f"step_end:{event.step}:{event.kind}:{event.status}")
         elif isinstance(event, PartBegin):
-            labels.append(
-                f"part_begin:{event.step}:{event.part}:{event.part_type}"
-            )
+            labels.append(f"part_begin:{event.step}:{event.part}:{event.part_type}")
         elif isinstance(event, PartDelta):
             labels.append(f"part_delta:{event.step}:{event.part}")
         else:
-            labels.append(
-                f"part_end:{event.step}:{event.part}:{event.data.type}"
-            )
+            labels.append(f"part_end:{event.step}:{event.part}:{event.data.type}")
     return labels
 
 
@@ -67,18 +61,14 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
         if isinstance(event, StepBegin):
             run_id = event.step.run
             assert run_id in active_runs, f"step outside active run at {where}"
-            assert event.step not in active_steps, (
-                f"duplicate step begin at {where}"
-            )
+            assert event.step not in active_steps, f"duplicate step begin at {where}"
             assert event.step not in ended_steps, f"step restarted at {where}"
             active_steps[event.step] = event
             continue
 
         if isinstance(event, PartBegin):
             key = (event.step, event.part)
-            assert event.step in active_steps, (
-                f"part outside active step at {where}"
-            )
+            assert event.step in active_steps, f"part outside active step at {where}"
             assert key not in active_parts, f"duplicate part begin at {where}"
             assert key not in ended_parts, f"part restarted at {where}"
             active_parts[key] = event
@@ -86,9 +76,7 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
 
         if isinstance(event, PartDelta):
             key = (event.step, event.part)
-            assert key in active_parts, (
-                f"part delta outside active part at {where}"
-            )
+            assert key in active_parts, f"part delta outside active part at {where}"
             continue
 
         if isinstance(event, PartEnd):
@@ -111,13 +99,9 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
                 assert begin.started_at <= event.finished_at, (
                     f"step finished before it started at {where}"
                 )
-            open_parts = {
-                key for key in active_parts if key[0] == event.step
-            }
+            open_parts = {key for key in active_parts if key[0] == event.step}
             if event.status == "finished":
-                assert not open_parts, (
-                    f"finished step has incomplete parts at {where}"
-                )
+                assert not open_parts, f"finished step has incomplete parts at {where}"
                 parts = tuple(
                     ended.data
                     for key, ended in sorted(
@@ -143,9 +127,9 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
         assert isinstance(event, RunEnd)
         assert event.run in active_runs, f"run end without begin at {where}"
         assert event.run not in ended_runs, f"duplicate run end at {where}"
-        assert not any(
-            step.run == event.run for step in active_steps
-        ), f"run ended with active steps at {where}"
+        assert not any(step.run == event.run for step in active_steps), (
+            f"run ended with active steps at {where}"
+        )
         if isinstance(event.output, StepOutputRef):
             assert event.output.step in ended_steps, (
                 f"run output references an incomplete step at {where}"
@@ -154,9 +138,5 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
         ended_runs.add(event.run)
 
     assert not active_runs, f"runs missing terminal events: {sorted(active_runs)}"
-    assert not active_steps, (
-        f"steps missing terminal events: {sorted(active_steps)}"
-    )
-    assert not active_parts, (
-        f"parts missing terminal events: {sorted(active_parts)}"
-    )
+    assert not active_steps, f"steps missing terminal events: {sorted(active_steps)}"
+    assert not active_parts, f"parts missing terminal events: {sorted(active_parts)}"

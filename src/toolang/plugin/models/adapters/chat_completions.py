@@ -175,7 +175,8 @@ async def stream_chat_completion(
                         ModelPartDelta(
                             delta=ToolCallDelta(
                                 text=arguments_delta,
-                                tool_call_id=buffer.tool_call_id or f"tool-call-{index}",
+                                tool_call_id=buffer.tool_call_id
+                                or f"tool-call-{index}",
                             )
                         )
                     )
@@ -184,7 +185,9 @@ async def stream_chat_completion(
         if callable(close):
             await close()
     text = "".join(text_parts)
-    tool_calls = tuple(buffer.to_tool_call(index) for index, buffer in sorted(tool_buffers.items()))
+    tool_calls = tuple(
+        buffer.to_tool_call(index) for index, buffer in sorted(tool_buffers.items())
+    )
     audio = _audio_part(
         data="".join(audio_data_parts),
         transcript="".join(audio_transcript_parts),
@@ -220,7 +223,9 @@ async def stream_chat_completion(
         )
     result = ModelCallResult(message=message, tool_calls=tool_calls)
     if final_usage is not None:
-        result = ModelCallResult(message=message, tool_calls=tool_calls, usage=final_usage)
+        result = ModelCallResult(
+            message=message, tool_calls=tool_calls, usage=final_usage
+        )
     _log_api_response(target, result, stream=True)
     return result
 
@@ -272,7 +277,9 @@ def chat_messages(
     return payload
 
 
-def encode_message(target: ModelTarget, message: Message) -> dict[str, Any] | list[dict[str, Any]] | None:
+def encode_message(
+    target: ModelTarget, message: Message
+) -> dict[str, Any] | list[dict[str, Any]] | None:
     """Encode one run-loop message into Chat Completions message objects."""
 
     role = message.role.strip()
@@ -280,9 +287,15 @@ def encode_message(target: ModelTarget, message: Message) -> dict[str, Any] | li
         return {"role": "user", "content": _encode_user_content(message)}
     if role == "assistant":
         text = _text_content(message)
-        tool_calls = [_encode_tool_call_part(part) for part in message.parts if isinstance(part, ToolCallPart)]
+        tool_calls = [
+            _encode_tool_call_part(part)
+            for part in message.parts
+            if isinstance(part, ToolCallPart)
+        ]
         payload: dict[str, Any] = {"role": "assistant", "content": text}
-        reasoning_content = _reasoning_content_for_payload(target, message, tool_calls=tool_calls)
+        reasoning_content = _reasoning_content_for_payload(
+            target, message, tool_calls=tool_calls
+        )
         if reasoning_content is not None:
             payload["reasoning_content"] = reasoning_content
         if tool_calls:
@@ -339,7 +352,9 @@ def parse_chat_completion(
         message=_assistant_message(
             text=text if isinstance(text, str) else "",
             tool_calls=tool_calls,
-            reasoning_content=reasoning_content if isinstance(reasoning_content, str) else "",
+            reasoning_content=reasoning_content
+            if isinstance(reasoning_content, str)
+            else "",
             audio=audio,
         ),
         tool_calls=tool_calls,
@@ -350,7 +365,9 @@ def parse_chat_completion(
 def parse_tool_calls(raw_tool_calls: object) -> list[ToolCall]:
     """Extract normalized tool calls from one Chat Completions message."""
 
-    if not isinstance(raw_tool_calls, Iterable) or isinstance(raw_tool_calls, (str, bytes, dict)):
+    if not isinstance(raw_tool_calls, Iterable) or isinstance(
+        raw_tool_calls, (str, bytes, dict)
+    ):
         return []
     results: list[ToolCall] = []
     for item in raw_tool_calls:
@@ -430,9 +447,7 @@ def _encode_user_content(message: Message) -> list[dict[str, Any]]:
             continue
         if isinstance(part, ImagePart):
             if part.image_url is None:
-                raise ToolangError(
-                    "Chat Completions image input requires image_url"
-                )
+                raise ToolangError("Chat Completions image input requires image_url")
             content.append(
                 {
                     "type": "image_url",
@@ -466,9 +481,7 @@ def _encode_user_content(message: Message) -> list[dict[str, Any]]:
             elif part.file_id is not None:
                 file["file_id"] = part.file_id
             else:  # pragma: no cover - guarded by DocumentPart validation
-                raise ToolangError(
-                    "document part is missing data or file_id"
-                )
+                raise ToolangError("document part is missing data or file_id")
             if part.filename is not None:
                 file["filename"] = part.filename
             content.append({"type": "file", "file": file})
@@ -483,7 +496,9 @@ def _encode_tool_call_part(part: ToolCallPart) -> dict[str, Any]:
         "type": "function",
         "function": {
             "name": part.tool_name,
-            "arguments": json.dumps(part.input, ensure_ascii=False, separators=(",", ":")),
+            "arguments": json.dumps(
+                part.input, ensure_ascii=False, separators=(",", ":")
+            ),
         },
     }
 

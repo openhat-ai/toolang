@@ -47,9 +47,7 @@ class ImageInputPart(ApiRequest):
     @model_validator(mode="after")
     def validate_source(self) -> Self:
         if sum(value is not None for value in (self.image_url, self.file_id)) != 1:
-            raise ValueError(
-                "image part requires exactly one of image_url or file_id"
-            )
+            raise ValueError("image part requires exactly one of image_url or file_id")
         return self
 
 

@@ -23,13 +23,17 @@ class ShellPlugin:
 
     config: dict[str, Any]
     name: str = "shell"
-    description: str | None = "Run non-interactive shell commands inside the current agent home."
+    description: str | None = (
+        "Run non-interactive shell commands inside the current agent home."
+    )
     _timeout_sec: int = field(init=False, repr=False)
     _max_output_chars: int = field(init=False, repr=False)
     _tools: dict[str, AgentTool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._timeout_sec = _int_value(self.config.get("timeout_sec"), default=DEFAULT_TIMEOUT_SEC)
+        self._timeout_sec = _int_value(
+            self.config.get("timeout_sec"), default=DEFAULT_TIMEOUT_SEC
+        )
         self._max_output_chars = _int_value(
             self.config.get("max_output_chars"),
             default=DEFAULT_MAX_OUTPUT_CHARS,
@@ -106,7 +110,11 @@ def _int_value(value: object, *, default: int) -> int:
     if value is None:
         return default
     try:
-        parsed = value if isinstance(value, int) and not isinstance(value, bool) else int(str(value))
+        parsed = (
+            value
+            if isinstance(value, int) and not isinstance(value, bool)
+            else int(str(value))
+        )
     except (TypeError, ValueError) as exc:
         raise ToolangError("shell integer argument is invalid") from exc
     if parsed <= 0:

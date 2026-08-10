@@ -74,7 +74,9 @@ def tool_ref_for_model_tool(model_name: str, tool: AgentTool) -> ToolRef:
     plugin = getattr(tool, "plugin_name", None)
     plugin_name = plugin if isinstance(plugin, str) and plugin else "-"
     namespace = getattr(tool, "namespace", None)
-    namespace_name = namespace if isinstance(namespace, str) and namespace else plugin_name
+    namespace_name = (
+        namespace if isinstance(namespace, str) and namespace else plugin_name
+    )
     leaf = _tool_leaf_name(tool)
     if namespace_name == "-" and "/" in model_name:
         namespace_name, _separator, leaf = model_name.partition("/")

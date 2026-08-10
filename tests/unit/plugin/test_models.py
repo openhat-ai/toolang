@@ -31,7 +31,7 @@ from toolang.execution.executor.runs.agic import _AgicState, _execute
 from toolang.execution.records import RunControlRecord
 from toolang.plugin.models.discovery import missing_provider_env_vars
 from toolang.plugin.models.resolution import resolve_model, select_model_selectors
-from toolang.plugin.models.views import model_target_profile
+from toolang.plugin.models.views import _format_decimal_unit, model_target_profile
 from toolang.plugin.models.providers import deepseek as deepseek_models
 from toolang.plugin.models.providers import google as google_models
 from toolang.plugin.models.providers import ollama as ollama_models
@@ -1162,6 +1162,10 @@ def test_model_target_profile_formats_token_counts_as_decimal_units() -> None:
         )
         == "streaming=y, tools=y, ctx=128k, max_out=16.4k, price=$1.75/$14"
     )
+
+
+def test_decimal_unit_formatting_accepts_integer_values() -> None:
+    assert _format_decimal_unit(1) == "1"
 
 
 def test_openrouter_provider_discovers_remote_models(monkeypatch) -> None:

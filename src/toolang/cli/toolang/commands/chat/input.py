@@ -108,8 +108,8 @@ def is_policy_commands(
 ) -> TypeGuard[tuple[PolicyCommand, ...]]:
     """Return whether a chat input is a policy-only command sequence."""
 
-    return bool(value) and isinstance(value, tuple) and isinstance(
-        value[0], PolicyCommand
+    return (
+        bool(value) and isinstance(value, tuple) and isinstance(value[0], PolicyCommand)
     )
 
 
@@ -138,7 +138,17 @@ def _parse_quick(line: str) -> QuickCommand | None:
 
     if name in _POLICY_HEADS and tail is not None:
         return None
-    if name in {"allow", "default", "limit", "tools", "caps", "psyches", "skills", "services", "prompts"}:
+    if name in {
+        "allow",
+        "default",
+        "limit",
+        "tools",
+        "caps",
+        "psyches",
+        "skills",
+        "services",
+        "prompts",
+    }:
         return None
     if name not in _QUICK_COMMANDS:
         raise ValueError(f"unknown command: :{name}")

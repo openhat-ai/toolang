@@ -29,6 +29,7 @@ from tests.support.live_provider import create_live_agent
 
 pytestmark = pytest.mark.live_provider
 
+
 @pytest.fixture
 def live_model(request: pytest.FixtureRequest) -> str:
     """Return the explicitly selected live model or skip this test module."""
@@ -106,9 +107,9 @@ def test_real_provider_executes_agic(
         async with _LiveExecution.create(tmp_path, model=live_model) as runtime:
             run_id, output = await runtime.run("smoke", "TOOLANG_AGIC_SMOKE")
             assert "TOOLANG_AGIC_SMOKE" in output
-            assert [
-                step.kind for step in runtime.store.list_steps(run_id=run_id)
-            ] == ["model"]
+            assert [step.kind for step in runtime.store.list_steps(run_id=run_id)] == [
+                "model"
+            ]
 
     asyncio.run(scenario())
 
@@ -121,9 +122,9 @@ def test_real_provider_executes_flow_with_nested_agic(
         async with _LiveExecution.create(tmp_path, model=live_model) as runtime:
             run_id, output = await runtime.run("relay", "TOOLANG_FLOW_SMOKE")
             assert "TOOLANG_FLOW_SMOKE" in output
-            assert [
-                step.kind for step in runtime.store.list_steps(run_id=run_id)
-            ] == ["run"]
+            assert [step.kind for step in runtime.store.list_steps(run_id=run_id)] == [
+                "run"
+            ]
             children = [
                 run
                 for run in runtime.store.list_runs(limit=None)
@@ -131,8 +132,7 @@ def test_real_provider_executes_flow_with_nested_agic(
             ]
             assert len(children) == 1
             assert [
-                step.kind
-                for step in runtime.store.list_steps(run_id=children[0].id)
+                step.kind for step in runtime.store.list_steps(run_id=children[0].id)
             ] == ["model"]
 
     asyncio.run(scenario())

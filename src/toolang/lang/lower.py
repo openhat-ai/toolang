@@ -297,7 +297,9 @@ class _Lowerer:
                 messages.extend(self._lower_messages(child))
                 continue
             if child.type == "message":
-                messages.append(self._lower_message(child, doc=self.docs.for_node(child)))
+                messages.append(
+                    self._lower_message(child, doc=self.docs.for_node(child))
+                )
                 continue
             if child.type in {"pass_keyword", "pass_statement"}:
                 continue

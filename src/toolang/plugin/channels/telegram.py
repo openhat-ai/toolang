@@ -41,14 +41,23 @@ class TelegramChannel:
 
     def __post_init__(self) -> None:
         self._token = _required_text(self.config.get("token"), name="token")
-        self._api_base = _optional_text(self.config.get("api_base")) or DEFAULT_TELEGRAM_API_BASE
-        self._poll_timeout_sec = _optional_int(self.config.get("poll_timeout_sec")) or DEFAULT_POLL_TIMEOUT_SEC
-        self._allowed_updates = (
-            _normalized_text_list(self.config.get("allowed_updates")) or list(DEFAULT_ALLOWED_UPDATES)
+        self._api_base = (
+            _optional_text(self.config.get("api_base")) or DEFAULT_TELEGRAM_API_BASE
         )
+        self._poll_timeout_sec = (
+            _optional_int(self.config.get("poll_timeout_sec"))
+            or DEFAULT_POLL_TIMEOUT_SEC
+        )
+        self._allowed_updates = _normalized_text_list(
+            self.config.get("allowed_updates")
+        ) or list(DEFAULT_ALLOWED_UPDATES)
         self._owner_chat_id = _optional_text(self.config.get("owner_chat_id"))
-        self._peer_chat_ids = set(_normalized_text_list(self.config.get("peer_chat_ids")))
-        self._allowed_chat_ids = set(_normalized_text_list(self.config.get("allowed_chat_ids")))
+        self._peer_chat_ids = set(
+            _normalized_text_list(self.config.get("peer_chat_ids"))
+        )
+        self._allowed_chat_ids = set(
+            _normalized_text_list(self.config.get("allowed_chat_ids"))
+        )
 
     def poll(self, state: ChannelState, context: ChannelContext) -> PollResult:
         """Poll Telegram for inbound chat deliveries."""
@@ -78,7 +87,11 @@ class TelegramChannel:
                 continue
             update_id = update.get("update_id")
             if isinstance(update_id, int):
-                max_update_id = update_id if max_update_id is None else max(max_update_id, update_id)
+                max_update_id = (
+                    update_id
+                    if max_update_id is None
+                    else max(max_update_id, update_id)
+                )
             message = update.get("message")
             if not isinstance(message, dict):
                 continue
@@ -86,13 +99,17 @@ class TelegramChannel:
             if delivery is not None:
                 deliveries.append(delivery)
 
-        next_cursor = str(max_update_id + 1) if max_update_id is not None else state.cursor
+        next_cursor = (
+            str(max_update_id + 1) if max_update_id is not None else state.cursor
+        )
         return PollResult(
             deliveries=deliveries,
             next_state=ChannelState(cursor=next_cursor, meta=dict(state.meta)),
         )
 
-    def decode_hook(self, request: HookRequest, context: ChannelContext) -> InboundDelivery | None:
+    def decode_hook(
+        self, request: HookRequest, context: ChannelContext
+    ) -> InboundDelivery | None:
         """Telegram polling plugin does not support generic hook decoding."""
 
         del request, context
@@ -141,7 +158,9 @@ class TelegramChannel:
             )
             result = response.get("result")
             if not isinstance(result, dict):
-                return DeliveryResult(ok=False, detail="telegram editMessageText returned no result")
+                return DeliveryResult(
+                    ok=False, detail="telegram editMessageText returned no result"
+                )
             remote_id = result.get("message_id", replace_remote_id)
             return DeliveryResult(
                 ok=True,
@@ -166,7 +185,9 @@ class TelegramChannel:
         )
         result = response.get("result")
         if not isinstance(result, dict):
-            return DeliveryResult(ok=False, detail="telegram sendMessage returned no result")
+            return DeliveryResult(
+                ok=False, detail="telegram sendMessage returned no result"
+            )
         remote_id = result.get("message_id")
         return DeliveryResult(
             ok=True,
@@ -193,13 +214,17 @@ class TelegramChannel:
         if chat_id is None or not self._is_allowed_chat(chat_id):
             return None
 
-        text = _optional_text(message.get("text")) or _optional_text(message.get("caption"))
+        text = _optional_text(message.get("text")) or _optional_text(
+            message.get("caption")
+        )
         if text is None:
             return None
 
         sender = self._sender_for_chat(chat_id)
         message_thread_id = message.get("message_thread_id")
-        thread_suffix = f"_{message_thread_id}" if isinstance(message_thread_id, int) else ""
+        thread_suffix = (
+            f"_{message_thread_id}" if isinstance(message_thread_id, int) else ""
+        )
         thread_id = f"script_tg_{chat_id}{thread_suffix}"
         reply_meta: dict[str, Any] = {"chat_id": chat_id}
         if isinstance(message_thread_id, int):
@@ -307,7 +332,9 @@ def _normalized_text_list(value: Any) -> list[str]:
     if value is None:
         return []
     if isinstance(value, str):
-        return [item for item in (_optional_text(part) for part in value.split(",")) if item]
+        return [
+            item for item in (_optional_text(part) for part in value.split(",")) if item
+        ]
     if isinstance(value, list | tuple):
         return [item for item in (_optional_text(part) for part in value) if item]
     return []

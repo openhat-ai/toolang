@@ -180,9 +180,7 @@ def _parse_limit_value(
     try:
         parsed = int(normalized)
     except ValueError as exc:
-        raise ValueError(
-            f"{source} limit {name} expects an integer or none"
-        ) from exc
+        raise ValueError(f"{source} limit {name} expects an integer or none") from exc
     if parsed < 0:
         raise ValueError(
             f"{source} limit {name} expects a non-negative integer or none"

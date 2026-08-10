@@ -57,8 +57,7 @@ def create_live_agent(
         provider_filters[0]
         if len(provider_filters) == 1 and provider_filters[0] in providers
         else selector.pattern.partition("/")[0]
-        if "/" in selector.pattern
-        and selector.pattern.partition("/")[0] in providers
+        if "/" in selector.pattern and selector.pattern.partition("/")[0] in providers
         else None
     )
     if provider_hint is not None:

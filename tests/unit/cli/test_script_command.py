@@ -365,8 +365,7 @@ def test_script_uses_typer_help_and_authored_docs(
     assert result == 0
     assert (
         "Usage: toolang demo.too demo [OPTIONS] "
-        "count=Number [enabled=Boolean] INPUT..."
-        in stdout
+        "count=Number [enabled=Boolean] INPUT..." in stdout
     )
     assert "Run the documented demo." in stdout
     assert "Arguments" in stdout
@@ -465,11 +464,13 @@ def test_script_accepts_explicit_runnable_selectors(
     monkeypatch.setattr(
         script,
         "_run",
-        lambda source_path, **kwargs: captured.update(
-            source_path=source_path,
-            **kwargs,
-        )
-        or 0,
+        lambda source_path, **kwargs: (
+            captured.update(
+                source_path=source_path,
+                **kwargs,
+            )
+            or 0
+        ),
     )
 
     result = script.dispatch(

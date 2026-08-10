@@ -49,6 +49,7 @@ class ModelCall:
     tools: tuple[ToolDefinition, ...] = field(default_factory=tuple)
     state: dict[str, Any] | None = None
 
+
 @dataclass(frozen=True, slots=True)
 class ModelCallResult:
     """One completed model call."""

@@ -52,13 +52,17 @@ def _validate_template(template: str) -> None:
             raise ToolangError("empty Toolang template tag is not allowed.")
         prefix = raw[0]
         if prefix in {">", "!", "&", "="}:
-            raise ToolangError(f"Toolang templates do not support tags starting with {prefix!r}.")
+            raise ToolangError(
+                f"Toolang templates do not support tags starting with {prefix!r}."
+            )
         if prefix in {"#", "^", "/"}:
             name = raw[1:].strip()
             _require_tag_name(name)
             if prefix == "/":
                 if not stack or stack[-1] != name:
-                    raise ToolangError(f"unmatched Toolang template section close: {name}")
+                    raise ToolangError(
+                        f"unmatched Toolang template section close: {name}"
+                    )
                 stack.pop()
                 continue
             stack.append(name)
@@ -79,18 +83,24 @@ def _validate_context(value: object, *, path: str = "context") -> None:
     if value is None or isinstance(value, (bool, int, float, str)):
         return
     if callable(value):
-        raise ToolangError(f"Toolang template context does not support callables at {path}.")
+        raise ToolangError(
+            f"Toolang template context does not support callables at {path}."
+        )
     if isinstance(value, Mapping):
         for key, item in value.items():
             if not isinstance(key, str):
-                raise ToolangError(f"Toolang template context keys must be strings at {path}.")
+                raise ToolangError(
+                    f"Toolang template context keys must be strings at {path}."
+                )
             _validate_context(item, path=f"{path}.{key}")
         return
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         for index, item in enumerate(value):
             _validate_context(item, path=f"{path}[{index}]")
         return
-    raise ToolangError(f"unsupported Toolang template context value at {path}: {type(value).__name__}")
+    raise ToolangError(
+        f"unsupported Toolang template context value at {path}: {type(value).__name__}"
+    )
 
 
 def _identity_escape(value: Any) -> Any:

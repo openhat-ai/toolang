@@ -150,15 +150,11 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
         assert fork_control[0].status == "finished"
         assert [
             run.id
-            for run in reopened.list_thread_history_chronological(
-                thread_id=forked
-            )
+            for run in reopened.list_thread_history_chronological(thread_id=forked)
         ] == [first_run]
         assert second_run not in {
             run.id
-            for run in reopened.list_thread_history_chronological(
-                thread_id=forked
-            )
+            for run in reopened.list_thread_history_chronological(thread_id=forked)
         }
     finally:
         reopened.close()
@@ -195,11 +191,14 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                     )
                 )
 
-            assert manager.rewind(
-                thread_id=thread,
-                run_id=runs[1].id,
-                request_id="thread-rewind-1",
-            ) is None
+            assert (
+                manager.rewind(
+                    thread_id=thread,
+                    run_id=runs[1].id,
+                    request_id="thread-rewind-1",
+                )
+                is None
+            )
             replacement = await harness.executor.start(
                 harness.run_spec(
                     thread=thread,
@@ -207,10 +206,13 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                     primary=perceive_input("replacement"),
                 )
             )
-            assert manager.rewind(
-                thread_id=thread,
-                request_id="thread-rewind-2",
-            ) is None
+            assert (
+                manager.rewind(
+                    thread_id=thread,
+                    request_id="thread-rewind-2",
+                )
+                is None
+            )
 
             controls = harness.store.list_thread_controls(thread_id=thread)
             assert [control.index for control in controls] == [0, 1, 2]
@@ -236,8 +238,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
             ]
             assert all(control.status == "finished" for control in controls)
             assert all(
-                control.finished_at == control.created_at
-                for control in controls
+                control.finished_at == control.created_at for control in controls
             )
 
             record = harness.store.get_thread(thread_id=thread)
@@ -247,9 +248,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
             first, second, third = (
                 harness.store.get_run(run_id=run.id) for run in runs
             )
-            replacement_record = harness.store.get_run(
-                run_id=replacement.id
-            )
+            replacement_record = harness.store.get_run(run_id=replacement.id)
             assert first is not None and first.ejected is None
             assert second is not None
             assert second.ejected == ThreadControlRef(thread, 1)
@@ -268,9 +267,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
             ] == [runs[0].id]
 
             rewinds = [
-                event
-                for event in listener.events
-                if isinstance(event, ThreadRewound)
+                event for event in listener.events if isinstance(event, ThreadRewound)
             ]
             assert [event.control.index for event in rewinds] == [1, 2]
             assert rewinds[0].ejected_runs == (
@@ -292,9 +289,7 @@ def test_fork_accepts_an_earlier_terminal_anchor_while_source_runs(
         responses=[
             ModelCallResult(message=Message.assistant("first answer")),
             ScriptedModelTurn(
-                result=ModelCallResult(
-                    message=Message.assistant("second answer")
-                ),
+                result=ModelCallResult(message=Message.assistant("second answer")),
                 gate=gate,
             ),
         ],
@@ -371,9 +366,7 @@ def test_rewind_rejects_a_running_thread_without_stopping_it(
         responses=[
             ModelCallResult(message=Message.assistant("first answer")),
             ScriptedModelTurn(
-                result=ModelCallResult(
-                    message=Message.assistant("second answer")
-                ),
+                result=ModelCallResult(message=Message.assistant("second answer")),
                 gate=gate,
             ),
         ],
@@ -413,27 +406,24 @@ def test_rewind_rejects_a_running_thread_without_stopping_it(
 
             assert [
                 control.kind
-                for control in harness.store.list_run_controls(
-                    run_id=active.run_id
-                )
+                for control in harness.store.list_run_controls(run_id=active.run_id)
             ] == ["start"]
             assert [
                 control.kind
-                for control in harness.store.list_thread_controls(
-                    thread_id=thread
-                )
+                for control in harness.store.list_thread_controls(thread_id=thread)
             ] == ["create"]
-            assert [event.type for event in listener.events] == [
-                "thread_created"
-            ]
+            assert [event.type for event in listener.events] == ["thread_created"]
 
             active.stop(reason="caller stopped before rewind")
             stopped = await asyncio.wait_for(active, timeout=2)
             assert stopped.status == "canceled"
-            assert manager.rewind(
-                thread_id=thread,
-                request_id="rewind-after-stop",
-            ) is None
+            assert (
+                manager.rewind(
+                    thread_id=thread,
+                    request_id="rewind-after-stop",
+                )
+                is None
+            )
             rewind = harness.store.get_thread_control(
                 thread_id=thread,
                 index=1,
@@ -506,9 +496,7 @@ def test_failed_thread_controls_leave_no_record_or_event(
                     request_id=" invalid",
                 )
 
-            assert harness.store.list_thread_controls(
-                thread_id=thread
-            ) == (
+            assert harness.store.list_thread_controls(thread_id=thread) == (
                 harness.store.get_thread_control(
                     thread_id=thread,
                     index=0,
@@ -518,9 +506,7 @@ def test_failed_thread_controls_leave_no_record_or_event(
             stored_run = harness.store.get_run(run_id=run.id)
             assert stored_run is not None
             assert stored_run.ejected is None
-            assert [event.type for event in listener.events] == [
-                "thread_created"
-            ]
+            assert [event.type for event in listener.events] == ["thread_created"]
 
     asyncio.run(scenario())
 

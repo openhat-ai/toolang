@@ -53,12 +53,7 @@ def parse_runnable_ref(value: str) -> tuple[str, str | None]:
     kind, separator, name = value.partition(":")
     if not separator:
         return value, None
-    if (
-        kind not in {"agic", "flow"}
-        or not name
-        or name != name.strip()
-        or ":" in name
-    ):
+    if kind not in {"agic", "flow"} or not name or name != name.strip() or ":" in name:
         raise ValueError(f"invalid default runnable: {value}")
     return name, kind
 
@@ -73,9 +68,7 @@ def runnable_binding_defaults(
 
     if binding is None:
         agic = (
-            fallback_agic
-            if program.find_agic(fallback_agic) is not None
-            else "default"
+            fallback_agic if program.find_agic(fallback_agic) is not None else "default"
         )
         return agic, None
     name, kind = parse_runnable_ref(binding)

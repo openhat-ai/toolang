@@ -17,7 +17,12 @@ from toolang.common.selectors import (
 
 
 def test_split_selector_list_treats_top_level_csv_as_union() -> None:
-    assert split_selector_list(("gpt-5[provider:openai,tools],o3", "[scope:here]",)) == (
+    assert split_selector_list(
+        (
+            "gpt-5[provider:openai,tools],o3",
+            "[scope:here]",
+        )
+    ) == (
         "gpt-5[provider:openai,tools]",
         "o3",
         "[scope:here]",
@@ -92,27 +97,43 @@ def test_parse_selector_rejects_empty_filter_list() -> None:
 def test_bare_pattern_matches_name_not_family() -> None:
     selector = Selector(raw="*l*", pattern="*l*")
 
-    assert selector_identity_matches(family="skill", name="implementation", selector=selector) is True
-    assert selector_identity_matches(family="skill", name="review", selector=selector) is False
+    assert (
+        selector_identity_matches(
+            family="skill", name="implementation", selector=selector
+        )
+        is True
+    )
+    assert (
+        selector_identity_matches(family="skill", name="review", selector=selector)
+        is False
+    )
 
 
 def test_family_pattern_requires_explicit_family_separator() -> None:
     bare = Selector(raw="skill", pattern="skill")
     explicit = Selector(raw="skill/*", pattern="skill/*")
 
-    assert selector_identity_matches(family="skill", name="review", selector=bare) is False
-    assert selector_identity_matches(family="skill", name="review", selector=explicit) is True
+    assert (
+        selector_identity_matches(family="skill", name="review", selector=bare) is False
+    )
+    assert (
+        selector_identity_matches(family="skill", name="review", selector=explicit)
+        is True
+    )
 
 
 def test_bare_pattern_can_match_extra_domain_values() -> None:
     selector = Selector(raw="gpt-*", pattern="gpt-*")
 
-    assert selector_identity_matches(
-        family="openai",
-        name="openai/gpt-5",
-        selector=selector,
-        extra_values=("gpt-5",),
-    ) is True
+    assert (
+        selector_identity_matches(
+            family="openai",
+            name="openai/gpt-5",
+            selector=selector,
+            extra_values=("gpt-5",),
+        )
+        is True
+    )
 
 
 def test_filter_value_matches_exact_and_wildcard_values() -> None:

@@ -37,9 +37,7 @@ def open_execution(
     layout = context_layout(ctx)
     if not layout.run_store.is_file():
         if required:
-            raise click.ClickException(
-                f"execution history not found: {layout.name}"
-            )
+            raise click.ClickException(f"execution history not found: {layout.name}")
         yield None
         return
     try:
@@ -58,9 +56,7 @@ def run_store_schema_error(error: RunStoreSchemaError, *, path: object) -> str:
     """Render one actionable CLI diagnostic for an incompatible run store."""
 
     if error.version > error.current:
-        advice = (
-            "Upgrade this CLI to a Toolang version that supports the newer schema."
-        )
+        advice = "Upgrade this CLI to a Toolang version that supports the newer schema."
     elif error.version in error.supported:
         advice = (
             "Start this agent once with the current Toolang runtime to apply the "

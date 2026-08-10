@@ -30,7 +30,9 @@ class FilesystemPlugin:
     _path_locks_guard: threading.Lock = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._max_chars = _int_value(self.config.get("max_chars"), default=DEFAULT_MAX_CHARS)
+        self._max_chars = _int_value(
+            self.config.get("max_chars"), default=DEFAULT_MAX_CHARS
+        )
         self._path_locks = {}
         self._path_locks_guard = threading.Lock()
         self._tools = self._build_tools()
@@ -39,8 +41,12 @@ class FilesystemPlugin:
         return dict(self._tools)
 
     def _build_tools(self) -> dict[str, AgentTool]:
-        @tool(name="list", description="List one directory inside the current agent home.")
-        def list_dir(path: str = ".", context: ToolContext | None = None) -> dict[str, Any]:
+        @tool(
+            name="list", description="List one directory inside the current agent home."
+        )
+        def list_dir(
+            path: str = ".", context: ToolContext | None = None
+        ) -> dict[str, Any]:
             resolved = _resolve_path(path, context=context)
             if not resolved.exists():
                 raise ToolangError(f"directory does not exist: {resolved}")
@@ -58,7 +64,10 @@ class FilesystemPlugin:
                 ],
             }
 
-        @tool(name="read_text", description="Read one text file inside the current agent home.")
+        @tool(
+            name="read_text",
+            description="Read one text file inside the current agent home.",
+        )
         def read_text(
             path: str,
             max_chars: int = self._max_chars,
@@ -73,8 +82,13 @@ class FilesystemPlugin:
                 "truncated": len(text) > limit,
             }
 
-        @tool(name="write_text", description="Write one text file inside the current agent home.")
-        def write_text(path: str, text: str, context: ToolContext | None = None) -> dict[str, Any]:
+        @tool(
+            name="write_text",
+            description="Write one text file inside the current agent home.",
+        )
+        def write_text(
+            path: str, text: str, context: ToolContext | None = None
+        ) -> dict[str, Any]:
             resolved = _resolve_path(path, context=context)
             with self._path_lock(resolved):
                 resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -85,7 +99,9 @@ class FilesystemPlugin:
             name="append_text",
             description="Append text to one file inside the current agent home.",
         )
-        def append_text(path: str, text: str, context: ToolContext | None = None) -> dict[str, Any]:
+        def append_text(
+            path: str, text: str, context: ToolContext | None = None
+        ) -> dict[str, Any]:
             resolved = _resolve_path(path, context=context)
             with self._path_lock(resolved):
                 resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -121,7 +137,9 @@ class FilesystemPlugin:
             }
 
         @tool(name="mkdir", description="Create one directory.")
-        def mkdir(path: str, parents: bool = True, context: ToolContext | None = None) -> dict[str, Any]:
+        def mkdir(
+            path: str, parents: bool = True, context: ToolContext | None = None
+        ) -> dict[str, Any]:
             resolved = _resolve_path(path, context=context)
             resolved.mkdir(parents=parents, exist_ok=True)
             return {"path": str(resolved), "created": True}
@@ -192,7 +210,11 @@ def _int_value(value: object, *, default: int) -> int:
     if value is None:
         return default
     try:
-        parsed = value if isinstance(value, int) and not isinstance(value, bool) else int(str(value))
+        parsed = (
+            value
+            if isinstance(value, int) and not isinstance(value, bool)
+            else int(str(value))
+        )
     except (TypeError, ValueError) as exc:
         raise ToolangError("filesystem integer argument is invalid") from exc
     if parsed <= 0:

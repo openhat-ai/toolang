@@ -21,14 +21,10 @@ agic second:
     )
 
     assert program.doc == (
-        "Toolang program.\n"
-        "Documents all declarations.\n"
-        "Not only the following one."
+        "Toolang program.\nDocuments all declarations.\nNot only the following one."
     )
     assert all(agic.doc is None for agic in program.agics)
-    assert [message.content for message in program.agics[0].messages] == [
-        "First body."
-    ]
+    assert [message.content for message in program.agics[0].messages] == ["First body."]
 
 
 def test_declaration_docs_attach_after_a_previous_body() -> None:

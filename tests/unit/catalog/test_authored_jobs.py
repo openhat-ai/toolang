@@ -245,9 +245,9 @@ def test_authored_jobs_assigns_and_persists_missing_ids(tmp_path: Path) -> None:
     assert catalog.get("task", "generated-2", stage=None) is not None
     assert catalog.get("chore", "generated-1", stage=None) is not None
     assert catalog.get("task", "existing", stage=None) is not None
-    assert "id: generated-2" in (
-        tmp_path / "tasks" / "review.md"
-    ).read_text(encoding="utf-8")
+    assert "id: generated-2" in (tmp_path / "tasks" / "review.md").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_authored_jobs_rejects_generated_id_collision(tmp_path: Path) -> None:

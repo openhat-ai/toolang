@@ -110,9 +110,7 @@ def validate_tool_selectors(
         return
     refs = {name: tool_ref_for_model_tool(name, tool) for name, tool in tools.items()}
     missing = [
-        selector
-        for selector in selectors
-        if not selected_tool_names(refs, (selector,))
+        selector for selector in selectors if not selected_tool_names(refs, (selector,))
     ]
     if missing:
         raise ValueError(f"tool selector matched no tools: {', '.join(missing)}")

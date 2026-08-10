@@ -462,7 +462,9 @@ def test_chat_nested_step_blocks_are_keyed_by_full_path() -> None:
 
     events.handle_run_event(_run_begin(executable_kind="flow"), app)
     events.handle_run_event(_flow_step_begin(step_index=0), app)
-    events.handle_run_event(_child_run_step_begin(step=StepPath.parse("run_1/0/0")), app)
+    events.handle_run_event(
+        _child_run_step_begin(step=StepPath.parse("run_1/0/0")), app
+    )
 
     assert [block.type for block in app.live_blocks] == [
         "FlowStepBlock",
@@ -1480,9 +1482,9 @@ def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
     assert "thinking…" not in writes[0]
     assert "You have no credits remaining." in writes[0]
     assert all(
-        not isinstance(block, blocks.ModelStepBlock)
-        for block in app.unfinalized_blocks
+        not isinstance(block, blocks.ModelStepBlock) for block in app.unfinalized_blocks
     )
+
 
 def test_chat_tui_show_command_renders_durable_markdown(
     monkeypatch: Any,
@@ -1527,9 +1529,7 @@ def _run_begin(
         run=run_id,
         input=RunInputRef(index=0),
         parent=(
-            StepPath.parse(f"{parent_run_id}/2")
-            if parent_run_id is not None
-            else None
+            StepPath.parse(f"{parent_run_id}/2") if parent_run_id is not None else None
         ),
         started_at="2026-01-01T00:00:00Z",
         context={

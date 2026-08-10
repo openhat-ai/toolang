@@ -301,6 +301,7 @@ class RunStopBlock(MutableBlock):
             )
         return facts
 
+
 @dataclass(slots=True)
 class DefaultStepBlock(MutableBlock):
     """Fallback step block for step kinds that do not have a dedicated block yet."""

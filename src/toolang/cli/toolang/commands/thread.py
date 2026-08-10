@@ -486,11 +486,13 @@ def _find_node(nodes: Sequence[_StepNode], path: tuple[int, ...]) -> _StepNode |
 
 
 def _node_data(node: _StepNode) -> dict[str, Any]:
-    return _inspect_data({
-        "run_id": node.run_id,
-        **_record_data(node.step),
-        "children": [_node_data(child) for child in node.children],
-    })
+    return _inspect_data(
+        {
+            "run_id": node.run_id,
+            **_record_data(node.step),
+            "children": [_node_data(child) for child in node.children],
+        }
+    )
 
 
 def _run_data(run: RunDetail, *, include_steps: bool) -> dict[str, Any]:
@@ -514,8 +516,7 @@ def _inspect_data(value: Any) -> Any:
 
 def _record_data(value: Any) -> dict[str, Any]:
     return {
-        field.name: _inspect_data(getattr(value, field.name))
-        for field in fields(value)
+        field.name: _inspect_data(getattr(value, field.name)) for field in fields(value)
     }
 
 
@@ -712,9 +713,7 @@ async def _restart_run(
     environ = load_runtime_environ(layout, base_environ=os.environ)
     cli_bindings = resolve_binding_overrides({}, default_options)
     if "runnable" in cli_bindings:
-        raise ValueError(
-            "--default runnable does not apply to a persisted source run"
-        )
+        raise ValueError("--default runnable does not apply to a persisted source run")
     binding_overrides = {
         **resolve_binding_overrides(environ),
         **cli_bindings,

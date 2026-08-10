@@ -173,9 +173,7 @@ async def invoke_response(
         stateful=stateful,
         stream=False,
     )
-    response = await client.responses.create(
-        **payload
-    )
+    response = await client.responses.create(**payload)
     _log_api_response(
         target,
         response,
@@ -210,9 +208,7 @@ async def stream_response(
         stateful=stateful,
         stream=True,
     )
-    async with client.responses.stream(
-        **payload
-    ) as stream:
+    async with client.responses.stream(**payload) as stream:
         seen_tool_inputs: set[str] = set()
         text_started = False
         text_deltas: list[str] = []
@@ -290,8 +286,12 @@ def response_payload(
     state = dict(request.state or {})
     previous_response_id = state.get("previous_response_id") if stateful else None
     baseline_count = state.get("baseline_count") if stateful else None
-    message_offset = baseline_count if isinstance(baseline_count, int) and baseline_count >= 0 else 0
-    messages = request.messages[message_offset:] if previous_response_id else request.messages
+    message_offset = (
+        baseline_count if isinstance(baseline_count, int) and baseline_count >= 0 else 0
+    )
+    messages = (
+        request.messages[message_offset:] if previous_response_id else request.messages
+    )
     payload: dict[str, Any] = {
         "model": target.model,
         "input": response_input(
@@ -421,7 +421,9 @@ def response_text(response: Any) -> str:
             continue
         for content in getattr(item, "content", []):
             content_type = getattr(content, "type", None)
-            if content_type in {"output_text", "text"} and getattr(content, "text", None):
+            if content_type in {"output_text", "text"} and getattr(
+                content, "text", None
+            ):
                 collected.append(str(content.text))
     return "".join(collected)
 
@@ -560,7 +562,8 @@ def response_state(
         return None
     return {
         "previous_response_id": response_id,
-        "baseline_count": len(request.messages) + (1 if emitted_message is not None else 0),
+        "baseline_count": len(request.messages)
+        + (1 if emitted_message is not None else 0),
     }
 
 
@@ -666,7 +669,9 @@ def _encode_actor_message(
             items.append(_encode_tool_call_part(part))
             continue
         if isinstance(part, ToolResultPart):
-            raise ToolangError("assistant/user messages cannot contain tool result parts")
+            raise ToolangError(
+                "assistant/user messages cannot contain tool result parts"
+            )
     _flush_text_buffer()
     if not items:
         return None

@@ -32,6 +32,7 @@ from ..steps import tool as tool_step
 if TYPE_CHECKING:
     from ..executor import _Execution
 
+
 @dataclass(slots=True)
 class _AgicState:
     """Mutable state shared by one agic's model and tool steps."""
@@ -42,12 +43,10 @@ class _AgicState:
     pending_inputs: Callable[[], tuple[RunControlRecord, ...]]
     before_call: Callable[[], None]
     messages: list[Message]
-    account_usage: Callable[[ModelUsage | None], _ModelAccounting] = (
-        lambda usage: _ModelAccounting(usage=usage)
+    account_usage: Callable[[ModelUsage | None], _ModelAccounting] = lambda usage: (
+        _ModelAccounting(usage=usage)
     )
-    record_accounting: Callable[[_ModelAccounting], None] = (
-        lambda _accounting: None
-    )
+    record_accounting: Callable[[_ModelAccounting], None] = lambda _accounting: None
     limits: RunLimits = RunLimits()
     record_output: Callable[[StepOutputRef], None] = lambda _ref: None
     output: StepOutputRef | None = None
@@ -121,9 +120,7 @@ async def execute(
         emit=execution.emit,
         pending_inputs=lambda: execution.steer_controls_for_call(binding.run_id),
         before_call=lambda: execution.raise_if_stopping(binding.run_id, call=True),
-        account_usage=lambda usage: execution.model_accounting(
-            prepared.model, usage
-        ),
+        account_usage=lambda usage: execution.model_accounting(prepared.model, usage),
         record_accounting=lambda accounting: execution.record_model_accounting(
             prepared.model, accounting
         ),
