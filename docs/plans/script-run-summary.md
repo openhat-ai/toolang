@@ -107,34 +107,36 @@ Success uses the result description as DETAIL:
 
 ### Failure
 
-Failure keeps one selected actionable error and no result, inspect, save, or
-log row:
+Failure keeps one selected actionable error as an unlabeled detail and has no
+result, inspect, save, or log row:
 
 ~~~text
 --- run_abc123 failed ---
-Error: provider returned status 429
+provider returned status 429
 2.1s · 1 tool call · 2 model calls · ↑ 1.2k+ ↓ 86+
 -------------------------
 ~~~
 
 Prefer the root error, otherwise the owning failed-step error, otherwise
-Run failed. A visible frame suppresses duplicate command-level error, Run, and
-Log rows.
+Run failed. The frame title supplies the failed status, so DETAIL has no Error:
+prefix. A visible frame suppresses duplicate command-level error, Run, and Log
+rows.
 
 ### Cancellation
 
-Cancellation shows one meaningful reason and no result, inspect, save, or log
-row:
+Cancellation shows one meaningful reason as an unlabeled detail and has no
+result, inspect, save, or log row:
 
 ~~~text
 --- run_abc123 canceled ---
-Canceled: interrupted by user
+interrupted by user
 4.1s · 2 runs · 1 model call
 ---------------------------
 ~~~
 
 Normalize the local interrupt reason to interrupted by user. Preserve another
-meaningful reason. Omit DETAIL when the only payload is a generic variant of
+meaningful reason. The frame title supplies the canceled status, so DETAIL has
+no Canceled: prefix. Omit DETAIL when the only payload is a generic variant of
 canceled, cancelled, run canceled, or operation canceled.
 
 
@@ -328,7 +330,8 @@ separate scope approval rather than an execution-contract change here.
 ## Acceptance Tests
 
 1. Snapshot concise success, failure, and cancellation frames; assert one frame,
-   one optional detail, one metrics line, and no inspect/save/log rows.
+   one optional unlabeled detail, one metrics line, no Error: or Canceled:
+   prefix, and no inspect/save/log rows.
 2. Cover every successful result wording, including empty, absent, and
    unresolved output; assert failed/canceled partial work has no result line.
 3. Assert every frame's run ID opens the intended run through #258 and stdout
