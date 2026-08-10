@@ -417,14 +417,16 @@ width 20
 ··openai/gpt-5······
 
 width 12 emergency
-openai/gpt-…
+openai/gpt-5
 ```
 
 The 80-, 40-, and 20-cell lines above contain exactly their declared number of
 terminal cells. At width 40, newline and history hints have been removed whole;
 at width 20, only the model remains. A 40-cell error snapshot contains the full
 `! Model selector matched no models` plus padding. At width 20 it truncates to
-one row with an ellipsis.
+one row with an ellipsis. The 12-cell model label fits exactly and therefore has
+no ellipsis; a separate overflowing-model fixture verifies emergency truncation
+only when the label exceeds the available cells.
 
 The accepted submitted-message snapshot has no ID in its lower padding row:
 
