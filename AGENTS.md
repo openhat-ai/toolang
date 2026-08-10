@@ -58,6 +58,10 @@ applies, raise the ambiguity and ask the human before proceeding.
 ## Convention
 
 - Write code and documentation in English.
+- Keep plans and documentation concise and decision-complete. Avoid repeated
+  context, unnecessary prose, and oversized sections; include only the explicit
+  decisions, acceptance criteria, risks, examples, and implementation
+  touchpoints needed to execute the work.
 - Use semantic commit messages and PR titles; open ready PRs by default.
 - Use the GitHub CLI (`gh`) for GitHub operations; never use the GitHub App.
 - Keep diffs minimal, composable, and limited to one concern.
