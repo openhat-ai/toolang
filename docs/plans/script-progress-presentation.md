@@ -145,14 +145,13 @@ Every physical line fits the measured width. Narrow layout removes decoration
 before semantic content and never abbreviates public identifiers or changes
 zero-based indexes.
 
-At the 20-cell boundary, the root lifecycle field has this shape:
+At the 20-cell boundary, the failed-summary detail has this shape:
 
 ```text
-Error: output is not
-  valid Number
+output is not valid
+Number
   caused by item 5
     run_score5/0
-Result: not produced
 ```
 
 
@@ -216,15 +215,14 @@ schema change is allowed.
 
 Failure events are buffered through root `RunEnd`. Statement and child-run
 blocks may finalize status, counts, and identity, but not the selected error
-message. The cause tree fills #259's second root-summary field; it is not a
+message. The cause tree extends #259's selected failure detail; it is not a
 separate statement or post-summary diagnostic.
 
 #259 selects the primary failed message: root error, then owning failed-step
-error, then `Run failed.`. This feature renders that selection as
-`Error: MESSAGE` exactly once and adds distinct descendant context below it.
-When the same message propagated through ancestors, cause labels may add
-identity without repeating the text. Distinct descendant messages remain under
-their owning labels.
+error, then `Run failed.`. This feature renders that unlabeled selection exactly
+once and adds distinct descendant context below it. When the same message
+propagated through ancestors, cause labels may add identity without repeating
+the text. Distinct descendant messages remain under their owning labels.
 
 Complete failed output at 120 cells:
 
@@ -236,14 +234,12 @@ Run flow score
   ↳ run_score5 failed · 820ms
 
 --- run_one failed ---
-Error: output is not valid Number
+output is not valid Number
   caused by item 5 · run_score5
     scorer returned Text
     caused by run_score5/0 · model deepseek/deepseek-chat
       provider returned status 429
-Result: not produced
-Inspect: toolang ./score.too inspect run_one
-820ms · 1 run · 1 model call · tokens unavailable · cost unavailable
+820ms · 1 run · 1 model call
 ----------------------
 ```
 
@@ -258,7 +254,7 @@ three-row diagnostic limit.
 For a failed batch, the lowest zero-based failed item is the representative
 cause regardless of completion order; aggregate facts add
 `N additional items failed`. Script progress never prints one tree per item.
-Cancellation uses #259's single `Canceled: REASON` field and no nested failure
+Cancellation uses #259's single unlabeled reason detail and no nested failure
 tree.
 
 
@@ -268,7 +264,7 @@ An opted-in non-TTY uses exactly 100 cells unless a test width is injected; it
 does not consult `COLUMNS`. It emits only stable newline-delimited blocks, with
 no ANSI, carriage return, erase command, cursor motion, transient delta,
 `thinking…`, active aggregate, or lane row. Final model/tool previews,
-statement aggregates, `let` outcomes, the root lifecycle field, and the root
+statement aggregates, `let` outcomes, the root summary detail, and the root
 summary follow normal visibility and wrapping rules.
 
 
@@ -286,7 +282,7 @@ Likely files:
 - `src/toolang/cli/common/script_progress/console.py`: dynamic width provider,
   cell-safe layout, width tiers, and recorded live geometry;
 - `src/toolang/cli/common/script_progress/blocks.py`: layout classification,
-  `let` output, and causes inside the root lifecycle field;
+  `let` output, and causes inside the root summary detail;
 - `src/toolang/cli/common/script_progress/tracer.py`: structural cause
   collection, root deferral, and deterministic batch selection;
 - `src/toolang/cli/common/execution_progress/formatting.py`: cell-aware helpers
@@ -318,7 +314,7 @@ feature.
    work, and discard across default/`-v`/`-vv`; assert safe bounded previews and
    no outcome on failure or cancellation.
 5. **Failures:** cover root model, tool, child-run, wrapper, propagated,
-   `until` coercion, and cancellation cases; assert one #259 lifecycle field,
+   `until` coercion, and cancellation cases; assert one #259 failure detail,
    real outer-to-inner labels, correct tone, and the selected message exactly
    once across statement progress and summary.
 6. **Cause bounds:** cover more than three causes and out-of-order batch
