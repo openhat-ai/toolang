@@ -23,9 +23,9 @@ Implementation starts only after this definition is approved.
 - Direct authored `let` statements expose a bounded value preview at `-v`, and
   every explicit named or discard binding exposes its successful destination at
   the default level.
-- One failure diagnostic identifies the useful visible boundary and nests
-  distinct descendant causes without repeating a propagated error at every run
-  and step.
+- The root summary's single lifecycle diagnostic identifies the useful visible
+  boundary and nests distinct descendant causes without repeating a propagated
+  error in statement progress or elsewhere in the summary.
 - Standard, compact, emergency-narrow, and non-interactive output have explicit
   behavior and representative snapshots.
 - Script flags, execution events, durable records, final stdout, bounded
@@ -127,8 +127,8 @@ The existing surface contract remains:
 `-q` continues to suppress execution progress, not the successful runnable
 value on stdout. A failed command that has no tracer continues through the
 existing command-level error path. Once a tracer is active, execution failures
-are reported by the diagnostic and root-summary contracts without a second
-Typer panel.
+are reported once through #259's root-summary lifecycle field, with this
+feature supplying its nested layout, and without a second Typer panel.
 
 Visibility remains monotonic: default is a subset of `-v`, which is a subset
 of `-vv`. Width may change layout but must not promote verbosity-gated facts.
@@ -146,16 +146,19 @@ unrelated stdout or process-global console. Tests and embedding callers may
 inject a width provider. The provider returns the current width for one render
 transaction rather than one immutable construction-time value.
 
-The renderer samples width:
+One render transaction has this unambiguous order:
 
-1. before writing one stable block;
-2. before every live-region refresh;
-3. before clearing the live region during finalization or close.
+1. if a live region exists, clear it strictly from its recorded old physical
+   row count and width without consulting the width provider;
+2. if a live replacement or stable block follows, sample width exactly once;
+3. render every replacement or stable line with that one sample and record new
+   live geometry when applicable.
 
-All lines in one transaction use the same sample. A positive measured value is
-honored exactly; it is never raised to a presentation minimum. A failed or
-unavailable interactive measurement uses 100 cells for that transaction and
-is retried on the next transaction.
+A close that only removes a live region stops after step 1 and does not sample
+width. A transaction with no old live region begins at step 2. A positive
+measured value is honored exactly; it is never raised to a presentation
+minimum. A failed or unavailable interactive measurement uses 100 cells for
+that transaction and is retried on the next transaction.
 
 Cell measurement and cutting must use the Unicode cell facilities already
 available through Rich or an equivalently mature library. A cut must not leave
@@ -215,11 +218,12 @@ Stable scrollback is immutable. A resize does not clear, rewrite, or reflow any
 line that has already ended with a newline.
 
 The console records the physical row count and width used by the current live
-region. On a refresh it clears exactly those old physical rows before measuring
-and drawing the replacement at the new width. This ordering matters when the
-terminal shrinks: clearing must use old geometry, while replacement uses new
-geometry. Finalization clears the live region once and then writes the stable
-block at the latest width.
+region. On a refresh or finalization it clears exactly those old physical rows
+without measuring the terminal. Only after the clear does it sample once for
+the replacement live region or stable block. This ordering matters when the
+terminal shrinks: clearing uses recorded old geometry, while replacement uses
+the new sample. Close without replacement clears and returns without a width
+sample.
 
 A `SIGWINCH` handler is not required. The next execution event or existing
 periodic live refresh observes the new size. Width discovery must not install a
@@ -360,48 +364,55 @@ No execution schema changes are required. Python `__cause__` values that were
 not serialized into an event remain log-only; the renderer must not parse
 traceback text or invent a provider cause.
 
-Failure events are buffered until the nearest useful visible boundary is
-terminal: an owning top-level flow statement, an `until` evaluator boundary,
-or the root agic run when there is no statement. That boundary emits one stable
-diagnostic block before its enclosing run summary.
+Failure events are buffered through the terminal root `RunEnd`. Statement and
+child-run blocks may finalize status, counts, and identity, but they do not
+print the selected error message. The buffered cause tree fills the second
+semantic field of #259's root summary. It is not a separate block before or
+after that summary.
 
 ### Hierarchy And Wording
 
-The visible owner supplies context through its existing header. The diagnostic
-then presents outer failure first and distinct descendant causes underneath:
+The summary field starts with #259's exact primary label and selected message,
+then presents distinct descendant causes underneath:
 
 ```text
-[2] let score = run score_item
-  Run agic score_item
-  ! failed: output is not valid Number
-    caused by item 5 · run_score5
-      scorer returned Text
-      caused by run_score5/0 · model deepseek/deepseek-chat
-        provider returned status 429
+Error: output is not valid Number
+  caused by item 5 · run_score5
+    scorer returned Text
+    caused by run_score5/0 · model deepseek/deepseek-chat
+      provider returned status 429
 ```
 
 Rules:
 
-- `!` begins the primary diagnostic and stays normal-brightness red on a TTY;
+- `Error: MESSAGE` is the failed summary's one lifecycle diagnostic and stays
+  normal-brightness red on a TTY;
 - `caused by` names a real descendant boundary and adds one two-space level;
-- a message propagated unchanged through ancestors appears only on the deepest
-  node that adds useful identity;
-- two unrelated failures with the same text are not de-duplicated;
+- when selected `MESSAGE` propagated unchanged through ancestors, it appears
+  only on the `Error:` line; descendant cause labels may add useful identity
+  without repeating that text;
+- distinct descendant messages remain under their owning cause labels, and
+  string equality never replaces structural ownership before representative
+  selection;
 - empty error text falls back to the boundary status and identity, never an
   invented explanation;
 - `-vv` may add duration and exact step facts after the matching message, but
   lower levels retain enough source, item, tool, model, or run context to act;
-- cancellation uses `canceled` and the existing yellow warning tone; it is not
-  described as a cause unless a real failed descendant exists.
+- cancellation uses #259's single `Canceled: REASON` lifecycle field and the
+  existing yellow warning tone; it does not add a nested failure cause tree.
 
-The root run summary may restate the lifecycle result according to #259, but it
-must not print the complete cause block a second time.
+The selection and fallback for `MESSAGE` are owned by #259: prefer the root run
+error, then the owning failed step error, then `Run failed.`. This feature does
+not select a competing primary message. It only associates real descendant
+events with that selected message and renders their distinct context below the
+same field. No `!` statement diagnostic, post-summary error, or command-level
+panel may repeat `MESSAGE` when the root summary is emitted.
 
 ### Bounded Causes
 
-One primary diagnostic may show at most three nested `caused by` nodes. If the
-runtime tree is deeper, retain the two causes nearest the visible owner and the
-deepest leaf cause, inserting `… N intermediate causes omitted` before the
+One lifecycle diagnostic may show at most three nested `caused by` nodes. If
+the runtime tree is deeper, retain the two causes nearest the root summary and
+the deepest leaf cause, inserting `… N intermediate causes omitted` before the
 leaf. Each distinct message is limited to three physical payload rows at the
 current width.
 
@@ -414,8 +425,9 @@ through durable inspection.
 
 ## Representative Layout Snapshots
 
-These excerpts define progress-body layout. The root summary that follows them
-uses #259's fields and wording with this plan's width rules.
+The successful excerpt defines progress-body layout. The failed snapshot is
+complete and composes #259's semantic root-summary fields with this plan's
+nested lifecycle field and width rules.
 
 ### Standard Width, `-v`
 
@@ -433,6 +445,33 @@ Research one topic and synthesize a sourced answer.
   ↳ 18-item list saved to findings · mapped from 18 items
 ```
 
+### Complete Failed Output, 120 Cells
+
+```text
+Run flow score
+
+[2] let score = run score_item
+  Run agic score_item
+  ↳ run_score5 failed · 820ms
+
+--- run_one failed ---
+Error: output is not valid Number
+  caused by item 5 · run_score5
+    scorer returned Text
+    caused by run_score5/0 · model deepseek/deepseek-chat
+      provider returned status 429
+Result: not produced
+Inspect: toolang ./score.too inspect run_one
+820ms · 1 run · 1 model call · tokens unavailable · cost unavailable
+----------------------
+```
+
+`output is not valid Number` is the selected #259 lifecycle message and occurs
+exactly once in the complete output. The red child-run status supplies early
+structural context without repeating that message. The nested lines belong to
+the `Error:` summary field; they are not a statement diagnostic or a second
+summary block.
+
 ### Compact Boundary, 20 Cells
 
 ```text
@@ -440,14 +479,16 @@ Research one topic and synthesize a sourced answer.
     score_item
   Run agic
     score_item
-  ! failed: output
-    is not valid
-    Number
-    caused by item 5
-      run_score5/0
-      provider
-      returned
-      status 429
+--- run_one failed
+    ---
+Error: output is not
+  valid Number
+  caused by item 5
+    run_score5/0
+    provider
+    returned status
+    429
+Result: not produced
 ```
 
 The real snapshot fixture must assert that every rendered line is at most 20
@@ -461,7 +502,9 @@ score = run
 score_item
 Run agic
 score_item
-! failed
+--- run_one
+failed ---
+Error:
 output is
 not valid
 Number
@@ -504,7 +547,8 @@ Non-interactive output:
 - omits transient model deltas, `thinking…`, active batch summaries, and lane
   assignments;
 - emits the finalized model/tool preview, statement aggregates, `let` outcome,
-  failure diagnostic, and root summary allowed by verbosity;
+  and the root summary containing its one lifecycle diagnostic when allowed by
+  verbosity;
 - uses the same cell-aware stable wrapping and semantic row limits as a TTY.
 
 This preserves useful `-v` logs without simulating an interactive live area.
@@ -519,7 +563,9 @@ This preserves useful `-v` logs without simulating an interactive live area.
 - Keep current `RunEvent`, `StepPath`, record, and logging contracts. Presentation
   state must derive only from ordered events.
 - Keep `finished` displayed as `succeeded`, zero-based statement/item/lane
-  positions, and the `·`, `!`, and `↳` marker meanings.
+  positions, and the `·`, `!`, and `↳` marker meanings. The root lifecycle
+  diagnostic is the unmarked `Error:` field defined by #259; `!` remains for
+  nonterminal diagnostics that do not repeat its selected message.
 - Keep successful parallel output bounded by active lane count and failed batch
   output bounded by one representative cause tree.
 - Keep progress dim, active live data normal brightness, failures red, and
@@ -550,10 +596,11 @@ renderer.
   - classify every field as stable prose, bounded preview, facts, live data, or
     structural identity;
   - render direct `let` previews and explicit binding outcomes;
-  - render nested diagnostic blocks and narrow variants.
+  - render the nested cause tree inside #259's root lifecycle field and its
+    narrow variants.
 - `src/toolang/cli/common/script_progress/tracer.py`
   - collect diagnostic ownership instead of globally de-duplicating strings;
-  - defer a failure until its useful visible boundary;
+  - defer selected error text and causes until root-summary finalization;
   - choose deterministic representative batch failures.
 - `src/toolang/cli/common/execution_progress/formatting.py`
   - replace code-point truncation with cell-aware helpers;
@@ -601,10 +648,11 @@ the limitation rather than expanding execution schemas under this feature.
 4. **Resize behavior**
    - Drive one TTY fixture through widths `80 -> 32 -> 120` while a live batch
      is active.
-   - Assert old live rows are cleared using their recorded row count, stable
-     scrollback bytes are unchanged, and only the replacement uses the new
-     width.
-   - Assert close and finalization leave no stale row.
+   - Assert each refresh clears from recorded old row count and width without
+     calling the provider, then samples exactly once for the replacement.
+   - Assert finalization follows the same clear-then-sample order for its stable
+     block, while close without replacement clears and never samples.
+   - Assert stable scrollback bytes are unchanged and no stale row remains.
 
 5. **Direct `let` values**
    - Cover text, interpolated text, empty content, and media descriptors.
@@ -624,9 +672,14 @@ the limitation rather than expanding execution schemas under this feature.
    - Cover one root model failure, a tool failure, a direct child-run failure,
      a distinct wrapper chain, identical propagated text, failed Boolean
      coercion after a successful `until` run, and cancellation.
-   - Assert one block per useful boundary, outer-to-inner cause order, real
-     labels, correct tone, and no duplicate propagation.
-   - Assert unrelated failures with identical text remain distinct.
+   - Assert one #259 lifecycle field per root summary, outer-to-inner cause
+     order, real labels, correct tone, and no statement or fallback diagnostic
+     repeats the selected message.
+   - Snapshot complete statement progress plus the failed root summary and
+     assert `Error: MESSAGE` is ordered before result/actions/metrics and
+     `MESSAGE` occurs exactly once in the entire output.
+   - Assert structurally unrelated failures with identical text remain distinct
+     before deterministic batch representative selection.
 
 8. **Bounded nested and batch failures**
    - Cover more than three nested causes and assert the exact omitted count and
@@ -684,9 +737,10 @@ the limitation rather than expanding execution schemas under this feature.
 - **String de-duplication can hide independent failures.** De-duplicate only
   identical propagation along one ownership chain and select batch failures by
   durable item position.
-- **Buffering failures can delay useful feedback.** Finalize at the nearest
-  useful statement or root boundary, not only at process exit, and keep live
-  failure state visible until the stable block is written.
+- **Buffering failures can delay the actionable message.** Keep failed status
+  and identity visible in live or finalized statement progress, then emit the
+  selected message and nested causes once in the terminal root summary as soon
+  as root `RunEnd` is available.
 - **Companion features can conflict on summaries or inspect hints.** Treat #259
   as the owner of summary content, #258 as the owner of inspect paths, and this
   plan as the owner only of shared geometry applied to those blocks.
