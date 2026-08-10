@@ -13,6 +13,7 @@ from toolang.common.files import atomic_write_text, file_write_lock
 from .common import normalize_meta
 from .errors import CatalogConflictError, CatalogNotFoundError
 from .types import CAP_DIR_BY_KIND, CAP_KINDS, CapKind
+
 _SKILL_FIELDS = frozenset({"name", "description"})
 _SERVICE_FIELDS = frozenset(
     {"name", "description", "transport", "protocol", "target", "headers", "env"}

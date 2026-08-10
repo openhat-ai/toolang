@@ -82,7 +82,9 @@ def test_telegram_channel_polls_and_delivers(monkeypatch) -> None:
     assert delivery.reply_target.address == "chat:123"
     assert polled.next_state.cursor == "42"
 
-    delivered = plugin.deliver(delivery.reply_target, OutboundMessage(text="hi back"), context)
+    delivered = plugin.deliver(
+        delivery.reply_target, OutboundMessage(text="hi back"), context
+    )
 
     assert delivered.ok is True
     assert delivered.remote_id == "88"
@@ -117,8 +119,12 @@ def test_telegram_channel_typing_and_edit(monkeypatch) -> None:
     )
     context = _channel_context(Path("/tmp/alice"), "telegram")
 
-    target = ReplyTarget(channel="telegram", address="chat:123", meta={"chat_id": "123"})
-    typing = plugin.deliver(target, OutboundMessage(text="", meta={"action": "typing"}), context)
+    target = ReplyTarget(
+        channel="telegram", address="chat:123", meta={"chat_id": "123"}
+    )
+    typing = plugin.deliver(
+        target, OutboundMessage(text="", meta={"action": "typing"}), context
+    )
     sent = plugin.deliver(target, OutboundMessage(text="hello"), context)
     edited = plugin.deliver(
         target,

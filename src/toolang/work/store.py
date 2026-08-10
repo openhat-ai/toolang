@@ -536,9 +536,7 @@ class JobStore:
             self._conn.execute("PRAGMA synchronous=NORMAL;")
             self._conn.execute("BEGIN IMMEDIATE")
             try:
-                version = int(
-                    self._conn.execute("PRAGMA user_version").fetchone()[0]
-                )
+                version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
                 if version > _SCHEMA_VERSION:
                     raise JobStoreSchemaError(
                         version,
@@ -695,9 +693,7 @@ def _rejected_status(
 
 def _require_kind(record: JobRecord, job: Job) -> None:
     if record.kind != job.kind:
-        raise ValueError(
-            f"job kind changed for {job.id}: {record.kind} -> {job.kind}"
-        )
+        raise ValueError(f"job kind changed for {job.id}: {record.kind} -> {job.kind}")
 
 
 def _index_jobs(jobs: Mapping[str, Job] | Iterable[Job]) -> dict[str, Job]:

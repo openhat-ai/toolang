@@ -84,7 +84,9 @@ def model_provider_rows(
         rows.append((name, model_count, details))
     for name, alias in sorted(aliases.items()):
         adapter, details = model_alias_status(alias, providers=providers, environ=envs)
-        rows.append((alias.provider, "-", f"alias={name}, {details}, adapter={adapter}"))
+        rows.append(
+            (alias.provider, "-", f"alias={name}, {details}, adapter={adapter}")
+        )
     return rows
 
 
@@ -114,8 +116,16 @@ def model_target_profile(
     if info.max_output_tokens is not None:
         parts.append(f"max_out={_format_k(info.max_output_tokens)}")
     if info.input_price is not None or info.output_price is not None:
-        in_price = "-" if info.input_price is None else _format_price_per_million(info.input_price)
-        out_price = "-" if info.output_price is None else _format_price_per_million(info.output_price)
+        in_price = (
+            "-"
+            if info.input_price is None
+            else _format_price_per_million(info.input_price)
+        )
+        out_price = (
+            "-"
+            if info.output_price is None
+            else _format_price_per_million(info.output_price)
+        )
         parts.append(f"price=${in_price}/${out_price}")
     return ", ".join(parts)
 
@@ -131,13 +141,19 @@ def model_alias_status(
     adapter = alias.adapter or "responses"
     provider = providers.get(alias.provider)
     if provider is None:
-        return (adapter, f"ref={alias.ref}, configured=false, missing_provider={alias.provider}")
+        return (
+            adapter,
+            f"ref={alias.ref}, configured=false, missing_provider={alias.provider}",
+        )
     missing = _model_alias_missing_env(alias, provider=provider, environ=environ)
     details = _model_alias_details(alias, provider=provider, environ=environ)
     if alias.provider == "custom" and alias.endpoint is None:
         return (adapter, f"{details}, configured=false, missing_endpoint=true")
     if missing:
-        return (adapter, f"{details}, configured=false, missing_env={'+'.join(missing)}")
+        return (
+            adapter,
+            f"{details}, configured=false, missing_env={'+'.join(missing)}",
+        )
     return (adapter, f"{details}, configured=true")
 
 
@@ -156,7 +172,9 @@ def model_provider_config(
     required = required_provider_env_vars(provider)
     base_url = default_provider_base_url(provider, environ=environ)
     api_key_env = default_provider_api_key_env(provider)
-    offline = _provider_url_offline(provider, model_count=model_count, available_count=available_count)
+    offline = _provider_url_offline(
+        provider, model_count=model_count, available_count=available_count
+    )
     parts: list[str] = []
     if base_url is not None:
         parts.append(f"url={base_url}{'(offline)' if offline else ''}")
@@ -201,7 +219,9 @@ def _model_provider_model_count(
 
 def _env_status(required: tuple[str, ...], missing: tuple[str, ...]) -> str:
     missing_set = set(missing)
-    return "+".join(f"{name}(missing)" if name in missing_set else name for name in required)
+    return "+".join(
+        f"{name}(missing)" if name in missing_set else name for name in required
+    )
 
 
 def _provider_url_offline(
@@ -226,7 +246,9 @@ def _model_alias_missing_env(
     required = list(required_provider_env_vars(provider))
     default_key_env = default_provider_api_key_env(provider)
     if alias.key_env is not None:
-        required = [alias.key_env if name == default_key_env else name for name in required]
+        required = [
+            alias.key_env if name == default_key_env else name for name in required
+        ]
         if default_key_env is None or alias.key_env not in required:
             required.append(alias.key_env)
     seen: set[str] = set()
@@ -278,7 +300,7 @@ def _format_k(value: int) -> str:
 
 
 def _format_decimal_unit(value: float) -> str:
-    if value.is_integer():
+    if isinstance(value, int) or value.is_integer():
         return str(int(value))
     return f"{value:.1f}".rstrip("0").rstrip(".")
 

@@ -114,9 +114,7 @@ def test_job_store_upgrades_an_older_schema_forward(tmp_path) -> None:
     assert _schema_version(path) == 3
     connection = sqlite3.connect(path)
     try:
-        columns = {
-            str(row[1]) for row in connection.execute("PRAGMA table_info(jobs)")
-        }
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(jobs)")}
     finally:
         connection.close()
     assert "job_id" in columns
@@ -170,10 +168,13 @@ def test_task_revisions_coalesce_and_run_serially(tmp_path) -> None:
             now=NOW + timedelta(seconds=3),
         )
         assert done is not None and done.status == "done"
-        assert store.reconcile(
-            jobs={second.id: second},
-            now=NOW + timedelta(seconds=4),
-        )[0].status == "done"
+        assert (
+            store.reconcile(
+                jobs={second.id: second},
+                now=NOW + timedelta(seconds=4),
+            )[0].status
+            == "done"
+        )
 
         reopened = store.reopen_task(
             task_id=second.id,
@@ -294,9 +295,7 @@ def test_chore_coalesces_missed_occurrences_without_shifting_schedule(
             now=NOW + timedelta(minutes=3, seconds=30),
         )
         assert claimed.active_at == (NOW + timedelta(minutes=3)).isoformat()
-        assert claimed.record.next_run_at == (
-            NOW + timedelta(minutes=4)
-        ).isoformat()
+        assert claimed.record.next_run_at == (NOW + timedelta(minutes=4)).isoformat()
 
         waiting = store.finish_run(
             jobs={job.id: job},

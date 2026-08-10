@@ -236,9 +236,7 @@ def executable_label(kind: str | None, name: str | None) -> str:
     normalized_kind = (kind or "run").strip() or "run"
     normalized_name = (name or "").strip()
     return (
-        f"{normalized_kind}:{normalized_name}"
-        if normalized_name
-        else normalized_kind
+        f"{normalized_kind}:{normalized_name}" if normalized_name else normalized_kind
     )
 
 

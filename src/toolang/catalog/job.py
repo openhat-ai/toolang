@@ -195,7 +195,9 @@ class AuthoredJobs:
                 raise CatalogConflictError(f"authored job id already exists: {job.id}")
             target = self.path(job.kind, job.id, stage=job.stage)
             if target.exists():
-                raise CatalogConflictError(f"authored job path already exists: {target}")
+                raise CatalogConflictError(
+                    f"authored job path already exists: {target}"
+                )
             return self._write(job, path=target)
 
     def update(self, job: JobFile) -> JobFile:
@@ -227,7 +229,9 @@ class AuthoredJobs:
                 return job
             target = self._directory(job.kind, stage) / job.path.name
             if target.exists():
-                raise CatalogConflictError(f"authored job path already exists: {target}")
+                raise CatalogConflictError(
+                    f"authored job path already exists: {target}"
+                )
             target.parent.mkdir(parents=True, exist_ok=True)
             job.path.replace(target)
             _prune_empty_parents(
@@ -267,9 +271,7 @@ class AuthoredJobs:
                 self._list_all()
                 if stage is None
                 else tuple(
-                    job
-                    for kind in JOB_KINDS
-                    for job in self._list_stage(kind, stage)
+                    job for kind in JOB_KINDS for job in self._list_stage(kind, stage)
                 )
             )
             _ensure_unique_ids(jobs)

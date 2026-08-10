@@ -77,7 +77,9 @@ def sample_renderable() -> Text:
     )
 
 
-def render_segments(renderable: RenderableType, *, width: int | None = None) -> list[Segment]:
+def render_segments(
+    renderable: RenderableType, *, width: int | None = None
+) -> list[Segment]:
     console = Console(
         width=width or terminal_width(),
         color_system="truecolor",
@@ -167,7 +169,12 @@ def interactive() -> None:
         [
             Window(
                 FormattedTextControl(
-                    [("class:hint", "Rich Segment -> prompt-toolkit fragments. Press q to exit.\n\n")]
+                    [
+                        (
+                            "class:hint",
+                            "Rich Segment -> prompt-toolkit fragments. Press q to exit.\n\n",
+                        )
+                    ]
                 ),
                 height=3,
             ),

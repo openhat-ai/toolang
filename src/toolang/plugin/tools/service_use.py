@@ -169,7 +169,7 @@ class _ServiceUseAdapter:
                             "type": "object",
                             "description": (
                                 "The selected service tool's JSON arguments. For example, call "
-                                "save_issue with input={\"title\":\"...\",\"team\":\"...\"}, not with "
+                                'save_issue with input={"title":"...","team":"..."}, not with '
                                 "title/team at the top level."
                             ),
                         },
@@ -258,7 +258,9 @@ class _ServiceUseAdapter:
             parameters=parameters,
         )
 
-        def invoke(arguments: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
+        def invoke(
+            arguments: Mapping[str, Any], context: ToolContext
+        ) -> dict[str, Any]:
             runtime = self.runtime(arguments, context)
             result = invoke_fn(runtime, arguments)
             return {
@@ -275,7 +277,9 @@ class _ServiceUseAdapter:
     def _service_schema(self) -> dict[str, Any]:
         return {"type": "string", "description": "Visible service name."}
 
-    def runtime(self, arguments: Mapping[str, Any], context: ToolContext) -> ServiceRuntime:
+    def runtime(
+        self, arguments: Mapping[str, Any], context: ToolContext
+    ) -> ServiceRuntime:
         service_name = str(arguments.get("service", "")).strip()
         service = _context_service(context, service_name)
         if service is None:
@@ -337,7 +341,9 @@ class _ServiceUseAdapter:
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
-                lambda: _mcat_bridge().bridge_stop(connection_file=str(runtime.connection_path))
+                lambda: _mcat_bridge().bridge_stop(
+                    connection_file=str(runtime.connection_path)
+                )
             ),
         )
 
@@ -350,9 +356,9 @@ class _ServiceUseAdapter:
         _safe_unlink(runtime.session_path)
         if runtime.service.transport == "http":
             _ensure_http_connection(
-            runtime,
-            connection_version=self.connection_version,
-            write_connection_file=self.write_connection_file,
+                runtime,
+                connection_version=self.connection_version,
+                write_connection_file=self.write_connection_file,
             )
         return _with_service_env(
             runtime,
@@ -401,9 +407,9 @@ class _ServiceUseAdapter:
         runtime.session_path.parent.mkdir(parents=True, exist_ok=True)
         if runtime.service.transport == "http":
             _ensure_http_connection(
-            runtime,
-            connection_version=self.connection_version,
-            write_connection_file=self.write_connection_file,
+                runtime,
+                connection_version=self.connection_version,
+                write_connection_file=self.write_connection_file,
             )
         return _with_service_env(
             runtime,
@@ -481,7 +487,9 @@ class _ServiceUseAdapter:
         runtime: ServiceRuntime,
         arguments: Mapping[str, Any],
     ) -> dict[str, Any]:
-        resource_uri = _required_text(arguments.get("resource_uri"), name="resource_uri")
+        resource_uri = _required_text(
+            arguments.get("resource_uri"), name="resource_uri"
+        )
         return _with_service_env(
             runtime,
             lambda: _wrap_mcat_errors(
@@ -641,7 +649,9 @@ def _wrap_mcat_errors(fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         raise ToolangError(message) from exc
 
 
-def _with_service_env(runtime: ServiceRuntime, fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+def _with_service_env(
+    runtime: ServiceRuntime, fn: Callable[[], dict[str, Any]]
+) -> dict[str, Any]:
     with patched_environ(runtime.env_vars):
         return fn()
 
@@ -749,11 +759,7 @@ def _string_mapping(value: object) -> dict[str, str]:
         return {}
     if not isinstance(value, Mapping):
         raise ValueError("env must be an object")
-    return {
-        str(key): str(item)
-        for key, item in value.items()
-        if str(key).strip()
-    }
+    return {str(key): str(item) for key, item in value.items() if str(key).strip()}
 
 
 def _required_text(value: object, *, name: str) -> str:

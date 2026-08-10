@@ -28,8 +28,7 @@ def parse_percept(parts: list[InputPart]) -> Percept:
             {
                 "role": "user",
                 "parts": [
-                    part.model_dump(mode="python", exclude_none=True)
-                    for part in parts
+                    part.model_dump(mode="python", exclude_none=True) for part in parts
                 ],
             }
         ).percept

@@ -520,9 +520,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert detail.input is not None
         assert detail.input.parts == (TextPart("hello"), image)
         assert detail.output == [audio]
-        assert detail.steps[0].given["call"] == model_call_to_data(
-            adapter.requests[0]
-        )
+        assert detail.steps[0].given["call"] == model_call_to_data(adapter.requests[0])
         payload = TypeAdapter(RunDetail).dump_python(detail, mode="json")
         serialized_call = cast(
             dict[str, Any],

@@ -202,9 +202,7 @@ def test_web_search_worker_is_process_isolated_and_cancellable(
 
     from toolang.plugin.tools.web_search import _run_search, _search_text
 
-    result = asyncio.run(
-        _run_search("toolang", max_results=15, timeout=5)
-    )
+    result = asyncio.run(_run_search("toolang", max_results=15, timeout=5))
 
     assert result == []
     assert observed == {
@@ -275,7 +273,9 @@ def test_service_use_tool_exposes_leaf_commands_only() -> None:
     assert "callback_target" not in plugin.tools()
 
 
-def test_service_use_tool_calls_http_service_via_mcat(monkeypatch, tmp_path: Path) -> None:
+def test_service_use_tool_calls_http_service_via_mcat(
+    monkeypatch, tmp_path: Path
+) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     plugin = create_service_use_tool({})
@@ -340,7 +340,9 @@ def test_service_use_requires_explicitly_resolved_environment(
         )
 
 
-def test_service_use_tool_serializes_dict_input_for_tool_call(monkeypatch, tmp_path: Path) -> None:
+def test_service_use_tool_serializes_dict_input_for_tool_call(
+    monkeypatch, tmp_path: Path
+) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     plugin = create_service_use_tool({})
@@ -354,7 +356,9 @@ def test_service_use_tool_serializes_dict_input_for_tool_call(monkeypatch, tmp_p
         )
         return {"session_file": sess_info_file}
 
-    def fake_call_tool(*, tool_name: str, arguments: dict[str, object], sess_info_file: str):
+    def fake_call_tool(
+        *, tool_name: str, arguments: dict[str, object], sess_info_file: str
+    ):
         del sess_info_file
         assert tool_name == "search_issues"
         assert arguments == {"query": "toolang"}
@@ -382,7 +386,9 @@ def test_service_use_tool_serializes_dict_input_for_tool_call(monkeypatch, tmp_p
     assert result["result"]["result"] == {"content": [{"type": "text", "text": "ok"}]}
 
 
-def test_service_use_tool_definitions_explain_auth_and_input_contract(tmp_path: Path) -> None:
+def test_service_use_tool_definitions_explain_auth_and_input_contract(
+    tmp_path: Path,
+) -> None:
     del tmp_path
     plugin = create_service_use_tool({})
     bridge_start_description = plugin.tools()["bridge_start"].definition().description
@@ -396,12 +402,19 @@ def test_service_use_tool_definitions_explain_auth_and_input_contract(tmp_path: 
     assert "HTTP services do not need bridge_start" in bridge_start_description
     assert "HTTP services do not need bridge_start" in init_description
     assert "call auth_start" in init_description
-    assert "call auth_complete so the callback endpoint is listening" in init_description
+    assert (
+        "call auth_complete so the callback endpoint is listening" in init_description
+    )
     assert "reuse it and do not call init again" in init_description
     assert "expired or invalid session" in init_description
     assert "show that URL to the user" in auth_start_description
-    assert "receives the token while the user approves the URL" in auth_start_description
-    assert "opening the callback endpoint and waiting for the token" in auth_complete_description
+    assert (
+        "receives the token while the user approves the URL" in auth_start_description
+    )
+    assert (
+        "opening the callback endpoint and waiting for the token"
+        in auth_complete_description
+    )
     assert "After this succeeds, call init" in auth_complete_description
     assert "inputSchema" in tool_list_description
     assert "prior successful tool_list result" in tool_list_description
@@ -410,10 +423,15 @@ def test_service_use_tool_definitions_explain_auth_and_input_contract(tmp_path: 
     assert "required inputSchema fields" in tool_call.description
     assert "pass input={}" in tool_call.description
     assert "previously returned schema" in tool_call.description
-    assert "not with title/team at the top level" in tool_call.parameters["properties"]["input"]["description"]
+    assert (
+        "not with title/team at the top level"
+        in tool_call.parameters["properties"]["input"]["description"]
+    )
 
 
-def test_service_use_bridge_start_is_not_required_for_http_service(tmp_path: Path) -> None:
+def test_service_use_bridge_start_is_not_required_for_http_service(
+    tmp_path: Path,
+) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     plugin = create_service_use_tool({})
@@ -426,7 +444,9 @@ def test_service_use_bridge_start_is_not_required_for_http_service(tmp_path: Pat
 
     assert result["ok"] is True
     assert result["result"]["result"]["status"] == "not_required"
-    assert not (home / ".runtime" / "tools" / "service_use" / "github" / "connection.json").exists()
+    assert not (
+        home / ".runtime" / "tools" / "service_use" / "github" / "connection.json"
+    ).exists()
 
 
 def test_service_use_bridge_start_parses_effective_stdio_target(
@@ -474,7 +494,9 @@ def test_service_use_rejects_service_outside_effective_run(tmp_path: Path) -> No
         )
 
 
-def test_service_use_auth_start_prepares_http_connection(monkeypatch, tmp_path: Path) -> None:
+def test_service_use_auth_start_prepares_http_connection(
+    monkeypatch, tmp_path: Path
+) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     plugin = create_service_use_tool({})
@@ -483,7 +505,9 @@ def test_service_use_auth_start_prepares_http_connection(monkeypatch, tmp_path: 
         assert kwargs["endpoint"] is None
         connection_path = Path(kwargs["connection_file"])
         assert connection_path.is_file()
-        assert "https://mcp.linear.app/mcp" in connection_path.read_text(encoding="utf-8")
+        assert "https://mcp.linear.app/mcp" in connection_path.read_text(
+            encoding="utf-8"
+        )
         return {"status": "pending"}
 
     monkeypatch.setattr("mcat_cli.auth.run_auth", fake_run_auth)
@@ -535,7 +559,9 @@ def test_service_use_tool_call_fails_without_init(tmp_path: Path) -> None:
         )
 
 
-def test_service_use_reuses_service_scoped_session_file(monkeypatch, tmp_path: Path) -> None:
+def test_service_use_reuses_service_scoped_session_file(
+    monkeypatch, tmp_path: Path
+) -> None:
     home = tmp_path / "alice"
     home.mkdir()
     plugin = create_service_use_tool({})
@@ -549,7 +575,10 @@ def test_service_use_reuses_service_scoped_session_file(monkeypatch, tmp_path: P
         return {"session_file": sess_info_file}
 
     monkeypatch.setattr("mcat_cli.mcp.init_session", fake_init_session)
-    monkeypatch.setattr("mcat_cli.mcp.list_tools", lambda *, sess_info_file: {"session_file": sess_info_file})
+    monkeypatch.setattr(
+        "mcat_cli.mcp.list_tools",
+        lambda *, sess_info_file: {"session_file": sess_info_file},
+    )
 
     _invoke(
         plugin.tools()["init"],

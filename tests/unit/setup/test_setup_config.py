@@ -138,8 +138,6 @@ def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
 
 
 def test_old_nested_run_limits_are_not_interpreted() -> None:
-    limits = resolve_run_limits(
-        ({"run": {"limits": {"tokens": 1000}}},)
-    )
+    limits = resolve_run_limits(({"run": {"limits": {"tokens": 1000}}},))
 
     assert limits == RunLimits()

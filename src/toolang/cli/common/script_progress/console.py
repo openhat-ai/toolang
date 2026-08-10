@@ -26,9 +26,7 @@ class ProgressConsole:
         self.stream = stream
         self.tty = bool(getattr(stream, "isatty", lambda: False)())
         detected = (
-            shutil.get_terminal_size(fallback=(100, 24)).columns
-            if self.tty
-            else 100
+            shutil.get_terminal_size(fallback=(100, 24)).columns if self.tty else 100
         )
         self.width = max(width or detected, 40)
         self._live_lines: list[str] = []
@@ -70,8 +68,7 @@ class ProgressConsole:
             return
         self.clear_live()
         rendered = "\n".join(
-            self._styled(truncate(line, self.width), tone="active")
-            for line in lines
+            self._styled(truncate(line, self.width), tone="active") for line in lines
         )
         self.stream.write(rendered)
         self.stream.flush()

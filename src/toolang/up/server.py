@@ -70,9 +70,7 @@ class ServeSpec:
         default_factory=dict
     )
     binding_overrides: Mapping[str, str | None] = field(default_factory=dict)
-    limit_overrides: Mapping[str, int | Decimal | None] = field(
-        default_factory=dict
-    )
+    limit_overrides: Mapping[str, int | Decimal | None] = field(default_factory=dict)
     file_inboxes: tuple[Path, ...] = ()
     log_spec: str | None = None
 
@@ -257,7 +255,7 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
                         stable_ms=DEFAULT_FILE_STABLE_MS,
                         stop_signal=stop_signal,
                     )
-            )
+                )
             yield
         finally:
             agents.stop_runtime_state(

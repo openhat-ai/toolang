@@ -82,8 +82,7 @@ def resolve_agent_ceiling(
     cap_selectors: list[str] = list(fields.get("caps", ()))
     for plural, kind in _CAP_KIND_BY_FIELD.items():
         cap_selectors.extend(
-            _cap_kind_selector(kind, selector)
-            for selector in fields.get(plural, ())
+            _cap_kind_selector(kind, selector) for selector in fields.get(plural, ())
         )
     ceiling = AgentCeiling(
         models=fields.get("models"),

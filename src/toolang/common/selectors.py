@@ -14,7 +14,9 @@ SelectorDomain = Literal["model", "tool", "cap"]
 
 _IDENTITY_FILTER_KEYS = frozenset({"family", "kind", "name", "namespace", "ref"})
 _ALLOWED_FILTER_KEYS: dict[SelectorDomain, frozenset[str]] = {
-    "model": frozenset({"provider", "adapter", "scope", "tools", "streaming", "alias", "tag"}),
+    "model": frozenset(
+        {"provider", "adapter", "scope", "tools", "streaming", "alias", "tag"}
+    ),
     "tool": frozenset({"plugin"}),
     "cap": frozenset({"scope", "form", "origin"}),
 }
@@ -49,7 +51,9 @@ class Selector:
         object.__setattr__(
             self,
             "filters",
-            MappingProxyType({key: tuple(values) for key, values in self.filters.items()}),
+            MappingProxyType(
+                {key: tuple(values) for key, values in self.filters.items()}
+            ),
         )
 
 
@@ -117,10 +121,14 @@ def selector_identity_matches(
         return True
     if "/" in pattern:
         family_pattern, _, name_pattern = pattern.partition("/")
-        return fnmatchcase(family, family_pattern or "*") and fnmatchcase(name, name_pattern or "*")
+        return fnmatchcase(family, family_pattern or "*") and fnmatchcase(
+            name, name_pattern or "*"
+        )
     del family
     values = (name, *extra_values)
-    return any(value == pattern or fnmatchcase(value, pattern) for value in values if value)
+    return any(
+        value == pattern or fnmatchcase(value, pattern) for value in values if value
+    )
 
 
 def filter_value_matches(actual: str, allowed: Sequence[str]) -> bool:
@@ -167,7 +175,10 @@ def _parse_filter_item(item: str, *, domain: SelectorDomain) -> tuple[str, str]:
         if not normalized_key or not normalized_value:
             raise ToolangError(f"invalid selector filter: {item}")
         _validate_filter_key(normalized_key, domain=domain)
-        return (normalized_key, _normalize_filter_value(normalized_key, normalized_value))
+        return (
+            normalized_key,
+            _normalize_filter_value(normalized_key, normalized_value),
+        )
     shorthand = key.strip()
     if not shorthand:
         raise ToolangError(f"invalid selector filter: {item}")
@@ -179,13 +190,19 @@ def _parse_filter_item(item: str, *, domain: SelectorDomain) -> tuple[str, str]:
 
 def _validate_filter_key(key: str, *, domain: SelectorDomain) -> None:
     if key in _IDENTITY_FILTER_KEYS:
-        raise ToolangError(f"selector identity belongs in the pattern, not filter {key!r}")
+        raise ToolangError(
+            f"selector identity belongs in the pattern, not filter {key!r}"
+        )
     if key not in _ALLOWED_FILTER_KEYS[domain]:
         allowed = ", ".join(sorted(_ALLOWED_FILTER_KEYS[domain]))
-        raise ToolangError(f"unknown {domain} selector filter {key!r}; expected one of {allowed}")
+        raise ToolangError(
+            f"unknown {domain} selector filter {key!r}; expected one of {allowed}"
+        )
 
 
-def _normalize_shorthand(item: str, *, domain: SelectorDomain) -> tuple[str, str] | None:
+def _normalize_shorthand(
+    item: str, *, domain: SelectorDomain
+) -> tuple[str, str] | None:
     text = item.strip()
     lower = text.lower()
     if domain == "model":

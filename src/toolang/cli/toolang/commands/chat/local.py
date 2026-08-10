@@ -125,14 +125,8 @@ class LocalChatSession:
         if kind == "runnable":
             return {
                 "default": setup.bindings.runnable or f"agic:{default_agic}",
-                "items": [
-                    {"kind": "agic", "name": agic.name}
-                    for agic in program.agics
-                ]
-                + [
-                    {"kind": "flow", "name": flow.name}
-                    for flow in program.flows
-                ],
+                "items": [{"kind": "agic", "name": agic.name} for agic in program.agics]
+                + [{"kind": "flow", "name": flow.name} for flow in program.flows],
             }
         raise ValueError(f"unknown executable kind: {kind}")
 

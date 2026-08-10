@@ -37,9 +37,7 @@ def parse_model_aliases(
         for name, value in raw_aliases.items():
             if not isinstance(name, str) or not isinstance(value, Mapping):
                 continue
-            aliases[name] = parse_model_alias(
-                name, cast(Mapping[str, object], value)
-            )
+            aliases[name] = parse_model_alias(name, cast(Mapping[str, object], value))
     return aliases
 
 
@@ -77,14 +75,18 @@ def parse_default_models(
         elif isinstance(raw_default, Sequence) and not isinstance(
             raw_default, (str, bytes, bytearray)
         ):
-            defaults = tuple(str(item).strip() for item in raw_default if str(item).strip())
+            defaults = tuple(
+                str(item).strip() for item in raw_default if str(item).strip()
+            )
     return defaults
 
 
 def parse_model_alias(name: str, payload: Mapping[str, object]) -> ModelAlias:
     """Parse one `[models.aliases.<name>]` table."""
 
-    ref = _required_model_config_str(payload, "ref", config_name=name, kind="model alias")
+    ref = _required_model_config_str(
+        payload, "ref", config_name=name, kind="model alias"
+    )
     provider = _optional_model_config_str(payload.get("provider")) or "custom"
     model = _optional_model_config_str(payload.get("model"))
     display_name = _optional_model_config_str(payload.get("name"))
@@ -176,9 +178,7 @@ def _optional_model_config_bool(value: object) -> bool | None:
 
 
 def _model_config_str_tuple(value: object) -> tuple[str, ...]:
-    if not isinstance(value, Sequence) or isinstance(
-        value, (str, bytes, bytearray)
-    ):
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
         return ()
     return tuple(str(item).strip() for item in value if str(item).strip())
 

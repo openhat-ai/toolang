@@ -191,10 +191,7 @@ def _chat_help_lines() -> list[str]:
     return [
         "Chat Commands",
         "",
-        *[
-            f"{slash.display_usage:<{width}}  {slash.summary}"
-            for slash in SLASHES
-        ],
+        *[f"{slash.display_usage:<{width}}  {slash.summary}" for slash in SLASHES],
     ]
 
 
@@ -295,8 +292,12 @@ def _chat_model_list_lines(payload: Mapping[str, Any]) -> list[str]:
             continue
         columns = [
             selector,
-            *(['default'] if selector == default else []),
-            *[text for value in (item.get("provider"), item.get("adapter")) if (text := as_text(value))],
+            *(["default"] if selector == default else []),
+            *[
+                text
+                for value in (item.get("provider"), item.get("adapter"))
+                if (text := as_text(value))
+            ],
         ]
         lines.append("  ".join(columns))
     return lines or ["No available chat models."]

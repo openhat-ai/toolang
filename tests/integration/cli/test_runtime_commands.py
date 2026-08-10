@@ -96,7 +96,7 @@ def test_run_resolves_hosting_inputs_and_runs_in_foreground(
     root = tmp_path / "toolang"
     layout = _create_agent(root)
     (root / "config.toml").write_text(
-        "[limit]\ntokens = 1000\ncost = \"5\"\n",
+        '[limit]\ntokens = 1000\ncost = "5"\n',
         encoding="utf-8",
     )
     layout.config.write_text(

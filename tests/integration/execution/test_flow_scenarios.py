@@ -81,18 +81,13 @@ flow relay(_: Part[]) -> Part[]:
             assert child.status == "finished"
             assert child.parent == StepPath.parse(f"{root.id}/0")
             assert child.root_run_id == root.id
-            assert harness.store.run_output(run_id=root.id) == (
-                TextPart("relayed"),
-            )
+            assert harness.store.run_output(run_id=root.id) == (TextPart("relayed"),)
             assert _root_step_kinds(harness, root.id) == ["run"]
             assert [
-                step.kind
-                for step in harness.store.list_steps(run_id=child.id)
+                step.kind for step in harness.store.list_steps(run_id=child.id)
             ] == ["model"]
             run_events = [
-                event
-                for event in tracer.events
-                if isinstance(event, RunBegin | RunEnd)
+                event for event in tracer.events if isinstance(event, RunBegin | RunEnd)
             ]
             assert [(event.type, event.run) for event in run_events] == [
                 ("run_begin", root.id),
@@ -160,9 +155,7 @@ flow staged(_: Part[]) -> Part[]:
                 (0, "finished"),
                 (2, "finished"),
             ]
-            assert active[0].noted["value"] == [
-                {"type": "text", "text": "committed"}
-            ]
+            assert active[0].noted["value"] == [{"type": "text", "text": "committed"}]
             historical = harness.store.list_steps(
                 run_id=retried.id,
                 include_ejected=True,
@@ -392,9 +385,7 @@ flow parallel(_: Part[]):
 """,
         responses=[
             ScriptedModelTurn(
-                result=ModelCallResult(
-                    message=Message.assistant(f"item {index}")
-                ),
+                result=ModelCallResult(message=Message.assistant(f"item {index}")),
                 gate=gate,
             )
             for index, gate in enumerate(gates)
@@ -414,9 +405,7 @@ flow parallel(_: Part[]):
                 tracer=tracer,
             )
             await asyncio.wait_for(
-                asyncio.gather(
-                    *(gate.wait_until_entered() for gate in gates)
-                ),
+                asyncio.gather(*(gate.wait_until_entered() for gate in gates)),
                 timeout=1,
             )
             gates[0].fail(RuntimeError("worker failed"))
@@ -441,12 +430,8 @@ flow parallel(_: Part[]):
                 for step in harness.store.list_steps(run_id=root.id)
             ] == [("par", "failed")]
             assert_run_event_integrity(tracer.events)
-            assert sum(
-                isinstance(event, RunBegin) for event in tracer.events
-            ) == 4
-            assert sum(
-                isinstance(event, RunEnd) for event in tracer.events
-            ) == 4
+            assert sum(isinstance(event, RunBegin) for event in tracer.events) == 4
+            assert sum(isinstance(event, RunEnd) for event in tracer.events) == 4
 
     asyncio.run(scenario())
 
@@ -555,9 +540,10 @@ flow mapped(_: Text) -> Text[]:
                 )
                 if run.parent == StepPath.parse(f"{root.id}/1")
             ]
-            assert sorted(
-                run.context["placement"]["item"] for run in children
-            ) == [0, 1]
+            assert sorted(run.context["placement"]["item"] for run in children) == [
+                0,
+                1,
+            ]
 
     asyncio.run(scenario())
 
@@ -565,9 +551,9 @@ flow mapped(_: Text) -> Text[]:
 def test_deep_search_example_uses_explicit_flow_reshaping(
     tmp_path: Path,
 ) -> None:
-    source = (
-        Path(__file__).parents[3] / "examples" / "deep_search.too"
-    ).read_text(encoding="utf-8")
+    source = (Path(__file__).parents[3] / "examples" / "deep_search.too").read_text(
+        encoding="utf-8"
+    )
     harness = ExecutionHarness.create(
         tmp_path,
         source=source,
@@ -583,9 +569,7 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
             ],
             *[
                 ModelCallResult(
-                    message=Message.assistant(
-                        "true" if index % 2 == 0 else "false"
-                    )
+                    message=Message.assistant("true" if index % 2 == 0 else "false")
                 )
                 for index in range(6)
             ],
@@ -733,9 +717,7 @@ flow fanout(_: Text) -> Text[]:
 """,
         responses=[
             ScriptedModelTurn(
-                result=ModelCallResult(
-                    message=Message.assistant(f"item {index}")
-                ),
+                result=ModelCallResult(message=Message.assistant(f"item {index}")),
                 gate=gate,
             )
             for index, gate in enumerate(gates)

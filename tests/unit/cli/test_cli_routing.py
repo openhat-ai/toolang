@@ -189,9 +189,7 @@ def test_cli_argument_panels_show_types_without_changing_usage(
     result = _call_main([*arguments, "--help"])
     stdout = click.unstyle(capsys.readouterr().out)
     row = next(
-        line
-        for line in stdout.splitlines()
-        if "│" in line and argument in line.split()
+        line for line in stdout.splitlines() if "│" in line and argument in line.split()
     )
 
     assert result == 0
@@ -594,11 +592,13 @@ def test_cli_routes_visiting_inspect_without_materialization(
 
     result = dispatch_visiting(
         [selector, "inspect", "run_1"],
-        run_app=lambda args, selected: captured.update(
-            args=args,
-            layout=selected,
-        )
-        or 13,
+        run_app=lambda args, selected: (
+            captured.update(
+                args=args,
+                layout=selected,
+            )
+            or 13
+        ),
     )
 
     assert result == 13
@@ -622,20 +622,24 @@ def test_cli_routes_command_before_visiting_info_through_materialization(
     monkeypatch.setattr(
         agents,
         "resolve_visiting_layout",
-        lambda source, *, progress: captured.update(
-            source=source,
-            progress=progress,
-        )
-        or layout,
+        lambda source, *, progress: (
+            captured.update(
+                source=source,
+                progress=progress,
+            )
+            or layout
+        ),
     )
 
     result = dispatch_visiting(
         ["info", selector],
-        run_app=lambda args, selected: captured.update(
-            args=args,
-            layout=selected,
-        )
-        or 14,
+        run_app=lambda args, selected: (
+            captured.update(
+                args=args,
+                layout=selected,
+            )
+            or 14
+        ),
     )
 
     assert result == 14
@@ -666,7 +670,9 @@ def test_cli_opens_visiting_chat_with_its_exact_layout(
     def end_input(_prompt: str) -> str:
         raise EOFError
 
-    monkeypatch.setattr(agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout)
+    monkeypatch.setattr(
+        agents, "resolve_visiting_layout", lambda *_args, **_kwargs: layout
+    )
     monkeypatch.setattr(chat_commands, "LocalChatSession", Session)
     monkeypatch.setattr("builtins.input", end_input)
     monkeypatch.setattr(chat_commands.sys.stdin, "isatty", lambda: False)

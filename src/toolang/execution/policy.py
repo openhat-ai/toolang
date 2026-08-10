@@ -19,6 +19,7 @@ from .types import (
     LIMIT_POLICY_FIELDS,
     PolicyCommand,
 )
+
 _ALLOW_SHORTCUTS = ALLOW_POLICY_FIELDS
 _DEFAULT_SHORTCUTS = frozenset({"model", "agic", "flow", "runnable"})
 _CAP_KIND_BY_FIELD = {
@@ -291,10 +292,10 @@ def _normalize_commands(
         if command.group != "allow":
             raise ValueError(f"duplicate {command.group} field: {command.field}")
         previous = result[position]
-        if not isinstance(previous.value, tuple) or not isinstance(command.value, tuple):
-            raise ValueError(
-                f"allow {command.field} cannot combine selectors with all"
-            )
+        if not isinstance(previous.value, tuple) or not isinstance(
+            command.value, tuple
+        ):
+            raise ValueError(f"allow {command.field} cannot combine selectors with all")
         if not previous.value or not command.value:
             raise ValueError(
                 f"allow {command.field} cannot combine selectors with none"
@@ -322,9 +323,7 @@ def _apply_binding_commands(
         value = command.value
         if value is not None and not isinstance(value, str):
             raise TypeError(f"default {command.field} must be a string or none")
-        fields[command.field] = (
-            getattr(base, command.field) if value is None else value
-        )
+        fields[command.field] = getattr(base, command.field) if value is None else value
     return RunBindings(**fields)
 
 
@@ -362,8 +361,7 @@ def _command_ceiling(
     caps: list[str] = list(fields.get("caps", ()))
     for plural, kind in _CAP_KIND_BY_FIELD.items():
         caps.extend(
-            _qualify_cap_selector(kind, value)
-            for value in fields.get(plural, ())
+            _qualify_cap_selector(kind, value) for value in fields.get(plural, ())
         )
     ceiling = AgentCeiling(
         models=models,

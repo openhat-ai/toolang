@@ -44,7 +44,9 @@ flow work:
 """
     )
 
-    assert [format_statement_head(statement) for statement in program.flows[0].stmts] == [
+    assert [
+        format_statement_head(statement) for statement in program.flows[0].stmts
+    ] == [
         "let topic",
         "run action",
         "let reviewed = run action",
@@ -74,7 +76,9 @@ flow work:
 """
     )
 
-    assert [format_statement_head(statement) for statement in program.flows[0].stmts] == [
+    assert [
+        format_statement_head(statement) for statement in program.flows[0].stmts
+    ] == [
         "run",
         "map par 3",
         "rank top 2 par 3",
@@ -669,9 +673,9 @@ def test_repo_programs_format_idempotently_without_semantic_changes() -> None:
         formatted = format_source(source)
 
         assert format_source(formatted) == formatted, source_path.name
-        assert _without_spans(to_data(Program.from_source(formatted))) == _without_spans(
-            to_data(Program.from_source(source))
-        ), source_path.name
+        assert _without_spans(
+            to_data(Program.from_source(formatted))
+        ) == _without_spans(to_data(Program.from_source(source))), source_path.name
 
 
 def test_format_source_preserves_relative_content_indentation() -> None:
@@ -739,9 +743,7 @@ def test_format_source_rejects_non_positive_tab_size(tab_size: int) -> None:
 def _without_spans(value: object) -> object:
     if isinstance(value, dict):
         return {
-            key: _without_spans(item)
-            for key, item in value.items()
-            if key != "span"
+            key: _without_spans(item) for key, item in value.items() if key != "span"
         }
     if isinstance(value, list):
         return [_without_spans(item) for item in value]

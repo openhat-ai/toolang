@@ -83,7 +83,9 @@ def _parse_model_info(item: object) -> ModelInfo | None:
     if not ref or "/" not in ref:
         return None
     raw_model = payload.get("id")
-    model = raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else ref
+    model = (
+        raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else ref
+    )
     short_name = ref.rsplit("/", 1)[-1]
     selectors = _selectors(ref=ref, model=model, short_name=short_name)
     supported_parameters = _string_items(payload.get("supported_parameters"))
@@ -104,7 +106,9 @@ def _parse_model_info(item: object) -> ModelInfo | None:
         max_output_tokens=max_output_tokens,
         input_price=_pricing_value(pricing, key="prompt"),
         output_price=_pricing_value(pricing, key="completion"),
-        details=details.strip() if isinstance(details, str) and details.strip() else "Built-in OpenRouter route.",
+        details=details.strip()
+        if isinstance(details, str) and details.strip()
+        else "Built-in OpenRouter route.",
         metadata={},
     )
 
@@ -131,11 +135,7 @@ def _dedupe_non_empty(items: Sequence[str]) -> list[str]:
 def _string_items(value: object) -> set[str]:
     if not isinstance(value, list):
         return set()
-    return {
-        item.strip()
-        for item in value
-        if isinstance(item, str) and item.strip()
-    }
+    return {item.strip() for item in value if isinstance(item, str) and item.strip()}
 
 
 def _pricing_value(pricing: object, *, key: str) -> float | None:
@@ -184,7 +184,9 @@ def _app_attribution_headers() -> dict[str, str]:
     }
 
 
-def _merge_headers(defaults: Mapping[str, str], overrides: Mapping[str, str]) -> dict[str, str]:
+def _merge_headers(
+    defaults: Mapping[str, str], overrides: Mapping[str, str]
+) -> dict[str, str]:
     merged = dict(defaults)
     default_keys = {key.lower(): key for key in defaults}
     for key, value in overrides.items():

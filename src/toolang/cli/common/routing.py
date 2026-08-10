@@ -65,6 +65,7 @@ def explicit_agent(token: str) -> str | None:
         raise ValueError(f"invalid resident agent target: {token}")
     return name
 
+
 # Typer renders command help text dim by default. Normal weight keeps usage
 # notes readable across terminal themes.
 setattr(rich_utils, "STYLE_HELPTEXT", "")

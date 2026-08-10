@@ -98,9 +98,7 @@ class StepPath:
             raise ValueError(f"invalid step path: {value!r}")
         raw_indices = suffix.split("/")
         if any(
-            not item.isascii()
-            or not item.isdigit()
-            or str(int(item)) != item
+            not item.isascii() or not item.isdigit() or str(int(item)) != item
             for item in raw_indices
         ):
             raise ValueError(f"invalid step path: {value!r}")

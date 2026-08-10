@@ -134,9 +134,7 @@ def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | Non
         layout = context_layout(ctx)
     except (AttributeError, KeyError, TypeError):
         return None
-    return ChatInputHistoryStore(
-        layout.runtime / "chat-input-history.jsonl"
-    )
+    return ChatInputHistoryStore(layout.runtime / "chat-input-history.jsonl")
 
 
 def _chat_home_label(ctx: typer.Context) -> str:

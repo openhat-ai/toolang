@@ -784,10 +784,13 @@ class _Execution:
         """Return the next unused top-level physical step index."""
 
         steps = self.store.list_steps(run_id=run_id, include_ejected=True)
-        return max(
-            (step.index for step in steps if step.parent is None),
-            default=-1,
-        ) + 1
+        return (
+            max(
+                (step.index for step in steps if step.parent is None),
+                default=-1,
+            )
+            + 1
+        )
 
     def _restore_model_limits(self, root_run_id: str) -> None:
         runs = [
@@ -1039,7 +1042,9 @@ class _Execution:
             if statement.binding is not None:
                 current[statement.binding] = local
             if statement.binding == "_":
-                self.record_output(binding.run_id, local.ref or StepOutputRef(step.path))
+                self.record_output(
+                    binding.run_id, local.ref or StepOutputRef(step.path)
+                )
         return current, len(committed)
 
     async def execute_child(
@@ -1421,8 +1426,10 @@ def _source_args(
 def _stored_value(value: object, type_name: str | None) -> object:
     if type_name == "Part" and isinstance(value, Mapping):
         return part_from_data(cast(Mapping[str, Any], value))
-    if type_name == "Part[]" and isinstance(value, Sequence) and not isinstance(
-        value, (str, bytes, bytearray)
+    if (
+        type_name == "Part[]"
+        and isinstance(value, Sequence)
+        and not isinstance(value, (str, bytes, bytearray))
     ):
         return tuple(
             part_from_data(cast(Mapping[str, Any], item))

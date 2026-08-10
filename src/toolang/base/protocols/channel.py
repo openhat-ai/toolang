@@ -24,7 +24,9 @@ class AgentChannel(Protocol):
     def poll(self, state: ChannelState, context: ChannelContext) -> PollResult:
         """Poll for zero or more inbound deliveries."""
 
-    def decode_hook(self, request: HookRequest, context: ChannelContext) -> InboundDelivery | None:
+    def decode_hook(
+        self, request: HookRequest, context: ChannelContext
+    ) -> InboundDelivery | None:
         """Decode one inbound hook request."""
 
     def deliver(

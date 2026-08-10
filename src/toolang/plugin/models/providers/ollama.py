@@ -80,6 +80,7 @@ class OllamaModelProvider(ModelProvider):
             )
         return tuple(sorted(discovered, key=lambda item: item.name))
 
+
 def _canonical_ollama_ref(selector: str) -> tuple[str | None, str | None]:
     if "/" in selector:
         namespace, _, model_name = selector.partition("/")

@@ -29,9 +29,7 @@ owner_chat_id = "123"
 """.strip()
     )
 
-    tools = merge_named_configs(
-        (root_config, home_config), section="tools", environ={}
-    )
+    tools = merge_named_configs((root_config, home_config), section="tools", environ={})
     channels = merge_named_configs(
         (root_config, home_config),
         section="channels",

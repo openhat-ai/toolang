@@ -4,7 +4,9 @@ from toolang.common.errors import ToolangError
 from toolang.common.template import render_text_template
 
 
-def test_render_text_template_supports_variables_sections_and_inverted_sections() -> None:
+def test_render_text_template_supports_variables_sections_and_inverted_sections() -> (
+    None
+):
     rendered = render_text_template(
         """
 {{greeting}}
@@ -31,7 +33,10 @@ No audience.
         },
     )
 
-    assert rendered.rstrip("\n") == "Hello\nFocus: correctness\nNo audience.\n- review\n- patch"
+    assert (
+        rendered.rstrip("\n")
+        == "Hello\nFocus: correctness\nNo audience.\n- review\n- patch"
+    )
 
 
 def test_render_text_template_does_not_escape_plain_text_values() -> None:
@@ -52,7 +57,9 @@ def test_render_text_template_does_not_escape_plain_text_values() -> None:
         ("{{/items}}", "unmatched Toolang template section close"),
     ],
 )
-def test_render_text_template_rejects_unsupported_mustache_features(template: str, match: str) -> None:
+def test_render_text_template_rejects_unsupported_mustache_features(
+    template: str, match: str
+) -> None:
     with pytest.raises(ToolangError, match=match):
         render_text_template(template, {"runtime": {}, "items": []})
 

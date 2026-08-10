@@ -121,9 +121,7 @@ agic answer(_: Part[]) -> Part[]:
             "step_end",
             "run_end",
         ]
-        assert [event.type for event in decoded] == [
-            event for event, _data in events
-        ]
+        assert [event.type for event in decoded] == [event for event, _data in events]
         assert [run_event_to_data(event) for event in decoded] == [
             data for _event, data in events
         ]

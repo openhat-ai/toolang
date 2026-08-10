@@ -49,9 +49,7 @@ def test_parse_input_rejects_invalid_sources(
 
 
 def test_plain_input_is_one_text_part_without_rendering_unknown_tags() -> None:
-    assert perceive_input("Review {{target}}.\n") == (
-        TextPart("Review {{target}}.\n"),
-    )
+    assert perceive_input("Review {{target}}.\n") == (TextPart("Review {{target}}.\n"),)
 
 
 def test_typed_part_splice_preserves_multimodal_order() -> None:
@@ -88,9 +86,7 @@ def test_include_resolver_inserts_one_typed_part() -> None:
     result = perceive_input(
         "Before\n@diagram.png\nAfter",
         include=lambda reference: (
-            image
-            if reference == "diagram.png"
-            else pytest.fail("unexpected include")
+            image if reference == "diagram.png" else pytest.fail("unexpected include")
         ),
     )
 
@@ -102,9 +98,9 @@ def test_include_resolver_inserts_one_typed_part() -> None:
 
 
 def test_content_markers_are_special_only_at_the_start_of_a_line() -> None:
-    assert perceive_input(" //review\n @file.md\n::model gpt-5\n//review\n@@file.md") == (
-        TextPart(" //review\n @file.md\n:model gpt-5\n/review\n@file.md"),
-    )
+    assert perceive_input(
+        " //review\n @file.md\n::model gpt-5\n//review\n@@file.md"
+    ) == (TextPart(" //review\n @file.md\n:model gpt-5\n/review\n@file.md"),)
 
 
 def test_markdown_fences_suspend_content_recognition() -> None:
@@ -126,7 +122,7 @@ def test_prompt_without_input_leaves_following_content_outside() -> None:
                 body="LABEL",
                 span=Span(1),
             ),
-        )
+        ),
     )
 
     assert perceive_input("/label\nFollowing", program=program) == (
@@ -147,7 +143,7 @@ def test_tail_prompt_consumes_all_remaining_content() -> None:
                 body="Before {{_}} after",
                 span=Span(1),
             ),
-        )
+        ),
     )
 
     assert perceive_input("/wrap -\nOne\nTwo", program=program) == (
@@ -168,7 +164,7 @@ def test_fenced_prompt_consumes_only_its_exact_backtick_scope() -> None:
                 body="[{{_}}]",
                 span=Span(1),
             ),
-        )
+        ),
     )
 
     assert perceive_input(
@@ -222,10 +218,7 @@ def test_input_coercion_preserves_parts_and_parses_declared_values() -> None:
 
 def test_output_coercion_accepts_one_explicit_json_fence() -> None:
     value = Message.assistant(
-        "Here is the requested value:\n\n"
-        "```json\n"
-        '["one", "two"]\n'
-        "```"
+        'Here is the requested value:\n\n```json\n["one", "two"]\n```'
     )
 
     assert coerce_output(value, "Text[]") == ["one", "two"]
@@ -237,10 +230,7 @@ def test_output_coercion_does_not_guess_unfenced_or_ambiguous_json() -> None:
 
     with pytest.raises(ToolangError, match="output is not valid Text\\[\\]"):
         coerce_output(
-            Message.assistant(
-                '```json\n["one"]\n```\n'
-                '```json\n["two"]\n```'
-            ),
+            Message.assistant('```json\n["one"]\n```\n```json\n["two"]\n```'),
             "Text[]",
         )
 

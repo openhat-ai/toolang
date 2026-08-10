@@ -145,9 +145,7 @@ class LiveEventRelay(ThreadListener):
     ) -> None:
         with self._lock:
             subscribers = {
-                subscriber
-                for key in keys
-                for subscriber in collection.get(key, ())
+                subscriber for key in keys for subscriber in collection.get(key, ())
             }
         try:
             current_loop = asyncio.get_running_loop()

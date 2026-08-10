@@ -168,18 +168,14 @@ agic chat(_: Part[]) -> Part[]:
         ]
         assert len(runs) == 1
         assert runs[0].status == "finished"
-        assert session.store.run_output(run_id=runs[0].id) == (
-            TextPart("hello back"),
-        )
+        assert session.store.run_output(run_id=runs[0].id) == (TextPart("hello back"),)
         assert session.get_result(None, thread_id=thread_id).output == (
             TextPart("hello back"),
         )
         assert session.get_result(runs[0].id, thread_id=None).output == (
             TextPart("hello back"),
         )
-        assert harness.adapter.invocations[0].call.messages == [
-            Message.user("hello")
-        ]
+        assert harness.adapter.invocations[0].call.messages == [Message.user("hello")]
         assert set(event_threads) == {session._thread.ident}
         assert threading.get_ident() != session._thread.ident
     finally:

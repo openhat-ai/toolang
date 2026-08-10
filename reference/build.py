@@ -34,7 +34,9 @@ def main() -> int:
         "--docformat",
         str(config.get("docformat", "google")),
         "--search" if bool(config.get("search", True)) else "--no-search",
-        "--show-source" if bool(config.get("show_source", True)) else "--no-show-source",
+        "--show-source"
+        if bool(config.get("show_source", True))
+        else "--no-show-source",
         (
             "--include-undocumented"
             if bool(config.get("include_undocumented", False))

@@ -30,7 +30,9 @@ class CliProgress:
     ) -> None:
         self._stream = stream or sys.stderr
         stream_is_tty = bool(getattr(self._stream, "isatty", lambda: False)())
-        force_terminal = True if live is True or (live is False and stream_is_tty) else None
+        force_terminal = (
+            True if live is True or (live is False and stream_is_tty) else None
+        )
         color_system = "standard" if force_terminal else "auto"
         self._console = Console(
             file=self._stream,
@@ -183,7 +185,10 @@ class CliProgress:
             item.step_details[step] = event.detail
             if step == "fetch" and event.status == "ok":
                 item.detail = event.detail
-        if step in {"fetch", "extract", "materialize"} and self._post_resolve_started_at is None:
+        if (
+            step in {"fetch", "extract", "materialize"}
+            and self._post_resolve_started_at is None
+        ):
             self._post_resolve_started_at = time.monotonic()
         if step == "materialize":
             if event.status == "running" and self._materialize_started_at is None:
@@ -211,12 +216,18 @@ class CliProgress:
             if not self._show_cached_prepare:
                 return ()
             elapsed = _format_elapsed(time.monotonic() - self._started_at)
-            return (f"{self._prepare_summary_label} {self._cap_count_label()} from cache in {elapsed}",)
+            return (
+                f"{self._prepare_summary_label} {self._cap_count_label()} from cache in {elapsed}",
+            )
         failed = sum(1 for item in cap_items if _item_status(item) == "failed")
         running = sum(1 for item in cap_items if _item_status(item) == "running")
         pending = sum(1 for item in cap_items if _item_status(item) == "pending")
         elapsed = self._prepare_elapsed()
-        prepare_status = _aggregate_status(tuple(self._prepare.values())) if self._prepare else "skipped"
+        prepare_status = (
+            _aggregate_status(tuple(self._prepare.values()))
+            if self._prepare
+            else "skipped"
+        )
         if self._interrupted:
             if cap_items or self._prepare:
                 return ("Prepare caps interrupted",)
@@ -224,7 +235,11 @@ class CliProgress:
                 return ("Fetch agent interrupted",)
             return ()
         if self._prepare:
-            total = self._prepare_total if self._prepare_total is not None else len(cap_items)
+            total = (
+                self._prepare_total
+                if self._prepare_total is not None
+                else len(cap_items)
+            )
             if failed:
                 return (f"Failed {failed}/{total} caps",)
             if running:
@@ -242,7 +257,9 @@ class CliProgress:
             )
         if not cap_items and agent_items:
             item = agent_items[0]
-            agent_status = _aggregate_status(tuple(_item_status(item) for item in agent_items))
+            agent_status = _aggregate_status(
+                tuple(_item_status(item) for item in agent_items)
+            )
             if agent_status == "failed":
                 detail = _failed_detail(item)
                 suffix = f": {detail}" if detail else ""
@@ -269,14 +286,24 @@ class CliProgress:
     def _with_materialize_summary(self, summary: str) -> tuple[str, ...]:
         if not self._show_materialize_summary or not self._materialized_keys:
             return (summary,)
-        started_at = self._post_resolve_started_at or self._materialize_started_at or self._started_at
+        started_at = (
+            self._post_resolve_started_at
+            or self._materialize_started_at
+            or self._started_at
+        )
         finished_at = self._materialize_finished_at or time.monotonic()
         elapsed = _format_elapsed(max(finished_at - started_at, 0))
         return (summary, f"Updated {len(self._materialized_keys)} caps in {elapsed}")
 
     def _prepare_elapsed(self) -> str:
-        if self._show_materialize_summary and self._materialized_keys and self._post_resolve_started_at is not None:
-            return _format_elapsed(max(self._post_resolve_started_at - self._started_at, 0))
+        if (
+            self._show_materialize_summary
+            and self._materialized_keys
+            and self._post_resolve_started_at is not None
+        ):
+            return _format_elapsed(
+                max(self._post_resolve_started_at - self._started_at, 0)
+            )
         return _format_elapsed(time.monotonic() - self._started_at)
 
     def _cap_count_label(self, total: int | None = None) -> str:
@@ -302,7 +329,12 @@ class CliProgress:
         text = Text()
         agent_items = [item for item in self._items.values() if item.kind == "agent"]
         cap_items = [item for item in self._items.values() if item.kind != "agent"]
-        if agent_items and not cap_items and not self._prepare and not self._agent_stage_uses_summary(agent_items[0]):
+        if (
+            agent_items
+            and not cap_items
+            and not self._prepare
+            and not self._agent_stage_uses_summary(agent_items[0])
+        ):
             text.append(f"{_format_item(agent_items[0])}\n", style="dim")
             return text
         for summary in self._summary_lines():
@@ -330,7 +362,8 @@ class CliProgress:
             phase for phase in self._prepare if phase.startswith("prepare.visibility:")
         )
         return bool(visibility_phases) and all(
-            self._prepare.get(phase) == "ok" and self._prepare_details.get(phase) == "cached"
+            self._prepare.get(phase) == "ok"
+            and self._prepare_details.get(phase) == "cached"
             for phase in visibility_phases
         )
 
@@ -494,6 +527,12 @@ def _parse_cap_event(event: ProgressEvent) -> tuple[str, str] | None:
     if len(parts) != 3:
         return None
     prefix, kind, ref = parts
-    if prefix not in {"cap.resolve", "cap.fetch", "cap.extract", "cap.materialize", "cap.config"}:
+    if prefix not in {
+        "cap.resolve",
+        "cap.fetch",
+        "cap.extract",
+        "cap.materialize",
+        "cap.config",
+    }:
         return None
     return kind, ref

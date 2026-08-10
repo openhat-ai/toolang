@@ -15,7 +15,10 @@ from toolang.plugin.models.discovery import (
     default_provider_base_url,
     required_provider_env_vars,
 )
-from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE, NO_MATCHED_MODELS_MESSAGE
+from toolang.plugin.models.messages import (
+    NO_AVAILABLE_MODELS_MESSAGE,
+    NO_MATCHED_MODELS_MESSAGE,
+)
 from toolang.common.selectors import (
     Selector as ModelSelector,
     filter_value_matches,
@@ -98,7 +101,9 @@ def resolve_model(
         )
     if len(matches) > 1:
         joined = ", ".join(item.selector for item in matches)
-        raise ToolangError(f"model selector is ambiguous: {effective_selector} (matches {joined})")
+        raise ToolangError(
+            f"model selector is ambiguous: {effective_selector} (matches {joined})"
+        )
     target = matches[0].target
     _require_allowed(target, selector=effective_selector, allowed=resolved_allowed)
     return target
@@ -347,7 +352,11 @@ def _resolve_selector_targets(
                 )
             continue
         selector = parse_model_selector(text)
-        matches = tuple(candidate for candidate in candidates if _candidate_matches(candidate, selector))
+        matches = tuple(
+            candidate
+            for candidate in candidates
+            if _candidate_matches(candidate, selector)
+        )
         if not matches and _looks_exact_ref(selector):
             matches = _resolve_exact_ref(
                 selector.pattern,
@@ -418,7 +427,9 @@ def _candidate_matches(candidate: _Candidate, selector: ModelSelector) -> bool:
         return False
     for key, values in selector.filters.items():
         actual_values = _candidate_filter_values(candidate, key)
-        if not actual_values or not any(filter_value_matches(actual, values) for actual in actual_values):
+        if not actual_values or not any(
+            filter_value_matches(actual, values) for actual in actual_values
+        ):
             return False
     return True
 
@@ -436,7 +447,9 @@ def _pattern_matches(candidate: _Candidate, pattern: str) -> bool:
             extra_values=candidate.match_values,
         ):
             return True
-    return any(value == text or fnmatchcase(value, text) for value in candidate.match_values)
+    return any(
+        value == text or fnmatchcase(value, text) for value in candidate.match_values
+    )
 
 
 def _candidate_filter_values(candidate: _Candidate, key: str) -> tuple[str, ...]:
@@ -477,13 +490,17 @@ def _target_from_alias(
     provider = providers.get(alias.provider)
     if provider is None:
         if strict:
-            raise ToolangError(f"unknown model provider for alias {alias.name!r}: {alias.provider}")
+            raise ToolangError(
+                f"unknown model provider for alias {alias.name!r}: {alias.provider}"
+            )
         return None
     missing = _missing_target_env_vars(provider, alias=alias, envs=envs)
     if missing:
         if strict:
             joined = ", ".join(missing)
-            raise ToolangError(f"model alias {alias.name!r} is missing environment: {joined}")
+            raise ToolangError(
+                f"model alias {alias.name!r} is missing environment: {joined}"
+            )
         return None
     if alias.provider == CUSTOM_MODEL_PROVIDER and not alias.endpoint:
         if strict:
@@ -514,23 +531,43 @@ def _target_from_info(
     envs: Mapping[str, str],
     alias: ModelAlias | None = None,
 ) -> ModelTarget:
-    api_key_env = alias.key_env if alias is not None and alias.key_env is not None else default_provider_api_key_env(provider)
+    api_key_env = (
+        alias.key_env
+        if alias is not None and alias.key_env is not None
+        else default_provider_api_key_env(provider)
+    )
     api_key = envs.get(api_key_env) if api_key_env else None
-    scope = alias.scope if alias is not None and alias.scope is not None else info.scope or _provider_scope(provider.name)
+    scope = (
+        alias.scope
+        if alias is not None and alias.scope is not None
+        else info.scope or _provider_scope(provider.name)
+    )
     return ModelTarget(
         ref=info.ref,
         provider=provider.name,
-        name=alias.display_name if alias is not None and alias.display_name is not None else info.name,
-        model=alias.model if alias is not None and alias.model is not None else info.model,
-        adapter=alias.adapter if alias is not None and alias.adapter is not None else info.adapter,
-        base_url=alias.endpoint if alias is not None and alias.endpoint is not None else default_provider_base_url(provider, environ=envs),
+        name=alias.display_name
+        if alias is not None and alias.display_name is not None
+        else info.name,
+        model=alias.model
+        if alias is not None and alias.model is not None
+        else info.model,
+        adapter=alias.adapter
+        if alias is not None and alias.adapter is not None
+        else info.adapter,
+        base_url=alias.endpoint
+        if alias is not None and alias.endpoint is not None
+        else default_provider_base_url(provider, environ=envs),
         api_key=api_key,
         scope=scope,
         tags=alias.tags if alias is not None and alias.tags else info.tags,
         headers=dict(alias.headers) if alias is not None else {},
         options=dict(alias.options) if alias is not None else {},
-        tools=alias.tools if alias is not None and alias.tools is not None else info.tools,
-        streaming=alias.streaming if alias is not None and alias.streaming is not None else info.streaming,
+        tools=alias.tools
+        if alias is not None and alias.tools is not None
+        else info.tools,
+        streaming=alias.streaming
+        if alias is not None and alias.streaming is not None
+        else info.streaming,
     )
 
 
@@ -542,7 +579,9 @@ def _target_from_alias_only(
 ) -> ModelTarget:
     model_name = alias.model or _provider_model_name_from_ref(alias.provider, alias.ref)
     endpoint = alias.endpoint or default_provider_base_url(provider, environ=envs)
-    scope = alias.scope or _scope_from_endpoint(endpoint) or _provider_scope(alias.provider)
+    scope = (
+        alias.scope or _scope_from_endpoint(endpoint) or _provider_scope(alias.provider)
+    )
     api_key_env = alias.key_env or default_provider_api_key_env(provider)
     return ModelTarget(
         ref=alias.ref,
@@ -600,7 +639,9 @@ def _missing_target_env_vars(
     required = list(required_provider_env_vars(provider))
     default_key_env = default_provider_api_key_env(provider)
     if alias is not None and alias.key_env is not None:
-        required = [alias.key_env if name == default_key_env else name for name in required]
+        required = [
+            alias.key_env if name == default_key_env else name for name in required
+        ]
         if default_key_env is None or alias.key_env not in required:
             required.append(alias.key_env)
     seen: set[str] = set()
@@ -615,7 +656,9 @@ def _missing_target_env_vars(
     return tuple(missing)
 
 
-def _candidate_match_values(selector: str, target: ModelTarget, *extra: str) -> tuple[str, ...]:
+def _candidate_match_values(
+    selector: str, target: ModelTarget, *extra: str
+) -> tuple[str, ...]:
     return _dedupe(
         (
             selector,

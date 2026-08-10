@@ -65,6 +65,7 @@ def test_timeout_check_skips_full_prepare_when_metadata_is_current(
             yield set()
 
         monkeypatch.setattr(state_watcher, "awatch", one_timeout)
+
         async def fail_refresh(*, force: bool = False):
             del force
             raise AssertionError("unchanged timeout must not load full prepared state")

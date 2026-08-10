@@ -6,7 +6,13 @@ import asyncio
 from collections.abc import Callable
 from collections.abc import Iterable, Mapping, Sequence
 from contextvars import ContextVar
-from contextlib import AbstractContextManager, chdir, nullcontext, redirect_stderr, redirect_stdout
+from contextlib import (
+    AbstractContextManager,
+    chdir,
+    nullcontext,
+    redirect_stderr,
+    redirect_stdout,
+)
 from dataclasses import dataclass, field
 import io
 import json
@@ -89,7 +95,9 @@ class _LeafCommandSpec:
         return ToolDefinition(
             name=self.tool_name,
             description=self.config.description
-            or _command_description(self.command, self.path_tokens, prog_name=self.prog_name),
+            or _command_description(
+                self.command, self.path_tokens, prog_name=self.prog_name
+            ),
             parameters=_schema_from_click_params(
                 params,
                 hidden_params=self.config.hidden_params,
@@ -100,17 +108,23 @@ class _LeafCommandSpec:
             ),
         )
 
-    def invoke(self, arguments: Mapping[str, Any], context: ToolContext) -> dict[str, Any]:
+    def invoke(
+        self, arguments: Mapping[str, Any], context: ToolContext
+    ) -> dict[str, Any]:
         click = _require_click()
         prepared = (
             self.config.prepare(self.path_tokens, arguments, context)
             if self.config.prepare is not None
             else None
         )
-        cli_arguments = _cli_arguments(arguments, param_aliases=self.config.param_aliases)
+        cli_arguments = _cli_arguments(
+            arguments, param_aliases=self.config.param_aliases
+        )
         if self.config.inject_arguments is not None:
             cli_arguments.update(
-                self.config.inject_arguments(self.path_tokens, arguments, context, prepared)
+                self.config.inject_arguments(
+                    self.path_tokens, arguments, context, prepared
+                )
             )
         argv = _build_argv(
             scopes=self.scopes,
@@ -120,7 +134,9 @@ class _LeafCommandSpec:
         if self.config.extra_argv is not None:
             argv.extend(
                 str(item)
-                for item in self.config.extra_argv(self.path_tokens, arguments, context, prepared)
+                for item in self.config.extra_argv(
+                    self.path_tokens, arguments, context, prepared
+                )
             )
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -212,7 +228,9 @@ def create_typer_tools(
 
     root = _require_get_command()(app)
     resolved_configs = dict(configs or {})
-    selected_paths = {tuple(path) for path in (include_paths or resolved_configs.keys())}
+    selected_paths = {
+        tuple(path) for path in (include_paths or resolved_configs.keys())
+    }
     specs = _collect_leaf_specs(
         root_command=root,
         command=root,
@@ -231,7 +249,9 @@ def current_tool_context() -> ToolContext:
 
     context = _CURRENT_TOOL_CONTEXT.get()
     if context is None:
-        raise ToolangError("tool context is only available while a Typer-backed tool is running")
+        raise ToolangError(
+            "tool context is only available while a Typer-backed tool is running"
+        )
     return context
 
 
@@ -254,14 +274,19 @@ def _collect_leaf_specs(
             child_path = (*path_tokens, token)
             if include_paths and not _is_selected_path(include_paths, child_path):
                 continue
-            if child.hidden and not _is_selected_path(include_paths or set(configs), child_path):
+            if child.hidden and not _is_selected_path(
+                include_paths or set(configs), child_path
+            ):
                 continue
             result.extend(
                 _collect_leaf_specs(
                     root_command,
                     child,
                     path_tokens=child_path,
-                    scopes=(*scopes, _CommandScope(child_token=token, params=parent_params)),
+                    scopes=(
+                        *scopes,
+                        _CommandScope(child_token=token, params=parent_params),
+                    ),
                     prog_name=prog_name,
                     name_prefix=name_prefix,
                     include_paths=include_paths,
@@ -269,11 +294,15 @@ def _collect_leaf_specs(
                 )
             )
         return result
-    normalized_tokens = path_tokens or (_normalize_tool_name(command.name or prog_name),)
+    normalized_tokens = path_tokens or (
+        _normalize_tool_name(command.name or prog_name),
+    )
     config = configs.get(normalized_tokens, TyperToolConfig())
     if include_paths and normalized_tokens not in include_paths:
         return []
-    tool_name = config.name or "_".join(_normalize_tool_name(token) for token in normalized_tokens)
+    tool_name = config.name or "_".join(
+        _normalize_tool_name(token) for token in normalized_tokens
+    )
     if name_prefix:
         tool_name = f"{_normalize_tool_name(name_prefix)}_{tool_name}"
     return [
@@ -307,7 +336,9 @@ def _is_selected_path(paths: Iterable[tuple[str, ...]], path: tuple[str, ...]) -
     return any(config_path[: len(path)] == path for config_path in selected)
 
 
-def _command_description(command: Any, path_tokens: tuple[str, ...], *, prog_name: str) -> str:
+def _command_description(
+    command: Any, path_tokens: tuple[str, ...], *, prog_name: str
+) -> str:
     summary = (command.help or command.short_help or "").strip()
     if summary:
         return summary
@@ -332,7 +363,9 @@ def _schema_from_click_params(
             continue
         param_name = param_aliases.get(param.name, param.name)
         if param_name in properties:
-            raise ToolangError(f"duplicate parameter while building Typer tool: {param_name}")
+            raise ToolangError(
+                f"duplicate parameter while building Typer tool: {param_name}"
+            )
         schema = dict(param_schemas.get(param_name) or _schema_for_click_param(param))
         help_text = getattr(param, "help", None)
         if isinstance(help_text, str) and help_text.strip():
@@ -342,7 +375,9 @@ def _schema_from_click_params(
             required.append(param_name)
     for param_name, schema in extra_params.items():
         if param_name in properties:
-            raise ToolangError(f"duplicate parameter while building Typer tool: {param_name}")
+            raise ToolangError(
+                f"duplicate parameter while building Typer tool: {param_name}"
+            )
         properties[param_name] = dict(schema)
         if param_name in required_params:
             required.append(param_name)
@@ -356,7 +391,10 @@ def _schema_from_click_params(
 
 def _schema_for_click_param(param: Any) -> dict[str, Any]:
     if getattr(param, "multiple", False) or getattr(param, "nargs", 1) != 1:
-        return {"type": "array", "items": _schema_for_click_type(getattr(param, "type", None))}
+        return {
+            "type": "array",
+            "items": _schema_for_click_type(getattr(param, "type", None)),
+        }
     schema = _schema_for_click_type(getattr(param, "type", None))
     default = getattr(param, "default", None)
     if default not in (None, (), []):
@@ -441,7 +479,10 @@ def _serialize_option(option: Any, raw_value: Any) -> list[str]:
 def _serialize_argument(argument: Any, raw_value: Any) -> list[str]:
     if argument.nargs == 1:
         return [_stringify(raw_value)]
-    return [_stringify(item) for item in _as_sequence(raw_value, name=argument.name or "argument")]
+    return [
+        _stringify(item)
+        for item in _as_sequence(raw_value, name=argument.name or "argument")
+    ]
 
 
 def _as_sequence(value: Any, *, name: str) -> list[Any]:
@@ -469,7 +510,9 @@ def _cli_arguments(
     *,
     param_aliases: Mapping[str, str],
 ) -> dict[str, Any]:
-    reverse_aliases = {tool_name: cli_name for cli_name, tool_name in param_aliases.items()}
+    reverse_aliases = {
+        tool_name: cli_name for cli_name, tool_name in param_aliases.items()
+    }
     return {reverse_aliases.get(name, name): value for name, value in values.items()}
 
 

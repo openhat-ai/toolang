@@ -168,9 +168,7 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
                 index=0,
             )
             assert created is not None
-            assert created.context == {
-                "job": {"id": "review", "kind": "task"}
-            }
+            assert created.context == {"job": {"id": "review", "kind": "task"}}
         finally:
             await _close_scheduler(scheduler, harness)
 

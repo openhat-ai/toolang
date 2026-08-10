@@ -217,9 +217,7 @@ async def retry_run(
             state=core.state.current(),
             anchor=request.anchor,
             model=(
-                request.model
-                if request.model is not None
-                else setup.bindings.model
+                request.model if request.model is not None else setup.bindings.model
             ),
             limits=(
                 request.limits.to_limits(setup.limits)
@@ -256,9 +254,7 @@ async def rerun_run(
             setup=setup,
             state=core.state.current(),
             model=(
-                request.model
-                if request.model is not None
-                else setup.bindings.model
+                request.model if request.model is not None else setup.bindings.model
             ),
             limits=(
                 request.limits.to_limits(setup.limits)

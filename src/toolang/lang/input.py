@@ -182,14 +182,10 @@ def validate_value(
             }
             if unknown:
                 names = ", ".join(sorted(str(name) for name in unknown))
-                raise ToolangError(
-                    f"{path} has unknown {type_name} fields: {names}"
-                )
+                raise ToolangError(f"{path} has unknown {type_name} fields: {names}")
             if missing:
                 names = ", ".join(sorted(missing))
-                raise ToolangError(
-                    f"{path} is missing {type_name} fields: {names}"
-                )
+                raise ToolangError(f"{path} is missing {type_name} fields: {names}")
             for name, item in value.items():
                 validate_value(
                     item,
@@ -247,9 +243,7 @@ def _perceive_body(
         if text.startswith("@"):
             reference = _include_reference(text)
             if include is None:
-                raise ToolangError(
-                    f"Include resolver is required for: {reference}"
-                )
+                raise ToolangError(f"Include resolver is required for: {reference}")
             _append_part(output, _require_percept_part(include(reference)))
             if line_break:
                 _append_part(output, TextPart(line_break))
@@ -282,9 +276,7 @@ def _perceive_body(
                     fence=call.fence,
                 )
                 if closing_index is None:
-                    raise ToolangError(
-                        f"Unclosed prompt fence for /{prompt_name}."
-                    )
+                    raise ToolangError(f"Unclosed prompt fence for /{prompt_name}.")
                 attached_body = "".join(lines[index + 1 : closing_index])
                 _, following_break = _split_line(lines[closing_index])
                 consumed = closing_index - index + 1
@@ -446,7 +438,9 @@ def _unquoted_terminal_token(value: str) -> tuple[int, str] | None:
             if token_start is None:
                 token_start = index
             token_is_plain = False
-            quote = None if quote == character else character if quote is None else quote
+            quote = (
+                None if quote == character else character if quote is None else quote
+            )
             continue
         if quote is None and character in " \t":
             if token_start is not None:
@@ -549,11 +543,7 @@ def _extend_parts(
 def _append_part(output: list[PerceptPart], part: PerceptPart) -> None:
     if isinstance(part, TextPart) and not part.text:
         return
-    if (
-        isinstance(part, TextPart)
-        and output
-        and isinstance(output[-1], TextPart)
-    ):
+    if isinstance(part, TextPart) and output and isinstance(output[-1], TextPart):
         output[-1] = TextPart(output[-1].text + part.text)
         return
     output.append(part)
@@ -565,11 +555,7 @@ def _strip_text_boundaries(parts: Percept) -> Percept:
         result[0] = TextPart(result[0].text.lstrip())
     if result and isinstance(result[-1], TextPart):
         result[-1] = TextPart(result[-1].text.rstrip())
-    return tuple(
-        part
-        for part in result
-        if not isinstance(part, TextPart) or part.text
-    )
+    return tuple(part for part in result if not isinstance(part, TextPart) or part.text)
 
 
 def _replace_direct_value(template: str, name: str, value: str) -> str:
@@ -592,10 +578,7 @@ def _template_value(value: object, *, type_name: str | None) -> object:
         return str(value)
     if type_name == "Json" or (
         type_name is not None
-        and (
-            type_name.endswith("[]")
-            or type_name not in {"Text", "Number", "Boolean"}
-        )
+        and (type_name.endswith("[]") or type_name not in {"Text", "Number", "Boolean"})
     ):
         return json.dumps(
             value,
@@ -694,8 +677,7 @@ def _structured_value(
     boundary: str,
 ) -> object:
     if isinstance(value, (str, Message)) or (
-        isinstance(value, tuple)
-        and all(_is_percept_part(part) for part in value)
+        isinstance(value, tuple) and all(_is_percept_part(part) for part in value)
     ):
         return _parse_text_json(
             value,
@@ -718,8 +700,7 @@ def _parse_text_json(
         error = exc
         if boundary == "output":
             blocks = tuple(
-                match.group("value")
-                for match in _JSON_OUTPUT_FENCE_RE.finditer(text)
+                match.group("value") for match in _JSON_OUTPUT_FENCE_RE.finditer(text)
             )
             if len(blocks) == 1:
                 try:
@@ -744,9 +725,7 @@ def _require_percept(value: object) -> Percept:
 
 def _require_percept_part(value: object) -> PerceptPart:
     if not _is_percept_part(value):
-        raise ToolangError(
-            "Part must be text, image, audio, or document"
-        )
+        raise ToolangError("Part must be text, image, audio, or document")
     return cast(PerceptPart, value)
 
 
@@ -801,8 +780,7 @@ def _parse_prompt_args(
             bindings[param.name] = ""
             continue
         raise ToolangError(
-            f"Missing required prompt argument {param.name!r} "
-            f"for /{prompt_name}."
+            f"Missing required prompt argument {param.name!r} for /{prompt_name}."
         )
 
     return bindings

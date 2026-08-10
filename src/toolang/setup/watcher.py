@@ -108,9 +108,7 @@ class SetupWatcher:
                 layout=self.layout,
                 providers=providers,
                 adapters=adapters,
-                models=tuple(
-                    model for model in models if model.adapter in adapters
-                ),
+                models=tuple(model for model in models if model.adapter in adapters),
                 tools=tools,
                 envs=envs,
                 environment=AgentEnvironment.capture(
