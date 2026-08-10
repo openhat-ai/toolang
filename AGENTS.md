@@ -59,6 +59,7 @@ applies, raise the ambiguity and ask the human before proceeding.
 
 - Write code and documentation in English.
 - Use semantic commit messages and PR titles; open ready PRs by default.
+- Prefer the GitHub CLI (`gh`) for GitHub operations; never use the GitHub App.
 - Keep diffs minimal, composable, and limited to one concern.
 - Prefer simple, explicit designs and mature libraries over unnecessary layers.
 - Use `types.py` for vocabulary, `records.py` for persistence, `events.py` for
