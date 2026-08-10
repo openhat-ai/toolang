@@ -159,9 +159,9 @@ summary is not defined for `pending` or `running`.
 
 A successful summary has no lifecycle diagnostic. It describes the result
 using the result-state rules below. A recorded or empty durable result exposes
-both inspect and save actions. An unavailable durable reference exposes an
-inspect action but not a save action. A run with no output reference exposes
-the run inspect action and no save action.
+both inspect and save actions. An unavailable durable reference exposes its
+output inspect action but not a save action. A run with no output reference
+exposes the run inspect action and no save action.
 
 ```text
 --- run_abc123 succeeded ---
@@ -281,8 +281,9 @@ Inspect: toolang SCRIPT inspect PATH
 `SCRIPT` is the source argument usable by the current invocation, rendered
 with safe POSIX shell quoting when needed. `PATH` is `RUN_OUTPUT_PATH` for a
 successful run with an output reference and `RUN_PATH` otherwise. The run path
-therefore remains useful for failure, cancellation, no-value success, and a
-result whose output reference is unavailable.
+therefore remains useful for failure, cancellation, and no-value success. An
+unavailable output reference still uses `RUN_OUTPUT_PATH`, allowing #258's
+focused output view to expose its unavailable state and unresolved source.
 
 The save action is a copyable, nonautomatic durable-history export:
 
@@ -349,16 +350,22 @@ to report.
 
 ### Duration
 
-Duration retains the existing compact UTC timestamp formatter:
+Duration keeps the existing compact units but normalizes a rounded value into
+the next unit instead of printing `1000ms`, `60.0s`, or `Xm 60s`. Each range
+rounds half-up at its displayed precision:
 
-| Range | Format | Example |
+| Raw range | Rounding and format | Examples |
 | --- | --- | --- |
-| less than 1 second | rounded integer milliseconds | `820ms` |
-| 1 second to less than 60 seconds | one decimal second | `19.0s` |
-| 60 seconds or more | whole minutes and zero-padded rounded seconds | `1m 08s` |
+| less than 1 second | nearest integer millisecond | `820ms`; `999.5ms` becomes `1.0s` |
+| 1 second to less than 60 seconds | nearest tenth of a second | `19.0s`; `59.95s` becomes `1m 00s` |
+| 60 seconds or more | nearest whole second, then `divmod` by 60 | `1m 08s`; `119.5s` becomes `2m 00s` |
 
-A negative clock delta is clamped to zero. Missing, invalid, or non-finite
-timestamps omit duration instead of failing the summary or printing zero.
+Rollover is based on the rounded display value, so the threshold examples are
+canonical even when the raw duration belonged to the lower range. Minute
+formatting remains unbounded rather than adding an hours unit. A negative clock
+delta is clamped to zero and displays as `0ms`. Missing, invalid, or non-finite
+timestamps omit duration instead of failing the summary or printing a guessed
+value.
 
 ### Counts
 
@@ -598,6 +605,9 @@ approval.
 4. **Inspect and save actions**
    - Assert output-bearing success uses `RUN_ID/output` and other outcomes use
      `RUN_ID`.
+   - Assert an unavailable successful output reference still uses
+     `RUN_ID/output`, exposes the unavailable state and source through inspect,
+     and omits save.
    - Assert source arguments needing spaces or shell metacharacters are quoted
      safely.
    - Assert save appears only for recorded and empty successful results, uses
@@ -611,7 +621,8 @@ approval.
    - Assert the root run is excluded, zero count fields are omitted, singular
      and plural labels are correct, and field order is fixed.
    - Cover duration boundaries below one second, below one minute, and at or
-     above one minute.
+     above one minute, including the canonical half-up rollovers from
+     `999.5ms` to `1.0s`, `59.95s` to `1m 00s`, and `119.5s` to `2m 00s`.
 
 6. **Token availability**
    - Cover exact nonzero usage, exact zero usage, one partially known direction,
