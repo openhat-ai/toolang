@@ -175,9 +175,14 @@ DURATION · RUNS · TOOL CALLS · MODEL CALLS · TOKENS · COST
   begun step, so current terminal-event counting usually produces the same
   totals, but completion is not the semantic requirement.
 - Exact zero call and descendant-run counts are omitted.
-- Duration uses rounded milliseconds below one second, one decimal seconds
-  below one minute, and `Xm YYs` at one minute or above. Invalid or missing
-  timestamps omit duration.
+- Duration uses #259's half-up rounding and unit normalization. Raw values below
+  one second round to the nearest integer millisecond, values from one second
+  to below one minute round to the nearest tenth of a second, and values at or
+  above one minute round to the nearest whole second before `divmod` minute
+  formatting. A rounded boundary advances to the next unit instead of printing
+  `1000ms`, `60.0s`, or `Xm 60s`: `999.5ms` becomes `1.0s`, `59.95s` becomes
+  `1m 00s`, and `119.5s` becomes `2m 00s`. Negative deltas clamp to `0ms`;
+  invalid, missing, or non-finite timestamps omit duration.
 - Token usage is `↑ INPUT ↓ OUTPUT`. Counts use base-1000 `k` and `m`, at most
   one decimal, and no trailing `.0`. A known exact zero is printed as `0`.
 - Cost is summed with `Decimal` USD arithmetic. Amounts at or above one cent
@@ -616,8 +621,11 @@ script surface and must not preempt the separately approved script changes.
      Chat presentation.
    - Assert descendant runs exclude the root; effective calls that began are
      counted across success, failure, and cancellation; field order and
-     duration, arrow-token, lower-bound,
-     unavailable, and cost formatting match exactly.
+     duration, arrow-token, lower-bound, unavailable, and cost formatting match
+     exactly.
+   - Assert canonical duration rollovers `999.5ms -> 1.0s`,
+     `59.95s -> 1m 00s`, and `119.5s -> 2m 00s`, plus negative-delta `0ms` and
+     invalid-timestamp omission, on both surfaces.
    - Cover zero calls, exact zero usage, partial input only, partial output only,
      partial cost, no usage from any model call, and invalid timestamps.
 
