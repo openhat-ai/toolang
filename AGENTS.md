@@ -8,6 +8,8 @@
   user explicitly requests them.
 - Write all code and documentation in English.
 - Keep changes PR-sized and composable.
+- When a task explicitly limits changes to named files, do not modify, stage,
+  commit, or include unrelated files.
 - When creating PRs with `gh`, avoid inline shell-quoted multiline bodies.
   Use `--body-file` or a single-quoted heredoc so Markdown formatting is not
   corrupted by shell interpolation.
