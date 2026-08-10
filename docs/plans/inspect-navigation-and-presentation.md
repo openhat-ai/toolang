@@ -22,8 +22,9 @@ Implementation starts only after this definition is approved.
   keeping default terminal output bounded.
 - Invalid syntax, absent records, unavailable values, empty values, and
   truncated values have distinct behavior.
-- Existing command placement, offline history access, `--limit`, `--json`, and
-  legacy colon-and-dot step targets remain compatible as defined below.
+- Existing command placement, offline history access, `--limit`, and `--json`
+  remain compatible; the current colon-and-dot step syntax is intentionally
+  replaced as defined below.
 
 
 ## Current Behavior
@@ -107,8 +108,8 @@ THREAD_PATH       = THREAD_ID
 RUN_PATH          = RUN_ID
 STEP_PATH         = RUN_ID "/" INDEX ("/" INDEX)*
 CONTROL_PATH      = (THREAD_ID | RUN_ID) "@" INDEX
-INPUT_PATH        = (RUN_PATH | STEP_PATH | RUN_CONTROL_PATH) "/input"
-OUTPUT_PATH       = (RUN_PATH | STEP_PATH) "/output"
+INPUT_PATH        = (RUN_PATH | STEP_PATH | RUN_CONTROL_PATH) ".input"
+OUTPUT_PATH       = (RUN_PATH | STEP_PATH) ".output"
 RUN_CONTROL_PATH  = RUN_ID "@" INDEX
 ```
 
@@ -125,8 +126,8 @@ The supported target kinds are:
 | run | `run_ab12` | one durable run |
 | step | `run_ab12/0`, `run_ab12/2/1` | one durable step in its owning run |
 | control | `term_ab12@0`, `run_ab12@1` | one thread or run control |
-| input | `run_ab12/input`, `run_ab12/0/input`, `run_ab12@1/input` | one recorded run, step, or run-control input |
-| output | `run_ab12/output`, `run_ab12/0/output` | one resolved run output or recorded step output |
+| input | `run_ab12.input`, `run_ab12/0.input`, `run_ab12@1.input` | one recorded run, step, or run-control input |
+| output | `run_ab12.output`, `run_ab12/0.output` | one resolved run output or recorded step output |
 
 Threads and thread controls have no input or output target. Controls have no
 output target. A run control has an input target only when its schema can carry
@@ -140,25 +141,25 @@ public run-ID discriminator. The complete parsed path is validated before any
 history query.
 
 
-## Compatibility Alias
+## Path Compatibility
 
-The existing form below remains accepted for compatibility:
+This feature intentionally stops accepting the current colon-and-dot step
+form:
 
 ```text
 RUN_ID:INDEX[.INDEX...]
 ```
 
-It retains its current synthetic traversal semantics, including traversal
-from a parent step into child-run steps. Resolution immediately canonicalizes
-the selected result to its real `STEP_PATH`. No human `PATH` cell or JSON
-`path` field emits the legacy form, and new documentation uses only canonical
-paths. The compatibility `target` field may retain the normalized legacy
-selector as defined in the JSON contract. The alias does not accept `/input`,
-`/output`, or `@` suffixes.
+`.` is reserved exclusively for field access, beginning with `.input` and
+`.output`; `/` is reserved exclusively for durable StepPath segments. Keeping
+the old form would give `.` two meanings and preserve synthetic paths that
+cannot be copied from stored `StepPath` values. A colon-and-dot target therefore
+fails as an invalid inspect path rather than being accepted as an alias.
 
-The alias remains silent rather than printing a deprecation warning, because a
-warning would contaminate redirected output. Its eventual removal requires a
-separate compatibility decision.
+This is the only intentional command-input compatibility break in the feature.
+There is no warning-only transition because the new grammar must remain
+unambiguous and the old selector is not a durable identity. Public examples and
+all emitted paths use the canonical grammar.
 
 
 ## Navigation Model
@@ -180,7 +181,7 @@ step
   -> direct child steps in the same run
   -> child runs whose parent is this StepPath
 
-run control
+control
   -> input, when supported
 ```
 
@@ -239,7 +240,7 @@ A thread view shows:
 - path, status, title, origin, channel, peer, created time, updated time, and
   total effective run count;
 - a `Controls` table with `PATH`, `STATUS`, `KIND`, and `SUMMARY`;
-- a `Runs` table with `PATH`, `STATUS`, `TARGET`, `DURATION`, and `SUMMARY`.
+- a `Runs` table with `PATH`, `STATUS`, `RUNNABLE`, `DURATION`, and `SUMMARY`.
 
 Only effective top-level runs appear in the run table. When the total exceeds
 the selected window, the heading states `Showing newest N of TOTAL runs.` An
@@ -257,7 +258,7 @@ PATH           STATUS     KIND    SUMMARY
 term_ab12@0    succeeded  create  created thread
 
 Runs
-PATH           STATUS     TARGET       DURATION  SUMMARY
+PATH           STATUS     RUNNABLE     DURATION  SUMMARY
 run_cd34       succeeded  agic review  1.8s      Review the repository
 run_ef56       failed     flow check   240ms     model credits exhausted
 ```
@@ -269,7 +270,7 @@ A run view shows:
 
 - path, display status, runnable kind and name, thread path, root run path,
   parent StepPath when present, lifecycle timestamps, duration, and failure;
-- a `Values` table containing `RUN_PATH/input` and `RUN_PATH/output` even when
+- a `Values` table containing `RUN_PATH.input` and `RUN_PATH.output` even when
   either value is unavailable or empty;
 - a `Controls` table for every run control;
 - a `Steps` table containing only steps whose durable parent is null.
@@ -289,7 +290,7 @@ A step view shows:
 
 - the complete durable StepPath, display status, kind, owning run path,
   lifecycle timestamps, duration, ejection reference when present, and error;
-- a `Values` table containing `STEP_PATH/input` and `STEP_PATH/output`;
+- a `Values` table containing `STEP_PATH.input` and `STEP_PATH.output`;
 - a `Children` table containing direct same-run child steps and direct child
   runs.
 
@@ -313,8 +314,8 @@ An input view identifies its owner and then renders the typed value:
 - run-control input is its optional `Message`.
 
 References are rendered as canonical paths. A run-input reference points to
-`RUN_ID@INDEX/input`; a step-output reference points to
-`STEP_PATH/output`. An optional part index is displayed as metadata, not
+`RUN_ID@INDEX.input`; a step-output reference points to
+`STEP_PATH.output`. An optional part index is displayed as metadata, not
 appended to the inspect path, because individual message parts are outside
 this feature's navigation scope.
 
@@ -348,7 +349,7 @@ A run control view shows:
 - path, display status, kind, timing, created and finished times;
 - source run, retry anchor StepPath, request ID, error, and context when
   present;
-- an `Input` navigation row at `CONTROL_PATH/input`.
+- an `Input` navigation row at `CONTROL_PATH.input`.
 
 A thread control view shows:
 
@@ -385,7 +386,7 @@ the reference and uses `value: null` plus `state: "unavailable"`.
 
 The parser reports grammar errors before owner lookup. Once syntax is valid,
 the most specific missing durable identity is reported. For example,
-`run_missing/0/output` reports the missing run before attempting the step or
+`run_missing/0.output` reports the missing run before attempting the step or
 output lookup.
 
 
@@ -431,17 +432,16 @@ field-additive:
 - thread inspection adds a top-level `controls` list whose items contain
   `inspect_path` plus caller-facing thread-control data.
 
-`target` remains for compatibility and contains the normalized user target.
-When the compatibility alias selects a step, `target` retains the legacy form
-and `path` contains the canonical StepPath.
+`target` remains for compatibility and contains the normalized canonical user
+target. Removed colon-and-dot selectors do not produce a JSON document.
 
 New target kinds use these envelopes:
 
 ```json
 {
   "kind": "input",
-  "target": "run_ab12/0/input",
-  "path": "run_ab12/0/input",
+  "target": "run_ab12/0.input",
+  "path": "run_ab12/0.input",
   "owner": {"kind": "step", "path": "run_ab12/0"},
   "state": "recorded",
   "source": null,
@@ -453,11 +453,11 @@ New target kinds use these envelopes:
 ```json
 {
   "kind": "output",
-  "target": "run_ab12/output",
-  "path": "run_ab12/output",
+  "target": "run_ab12.output",
+  "path": "run_ab12.output",
   "owner": {"kind": "run", "path": "run_ab12"},
   "state": "recorded",
-  "source": "run_ab12/0/output",
+  "source": "run_ab12/0.output",
   "source_part": null,
   "value": []
 }
@@ -484,8 +484,8 @@ messages, references, and message parts.
 - Keep `toolang TARGET inspect PATH`, its command routing, default human mode,
   `--json`, and `--limit` public.
 - Add `--full` without changing the meaning of existing options.
-- Continue accepting legacy `RUN_ID:DOT.PATH` targets with current traversal
-  semantics.
+- Reject current `RUN_ID:DOT.PATH` selectors; `.` now means field access only,
+  `/` means StepPath traversal only, and `:` is not part of the grammar.
 - Preserve current existing-target JSON keys and nested fields; additions must
   not rename or remove them.
 - Human output is intentionally allowed to change. It has no stable
@@ -505,7 +505,7 @@ Implementation should keep parsing and presentation in the CLI while keeping
 durable record conversion in execution-owned caller schemas.
 
 - `src/toolang/cli/toolang/commands/thread.py`
-  - parse the canonical grammar and compatibility alias;
+  - parse the canonical grammar and reject removed colon-and-dot selectors;
   - resolve paths through `RunHistory`;
   - build additive inspect documents;
   - render shallow human views and bounded values;
@@ -553,11 +553,11 @@ not change command registration or expand feature scope.
      and child-run `PATH`.
    - Assert each invocation selects the intended durable record.
 
-3. **Legacy step compatibility**
-   - Assert `run_parent:2.0` still traverses into the same child step as before.
-   - Assert its result exposes the child's real StepPath in human output and
-     JSON `path`.
-   - Assert no newly rendered `PATH` uses colon-and-dot syntax.
+3. **Delimiter ownership and old-syntax rejection**
+   - Assert `run_parent:2.0` is rejected as an invalid inspect path.
+   - Assert `/` accepts only canonical StepPath indexes and `.` accepts only
+     supported terminal field names.
+   - Assert every human `PATH` and JSON `path` uses the canonical delimiters.
 
 4. **Thread view**
    - Assert only effective top-level runs appear, the selected newest window is
@@ -589,7 +589,8 @@ not change command registration or expand feature scope.
      the `--full --json` conflict.
 
 9. **JSON compatibility**
-   - Retain assertions for current thread, run, and legacy step document fields.
+   - Retain assertions for current thread, run, and step document fields while
+     updating step invocations to canonical StepPaths.
    - Assert additive `path`, `inspect_path`, thread controls, and the exact new
      value/control envelopes.
 
@@ -608,17 +609,18 @@ not change command registration or expand feature scope.
 
 ## Risks And Mitigations
 
-- **Legacy synthetic paths can cross run boundaries.** Keep the old resolver
-  only behind the compatibility alias and canonicalize its result immediately.
-- **Field suffixes can be mistaken for step segments.** Step segments accept
-  only canonical ASCII indexes; `input` and `output` are reserved terminal
-  suffixes.
+- **Removing synthetic paths breaks old step selectors.** Reject them
+  consistently, document the canonical replacement, and test the exact error
+  instead of retaining a second traversal model.
+- **Field access can be mistaken for traversal.** `/` accepts only canonical
+  ASCII StepPath indexes, while `.` accepts only supported terminal field names
+  such as `input` and `output`.
 - **Run and thread controls share `@` syntax.** Resolve the owner kind first and
   use the matching caller-facing lookup; never probe both control tables and
   accept whichever returns data.
 - **A shallow view can hide descendants users previously saw.** Direct child
-  paths and explicit empty states make the next navigation step visible, while
-  the legacy target alias preserves old scripted selection.
+  paths and explicit empty states make the next canonical navigation step
+  visible.
 - **JSON consumers may depend on current fields.** Keep existing envelopes and
   nested fields, make additions only, and test the old assertions alongside
   new target documents.
