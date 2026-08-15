@@ -94,7 +94,11 @@ InvocationInput {
   "named": {NAME: JsonValue}
 }
 
-ExecutionError {"type": STRING, "message": STRING}
+ErrorType
+  model_error | tool_error | flow_error | store_error | limit_error |
+  runtime_error
+
+ExecutionError {"type": ErrorType, "message": STRING}
 
 RunFailure
   {"kind": "step", "step": STEP_PATH}
@@ -126,8 +130,27 @@ Integers are non-negative. Money is finite and non-negative. Reference
 entry control's `input.primary` or a steer control's `message.parts`; it
 never selects named input.
 
-ExecutionError fields are non-empty and stable. Tracebacks, credentials,
-provider requests, and arbitrary exception attributes are not persisted.
+`ExecutionError.type` is a stable code; `message` is non-empty diagnostic text
+and is not an API-stable identifier. Errors are normalized once at the boundary
+that owns the failed operation, then propagated unchanged:
+
+| Boundary | ErrorType |
+| --- | --- |
+| model adapter invocation or response application | `model_error` |
+| tool lookup, invocation, or returned tool error | `tool_error` |
+| Flow statement validation, coercion, or local operation | `flow_error` |
+| store codec, invariant, transaction, or projection | `store_error` |
+| any configured call, token, cost, or time limit check | `limit_error` |
+| uncaught execution failure outside those boundaries | `runtime_error` |
+
+The limit boundary takes precedence over the operation it interrupts. A child
+Run retains its own error; its parent records a causal Step failure. Existing
+`ExecutionError` values are never reclassified. Otherwise, `message` is the
+trimmed exception text, or the exception class name when that text is empty;
+returned tool-error strings use the same trimming rule. One central redactor
+runs before persistence. Tracebacks, credentials, provider requests, and
+arbitrary exception attributes are never persisted. Cancellation is not an
+error and produces no `ExecutionError`.
 
 Placement indexes are zero-based and appear with their total. `iters=null`
 means unbounded. Empty placement is omitted.
@@ -196,16 +219,41 @@ controls. `input` always references the index-zero `run` or `rerun`
 control, including after retry.
 
 ```text
+RunnableRef {"kind": RunKind, "name": STRING}
+
 RunGiven {
   root: RunId
-  runnable: string
-  placement?: Placement
+  runnable: RunnableRef
+  placement: Placement | null
 }
 ```
 
-RunNoted is empty while nonterminal. Success notes `shape`, nullable `type`,
-and `items` for a list. Cancellation may note `reason` and
-`stop: RunControlRef`. Failure belongs only in `failure`.
+`RunnableRef.name` is the resolved canonical declaration name, including the
+generated name of an inline runnable; its kind equals the Run kind. `RunGiven`
+is closed and always serializes `placement`, using null for a root or otherwise
+unplaced Run.
+
+`RunNoted` is the following closed union selected by Run status and, for
+success, result shape:
+
+```text
+pending | running | failed
+  {}
+succeeded, none
+  {"shape": "none", "type": null}
+succeeded, item
+  {"shape": "item", "type": STRING | null}
+succeeded, list
+  {"shape": "list", "type": STRING | null, "items": INT}
+canceled
+  {"reason": STRING | null, "stop": RunControlRef | null}
+```
+
+Pending and running Runs have null output and failure. A succeeded Run has
+null failure; its output is null exactly for `shape=none`. A failed Run has one
+failure and may retain partial output. A canceled Run has null failure, may
+retain partial output, and records an applied stop when one caused it. Every
+listed key is serialized; keys belonging to another variant are omitted.
 
 ### RunControlRecord
 
@@ -268,81 +316,160 @@ ordered completed PartEnd data is the Step output.
 
 ## Step Facts
 
-Every Flow StepBegin has:
+All fact objects are closed: unknown keys are rejected. Every key shown is
+required, including keys whose value is null. A key is omitted only when its
+selected union variant does not list it. `Message`, `MessagePart`, and
+`ToolDefinition` use their existing canonical codecs unchanged.
+
+### StepGiven
 
 ```text
-FlowGiven {
-  statement: string
-  binding: string | null
-  current: ValueMeta
-  source: {"line": INT, "head": STRING}
-  doc?: string
-  placement?: Placement
-  runnable?, agent?, count?, par?, position?, predicate?, scorer?, limit?, until?
-}
+FlowStatement
+  run | seek | ask | scatter | storm | gather | settle | map | keep | drop |
+  rank | repeat | let
+```
 
-ValueMeta {
-  shape: Shape
-  type: string | null
-  items?: INT
+`ValueMeta` is a closed shape union:
+
+```text
+{"shape": "none", "type": null}
+| {"shape": "item", "type": STRING | null}
+| {"shape": "list", "type": STRING | null, "items": INT}
+```
+
+`FlowGiven` is `FlowGivenBase` plus exactly one row from the variant table.
+`binding` is `_`, a canonical local name, or null for discarded output and
+repeat. `current` describes `_` immediately before the Step. Source lines are
+one-based; `head` is the canonical formatted statement head.
+
+```text
+FlowGivenBase {
+  "statement": FlowStatement,
+  "binding": STRING | null,
+  "current": ValueMeta,
+  "source": {"line": INT, "head": STRING},
+  "doc": STRING | null,
+  "placement": Placement | null
 }
 ```
 
-`items` exists exactly for list shape. Operand values keep their AST scalar
-types and are omitted when absent.
+| FlowStatement variant | Additional required keys and constraints |
+| --- | --- |
+| `run` | `runnable: RunnableRef` |
+| `seek` | `agent: STRING`, `runnable: RunnableRef` |
+| `ask` | none |
+| `scatter` | `count: INT`, `runnable: RunnableRef` |
+| `storm` | `count: INT`, `runnable: RunnableRef`, `par: INT \| null` |
+| `gather` | `runnable: RunnableRef` |
+| `settle` | `runnable: RunnableRef` |
+| `map` | `runnable: RunnableRef`, `par: INT \| null` |
+| positional `keep` or `drop` | `position: first \| last`, `count: INT` |
+| predicate `keep` or `drop` | `predicate: RunnableRef`, `par: INT \| null` |
+| `rank` | `scorer: RunnableRef`, `limit: top \| bottom \| null`, `count: INT \| null`, `par: INT \| null` |
+| `repeat` | `count: INT \| null`, `until: RunnableRef \| null` |
+| `let` | none |
 
-Every succeeded Flow StepEnd has:
+Counts are non-negative; non-null `par` is positive. Rank `limit` and `count`
+are either both null or both present. Repeat requires `count` or `until`.
+Runnable operands are resolved to canonical refs before StepBegin, including
+generated inline agics. Authored `ask`/`let` bodies and the nested repeat AST
+are intentionally omitted: the activation `state_hash` and source line identify
+their immutable source, while nested Steps record repeat execution.
+
+Model and tool Steps use these closed shapes:
 
 ```text
-FlowNoted {
-  result: ValueSnapshot
-  commit: {LOCAL_NAME: ValueSnapshot}
-  source_items?: INT
-  iters?: INT
-  stopped?: bool
+ModelTargetData {
+  "ref": STRING, "provider": STRING, "name": STRING, "model": STRING,
+  "adapter": STRING, "base_url": STRING | null, "scope": STRING | null,
+  "tags": STRING[], "options": {STRING: JsonValue},
+  "tools": BOOL, "streaming": BOOL
 }
 
-ValueSnapshot {
-  shape: Shape
-  type: string | null
-  value: JsonValue
-  items?: INT
-  ref: ValueRef | null
+ModelCallData {
+  "instructions": STRING,
+  "messages": Message[],
+  "tools": ToolDefinition[],
+  "state": {STRING: JsonValue} | null
 }
+
+ModelGiven {"model": ModelTargetData, "call": ModelCallData}
+
+ToolGiven {
+  "tool": STRING, "plugin": STRING,
+  "tool_call_id": STRING, "call_id": STRING
+}
+
+StepGiven = FlowGiven | ModelGiven | ToolGiven
 ```
 
-`commit` is the exact atomic local change:
+Model headers and API keys are never facts. Step kind `model` requires
+`ModelGiven`; `tool` requires `ToolGiven`; Flow-owned kinds require the
+statement variant assigned to that kind in the vocabulary table.
 
-- `_` or a named binding stores the result;
-- discarded output uses an empty commit;
-- repeat stores every net local change from its completed body;
-- failed/canceled Steps have no result or commit.
+### StepNoted
 
-Repeat notes completed `iters` and whether until stopped it early.
-List-consuming statements note `source_items`, including zero.
+`ValueSnapshot` is a closed shape union. A list's `items` equals its array
+length. A successful value-producing Step uses a `StepOutputRef` to itself;
+repeat commit snapshots preserve the refs of their last nested producers.
 
-The progress model derives:
+```text
+{"shape": "none", "type": null, "value": null, "ref": null}
+| {"shape": "item", "type": STRING | null,
+   "value": JsonValue, "ref": ValueRef | null}
+| {"shape": "list", "type": STRING | null,
+   "value": JsonValue[], "items": INT, "ref": ValueRef | null}
 
-- resolve from child Runs whose parent is the Step;
-- transform from statement plus source/result cardinalities;
-- commit from `commit`.
+CommitMap {LOCAL_NAME: ValueSnapshot}
+```
 
-No Stage or Iteration record/event is needed.
+Succeeded `FlowNoted` is selected by statement:
 
-Model StepGiven contains:
+| Statements | Closed StepNoted shape |
+| --- | --- |
+| `run`, `seek`, `ask`, `scatter`, `storm`, `let` | `{"result": ValueSnapshot, "commit": CommitMap}` |
+| `gather`, `settle`, `map`, `keep`, `drop`, `rank` | `{"result": ValueSnapshot, "commit": CommitMap, "source_items": INT}` |
+| `repeat` | `{"commit": CommitMap, "iters": INT, "stopped": BOOL}` |
 
-- `model`: `ref`, `provider`, `name`, `model`, `adapter`, nullable
-  `base_url`, `scope`, ordered `tags`, JSON `options`, `tools`, and
-  `streaming`;
-- `call`: normalized `instructions`, ordered `messages`, ordered `tools`,
-  and nullable adapter `state`.
+`commit` is the exact atomic local change. `_` or a named binding stores the
+result; discarded output uses `{}`. Repeat has no result or binding and commits
+every net local change from its completed body; `iters` counts completed body
+executions and `stopped` is true exactly when `until` returned true.
+`source_items`, including zero, is the input-list size before the operation.
 
-Succeeded model StepNoted contains nullable `tokens {input, output}`, nullable
-`price {input, output}`, nullable decimal `cost`, nullable
-`reasoning_content`, and nullable JSON `state`.
+```text
+ModelNoted {
+  "tokens": {"input": INT, "output": INT} | null,
+  "price": {"input": DECIMAL_STRING | null,
+            "output": DECIMAL_STRING | null} | null,
+  "cost": DECIMAL_STRING | null,
+  "reasoning_content": STRING | null,
+  "state": {STRING: JsonValue} | null
+}
 
-Tool StepGiven contains string `tool`, `plugin`, `tool_call_id`, and
-`call_id`. Tool StepNoted is empty; output is its ToolResultPart.
+ToolNoted {}
+
+StepNoted = FlowNoted | ModelNoted | ToolNoted | {}
+```
+
+Token and money values are non-negative. A succeeded model Step requires
+`ModelNoted`; a succeeded tool Step requires `{}` and outputs exactly its
+`ToolResultPart`. Status fixes fact and error presence for every Step kind:
+
+| Step status | output | noted | error |
+| --- | --- | --- | --- |
+| `running` | `[]` | `{}` | null |
+| `succeeded` | all completed parts | kind-specific success variant | null |
+| `failed` | completed parts, possibly `[]` | `{}` | `ExecutionError` |
+| `canceled` | completed parts, possibly `[]` | `{}` | null |
+
+Terminal Steps require `finished_at`; running Steps require it to be null.
+StepEnd accepts only terminal rows and serializes empty arrays, empty facts,
+and null errors explicitly.
+
+The progress model derives resolve from child Runs whose parent is the Step,
+transform from statement plus source/result cardinalities, and commit from
+`commit`. No Stage or Iteration record/event is needed.
 
 
 ## Placement And Until
@@ -455,8 +582,8 @@ unchanged.
 
 ## Acceptance Tests
 
-1. Codecs round-trip every new record, reference, failure, and event; legacy
-   statuses, kinds, context, and overloaded input are rejected.
+1. Codecs round-trip every closed record, fact variant, reference, failure, and
+   event; unknown fact keys and legacy shapes are rejected.
 2. New storage initializes cleanly; an old non-empty database fails unchanged.
 3. Entry acceptance, event projection, retry reopen, and attempt termination
    are transactionally atomic.
@@ -466,12 +593,13 @@ unchanged.
    source or Run facts.
 6. Retry retains attempts and ejected Steps, restores exact Flow commits, and
    attributes new Steps to fresh physical indexes and the new activation.
-7. Every Flow statement emits its specified StepKind and complete
-   current/result/commit/cardinality facts, including empty work and repeat.
+7. Every Flow statement emits its exact Given/Noted variant and StepKind,
+   including nullable operands, empty work, list cardinality, and repeat commit.
 8. Placement tests cover repeat, until, nested parallel work, and settle using
    only the three normalized pairs.
-9. Model, tool, Flow, nested, Run-level, limit, and cancellation cases produce
-   structured causal failures without synthetic Steps.
+9. Model, tool, Flow, store, limit, fallback runtime, nested, and cancellation
+   cases assert the normalization table and causal failures without synthetic
+   Steps; empty exception text and redaction are covered.
 10. Event integrity covers success, failure, cancellation, retry, nesting,
     parallelism, streaming, and pass-through output.
 11. History, API, SSE, inspect, script, and chat consume the new vocabulary.
