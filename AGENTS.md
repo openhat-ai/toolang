@@ -70,6 +70,36 @@ applies, raise the ambiguity and ask the human before proceeding.
   events, `errors.py` for exceptions, `schemas.py` for protocol types, and
   `config.py` for package-owned configuration formats.
 
+### Issue and Pull Request Titles
+
+- Write issue titles as concise, outcome-oriented English sentences. Starting
+  with a simple verb is encouraged but not required; do not use semantic
+  prefixes such as `feat:`, `fix:`, or `docs:`.
+- Use an opening verb that normally signals whether the outcome requires a pull
+  request:
+  - Repository change: `Define`, `Implement`, `Add`, `Fix`, `Change`, `Remove`,
+    `Refactor`, `Cover`, `Test`, `Document`, `Clarify`, `Upgrade`, or `Configure`.
+  - No repository change by default: `Investigate`, `Reproduce`, `Evaluate`,
+    `Compare`, `Discuss`, `Decide`, `Review`, `Audit`, `Track`, or `Coordinate`.
+- Avoid ambiguous titles such as `Improve ...`, `Prepare ...`, or `Work on ...`;
+  name a verifiable outcome instead. Do not combine investigation and
+  implementation in one title. If investigation finds that a repository change
+  is needed, create a follow-up implementation issue.
+- `Define <capability or behavior>` is a feature-definition issue. It produces a
+  decision-complete plan under `docs/plans/` and a pull request such as
+  `docs(plans): define task retry behavior`.
+- `Implement <capability or behavior>` is a feature-implementation issue. Its
+  body links the approved plan and identifies the implemented scope and
+  acceptance criteria. When a plan is split across issues, title each issue by
+  its independently verifiable product outcome, such as `Implement retry state
+  persistence` or `Expose retry configuration in the CLI`, not by the plan
+  filename.
+- Continue to title pull requests in semantic `type(scope): summary` form.
+  Select the type from the delivered change, not mechanically from the issue's
+  opening verb.
+- Use `loop:human-confirmed` as the human-approval workflow signal. Do not add
+  account-identity requirements or a separate manual-merge ownership rule.
+
 ## Verification
 
 Run the default verification before every commit:
