@@ -99,7 +99,7 @@ agic chat(_: Part[]) -> Part[]:
     reopened = RunStore(harness.store.db_path)
     try:
         record = reopened.get_run(run_id=run_id)
-        assert record is not None and record.status == "finished"
+        assert record is not None and record.status == "succeeded"
         steps = reopened.list_steps(run_id=run_id)
         assert len(steps) == 1
         assert reopened.rebuild_model_call(steps[0]) == expected_call
@@ -183,7 +183,7 @@ agic chat(_: Part[]) -> Part[]:
             assert (
                 harness.store.list_thread_history_chronological(thread_id=thread) == ()
             )
-            assert second.status == "finished"
+            assert second.status == "succeeded"
             assert harness.adapter.pending_responses == 0
 
     asyncio.run(scenario())
@@ -240,7 +240,7 @@ agic calculate(_: Text) -> Text:
                 )
             )
 
-            assert record.status == "finished"
+            assert record.status == "succeeded"
             assert harness.adapter.invocations[1].call.state == {"cursor": "turn-1"}
             assert harness.adapter.invocations[1].call.messages[-1].parts == (
                 ToolResultPart(
@@ -400,7 +400,7 @@ def test_recent_history_never_splits_a_complete_tool_exchange(
             run_id=run.id,
             step_index=0,
             kind="model",
-            status="finished",
+            status="succeeded",
             input=(),
             output=call_parts,
             started_at="2026-01-01T00:00:01Z",
@@ -412,7 +412,7 @@ def test_recent_history_never_splits_a_complete_tool_exchange(
                 run_id=run.id,
                 step_index=index,
                 kind="tool",
-                status="finished",
+                status="succeeded",
                 input=(),
                 output=message.parts,
                 started_at=f"2026-01-01T00:00:0{index + 2}Z",
@@ -424,7 +424,7 @@ def test_recent_history_never_splits_a_complete_tool_exchange(
             run_id=run.id,
             step_index=3,
             kind="model",
-            status="finished",
+            status="succeeded",
             input=(),
             output=final.parts,
             started_at="2026-01-01T00:00:05Z",
@@ -466,7 +466,7 @@ def test_recent_history_skips_incomplete_and_orphan_tool_messages(
             run_id=run.id,
             step_index=0,
             kind="model",
-            status="finished",
+            status="succeeded",
             input=(),
             output=(
                 ToolCallPart(
@@ -484,7 +484,7 @@ def test_recent_history_skips_incomplete_and_orphan_tool_messages(
             run_id=run.id,
             step_index=1,
             kind="tool",
-            status="finished",
+            status="succeeded",
             input=(),
             output=(
                 ToolResultPart(
@@ -509,7 +509,7 @@ def test_recent_history_skips_incomplete_and_orphan_tool_messages(
             run_id=run.id,
             step_index=2,
             kind="model",
-            status="finished",
+            status="succeeded",
             input=(),
             output=final.parts,
             started_at="2026-01-01T00:00:05Z",

@@ -42,7 +42,7 @@ from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
 from toolang.execution.records import RunControlRef, run_limits_to_data
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import StepErrorRef, StepPath, ThreadPrefix
 from toolang.lang.input import perceive_input
 
 
@@ -75,7 +75,7 @@ agic reply(_: Part[], tone: Text) -> Part[]:
                 tracer=tracer,
             )
 
-            assert record.status == "finished"
+            assert record.status == "succeeded"
             assert harness.store.run_output(run_id=record.id) == (TextPart("done"),)
             assert harness.adapter.invocations[0].call.messages == [
                 Message.user("Reply to hello in brief.")
@@ -133,10 +133,10 @@ agic reply(_: Part[]) -> Part[]:
                 state=harness.state,
             )
 
-            assert run.status == "finished"
+            assert run.status == "succeeded"
             active = harness.store.list_steps(run_id=run.id)
             assert [(step.path.index, step.status) for step in active] == [
-                (1, "finished")
+                (1, "succeeded")
             ]
             historical = harness.store.list_steps(
                 run_id=run.id,
@@ -180,7 +180,7 @@ agic inspect(_: Part[]) -> Part[]:
                 )
             )
 
-            assert record.status == "finished"
+            assert record.status == "succeeded"
             assert harness.adapter.invocations[0].call.messages == [
                 Message(role="user", parts=input)
             ]
@@ -228,7 +228,7 @@ agic stream(_: Part[]) -> Part[]:
                 tracer=tracer,
             )
 
-            assert record.status == "finished"
+            assert record.status == "succeeded"
             assert harness.store.run_output(run_id=record.id) == (TextPart("hello"),)
             assert [event.type for event in tracer.events] == [
                 "run_begin",
@@ -308,7 +308,7 @@ agic calculate(_: Text) -> Text:
                 tracer=tracer,
             )
 
-            assert record.status == "finished"
+            assert record.status == "succeeded"
             deltas = [
                 event.delta
                 for event in tracer.events
@@ -377,7 +377,7 @@ agic illustrate(_: Text) -> Part[]:
                 tracer=tracer,
             )
 
-            assert record.status == "finished"
+            assert record.status == "succeeded"
             assert harness.store.run_output(run_id=record.id) == (
                 TextPart("caption"),
                 image,
@@ -390,8 +390,8 @@ agic illustrate(_: Text) -> Part[]:
                 f"part_end:{record.id}/0:0:text",
                 f"part_begin:{record.id}/0:1:image",
                 f"part_end:{record.id}/0:1:image",
-                f"step_end:{record.id}/0:model:finished",
-                f"run_end:{record.id}:finished",
+                f"step_end:{record.id}/0:model:succeeded",
+                f"run_end:{record.id}:succeeded",
             ]
             assert_run_event_integrity(tracer.events)
 
@@ -437,7 +437,7 @@ agic stream(_: Text) -> Text:
             )
 
             assert record.status == "failed"
-            assert record.error == "stream disconnected"
+            assert record.error == StepErrorRef(StepPath(record.id, (0,)))
             assert [
                 (step.kind, step.status, step.error)
                 for step in harness.store.list_steps(run_id=record.id)
@@ -502,7 +502,7 @@ agic stream(_: Text) -> Text:
                 run_id=record.id,
                 index=control.index,
             )
-            assert stored is not None and stored.status == "finished"
+            assert stored is not None and stored.status == "applied"
             assert event_labels(tracer.events) == [
                 f"run_begin:{record.id}",
                 f"step_begin:{record.id}/0:model",
@@ -564,7 +564,7 @@ agic calculate(_: Part[]) -> Part[]:
                 )
             )
 
-            assert record.status == "finished"
+            assert record.status == "succeeded"
             assert len(tool.calls) == 1
             arguments, context = tool.calls[0]
             assert arguments == {"value": 3}
@@ -636,13 +636,13 @@ agic calculate(_: Text) -> Text:
                 tracer=tracer,
             )
 
-            assert record.status == "finished"
+            assert record.status == "succeeded"
             steps = harness.store.list_steps(run_id=record.id)
             assert [(step.kind, step.status) for step in steps] == [
-                ("model", "finished"),
+                ("model", "succeeded"),
                 ("tool", "failed"),
                 ("tool", "failed"),
-                ("model", "finished"),
+                ("model", "succeeded"),
             ]
             assert [step.error for step in steps[1:3]] == [
                 "calculator unavailable",
@@ -711,22 +711,20 @@ agic calculate(_: Text) -> Number:
             )
 
             assert record.status == "failed"
-            assert record.error is not None
+            assert isinstance(record.error, str)
             assert record.error.startswith("output is not valid Number")
             steps = harness.store.list_steps(run_id=record.id)
             assert [(step.kind, step.status) for step in steps] == [
-                ("model", "finished"),
+                ("model", "succeeded"),
                 ("tool", "failed"),
-                ("model", "finished"),
-                ("system", "failed"),
+                ("model", "succeeded"),
             ]
             assert steps[1].error == "calculator unavailable"
-            assert steps[-1].error == record.error
 
     asyncio.run(scenario())
 
 
-def test_agic_model_call_limit_emits_one_terminal_system_failure(
+def test_agic_model_call_limit_records_a_direct_run_error(
     tmp_path: Path,
 ) -> None:
     tool = RecordingTool("loop__again", output={"continue": True})
@@ -769,19 +767,14 @@ agic loop(_: Text) -> Text:
             assert record.status == "failed"
             assert record.error == "Agic model call limit exceeded: 8"
             steps = harness.store.list_steps(run_id=record.id)
-            assert [(step.kind, step.status) for step in steps[:-1]] == [
+            assert [(step.kind, step.status) for step in steps] == [
                 item
                 for _ in range(8)
                 for item in (
-                    ("model", "finished"),
-                    ("tool", "finished"),
+                    ("model", "succeeded"),
+                    ("tool", "succeeded"),
                 )
             ]
-            assert (steps[-1].kind, steps[-1].status) == (
-                "system",
-                "failed",
-            )
-            assert steps[-1].error == record.error
             assert len(tool.calls) == 8
             assert harness.adapter.pending_responses == 0
             assert_run_event_integrity(tracer.events)
@@ -829,7 +822,7 @@ agic reply(_: Text) -> Text:
 
             assert rejected.status == "failed"
             assert rejected.error == "Agic model call limit exceeded: 0"
-            assert accepted.status == "finished"
+            assert accepted.status == "succeeded"
             assert len(harness.adapter.invocations) == 1
             rejected_start = harness.store.get_run_control(
                 run_id=rejected.id,
@@ -935,7 +928,7 @@ agic reply(_: Text) -> Text:
             assert [
                 (step.kind, step.status)
                 for step in harness.store.list_steps(run_id=record.id)
-            ] == [("model", "finished"), ("system", "failed")]
+            ] == [("model", "succeeded")]
             model_step = harness.store.list_steps(run_id=record.id)[0]
             assert model_step.noted["tokens"] == {"input": 6, "output": 5}
             assert model_step.noted["price"] is None
@@ -948,7 +941,7 @@ agic reply(_: Text) -> Text:
 @pytest.mark.parametrize(
     ("cost_limit", "status", "error"),
     [
-        (None, "finished", None),
+        (None, "succeeded", None),
         (
             Decimal("0.02"),
             "failed",
@@ -1126,7 +1119,7 @@ agic reply(_: Text) -> Text:
             assert [
                 (step.kind, step.status)
                 for step in harness.store.list_steps(run_id=record.id)
-            ] == [("model", "canceled"), ("system", "failed")]
+            ] == [("model", "canceled")]
 
     asyncio.run(scenario())
 
@@ -1194,7 +1187,7 @@ agic fail(_: Part[]) -> Part[]:
             )
 
             assert record.status == "failed"
-            assert record.error == "provider unavailable"
+            assert record.error == StepErrorRef(StepPath(record.id, (0,)))
             steps = harness.store.list_steps(run_id=record.id)
             assert [(step.kind, step.status) for step in steps] == [("model", "failed")]
             assert steps[0].error == "provider unavailable"

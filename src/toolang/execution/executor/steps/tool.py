@@ -19,6 +19,7 @@ from toolang.common.time import elapsed_ms, utc_now
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
 from ...records import RunInputRef, StepInput, StepOutputRef
 from ...types import StepPath
+from ..common import _StepFailed
 from ..diagnostics import log_tool_call_input, log_tool_call_output
 
 if TYPE_CHECKING:
@@ -117,7 +118,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             error,
             elapsed_ms(step_started),
         )
-        raise
+        raise _StepFailed(StepPath(run.run_id, (step_index,)), exc) from exc
     part = ToolResultPart(
         tool_call_id=record.tool_call_id,
         call_id=record.call_id,
@@ -140,7 +141,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             data=part,
         )
     )
-    status = "failed" if record.error else "finished"
+    status = "failed" if record.error else "succeeded"
     log_tool_call_output(
         record,
         thread_id=run.thread,

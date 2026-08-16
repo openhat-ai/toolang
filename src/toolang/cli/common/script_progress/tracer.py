@@ -16,8 +16,8 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import StepOutputRef
-from toolang.execution.types import StepPath
+from toolang.execution.records import StepOutputRef, execution_error_message
+from toolang.execution.types import ExecutionError, StepPath
 
 from .blocks import CallBlock, RunBlock, StatementBlock
 from .console import ProgressConsole
@@ -145,7 +145,7 @@ class ConsoleRunTracer(RunTracer):
         if parent_run is not None:
             parent_run.metrics.add(run.metrics)
         individual = not owner.batched or until
-        if individual and run.status != "finished":
+        if individual and run.status != "succeeded":
             if error := self._new_error(event.error):
                 self.console.wrapped(
                     f"{run.run_id} {status_label(run.status)}: {error}",
@@ -153,9 +153,9 @@ class ConsoleRunTracer(RunTracer):
                     continuation=f"{' ' * (run.indent + 2)}",
                     tone="error" if run.status == "failed" else "warning",
                 )
-        if individual and (self.verbosity >= 2 or run.status != "finished"):
+        if individual and (self.verbosity >= 2 or run.status != "succeeded"):
             run.render_compact(self.console, finished_at=event.finished_at)
-        if until and run.status == "finished":
+        if until and run.status == "succeeded":
             owner.render_until_decision(
                 self.console,
                 self._until_decision(event),
@@ -249,7 +249,7 @@ class ConsoleRunTracer(RunTracer):
                 owner = self._live_owner(statement)
                 owner.active_activity = (
                     "iteration completed"
-                    if event.status == "finished"
+                    if event.status == "succeeded"
                     else f"iteration {event.status}"
                 )
                 self._show_statement_live(owner, event.finished_at)
@@ -263,7 +263,7 @@ class ConsoleRunTracer(RunTracer):
             self._show_statement_live(owner, event.finished_at)
         immediate_owner = self._owner_statement(run)
         deferred_batch_failure = (
-            event.status != "finished"
+            event.status != "succeeded"
             and immediate_owner is not None
             and immediate_owner.batched
             and immediate_owner.statement != "repeat"
@@ -371,8 +371,8 @@ class ConsoleRunTracer(RunTracer):
         elif event.kind == "tool":
             run.metrics.tool_calls += 1
 
-    def _new_error(self, error: str | None) -> str:
-        value = (error or "").strip()
+    def _new_error(self, error: ExecutionError | None) -> str:
+        value = (execution_error_message(error) or "").strip()
         if not value or value in self._reported_errors:
             return ""
         self._reported_errors.add(value)

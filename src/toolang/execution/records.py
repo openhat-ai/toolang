@@ -14,9 +14,11 @@ from toolang.base.types.run import ModelCall
 from .types import (
     ControlStatus,
     ControlTiming,
+    ExecutionError,
     RunControlKind,
     RunId,
     RunStatus,
+    StepErrorRef,
     StepKind,
     StepPath,
     StepStatus,
@@ -113,7 +115,7 @@ class RunRecord:
     output: ValueRef | None
     context: dict[str, Any] = field(default_factory=dict)
     status: RunStatus = "pending"
-    error: str | None = None
+    error: ExecutionError | None = None
     ejected: ThreadControlRef | RunControlRef | None = None
     created_at: str = ""
     started_at: str = ""
@@ -202,7 +204,7 @@ class StepRecord:
     given: dict[str, Any] = field(default_factory=dict)
     noted: dict[str, Any] = field(default_factory=dict)
     status: StepStatus = "running"
-    error: str | None = None
+    error: ExecutionError | None = None
     ejected: RunControlRef | None = None
     created_at: str = ""
     started_at: str = ""
@@ -232,7 +234,7 @@ class RunControlRecord:
     input: Message | None
     source: RunId | None = None
     anchor: StepPath | None = None
-    request_id: str | None = None
+    request: str | None = None
     context: dict[str, Any] = field(default_factory=dict)
     status: ControlStatus = "pending"
     error: str | None = None
@@ -249,7 +251,7 @@ class ThreadControlRecord:
     kind: ThreadControlKind
     source: str | None = None
     anchor: str | None = None
-    request_id: str | None = None
+    request: str | None = None
     expected_head: ThreadControlRef | None = None
     context: dict[str, Any] = field(default_factory=dict)
     status: ControlStatus = "pending"
@@ -331,6 +333,49 @@ def run_limits_to_data(limits: RunLimits) -> dict[str, Any]:
         dict[str, Any],
         _RUN_LIMITS_ADAPTER.dump_python(limits, mode="json"),
     )
+
+
+def execution_error_from_data(data: object) -> ExecutionError:
+    """Parse one execution error from protocol-compatible data."""
+
+    if isinstance(data, str):
+        return data
+    if isinstance(data, Mapping) and set(data) == {"step"}:
+        mapping = cast(Mapping[str, object], data)
+        step = mapping.get("step")
+        if isinstance(step, str):
+            return StepErrorRef(step=StepPath.parse(step))
+    raise ValueError("invalid execution error")
+
+
+def execution_error_to_data(error: ExecutionError) -> str | dict[str, str]:
+    """Serialize one execution error for a protocol or storage boundary."""
+
+    if isinstance(error, str):
+        return error
+    return {"step": str(error.step)}
+
+
+def execution_error_message(
+    error: ExecutionError | None,
+    steps: Sequence[StepRecord] = (),
+) -> str | None:
+    """Resolve one execution error to a displayable message when possible."""
+
+    by_path = {step.path: step for step in steps}
+    seen: set[StepPath] = set()
+    current = error
+    while isinstance(current, StepErrorRef):
+        if current.step in seen:
+            break
+        seen.add(current.step)
+        step = by_path.get(current.step)
+        if step is None:
+            break
+        current = step.error
+    if isinstance(current, StepErrorRef):
+        return f"step {current.step} failed"
+    return current
 
 
 def step_message_role(kind: StepKind) -> MessageRole | None:

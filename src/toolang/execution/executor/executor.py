@@ -30,7 +30,7 @@ from toolang.plugin.models.config import parse_default_models, parse_model_alias
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 
-from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin, StepEnd
+from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin
 from ..records import (
     RunControlRecord,
     RunInputRef,
@@ -41,13 +41,19 @@ from ..records import (
     run_limits_to_data,
 )
 from ..store import RunStore
-from ..types import ControlTiming, RunControlKind, StepPath
+from ..types import (
+    ControlTiming,
+    ExecutionError,
+    RunControlKind,
+    StepPath,
+)
 from ..runnables import parse_runnable_ref, resolve_runnable
 from .common import (
     BoundRun,
     EventEmitter,
     Local,
     Shape,
+    _StepFailed,
     control_text,
     initial_locals,
     json_value,
@@ -730,7 +736,7 @@ class RunExecutor:
         *,
         emit: EventEmitter,
         status: Literal["failed", "canceled"],
-        error: str | None = None,
+        error: ExecutionError | None = None,
     ) -> None:
         record = self.store.get_run(run_id=run_id)
         if record is not None and record.status not in {"pending", "running"}:
@@ -777,8 +783,6 @@ class _Execution:
         if retry is not None:
             self._restore_model_limits(root.run_id)
         self._run_outputs: dict[str, ValueRef] = {}
-        self._last_step_index: dict[str, int] = {}
-        self._step_failures: dict[str, str | None] = {}
 
     def next_step(self, run_id: str) -> int:
         """Return the next unused top-level physical step index."""
@@ -805,7 +809,7 @@ class _Execution:
             step
             for steps in steps_by_run.values()
             for step in steps
-            if step.kind == "model" and step.status == "finished"
+            if step.kind == "model" and step.status == "succeeded"
         ):
             tokens = step.noted.get("tokens")
             input_tokens = (
@@ -954,7 +958,6 @@ class _Execution:
         except asyncio.CancelledError as exc:
             if self._limits.error is not None:
                 error = self._limits.error
-                await self._emit_system_failure(binding.run_id, error)
                 await self.emit(
                     RunEnd(
                         run=binding.run_id,
@@ -990,9 +993,19 @@ class _Execution:
                 )
             )
             raise
+        except _StepFailed as exc:
+            await self.emit(
+                RunEnd(
+                    run=binding.run_id,
+                    status="failed",
+                    output=self.run_output(binding.run_id),
+                    error=exc.error,
+                    finished_at=utc_now(),
+                )
+            )
+            raise
         except Exception as exc:
             error = str(exc) or type(exc).__name__
-            await self._emit_system_failure(binding.run_id, error)
             await self.emit(
                 RunEnd(
                     run=binding.run_id,
@@ -1006,7 +1019,7 @@ class _Execution:
         await self.emit(
             RunEnd(
                 run=binding.run_id,
-                status="finished",
+                status="succeeded",
                 output=result.ref,
                 finished_at=utc_now(),
             )
@@ -1036,7 +1049,7 @@ class _Execution:
                 raise ValueError(
                     f"retry prefix no longer matches flow source: {step.path}"
                 )
-            if step.status != "finished":
+            if step.status != "succeeded":
                 raise ValueError(f"retry prefix step is not committed: {step.path}")
             local = _step_local(step)
             if statement.binding is not None:
@@ -1229,39 +1242,6 @@ class _Execution:
 
     async def emit(self, event: RunEvent) -> None:
         await self._emit_trace(event)
-        if isinstance(event, StepBegin | StepEnd):
-            run_id = event.step.run
-            if event.step.parent is None:
-                self._last_step_index[run_id] = max(
-                    self._last_step_index.get(run_id, -1),
-                    event.step.index,
-                )
-            if isinstance(event, StepEnd) and event.status == "failed":
-                self._step_failures[run_id] = event.error
-
-    async def _emit_system_failure(self, run_id: str, error: str) -> None:
-        if self._step_failures.get(run_id) == error:
-            return
-        path = StepPath(run_id, (self._last_step_index.get(run_id, -1) + 1,))
-        started_at = utc_now()
-        await self.emit(
-            StepBegin(
-                step=path,
-                kind="system",
-                given={"runtime": "failure"},
-                started_at=started_at,
-            )
-        )
-        await self.emit(
-            StepEnd(
-                step=path,
-                kind="system",
-                status="failed",
-                output=(TextPart(text=error),),
-                error=error,
-                finished_at=utc_now(),
-            )
-        )
 
 
 def _parallel_output_type(

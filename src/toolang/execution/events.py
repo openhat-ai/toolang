@@ -17,7 +17,7 @@ from .records import (
     ThreadPeer,
     ValueRef,
 )
-from .types import RunStatus, StepKind, StepPath, StepStatus
+from .types import ExecutionError, RunStatus, StepKind, StepPath, StepStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +83,7 @@ class StepEnd:
     status: StepStatus
     output: tuple[MessagePart, ...] = ()
     noted: dict[str, Any] = field(default_factory=dict)
-    error: str | None = None
+    error: ExecutionError | None = None
     finished_at: str = ""
     type: Literal["step_end"] = field(default="step_end", init=False)
 
@@ -96,7 +96,7 @@ class RunEnd:
     status: RunStatus
     input: RunInputRef | None = None
     output: ValueRef | None = None
-    error: str | None = None
+    error: ExecutionError | None = None
     finished_at: str = ""
     type: Literal["run_end"] = field(default="run_end", init=False)
 

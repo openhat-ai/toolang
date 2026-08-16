@@ -130,7 +130,7 @@ agic answer(_: Part[]) -> Part[]:
         assert decoded[2].part_type == "text"
         assert events[2][1]["part_type"] == "text"
         assert "type_" not in events[2][1]
-        assert events[-1][1]["status"] == "finished"
+        assert events[-1][1]["status"] == "succeeded"
         assert harness.adapter.invocations[0].call.messages == [
             Message(
                 role="user",
@@ -144,6 +144,53 @@ agic answer(_: Part[]) -> Part[]:
                 ),
             )
         ]
+    finally:
+        asyncio.run(core.close())
+
+
+def test_run_detail_exposes_one_structured_step_error(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic answer(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[RuntimeError("provider unavailable")],
+    )
+    harness.store.close()
+    core = AgentCore(harness.setup.layout)
+    core.setup = _Snapshot(harness.setup)
+    core.state = _Snapshot(harness.state)
+    app = create_app(
+        core,
+        CapsManager(core.layout),
+        JobsManager(core.layout),
+        cors_allowed_origins=(),
+    )
+
+    try:
+        with TestClient(app) as client:
+            created = client.post("/api/v1/threads", json={"client": "script"})
+            response = client.post(
+                "/api/v1/runs/stream",
+                json={
+                    "thread": created.json()["thread"]["id"],
+                    "runnable": "answer",
+                    "input": [{"type": "text", "text": "hello"}],
+                },
+            )
+            events = _sse_events(response.text)
+            run_id = str(events[0][1]["run"])
+            detail = client.get(f"/api/v1/runs/{run_id}").json()
+
+        error = {"step": f"{run_id}/0"}
+        assert events[-1][1]["error"] == error
+        assert detail["error"] == error
+        assert detail["steps"][0]["error"] == "provider unavailable"
+        assert "failure" not in detail
     finally:
         asyncio.run(core.close())
 
@@ -307,6 +354,15 @@ agic answer(_: Part[]) -> Part[]:
         with TestClient(app) as client:
             created = client.post("/api/v1/threads", json={"client": "script"})
             thread_id = created.json()["thread"]["id"]
+            short_name = client.post(
+                "/api/v1/runs/stream",
+                json={
+                    "thread": thread_id,
+                    "request": "short-request",
+                    "runnable": "answer",
+                    "input": [{"type": "text", "text": "hello"}],
+                },
+            )
             started = client.post(
                 "/api/v1/runs/stream",
                 json={
@@ -336,6 +392,7 @@ agic answer(_: Part[]) -> Part[]:
             _wait_for_terminal(core, rerun_id)
 
         assert started.status_code == 200
+        assert short_name.status_code == 422
         assert retry.status_code == 202
         assert retry.json()["command"]["kind"] == "retry"
         assert retry.json()["command"]["request_id"] == "retry-request"
@@ -394,23 +451,23 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
             StepEnd(
                 step=StepPath.parse("run_child/0"),
                 kind="system",
-                status="finished",
+                status="succeeded",
                 finished_at="2026-01-01T00:00:04Z",
             ),
             RunEnd(
                 run="run_child",
-                status="finished",
+                status="succeeded",
                 finished_at="2026-01-01T00:00:05Z",
             ),
             StepEnd(
                 step=StepPath.parse("run_test/0"),
                 kind="run",
-                status="finished",
+                status="succeeded",
                 finished_at="2026-01-01T00:00:06Z",
             ),
             RunEnd(
                 run="run_test",
-                status="finished",
+                status="succeeded",
                 finished_at="2026-01-01T00:00:07Z",
             ),
         )
@@ -500,7 +557,7 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
             await tracer.on_event(
                 RunEnd(
                     run="run_live",
-                    status="finished",
+                    status="succeeded",
                     finished_at="2026-01-01T00:00:01Z",
                 )
             )

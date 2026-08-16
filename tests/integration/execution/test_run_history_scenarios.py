@@ -140,7 +140,7 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
             run_id=run.id,
             step_index=0,
             kind="system",
-            status="finished",
+            status="succeeded",
             input=(),
             output=(TextPart("ignored"), TextPart("result")),
             started_at="2026-01-01T00:00:00Z",

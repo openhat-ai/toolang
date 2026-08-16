@@ -122,7 +122,8 @@ and `retry()` create an owner task and return an awaitable `RunHandle`.
 against the supplied current setup and state. `retry()` keeps the root ID,
 reopens a terminal run, and resumes after its effective committed prefix. An
 omitted retry anchor prefers the latest visible failed, canceled, or running
-non-system step and falls back to a runtime system-failure step. The handle
+non-system step. If no incomplete step exists, retry restarts at the latest
+visible non-system step, or from the beginning when the run has no steps. The handle
 exposes its run ID, executor, and task, and
 delegates same-process `stop()`, `steer()`, and `cancel_control()` operations.
 Its await path shields the owner task so
@@ -159,13 +160,13 @@ records remain available for audit but disappear from effective thread and run
 projection. The source must be the latest visible root in its thread.
 It must also be terminal, so rerun cannot detach a still-owned execution.
 
-Retry acceptance atomically appends a finished `retry` control to the existing
+Retry acceptance atomically appends an applied `retry` control to the existing
 root, resolves and records its anchor, ejects the invalid structural step
 suffix, fails stale pending controls, and reopens the root as pending. New
 steps use fresh physical indexes; ejected steps are never overwritten. A flow
-retry restores typed locals from the finished top-level prefix and begins at
+retry restores typed locals from the succeeded top-level prefix and begins at
 the first invalid statement. When a nested failed step is selected, its
-unfinished containing step is also invalidated because only a finished
+unfinished containing step is also invalidated because only a succeeded
 container is a reusable commit. Agic retry invalidates the agic step sequence
 and starts a fresh model-tool cycle under the same root.
 
@@ -246,7 +247,7 @@ resource.
 Call limits are checked before invoking a model or tool. Token and cost totals
 are charged from each completed model result. Every completed model step notes
 its input and output token counts, captured USD-per-token prices, and computed
-USD cost when available. The model step remains finished when its usage or cost
+USD cost when available. The model step remains succeeded when its usage or cost
 crosses a total, then the owning run fails. A token or cost limit requires model
 usage, and a cost limit also requires captured input and output prices for every
 selected model. Time expiry cancels an in-flight operation while recording
@@ -262,7 +263,7 @@ frozen process overrides. A request may overlay individual fields for one root
 run without changing the setup snapshot.
 
 A retry restores global token and cost accounting from effective, non-ejected
-finished model steps. Ejected attempts remain auditable but do not consume the
+succeeded model steps. Ejected attempts remain auditable but do not consume the
 retried execution's effective totals. Per-agic call counters restart only for
 agics that execute again.
 
@@ -296,7 +297,7 @@ Every inserted or changed control receives a global monotonic revision inside
 the same SQLite write transaction. The owner process polls only revisions
 newer than its cursor. An unchanged control table returns no rows. Changed
 pending controls are merged into the matching `_ActiveRun` cache, while
-`finished`, `canceled`, and `failed` controls are removed. Runtime checkpoints
+`applied`, `wontapply`, and `revoked` controls are removed. Runtime checkpoints
 read the cache rather than querying SQLite once per active run.
 
 An `immediate` stop cancels the owner task. `next_step` and `next_call` controls
@@ -332,15 +333,15 @@ thread-safe tracer.
 
 ## Terminal Behavior
 
-Successful execution emits one `RunEnd(finished)`. Runtime exceptions emit one
-`RunEnd(failed)`. If the exception occurred outside an existing step boundary,
-the runtime first emits a failed system `StepBegin` / `StepEnd` pair. The
-persistence layer never synthesizes steps. Cancellation unwinds steps and child
-runs before the root `RunEnd(canceled)`.
+Successful execution emits one `RunEnd(succeeded)`. Runtime exceptions emit one
+`RunEnd(failed)`. A directly failing step stores the message; enclosing steps
+and runs reference that step. An exception outside a step stores its message
+directly on the run without a synthetic step. Cancellation unwinds steps and
+child runs before the root `RunEnd(canceled)`.
 
 If cancellation came from a stop control, `RunEnd.input` references it. The
-runtime marks that control `finished` and marks all other pending controls
-`failed` because they can no longer reach an applicable checkpoint.
+runtime marks that control `applied` and marks all other pending controls
+`wontapply` because they can no longer reach an applicable checkpoint.
 
 
 ## Persistence

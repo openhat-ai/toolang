@@ -258,7 +258,7 @@ def retry_command(
         )
     status = _display_status(result.status)
     typer.echo(f"retried {result.id}: {status}")
-    if result.status != "finished":
+    if result.status != "succeeded":
         raise typer.Exit(1)
 
 
@@ -305,7 +305,7 @@ def rerun_command(
         )
     status = _display_status(result.status)
     typer.echo(f"reran {source} as {result.id}: {status}")
-    if result.status != "finished":
+    if result.status != "succeeded":
         raise typer.Exit(1)
 
 
@@ -771,21 +771,21 @@ def _parse_step_path(value: str) -> tuple[int, ...]:
 def _run_status(value: str | None) -> RunStatus | None:
     if value is None:
         return None
-    if value == "succeeded":
-        return "finished"
-    if value not in {"pending", "running", "finished", "failed", "canceled"}:
+    if value not in {"pending", "running", "succeeded", "failed", "canceled"}:
         raise click.ClickException(f"unknown run status: {value}")
     return cast(RunStatus, value)
 
 
 def _failure_text(run: Mapping[str, Any]) -> str:
-    failure = _mapping(run.get("failure"))
-    return _text(failure.get("reason")) or _text(run.get("error")) or ""
+    error = run.get("error")
+    if isinstance(error, str):
+        return error
+    step = _text(_mapping(error).get("step"))
+    return f"step {step} failed" if step else ""
 
 
 def _display_status(value: object) -> str:
-    text = str(value or "")
-    return "succeeded" if text == "finished" else text
+    return str(value or "")
 
 
 def _status_mark(status: str) -> str:

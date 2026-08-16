@@ -484,7 +484,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
             )
 
         record = asyncio.run(execute())
-        assert record.status == "finished"
+        assert record.status == "succeeded"
         steps = store.list_steps(run_id=record.id)
         assert [step.kind for step in steps] == ["model"]
         assert steps[0].output == (audio,)

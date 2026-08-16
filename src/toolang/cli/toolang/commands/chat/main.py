@@ -19,6 +19,7 @@ from toolang.cli.common.policy import (
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.history import RunHistory
+from toolang.execution.records import execution_error_message
 from toolang.execution.types import StepPath
 from toolang.cli.common.context import context_layout, load_runtime_environ, user_call
 from toolang.cli.common.execution import open_execution
@@ -304,9 +305,9 @@ class _ScriptedRunRenderer:
     @property
     def failure(self) -> str | None:
         terminal = self._terminal
-        if terminal is None or terminal.status == "finished":
+        if terminal is None or terminal.status == "succeeded":
             return None
-        return terminal.error or f"run {terminal.status}"
+        return execution_error_message(terminal.error) or f"run {terminal.status}"
 
     def reset(self) -> None:
         self._close()

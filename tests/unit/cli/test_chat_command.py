@@ -174,11 +174,11 @@ def test_scripted_renderer_uses_model_step_output_without_deltas(
         StepEnd(
             step=StepPath.parse("run_success/1"),
             kind="model",
-            status="finished",
+            status="succeeded",
             output=(TextPart("complete answer"),),
         )
     )
-    renderer.render(RunEnd(run="run_success", status="finished"))
+    renderer.render(RunEnd(run="run_success", status="succeeded"))
 
     assert capsys.readouterr().out == "assistant: complete answer\n"
     assert renderer.failure is None

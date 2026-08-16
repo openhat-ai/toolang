@@ -167,7 +167,7 @@ agic chat(_: Part[]) -> Part[]:
             "run_end",
         ]
         assert len(runs) == 1
-        assert runs[0].status == "finished"
+        assert runs[0].status == "succeeded"
         assert session.store.run_output(run_id=runs[0].id) == (TextPart("hello back"),)
         assert session.get_result(None, thread_id=thread_id).output == (
             TextPart("hello back"),

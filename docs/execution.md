@@ -90,7 +90,7 @@ provides same-process `stop()`, `steer()`, and `cancel_control()` conveniences.
 Cross-process callers address the run by ID through their local `RunExecutor`.
 
 `steer()` and `stop()` only accept durable controls; `cancel_control()` changes
-one pending steer or stop to `canceled`. None of these operations needs the
+one pending steer or stop to `revoked`. None of these operations needs the
 target run to be owned by the submitting process. Start remains local: the
 process that calls `start(spec)` accepts and executes that run. The executor is
 ready after construction and therefore has no separate `open()` method.
@@ -176,15 +176,15 @@ immediate | next_step | next_call
 Statuses are:
 
 ```text
-pending  newly accepted and not applied
-finished applied by the runtime
-canceled explicitly withdrawn before application
-failed   no longer applicable because the run ended or the checkpoint vanished
+pending   newly accepted and not applied
+applied   applied by the runtime
+wontapply no longer applicable because the run ended or the checkpoint vanished
+revoked   explicitly withdrawn before application
 ```
 
-`finished` means the control was applied; it does not mean the run succeeded.
-A stop control that cancels a run is therefore `finished`. An unapplied steer
-left behind by a terminal run is `failed`.
+`applied` means the control was applied; it does not mean the run succeeded.
+A stop control that cancels a run is therefore `applied`. An unapplied steer
+left behind by a terminal run is `wontapply`.
 
 Every run-control insert or status change receives a monotonically increasing
 SQLite revision. Each executor remembers the latest revision it observed and

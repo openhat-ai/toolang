@@ -215,7 +215,7 @@ class StatementState:
 
     def child_finished(self, run: RunState) -> None:
         self.metrics.add(run.metrics)
-        if run.status == "finished":
+        if run.status == "succeeded":
             self.completed += 1
         elif run.status == "failed":
             self.failed += 1

@@ -199,7 +199,7 @@ class FileRequestStore:
 
         current = _utc(now)
         status: FileRequestStatus
-        if run_status == "finished":
+        if run_status == "succeeded":
             status = "finished"
         elif run_status == "canceled":
             status = "canceled"

@@ -168,7 +168,7 @@ class LocalChatSession:
                         )
                     )
                     if candidate.parent is None
-                    and candidate.status == "finished"
+                    and candidate.status == "succeeded"
                     and candidate.output is not None
                 ),
                 None,

@@ -16,7 +16,7 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.records import StepOutputRef
-from toolang.execution.types import StepPath
+from toolang.execution.types import ExecutionError, StepPath
 
 from toolang.cli.common.execution_progress.formatting import (
     integer,
@@ -218,7 +218,7 @@ class ChatRunPresenter:
         if block is None:
             return
         block.update(event)
-        if event.status != "finished":
+        if event.status != "succeeded":
             self._assign_block_error(block, self._new_error(event.error))
             self._finalize(event.step, app)
         elif event.kind != "model":
@@ -235,7 +235,7 @@ class ChatRunPresenter:
             owner = self._live_owner(state)
             owner.active_activity = (
                 "iteration completed"
-                if event.status == "finished"
+                if event.status == "succeeded"
                 else f"iteration {status_label(event.status)}"
             )
             return
@@ -263,7 +263,7 @@ class ChatRunPresenter:
         parent_run = self._runs.get(owner.begin.step.run)
         if parent_run is not None:
             parent_run.metrics.add(run.metrics)
-        if self._is_until(run, owner) and run.status == "finished":
+        if self._is_until(run, owner) and run.status == "succeeded":
             owner.record_until_decision(self._until_decision(event))
         live_owner = self._live_owner(owner)
         if owner.live_owner is not None and live_owner.active_run == run.run_id:
@@ -316,11 +316,11 @@ class ChatRunPresenter:
         else:
             stop.update(event)
         stop.set_metrics(run.metrics, include_child_runs=run.kind == "flow")
-        if event.status != "finished":
+        if event.status != "succeeded":
             stop.error = self._new_error(event.error)
         if (
             run.kind == "flow"
-            and event.status == "finished"
+            and event.status == "succeeded"
             and output_step is not None
         ):
             app.finalize_block(blocks.ResultAvailableBlock(event.run))
@@ -388,8 +388,8 @@ class ChatRunPresenter:
                 self._discard(block, app)
                 self._blocks.pop(step, None)
 
-    def _new_error(self, error: str | None) -> str:
-        value = friendly_error((error or "").strip())
+    def _new_error(self, error: ExecutionError | None) -> str:
+        value = friendly_error(error) if error is not None else ""
         if not value or value in self._reported_errors:
             return ""
         self._reported_errors.add(value)

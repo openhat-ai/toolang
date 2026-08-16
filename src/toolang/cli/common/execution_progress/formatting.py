@@ -17,6 +17,7 @@ from toolang.base.types.message import (
     message_text,
 )
 from toolang.execution.events import StepBegin, StepEnd
+from toolang.execution.records import execution_error_message
 from toolang.execution.types import StepPath
 
 from ..output import parse_utc_timestamp
@@ -35,7 +36,7 @@ def integer(value: object) -> int | None:
 
 
 def status_label(status: str) -> str:
-    return "succeeded" if status == "finished" else status
+    return status
 
 
 def one_line(value: str) -> str:
@@ -159,8 +160,8 @@ def tool_exit_code(event: StepEnd) -> int | None:
         for key in ("exit_code", "returncode", "status_code"):
             if (code := integer(part.output.get(key))) is not None:
                 return code
-    if event.error:
-        match = re.search(r"\b(?:exit|status)\s+(\d+)\b", event.error)
+    if error := execution_error_message(event.error):
+        match = re.search(r"\b(?:exit|status)\s+(\d+)\b", error)
         if match is not None:
             return int(match.group(1))
     return None
@@ -175,7 +176,7 @@ def active_step_label(event: StepBegin) -> str:
 
 
 def completed_step_label(begin: StepBegin, event: StepEnd) -> str:
-    if event.status != "finished":
+    if event.status != "succeeded":
         return status_label(event.status)
     if begin.kind == "model":
         return output_preview(event) or "model completed"
