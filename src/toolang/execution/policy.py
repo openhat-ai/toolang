@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 import shlex
 
 from toolang.base.errors import ToolangError
-from toolang.base.types.policy import ResourceFilter, RunBindings, RunLimits
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.selectors import parse_selector, split_selector_list
 from toolang.lang.input import NamedInputSources
 from toolang.setup import AgentSetup
@@ -97,7 +97,7 @@ def resolve_commands(
     surface: RunBindings = RunBindings(),
     session: Sequence[RunOverride] = (),
     run: Sequence[RunOverride] = (),
-) -> tuple[tuple[ResourceFilter, ...], RunBindings, RunLimits]:
+) -> tuple[tuple[AgentCeiling, ...], RunBindings, RunLimits]:
     """Resolve policy layers against one current setup snapshot."""
 
     base = RunBindings(
@@ -112,12 +112,12 @@ def resolve_commands(
     bindings = _apply_binding_commands(bindings, base, run)
     limits = _apply_limit_commands(setup.limits, session)
     limits = _apply_limit_commands(limits, run)
-    resource_filters = tuple(
-        resource_filter
+    ceilings = tuple(
+        ceiling
         for commands in (session, run)
-        if (resource_filter := _command_resource_filter(commands)) is not None
+        if (ceiling := _command_agent_ceiling(commands)) is not None
     )
-    return resource_filters, bindings, limits
+    return ceilings, bindings, limits
 
 
 def _try_parse_command(
@@ -338,9 +338,9 @@ def _apply_limit_commands(
     return replace(current, **fields)
 
 
-def _command_resource_filter(
+def _command_agent_ceiling(
     commands: Sequence[RunOverride],
-) -> ResourceFilter | None:
+) -> AgentCeiling | None:
     fields: dict[str, tuple[str, ...]] = {}
     present: set[str] = set()
     for command in commands:
@@ -363,18 +363,14 @@ def _command_resource_filter(
         caps.extend(
             _qualify_cap_selector(kind, value) for value in fields.get(plural, ())
         )
-    resource_filter = ResourceFilter(
+    ceiling = AgentCeiling(
         models=models,
         tools=tools,
         caps=tuple(caps) if cap_present else None,
     )
-    if (
-        resource_filter.models is None
-        and resource_filter.tools is None
-        and resource_filter.caps is None
-    ):
+    if ceiling.models is None and ceiling.tools is None and ceiling.caps is None:
         return None
-    return resource_filter
+    return ceiling
 
 
 def _qualify_cap_selector(kind: str, value: str) -> str:

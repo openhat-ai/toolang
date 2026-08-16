@@ -7,7 +7,7 @@ from decimal import Decimal
 
 
 @dataclass(frozen=True, slots=True)
-class ResourceFilter:
+class AgentCeiling:
     """Stable selector lists that can only narrow agent resources."""
 
     models: tuple[str, ...] | None = None

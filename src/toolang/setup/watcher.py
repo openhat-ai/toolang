@@ -19,7 +19,7 @@ from .config import (
     load_agent_config,
     load_setup_config,
     load_setup_envs,
-    resolve_resource_filter,
+    resolve_agent_ceiling,
     resolve_run_bindings,
     resolve_run_limits,
 )
@@ -37,12 +37,12 @@ class SetupWatcher:
         self,
         layout: AgentLayout,
         *,
-        resource_filter_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+        ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         binding_overrides: Mapping[str, str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     ) -> None:
         self.layout = layout
-        self._resource_filter_overrides = dict(resource_filter_overrides or {})
+        self._ceiling_overrides = dict(ceiling_overrides or {})
         self._binding_overrides = dict(binding_overrides or {})
         self._limit_overrides = dict(limit_overrides or {})
         self._config: dict[str, object] | None = None
@@ -68,9 +68,9 @@ class SetupWatcher:
             agent_config = load_agent_config(self.layout)
             envs = load_setup_envs(self.layout)
             configs = (config, agent_config)
-            resource_filter = resolve_resource_filter(
+            ceiling = resolve_agent_ceiling(
                 configs,
-                overrides=self._resource_filter_overrides,
+                overrides=self._ceiling_overrides,
             )
             bindings = resolve_run_bindings(
                 configs,
@@ -115,7 +115,7 @@ class SetupWatcher:
                     self.layout,
                     envs=envs,
                 ),
-                resource_filter=resource_filter,
+                ceiling=ceiling,
                 bindings=bindings,
                 limits=limits,
             )

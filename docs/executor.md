@@ -25,7 +25,7 @@ class RunExecutor:
         *,
         setup: AgentSetup,
         state: AgentState,
-        resource_filter: ResourceFilter = ResourceFilter(),
+        ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         limits: RunLimits | None = None,
         run_id: str | None = None,
@@ -40,7 +40,7 @@ class RunExecutor:
         setup: AgentSetup,
         state: AgentState,
         anchor: StepPath | str | None = None,
-        resource_filter: ResourceFilter = ResourceFilter(),
+        ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         limits: RunLimits | None = None,
         request_id: str | None = None,
@@ -94,15 +94,15 @@ class RunSpec:
     thread: str
     bindings: RunBindings
     limits: RunLimits
-    resource_filters: tuple[ResourceFilter, ...] = ()
+    ceilings: tuple[AgentCeiling, ...] = ()
     input: RunnableInput = RunnableInput()
 ```
 
 `bindings.runnable` is required and resolves to exactly one agic or flow in the
 captured program. `bindings.model` is the effective singular model choice.
 The spec does not carry an origin, run identity, request identity, or arbitrary
-transport context. Each item in `resource_filters` is one independently applied
-selector-based restriction inside `setup.resource_filter`; retaining separate session
+transport context. Each item in `ceilings` is one independently applied
+selector-based restriction inside `setup.ceiling`; retaining separate session
 and run restrictions preserves intersection semantics when selector lists use
 OR matching. `input.primary` is the primary multimodal input;
 `input.named` contains typed values for the runnable's declared `params`.
@@ -207,10 +207,10 @@ There is no loop plugin or public run-context protocol, and there are no
 separate effective-resource, invocation, model-call assembly, or tool-snapshot
 layers.
 
-`AgentSetup.resource_filter` contains stable selector lists, not resolved resources. At
+`AgentSetup.ceiling` contains stable selector lists, not resolved resources. At
 `start()`, the executor resolves it against the captured `AgentSetup` and
-`AgentState`, intersects every `RunSpec.resource_filters` restriction, and creates
-the tree-level `AgentResources`. A filter cannot expand the preceding resource
+`AgentState`, intersects every `RunSpec.ceilings` restriction, and creates
+the tree-level `AgentResources`. A ceiling cannot expand the preceding resource
 set. Invalid selectors are rejected before the run is durably accepted.
 Every flow invocation starts from the tree-level agent resources and applies
 its own directives, whether or not the flow declares any. Agics start from the

@@ -187,15 +187,15 @@ Toolang-owned run ids may also use one dedicated short generated id family. See
 ## Resource Preparation
 
 Runtime resources such as models, tools, and caps are selected through ordered
-sets. `SetupWatcher` rebuilds an immutable `AgentSetup.resource_filter` from root and
+sets. `SetupWatcher` rebuilds an immutable `AgentSetup.ceiling` from root and
 agent `[allow]` config on every refresh, then applies field-level environment
 and CLI overrides captured at process startup. Each completed setup snapshot is
 stable; the next root run observes the latest valid snapshot.
 
-At root-run start, the executor resolves `AgentSetup.resource_filter` against the
+At root-run start, the executor resolves `AgentSetup.ceiling` against the
 captured `AgentSetup` and `AgentState`, then intersects every session or
-request filter in `RunSpec.resource_filters`. The resulting `AgentResources`
-is the concrete resource set for that recursive run tree. Request filters can
+request ceiling in `RunSpec.ceilings`. The resulting `AgentResources`
+is the concrete resource set for that recursive run tree. Request ceilings can
 narrow the preceding set but cannot expand it.
 
 Flow and agic directives compute runnable resources from a selected base:

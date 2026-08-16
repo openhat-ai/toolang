@@ -56,7 +56,7 @@ def resolve_spec(
 
     from .executor.executor import RunSpec
 
-    resource_filters, bindings, limits = resolve_commands(
+    ceilings, bindings, limits = resolve_commands(
         setup,
         surface=surface,
         session=session_commands,
@@ -102,7 +102,7 @@ def resolve_spec(
             runnable=f"{runnable.kind}:{runnable.name}",
         ),
         limits=limits,
-        resource_filters=resource_filters,
+        ceilings=ceilings,
         input=RunnableInput.from_values(
             primary=primary,
             named=named,
@@ -122,14 +122,14 @@ def validate_commands(
     """Validate one prospective session policy without requiring run input."""
 
     from .executor.resources import (
-        apply_resource_filter,
+        apply_agent_ceiling,
         resolve_agent_resources,
         resolve_runnable_resources,
         snapshot_model_selection,
         validate_model_binding,
     )
 
-    resource_filters, bindings, _limits = resolve_commands(
+    ceilings, bindings, _limits = resolve_commands(
         setup,
         surface=surface,
         session=commands,
@@ -142,13 +142,13 @@ def validate_commands(
         runnable_name,
         kind=runnable_kind,
     )
-    resources = resolve_agent_resources(setup, state, setup.resource_filter)
-    for resource_filter in resource_filters:
-        resources = apply_resource_filter(
+    resources = resolve_agent_resources(setup, state, setup.ceiling)
+    for ceiling in ceilings:
+        resources = apply_agent_ceiling(
             setup,
             state,
             resources,
-            resource_filter,
+            ceiling,
         )
     resources = resolve_runnable_resources(
         snapshot_model_selection(setup, state),

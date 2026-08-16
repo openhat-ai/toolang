@@ -27,7 +27,7 @@ from toolang.execution.events import (
     ThreadEvent,
     ThreadListener,
 )
-from toolang.execution.executor import ResourceFilter, RunExecutor, RunSpec
+from toolang.execution.executor import AgentCeiling, RunExecutor, RunSpec
 from toolang.execution.executor.resources import resolve_agent_resources
 from toolang.execution.executor.common import BoundRun, Local
 from toolang.execution.executor.executor import _Execution
@@ -134,7 +134,7 @@ def _spec(
     state: Any,
     thread: str,
     runnable: str,
-    resource_filter: ResourceFilter | None = None,
+    ceiling: AgentCeiling | None = None,
     primary: tuple[Any, ...] = (),
     named: dict[str, object] | None = None,
 ) -> RunSpec:
@@ -144,7 +144,7 @@ def _spec(
         thread=thread,
         bindings=RunBindings(runnable=runnable),
         limits=setup.limits,
-        resource_filters=(resource_filter,) if resource_filter is not None else (),
+        ceilings=(ceiling,) if ceiling is not None else (),
         input=RunnableInput.from_values(primary=primary, named=named),
     )
 
@@ -317,7 +317,7 @@ def test_run_executor_rejects_lossy_input_before_acceptance(
     asyncio.run(executor.shutdown())
 
 
-def test_run_executor_rejects_invalid_resource_filter_before_acceptance(
+def test_run_executor_rejects_invalid_ceiling_before_acceptance(
     tmp_path: Path,
 ) -> None:
     flow = FlowDecl(name="pipeline", span=Span(line=1))
@@ -331,7 +331,7 @@ def test_run_executor_rejects_invalid_resource_filter_before_acceptance(
                     state=_state(flow),
                     thread="term_test",
                     runnable=flow.name,
-                    resource_filter=ResourceFilter(tools=("missing/*",)),
+                    ceiling=AgentCeiling(tools=("missing/*",)),
                 )
             )
 
@@ -709,7 +709,7 @@ def test_parallel_children_preserve_input_and_output_types(
         input=RunnableInput(primary=Message.user("input").percept),
         state=state,
         setup=setup,
-        agent_resources=resolve_agent_resources(setup, state, ResourceFilter()),
+        agent_resources=resolve_agent_resources(setup, state, AgentCeiling()),
         created_at="2026-01-01T00:00:00Z",
     )
 
@@ -764,7 +764,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
         input=RunnableInput(primary=Message.user("input").percept),
         state=state,
         setup=setup,
-        agent_resources=resolve_agent_resources(setup, state, ResourceFilter()),
+        agent_resources=resolve_agent_resources(setup, state, AgentCeiling()),
         created_at="2026-01-01T00:00:00Z",
     )
 

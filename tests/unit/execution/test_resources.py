@@ -10,9 +10,9 @@ import pytest
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor import ResourceFilter
+from toolang.execution.executor import AgentCeiling
 from toolang.execution.executor.resources import (
-    apply_resource_filter,
+    apply_agent_ceiling,
     resolve_agent_resources,
     resolve_runnable_resources,
     snapshot_model_selection,
@@ -95,17 +95,17 @@ def test_agent_resources_never_filter_setup_snapshot(tmp_path: Path) -> None:
     alpha = resolve_agent_resources(
         setup,
         state,
-        ResourceFilter(tools=("alpha/*",)),
+        AgentCeiling(tools=("alpha/*",)),
     )
     beta = resolve_agent_resources(
         setup,
         state,
-        ResourceFilter(tools=("beta/*",)),
+        AgentCeiling(tools=("beta/*",)),
     )
     no_models = resolve_agent_resources(
         setup,
         state,
-        ResourceFilter(models=()),
+        AgentCeiling(models=()),
     )
 
     assert tuple(setup.tools) == ("alpha__one", "beta__two")
@@ -118,8 +118,8 @@ def test_agent_resources_never_filter_setup_snapshot(tmp_path: Path) -> None:
     assert AgentResources.from_data(alpha.to_data()) == alpha
 
 
-def test_resource_filter_normalizes_stable_selector_lists() -> None:
-    spec = ResourceFilter(
+def test_agent_ceiling_normalizes_stable_selector_lists() -> None:
+    spec = AgentCeiling(
         models=(" openai/gpt-5 ", "openai/gpt-5"),
         tools=None,
         caps=(),
@@ -130,22 +130,22 @@ def test_resource_filter_normalizes_stable_selector_lists() -> None:
     assert spec.caps == ()
 
 
-def test_resource_filter_cannot_expand_empty_agent_resources(
+def test_agent_ceiling_cannot_expand_empty_agent_resources(
     tmp_path: Path,
 ) -> None:
     setup, state, _selection = _snapshots(tmp_path)
     agent = resolve_agent_resources(
         setup,
         state,
-        ResourceFilter(models=()),
+        AgentCeiling(models=()),
     )
 
     with pytest.raises(ToolangError, match="no available models"):
-        apply_resource_filter(
+        apply_agent_ceiling(
             setup,
             state,
             agent,
-            ResourceFilter(models=("test/scripted",)),
+            AgentCeiling(models=("test/scripted",)),
         )
 
 
@@ -156,7 +156,7 @@ def test_flow_resets_resources_while_agics_use_current_flow(
     agent = resolve_agent_resources(
         setup,
         state,
-        ResourceFilter(),
+        AgentCeiling(),
     )
     model_selection = snapshot_model_selection(setup, state)
     outer = resolve_runnable_resources(

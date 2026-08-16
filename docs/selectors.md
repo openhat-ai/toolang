@@ -318,8 +318,8 @@ overlays complete.
 chat session policy, or run policy may select a different value; run policy is
 the highest binding layer.
 
-At `RunExecutor.start()`, the captured `AgentSetup.resource_filter` resolves to a
-private concrete `AgentResources`. Session and run `ResourceFilter`
+At `RunExecutor.start()`, the captured `AgentSetup.ceiling` resolves to a
+private concrete `AgentResources`. Session and run `AgentCeiling`
 restrictions are then intersected with it in order and cannot restore
 resources excluded by setup policy or an earlier restriction.
 

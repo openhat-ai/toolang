@@ -238,7 +238,7 @@ Behavior:
   its dynamic help and does not create a run; omitted input is first read from
   stdin when available
 - script run reads the complete setup snapshot and resolves effective resources
-  inside the executor from `AgentSetup.resource_filter`, captured state, and runnable
+  inside the executor from `AgentSetup.ceiling`, captured state, and runnable
   directives
 - `NAME=VALUE` supplies one named argument and is coerced using its declared
   parameter type
@@ -486,7 +486,7 @@ script runs and TUI execution do not consume this endpoint.
 | `tokens` | Aggregated input, output, and total token usage |
 
 `GET /api/v1/models` returns the selectable model routes inside the server's
-current `AgentSetup.resource_filter`. Runnable `models` directives are applied when a
+current `AgentSetup.ceiling`. Runnable `models` directives are applied when a
 run starts, not by this inspection endpoint. The response includes:
 
 - `default`

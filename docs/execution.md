@@ -249,7 +249,7 @@ check; it is not part of the public manager API.
 
 `RunSpec` carries one explicit immutable `AgentState`,
 `toolang.setup.AgentSetup`, effective `RunBindings` and `RunLimits`, and zero
-or more `ResourceFilter` restrictions. `AgentSetup` supplies the immutable
+or more `AgentCeiling` restrictions. `AgentSetup` supplies the immutable
 `AgentLayout`, root-scoped installed runtime implementations, and captured
 policy defaults. `SetupWatcher` resolves
 root and agent-home `[allow]`, `[default]`, and `[limit]` config on every

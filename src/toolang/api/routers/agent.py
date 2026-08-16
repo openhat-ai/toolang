@@ -36,9 +36,7 @@ def models(core: AgentCoreDep) -> dict[str, object]:
     try:
         setup = core.setup.current()
         state = core.state.current()
-        resolved_default, targets = agent_model_targets(
-            setup, state, setup.resource_filter
-        )
+        resolved_default, targets = agent_model_targets(setup, state, setup.ceiling)
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {

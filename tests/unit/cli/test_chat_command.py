@@ -272,7 +272,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
 
     assert captured["layout"] == layout
     assert captured["kwargs"] == {
-        "resource_filter_overrides": {
+        "ceiling_overrides": {
             "models": ("test/model",),
             "tools": ("shell/*",),
             "caps": ("skill/reviewer",),

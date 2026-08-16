@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from toolang.base.types.policy import ResourceFilter, RunBindings, RunLimits
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.execution.policy import (
     merge_commands,
@@ -25,7 +25,7 @@ def _setup() -> AgentSetup:
         models=(),
         tools={},
         envs={},
-        resource_filter=ResourceFilter(models=("root/*",)),
+        ceiling=AgentCeiling(models=("root/*",)),
         bindings=RunBindings(model="root/model", runnable="agic:chat"),
         limits=RunLimits(tokens=100, cost=Decimal("5"), time=60),
     )
@@ -141,8 +141,8 @@ def test_merge_commands_compacts_session_state_and_preserves_disabled_limit() ->
     assert merged == (RunOverride("limit", "time", None),)
 
 
-def test_resolve_commands_overlays_bindings_limits_and_resource_filters() -> None:
-    resource_filters, bindings, limits = resolve_commands(
+def test_resolve_commands_overlays_bindings_limits_and_ceilings() -> None:
+    ceilings, bindings, limits = resolve_commands(
         _setup(),
         surface=RunBindings(runnable="flow:surface"),
         session=(
@@ -164,9 +164,9 @@ def test_resolve_commands_overlays_bindings_limits_and_resource_filters() -> Non
         runnable="flow:surface",
     )
     assert limits == RunLimits(tokens=80, cost=Decimal("5"), time=None)
-    assert resource_filters == (
-        ResourceFilter(models=("session/*",)),
-        ResourceFilter(models=("run/*",), caps=("skill/reviewer",)),
+    assert ceilings == (
+        AgentCeiling(models=("session/*",)),
+        AgentCeiling(models=("run/*",), caps=("skill/reviewer",)),
     )
 
 
@@ -175,7 +175,7 @@ def test_allow_all_removes_that_field_before_cap_kind_normalization() -> None:
         _setup(),
         run=(RunOverride("allow", "skills", None),),
     )
-    resource_filters, _bindings, _limits = resolve_commands(
+    ceilings, _bindings, _limits = resolve_commands(
         _setup(),
         run=(
             RunOverride("allow", "caps", None),
@@ -184,4 +184,4 @@ def test_allow_all_removes_that_field_before_cap_kind_normalization() -> None:
     )
 
     assert unrestricted == ()
-    assert resource_filters == (ResourceFilter(caps=("skill/reviewer",)),)
+    assert ceilings == (AgentCeiling(caps=("skill/reviewer",)),)

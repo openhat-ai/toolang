@@ -58,7 +58,7 @@ def _launch_spec(
     endpoint_host: str | None,
     port: int | None,
     sandbox: str | None,
-    resource_filter_overrides: Mapping[str, tuple[str, ...] | None],
+    ceiling_overrides: Mapping[str, tuple[str, ...] | None],
     binding_overrides: Mapping[str, str | None],
     limit_overrides: Mapping[str, int | Decimal | None],
     file_inboxes: Sequence[Path] | None,
@@ -75,7 +75,7 @@ def _launch_spec(
             endpoint_host=endpoint_host
             or ("localhost" if host == "127.0.0.1" else host),
             port=port or 7123,
-            resource_filter_overrides=resource_filter_overrides,
+            ceiling_overrides=ceiling_overrides,
             binding_overrides=binding_overrides,
             limit_overrides=limit_overrides,
             file_inboxes=tuple(file_inboxes or ()),
@@ -166,7 +166,7 @@ def test_run_resolves_hosting_inputs_and_runs_in_foreground(
     assert resolved["sandbox"] == "docker:registry.example/a:b"
     assert resolved["host"] == "0.0.0.0"
     assert resolved["port"] == 8123
-    assert resolved["resource_filter_overrides"] == {
+    assert resolved["ceiling_overrides"] == {
         "models": ("openai/gpt-5[openai]", "o3"),
         "tools": ("filesystem", "shell"),
         "caps": ("skill/reviewer",),

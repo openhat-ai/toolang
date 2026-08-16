@@ -5,7 +5,7 @@ from pathlib import Path
 
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
-    resolve_resource_filter_overrides,
+    resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
 from toolang.common.layout import AgentLayout
@@ -19,7 +19,7 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
         host="127.0.0.1",
         endpoint_host="localhost",
         port=8123,
-        resource_filter_overrides={
+        ceiling_overrides={
             "models": ("openai/gpt-5",),
             "tools": (),
             "caps": None,
@@ -40,7 +40,7 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
         host="0.0.0.0",
     )
 
-    assert spec.resource_filter_overrides == {
+    assert spec.ceiling_overrides == {
         "models": ("openai/gpt-5",),
         "tools": (),
         "caps": None,
@@ -73,9 +73,9 @@ def test_serve_argv_contains_only_server_inputs(tmp_path: Path) -> None:
         "cost=1.5",
         "time=none",
     ]
-    assert resolve_resource_filter_overrides(
-        {}, _option_values(argv, "--allow")
-    ) == dict(spec.resource_filter_overrides)
+    assert resolve_ceiling_overrides({}, _option_values(argv, "--allow")) == dict(
+        spec.ceiling_overrides
+    )
     assert resolve_binding_overrides({}, _option_values(argv, "--default")) == dict(
         spec.binding_overrides
     )

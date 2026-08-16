@@ -13,7 +13,7 @@ import typer
 from toolang.base.types.message import TextDelta, TextPart, message_text
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
-    resolve_resource_filter_overrides,
+    resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
 from toolang.common.errors import ToolangError
@@ -108,8 +108,8 @@ def _chat_runtime(
     environ = load_runtime_environ(layout, base_environ=os.environ)
     local = LocalChatSession(
         layout,
-        resource_filter_overrides=user_call(
-            resolve_resource_filter_overrides,
+        ceiling_overrides=user_call(
+            resolve_ceiling_overrides,
             environ,
             allow_options,
         ),

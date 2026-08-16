@@ -11,7 +11,7 @@ import tomllib
 from typing import cast
 
 from dotenv import dotenv_values
-from toolang.base.types.policy import ResourceFilter, RunBindings, RunLimits
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.common.selectors import parse_selector
 
@@ -55,11 +55,11 @@ def load_setup_envs(layout: AgentLayout) -> dict[str, str]:
     return envs
 
 
-def resolve_resource_filter(
+def resolve_agent_ceiling(
     configs: Sequence[Mapping[str, object]],
     *,
     overrides: Mapping[str, tuple[str, ...] | None] | None = None,
-) -> ResourceFilter:
+) -> AgentCeiling:
     """Resolve layered ``[allow]`` configuration and frozen overrides."""
 
     fields: dict[str, tuple[str, ...]] = {}
@@ -84,13 +84,13 @@ def resolve_resource_filter(
         cap_selectors.extend(
             _cap_kind_selector(kind, selector) for selector in fields.get(plural, ())
         )
-    resource_filter = ResourceFilter(
+    ceiling = AgentCeiling(
         models=fields.get("models"),
         tools=fields.get("tools"),
         caps=tuple(cap_selectors) if caps_present else None,
     )
-    _validate_resource_filter_syntax(resource_filter)
-    return resource_filter
+    _validate_agent_ceiling_syntax(ceiling)
+    return ceiling
 
 
 def resolve_run_bindings(
@@ -190,12 +190,12 @@ def _cap_kind_selector(kind: str, value: str) -> str:
     return f"{kind}/{parsed.pattern}{suffix}"
 
 
-def _validate_resource_filter_syntax(resource_filter: ResourceFilter) -> None:
-    for selector in resource_filter.models or ():
+def _validate_agent_ceiling_syntax(ceiling: AgentCeiling) -> None:
+    for selector in ceiling.models or ():
         parse_selector(selector, domain="model")
-    for selector in resource_filter.tools or ():
+    for selector in ceiling.tools or ():
         parse_selector(selector, domain="tool")
-    for selector in resource_filter.caps or ():
+    for selector in ceiling.caps or ():
         parse_selector(selector, domain="cap")
 
 

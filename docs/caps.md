@@ -213,8 +213,8 @@ preparation:
 3. materializes runtime-ready artifacts when needed
 4. selects the winning definition for each `(kind, name)`
 
-At root-run start, `AgentSetup.resource_filter.caps` filters that captured set
-into the tree-level `AgentResources`. Any request-level cap filter is applied
+At root-run start, `AgentSetup.ceiling.caps` narrows that captured set
+into the tree-level `AgentResources`. Any request-level cap ceiling is applied
 to that result. Flow and agic directives may narrow it further, but cannot
 restore caps outside the agent resources.
 

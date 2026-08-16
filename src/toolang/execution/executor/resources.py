@@ -9,7 +9,7 @@ from typing import Protocol, cast
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
-from toolang.base.types.policy import ResourceFilter
+from toolang.base.types.policy import AgentCeiling
 from toolang.common.errors import ToolangError
 from toolang.common.selectors import SelectorOperator, apply_selector_operations
 from toolang.execution.types import (
@@ -53,12 +53,12 @@ class _SnapshotModelSelection:
 def agent_model_targets(
     setup: AgentSetup,
     state: AgentState,
-    resource_filter: ResourceFilter,
+    ceiling: AgentCeiling,
 ) -> tuple[str | None, tuple[tuple[str, ModelTarget], ...]]:
-    """Return the default and selectable targets within one resource filter."""
+    """Return the default and selectable targets within one agent ceiling."""
 
     selection = _snapshot_model_selection(setup, state)
-    selectors = _select_agent_model_selectors(selection, resource_filter)
+    selectors = _select_agent_model_selectors(selection, ceiling)
     targets = (
         selectable_model_targets(
             providers=setup.providers,
@@ -73,34 +73,34 @@ def agent_model_targets(
     return (selectors[0] if selectors else None), targets
 
 
-def validate_resource_filter(
+def validate_agent_ceiling(
     setup: AgentSetup,
     state: AgentState,
-    resource_filter: ResourceFilter,
+    ceiling: AgentCeiling,
 ) -> None:
-    """Validate one resource filter against immutable setup and state."""
+    """Validate one agent ceiling against immutable setup and state."""
 
-    resolve_agent_resources(setup, state, resource_filter)
+    resolve_agent_resources(setup, state, ceiling)
 
 
 def resolve_agent_resources(
     setup: AgentSetup,
     state: AgentState,
-    resource_filter: ResourceFilter,
+    ceiling: AgentCeiling,
 ) -> AgentResources:
     """Build initial stable resources from complete immutable snapshots."""
 
     selection = _snapshot_model_selection(setup, state)
-    models = _select_agent_model_selectors(selection, resource_filter)
+    models = _select_agent_model_selectors(selection, ceiling)
 
-    validate_tool_selectors(dict(setup.tools), resource_filter.tools)
-    tools = select_tools(dict(setup.tools), resource_filter.tools)
+    validate_tool_selectors(dict(setup.tools), ceiling.tools)
+    tools = select_tools(dict(setup.tools), ceiling.tools)
 
     caps = tuple(state.caps)
-    if resource_filter.caps is not None:
+    if ceiling.caps is not None:
         missing = [
             selector
-            for selector in resource_filter.caps
+            for selector in ceiling.caps
             if not select_cap_entries(
                 caps,
                 (selector,),
@@ -112,46 +112,46 @@ def resolve_agent_resources(
         caps = (
             select_cap_entries(
                 caps,
-                resource_filter.caps,
+                ceiling.caps,
                 agent_name=setup.layout.name,
             )
-            if resource_filter.caps
+            if ceiling.caps
             else ()
         )
     return _agent_resources(models=models, tools=tools, caps=caps)
 
 
-def apply_resource_filter(
+def apply_agent_ceiling(
     setup: AgentSetup,
     state: AgentState,
     resources: AgentResources,
-    resource_filter: ResourceFilter,
+    ceiling: AgentCeiling,
 ) -> AgentResources:
-    """Apply one selector filter without expanding the base resource set."""
+    """Apply one agent ceiling without expanding the base resource set."""
 
     selection = _snapshot_model_selection(setup, state)
-    if resource_filter.models is None:
+    if ceiling.models is None:
         models = resources.models
-    elif not resource_filter.models:
+    elif not ceiling.models:
         models = ()
     elif not resources.models:
-        raise ToolangError("model resource filter matched no available models")
+        raise ToolangError("model ceiling matched no available models")
     else:
         models = select_model_selectors(
             selection,
-            directive_selectors=resource_filter.models,
+            directive_selectors=ceiling.models,
             allowed_selectors=resources.models,
         )
 
     available_tools = resource_tools(setup, resources)
-    validate_tool_selectors(dict(available_tools), resource_filter.tools)
-    tools = select_tools(dict(available_tools), resource_filter.tools)
+    validate_tool_selectors(dict(available_tools), ceiling.tools)
+    tools = select_tools(dict(available_tools), ceiling.tools)
 
     caps = resource_caps(state, resources)
-    if resource_filter.caps is not None:
+    if ceiling.caps is not None:
         missing = [
             selector
-            for selector in resource_filter.caps
+            for selector in ceiling.caps
             if not select_cap_entries(
                 caps,
                 (selector,),
@@ -160,15 +160,15 @@ def apply_resource_filter(
         ]
         if missing:
             raise ToolangError(
-                "cap resource filter matched no available caps: " + ", ".join(missing)
+                "cap ceiling matched no available caps: " + ", ".join(missing)
             )
         caps = (
             select_cap_entries(
                 caps,
-                resource_filter.caps,
+                ceiling.caps,
                 agent_name=setup.layout.name,
             )
-            if resource_filter.caps
+            if ceiling.caps
             else ()
         )
     return _agent_resources(models=models, tools=tools, caps=caps)
@@ -379,23 +379,23 @@ def _snapshot_model_selection(
 
 def _select_agent_model_selectors(
     selection: _ModelSelection,
-    resource_filter: ResourceFilter,
+    ceiling: AgentCeiling,
 ) -> tuple[str, ...]:
-    if resource_filter.models == ():
+    if ceiling.models == ():
         return ()
-    if resource_filter.models is None:
+    if ceiling.models is None:
         try:
             return select_model_selectors(selection)
         except ToolangError as exc:
             if str(exc) == NO_AVAILABLE_MODELS_MESSAGE:
                 return ()
             raise
-    for selector in resource_filter.models:
+    for selector in ceiling.models:
         select_model_selectors(
             selection,
             allowed_selectors=(selector,),
         )
     return select_model_selectors(
         selection,
-        allowed_selectors=resource_filter.models,
+        allowed_selectors=ceiling.models,
     )

@@ -13,7 +13,7 @@ from typing import Any, Literal, cast
 
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.base.types.policy import ResourceFilter, RunBindings, RunLimits
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import (
     Message,
@@ -67,7 +67,7 @@ from .common import (
     value_text,
 )
 from .resources import (
-    apply_resource_filter,
+    apply_agent_ceiling,
     resolve_agent_resources,
     resolve_runnable_resources,
     snapshot_model_selection,
@@ -113,7 +113,7 @@ class RunSpec:
     thread: str
     bindings: RunBindings
     limits: RunLimits
-    resource_filters: tuple[ResourceFilter, ...] = ()
+    ceilings: tuple[AgentCeiling, ...] = ()
     input: RunnableInput = RunnableInput()
 
 
@@ -234,7 +234,7 @@ class RunExecutor:
         *,
         setup: AgentSetup,
         state: AgentState,
-        resource_filter: ResourceFilter = ResourceFilter(),
+        ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         limits: RunLimits | None = None,
         run_id: str | None = None,
@@ -249,7 +249,7 @@ class RunExecutor:
             source,
             setup=setup,
             state=state,
-            resource_filter=resource_filter,
+            ceiling=ceiling,
             model=model,
             limits=limits if limits is not None else setup.limits,
         )
@@ -285,7 +285,7 @@ class RunExecutor:
         setup: AgentSetup,
         state: AgentState,
         anchor: StepPath | str | None = None,
-        resource_filter: ResourceFilter = ResourceFilter(),
+        ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         limits: RunLimits | None = None,
         request_id: str | None = None,
@@ -299,7 +299,7 @@ class RunExecutor:
             run_id,
             setup=setup,
             state=state,
-            resource_filter=resource_filter,
+            ceiling=ceiling,
             model=model,
             limits=limits if limits is not None else setup.limits,
         )
@@ -336,7 +336,7 @@ class RunExecutor:
         *,
         setup: AgentSetup,
         state: AgentState,
-        resource_filter: ResourceFilter,
+        ceiling: AgentCeiling,
         model: str | None,
         limits: RunLimits,
     ) -> RunSpec:
@@ -368,14 +368,14 @@ class RunExecutor:
                 ),
             ),
             limits=limits,
-            resource_filters=(
-                (resource_filter,)
+            ceilings=(
+                (ceiling,)
                 if any(
                     value is not None
                     for value in (
-                        resource_filter.models,
-                        resource_filter.tools,
-                        resource_filter.caps,
+                        ceiling.models,
+                        ceiling.tools,
+                        ceiling.caps,
                     )
                 )
                 else ()
@@ -1321,7 +1321,7 @@ def _child_binding(
         state=parent.state,
         setup=parent.setup,
         limits=parent.limits,
-        resource_filters=parent.resource_filters,
+        ceilings=parent.ceilings,
         agent_resources=parent.agent_resources,
         resources=None,
         flow_resources=parent.flow_resources,
@@ -1366,7 +1366,7 @@ def _bind_run(
         state=spec.state,
         setup=spec.setup,
         limits=spec.limits,
-        resource_filters=spec.resource_filters,
+        ceilings=spec.ceilings,
         agent_resources=agent_resources,
         resources=resources,
         flow_resources=resources if isinstance(executable, FlowDecl) else None,
@@ -1443,14 +1443,14 @@ def _prepare_start_spec(
     agent_resources = resolve_agent_resources(
         spec.setup,
         spec.state,
-        spec.setup.resource_filter,
+        spec.setup.ceiling,
     )
-    for resource_filter in spec.resource_filters:
-        agent_resources = apply_resource_filter(
+    for ceiling in spec.ceilings:
+        agent_resources = apply_agent_ceiling(
             spec.setup,
             spec.state,
             agent_resources,
-            resource_filter,
+            ceiling,
         )
     selection = snapshot_model_selection(spec.setup, spec.state)
     resources = resolve_runnable_resources(

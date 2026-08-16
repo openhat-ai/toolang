@@ -9,7 +9,7 @@ execution concepts while preserving current behavior:
 - `RunLimits`: the limits adopted by a run tree;
 - `RunnableInput`: resolved primary and named inputs adopted by a run;
 - `AgentResources`: the concrete resources available at an execution point;
-- `ResourceFilter`: selector lists that can only narrow `AgentResources`.
+- `AgentCeiling`: selector lists that can only narrow `AgentResources`.
 
 Raw chat input remains a `str`; there is no separate raw-text type alias. Chat
 parsing distinguishes quick commands, override-only input, and runnable input.
@@ -22,10 +22,10 @@ text, while `PolicyCommand` becomes `RunOverride`.
   RunOverride* + RunnableInputRaw`; execution resolution produces `RunnableInput`.
 - `RunSpec` and bound runs carry one `RunnableInput` instead of separate primary
   and named fields.
-- `AgentCeiling`, `_ResolvedAgentCeiling`, and `_RunCeiling` are replaced by
-  `ResourceFilter` and `AgentResources`; no `RunResources` or
+- `AgentCeiling` remains selector-based, while `_ResolvedAgentCeiling` and
+  `_RunCeiling` are replaced by `AgentResources`; no `RunResources` or
   `AvailableResources` type exists.
-- Resource preparation follows `AgentResources + ResourceFilter* ->
+- Resource preparation follows `AgentResources + AgentCeiling* ->
   AgentResources` through shared selector-list operations.
 - Preparation controls store explicit `bindings`, `limits`, `input`, and final
   `resources` snapshots.
@@ -42,7 +42,7 @@ documentation, and tests.
 
 It does not change statuses, errors, request identity, control timing, retry
 cuts, command syntax, resource-selection semantics, or `given`/`noted` values.
-It does not persist state fingerprints, resource filters, environment variables,
+It does not persist state fingerprints, agent ceilings, environment variables,
 plugin instances, provider credentials, or other new setup provenance.
 
 ## Input Model
@@ -77,7 +77,7 @@ not round-trip through raw text or `RunnableInputRaw`.
 `default`, and `limit` commands. Existing config keys, environment variables,
 CLI flags, and colon-command spellings remain unchanged.
 
-`ResourceFilter` contains the current model, tool, and cap selector lists.
+`AgentCeiling` contains the current model, tool, and cap selector lists.
 `AgentResources` contains the resolved model selectors and concrete tool/cap
 bindings used by execution. Its record codec emits only stable model, tool, and
 cap identities; it never emits runtime objects or secrets.
@@ -85,7 +85,7 @@ cap identities; it never emits runtime objects or secrets.
 Resource construction has two operations:
 
 1. build the initial `AgentResources` from immutable setup and state snapshots;
-2. apply zero or more `ResourceFilter` values without expanding the base set.
+2. apply zero or more `AgentCeiling` values without expanding the base set.
 
 Selector matching, ordering, deduplication, and directive `=`, `+=`, and `-=`
 behavior use shared selector-list helpers. Flow and agic execution select their
@@ -108,7 +108,7 @@ Each is the effective snapshot for that accepted preparation. Retry records a
 self-contained snapshot even when its input is unchanged. Steer uses a message
 and stop uses a reason rather than overloading `RunnableInput`.
 
-`ResourceFilter` is not durable run truth and is not stored. Historical ceiling
+`AgentCeiling` is not durable run truth and is not stored. Historical ceiling
 data may be decoded only for migration and is not projected as final resources.
 Historical controls that cannot reconstruct final resources use an explicit
 legacy absence; all newly accepted preparation controls require resources.

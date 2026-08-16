@@ -18,7 +18,7 @@ from toolang.base.types.message import (
     TextPart,
     message_text,
 )
-from toolang.base.types.policy import ResourceFilter, RunBindings, RunLimits
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.time import utc_now
 from toolang.lang.ast import (
@@ -74,7 +74,7 @@ class BoundRun:
     setup: AgentSetup
     created_at: str
     limits: RunLimits = RunLimits()
-    resource_filters: tuple[ResourceFilter, ...] = ()
+    ceilings: tuple[AgentCeiling, ...] = ()
     agent_resources: AgentResources | None = None
     resources: AgentResources | None = None
     flow_resources: AgentResources | None = None

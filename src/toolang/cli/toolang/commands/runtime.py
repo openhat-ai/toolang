@@ -14,7 +14,7 @@ import typer
 from toolang.common.layout import AgentLayout
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
-    resolve_resource_filter_overrides,
+    resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
 from toolang.up import process as agents
@@ -87,8 +87,8 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
             agent_log_path=layout.runtime_log,
         )
         configure_logging_plan(log_plan)
-        resource_filter_overrides = user_call(
-            resolve_resource_filter_overrides,
+        ceiling_overrides = user_call(
+            resolve_ceiling_overrides,
             log_plan.environ,
             options.allows,
         )
@@ -110,7 +110,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                 endpoint_host=options.endpoint_host,
                 port=options.port,
                 sandbox=options.sandbox,
-                resource_filter_overrides=resource_filter_overrides,
+                ceiling_overrides=ceiling_overrides,
                 binding_overrides=binding_overrides,
                 limit_overrides=limit_overrides,
                 file_inboxes=options.inboxes,
@@ -517,9 +517,7 @@ def serve(
         host=host,
         endpoint_host=endpoint_host,
         port=port,
-        resource_filter_overrides=user_call(
-            resolve_resource_filter_overrides, {}, allows
-        ),
+        ceiling_overrides=user_call(resolve_ceiling_overrides, {}, allows),
         binding_overrides=user_call(resolve_binding_overrides, {}, defaults),
         limit_overrides=user_call(resolve_limit_overrides, {}, limits),
         file_inboxes=inboxes,
@@ -562,8 +560,8 @@ def resolve_startup(
     )
     if not background:
         configure_logging_plan(log_plan)
-    resource_filter_overrides = user_call(
-        resolve_resource_filter_overrides,
+    ceiling_overrides = user_call(
+        resolve_ceiling_overrides,
         log_plan.environ,
         allows,
     )
@@ -585,7 +583,7 @@ def resolve_startup(
             endpoint_host=endpoint_host,
             port=port,
             sandbox=sandbox,
-            resource_filter_overrides=resource_filter_overrides,
+            ceiling_overrides=ceiling_overrides,
             binding_overrides=binding_overrides,
             limit_overrides=limit_overrides,
             file_inboxes=inboxes,

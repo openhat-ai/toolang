@@ -26,7 +26,7 @@ from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
-    resolve_resource_filter_overrides,
+    resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
 from toolang.execution.calls import parse_call, resolve_spec
@@ -520,9 +520,7 @@ async def _execute(
         )
     setup = await SetupWatcher(
         layout,
-        resource_filter_overrides=resolve_resource_filter_overrides(
-            environ, allow_options
-        ),
+        ceiling_overrides=resolve_ceiling_overrides(environ, allow_options),
         binding_overrides={
             **resolve_binding_overrides(environ),
             **cli_bindings,

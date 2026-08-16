@@ -31,7 +31,7 @@ def test_run_spec_has_minimal_execution_contract() -> None:
         "thread",
         "bindings",
         "limits",
-        "resource_filters",
+        "ceilings",
         "input",
     )
 

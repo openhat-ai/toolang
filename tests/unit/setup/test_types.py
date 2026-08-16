@@ -8,7 +8,7 @@ import pytest
 
 import toolang.setup as setup_package
 from toolang.base.types.model import ModelInfo
-from toolang.base.types.policy import ResourceFilter, RunBindings, RunLimits
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.setup import AgentEnvironment, AgentSetup
 
@@ -46,7 +46,7 @@ def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:
     assert tuple(setup.providers) == ("openai",)
     assert tuple(setup.adapters) == ("responses",)
     assert setup.envs == {"OPENAI_API_KEY": "secret"}
-    assert setup.resource_filter == ResourceFilter()
+    assert setup.ceiling == AgentCeiling()
     assert setup.bindings == RunBindings()
     assert setup.limits == RunLimits()
     with pytest.raises(TypeError):

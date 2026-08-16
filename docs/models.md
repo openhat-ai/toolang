@@ -289,8 +289,8 @@ Resolution proceeds in this order:
 
 Every candidate must be inside the current private `AgentResources`.
 `--allow models=SELECTORS` contributes a selector list to
-`AgentSetup.resource_filter`; it does not select one model and does not alter the
+`AgentSetup.ceiling`; it does not select one model and does not alter the
 complete model list cached by `SetupWatcher`. At start, the executor resolves
-the setup filter, applies any request filters, and produces `AgentResources`.
+the setup ceiling, applies any request ceilings, and produces `AgentResources`.
 Agic `models` directives further intersect the nearest flow resources. A
 nested flow starts again from the tree-level agent resources.
