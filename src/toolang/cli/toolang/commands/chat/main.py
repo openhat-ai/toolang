@@ -13,7 +13,7 @@ import typer
 from toolang.base.types.message import TextDelta, TextPart, message_text
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
-    resolve_ceiling_overrides,
+    resolve_resource_filter_overrides,
     resolve_limit_overrides,
 )
 from toolang.common.errors import ToolangError
@@ -28,8 +28,8 @@ from .base import ChatClient, chat_status_label, friendly_error as chat_friendly
 from .history import ChatInputHistoryStore
 from .input import (
     QuickCommand,
-    is_policy_commands,
-    is_runnable_input,
+    is_run_input_text,
+    is_run_overrides,
     normalize_chat_input,
     parse_chat_input,
 )
@@ -108,8 +108,8 @@ def _chat_runtime(
     environ = load_runtime_environ(layout, base_environ=os.environ)
     local = LocalChatSession(
         layout,
-        ceiling_overrides=user_call(
-            resolve_ceiling_overrides,
+        resource_filter_overrides=user_call(
+            resolve_resource_filter_overrides,
             environ,
             allow_options,
         ),
@@ -223,9 +223,9 @@ def _chat_handle_scripted_command(
     except ValueError as exc:
         typer.echo(chat_friendly_error(str(exc)), err=True)
         return True
-    if is_runnable_input(chat_input):
+    if is_run_input_text(chat_input):
         return False
-    if is_policy_commands(chat_input):
+    if is_run_overrides(chat_input):
         try:
             updated = client.apply_settings(chat_input, selector_payload)
         except (click.ClickException, ToolangError, ValueError) as exc:

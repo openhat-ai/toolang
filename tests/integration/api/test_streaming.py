@@ -34,7 +34,7 @@ from toolang.execution.records import RunInputRef, ThreadControlRef, ThreadPeer
 from toolang.execution.schemas import RunDetail, ThreadDetail
 from toolang.execution.types import StepPath
 from toolang.up import AgentCore
-from tests.support.execution_fixtures import project_run_start
+from tests.support.execution_fixtures import project_run_start, project_step
 from tests.support.execution_harness import ExecutionHarness
 
 
@@ -402,21 +402,9 @@ agic answer(_: Part[]) -> Part[]:
 
         retry_control = core.store.list_run_controls(run_id=source_id)[-1]
         rerun_control = core.store.get_run_control(run_id=rerun_id, index=0)
-        assert retry_control.context["limits"] == {
-            "agic_model_calls": 200,
-            "agic_tool_calls": None,
-            "tokens": 10,
-            "cost": None,
-            "time": None,
-        }
+        assert retry_control.limits == RunLimits(tokens=10)
         assert rerun_control is not None
-        assert rerun_control.context["limits"] == {
-            "agic_model_calls": 200,
-            "agic_tool_calls": None,
-            "tokens": 100,
-            "cost": None,
-            "time": 30,
-        }
+        assert rerun_control.limits == RunLimits(tokens=100, time=30)
     finally:
         asyncio.run(core.close())
 
@@ -593,6 +581,17 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
         thread_id="script_tree",
         origin="script",
         input=Message.user("root"),
+    )
+    project_step(
+        core.store,
+        run_id="run_root",
+        step_index=0,
+        kind="run",
+        status="running",
+        input=(RunInputRef(index=0),),
+        output=(),
+        started_at="2026-01-01T00:00:01Z",
+        finished_at=None,
     )
     project_run_start(
         core.store,

@@ -16,8 +16,8 @@ Chat uses the same runtime units as the rest of Toolang:
 | `step` | One execution unit inside the run |
 
 One terminal `ChatInput` resolves to one `QuickCommand`, one or more
-`PolicyCommand` values, or a policy-command sequence paired with
-`RunnableInput`. Only the runnable-input branch creates a start control and a
+`RunOverride` values, or a policy-command sequence paired with
+`RunInputText`. Only the runnable-input branch creates a start control and a
 run in an existing thread. A client creates the thread explicitly before the
 first run.
 
@@ -186,7 +186,7 @@ chat/default runnable. Persisted state is read through the normal thread and run
 detail endpoints.
 
 `GET /api/v1/models` returns model selectors inside the server's current
-`AgentSetup.ceiling` and reports `AgentSetup.bindings.model` when one is set.
+`AgentSetup.resource_filter` and reports `AgentSetup.bindings.model` when one is set.
 A run applies its selected runnable's `models` directive after it starts.
 
 

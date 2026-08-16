@@ -23,14 +23,14 @@ import uvicorn
 from uvicorn.main import STARTUP_FAILURE
 
 from toolang.api.app import create_app
-from toolang.base.types.policy import AgentCeiling
+from toolang.base.types.policy import ResourceFilter
 from toolang.catalog import CapsManager, JobsManager
 from toolang.common.config import resolve_ui_base_url
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor.ceiling import (
+from toolang.execution.executor.resources import (
     agent_model_targets,
-    validate_agent_ceiling,
+    validate_resource_filter,
 )
 from toolang.setup import AgentSetup
 from toolang.state import watcher as state_watcher
@@ -66,7 +66,7 @@ class ServeSpec:
     host: str
     endpoint_host: str
     port: int
-    ceiling_overrides: Mapping[str, tuple[str, ...] | None] = field(
+    resource_filter_overrides: Mapping[str, tuple[str, ...] | None] = field(
         default_factory=dict
     )
     binding_overrides: Mapping[str, str | None] = field(default_factory=dict)
@@ -77,8 +77,8 @@ class ServeSpec:
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
-            "ceiling_overrides",
-            MappingProxyType(dict(self.ceiling_overrides)),
+            "resource_filter_overrides",
+            MappingProxyType(dict(self.resource_filter_overrides)),
         )
         object.__setattr__(
             self,
@@ -102,7 +102,7 @@ def resolve_serve(
     host: str = "127.0.0.1",
     endpoint_host: str | None = None,
     port: int | None = None,
-    ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+    resource_filter_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
     binding_overrides: Mapping[str, str | None] | None = None,
     limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     file_inboxes: Sequence[Path] | None = None,
@@ -122,7 +122,7 @@ def resolve_serve(
             layout=layout,
             temporary=temporary_port,
         ),
-        ceiling_overrides=dict(ceiling_overrides or {}),
+        resource_filter_overrides=dict(resource_filter_overrides or {}),
         binding_overrides=dict(binding_overrides or {}),
         limit_overrides=dict(limit_overrides or {}),
         file_inboxes=resolved_inboxes,
@@ -152,7 +152,7 @@ def build_serve_argv(
         "--port",
         str(spec.port),
     ]
-    for name, selectors in spec.ceiling_overrides.items():
+    for name, selectors in spec.resource_filter_overrides.items():
         command.extend(["--allow", f"{name}={_format_allow(selectors)}"])
     for name, value in spec.binding_overrides.items():
         command.extend(["--default", f"{name}={_format_value(value)}"])
@@ -177,16 +177,16 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
 
     core = AgentCore(
         spec.layout,
-        ceiling_overrides=spec.ceiling_overrides,
+        resource_filter_overrides=spec.resource_filter_overrides,
         binding_overrides=spec.binding_overrides,
         limit_overrides=spec.limit_overrides,
     )
     asyncio.run(core.state.refresh())
     asyncio.run(core.setup.refresh())
     state = core.state.current()
-    ceiling = core.setup.current().ceiling
+    resource_filter = core.setup.current().resource_filter
     _validate_file_agic(state, enabled=bool(spec.file_inboxes))
-    validate_agent_ceiling(core.setup.current(), state, ceiling)
+    validate_resource_filter(core.setup.current(), state, resource_filter)
     cors_allowed_origins = resolve_cors_allowed_origins(
         state.root_config,
         environ=environ,
@@ -202,7 +202,7 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
     _log_state_loaded(
         current_setup(),
         current_state(),
-        ceiling=ceiling,
+        resource_filter=resource_filter,
     )
     shutdown_signal = threading.Event()
     caps_manager = CapsManager(spec.layout)
@@ -219,7 +219,7 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
                 endpoint=spec.endpoint,
                 started_at=started_at,
                 pid=os.getpid(),
-                models=ceiling.models or (),
+                models=resource_filter.models or (),
                 sandbox=environ.get("TOOLANG_SANDBOX", "none"),
             )
             scheduler = JobScheduler(
@@ -360,12 +360,12 @@ def _log_state_loaded(
     setup: AgentSetup,
     state: AgentState,
     *,
-    ceiling: AgentCeiling,
+    resource_filter: ResourceFilter,
 ) -> None:
     logger.info(
         "Agent loaded state=%s models=%s tools=%s psyches=%s skills=%s services=%s",
         state.fingerprint[:12],
-        _model_count(setup, state, ceiling=ceiling),
+        _model_count(setup, state, resource_filter=resource_filter),
         len(setup.tools),
         _cap_count(state, "psyche"),
         _cap_count(state, "skill"),
@@ -377,9 +377,9 @@ def _model_count(
     setup: AgentSetup,
     state: AgentState,
     *,
-    ceiling: AgentCeiling,
+    resource_filter: ResourceFilter,
 ) -> int:
-    _default, targets = agent_model_targets(setup, state, ceiling)
+    _default, targets = agent_model_targets(setup, state, resource_filter)
     return len(targets)
 
 

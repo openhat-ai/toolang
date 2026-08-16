@@ -7,8 +7,8 @@ from toolang.cli.toolang.commands.chat.input import (
     normalize_chat_input,
     parse_chat_input,
 )
-from toolang.execution.types import PolicyCommand
-from toolang.lang.input import RunnableInput
+from toolang.execution.types import RunOverride
+from toolang.lang.input import RunInputText
 
 
 @pytest.mark.parametrize(
@@ -31,8 +31,8 @@ def test_parse_single_quick_command(source: str, expected: QuickCommand) -> None
 
 def test_policy_only_input_returns_commands() -> None:
     assert parse_chat_input(":model openai/gpt-5\n\n:limit time=30") == (
-        PolicyCommand("default", "model", "openai/gpt-5"),
-        PolicyCommand("limit", "time", 30),
+        RunOverride("default", "model", "openai/gpt-5"),
+        RunOverride("limit", "time", 30),
     )
 
 
@@ -41,10 +41,10 @@ def test_policy_and_primary_input_return_one_runnable_branch() -> None:
         ":model openai/gpt-5\n\n:agic review focus=security\n\nReview this"
     ) == (
         (
-            PolicyCommand("default", "model", "openai/gpt-5"),
-            PolicyCommand("default", "runnable", "agic:review"),
+            RunOverride("default", "model", "openai/gpt-5"),
+            RunOverride("default", "runnable", "agic:review"),
         ),
-        RunnableInput(
+        RunInputText(
             primary="Review this",
             named=(("focus", "security"),),
         ),
@@ -53,17 +53,17 @@ def test_policy_and_primary_input_return_one_runnable_branch() -> None:
 
 def test_runnable_named_inputs_make_a_run_without_primary_input() -> None:
     assert parse_chat_input(":flow research topic=agents") == (
-        (PolicyCommand("default", "runnable", "flow:research"),),
-        RunnableInput(named=(("topic", "agents"),)),
+        (RunOverride("default", "runnable", "flow:research"),),
+        RunInputText(named=(("topic", "agents"),)),
     )
 
 
-def test_allow_shortcuts_are_policy_commands_not_quick_commands() -> None:
+def test_allow_shortcuts_are_run_overrides_not_quick_commands() -> None:
     assert parse_chat_input(":models openai/* deepseek/*") == (
-        PolicyCommand("allow", "models", ("openai/*", "deepseek/*")),
+        RunOverride("allow", "models", ("openai/*", "deepseek/*")),
     )
     assert parse_chat_input(":skills reviewer") == (
-        PolicyCommand("allow", "skills", ("reviewer",)),
+        RunOverride("allow", "skills", ("reviewer",)),
     )
 
 
@@ -73,7 +73,7 @@ def test_chat_normalization_preserves_first_indentation_and_internal_blanks() ->
     assert normalize_chat_input(source) == "  first\n\nsecond"
     assert parse_chat_input(source) == (
         (),
-        RunnableInput(primary="  first\n\nsecond"),
+        RunInputText(primary="  first\n\nsecond"),
     )
 
 

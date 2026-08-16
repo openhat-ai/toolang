@@ -318,8 +318,8 @@ overlays complete.
 chat session policy, or run policy may select a different value; run policy is
 the highest binding layer.
 
-At `RunExecutor.start()`, the captured `AgentSetup.ceiling` resolves to a
-private concrete `_ResolvedAgentCeiling`. Session and run `AgentCeiling`
+At `RunExecutor.start()`, the captured `AgentSetup.resource_filter` resolves to a
+private concrete `AgentResources`. Session and run `ResourceFilter`
 restrictions are then intersected with it in order and cannot restore
 resources excluded by setup policy or an earlier restriction.
 
@@ -342,10 +342,11 @@ List filters use the same selector list grammar.
 ## Directive Set Math
 
 At agic start, each directive set starts from the nearest concrete flow
-ceiling, or from the concrete agent ceiling when there is no containing flow:
+resources, or from the tree-level agent resources when there is no containing
+flow:
 
 ```text
-inherited = nearest flow ceiling or agent ceiling
+inherited = nearest flow resources or agent resources
 current = inherited
 ```
 
@@ -366,19 +367,19 @@ The canonical operator meanings are:
 | `+=` | set union |
 
 `matches(selector-list)` is always evaluated against `inherited`, not against
-all setup resources. Therefore `+=` cannot grant access outside the current
-flow ceiling or the agent ceiling.
+all setup resources. Therefore `+=` cannot grant access outside the selected
+flow or agent resource base.
 
-Every flow invocation is a ceiling reset boundary:
+Every flow invocation is a resource-base reset boundary:
 
 ```text
-flow ceiling = apply(agent ceiling, flow directives)
+flow resources = apply(agent resources, flow directives)
 ```
 
-A flow without directives resets to the agent ceiling. Flow directives
+A flow without directives resets to the agent resources. Flow directives
 constrain agics executed in that flow, but do not propagate through nested flow
 calls. When a nested flow returns, subsequent sibling agics again use the
-caller's immutable flow ceiling.
+caller's immutable flow resources.
 
 Examples:
 

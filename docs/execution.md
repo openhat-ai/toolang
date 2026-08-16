@@ -167,7 +167,8 @@ observe only higher-level events.
 
 ## Run Controls
 
-Control kinds are `start`, `steer`, and `stop`. Control timing is:
+Preparation control kinds are `start`, `rerun`, and `retry`; interactive
+control kinds are `steer` and `stop`. Control timing is:
 
 ```text
 immediate | next_step | next_call
@@ -185,6 +186,12 @@ revoked   explicitly withdrawn before application
 `applied` means the control was applied; it does not mean the run succeeded.
 A stop control that cancels a run is therefore `applied`. An unapplied steer
 left behind by a terminal run is `wontapply`.
+
+Every newly accepted preparation control stores top-level `RunBindings`,
+`RunLimits`, `RunInput`, and final `AgentResources` snapshots. Steer stores a
+`Message`; stop stores an optional reason. These values are not duplicated in
+the control context. A durable run is a root exactly when `parent is None`;
+callers that need a root run ID derive it by following parent-run ownership.
 
 Every run-control insert or status change receives a monotonically increasing
 SQLite revision. Each executor remembers the latest revision it observed and
@@ -242,18 +249,18 @@ check; it is not part of the public manager API.
 
 `RunSpec` carries one explicit immutable `AgentState`,
 `toolang.setup.AgentSetup`, effective `RunBindings` and `RunLimits`, and zero
-or more `AgentCeiling` restrictions. `AgentSetup` supplies the immutable
+or more `ResourceFilter` restrictions. `AgentSetup` supplies the immutable
 `AgentLayout`, root-scoped installed runtime implementations, and captured
 policy defaults. `SetupWatcher` resolves
 root and agent-home `[allow]`, `[default]`, and `[limit]` config on every
 refresh, then applies frozen field-level environment/CLI overrides before
 publishing the setup snapshot.
 Execution uses that layout directly for the agent identity, home, and runtime
-rooms. `RunSpec.primary` is one protocol-level `Percept`;
+rooms. `RunSpec.input.primary` is one protocol-level `Percept`;
 after runnable resolution, input coercion exposes that value as `Part[]` or
 another explicitly declared primary type. Output coercion validates the final
 run value against the runnable's declared output type. Setup and state remain
-complete snapshots; the executor computes private run ceilings instead of
+complete snapshots; the executor computes concrete `AgentResources` instead of
 receiving filtered copies. Child runs inherit setup and state. Source changes
 affect only runs accepted after the new state is observed. Invalid later setup
 config does not replace the last valid snapshot.

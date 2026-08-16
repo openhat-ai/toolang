@@ -7,50 +7,50 @@ from typing import cast
 
 from toolang.execution.policy import merge_commands
 from toolang.execution.runnables import parse_runnable_ref
-from toolang.execution.types import PolicyCommand
+from toolang.execution.types import RunOverride
 
-_COMMANDS_KEY = "policy_commands"
+_OVERRIDES_KEY = "run_overrides"
 
 
 def commands_from_selects(
     selects: Mapping[str, object],
-) -> tuple[PolicyCommand, ...]:
+) -> tuple[RunOverride, ...]:
     """Project canonical session commands from chat presentation state."""
 
-    stored = selects.get(_COMMANDS_KEY)
+    stored = selects.get(_OVERRIDES_KEY)
     if isinstance(stored, tuple) and all(
-        isinstance(item, PolicyCommand) for item in stored
+        isinstance(item, RunOverride) for item in stored
     ):
-        return cast(tuple[PolicyCommand, ...], stored)
+        return cast(tuple[RunOverride, ...], stored)
 
-    commands: list[PolicyCommand] = []
+    commands: list[RunOverride] = []
     model = _text(selects.get("model"))
     if model is not None:
-        commands.append(PolicyCommand("default", "model", model))
+        commands.append(RunOverride("default", "model", model))
     runnable = _text(selects.get("runnable"))
     if runnable is not None:
-        commands.append(PolicyCommand("default", "runnable", runnable))
+        commands.append(RunOverride("default", "runnable", runnable))
         return tuple(commands)
     for kind in ("flow", "agic"):
         name = _text(selects.get(kind))
         if name is not None:
-            commands.append(PolicyCommand("default", "runnable", f"{kind}:{name}"))
+            commands.append(RunOverride("default", "runnable", f"{kind}:{name}"))
             break
     return tuple(commands)
 
 
 def apply_session_commands(
     selects: Mapping[str, object],
-    updates: Sequence[PolicyCommand],
+    updates: Sequence[RunOverride],
 ) -> dict[str, object]:
     """Apply policy-only commands and retain chat presentation selectors."""
 
     commands = merge_commands(commands_from_selects(selects), updates)
     result = dict(selects)
     if commands:
-        result[_COMMANDS_KEY] = commands
+        result[_OVERRIDES_KEY] = commands
     else:
-        result.pop(_COMMANDS_KEY, None)
+        result.pop(_OVERRIDES_KEY, None)
     result.pop("model", None)
     result.pop("agic", None)
     result.pop("flow", None)

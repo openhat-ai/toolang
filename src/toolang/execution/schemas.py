@@ -7,7 +7,9 @@ from dataclasses import dataclass, field, fields
 from typing import Any, cast
 
 from toolang.base.types.message import Message, MessagePart, message_summary
+from toolang.base.types.policy import RunBindings, RunLimits
 from toolang.base.types.run import ModelCall
+from toolang.lang.input import RunInput
 from .records import (
     RunControlRecord,
     RunControlRef,
@@ -25,6 +27,7 @@ from .records import (
 )
 from .types import (
     ControlTiming,
+    AgentResources,
     RunControlKind,
     ControlStatus,
     ExecutionError,
@@ -41,11 +44,12 @@ class RunInputRefData:
     """One caller-facing run input reference."""
 
     index: int = 0
+    name: str | None = None
     part: int | None = None
 
     @classmethod
     def from_ref(cls, ref: RunInputRef) -> RunInputRefData:
-        return cls(index=ref.index, part=ref.part)
+        return cls(index=ref.index, name=ref.name, part=ref.part)
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,7 +183,7 @@ class ThreadInfo:
             raise ValueError(f"run start input has no message: {first.id}")
         return cls(
             id=thread.thread_id,
-            title=message_summary(start.input.parts) or thread.origin,
+            title=message_summary(start.input.primary) or thread.origin,
             created_at=thread.created_at,
             origin=thread.origin,
             channel=_thread_channel(thread.thread_id, thread.origin),
@@ -225,12 +229,13 @@ class RunInfo:
         *,
         controls: Sequence[RunControlRecord],
         steps: Sequence[StepRecord],
+        root_run_id: str,
     ) -> RunInfo:
         """Build one run summary from durable records."""
 
         start = _start_control(controls)
         input_text = (
-            message_summary(start.input.parts) if start.input is not None else ""
+            message_summary(start.input.primary) if start.input is not None else ""
         )
         last_message_step = next(
             (
@@ -256,7 +261,7 @@ class RunInfo:
             id=run.id,
             parent=run.parent,
             thread_id=run.thread,
-            root_run_id=run.root_run_id,
+            root_run_id=root_run_id,
             runnable_kind=run.runnable_kind,
             runnable_name=run.runnable_name,
             call_kind=run.call_kind,
@@ -285,7 +290,12 @@ class RunControlInfo:
     anchor: StepPath | None
     request_id: str | None
     status: ControlStatus
+    input: RunInput | None
+    bindings: RunBindings | None
+    limits: RunLimits | None
+    resources: AgentResources | None
     message: Message | None
+    reason: str | None
     context: dict[str, Any]
     error: str | None
     created_at: str
@@ -302,7 +312,12 @@ class RunControlInfo:
             anchor=control.anchor,
             request_id=control.request,
             status=control.status,
-            message=control.input,
+            input=control.input,
+            bindings=control.bindings,
+            limits=control.limits,
+            resources=control.resources,
+            message=control.message,
+            reason=control.reason,
             context=dict(control.context),
             error=control.error,
             created_at=control.created_at,
@@ -374,14 +389,24 @@ class RunDetail(RunInfo):
         steps: Sequence[StepRecord],
         controls: Sequence[RunControlRecord] = (),
         model_calls: Mapping[StepPath, ModelCall] | None = None,
+        root_run_id: str,
     ) -> RunDetail:
         """Build complete caller-facing run detail from durable records."""
 
-        info = RunInfo.from_record(run, controls=controls, steps=steps)
+        info = RunInfo.from_record(
+            run,
+            controls=controls,
+            steps=steps,
+            root_run_id=root_run_id,
+        )
         start = _start_control(controls)
         return cls(
             **{item.name: getattr(info, item.name) for item in fields(RunInfo)},
-            input=start.input,
+            input=(
+                Message(role="user", parts=start.input.primary)
+                if start.input is not None
+                else None
+            ),
             output=(
                 list(_resolve_value_ref(run.output, controls=controls, steps=steps))
                 if run.output is not None
@@ -431,7 +456,21 @@ def _resolve_value_ref(
     control = next((item for item in controls if item.index == ref.index), None)
     if control is None or control.input is None:
         return ()
-    parts = control.input.parts
+    if ref.name is not None:
+        value = next(
+            (item.value for item in control.input.named if item.name == ref.name),
+            None,
+        )
+        if isinstance(value, MessagePart):
+            parts: tuple[MessagePart, ...] = (value,)
+        elif isinstance(value, tuple) and all(
+            isinstance(item, MessagePart) for item in value
+        ):
+            parts = cast(tuple[MessagePart, ...], value)
+        else:
+            return ()
+    else:
+        parts = control.input.primary
     if ref.part is None:
         return parts
     if 0 <= ref.part < len(parts):

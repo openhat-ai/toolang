@@ -8,6 +8,7 @@ import sqlite3
 import pytest
 
 from tests.support.execution_fixtures import (
+    accept_run_start,
     project_run_end,
     project_run_start,
     project_step,
@@ -57,7 +58,8 @@ def test_start_acceptance_rolls_back_the_run_when_control_insert_fails(
         )
 
         with pytest.raises(ValueError):
-            store.accept_start(
+            accept_run_start(
+                store,
                 run_id="run_atomic_start",
                 parent=None,
                 thread="term_atomic_start",
@@ -128,10 +130,19 @@ def test_retry_reopens_root_and_ejects_the_failed_step_suffix(
             error="temporary failure",
         )
 
+        start = store.get_run_control(run_id=run.id, index=0)
+        assert start is not None
+        assert start.bindings is not None
+        assert start.limits is not None
+        assert start.input is not None
+        assert start.resources is not None
         reopened, control, ejected = store.accept_retry(
             run_id=run.id,
             anchor=None,
-            context={"limits": {"models": 400}},
+            bindings=start.bindings,
+            limits=start.limits,
+            input=start.input,
+            resources=start.resources,
             request_id="retry-1",
             created_at="2026-01-01T00:00:03Z",
         )
@@ -180,7 +191,8 @@ def test_rerun_acceptance_ejects_the_source_with_the_new_start_control(
             finished_at="2026-01-01T00:00:01Z",
         )
 
-        rerun, control = store.accept_start(
+        rerun, control = accept_run_start(
+            store,
             run_id="run_rerun",
             parent=None,
             thread=source.thread,
@@ -212,7 +224,8 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
     store = RunStore(tmp_path / "runs.db")
     try:
         store.create_thread(thread_id="term_atomic_event")
-        store.accept_start(
+        accept_run_start(
+            store,
             run_id="run_atomic_event",
             parent=None,
             thread="term_atomic_event",
@@ -225,7 +238,7 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
             run_id="run_atomic_event",
             kind="steer",
             timing="next_step",
-            input=Message.user("updated"),
+            message=Message.user("updated"),
             context={},
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
@@ -334,7 +347,8 @@ def test_run_control_revision_only_advances_when_control_state_changes(
     store = RunStore(tmp_path / "runs.db")
     try:
         store.create_thread(thread_id="term_control_revision")
-        store.accept_start(
+        accept_run_start(
+            store,
             run_id="run_control_revision",
             parent=None,
             thread="term_control_revision",
@@ -353,7 +367,7 @@ def test_run_control_revision_only_advances_when_control_state_changes(
             run_id="run_control_revision",
             kind="steer",
             timing="next_step",
-            input=Message.user("updated"),
+            message=Message.user("updated"),
             context={},
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
@@ -389,7 +403,8 @@ def test_run_store_adds_control_revisions_without_deleting_v18_history(
     path = tmp_path / "runs.db"
     store = RunStore(path)
     store.create_thread(thread_id="term_v18_revision")
-    store.accept_start(
+    accept_run_start(
+        store,
         run_id="run_v18_revision",
         parent=None,
         thread="term_v18_revision",
@@ -419,7 +434,7 @@ def test_run_store_adds_control_revisions_without_deleting_v18_history(
             run_id="run_v18_revision",
             kind="steer",
             timing="next_step",
-            input=Message.user("updated"),
+            message=Message.user("updated"),
             context={},
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
@@ -435,7 +450,8 @@ def test_claimed_control_cannot_be_canceled_before_its_event_is_persisted(
     store = RunStore(tmp_path / "runs.db")
     try:
         store.create_thread(thread_id="term_claimed_control")
-        store.accept_start(
+        accept_run_start(
+            store,
             run_id="run_claimed_control",
             parent=None,
             thread="term_claimed_control",
@@ -448,7 +464,7 @@ def test_claimed_control_cannot_be_canceled_before_its_event_is_persisted(
             run_id="run_claimed_control",
             kind="steer",
             timing="next_step",
-            input=Message.user("updated"),
+            message=Message.user("updated"),
             context={},
             request_id=None,
             created_at="2026-01-01T00:00:01Z",

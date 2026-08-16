@@ -26,7 +26,7 @@ from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
-    resolve_ceiling_overrides,
+    resolve_resource_filter_overrides,
     resolve_limit_overrides,
 )
 from toolang.execution.calls import parse_call, resolve_spec
@@ -35,10 +35,10 @@ from toolang.execution.records import RunRecord, execution_error_message
 from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import PolicyCommand, ThreadPrefix
+from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.input import NamedInputSources, RunnableInput
+from toolang.lang.input import NamedInputSources, RunInputText
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState
@@ -81,7 +81,7 @@ class _CollectorArgument(TyperArgument):
         return []
 
 
-class _IncompleteRunnableInput(Exception):
+class _IncompleteRunInputText(Exception):
     """A dynamic runnable command is missing required input."""
 
 
@@ -91,7 +91,7 @@ class _RunnableCommand(TyperCommand):
     def invoke(self, ctx: click.Context) -> Any:
         try:
             return TyperCommand.invoke(self, ctx)
-        except _IncompleteRunnableInput:
+        except _IncompleteRunInputText:
             click.echo(ctx.get_help())
             ctx.exit(2)
 
@@ -320,7 +320,7 @@ def _collect_call(
     *,
     items: tuple[str, ...],
     stdin: TextIO,
-) -> tuple[tuple[PolicyCommand, ...], RunnableInput, NamedInputSources]:
+) -> tuple[tuple[RunOverride, ...], RunInputText, NamedInputSources]:
     params = {parameter.name: parameter for parameter in runnable.params}
     raw_args: dict[str, str] = {}
     input_items: list[str] = []
@@ -349,13 +349,13 @@ def _collect_call(
             if not parameter.optional and parameter.name not in raw_args
         ]
         if missing:
-            raise _IncompleteRunnableInput
+            raise _IncompleteRunInputText
         if (
             runnable.input is not None
             and not runnable.input.optional
             and input.primary is None
         ):
-            raise _IncompleteRunnableInput
+            raise _IncompleteRunInputText
     return commands, input, tuple(raw_args.items())
 
 
@@ -403,8 +403,8 @@ def _run(
     source_path: Path,
     *,
     runnable: str,
-    commands: tuple[PolicyCommand, ...],
-    input: RunnableInput,
+    commands: tuple[RunOverride, ...],
+    input: RunInputText,
     raw_named: NamedInputSources,
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
@@ -503,8 +503,8 @@ async def _execute(
     ids: IdIssuer,
     run_id: str,
     runnable: str,
-    commands: tuple[PolicyCommand, ...],
-    input: RunnableInput,
+    commands: tuple[RunOverride, ...],
+    input: RunInputText,
     raw_named: NamedInputSources,
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
@@ -520,7 +520,9 @@ async def _execute(
         )
     setup = await SetupWatcher(
         layout,
-        ceiling_overrides=resolve_ceiling_overrides(environ, allow_options),
+        resource_filter_overrides=resolve_resource_filter_overrides(
+            environ, allow_options
+        ),
         binding_overrides={
             **resolve_binding_overrides(environ),
             **cli_bindings,
@@ -560,8 +562,8 @@ async def _execute(
             runnable_kind=selected.kind,
             runnable_name=selected.name,
             runnable_doc=selected.doc,
-            input_value=spec.primary,
-            args=dict(spec.named or {}),
+            input_value=spec.input.primary,
+            args=dict(spec.input.values),
         )
         if not quiet and (sys.stderr.isatty() or verbosity > 0)
         else None

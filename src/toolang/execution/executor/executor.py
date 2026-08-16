@@ -13,7 +13,7 @@ from typing import Any, Literal, cast
 
 from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.base.types.policy import ResourceFilter, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import (
     Message,
@@ -25,7 +25,13 @@ from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt, Parameter
 from toolang.lang.format import format_statement_head
-from toolang.lang.input import coerce_input, validate_value
+from toolang.lang.input import (
+    RunInput,
+    RunInputData,
+    RunInputValue,
+    coerce_input,
+    validate_value,
+)
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
@@ -38,11 +44,11 @@ from ..records import (
     StepOutputRef,
     StepRecord,
     ValueRef,
-    run_limits_to_data,
 )
 from ..store import RunStore
 from ..types import (
     ControlTiming,
+    AgentResources,
     ExecutionError,
     RunControlKind,
     StepPath,
@@ -56,17 +62,16 @@ from .common import (
     _StepFailed,
     control_text,
     initial_locals,
-    json_value,
     statement_has_call,
     value_percept,
     value_text,
 )
-from .ceiling import (
-    _ResolvedAgentCeiling,
-    restrict_agent_ceiling,
-    resolve_agent_ceiling,
-    resolve_run_ceiling,
-    validate_root_run_resources,
+from .resources import (
+    apply_resource_filter,
+    resolve_agent_resources,
+    resolve_runnable_resources,
+    snapshot_model_selection,
+    validate_model_binding,
 )
 from .limits import (
     _ModelAccounting,
@@ -108,9 +113,8 @@ class RunSpec:
     thread: str
     bindings: RunBindings
     limits: RunLimits
-    ceilings: tuple[AgentCeiling, ...] = ()
-    primary: Percept = ()
-    named: Mapping[str, object] | None = None
+    resource_filters: tuple[ResourceFilter, ...] = ()
+    input: RunInput = RunInput()
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,23 +203,28 @@ class RunExecutor:
 
         self._require_available()
         loop = asyncio.get_running_loop()
-        executable, agent_ceiling = _validate_start_spec(spec)
+        executable, input, agent_resources, resources = _prepare_start_spec(spec)
         if not isinstance(spec.limits, RunLimits):
             raise TypeError("run limits must be RunLimits")
         bound = _bind_run(
             spec,
+            executable=executable,
             run_id=run_id or self.ids.issue_run(),
-            agent_ceiling=agent_ceiling,
+            input=input,
+            agent_resources=agent_resources,
+            resources=resources,
         )
         self.store.accept_start(
             run_id=bound.run_id,
             parent=None,
             thread=bound.thread,
+            bindings=bound.bindings,
+            limits=bound.limits,
             input=bound.input,
+            resources=resources,
             context=_run_context(bound, executable),
             request_id=request_id,
             created_at=bound.created_at,
-            control_context={"limits": run_limits_to_data(spec.limits)},
         )
         return self._launch(bound, executable, loop=loop, tracer=tracer)
 
@@ -225,7 +234,7 @@ class RunExecutor:
         *,
         setup: AgentSetup,
         state: AgentState,
-        ceiling: AgentCeiling = AgentCeiling(),
+        resource_filter: ResourceFilter = ResourceFilter(),
         model: str | None = None,
         limits: RunLimits | None = None,
         run_id: str | None = None,
@@ -240,25 +249,30 @@ class RunExecutor:
             source,
             setup=setup,
             state=state,
-            ceiling=ceiling,
+            resource_filter=resource_filter,
             model=model,
             limits=limits if limits is not None else setup.limits,
         )
-        executable, agent_ceiling = _validate_start_spec(spec)
+        executable, input, agent_resources, resources = _prepare_start_spec(spec)
         bound = _bind_run(
             spec,
+            executable=executable,
             run_id=run_id or self.ids.issue_run(),
-            agent_ceiling=agent_ceiling,
+            input=input,
+            agent_resources=agent_resources,
+            resources=resources,
         )
         self.store.accept_start(
             run_id=bound.run_id,
             parent=None,
             thread=bound.thread,
+            bindings=bound.bindings,
+            limits=bound.limits,
             input=bound.input,
+            resources=resources,
             context=_run_context(bound, executable),
             request_id=request_id,
             created_at=bound.created_at,
-            control_context={"limits": run_limits_to_data(spec.limits)},
             kind="rerun",
             source=source,
         )
@@ -271,7 +285,7 @@ class RunExecutor:
         setup: AgentSetup,
         state: AgentState,
         anchor: StepPath | str | None = None,
-        ceiling: AgentCeiling = AgentCeiling(),
+        resource_filter: ResourceFilter = ResourceFilter(),
         model: str | None = None,
         limits: RunLimits | None = None,
         request_id: str | None = None,
@@ -285,20 +299,26 @@ class RunExecutor:
             run_id,
             setup=setup,
             state=state,
-            ceiling=ceiling,
+            resource_filter=resource_filter,
             model=model,
             limits=limits if limits is not None else setup.limits,
         )
-        executable, agent_ceiling = _validate_start_spec(spec)
+        executable, input, agent_resources, resources = _prepare_start_spec(spec)
         bound = _bind_run(
             spec,
+            executable=executable,
             run_id=run_id,
-            agent_ceiling=agent_ceiling,
+            input=input,
+            agent_resources=agent_resources,
+            resources=resources,
         )
         _reopened, control, _ejected = self.store.accept_retry(
             run_id=run_id,
             anchor=StepPath.parse(anchor) if anchor is not None else None,
-            context={"limits": run_limits_to_data(spec.limits)},
+            bindings=bound.bindings,
+            limits=bound.limits,
+            input=bound.input,
+            resources=resources,
             request_id=request_id,
             created_at=bound.created_at,
         )
@@ -316,7 +336,7 @@ class RunExecutor:
         *,
         setup: AgentSetup,
         state: AgentState,
-        ceiling: AgentCeiling,
+        resource_filter: ResourceFilter,
         model: str | None,
         limits: RunLimits,
     ) -> RunSpec:
@@ -326,7 +346,10 @@ class RunExecutor:
         control = self.store.get_run_control(run_id=run_id, index=0)
         if control is None or control.input is None:
             raise ValueError(f"run input not found: {run_id}")
-        runnable = run.runnable_name
+        runnable = control.bindings.runnable if control.bindings is not None else None
+        if runnable is not None:
+            _kind, _separator, runnable = runnable.partition(":")
+        runnable = runnable or run.runnable_name
         if not runnable:
             raise ValueError(f"run runnable not found: {run_id}")
         executable = resolve_runnable(state.program, runnable)
@@ -336,19 +359,28 @@ class RunExecutor:
             thread=run.thread,
             bindings=RunBindings(
                 runnable=f"{executable.kind}:{runnable}",
-                model=model if model is not None else _source_model(run),
+                model=(
+                    model
+                    if model is not None
+                    else control.bindings.model
+                    if control.bindings is not None
+                    else _source_model(run)
+                ),
             ),
             limits=limits,
-            ceilings=(
-                (ceiling,)
+            resource_filters=(
+                (resource_filter,)
                 if any(
                     value is not None
-                    for value in (ceiling.models, ceiling.tools, ceiling.caps)
+                    for value in (
+                        resource_filter.models,
+                        resource_filter.tools,
+                        resource_filter.caps,
+                    )
                 )
                 else ()
             ),
-            primary=control.input.percept,
-            named=_source_args(run, executable),
+            input=control.input,
         )
 
     def _launch(
@@ -375,7 +407,7 @@ class RunExecutor:
     def validate(self, spec: RunSpec) -> None:
         """Validate one immutable run spec without accepting a run."""
 
-        _validate_start_spec(spec)
+        _prepare_start_spec(spec)
 
     async def _execute_owned(
         self,
@@ -449,7 +481,8 @@ class RunExecutor:
             run_id=run_id,
             kind="stop",
             timing=timing,
-            input=Message.user(reason) if reason else None,
+            message=None,
+            reason=reason,
             context={},
             request_id=request_id,
             created_at=utc_now(),
@@ -475,7 +508,8 @@ class RunExecutor:
             run_id=run_id,
             kind="steer",
             timing=timing,
-            input=message,
+            message=message,
+            reason=None,
             context={},
             request_id=request_id,
             created_at=utc_now(),
@@ -772,9 +806,9 @@ class _Execution:
         config_layers = (root.state.root_config, root.state.home_config)
         self.model_aliases = parse_model_aliases(config_layers)
         self.default_models = parse_default_models(config_layers)
-        if root.agent_ceiling is None:
-            raise RuntimeError(f"agent ceiling missing: {root.run_id}")
-        self._agent_ceiling = root.agent_ceiling
+        if root.agent_resources is None:
+            raise RuntimeError(f"agent resources missing: {root.run_id}")
+        self._agent_resources = root.agent_resources
         self.date = root.created_at.partition("T")[0]
         self.timezone = "UTC"
         self._emit_trace = emit
@@ -797,11 +831,7 @@ class _Execution:
         )
 
     def _restore_model_limits(self, root_run_id: str) -> None:
-        runs = [
-            run
-            for run in self.store.list_runs(limit=None)
-            if run.root_run_id == root_run_id
-        ]
+        runs = self.store.list_run_tree(root_run_id=root_run_id)
         steps_by_run = self.store.list_steps_for_runs(
             run_ids=tuple(run.id for run in runs)
         )
@@ -902,20 +932,8 @@ class _Execution:
         from .runs import agic as agic_run
         from .runs import flow as flow_run
 
-        ceiling = resolve_run_ceiling(
-            self,
-            executable=executable,
-            agent=self._agent_ceiling,
-            flow=binding.flow_ceiling,
-            agent_name=binding.setup.layout.name,
-        )
-        binding = replace(
-            binding,
-            ceiling=ceiling,
-            flow_ceiling=(
-                ceiling if isinstance(executable, FlowDecl) else binding.flow_ceiling
-            ),
-        )
+        if binding.resources is None:
+            raise RuntimeError(f"run resources missing: {binding.run_id}")
         current = (
             dict(locals) if locals is not None else initial_locals(binding, executable)
         )
@@ -1079,22 +1097,25 @@ class _Execution:
             parent_step=step,
             placement=placement,
         )
+        binding = _prepare_child_run(binding, executable)
         _validate_inputs(
-            state=binding.state,
-            executable=executable,
-            input=binding.input.percept,
-            args=binding.args,
+            state=binding.state, executable=executable, input=binding.input
         )
+        resources = binding.resources
+        if resources is None:
+            raise RuntimeError(f"run resources missing: {binding.run_id}")
         context = _run_context(binding, executable)
         self.store.accept_start(
             run_id=binding.run_id,
             parent=step,
             thread=binding.thread,
+            bindings=binding.bindings,
+            limits=binding.limits,
             input=binding.input,
+            resources=resources,
             context=context,
             request_id=None,
             created_at=binding.created_at,
-            control_context={},
         )
         self.executor._register_child_run(
             run_id=binding.run_id,
@@ -1279,24 +1300,31 @@ def _child_binding(
         if percept is None:
             percept = (TextPart(value_text(primary.value)),)
     parameters = {parameter.name: parameter for parameter in executable.params}
+    named = tuple(
+        RunInputValue(
+            name=name,
+            value=_argument_value(local, parameters[name]),
+            type_name=parameters[name].type_name or "Part[]",
+        )
+        for name, local in locals.items()
+        if name in parameters and local.shape != "none"
+    )
     return BoundRun(
         run_id=context.executor.ids.issue_run(),
         root_run_id=parent.root_run_id,
         thread=parent.thread,
-        input=Message(role="user", parts=percept),
-        args={
-            name: _argument_value(local, parameters[name])
-            for name, local in locals.items()
-            if name in parameters and local.shape != "none"
-        },
-        model=parent.model,
+        bindings=RunBindings(
+            model=parent.bindings.model,
+            runnable=f"{executable.kind}:{executable.name}",
+        ),
+        input=RunInput(primary=percept, named=named),
         state=parent.state,
         setup=parent.setup,
         limits=parent.limits,
-        ceiling_restrictions=parent.ceiling_restrictions,
-        agent_ceiling=parent.agent_ceiling,
-        ceiling=None,
-        flow_ceiling=parent.flow_ceiling,
+        resource_filters=parent.resource_filters,
+        agent_resources=parent.agent_resources,
+        resources=None,
+        flow_resources=parent.flow_resources,
         created_at=utc_now(),
         call="run",
         parent=parent_step,
@@ -1304,11 +1332,11 @@ def _child_binding(
     )
 
 
-def _argument_value(local: Local, parameter: Parameter) -> object:
+def _argument_value(local: Local, parameter: Parameter) -> RunInputData:
     """Represent one child argument according to its declared value type."""
 
     if (parameter.type_name or "Part[]") != "Part[]":
-        return local.value
+        return cast(RunInputData, local.value)
     percept = value_percept(local.value, type_name=local.type_name)
     if percept is not None:
         return percept
@@ -1318,8 +1346,11 @@ def _argument_value(local: Local, parameter: Parameter) -> object:
 def _bind_run(
     spec: RunSpec,
     *,
+    executable: AgicDecl | FlowDecl,
     run_id: str,
-    agent_ceiling: _ResolvedAgentCeiling,
+    input: RunInput,
+    agent_resources: AgentResources,
+    resources: AgentResources,
 ) -> BoundRun:
     if not spec.thread or spec.thread != spec.thread.strip():
         raise ValueError("run spec requires a canonical thread id")
@@ -1327,16 +1358,18 @@ def _bind_run(
         run_id=run_id,
         root_run_id=run_id,
         thread=spec.thread,
-        input=Message(role="user", parts=tuple(spec.primary)),
-        args=dict(spec.named or {}),
-        model=spec.bindings.model,
+        bindings=replace(
+            spec.bindings,
+            runnable=f"{executable.kind}:{executable.name}",
+        ),
+        input=input,
         state=spec.state,
         setup=spec.setup,
         limits=spec.limits,
-        ceiling_restrictions=spec.ceilings,
-        agent_ceiling=agent_ceiling,
-        ceiling=None,
-        flow_ceiling=None,
+        resource_filters=spec.resource_filters,
+        agent_resources=agent_resources,
+        resources=resources,
+        flow_resources=resources if isinstance(executable, FlowDecl) else None,
         created_at=utc_now(),
     )
 
@@ -1346,32 +1379,10 @@ def _run_context(
     executable: AgicDecl | FlowDecl,
 ) -> dict[str, object]:
     context: dict[str, object] = {
-        "root": binding.root_run_id,
         "state_fingerprint": binding.state.fingerprint,
         "runnable": {"kind": executable.kind, "name": executable.name},
         "call": binding.call,
     }
-    if binding.model is not None:
-        context["model"] = binding.model
-    if binding.args:
-        context["args"] = {
-            name: json_value(value) for name, value in binding.args.items()
-        }
-    if binding.ceiling_restrictions:
-        context["ceilings"] = [
-            {
-                "models": list(restriction.models)
-                if restriction.models is not None
-                else None,
-                "tools": list(restriction.tools)
-                if restriction.tools is not None
-                else None,
-                "caps": list(restriction.caps)
-                if restriction.caps is not None
-                else None,
-            }
-            for restriction in binding.ceiling_restrictions
-        ]
     if binding.placement:
         context["placement"] = dict(binding.placement)
     return context
@@ -1380,27 +1391,6 @@ def _run_context(
 def _source_model(run: RunRecord) -> str | None:
     value = run.context.get("model")
     return str(value) if value is not None else None
-
-
-def _source_args(
-    run: RunRecord,
-    executable: AgicDecl | FlowDecl,
-) -> dict[str, object]:
-    raw = run.context.get("args")
-    if raw is None:
-        return {}
-    if not isinstance(raw, Mapping):
-        raise ValueError(f"run arguments are invalid: {run.id}")
-    parameters = {parameter.name: parameter for parameter in executable.params}
-    return {
-        str(name): _stored_value(
-            value,
-            (parameters[str(name)].type_name or "Part[]")
-            if str(name) in parameters
-            else None,
-        )
-        for name, value in raw.items()
-    }
 
 
 def _stored_value(value: object, type_name: str | None) -> object:
@@ -1437,18 +1427,9 @@ def _step_local(step: StepRecord) -> Local:
     )
 
 
-def _validate_call(spec: RunSpec, executable: AgicDecl | FlowDecl) -> None:
-    _validate_inputs(
-        state=spec.state,
-        executable=executable,
-        input=tuple(spec.primary),
-        args=dict(spec.named or {}),
-    )
-
-
-def _validate_start_spec(
+def _prepare_start_spec(
     spec: RunSpec,
-) -> tuple[AgicDecl | FlowDecl, _ResolvedAgentCeiling]:
+) -> tuple[AgicDecl | FlowDecl, RunInput, AgentResources, AgentResources]:
     if spec.bindings.runnable is None:
         raise ValueError("run spec requires a runnable binding")
     runnable_name, runnable_kind = parse_runnable_ref(spec.bindings.runnable)
@@ -1457,39 +1438,96 @@ def _validate_start_spec(
         runnable_name,
         kind=runnable_kind,
     )
-    _validate_call(spec, executable)
-    setup_ceiling = resolve_agent_ceiling(
+    input = _typed_run_input(spec.input, executable)
+    _validate_inputs(state=spec.state, executable=executable, input=input)
+    agent_resources = resolve_agent_resources(
         spec.setup,
         spec.state,
-        spec.setup.ceiling,
+        spec.setup.resource_filter,
     )
-    agent_ceiling = setup_ceiling
-    for restriction in spec.ceilings:
-        agent_ceiling = restrict_agent_ceiling(
+    for resource_filter in spec.resource_filters:
+        agent_resources = apply_resource_filter(
             spec.setup,
             spec.state,
-            agent_ceiling,
-            restriction,
+            agent_resources,
+            resource_filter,
         )
-    validate_root_run_resources(
-        spec.setup,
-        spec.state,
+    selection = snapshot_model_selection(spec.setup, spec.state)
+    resources = resolve_runnable_resources(
+        selection,
         executable=executable,
-        agent=agent_ceiling,
+        base=agent_resources,
+        setup=spec.setup,
+        state=spec.state,
+    )
+    validate_model_binding(
+        selection,
+        executable=executable,
+        resources=resources,
         model=spec.bindings.model,
     )
-    return executable, agent_ceiling
+    return executable, input, agent_resources, resources
+
+
+def _prepare_child_run(
+    binding: BoundRun,
+    executable: AgicDecl | FlowDecl,
+) -> BoundRun:
+    agent_resources = binding.agent_resources
+    if agent_resources is None:
+        raise RuntimeError(f"agent resources missing: {binding.run_id}")
+    base = (
+        agent_resources
+        if isinstance(executable, FlowDecl)
+        else binding.flow_resources or agent_resources
+    )
+    selection = snapshot_model_selection(binding.setup, binding.state)
+    resources = resolve_runnable_resources(
+        selection,
+        executable=executable,
+        base=base,
+        setup=binding.setup,
+        state=binding.state,
+    )
+    return replace(
+        binding,
+        resources=resources,
+        flow_resources=(
+            resources if isinstance(executable, FlowDecl) else binding.flow_resources
+        ),
+    )
+
+
+def _typed_run_input(
+    input: RunInput,
+    executable: AgicDecl | FlowDecl,
+) -> RunInput:
+    parameters = {parameter.name: parameter for parameter in executable.params}
+    return RunInput(
+        primary=input.primary,
+        named=tuple(
+            replace(
+                item,
+                type_name=(
+                    parameters[item.name].type_name or "Part[]"
+                    if item.name in parameters
+                    else item.type_name
+                ),
+            )
+            for item in input.named
+        ),
+    )
 
 
 def _validate_inputs(
     *,
     state: AgentState,
     executable: AgicDecl | FlowDecl,
-    input: Percept,
-    args: Mapping[str, object],
+    input: RunInput,
 ) -> None:
     structs = {item.name: item for item in state.program.structs}
     params = {param.name: param for param in executable.params}
+    args = input.values
     unknown = sorted(set(args) - set(params))
     if unknown:
         joined = ", ".join(unknown)
@@ -1502,13 +1540,17 @@ def _validate_inputs(
     if missing:
         joined = ", ".join(missing)
         raise ValueError(f"missing named inputs for {executable.name}: {joined}")
-    if executable.input is None and input:
+    if executable.input is None and input.primary:
         raise ValueError(f"{executable.name} does not accept primary input")
-    if executable.input is not None and not executable.input.optional and not input:
+    if (
+        executable.input is not None
+        and not executable.input.optional
+        and not input.primary
+    ):
         raise ValueError(f"{executable.name} requires primary input")
     if executable.input is not None:
         coerce_input(
-            input,
+            input.primary,
             executable.input.type_name or "Part[]",
             structs=structs,
         )

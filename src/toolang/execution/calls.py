@@ -10,7 +10,9 @@ from toolang.base.types.policy import RunBindings
 from toolang.lang.ast import AgicDecl, FlowDecl
 from toolang.lang.input import (
     NamedInputSources,
-    RunnableInput,
+    RunContent,
+    RunInput,
+    RunInputText,
     coerce_input,
     parse_input,
     perceive_input,
@@ -20,7 +22,7 @@ from toolang.state.state import AgentState
 
 from .policy import parse_policy_prefix, resolve_commands
 from .runnables import parse_runnable_ref, resolve_runnable
-from .types import PolicyCommand
+from .types import RunOverride
 
 if TYPE_CHECKING:
     from .executor.executor import RunSpec
@@ -29,7 +31,7 @@ IncludeResolver = Callable[[str], PerceptPart]
 Runnable = AgicDecl | FlowDecl
 
 
-def parse_call(source: str) -> tuple[tuple[PolicyCommand, ...], RunnableInput]:
+def parse_call(source: RunContent) -> tuple[tuple[RunOverride, ...], RunInputText]:
     """Parse one run-only source into policy commands and runnable input."""
 
     body = _strip_final_line_break(source)
@@ -38,15 +40,15 @@ def parse_call(source: str) -> tuple[tuple[PolicyCommand, ...], RunnableInput]:
 
 
 def resolve_spec(
-    commands: Sequence[PolicyCommand],
-    input: RunnableInput,
+    commands: Sequence[RunOverride],
+    input: RunInputText,
     *,
     setup: AgentSetup,
     state: AgentState,
     thread: str,
     default_runnable: str,
     surface: RunBindings = RunBindings(),
-    session_commands: Sequence[PolicyCommand] = (),
+    session_commands: Sequence[RunOverride] = (),
     surface_named: Mapping[str, object] | None = None,
     surface_named_sources: NamedInputSources = (),
     include: IncludeResolver | None = None,
@@ -55,7 +57,7 @@ def resolve_spec(
 
     from .executor.executor import RunSpec
 
-    restrictions, bindings, limits = resolve_commands(
+    resource_filters, bindings, limits = resolve_commands(
         setup,
         surface=surface,
         session=session_commands,
@@ -89,6 +91,9 @@ def resolve_spec(
         program=state.program,
         include=include,
     )
+    parameter_types = {
+        parameter.name: parameter.type_name or "Part[]" for parameter in runnable.params
+    }
     return RunSpec(
         setup=setup,
         state=state,
@@ -98,14 +103,17 @@ def resolve_spec(
             runnable=f"{runnable.kind}:{runnable.name}",
         ),
         limits=limits,
-        ceilings=restrictions,
-        primary=primary,
-        named=named or None,
+        resource_filters=resource_filters,
+        input=RunInput.from_values(
+            primary=primary,
+            named=named,
+            types=parameter_types,
+        ),
     )
 
 
 def validate_commands(
-    commands: Sequence[PolicyCommand],
+    commands: Sequence[RunOverride],
     *,
     setup: AgentSetup,
     state: AgentState,
@@ -114,13 +122,15 @@ def validate_commands(
 ) -> None:
     """Validate one prospective session policy without requiring run input."""
 
-    from .executor.ceiling import (
-        restrict_agent_ceiling,
-        resolve_agent_ceiling,
-        validate_root_run_resources,
+    from .executor.resources import (
+        apply_resource_filter,
+        resolve_agent_resources,
+        resolve_runnable_resources,
+        snapshot_model_selection,
+        validate_model_binding,
     )
 
-    restrictions, bindings, _limits = resolve_commands(
+    resource_filters, bindings, _limits = resolve_commands(
         setup,
         surface=surface,
         session=commands,
@@ -133,19 +143,25 @@ def validate_commands(
         runnable_name,
         kind=runnable_kind,
     )
-    ceiling = resolve_agent_ceiling(setup, state, setup.ceiling)
-    for restriction in restrictions:
-        ceiling = restrict_agent_ceiling(
+    resources = resolve_agent_resources(setup, state, setup.resource_filter)
+    for resource_filter in resource_filters:
+        resources = apply_resource_filter(
             setup,
             state,
-            ceiling,
-            restriction,
+            resources,
+            resource_filter,
         )
-    validate_root_run_resources(
-        setup,
-        state,
+    resources = resolve_runnable_resources(
+        snapshot_model_selection(setup, state),
         executable=runnable,
-        agent=ceiling,
+        base=resources,
+        setup=setup,
+        state=state,
+    )
+    validate_model_binding(
+        snapshot_model_selection(setup, state),
+        executable=runnable,
+        resources=resources,
         model=bindings.model,
     )
 

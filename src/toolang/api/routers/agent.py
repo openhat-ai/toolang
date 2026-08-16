@@ -9,7 +9,7 @@ from toolang.api.app import AgentCoreDep
 from toolang.common.errors import ToolangError
 from toolang.execution.runnables import effective_agics, runnable_binding_defaults
 from toolang.execution.schemas import ThreadInfo
-from toolang.execution.executor.ceiling import agent_model_targets
+from toolang.execution.executor.resources import agent_model_targets
 from toolang.up import AgentCore, process as agents
 
 
@@ -36,7 +36,9 @@ def models(core: AgentCoreDep) -> dict[str, object]:
     try:
         setup = core.setup.current()
         state = core.state.current()
-        resolved_default, targets = agent_model_targets(setup, state, setup.ceiling)
+        resolved_default, targets = agent_model_targets(
+            setup, state, setup.resource_filter
+        )
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {

@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.base.types.policy import ResourceFilter, RunBindings, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.setup.config import (
     load_agent_config,
     load_setup_config,
     load_setup_envs,
-    resolve_agent_ceiling,
+    resolve_resource_filter,
     resolve_run_bindings,
     resolve_run_limits,
 )
@@ -80,10 +80,10 @@ def test_setup_policy_overlays_root_agent_and_frozen_overrides() -> None:
         "limit": {"tokens": 2000, "cost": "none", "time": 60},
     }
 
-    assert resolve_agent_ceiling(
+    assert resolve_resource_filter(
         (root, agent),
         overrides={"models": ("local/*",), "caps": None},
-    ) == AgentCeiling(
+    ) == ResourceFilter(
         models=("local/*",),
         caps=("skill/editor",),
     )
@@ -126,9 +126,9 @@ def test_run_limits_use_limit_table() -> None:
 
 def test_setup_policy_rejects_unknown_and_invalid_fields() -> None:
     with pytest.raises(ValueError, match="unknown allow field: channels"):
-        resolve_agent_ceiling(({"allow": {"channels": ["web"]}},))
+        resolve_resource_filter(({"allow": {"channels": ["web"]}},))
     with pytest.raises(TypeError, match="allow models must be an array"):
-        resolve_agent_ceiling(({"allow": {"models": "gateway"}},))
+        resolve_resource_filter(({"allow": {"models": "gateway"}},))
     with pytest.raises(ValueError, match="unknown default field: tool"):
         resolve_run_bindings(({"default": {"tool": "shell"}},))
     with pytest.raises(ValueError, match="unknown run limit: turns"):

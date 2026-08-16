@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
-from toolang.base.types.policy import AgentCeiling
+from toolang.base.types.policy import ResourceFilter
 from toolang.cli.toolang.commands.chat import local
 from toolang.cli.toolang.commands.chat.tui import ChatTuiApp
 from toolang.setup import AgentSetup
@@ -23,7 +23,7 @@ def run_chat_tui(
     """Run a local chat TUI with fixed setup and state snapshots."""
 
     if models:
-        setup = replace(setup, ceiling=AgentCeiling(models=tuple(models)))
+        setup = replace(setup, resource_filter=ResourceFilter(models=tuple(models)))
 
     class SetupWatcher:
         def __init__(self, _layout: object, **_kwargs: object) -> None:

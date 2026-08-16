@@ -27,7 +27,7 @@ _LIMIT_FIELDS = (
 )
 
 
-def resolve_ceiling_overrides(
+def resolve_resource_filter_overrides(
     environ: Mapping[str, str],
     options: Sequence[str] | None = None,
 ) -> dict[str, tuple[str, ...] | None]:

@@ -14,6 +14,7 @@ from toolang.base.types.policy import RunBindings
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.records import RunRecord, execution_error_message
+from toolang.lang.input import RunInput
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 from toolang.work import files
@@ -119,7 +120,7 @@ async def run(
                             model=setup.bindings.model,
                         ),
                         limits=setup.limits,
-                        primary=submission.input.percept,
+                        input=RunInput(primary=submission.input.percept),
                     )
                 )
                 try:

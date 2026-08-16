@@ -9,7 +9,7 @@ from toolang.base.errors import ToolangError
 from toolang.base.types.message import TextPart
 from toolang.base.types.policy import RunBindings
 from toolang.execution.calls import parse_call, resolve_spec
-from toolang.execution.types import PolicyCommand, ThreadPrefix
+from toolang.execution.types import RunOverride, ThreadPrefix
 from tests.support.execution_harness import ExecutionHarness
 
 
@@ -46,8 +46,8 @@ def test_resolve_spec_binds_policy_primary_and_typed_named_inputs(
             model="test/scripted",
             runnable="agic:review",
         )
-        assert spec.named == {"count": 2}
-        assert spec.primary == (TextPart("Review this."),)
+        assert spec.input.values == {"count": 2}
+        assert spec.input.primary == (TextPart("Review this."),)
         harness.executor.validate(spec)
     finally:
         harness.store.close()
@@ -67,11 +67,11 @@ def test_run_default_returns_to_surface_binding_not_session_binding(
             thread="term_test",
             default_runnable="default",
             surface=RunBindings(runnable="agic:default"),
-            session_commands=(PolicyCommand("default", "runnable", "agic:review"),),
+            session_commands=(RunOverride("default", "runnable", "agic:review"),),
         )
 
         assert spec.bindings.runnable == "agic:default"
-        assert spec.named is None
+        assert spec.input.named == ()
     finally:
         harness.store.close()
 
@@ -89,7 +89,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
         source: str,
         *,
         surface: RunBindings = RunBindings(),
-        session: tuple[PolicyCommand, ...] = (),
+        session: tuple[RunOverride, ...] = (),
         named: tuple[tuple[str, str], ...] = (),
     ):
         commands, input = parse_call(source)
@@ -109,24 +109,24 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
         bound = resolve("Input")
         session = resolve(
             "Input",
-            session=(PolicyCommand("default", "runnable", "agic:review"),),
+            session=(RunOverride("default", "runnable", "agic:review"),),
             named=(("count", "2"),),
         )
         authored = resolve(
             ":agic default\nInput",
-            session=(PolicyCommand("default", "runnable", "agic:review"),),
+            session=(RunOverride("default", "runnable", "agic:review"),),
         )
         selected = resolve(
             ":agic default\nInput",
             surface=RunBindings(runnable="agic:default"),
-            session=(PolicyCommand("default", "runnable", "agic:bound"),),
+            session=(RunOverride("default", "runnable", "agic:bound"),),
         )
 
         assert bound.bindings == RunBindings(
             model="test/scripted",
             runnable="agic:bound",
         )
-        assert (session.bindings.runnable, session.named) == (
+        assert (session.bindings.runnable, session.input.values) == (
             "agic:review",
             {"count": 2},
         )

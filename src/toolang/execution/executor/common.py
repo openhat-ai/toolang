@@ -18,7 +18,7 @@ from toolang.base.types.message import (
     TextPart,
     message_text,
 )
-from toolang.base.types.policy import AgentCeiling, RunLimits
+from toolang.base.types.policy import ResourceFilter, RunBindings, RunLimits
 from toolang.common.errors import ToolangError
 from toolang.common.time import utc_now
 from toolang.lang.ast import (
@@ -40,15 +40,14 @@ from toolang.lang.ast import (
     StormStmt,
     StructDecl,
 )
-from toolang.lang.input import coerce_input, validate_value
+from toolang.lang.input import RunInput, coerce_input, validate_value
 from toolang.lang.format import format_statement_head
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
 from ..records import RunControlRecord, RunInputRef, StepInput, StepOutputRef, ValueRef
-from ..types import StepErrorRef, StepKind, StepPath
-from .ceiling import _ResolvedAgentCeiling, _RunCeiling
+from ..types import AgentResources, StepErrorRef, StepKind, StepPath
 
 Shape = Literal["none", "item", "list"]
 EventEmitter = Callable[[RunEvent], Awaitable[None]]
@@ -69,17 +68,16 @@ class BoundRun:
     run_id: str
     root_run_id: str
     thread: str
-    input: Message
-    args: Mapping[str, object]
-    model: str | None
+    bindings: RunBindings
+    input: RunInput
     state: AgentState
     setup: AgentSetup
     created_at: str
     limits: RunLimits = RunLimits()
-    ceiling_restrictions: tuple[AgentCeiling, ...] = ()
-    agent_ceiling: _ResolvedAgentCeiling | None = None
-    ceiling: _RunCeiling | None = None
-    flow_ceiling: _RunCeiling | None = None
+    resource_filters: tuple[ResourceFilter, ...] = ()
+    agent_resources: AgentResources | None = None
+    resources: AgentResources | None = None
+    flow_resources: AgentResources | None = None
     call: Literal["top", "run"] = "top"
     parent: StepPath | None = None
     placement: Mapping[str, object] | None = None
@@ -207,7 +205,7 @@ def initial_locals(
     structs = program_structs(binding)
     params = {parameter.name: parameter for parameter in executable.params}
     locals: dict[str, Local] = {}
-    for name, value in binding.args.items():
+    for name, value in binding.input.values.items():
         parameter = params.get(name)
         if parameter is None:
             continue
@@ -220,13 +218,13 @@ def initial_locals(
         locals[name] = Local(
             value,
             "item",
-            start,
+            RunInputRef(name=name),
             parameter.type_name or "Part[]",
         )
     if executable.input is not None:
         locals["_"] = Local(
             coerce_input(
-                binding.input.percept,
+                binding.input.primary,
                 executable.input.type_name or "Part[]",
                 structs=structs,
             ),
@@ -256,11 +254,11 @@ def apply_steer(
     """Apply accepted steer inputs to the primary local."""
 
     for control in controls:
-        if control.input is not None:
+        if control.message is not None:
             effective_type = input_type or "Part[]"
             locals["_"] = Local(
                 coerce_input(
-                    control.input.percept,
+                    control.message.percept,
                     effective_type,
                     structs=structs,
                 ),
@@ -434,9 +432,13 @@ def value_text(value: Any) -> str:
 
 
 def control_text(control: RunControlRecord | None) -> str:
-    if control is None or control.input is None:
+    if control is None:
         return ""
-    return message_text(control.input.parts)
+    if control.reason is not None:
+        return control.reason
+    if control.message is None:
+        return ""
+    return message_text(control.message.parts)
 
 
 def _unique_step_inputs(items: Sequence[StepInput]) -> tuple[StepInput, ...]:

@@ -18,13 +18,13 @@ from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.calls import parse_call, resolve_spec, validate_commands
 from toolang.execution.executor import RunExecutor
 from toolang.execution.runnables import runnable_binding_defaults
-from toolang.execution.executor.ceiling import (
+from toolang.execution.executor.resources import (
     agent_model_targets,
-    validate_agent_ceiling,
+    validate_resource_filter,
 )
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import PolicyCommand, ThreadPrefix
+from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.includes import resolve_file_include
 from toolang.setup import SetupWatcher
 from toolang.state.state import AgentState
@@ -48,7 +48,7 @@ class LocalChatSession:
         self,
         layout: AgentLayout,
         *,
-        ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+        resource_filter_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         binding_overrides: Mapping[str, str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     ) -> None:
@@ -59,7 +59,7 @@ class LocalChatSession:
         self.executor = RunExecutor(self.store, self.ids)
         self.setup_watcher = SetupWatcher(
             layout,
-            ceiling_overrides=ceiling_overrides,
+            resource_filter_overrides=resource_filter_overrides,
             binding_overrides=binding_overrides,
             limit_overrides=limit_overrides,
         )
@@ -81,7 +81,7 @@ class LocalChatSession:
     def list_models(self) -> Mapping[str, Any]:
         setup = self.setup_watcher.current()
         state = self.state_watcher.current()
-        default, targets = agent_model_targets(setup, state, setup.ceiling)
+        default, targets = agent_model_targets(setup, state, setup.resource_filter)
         default = setup.bindings.model or default
         return {
             "default": default,
@@ -135,7 +135,7 @@ class LocalChatSession:
 
     def apply_settings(
         self,
-        commands: tuple[PolicyCommand, ...],
+        commands: tuple[RunOverride, ...],
         selects: Mapping[str, object],
     ) -> Mapping[str, object]:
         candidate = apply_session_commands(selects, commands)
@@ -237,7 +237,7 @@ class LocalChatSession:
     async def _initialize(self) -> None:
         state = await self.state_watcher.refresh()
         setup = await self.setup_watcher.refresh()
-        validate_agent_ceiling(setup, state, setup.ceiling)
+        validate_resource_filter(setup, state, setup.resource_filter)
         if self._stop_signal is None:
             raise RuntimeError("local chat event loop was not initialized")
         self._watch_tasks = (

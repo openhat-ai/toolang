@@ -86,7 +86,7 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     assert "Traceback" not in error_output
     assert "execution history is incompatible with toolang" in error_output
     assert f"uses schema {schema_version}" in error_output
-    assert "requires schema 22" in error_output
+    assert "requires schema 23" in error_output
     assert advice in error_output
     assert "database was not changed" in error_output.lower()
     connection = sqlite3.connect(layout.run_store)
@@ -375,7 +375,7 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
         ("steer", "next_step", "pending"),
         ("stop", "immediate", "pending"),
     ]
-    assert controls[1].input == Message.user("Focus on tests")
+    assert controls[1].message == Message.user("Focus on tests")
 
 
 def test_retry_and_rerun_execute_locally_with_limit_overrides(
@@ -482,11 +482,13 @@ agic reply(_: Part[]) -> Part[]:
         retry_control = harness.store.list_run_controls(run_id=source.id)[-1]
         rerun_control = harness.store.get_run_control(run_id=rerun_id, index=0)
         assert retry_control.kind == "retry"
-        assert retry_control.context["limits"]["tokens"] == 10
+        assert retry_control.limits is not None
+        assert retry_control.limits.tokens == 10
         assert rerun_control is not None
         assert rerun_control.kind == "rerun"
         assert rerun_control.source == source.id
-        assert rerun_control.context["limits"]["time"] == 30
+        assert rerun_control.limits is not None
+        assert rerun_control.limits.time == 30
     finally:
         harness.store.close()
 

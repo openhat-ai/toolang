@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from toolang.base.types.message import MessagePart
 from toolang.execution.events import RunEvent
 from toolang.execution.records import execution_error_message
-from toolang.execution.types import ExecutionError, PolicyCommand
+from toolang.execution.types import ExecutionError, RunOverride
 
 if TYPE_CHECKING:
     from .blocks import MutableBlock
@@ -43,7 +43,7 @@ class ChatClient(Protocol):
 
     def apply_settings(
         self,
-        commands: tuple[PolicyCommand, ...],
+        commands: tuple[RunOverride, ...],
         selects: Mapping[str, object],
     ) -> Mapping[str, object]: ...
 

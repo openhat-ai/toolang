@@ -2,7 +2,7 @@ import pytest
 
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
-    resolve_ceiling_overrides,
+    resolve_resource_filter_overrides,
     resolve_limit_overrides,
 )
 
@@ -14,7 +14,7 @@ def test_policy_options_overlay_environment_by_field() -> None:
         "TOOLANG_LIMIT_TOKENS": "100",
     }
 
-    assert resolve_ceiling_overrides(
+    assert resolve_resource_filter_overrides(
         environ,
         ("models=local/*", "models=test/*", "tools=none"),
     ) == {
@@ -33,9 +33,9 @@ def test_policy_options_overlay_environment_by_field() -> None:
 
 
 def test_policy_overrides_preserve_absent_empty_and_unrestricted() -> None:
-    assert resolve_ceiling_overrides({}, ()) == {}
-    assert resolve_ceiling_overrides({}, ("tools=none",)) == {"tools": ()}
-    assert resolve_ceiling_overrides({}, ("tools=all",)) == {"tools": None}
+    assert resolve_resource_filter_overrides({}, ()) == {}
+    assert resolve_resource_filter_overrides({}, ("tools=none",)) == {"tools": ()}
+    assert resolve_resource_filter_overrides({}, ("tools=all",)) == {"tools": None}
     assert resolve_binding_overrides({}, ("model=none",)) == {"model": None}
     assert resolve_limit_overrides({}, ("time=none",)) == {"time": None}
 
@@ -43,8 +43,8 @@ def test_policy_overrides_preserve_absent_empty_and_unrestricted() -> None:
 @pytest.mark.parametrize(
     ("resolver", "value", "message"),
     [
-        (resolve_ceiling_overrides, "channels=web", "unknown allow field"),
-        (resolve_ceiling_overrides, "models=none", "cannot combine"),
+        (resolve_resource_filter_overrides, "channels=web", "unknown allow field"),
+        (resolve_resource_filter_overrides, "models=none", "cannot combine"),
         (resolve_binding_overrides, "model=a", "duplicate default field"),
         (resolve_limit_overrides, "tokens=1", "duplicate run limit"),
         (resolve_limit_overrides, "unknown=1", "unknown run limit"),
@@ -60,7 +60,7 @@ def test_policy_options_reject_invalid_values(
 ) -> None:
     values = (
         (value, "models=test/*")
-        if resolver is resolve_ceiling_overrides and value == "models=none"
+        if resolver is resolve_resource_filter_overrides and value == "models=none"
         else (value, value)
         if "duplicate" in message
         else (value,)

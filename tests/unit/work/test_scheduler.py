@@ -162,7 +162,9 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
             assert "job" not in runs[0].context
             control = harness.store.get_run_control(run_id=runs[0].id, index=0)
             assert control is not None
-            assert control.input == Message.user("Review this.")
+            assert control.input is not None
+            assert control.input.primary == Message.user("Review this.").percept
+            assert control.input.values == {"focus": "security"}
             created = harness.store.get_thread_control(
                 thread_id="task_review",
                 index=0,

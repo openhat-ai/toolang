@@ -12,7 +12,7 @@ import pytest
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelInfo, ModelTarget
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.base.types.policy import ResourceFilter, RunBindings, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.config import ModelProviderConfig
 from toolang.setup import AgentSetup, SetupWatcher
@@ -310,7 +310,7 @@ def test_setup_watcher_rebuilds_dynamic_policy_with_frozen_overrides(
     )
     watcher = SetupWatcher(
         watcher.layout,
-        ceiling_overrides={"tools": ()},
+        resource_filter_overrides={"tools": ()},
         binding_overrides={"runnable": "agic:chat"},
         limit_overrides={"time": 60},
     )
@@ -321,13 +321,13 @@ def test_setup_watcher_rebuilds_dynamic_policy_with_frozen_overrides(
     agent_config["limit"] = {"tokens": 200}
     second = asyncio.run(watcher.refresh())
 
-    assert first.ceiling == AgentCeiling(models=("test/one",), tools=())
+    assert first.resource_filter == ResourceFilter(models=("test/one",), tools=())
     assert first.bindings == RunBindings(
         model="test/one",
         runnable="agic:chat",
     )
     assert first.limits == RunLimits(tokens=100, time=60)
-    assert second.ceiling == AgentCeiling(models=(), tools=())
+    assert second.resource_filter == ResourceFilter(models=(), tools=())
     assert second.bindings == RunBindings(runnable="agic:chat")
     assert second.limits == RunLimits(tokens=200, time=60)
 

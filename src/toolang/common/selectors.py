@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, TypeVar
 
 from .errors import ToolangError
 
 SelectorDomain = Literal["model", "tool", "cap"]
+SelectorOperator = Literal["=", "+=", "-="]
+_T = TypeVar("_T")
 
 _IDENTITY_FILTER_KEYS = frozenset({"family", "kind", "name", "namespace", "ref"})
 _ALLOWED_FILTER_KEYS: dict[SelectorDomain, frozenset[str]] = {
@@ -135,6 +137,41 @@ def filter_value_matches(actual: str, allowed: Sequence[str]) -> bool:
     """Return whether one actual filter value matches any allowed values."""
 
     return any(actual == value or fnmatchcase(actual, value) for value in allowed)
+
+
+def apply_selector_operations(
+    base: Sequence[_T],
+    operations: Sequence[tuple[SelectorOperator, tuple[str, ...]]],
+    match: Callable[[tuple[str, ...]], Sequence[_T]],
+    *,
+    identity: Callable[[_T], Hashable] = lambda item: item,
+) -> tuple[_T, ...]:
+    """Apply ordered selector-list operations within one immutable base set."""
+
+    inherited: list[_T] = []
+    seen: set[Hashable] = set()
+    for item in base:
+        key = identity(item)
+        if key not in seen:
+            inherited.append(item)
+            seen.add(key)
+    current = list(inherited)
+    for operator, selectors in operations:
+        matches = list(match(selectors))
+        if operator == "=":
+            allowed = {identity(item) for item in matches}
+            current = [item for item in current if identity(item) in allowed]
+        elif operator == "+=":
+            seen = {identity(item) for item in current}
+            for item in matches:
+                key = identity(item)
+                if key not in seen:
+                    current.append(item)
+                    seen.add(key)
+        else:
+            blocked = {identity(item) for item in matches}
+            current = [item for item in current if identity(item) not in blocked]
+    return tuple(current)
 
 
 def _split_selector_csv(text: str) -> tuple[str, ...]:

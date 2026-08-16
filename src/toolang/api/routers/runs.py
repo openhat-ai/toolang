@@ -23,6 +23,7 @@ from toolang.execution.executor import RunHandle, RunSpec
 from toolang.execution.records import RunControlRecord, RunRecord
 from toolang.execution.schemas import RunControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
+from toolang.lang.input import RunInput
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -56,8 +57,10 @@ async def _start_run_stream(
                     ),
                 ),
                 limits=limits,
-                primary=parse_percept(payload.input),
-                named=payload.args,
+                input=RunInput.from_values(
+                    primary=parse_percept(payload.input),
+                    named=payload.args,
+                ),
             ),
             request_id=payload.request_id,
             tracer=live.trace(thread_id=thread_id),
@@ -82,7 +85,7 @@ async def _subscribe_root_run(
             status_code=409,
             detail=(
                 f"run stream requires a root run: {run_id}; "
-                f"subscribe to {run.root_run_id}"
+                f"subscribe to {core.store.root_run_id(run_id=run_id)}"
             ),
         )
     subscription = live.subscribe_run(run_id)

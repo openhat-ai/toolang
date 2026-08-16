@@ -10,12 +10,14 @@ import pytest
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor import AgentCeiling
-from toolang.execution.executor.ceiling import (
-    restrict_agent_ceiling,
-    resolve_agent_ceiling,
-    resolve_run_ceiling,
+from toolang.execution.executor import ResourceFilter
+from toolang.execution.executor.resources import (
+    apply_resource_filter,
+    resolve_agent_resources,
+    resolve_runnable_resources,
+    snapshot_model_selection,
 )
+from toolang.execution.types import AgentResources
 from toolang.lang.ast import AgicDecl, Directive, FlowDecl, Span
 from toolang.setup import AgentSetup
 from tests.support.execution_harness import FakeModelProvider
@@ -87,36 +89,37 @@ def _snapshots(tmp_path: Path) -> tuple[AgentSetup, Any, Any]:
     return setup, state, selection
 
 
-def test_agent_ceiling_never_filters_setup_snapshot(tmp_path: Path) -> None:
+def test_agent_resources_never_filter_setup_snapshot(tmp_path: Path) -> None:
     setup, state, _selection = _snapshots(tmp_path)
 
-    alpha = resolve_agent_ceiling(
+    alpha = resolve_agent_resources(
         setup,
         state,
-        AgentCeiling(tools=("alpha/*",)),
+        ResourceFilter(tools=("alpha/*",)),
     )
-    beta = resolve_agent_ceiling(
+    beta = resolve_agent_resources(
         setup,
         state,
-        AgentCeiling(tools=("beta/*",)),
+        ResourceFilter(tools=("beta/*",)),
     )
-    no_models = resolve_agent_ceiling(
+    no_models = resolve_agent_resources(
         setup,
         state,
-        AgentCeiling(models=()),
+        ResourceFilter(models=()),
     )
 
     assert tuple(setup.tools) == ("alpha__one", "beta__two")
     assert tuple(model.ref for model in setup.models) == ("test/scripted",)
-    assert tuple(alpha.tools) == ("alpha__one",)
-    assert tuple(beta.tools) == ("beta__two",)
+    assert tuple(item.model_name for item in alpha.tools) == ("alpha__one",)
+    assert tuple(item.model_name for item in beta.tools) == ("beta__two",)
     assert no_models.models == ()
     with pytest.raises(TypeError):
         cast(Any, alpha.tools)["beta__two"] = setup.tools["beta__two"]
+    assert AgentResources.from_data(alpha.to_data()) == alpha
 
 
-def test_agent_ceiling_normalizes_stable_selector_lists() -> None:
-    spec = AgentCeiling(
+def test_resource_filter_normalizes_stable_selector_lists() -> None:
+    spec = ResourceFilter(
         models=(" openai/gpt-5 ", "openai/gpt-5"),
         tools=None,
         caps=(),
@@ -127,84 +130,88 @@ def test_agent_ceiling_normalizes_stable_selector_lists() -> None:
     assert spec.caps == ()
 
 
-def test_run_restriction_cannot_expand_an_empty_agent_ceiling(
+def test_resource_filter_cannot_expand_empty_agent_resources(
     tmp_path: Path,
 ) -> None:
     setup, state, _selection = _snapshots(tmp_path)
-    agent = resolve_agent_ceiling(
+    agent = resolve_agent_resources(
         setup,
         state,
-        AgentCeiling(models=()),
+        ResourceFilter(models=()),
     )
 
-    with pytest.raises(ToolangError, match="no allowed models"):
-        restrict_agent_ceiling(
+    with pytest.raises(ToolangError, match="no available models"):
+        apply_resource_filter(
             setup,
             state,
             agent,
-            AgentCeiling(models=("test/scripted",)),
+            ResourceFilter(models=("test/scripted",)),
         )
 
 
-def test_flow_resets_ceiling_while_agics_use_current_flow(
+def test_flow_resets_resources_while_agics_use_current_flow(
     tmp_path: Path,
 ) -> None:
-    setup, state, selection = _snapshots(tmp_path)
-    agent = resolve_agent_ceiling(
+    setup, state, _selection = _snapshots(tmp_path)
+    agent = resolve_agent_resources(
         setup,
         state,
-        AgentCeiling(),
+        ResourceFilter(),
     )
-    outer = resolve_run_ceiling(
-        selection,
+    model_selection = snapshot_model_selection(setup, state)
+    outer = resolve_runnable_resources(
+        model_selection,
         executable=FlowDecl(
             name="outer",
             directives=(_directive("tools", "alpha/*"),),
             span=Span(line=1),
         ),
-        agent=agent,
-        flow=None,
-        agent_name="alice",
+        base=agent,
+        setup=setup,
+        state=state,
     )
-    blocked_agic = resolve_run_ceiling(
-        selection,
+    blocked_agic = resolve_runnable_resources(
+        model_selection,
         executable=AgicDecl(
             name="blocked",
             directives=(_directive("tools", "beta/*"),),
             span=Span(line=1),
         ),
-        agent=agent,
-        flow=outer,
-        agent_name="alice",
+        base=outer,
+        setup=setup,
+        state=state,
     )
-    inner = resolve_run_ceiling(
-        selection,
+    inner = resolve_runnable_resources(
+        model_selection,
         executable=FlowDecl(name="inner", span=Span(line=1)),
-        agent=agent,
-        flow=outer,
-        agent_name="alice",
+        base=agent,
+        setup=setup,
+        state=state,
     )
-    inner_agic = resolve_run_ceiling(
-        selection,
+    inner_agic = resolve_runnable_resources(
+        model_selection,
         executable=AgicDecl(
             name="inner_agic",
             directives=(_directive("tools", "beta/*"),),
             span=Span(line=1),
         ),
-        agent=agent,
-        flow=inner,
-        agent_name="alice",
+        base=inner,
+        setup=setup,
+        state=state,
     )
-    outer_sibling = resolve_run_ceiling(
-        selection,
+    outer_sibling = resolve_runnable_resources(
+        model_selection,
         executable=AgicDecl(name="outer_sibling", span=Span(line=1)),
-        agent=agent,
-        flow=outer,
-        agent_name="alice",
+        base=outer,
+        setup=setup,
+        state=state,
     )
 
-    assert tuple(outer.tools) == ("alpha__one",)
+    assert tuple(item.model_name for item in outer.tools) == ("alpha__one",)
     assert tuple(blocked_agic.tools) == ()
-    assert tuple(inner.tools) == ("alpha__one", "beta__two")
-    assert tuple(inner_agic.tools) == ("beta__two",)
-    assert tuple(outer_sibling.tools) == ("alpha__one",)
+    assert tuple(item.model_name for item in inner.tools) == (
+        "alpha__one",
+        "beta__two",
+    )
+    assert tuple(item.model_name for item in inner_agic.tools) == ("beta__two",)
+    assert tuple(item.model_name for item in outer_sibling.tools) == ("alpha__one",)

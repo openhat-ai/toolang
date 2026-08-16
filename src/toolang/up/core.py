@@ -33,7 +33,7 @@ class AgentCore:
         self,
         layout: AgentLayout,
         *,
-        ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
+        resource_filter_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         binding_overrides: Mapping[str, str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     ) -> None:
@@ -45,7 +45,7 @@ class AgentCore:
         self.history = RunHistory(self.store)
         self.setup = SetupWatcher(
             layout,
-            ceiling_overrides=ceiling_overrides,
+            resource_filter_overrides=resource_filter_overrides,
             binding_overrides=binding_overrides,
             limit_overrides=limit_overrides,
         )

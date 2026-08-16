@@ -11,7 +11,7 @@ from types import MappingProxyType
 from toolang.base.protocols.model import ModelAdapter, ModelProvider
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelInfo
-from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
+from toolang.base.types.policy import ResourceFilter, RunBindings, RunLimits
 from toolang.common.layout import AgentLayout
 
 
@@ -61,7 +61,7 @@ class AgentSetup:
     tools: Mapping[str, AgentTool]
     envs: Mapping[str, str]
     environment: AgentEnvironment | None = None
-    ceiling: AgentCeiling = AgentCeiling()
+    resource_filter: ResourceFilter = ResourceFilter()
     bindings: RunBindings = RunBindings()
     limits: RunLimits = RunLimits()
 
@@ -69,8 +69,8 @@ class AgentSetup:
         providers = dict(self.providers)
         adapters = dict(self.adapters)
         models = tuple(self.models)
-        if not isinstance(self.ceiling, AgentCeiling):
-            raise TypeError("setup ceiling must be AgentCeiling")
+        if not isinstance(self.resource_filter, ResourceFilter):
+            raise TypeError("setup resource filter must be ResourceFilter")
         if not isinstance(self.bindings, RunBindings):
             raise TypeError("setup bindings must be RunBindings")
         if not isinstance(self.limits, RunLimits):

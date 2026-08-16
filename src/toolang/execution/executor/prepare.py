@@ -35,7 +35,8 @@ from toolang.state import state as cap_store
 from toolang.state.state import PreparedCap
 
 from . import prompts
-from .common import BoundRun, value_percept
+from .common import BoundRun
+from .resources import resource_caps, resource_tools
 
 if TYPE_CHECKING:
     from .executor import _Execution
@@ -71,21 +72,22 @@ def prepare_agic(
 ) -> _AgicFrame:
     """Resolve runtime resources and render the complete model input."""
 
-    args = dict(run.args)
+    args = dict(run.input.values)
 
-    ceiling = run.ceiling
-    if ceiling is None:
-        raise RuntimeError(f"run ceiling missing: {run.run_id}")
-    model_selectors = ceiling.models
+    resources = run.resources
+    if resources is None:
+        raise RuntimeError(f"run resources missing: {run.run_id}")
+    model_selectors = resources.models
     if not model_selectors:
-        raise ToolangError(f"run ceiling allows no models: {agic.name}")
+        raise ToolangError(f"run resources include no models: {agic.name}")
     model = resolve_model(
         context,
-        selector=run.model or (model_selectors[0] if model_selectors else None),
+        selector=run.bindings.model
+        or (model_selectors[0] if model_selectors else None),
         allowed_selectors=model_selectors,
     )
-    tools = dict(ceiling.tools)
-    caps = ceiling.caps
+    tools = dict(resource_tools(run.setup, resources))
+    caps = resource_caps(run.state, resources)
     psyches = tuple(item for item in caps if item.kind == "psyche")
     skills = tuple(item for item in caps if item.kind == "skill")
     services = tuple(item for item in caps if item.kind == "service")
@@ -93,7 +95,7 @@ def prepare_agic(
     if variables is None:
         default_variables: dict[str, object] = dict(args)
         if agic.input is not None:
-            percept = value_percept(run.input)
+            percept = run.input.primary
             if percept is None:
                 raise ToolangError("user run input is not a Percept")
             default_variables["_"] = coerce_input(
@@ -253,9 +255,7 @@ def _run_message(
         if block.role == "user" and not block.explicit
     )
     authored = _join_percepts(*implicit)
-    primary = value_percept(run.input)
-    if primary is None:
-        raise ToolangError("user run input is not a Percept")
+    primary = run.input.primary
     references_primary = any(
         block.role == "user"
         and not block.explicit
@@ -268,7 +268,7 @@ def _run_message(
         primary if (not authored or not references_primary) else (),
     )
     if parts == primary:
-        return run.input
+        return Message(role="user", parts=primary)
     return Message(role="user", parts=parts)
 
 

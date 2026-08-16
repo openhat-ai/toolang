@@ -7,7 +7,11 @@ from multiprocessing import get_context
 from pathlib import Path
 from typing import Any
 
-from tests.support.execution_fixtures import project_run_end, project_run_start
+from tests.support.execution_fixtures import (
+    accept_run_start,
+    project_run_end,
+    project_run_start,
+)
 from tests.support.execution_harness import (
     AsyncGate,
     ExecutionHarness,
@@ -39,7 +43,7 @@ def _accept_remote_steer(db_path: str, run_id: str) -> None:
             run_id=run_id,
             kind="steer",
             timing="next_call",
-            input=Message.user("Use the remote guidance."),
+            message=Message.user("Use the remote guidance."),
             context={"source": "remote-process"},
             request_id="remote-steer",
             created_at="2026-01-01T00:00:01Z",
@@ -77,7 +81,7 @@ def _accept_duplicate_request(
             run_id=run_id,
             kind="steer",
             timing="next_step",
-            input=Message.user(run_id),
+            message=Message.user(run_id),
             context={},
             request_id="shared-control-request",
             created_at="2026-01-01T00:00:01Z",
@@ -118,7 +122,8 @@ def _race_start(
     try:
         ready.put("start")
         start.wait()
-        store.accept_start(
+        accept_run_start(
+            store,
             run_id="run_racing_start",
             parent=None,
             thread="term_race",
@@ -352,7 +357,8 @@ def test_duplicate_run_control_request_has_one_process_winner(
     try:
         store.create_thread(thread_id="term_requests")
         for run_id in ("run_request_a", "run_request_b"):
-            store.accept_start(
+            accept_run_start(
+                store,
                 run_id=run_id,
                 parent=None,
                 thread="term_requests",
@@ -392,7 +398,8 @@ def test_pending_control_has_one_cross_process_cancellation_winner(
     store = RunStore(db_path)
     try:
         store.create_thread(thread_id="term_cancel_race")
-        store.accept_start(
+        accept_run_start(
+            store,
             run_id="run_cancel_race",
             parent=None,
             thread="term_cancel_race",
@@ -405,7 +412,7 @@ def test_pending_control_has_one_cross_process_cancellation_winner(
             run_id="run_cancel_race",
             kind="steer",
             timing="next_step",
-            input=Message.user("updated"),
+            message=Message.user("updated"),
             context={},
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
@@ -445,7 +452,8 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
     store = RunStore(db_path)
     try:
         store.create_thread(thread_id="term_claim_cancel_race")
-        store.accept_start(
+        accept_run_start(
+            store,
             run_id="run_claim_cancel_race",
             parent=None,
             thread="term_claim_cancel_race",
@@ -458,7 +466,7 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
             run_id="run_claim_cancel_race",
             kind="steer",
             timing="next_step",
-            input=Message.user("updated"),
+            message=Message.user("updated"),
             context={},
             request_id=None,
             created_at="2026-01-01T00:00:01Z",

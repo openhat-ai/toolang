@@ -46,8 +46,8 @@ from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 from .input import (
     QuickCommand,
-    is_policy_commands,
-    is_runnable_input,
+    is_run_input_text,
+    is_run_overrides,
     normalize_chat_input,
     parse_chat_input,
 )
@@ -435,7 +435,7 @@ class ChatTuiApp:
                     blocks.SlashBlock(message, slash_result.lines).render()
                 )
             return
-        if is_policy_commands(chat_input):
+        if is_run_overrides(chat_input):
             try:
                 updated = self.client.apply_settings(
                     chat_input,
@@ -453,7 +453,7 @@ class ChatTuiApp:
                 self.actual_model = None
             self.status_bar.set_status(self._status_label())
             return
-        if not is_runnable_input(chat_input):
+        if not is_run_input_text(chat_input):
             raise AssertionError("unknown chat input value")
         queued = QueuedCall(source, dict(self.selects))
         if self.active_run_id is not None or self.run_in_flight.is_set():

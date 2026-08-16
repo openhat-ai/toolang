@@ -15,7 +15,7 @@ import typer
 from toolang.base.types.message import Message
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
-    resolve_ceiling_overrides,
+    resolve_resource_filter_overrides,
     resolve_limit_overrides,
 )
 from toolang.common.layout import AgentLayout
@@ -720,7 +720,9 @@ async def _restart_run(
     }
     setup = await SetupWatcher(
         layout,
-        ceiling_overrides=resolve_ceiling_overrides(environ, allow_options or ()),
+        resource_filter_overrides=resolve_resource_filter_overrides(
+            environ, allow_options or ()
+        ),
         binding_overrides=binding_overrides,
         limit_overrides=resolve_limit_overrides(environ, limit_options or ()),
     ).refresh()

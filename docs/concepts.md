@@ -184,32 +184,32 @@ Toolang-owned run ids may also use one dedicated short generated id family. See
 [ids.md](./ids.md).
 
 
-## Resource Ceilings
+## Resource Preparation
 
 Runtime resources such as models, tools, and caps are selected through ordered
-sets. `SetupWatcher` rebuilds an immutable `AgentSetup.ceiling` from root and
+sets. `SetupWatcher` rebuilds an immutable `AgentSetup.resource_filter` from root and
 agent `[allow]` config on every refresh, then applies field-level environment
 and CLI overrides captured at process startup. Each completed setup snapshot is
 stable; the next root run observes the latest valid snapshot.
 
-At root-run start, the executor resolves `AgentSetup.ceiling` against the
+At root-run start, the executor resolves `AgentSetup.resource_filter` against the
 captured `AgentSetup` and `AgentState`, then intersects every session or
-request restriction in `RunSpec.ceilings`. The resulting private ceiling is the absolute
-resource limit for that recursive run tree. Request restrictions can narrow
-the setup ceiling but cannot expand it.
+request filter in `RunSpec.resource_filters`. The resulting `AgentResources`
+is the concrete resource set for that recursive run tree. Request filters can
+narrow the preceding set but cannot expand it.
 
-Flow and agic directives compute narrower run ceilings:
+Flow and agic directives compute runnable resources from a selected base:
 
 ```text
-current_set = inherited_ceiling
+current_set = base_resources
 
 items += operand  => current_set = current_set union operand
 items -= operand  => current_set = current_set minus operand
 items = operand   => current_set = current_set intersect operand
 ```
 
-All operands are evaluated inside the inherited ceiling, so `+=` cannot grant
-resources outside the agent ceiling. `-=` and `=` operands may use arbitrary
+All operands are evaluated inside the base resources, so `+=` cannot grant
+resources outside the agent resources. `-=` and `=` operands may use arbitrary
 selectors, for example a selector that removes all local
 models. `=` is a keep-only filter, not a traditional assignment.
 
@@ -266,9 +266,10 @@ part of a local.
 
 Toolang uses six operations at runnable boundaries:
 
-- policy parsing produces canonical `PolicyCommand` values
-- runnable-input parsing produces `RunnableInput(primary, named)`
-- policy and runnable resolution produces one immutable `RunSpec`
+- policy parsing produces canonical `RunOverride` values
+- runnable-input parsing produces `RunInputText(primary, named)`
+- policy and runnable resolution produces one immutable `RunSpec` containing
+  a resolved `RunInput`
 - content evaluation produces one ordered canonical `Percept`
 - input coercion converts that percept to the runnable's declared primary type
 - output coercion converts the runnable's final value to its declared output
