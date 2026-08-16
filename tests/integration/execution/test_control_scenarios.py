@@ -69,7 +69,7 @@ agic wait(_: Part[]) -> Part[]:
                 index=control.index,
             )
             assert stored_control is not None
-            assert stored_control.status == "finished"
+            assert stored_control.status == "applied"
             steps = harness.store.list_steps(run_id=record.id)
             assert [(step.kind, step.status) for step in steps] == [
                 ("model", "canceled")
@@ -127,7 +127,7 @@ agic revise(_: Part[]) -> Part[]:
             gate.release()
             record = await asyncio.wait_for(handle, timeout=2)
 
-            assert record.status == "finished"
+            assert record.status == "succeeded"
             assert harness.adapter.invocations[1].call.messages == [
                 Message.user("write"),
                 Message.assistant("draft"),
@@ -138,7 +138,7 @@ agic revise(_: Part[]) -> Part[]:
                 index=control.index,
             )
             assert stored_control is not None
-            assert stored_control.status == "finished"
+            assert stored_control.status == "applied"
             steps = harness.store.list_steps(run_id=record.id)
             assert steps[1].input == (
                 StepOutputRef(step=StepPath.parse(f"{record.id}/0")),
@@ -201,13 +201,13 @@ agic calculate(_: Part[]) -> Part[]:
             assert [
                 (step.kind, step.status)
                 for step in harness.store.list_steps(run_id=record.id)
-            ] == [("model", "finished"), ("tool", "canceled")]
+            ] == [("model", "succeeded"), ("tool", "canceled")]
             stored_control = harness.store.get_run_control(
                 run_id=record.id,
                 index=control.index,
             )
             assert stored_control is not None
-            assert stored_control.status == "finished"
+            assert stored_control.status == "applied"
             assert harness.adapter.pending_responses == 1
             assert_run_event_integrity(tracer.events)
             assert event_labels(tracer.events) == [
@@ -215,7 +215,7 @@ agic calculate(_: Part[]) -> Part[]:
                 f"step_begin:{record.id}/0:model",
                 f"part_begin:{record.id}/0:0:tool_call",
                 f"part_end:{record.id}/0:0:tool_call",
-                f"step_end:{record.id}/0:model:finished",
+                f"step_end:{record.id}/0:model:succeeded",
                 f"step_begin:{record.id}/1:tool",
                 f"step_end:{record.id}/1:tool:canceled",
                 f"run_end:{record.id}:canceled",
@@ -228,10 +228,10 @@ agic calculate(_: Part[]) -> Part[]:
     ("timing", "expected_steps"),
     [
         ("immediate", [("run", "canceled")]),
-        ("next_step", [("run", "finished")]),
+        ("next_step", [("run", "succeeded")]),
         (
             "next_call",
-            [("run", "finished"), ("system", "finished")],
+            [("run", "succeeded"), ("system", "succeeded")],
         ),
     ],
 )
@@ -292,7 +292,7 @@ flow sequence(_: Text) -> Text:
                 run_id=record.id,
                 index=control.index,
             )
-            assert stored is not None and stored.status == "finished"
+            assert stored is not None and stored.status == "applied"
             root_steps = [
                 (step.kind, step.status)
                 for step in harness.store.list_steps(run_id=record.id)
@@ -359,13 +359,13 @@ flow sequence(_: Text) -> Text:
             gate.release()
             record = await asyncio.wait_for(handle, timeout=2)
 
-            assert record.status == "finished"
+            assert record.status == "succeeded"
             assert harness.adapter.invocations[1].call.messages == [guidance]
             stored = harness.store.get_run_control(
                 run_id=record.id,
                 index=control.index,
             )
-            assert stored is not None and stored.status == "finished"
+            assert stored is not None and stored.status == "applied"
             referencing_steps = [
                 step
                 for step in harness.store.list_steps(run_id=record.id)
@@ -427,7 +427,7 @@ agic revise(_: Text) -> Text:
             gate.release()
             record = await asyncio.wait_for(handle, timeout=2)
 
-            assert record.status == "finished"
+            assert record.status == "succeeded"
             assert harness.adapter.invocations[1].call.messages == [
                 Message.user("start"),
                 Message.assistant("draft"),
@@ -453,6 +453,6 @@ agic revise(_: Text) -> Text:
             assert all(control is not None for control in stored_controls)
             assert [
                 control.status for control in stored_controls if control is not None
-            ] == ["finished", "finished", "finished"]
+            ] == ["applied", "applied", "applied"]
 
     asyncio.run(scenario())

@@ -197,7 +197,7 @@ def project_run_end(
     store: RunStore,
     *,
     run_id: str,
-    status: RunStatus = "finished",
+    status: RunStatus = "succeeded",
     error: str | None = None,
     finished_at: str | None = None,
     output: ValueRef | None = None,

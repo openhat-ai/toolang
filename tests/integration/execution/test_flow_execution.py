@@ -203,7 +203,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
         _start(executor, _setup(), _state(flow), flow.name, tracer=tracer)
     )
 
-    assert record.status == "finished"
+    assert record.status == "succeeded"
     assert store.run_output_text(run_id=record.id) == "done"
     assert [event.type for event in tracer.events] == [
         "run_begin",
@@ -213,7 +213,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     ]
     assert tracer.thread_ids == {owner_thread}
     start = store.get_run_control(run_id=record.id, index=0)
-    assert start is not None and start.status == "finished"
+    assert start is not None and start.status == "applied"
     detail = RunHistory(store).get_run(record.id)
     assert detail is not None
     assert detail.runnable_kind == "flow"
@@ -271,7 +271,7 @@ def test_run_executor_validates_args_against_runnable_params(
                 named={"focus": (TextPart("events"),)},
             )
         )
-        assert record.status == "finished"
+        assert record.status == "succeeded"
 
     asyncio.run(scenario())
     asyncio.run(executor.shutdown())
@@ -358,13 +358,13 @@ def test_top_level_agic_has_no_containing_step_events(
         _start(executor, _model_setup(), state, "default", tracer=tracer)
     )
 
-    assert record.status == "finished"
+    assert record.status == "succeeded"
     assert [event.type for event in tracer.events] == ["run_begin", "run_end"]
     assert store.list_steps(run_id=record.id) == []
     asyncio.run(executor.shutdown())
 
 
-def test_runtime_emits_and_persists_system_failure_step(
+def test_runtime_failure_is_recorded_directly_on_the_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     agic = AgicDecl(name="default", span=Span(line=1))
@@ -391,18 +391,9 @@ def test_runtime_emits_and_persists_system_failure_step(
     )
 
     assert record.status == "failed"
-    assert [event.type for event in tracer.events] == [
-        "run_begin",
-        "step_begin",
-        "step_end",
-        "run_end",
-    ]
-    steps = executor.store.list_steps(run_id=record.id)
-    assert len(steps) == 1
-    assert steps[0].kind == "system"
-    assert steps[0].status == "failed"
-    assert steps[0].error == "runtime failed"
-    assert steps[0].given == {"runtime": "failure"}
+    assert record.error == "runtime failed"
+    assert [event.type for event in tracer.events] == ["run_begin", "run_end"]
+    assert executor.store.list_steps(run_id=record.id) == []
     asyncio.run(executor.shutdown())
 
 
@@ -426,7 +417,7 @@ def test_event_delivery_does_not_read_run_state_per_event(
     monkeypatch.setattr(executor.store, "get_run", get_run)
     record = asyncio.run(_start(executor, _setup(), _state(flow), flow.name))
 
-    assert record.status == "finished"
+    assert record.status == "succeeded"
     assert reads == 1
     asyncio.run(executor.shutdown())
 
@@ -480,7 +471,7 @@ def test_tracer_failure_does_not_fail_execution(tmp_path: Path) -> None:
         )
     )
 
-    assert record.status == "finished"
+    assert record.status == "succeeded"
     asyncio.run(executor.shutdown())
 
 
@@ -553,7 +544,7 @@ def test_duplicate_start_request_is_rejected(tmp_path: Path) -> None:
             )
         )
 
-    assert first.status == "finished"
+    assert first.status == "succeeded"
     assert len(store.list_run_controls(run_id=first.id)) == 1
     asyncio.run(executor.shutdown())
 
@@ -586,7 +577,7 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
     runs = store.list_runs(limit=None)
     child_run = next(run for run in runs if run.id != root.id)
     assert child_run.parent == StepPath.parse(f"{root.id}/0")
-    assert child_run.status == "finished"
+    assert child_run.status == "succeeded"
     assert [event.type for event in tracer.events] == [
         "run_begin",
         "step_begin",
@@ -676,7 +667,7 @@ def test_nested_flow_resets_ceiling_and_restores_parent_scope(
 
     record = asyncio.run(_start(executor, setup, state, outer.name))
 
-    assert record.status == "finished"
+    assert record.status == "succeeded"
     assert observed == [
         ("direct", ("alpha__one",)),
         ("nested", ("alpha__one", "beta__two")),
@@ -881,7 +872,7 @@ def test_steer_control_is_finished_when_step_consumes_it(tmp_path: Path) -> None
 
     assert tracer.control_index is not None
     control = store.get_run_control(run_id=record.id, index=tracer.control_index)
-    assert control is not None and control.status == "finished"
+    assert control is not None and control.status == "applied"
     steps = store.list_steps(run_id=record.id)
     assert steps[0].input == (RunInputRef(index=tracer.control_index),)
     asyncio.run(executor.shutdown())
@@ -911,12 +902,12 @@ def test_unreachable_control_fails_when_run_ends(tmp_path: Path) -> None:
     assert tracer.control_index is not None
     control = store.get_run_control(run_id=record.id, index=tracer.control_index)
     assert control is not None
-    assert control.status == "failed"
+    assert control.status == "wontapply"
     assert control.error == "run ended before the control could be applied"
     asyncio.run(executor.shutdown())
 
 
-def test_run_control_request_id_is_unique_across_runs(tmp_path: Path) -> None:
+def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     store.create_thread(thread_id="term_test")
     store.create_thread(thread_id="term_other")
@@ -1054,7 +1045,7 @@ def test_thread_manager_emits_only_successful_events(tmp_path: Path) -> None:
     asyncio.run(executor.shutdown())
 
 
-def test_thread_create_rejects_duplicate_request_id(
+def test_thread_create_rejects_duplicate_request(
     tmp_path: Path,
 ) -> None:
     executor = _executor(tmp_path)
@@ -1070,7 +1061,7 @@ def test_thread_create_rejects_duplicate_request_id(
     asyncio.run(executor.shutdown())
 
 
-def test_thread_request_id_is_unique_across_thread_kinds(tmp_path: Path) -> None:
+def test_thread_request_is_unique_across_thread_kinds(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     manager = ThreadManager(executor.store, executor.ids)
 
@@ -1133,7 +1124,7 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
     sink.on_event(
         RunEnd(
             run=anchor_id,
-            status="finished",
+            status="succeeded",
             finished_at="2026-01-01T00:00:02Z",
         )
     )
@@ -1185,7 +1176,7 @@ def test_thread_fork_rejects_duplicate_request_without_starting_runs(
     sink.on_event(
         RunEnd(
             run="run_anchor",
-            status="finished",
+            status="succeeded",
             finished_at="2026-01-01T00:00:02Z",
         )
     )
@@ -1242,7 +1233,7 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
                 started_at=timestamp,
             )
         )
-        sink.on_event(RunEnd(run=run_id, status="finished", finished_at=timestamp))
+        sink.on_event(RunEnd(run=run_id, status="succeeded", finished_at=timestamp))
 
     manager.rewind(thread_id=created, run_id="run_anchor")
 
@@ -1283,7 +1274,7 @@ def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
         sink.on_event(
             RunEnd(
                 run=run_id,
-                status="finished",
+                status="succeeded",
                 finished_at="2026-01-01T00:00:02Z",
             )
         )
@@ -1328,7 +1319,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
         sink.on_event(
             RunEnd(
                 run=run_id,
-                status="finished",
+                status="succeeded",
                 finished_at="2026-01-01T00:00:02Z",
             )
         )
@@ -1521,7 +1512,7 @@ def test_remote_process_can_stop_an_owned_run(
 
     control = store.get_run_control(run_id=record.id, index=1)
     assert record.status == "canceled"
-    assert control is not None and control.status == "finished"
+    assert control is not None and control.status == "applied"
     asyncio.run(executor.shutdown())
 
 
@@ -1626,7 +1617,7 @@ def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> Non
     sink.on_event(
         RunEnd(
             run="run_thread_anchor",
-            status="finished",
+            status="succeeded",
             finished_at="2026-01-01T00:00:02Z",
         )
     )
@@ -1681,7 +1672,7 @@ def test_private_event_projector_persists_run_and_step_records(
         StepEnd(
             step=StepPath.parse("run_test/0"),
             kind="system",
-            status="finished",
+            status="succeeded",
             output=(TextPart(text="done"),),
             finished_at="2026-01-01T00:00:03Z",
         )
@@ -1689,14 +1680,14 @@ def test_private_event_projector_persists_run_and_step_records(
     sink.on_event(
         RunEnd(
             run="run_test",
-            status="finished",
+            status="succeeded",
             output=StepOutputRef(step=StepPath.parse("run_test/0")),
             finished_at="2026-01-01T00:00:04Z",
         )
     )
 
     run = store.get_run(run_id="run_test")
-    assert run is not None and run.status == "finished"
+    assert run is not None and run.status == "succeeded"
     assert store.run_output_text(run_id="run_test") == "done"
     assert len(store.list_steps(run_id="run_test")) == 1
     store.close()
@@ -1719,6 +1710,11 @@ def test_run_store_migrates_schema_without_deleting_history(tmp_path: Path) -> N
 
     connection = sqlite3.connect(path)
     connection.execute("DROP INDEX idx_run_controls_request")
+    connection.execute("DROP INDEX idx_thread_controls_request")
+    connection.execute("ALTER TABLE run_controls RENAME COLUMN request TO request_id")
+    connection.execute(
+        "ALTER TABLE thread_controls RENAME COLUMN request TO request_id"
+    )
     connection.execute(
         """
         CREATE UNIQUE INDEX idx_run_controls_request
@@ -1801,7 +1797,7 @@ def test_run_store_migrates_step_and_model_text_names_in_place(
         StepEnd(
             step=StepPath.parse("run_test/0"),
             kind="system",
-            status="finished",
+            status="succeeded",
             noted={"shape": "item"},
             finished_at="2026-01-01T00:00:02Z",
         )
@@ -1877,7 +1873,7 @@ def test_run_store_migrates_v19_step_identity_without_losing_history(
             StepEnd(
                 step=step_path,
                 kind="system",
-                status="finished",
+                status="succeeded",
                 output=(TextPart(text=step_path.local),),
                 finished_at="2026-01-01T00:00:02Z",
             )
@@ -1974,7 +1970,7 @@ def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
             StepEnd(
                 step=StepPath.parse(f"{run_id}/0"),
                 kind="system",
-                status="finished",
+                status="succeeded",
                 output=(TextPart(text=text),),
                 finished_at="2026-01-01T00:00:03Z",
             )
@@ -1982,7 +1978,7 @@ def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
         sink.on_event(
             RunEnd(
                 run=run_id,
-                status="finished",
+                status="succeeded",
                 finished_at="2026-01-01T00:00:04Z",
             )
         )

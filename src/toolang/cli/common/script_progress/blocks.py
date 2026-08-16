@@ -87,7 +87,7 @@ class RunBlock(RunState):
         tone = _tone(event.status)
         title = f"--- {event.run} {status} ---"
         console.write(title, tone=tone)
-        if event.status == "finished" and output is not None:
+        if event.status == "succeeded" and output is not None:
             shape = shape_label(output)
             if shape:
                 console.write(f"{shape} returned")
@@ -163,7 +163,7 @@ class CallBlock(CallState):
         error: str,
     ) -> None:
         console.clear_live()
-        if batched and event.status == "finished":
+        if batched and event.status == "succeeded":
             return
         if self.begin.kind == "model":
             self._render_model(
@@ -181,7 +181,7 @@ class CallBlock(CallState):
                 indent=indent,
                 error=error,
             )
-        elif event.status != "finished" and error:
+        elif event.status != "succeeded" and error:
             tone = _tone(event.status)
             console.wrapped(
                 f"{event.step} {status_label(event.status)}: {error}",
@@ -202,7 +202,7 @@ class CallBlock(CallState):
         model = model_label(self.begin.given)
         duration = elapsed(self.begin.started_at, event.finished_at)
         facts = [str(event.step), duration, model, *usage_facts(event.noted)]
-        if event.status != "finished":
+        if event.status != "succeeded":
             if not error:
                 return
             tone = _tone(event.status)
@@ -245,7 +245,7 @@ class CallBlock(CallState):
             duration,
             f"exit {exit_code}" if exit_code is not None else "",
         ]
-        if event.status != "finished":
+        if event.status != "succeeded":
             if not error:
                 return
             tone = _tone(event.status)
@@ -447,7 +447,7 @@ class StatementBlock(StatementState):
             return
         if not self.header_written:
             self._render_header(console, verbosity=verbosity)
-        if event.status != "finished":
+        if event.status != "succeeded":
             if error:
                 tone = _tone(event.status)
                 detail = (

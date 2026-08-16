@@ -127,7 +127,7 @@ class ChatTuiPtySession:
         try:
             chunk = os.read(self.master, 65_536)
         except OSError as exc:
-            if exc.errno == errno.EIO and self.process.poll() is not None:
+            if exc.errno == errno.EIO:
                 return
             raise
         self.data.extend(chunk)

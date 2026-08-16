@@ -97,7 +97,7 @@ Chore list item:
     "thread_id": "chore_xy1234ab",
     "last_run": {
       "id": "run_ab12cd34",
-      "status": "finished",
+      "status": "succeeded",
       "started_at": "2026-04-23T06:00:00Z",
       "finished_at": "2026-04-23T06:02:00Z"
     },
@@ -142,7 +142,7 @@ Runtime run `status` values:
 | Value | Meaning |
 | --- | --- |
 | `running` | Run is currently active |
-| `finished` | Run finished successfully |
+| `succeeded` | Run succeeded |
 | `failed` | Run failed |
 | `canceled` | Run was canceled |
 

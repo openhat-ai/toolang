@@ -149,7 +149,7 @@ def test_task_revisions_coalesce_and_run_serially(tmp_path) -> None:
         after_first = store.finish_run(
             jobs={second.id: second},
             run_id="run_one",
-            run_status="finished",
+            run_status="succeeded",
             now=NOW + timedelta(seconds=2),
         )
         assert after_first is not None
@@ -164,7 +164,7 @@ def test_task_revisions_coalesce_and_run_serially(tmp_path) -> None:
         done = store.finish_run(
             jobs={second.id: second},
             run_id="run_two",
-            run_status="finished",
+            run_status="succeeded",
             now=NOW + timedelta(seconds=3),
         )
         assert done is not None and done.status == "done"
@@ -206,7 +206,7 @@ def test_active_job_survives_ready_removal_until_run_finishes(tmp_path) -> None:
             store.finish_run(
                 jobs={},
                 run_id="run_one",
-                run_status="finished",
+                run_status="succeeded",
                 now=NOW + timedelta(seconds=2),
             )
             is None
@@ -328,7 +328,7 @@ def test_chore_coalesces_missed_occurrences_without_shifting_schedule(
         after_manual = store.finish_run(
             jobs={job.id: job},
             run_id="run_manual",
-            run_status="finished",
+            run_status="succeeded",
             now=NOW + timedelta(minutes=3, seconds=50),
         )
         assert after_manual is not None

@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 from prompt_toolkit.output.color_depth import ColorDepth
 from rich.console import RenderableType
 from rich.text import Text
+import pytest
 
 from toolang.base.types.message import (
     TextDelta,
@@ -39,6 +40,28 @@ from toolang.execution.events import (
 )
 from toolang.execution.records import RunInputRef, StepOutputRef
 from toolang.execution.types import PolicyCommand, StepPath
+from tests.support import chat_tui_pty
+
+
+def test_chat_tui_pty_treats_linux_eio_as_eof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = cast(Any, SimpleNamespace(poll=lambda: None))
+    session = chat_tui_pty.ChatTuiPtySession(master=123, process=process)
+    monkeypatch.setattr(
+        chat_tui_pty.select,
+        "select",
+        lambda *_args: ([session.master], [], []),
+    )
+
+    def closed_pty(*_args: object) -> bytes:
+        raise OSError(chat_tui_pty.errno.EIO, "pty closed")
+
+    monkeypatch.setattr(chat_tui_pty.os, "read", closed_pty)
+
+    session._read(timeout=0)
+
+    assert session.data == b""
 
 
 def test_chat_run_events_keep_run_stop_block_until_run_end() -> None:
@@ -63,7 +86,7 @@ def test_chat_run_events_keep_run_stop_block_until_run_end() -> None:
     ]
     assert app.finalized == []
 
-    events.handle_run_event(_run_end(status="finished"), app)
+    events.handle_run_event(_run_end(status="succeeded"), app)
     assert app.live_blocks == []
     assert [block.type for block in app.finalized] == [
         "ModelStepBlock",
@@ -182,7 +205,7 @@ def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
 
 def test_chat_flow_root_footer_counts_child_runs() -> None:
     block = blocks.RunStopBlock.create(_run_begin(executable_kind="flow"))
-    block.update(_run_end(status="finished"))
+    block.update(_run_end(status="succeeded"))
     block.set_metrics(
         Metrics(
             runs=7,
@@ -303,7 +326,7 @@ def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
     ]
     assert "· child done" in _render_text(app.live_blocks[0].render())
 
-    events.handle_run_event(_run_end(run_id="run_child", status="finished"), app)
+    events.handle_run_event(_run_end(run_id="run_child", status="succeeded"), app)
 
     assert app.active_run == "run_1"
     assert not app.finished
@@ -322,7 +345,7 @@ def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
         "    run_child/1 · 1.0s · model · 1/1 tokens",
         "  ↳ run_child succeeded · 3.0s",
     ]
-    events.handle_run_event(_run_end(status="finished"), app)
+    events.handle_run_event(_run_end(status="succeeded"), app)
 
     assert app.live_blocks == []
     assert [block.type for block in app.finalized] == [
@@ -522,7 +545,7 @@ def test_chat_confirms_only_the_root_output_model_response() -> None:
     events.handle_run_event(
         RunEnd(
             run="run_1",
-            status="finished",
+            status="succeeded",
             output=StepOutputRef(step=StepPath.parse("run_1/2")),
             finished_at="2026-01-01T00:00:04Z",
         ),
@@ -611,20 +634,20 @@ def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
             StepEnd(
                 step=StepPath.parse(f"run_child_{item}/0"),
                 kind="model",
-                status="finished",
+                status="succeeded",
                 output=(TextPart(f"summary {item}"),),
             ),
             app,
         )
         events.handle_run_event(
-            RunEnd(run=f"run_child_{item}", status="finished"),
+            RunEnd(run=f"run_child_{item}", status="succeeded"),
             app,
         )
     events.handle_run_event(
         StepEnd(
             step=StepPath.parse("run_1/1"),
             kind="par",
-            status="finished",
+            status="succeeded",
             noted={"shape": "list", "items": 2},
             finished_at="2026-01-01T00:00:03Z",
         ),
@@ -666,7 +689,7 @@ def test_chat_flow_root_result_is_durable_and_hidden_until_requested() -> None:
         StepEnd(
             step=StepPath.parse("run_1/1"),
             kind="run",
-            status="finished",
+            status="succeeded",
             output=(TextPart("flow response"),),
             noted={"shape": "item"},
         ),
@@ -675,7 +698,7 @@ def test_chat_flow_root_result_is_durable_and_hidden_until_requested() -> None:
     events.handle_run_event(
         RunEnd(
             run="run_1",
-            status="finished",
+            status="succeeded",
             output=StepOutputRef(step=StepPath.parse("run_1/1")),
         ),
         app,
@@ -852,17 +875,17 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
         StepEnd(
             step=StepPath.parse("run_revise/0"),
             kind="model",
-            status="finished",
+            status="succeeded",
             output=(TextPart("revised"),),
         ),
         app,
     )
-    events.handle_run_event(RunEnd(run="run_revise", status="finished"), app)
+    events.handle_run_event(RunEnd(run="run_revise", status="succeeded"), app)
     events.handle_run_event(
         StepEnd(
             step=StepPath.parse("run_1/1/0"),
             kind="run",
-            status="finished",
+            status="succeeded",
             output=(TextPart("revised"),),
         ),
         app,
@@ -871,7 +894,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
         StepEnd(
             step=StepPath.parse("run_1/1"),
             kind="loop",
-            status="finished",
+            status="succeeded",
             output=(TextPart("revised"),),
             finished_at="2026-01-01T00:00:03Z",
         ),
@@ -1543,14 +1566,14 @@ def _run_begin(
 def _run_end(
     *,
     run_id: str = "run_1",
-    status: Literal["running", "finished", "failed", "canceled"],
+    status: Literal["running", "succeeded", "failed", "canceled"],
 ) -> RunEnd:
     return RunEnd(
         run=run_id,
         status=status,
         output=(
             StepOutputRef(step=StepPath.parse(f"{run_id}/1"))
-            if run_id == "run_1" and status == "finished"
+            if run_id == "run_1" and status == "succeeded"
             else None
         ),
         finished_at="2026-01-01T00:00:03Z",
@@ -1591,12 +1614,9 @@ def _model_step_end(
     return StepEnd(
         step=StepPath.parse(f"{run_id}/{step_index}"),
         kind="model",
-        status="finished",
+        status="succeeded",
         output=(TextPart(text=output),),
-        noted={
-            "model_ref": "test/model",
-            "tokens": {"input": 1, "output": 1},
-        },
+        noted={"tokens": {"input": 1, "output": 1}},
         finished_at=finished_at,
     )
 
@@ -1619,14 +1639,9 @@ def _flow_step_end(*, step_index: int = 1) -> StepEnd:
     return StepEnd(
         step=StepPath.parse(f"run_1/{step_index}"),
         kind="par",
-        status="finished",
+        status="succeeded",
         output=(),
-        noted={
-            "statement": "map",
-            "runnable": "summarize",
-            "par": 2,
-            "shape": "list",
-        },
+        noted={"shape": "list"},
         finished_at="2026-01-01T00:00:02Z",
     )
 
@@ -1652,13 +1667,9 @@ def _child_run_step_end(
     return StepEnd(
         step=StepPath.parse(step or f"run_1/{step_index}"),
         kind="run",
-        status="finished",
+        status="succeeded",
         output=(TextPart(text="done"),),
-        noted={
-            "statement": "run",
-            "runnable": "summarize",
-            "shape": "item",
-        },
+        noted={"shape": "item"},
         finished_at="2026-01-01T00:00:02Z",
     )
 
@@ -1672,7 +1683,7 @@ def _tool_step_end(
     return StepEnd(
         step=StepPath.parse(f"{run_id}/{step_index}"),
         kind="tool",
-        status="finished",
+        status="succeeded",
         output=(
             ToolCallPart(
                 tool_call_id="call_1",
@@ -1687,7 +1698,6 @@ def _tool_step_end(
                 output={"stdout": "ok\n"},
             ),
         ),
-        noted={"tool": "shell__execute"},
         finished_at=finished_at,
     )
 

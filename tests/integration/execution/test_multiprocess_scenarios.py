@@ -272,7 +272,7 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
 
             gate.release()
             record = await asyncio.wait_for(handle, timeout=2)
-            assert record.status == "finished"
+            assert record.status == "succeeded"
             assert harness.store.run_output_text(run_id=record.id) == "final"
             assert len(harness.adapter.invocations) == 2
             assert harness.adapter.invocations[1].call.messages[-1] == Message.user(
@@ -280,7 +280,7 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
             )
             control = harness.store.get_run_control(run_id=record.id, index=1)
             assert control is not None
-            assert control.status == "finished"
+            assert control.status == "applied"
             assert control.context == {"source": "remote-process"}
 
     asyncio.run(scenario())
@@ -331,7 +331,7 @@ def test_remote_process_can_cancel_a_pending_steer(tmp_path: Path) -> None:
 
             gate.release()
             record = await asyncio.wait_for(handle, timeout=2)
-            assert record.status == "finished"
+            assert record.status == "succeeded"
             assert harness.store.run_output_text(run_id=record.id) == "draft"
             assert len(harness.adapter.invocations) == 1
             stored = harness.store.get_run_control(
@@ -339,7 +339,7 @@ def test_remote_process_can_cancel_a_pending_steer(tmp_path: Path) -> None:
                 index=steer.index,
             )
             assert stored is not None
-            assert stored.status == "canceled"
+            assert stored.status == "revoked"
 
     asyncio.run(scenario())
 
@@ -377,7 +377,7 @@ def test_duplicate_run_control_request_has_one_process_winner(
             control
             for run_id in ("run_request_a", "run_request_b")
             for control in reopened.list_run_controls(run_id=run_id)
-            if control.request_id == "shared-control-request"
+            if control.request == "shared-control-request"
         ]
         assert len(controls) == 1
         assert controls[0].index == 1
@@ -433,7 +433,7 @@ def test_pending_control_has_one_cross_process_cancellation_winner(
             index=control.index,
         )
         assert stored is not None
-        assert stored.status == "canceled"
+        assert stored.status == "revoked"
     finally:
         reopened.close()
 
@@ -486,7 +486,7 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
             index=control.index,
         )
         assert stored is not None
-        assert stored.status == ("pending" if "claimed" in kinds else "canceled")
+        assert stored.status == ("pending" if "claimed" in kinds else "revoked")
     finally:
         reopened.close()
 

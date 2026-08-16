@@ -42,7 +42,7 @@ def test_job_claim_persists_preallocated_run_id(tmp_path: Path) -> None:
             store.finish_run(
                 jobs=jobs,
                 run_id="run_executor",
-                run_status="finished",
+                run_status="succeeded",
                 now=NOW,
             )
             is not None
@@ -75,7 +75,7 @@ def test_file_claim_binds_executor_assigned_run_id(tmp_path: Path) -> None:
         assert (
             store.finish_run(
                 run_id="run_executor",
-                run_status="finished",
+                run_status="succeeded",
                 now=NOW,
             )
             is not None

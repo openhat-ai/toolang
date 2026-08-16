@@ -66,16 +66,16 @@ agic calculate(_: Text) -> Text:
                 f"step_begin:{run.id}/0:model",
                 f"part_begin:{run.id}/0:0:tool_call",
                 f"part_end:{run.id}/0:0:tool_call",
-                f"step_end:{run.id}/0:model:finished",
+                f"step_end:{run.id}/0:model:succeeded",
                 f"step_begin:{run.id}/1:tool",
                 f"part_begin:{run.id}/1:0:tool_result",
                 f"part_end:{run.id}/1:0:tool_result",
-                f"step_end:{run.id}/1:tool:finished",
+                f"step_end:{run.id}/1:tool:succeeded",
                 f"step_begin:{run.id}/2:model",
                 f"part_begin:{run.id}/2:0:text",
                 f"part_end:{run.id}/2:0:text",
-                f"step_end:{run.id}/2:model:finished",
-                f"run_end:{run.id}:finished",
+                f"step_end:{run.id}/2:model:succeeded",
+                f"run_end:{run.id}:succeeded",
             ]
 
     asyncio.run(scenario())
@@ -128,10 +128,10 @@ flow relay(_: Text) -> Text:
                 f"step_begin:{child.id}/0:model",
                 f"part_begin:{child.id}/0:0:text",
                 f"part_end:{child.id}/0:0:text",
-                f"step_end:{child.id}/0:model:finished",
-                f"run_end:{child.id}:finished",
-                f"step_end:{root.id}/0:run:finished",
-                f"run_end:{root.id}:finished",
+                f"step_end:{child.id}/0:model:succeeded",
+                f"run_end:{child.id}:succeeded",
+                f"step_end:{root.id}/0:run:succeeded",
+                f"run_end:{root.id}:succeeded",
             ]
 
     asyncio.run(scenario())

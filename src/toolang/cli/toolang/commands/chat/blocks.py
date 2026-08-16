@@ -30,7 +30,7 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.types import StepPath
+from toolang.execution.types import ExecutionError, StepPath
 
 from toolang.cli.common.execution_progress.formatting import (
     count,
@@ -68,7 +68,7 @@ from .rendering import (
 STEER_BAR_BG = "#2f555d"
 
 
-def _terminal_diagnostic(status: str, error: str) -> str:
+def _terminal_diagnostic(status: str, error: ExecutionError) -> str:
     value = friendly_error(error) if error else ""
     normalized = re.sub(r"[\s._-]+", " ", value.casefold()).strip(" .:!")
     if status == "canceled" and normalized in {
@@ -267,7 +267,7 @@ class RunStopBlock(MutableBlock):
         label = status_label(status)
         tone = (
             "green"
-            if status == "finished"
+            if status == "succeeded"
             else "red"
             if status == "failed"
             else "yellow"
@@ -336,7 +336,7 @@ class DefaultStepBlock(MutableBlock):
     def update(self, event: StepEnd) -> None:
         self.step = event.step
         self.status = "completed"
-        self.error = event.error or ""
+        self.error = friendly_error(event.error) if event.error else ""
         self.final_label = self._final_label(event.noted)
 
     def render(self) -> RenderableType:
@@ -395,7 +395,7 @@ class FlowStepBlock(MutableBlock):
 
     def update(self, event: StepEnd) -> None:
         self.state.finish(event)
-        self.display_error = event.error or ""
+        self.display_error = friendly_error(event.error) if event.error else ""
 
     def note_call(self, call: CallState) -> None:
         """Retain one direct child call as detailed statement progress."""
@@ -436,7 +436,7 @@ class FlowStepBlock(MutableBlock):
             lines.extend(self._live_lines())
             return Group(*lines)
         lines.extend(self._call_lines())
-        if end.status != "finished":
+        if end.status != "succeeded":
             lines.extend(self._successful_child_run_lines())
             error = _terminal_diagnostic(
                 end.status,
@@ -543,7 +543,7 @@ class FlowStepBlock(MutableBlock):
         lines: list[RenderableType] = []
         for call in self.calls:
             end = call.end
-            if end is None or end.status != "finished":
+            if end is None or end.status != "succeeded":
                 continue
             begin = call.begin
             if begin.kind == "model":
@@ -577,13 +577,13 @@ class FlowStepBlock(MutableBlock):
 
     def _successful_child_run_lines(self) -> list[RenderableType]:
         return self._child_run_lines_for(
-            tuple(run for run in self.child_runs if run.status == "finished")
+            tuple(run for run in self.child_runs if run.status == "succeeded")
         )
 
     def _failed_child_fact_lines(self) -> list[RenderableType]:
         lines: list[RenderableType] = []
         for run in self.child_runs:
-            if run.status == "finished":
+            if run.status == "succeeded":
                 continue
             facts = [
                 f"{run.run_id} {status_label(run.status)}",
@@ -681,7 +681,7 @@ class ModelStepBlock(MutableBlock):
             self.status = event.status
             self.output = _parts_text(event.output)
             self.tool_requests = self._tool_request_summary(event)
-            self.error = event.error or ""
+            self.error = friendly_error(event.error) if event.error else ""
             self.finished_at = event.finished_at
             self.noted = event.noted
 
@@ -704,7 +704,7 @@ class ModelStepBlock(MutableBlock):
                 )
             return Text.from_markup("[none]· thinking…[/]")
 
-        if self.status != "finished":
+        if self.status != "succeeded":
             label = self.model or "model"
             error = _terminal_diagnostic(self.status, self.error)
             detail = (
@@ -877,7 +877,7 @@ class ToolStepBlock(MutableBlock):
         self.step = event.step
         self.status = "completed"
         self.detail = _tool_call_display_from_parts(event.output)
-        self.error = event.error or ""
+        self.error = friendly_error(event.error) if event.error else ""
         self.output_messages = self._output_messages(event)
         self.finished_at = event.finished_at
         self.exit_code = tool_exit_code(event)

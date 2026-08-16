@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
-from typing import Any
+from typing import Any, cast
 
 from toolang.base.types.message import Message, MessagePart, message_summary
 from toolang.base.types.run import ModelCall
@@ -20,12 +20,14 @@ from .records import (
     ThreadPeer,
     ThreadRecord,
     model_call_to_data,
+    execution_error_message,
     step_message_role,
 )
 from .types import (
     ControlTiming,
     RunControlKind,
     ControlStatus,
+    ExecutionError,
     RunStatus,
     StepKind,
     StepPath,
@@ -99,37 +101,6 @@ class ThreadPeerInfo:
     @classmethod
     def from_peer(cls, peer: ThreadPeer) -> ThreadPeerInfo:
         return cls(type=peer.type, name=peer.name, thread=peer.thread)
-
-
-@dataclass(frozen=True, slots=True)
-class FailureDetail:
-    """One normalized run failure schema."""
-
-    reason: str
-    step_index: int | None = None
-    step_kind: StepKind | None = None
-    step_error: str | None = None
-
-    @classmethod
-    def from_run(
-        cls,
-        *,
-        status: str,
-        error: str | None,
-        steps: Sequence[StepRecord],
-    ) -> FailureDetail | None:
-        if status != "failed" and error is None:
-            return None
-        failed_step = next(
-            (item for item in reversed(steps) if item.status == "failed"), None
-        )
-        step_error = failed_step.error if failed_step is not None else None
-        return cls(
-            reason=error or step_error or "Run failed.",
-            step_index=failed_step.index if failed_step is not None else None,
-            step_kind=failed_step.kind if failed_step is not None else None,
-            step_error=step_error,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,9 +211,8 @@ class RunInfo:
     input_text: str
     summary: str
     status: RunStatus
-    error: str | None
+    error: ExecutionError | None
     ejected: EjectionRefData | None
-    failure: FailureDetail | None
     created_at: str
     started_at: str
     finished_at: str | None
@@ -275,12 +245,13 @@ class RunInfo:
             if last_message_step is not None
             else input_text
         )
+        error_message = execution_error_message(run.error, steps)
         if (
             run.status == "failed"
-            and run.error
+            and error_message
             and (not summary or summary == input_text)
         ):
-            summary = run.error
+            summary = error_message
         return cls(
             id=run.id,
             parent=run.parent,
@@ -289,17 +260,12 @@ class RunInfo:
             runnable_kind=run.runnable_kind,
             runnable_name=run.runnable_name,
             call_kind=run.call_kind,
-            metadata=dict(run.context),
+            metadata=cast(dict[str, object], dict(run.context)),
             input_text=input_text,
             summary=summary,
             status=run.status,
             error=run.error,
             ejected=_ejection_ref_data(run.ejected),
-            failure=FailureDetail.from_run(
-                status=run.status,
-                error=run.error,
-                steps=steps,
-            ),
             created_at=run.created_at,
             started_at=run.started_at,
             finished_at=run.finished_at,
@@ -334,7 +300,7 @@ class RunControlInfo:
             timing=control.timing,
             source=control.source,
             anchor=control.anchor,
-            request_id=control.request_id,
+            request_id=control.request,
             status=control.status,
             message=control.input,
             context=dict(control.context),
@@ -355,7 +321,7 @@ class StepData:
     given: dict[str, Any] = field(default_factory=dict)
     noted: dict[str, Any] = field(default_factory=dict)
     status: StepStatus = "running"
-    error: str | None = None
+    error: ExecutionError | None = None
     ejected: RunControlRefData | None = None
     created_at: str = ""
     started_at: str = ""

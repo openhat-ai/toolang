@@ -50,7 +50,7 @@ class _RecordingThreadListener(ThreadListener):
             index=event.control.index,
         )
         assert thread is not None
-        assert control is not None and control.status == "finished"
+        assert control is not None and control.status == "applied"
         self.events.append(event)
 
 
@@ -127,12 +127,12 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
         create_control = reopened.list_thread_controls(thread_id=source)
         assert len(create_control) == 1
         assert create_control[0].kind == "create"
-        assert create_control[0].request_id == "thread-create-1"
+        assert create_control[0].request == "thread-create-1"
         assert create_control[0].context == {"prefix": "web"}
         assert create_control[0].source is None
         assert create_control[0].anchor is None
         assert create_control[0].expected_head is None
-        assert create_control[0].status == "finished"
+        assert create_control[0].status == "applied"
         assert create_control[0].finished_at == create_control[0].created_at
 
         forked_thread = reopened.get_thread(thread_id=forked)
@@ -145,9 +145,9 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
         assert fork_control[0].kind == "fork"
         assert fork_control[0].source == source
         assert fork_control[0].anchor == first_run
-        assert fork_control[0].request_id == "thread-fork-1"
+        assert fork_control[0].request == "thread-fork-1"
         assert fork_control[0].expected_head is None
-        assert fork_control[0].status == "finished"
+        assert fork_control[0].status == "applied"
         assert [
             run.id
             for run in reopened.list_thread_history_chronological(thread_id=forked)
@@ -231,12 +231,12 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                 runs[1].id,
                 replacement.id,
             ]
-            assert [control.request_id for control in controls] == [
+            assert [control.request for control in controls] == [
                 None,
                 "thread-rewind-1",
                 "thread-rewind-2",
             ]
-            assert all(control.status == "finished" for control in controls)
+            assert all(control.status == "applied" for control in controls)
             assert all(
                 control.finished_at == control.created_at for control in controls
             )
@@ -539,7 +539,7 @@ def test_listener_failure_does_not_roll_back_a_thread_control(
             )
             assert record is not None
             assert control is not None
-            assert control.status == "finished"
+            assert control.status == "applied"
             assert record.head == ThreadControlRef(thread, 0)
 
     asyncio.run(scenario())

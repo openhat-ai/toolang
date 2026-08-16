@@ -149,7 +149,7 @@ running
 canceling
 ```
 
-The durable `finished` status is presented as `succeeded`.
+The durable `succeeded` status is presented without translation.
 
 
 ### Markers

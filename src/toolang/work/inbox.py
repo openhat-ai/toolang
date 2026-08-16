@@ -13,7 +13,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.policy import RunBindings
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.records import RunRecord
+from toolang.execution.records import RunRecord, execution_error_message
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 from toolang.work import files
@@ -242,7 +242,7 @@ def _record_completed_runs(
             error = str(exc) or type(exc).__name__
         else:
             status = run.status
-            error = run.error
+            error = execution_error_message(run.error)
         store.finish_run(
             run_id=run_id,
             run_status=status,

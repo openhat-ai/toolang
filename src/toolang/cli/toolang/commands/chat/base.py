@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from toolang.base.types.message import MessagePart
 from toolang.execution.events import RunEvent
-from toolang.execution.types import PolicyCommand
+from toolang.execution.records import execution_error_message
+from toolang.execution.types import ExecutionError, PolicyCommand
 
 if TYPE_CHECKING:
     from .blocks import MutableBlock
@@ -132,8 +133,8 @@ def chat_status_label(selects: Mapping[str, object]) -> str:
     return f"{model_label}  {executable}" if executable else model_label
 
 
-def friendly_error(message: str) -> str:
-    text = message.strip()
+def friendly_error(message: ExecutionError) -> str:
+    text = (execution_error_message(message) or "").strip()
     extracted = _extract_error_message(text)
     if extracted:
         return extracted

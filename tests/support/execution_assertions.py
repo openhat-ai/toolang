@@ -100,7 +100,7 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
                     f"step finished before it started at {where}"
                 )
             open_parts = {key for key in active_parts if key[0] == event.step}
-            if event.status == "finished":
+            if event.status == "succeeded":
                 assert not open_parts, f"finished step has incomplete parts at {where}"
                 parts = tuple(
                     ended.data

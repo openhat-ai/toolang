@@ -95,7 +95,7 @@ class _LiveExecution:
             ),
             timeout=180,
         )
-        assert record.status == "finished", record.error
+        assert record.status == "succeeded", record.error
         return record.id, self.store.run_output_text(run_id=record.id)
 
 

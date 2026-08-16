@@ -97,7 +97,7 @@ def test_local_script_runs_through_execution_and_persists_script_thread(
     assert threads[0].thread_id.startswith("script_")
     assert threads[0].origin == "script"
     assert len(runs) == 1
-    assert runs[0].status == "finished"
+    assert runs[0].status == "succeeded"
     assert runs[0].runnable_name == "echo"
 
 
@@ -198,8 +198,8 @@ def test_script_cancellation_stops_its_owned_run(tmp_path: Path) -> None:
             assert record.error == "script interrupted"
             controls = harness.store.list_run_controls(run_id=handle.run_id)
             assert [(item.kind, item.status) for item in controls] == [
-                ("start", "finished"),
-                ("stop", "finished"),
+                ("start", "applied"),
+                ("stop", "applied"),
             ]
 
     asyncio.run(scenario())

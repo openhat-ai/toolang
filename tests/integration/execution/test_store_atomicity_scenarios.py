@@ -91,7 +91,7 @@ def test_retry_reopens_root_and_ejects_the_failed_step_suffix(
             run_id=run.id,
             step_index=0,
             kind="system",
-            status="finished",
+            status="succeeded",
             input=(),
             output=(),
             started_at="2026-01-01T00:00:00Z",
@@ -142,7 +142,7 @@ def test_retry_reopens_root_and_ejects_the_failed_step_suffix(
         assert reopened.error is None
         assert control.kind == "retry"
         assert control.anchor == failed.path
-        assert control.status == "finished"
+        assert control.status == "applied"
         assert ejected == (failed.path, failure.path)
         assert store.list_steps(run_id=run.id) == [first]
         historical = store.list_steps(run_id=run.id, include_ejected=True)
@@ -377,7 +377,7 @@ def test_run_control_revision_only_advances_when_control_state_changes(
             after_revision=accepted_revision
         )
         assert changed == (canceled,)
-        assert changed[0].status == "canceled"
+        assert changed[0].status == "revoked"
         assert canceled_revision > accepted_revision
     finally:
         store.close()

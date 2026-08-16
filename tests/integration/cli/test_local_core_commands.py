@@ -86,7 +86,7 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     assert "Traceback" not in error_output
     assert "execution history is incompatible with toolang" in error_output
     assert f"uses schema {schema_version}" in error_output
-    assert "requires schema 21" in error_output
+    assert "requires schema 22" in error_output
     assert advice in error_output
     assert "database was not changed" in error_output.lower()
     connection = sqlite3.connect(layout.run_store)
@@ -120,7 +120,7 @@ def test_thread_and_run_lists_read_local_history(tmp_path: Path) -> None:
             run_id=run.id,
             step_index=0,
             kind="model",
-            status="finished",
+            status="succeeded",
             input=(),
             output=(TextPart(text="The repository looks good."),),
             started_at="2026-07-25T01:00:00Z",
@@ -220,7 +220,7 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
             run_id=run.id,
             step_index=0,
             kind="system",
-            status="finished",
+            status="succeeded",
             input=(),
             output=(TextPart(text="prepared"),),
             started_at="2026-07-25T01:00:00Z",
@@ -262,7 +262,7 @@ def test_roaming_source_reads_threads_runs_and_inspection(
             run_id=run.id,
             step_index=0,
             kind="system",
-            status="finished",
+            status="succeeded",
             input=(),
             output=(TextPart(text="ready"),),
             started_at="2026-07-25T01:00:00Z",
@@ -316,7 +316,7 @@ def test_visiting_selector_reads_inspection_without_fetching(
             run_id=run.id,
             step_index=0,
             kind="system",
-            status="finished",
+            status="succeeded",
             input=(),
             output=(TextPart(text="cached"),),
             started_at="2026-07-25T01:00:00Z",
@@ -371,7 +371,7 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
     finally:
         reopened.close()
     assert [(item.kind, item.timing, item.status) for item in controls] == [
-        ("start", "immediate", "finished"),
+        ("start", "immediate", "applied"),
         ("steer", "next_step", "pending"),
         ("stop", "immediate", "pending"),
     ]

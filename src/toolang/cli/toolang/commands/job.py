@@ -14,6 +14,7 @@ from typer.core import TyperCommand
 from ....catalog import templates
 from ....catalog.types import JobStage
 from toolang.common.layout import AgentLayout
+from toolang.execution.records import execution_error_message
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.errors import CatalogError
 from toolang.work.errors import JobStoreSchemaError
@@ -437,12 +438,16 @@ def _last_run_status(job: JobInfo) -> str:
     run = job.runtime.last_run
     if run is None:
         return "-"
-    return "succeeded" if run.status == "finished" else run.status
+    return run.status
 
 
 def _runtime_error(job: JobInfo) -> str:
     run = job.runtime.last_run
-    error = job.runtime.error or (run.error if run is not None else None) or ""
+    error = (
+        job.runtime.error
+        or (execution_error_message(run.error) if run is not None else None)
+        or ""
+    )
     compact = " ".join(error.split())
     return compact if len(compact) <= 56 else f"{compact[:53].rstrip()}..."
 

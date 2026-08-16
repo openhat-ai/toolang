@@ -47,11 +47,19 @@ from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
 from ..records import RunControlRecord, RunInputRef, StepInput, StepOutputRef, ValueRef
-from ..types import StepKind, StepPath
+from ..types import StepErrorRef, StepKind, StepPath
 from .ceiling import _ResolvedAgentCeiling, _RunCeiling
 
 Shape = Literal["none", "item", "list"]
 EventEmitter = Callable[[RunEvent], Awaitable[None]]
+
+
+class _StepFailed(Exception):
+    """Carry one failed-step reference across enclosing execution layers."""
+
+    def __init__(self, step: StepPath, cause: BaseException) -> None:
+        super().__init__(str(cause) or type(cause).__name__)
+        self.error = StepErrorRef(step)
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,22 +148,34 @@ async def execute_step(
             )
         )
         raise
-    except Exception as exc:
+    except _StepFailed as exc:
         await emit(
             StepEnd(
                 step=path,
                 kind=kind,
                 status="failed",
-                error=str(exc) or type(exc).__name__,
+                error=exc.error,
                 finished_at=utc_now(),
             )
         )
-        raise
+        raise _StepFailed(path, exc) from exc
+    except Exception as exc:
+        message = str(exc) or type(exc).__name__
+        await emit(
+            StepEnd(
+                step=path,
+                kind=kind,
+                status="failed",
+                error=message,
+                finished_at=utc_now(),
+            )
+        )
+        raise _StepFailed(path, exc) from exc
     await emit(
         StepEnd(
             step=path,
             kind=kind,
-            status="finished",
+            status="succeeded",
             output=output_parts(result),
             noted={
                 "shape": result.shape,

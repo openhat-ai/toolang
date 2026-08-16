@@ -28,13 +28,13 @@ run_abc123/0/1
 ## Statuses
 
 ```text
-RunStatus     pending | running | finished | failed | canceled
-StepStatus    running | finished | failed | canceled
-ControlStatus pending | finished | canceled | failed
+RunStatus     pending | running | succeeded | failed | canceled
+StepStatus    pending | running | succeeded | failed | canceled
+ControlStatus pending | applied | wontapply | revoked
 ```
 
-Both run and thread controls use `ControlStatus`. For a control, `finished`
-means applied rather than merely accepted.
+Both run and thread controls use `ControlStatus`. `StepStatus.pending` is
+reserved for future use and is not currently emitted.
 
 
 ## RunRecord
@@ -66,6 +66,17 @@ calling `StepPath` was ejected is consequently omitted from effective run and
 thread projections while its durable run record remains available to audit
 reads.
 
+Run and step errors share one compact shape:
+
+```text
+ExecutionError = string | StepErrorRef(step: StepPath)
+```
+
+The step that directly catches an exception stores its message string. An
+enclosing step or run stores `{"step": "run_id/path"}` to reference the step
+that owns the next error detail. A runtime failure outside a step stores its
+message directly on the run and does not create a synthetic system step.
+
 
 ## RunControlRecord
 
@@ -77,7 +88,7 @@ timing
 input
 source
 anchor
-request_id
+request
 context
 status
 error
@@ -87,8 +98,8 @@ finished_at
 
 `(run, index)` is the durable identity. Kinds are `start`, `rerun`, `retry`,
 `steer`, and `stop`.
-Timing is `immediate`, `next_step`, or `next_call`. A non-null request ID is
-unique across the `run_controls` table. Duplicate request IDs are rejected;
+Timing is `immediate`, `next_step`, or `next_call`. A non-null request is
+unique across the `run_controls` table. Duplicate requests are rejected;
 they do not replay a previous result.
 
 The index-zero `start` or `rerun` control and `RunRecord` are inserted in one
@@ -149,9 +160,10 @@ later persisted in step output.
 
 `given` contains information known when `StepBegin` is emitted. `noted`
 contains additional information recorded by `StepEnd`. Neither repeats the
-step's input, output, status, or error.
+step's input, output, status, or error. `RunRecord.context`, `StepRecord.given`,
+and `StepRecord.noted` remain open dictionaries.
 
-A finished flow step also notes its typed local result (`shape`, `type`, and
+A succeeded flow step also notes its typed local result (`shape`, `type`, and
 `value`). This makes the step a reusable commit boundary for retry without a
 separate checkpoint record. `ejected` is the `RunControlRef` of the retry that
 removed the step from the effective projection. Normal inspection excludes
@@ -207,7 +219,7 @@ index
 kind
 source
 anchor
-request_id
+request
 expected_head
 context
 status
@@ -218,8 +230,8 @@ finished_at
 Kinds are `create`, `fork`, and `rewind`. `(thread, index)` is the durable
 identity. Thread mutations are synchronous, so callers observe their success or
 failure directly. Only successful mutations produce thread events.
-Non-null request IDs are unique across the `thread_controls` table. Clients
-must keep request IDs globally unique across both control tables or pass
+Non-null requests are unique across the `thread_controls` table. Clients
+must keep requests globally unique across both control tables or pass
 `None`.
 
 
@@ -255,10 +267,10 @@ The runtime projects each event fact and its referenced control transitions in
 one SQLite write transaction:
 
 ```text
-RunBegin.input  -> finish start control
-StepBegin.input -> finish steer controls
-RunEnd.input    -> finish stop control
-RunEnd          -> fail remaining pending controls
+RunBegin.input  -> apply start control
+StepBegin.input -> apply steer controls
+RunEnd.input    -> apply stop control
+RunEnd          -> mark remaining pending controls wontapply
 ```
 
 The executor's private event projector owns no control transitions.
@@ -267,7 +279,7 @@ The executor's private event projector owns no control transitions.
 ## Idempotency And Concurrency
 
 SQLite primary keys protect run, control, thread, and step identities.
-Non-null request IDs are unique within their control table; duplicate
+Non-null `request` values are unique within their control table; duplicate
 submissions are rejected rather than replayed. Index allocation and insertion use one
 `BEGIN IMMEDIATE` transaction, and every process owns its own SQLite
 connection. A configured busy timeout allows concurrent local processes to

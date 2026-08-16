@@ -118,12 +118,12 @@ facts. It does not invent statement events.
 
 ### Status
 
-Durable `finished` is presented as `succeeded`.
+Execution statuses are presented without translation.
 
 | Internal | Display |
 | --- | --- |
 | `running` | `running` |
-| `finished` | `succeeded` |
+| `succeeded` | `succeeded` |
 | `failed` | `failed` |
 | `canceled` | `canceled` |
 

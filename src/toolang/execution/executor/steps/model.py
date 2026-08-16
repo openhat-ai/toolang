@@ -40,6 +40,7 @@ from ...records import (
     model_call_to_data,
 )
 from ...types import StepPath
+from ..common import _StepFailed
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
 
@@ -137,12 +138,13 @@ async def execute(state: _AgicState) -> ModelCallResult:
         )
         raise
     except Exception as exc:
+        message = str(exc) or type(exc).__name__
         await state.emit(
             StepEnd(
                 step=StepPath(run.run_id, (step_index,)),
                 kind="model",
                 status="failed",
-                error=str(exc) or type(exc).__name__,
+                error=message,
                 finished_at=utc_now(),
             )
         )
@@ -154,7 +156,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             str(exc),
             elapsed_ms(step_started),
         )
-        raise
+        raise _StepFailed(StepPath(run.run_id, (step_index,)), exc) from exc
     return await _apply_response(
         state,
         stream,
@@ -211,7 +213,7 @@ async def _apply_response(
         StepEnd(
             step=StepPath(run.run_id, (step_index,)),
             kind="model",
-            status="finished",
+            status="succeeded",
             output=output,
             noted={
                 **_accounting_data(accounting),
@@ -225,7 +227,7 @@ async def _apply_response(
     state.record_accounting(accounting)
     usage = current.usage
     _LOGGER.info(
-        "Step finished thread=%s run=%s step=%s kind=model status=finished input=%s output=%s tool_calls=%s duration_ms=%s",
+        "Step finished thread=%s run=%s step=%s kind=model status=succeeded input=%s output=%s tool_calls=%s duration_ms=%s",
         run.thread,
         run.run_id,
         step_index,

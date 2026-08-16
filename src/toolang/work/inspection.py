@@ -9,6 +9,8 @@ from typing import Protocol
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.types import JobKind, JobStage
 from toolang.common.layout import AgentLayout
+from toolang.execution.records import execution_error_message
+from toolang.execution.types import ExecutionError
 from .authoring import assign_missing_authored_job_ids
 from .records import JobRecord
 from .schemas import JobDetail, JobInfo, LastRunInfo
@@ -25,7 +27,7 @@ class JobRun(Protocol):
     created_at: str
     started_at: str | None
     finished_at: str | None
-    error: str | None
+    error: ExecutionError | None
 
 
 class JobInspection:
@@ -118,7 +120,7 @@ class JobInspection:
                 status=run.status,
                 started_at=run.started_at,
                 finished_at=run.finished_at,
-                error=run.error,
+                error=execution_error_message(run.error),
             )
             if run is not None
             else None

@@ -674,7 +674,7 @@ def _finished_status(record: JobRecord, run_status: RunStatus) -> JobStatus:
         return "pending" if record.ready_at or record.next_run_at else "done"
     if record.ready_at is not None or record.revision != record.active_revision:
         return "pending"
-    if run_status == "finished":
+    if run_status == "succeeded":
         return "done"
     if run_status == "canceled":
         return "canceled"

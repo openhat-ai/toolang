@@ -25,7 +25,7 @@ from toolang.execution.events import RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
 from toolang.execution.history import RunHistory
 from toolang.execution.records import RunControlRef, run_limits_to_data
-from toolang.execution.types import StepPath, ThreadPrefix
+from toolang.execution.types import StepErrorRef, StepPath, ThreadPrefix
 from toolang.lang.input import perceive_input
 
 
@@ -75,10 +75,10 @@ flow relay(_: Part[]) -> Part[]:
 
             runs = harness.store.list_runs(thread_id=thread, limit=None)
             children = [run for run in runs if run.parent is not None]
-            assert root.status == "finished"
+            assert root.status == "succeeded"
             assert len(children) == 1
             child = children[0]
-            assert child.status == "finished"
+            assert child.status == "succeeded"
             assert child.parent == StepPath.parse(f"{root.id}/0")
             assert child.root_run_id == root.id
             assert harness.store.run_output(run_id=root.id) == (TextPart("relayed"),)
@@ -135,7 +135,7 @@ flow staged(_: Part[]) -> Part[]:
             assert failed.status == "failed"
             before = harness.store.list_steps(run_id=failed.id)
             assert [(step.path.index, step.status) for step in before] == [
-                (0, "finished"),
+                (0, "succeeded"),
                 (1, "failed"),
             ]
 
@@ -146,14 +146,14 @@ flow staged(_: Part[]) -> Part[]:
             )
 
             assert retried.id == failed.id
-            assert retried.status == "finished"
+            assert retried.status == "succeeded"
             assert harness.store.run_output(run_id=retried.id) == (
                 TextPart("recovered"),
             )
             active = harness.store.list_steps(run_id=retried.id)
             assert [(step.path.index, step.status) for step in active] == [
-                (0, "finished"),
-                (2, "finished"),
+                (0, "succeeded"),
+                (2, "succeeded"),
             ]
             assert active[0].noted["value"] == [{"type": "text", "text": "committed"}]
             historical = harness.store.list_steps(
@@ -217,7 +217,7 @@ agic reply(_: Part[], tone: Text) -> Part[]:
 
             assert rerun.id != source.id
             assert rerun.thread == source.thread
-            assert rerun.status == "finished"
+            assert rerun.status == "succeeded"
             assert harness.store.run_output(run_id=rerun.id) == (TextPart("second"),)
             stored_source = harness.store.get_run(run_id=source.id)
             assert stored_source is not None
@@ -287,7 +287,7 @@ flow staged(_: Part[]) -> Part[]:
                 state=harness.state,
             )
 
-            assert run.status == "finished"
+            assert run.status == "succeeded"
             assert [
                 step.path.index for step in harness.store.list_steps(run_id=run.id)
             ] == [0, 3]
@@ -352,7 +352,7 @@ flow twice(_: Part[]) -> Part[]:
             )
 
             assert run.status == "failed"
-            assert run.error == "Run token limit exceeded: 4 > 2"
+            assert run.error == StepErrorRef(StepPath(run.id, (2,)))
             retry = harness.store.list_run_controls(run_id=run.id)[-1]
             assert retry.context == {
                 "limits": {
@@ -420,6 +420,15 @@ flow parallel(_: Part[]):
                 "canceled",
                 "failed",
             ]
+            failed_child = next(run for run in children if run.status == "failed")
+            leaf_path = StepPath(failed_child.id, (0,))
+            root_path = StepPath(root.id, (0,))
+            root_step = harness.store.list_steps(run_id=root.id)[0]
+            leaf_step = harness.store.list_steps(run_id=failed_child.id)[0]
+            assert root.error == StepErrorRef(root_path)
+            assert root_step.error == StepErrorRef(leaf_path)
+            assert failed_child.error == StepErrorRef(leaf_path)
+            assert leaf_step.error == "worker failed"
             assert all(
                 step.status != "running"
                 for run in runs
@@ -436,7 +445,7 @@ flow parallel(_: Part[]):
     asyncio.run(scenario())
 
 
-def test_runtime_failure_outside_a_step_emits_a_failed_system_step(
+def test_runtime_failure_outside_a_step_is_recorded_on_the_run(
     tmp_path: Path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -463,22 +472,17 @@ flow fail(_: Part[]) -> Number:
             )
 
             assert record.status == "failed"
-            assert record.error is not None
+            assert isinstance(record.error, str)
             assert record.error.startswith("output is not valid Number")
             steps = harness.store.list_steps(run_id=record.id)
             assert [(step.kind, step.status) for step in steps] == [
-                ("system", "finished"),
-                ("system", "failed"),
+                ("system", "succeeded"),
             ]
-            assert steps[-1].given == {"runtime": "failure"}
-            assert steps[-1].output == (TextPart(record.error),)
             assert_run_event_integrity(tracer.events)
             assert event_labels(tracer.events) == [
                 f"run_begin:{record.id}",
                 f"step_begin:{record.id}/0:system",
-                f"step_end:{record.id}/0:system:finished",
-                f"step_begin:{record.id}/1:system",
-                f"step_end:{record.id}/1:system:failed",
+                f"step_end:{record.id}/0:system:succeeded",
                 f"run_end:{record.id}:failed",
             ]
 
@@ -525,7 +529,7 @@ flow mapped(_: Text) -> Text[]:
                 )
             )
 
-            assert root.status == "finished"
+            assert root.status == "succeeded"
             assert _output_value(harness, root.id) == ["ONE", "TWO"]
             assert _root_step_kinds(harness, root.id) == ["run", "par"]
             assert [
@@ -596,7 +600,7 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
                 )
             )
 
-            assert root.status == "finished", root.error
+            assert root.status == "succeeded", root.error
             assert harness.store.run_output_text(run_id=root.id) == "report"
             assert _root_step_kinds(harness, root.id) == [
                 "system",
@@ -685,8 +689,8 @@ flow select(_: Text) -> Text[]:
                 )
             )
 
-            assert remembered.status == "finished"
-            assert selected.status == "finished", selected.error
+            assert remembered.status == "succeeded"
+            assert selected.status == "succeeded", selected.error
             assert _output_value(harness, selected.id) == ["candidate"]
             score_call = harness.adapter.invocations[-1].call
             assert score_call.tools == ()
@@ -749,7 +753,7 @@ flow fanout(_: Text) -> Text[]:
             gates[0].release()
             root = await asyncio.wait_for(handle, timeout=2)
 
-            assert root.status == "finished"
+            assert root.status == "succeeded"
             assert _output_value(harness, root.id) == [
                 "item 0",
                 "item 1",
@@ -799,7 +803,7 @@ flow summary(_: Text) -> Text:
                 )
             )
 
-            assert root.status == "finished"
+            assert root.status == "succeeded"
             assert harness.store.run_output_text(run_id=root.id) == "a+b+c"
             assert _root_step_kinds(harness, root.id) == ["run", "run"]
             assert harness.adapter.invocations[-1].call.messages[-1] == (
@@ -850,7 +854,7 @@ flow folded(_: Text) -> Text:
                 )
             )
 
-            assert root.status == "finished"
+            assert root.status == "succeeded"
             assert harness.store.run_output_text(run_id=root.id) == "abc"
             assert _root_step_kinds(harness, root.id) == ["run", "loop"]
             assert [
@@ -903,7 +907,7 @@ flow folded(_: Text) -> Text:
                 tracer=tracer,
             )
 
-            assert root.status == "finished"
+            assert root.status == "succeeded"
             assert harness.store.run_output_text(run_id=root.id) == "abc"
             assert [
                 message_text(invocation.call.messages[-1].parts).rsplit("\n", 1)[-1]
@@ -972,7 +976,7 @@ flow selected(_: Text) -> Text[]:
                 )
             )
 
-            assert root.status == "finished"
+            assert root.status == "succeeded"
             assert _output_value(harness, root.id) == expected
             assert _root_step_kinds(harness, root.id) == ["run", "system"]
 
@@ -1029,7 +1033,7 @@ flow selected(_: Text) -> Text[]:
                 )
             )
 
-            assert root.status == "finished"
+            assert root.status == "succeeded"
             assert _output_value(harness, root.id) == expected
             assert _root_step_kinds(harness, root.id) == ["run", "par"]
 
@@ -1087,7 +1091,7 @@ flow ranked(_: Text) -> Text[]:
                 )
             )
 
-            assert root.status == "finished"
+            assert root.status == "succeeded"
             assert _output_value(harness, root.id) == expected
             assert _root_step_kinds(harness, root.id) == ["run", "par"]
 
@@ -1126,7 +1130,7 @@ flow repeated(_: Text) -> Text:
                 )
             )
 
-            assert root.status == "finished"
+            assert root.status == "succeeded"
             assert harness.store.run_output_text(run_id=root.id) == "three"
             assert _root_step_kinds(harness, root.id) == ["loop"]
             assert [
@@ -1185,9 +1189,9 @@ flow repeated(_: Text) -> Text:
                 if run.parent is not None
             ]
             assert root.status == "failed"
-            assert root.error == "Run token limit exceeded: 10 > 8"
+            assert root.error == StepErrorRef(StepPath(root.id, (0,)))
             assert len(harness.adapter.invocations) == 2
-            assert sorted(run.status for run in children) == ["failed", "finished"]
+            assert sorted(run.status for run in children) == ["failed", "succeeded"]
             root_start = harness.store.get_run_control(run_id=root.id, index=0)
             assert root_start is not None
             assert root_start.context == {"limits": run_limits_to_data(limits)}
@@ -1237,7 +1241,7 @@ flow repeated(_: Text) -> Text:
                 )
             )
 
-            assert root.status == "finished"
+            assert root.status == "succeeded"
             assert harness.store.run_output_text(run_id=root.id) == "two"
             assert _root_step_kinds(harness, root.id) == ["loop"]
             assert len(harness.adapter.invocations) == 4
@@ -1296,7 +1300,7 @@ flow invalid(_: Text) -> Text:
 
             error = f"{operation} requires current shape list, got item"
             assert root.status == "failed"
-            assert root.error == error
+            assert root.error == StepErrorRef(StepPath(root.id, (0,)))
             steps = [
                 step
                 for step in harness.store.list_steps(run_id=root.id)
@@ -1348,7 +1352,7 @@ flow scattered(_: Text) -> Text[]:
                 )
             )
 
-            assert root.status == "finished"
+            assert root.status == "succeeded"
             assert _output_value(harness, root.id) == ["a", "b"]
             root_steps = [
                 step
@@ -1356,7 +1360,7 @@ flow scattered(_: Text) -> Text[]:
                 if step.parent is None
             ]
             assert [(step.kind, step.status) for step in root_steps] == [
-                ("run", "finished")
+                ("run", "succeeded")
             ]
             assert root_steps[0].noted["items"] == 2
             child = next(
@@ -1367,7 +1371,7 @@ flow scattered(_: Text) -> Text[]:
                 )
                 if run.parent is not None
             )
-            assert child.status == "finished"
+            assert child.status == "succeeded"
 
     asyncio.run(scenario())
 
@@ -1404,7 +1408,7 @@ flow relay(_: Text, suffix: Text) -> Text:
                 )
             )
 
-            assert root.status == "finished"
+            assert root.status == "succeeded"
             assert harness.adapter.invocations[0].call.messages == [
                 Message.user("hello!")
             ]

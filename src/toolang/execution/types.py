@@ -165,9 +165,24 @@ class StepPath:
         )
 
 
-RunStatus = Literal["pending", "running", "finished", "failed", "canceled"]
-StepStatus = Literal["running", "finished", "failed", "canceled"]
-ControlStatus = Literal["pending", "finished", "canceled", "failed"]
+@dataclass(frozen=True, slots=True)
+class StepErrorRef:
+    """Reference the step that owns one propagated record error."""
+
+    step: StepPath
+
+
+ExecutionError: TypeAlias = str | StepErrorRef
+
+RunStatus = Literal["pending", "running", "succeeded", "failed", "canceled"]
+StepStatus = Literal[
+    "pending",
+    "running",
+    "succeeded",
+    "failed",
+    "canceled",
+]
+ControlStatus = Literal["pending", "applied", "wontapply", "revoked"]
 
 StepKind = Literal[
     "run",
