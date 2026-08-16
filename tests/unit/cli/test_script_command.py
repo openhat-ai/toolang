@@ -12,7 +12,7 @@ from toolang.cli.toolang.commands import script
 from toolang.execution.calls import parse_call
 from toolang.execution.records import RunInputRef, RunRecord
 from toolang.execution.types import RunOverride
-from toolang.lang.input import RunInputText
+from toolang.lang.input import RunnableInputRaw
 from tests.support.execution_harness import ExecutionHarness
 
 
@@ -91,7 +91,7 @@ def test_script_binds_options_arguments_and_primary_input(
     )
     assert captured["raw_named"] == (("count", "2.5"), ("enabled", "true"))
     input = captured["input"]
-    assert isinstance(input, RunInputText)
+    assert isinstance(input, RunnableInputRaw)
     assert input.primary == "hello world"
 
 
@@ -117,7 +117,7 @@ def test_script_reads_primary_input_from_stdin(
 
     assert result == 0
     input = captured["input"]
-    assert isinstance(input, RunInputText)
+    assert isinstance(input, RunnableInputRaw)
     assert input.primary == "from stdin"
 
 
@@ -155,7 +155,7 @@ agic alternate(_: Part[]):
         RunOverride("default", "runnable", "agic:alternate"),
     )
     input = captured["input"]
-    assert isinstance(input, RunInputText)
+    assert isinstance(input, RunnableInputRaw)
     assert input.primary == "from stdin"
     assert captured["raw_named"] == ()
 
@@ -182,7 +182,7 @@ def test_script_supports_explicit_stdin_marker(
 
     assert result == 0
     input = captured["input"]
-    assert isinstance(input, RunInputText)
+    assert isinstance(input, RunnableInputRaw)
     assert input.primary == "from stdin"
 
 
@@ -215,7 +215,7 @@ agic demo(_: Part[], count?: Number):
     assert result == 0
     assert captured["raw_named"] == ()
     input = captured["input"]
-    assert isinstance(input, RunInputText)
+    assert isinstance(input, RunnableInputRaw)
     assert input.primary == "count=2"
 
 
@@ -244,7 +244,7 @@ def test_script_includes_an_image(
 
     assert result == 0
     input = captured["input"]
-    assert isinstance(input, RunInputText)
+    assert isinstance(input, RunnableInputRaw)
     assert input.primary == "@sample.png"
 
 

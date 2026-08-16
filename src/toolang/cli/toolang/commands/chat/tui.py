@@ -46,7 +46,7 @@ from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 from .input import (
     QuickCommand,
-    is_run_input_text,
+    is_runnable_input,
     is_run_overrides,
     normalize_chat_input,
     parse_chat_input,
@@ -453,7 +453,7 @@ class ChatTuiApp:
                 self.actual_model = None
             self.status_bar.set_status(self._status_label())
             return
-        if not is_run_input_text(chat_input):
+        if not is_runnable_input(chat_input):
             raise AssertionError("unknown chat input value")
         queued = QueuedCall(source, dict(self.selects))
         if self.active_run_id is not None or self.run_in_flight.is_set():

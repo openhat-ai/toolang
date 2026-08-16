@@ -24,7 +24,7 @@ from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunBindings, RunLimits
 from toolang.common.time import utc_now
-from toolang.lang.input import RunInput
+from toolang.lang.input import RunnableInput
 from .errors import RunStoreSchemaError
 from .records import (
     ValueRef,
@@ -143,7 +143,7 @@ class RunStore:
         thread: str,
         bindings: RunBindings,
         limits: RunLimits,
-        input: RunInput,
+        input: RunnableInput,
         resources: AgentResources,
         context: Mapping[str, Any],
         request_id: str | None,
@@ -409,7 +409,7 @@ class RunStore:
         anchor: StepPath | None,
         bindings: RunBindings,
         limits: RunLimits,
-        input: RunInput,
+        input: RunnableInput,
         resources: AgentResources,
         request_id: str | None,
         created_at: str,
@@ -2500,7 +2500,9 @@ def _migrate_run_control_preparation(connection: sqlite3.Connection) -> None:
         if isinstance(old_input, Mapping) and (
             "primary" in old_input or "named" in old_input
         ):
-            run_input = RunInput.from_data(cast(Mapping[str, object], old_input))
+            runnable_input = RunnableInput.from_data(
+                cast(Mapping[str, object], old_input)
+            )
         elif isinstance(old_input, Mapping):
             message = Message.from_data(old_input)
             raw_named = run_context.get("args")
@@ -2509,7 +2511,10 @@ def _migrate_run_control_preparation(connection: sqlite3.Connection) -> None:
                 if isinstance(raw_named, Mapping)
                 else {}
             )
-            run_input = RunInput.from_values(primary=message.percept, named=named)
+            runnable_input = RunnableInput.from_values(
+                primary=message.percept,
+                named=named,
+            )
         else:
             start = connection.execute(
                 """
@@ -2523,10 +2528,10 @@ def _migrate_run_control_preparation(connection: sqlite3.Connection) -> None:
                 if start is not None and start["input"] is not None
                 else {}
             )
-            run_input = (
-                RunInput.from_data(cast(Mapping[str, object], start_raw))
+            runnable_input = (
+                RunnableInput.from_data(cast(Mapping[str, object], start_raw))
                 if isinstance(start_raw, Mapping)
-                else RunInput()
+                else RunnableInput()
             )
         raw_runnable = run_context.get("runnable")
         runnable = None
@@ -2582,7 +2587,7 @@ def _migrate_run_control_preparation(connection: sqlite3.Connection) -> None:
             WHERE run = ? AND "index" = ?
             """,
             (
-                _dump_json(run_input.to_data()),
+                _dump_json(runnable_input.to_data()),
                 _dump_json(run_bindings_to_data(bindings)),
                 _dump_json(run_limits_to_data(limits)) if limits is not None else None,
                 _dump_json({}),
@@ -2871,7 +2876,9 @@ def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
         index=int(row["index"]),
         kind=cast(RunControlKind, row["kind"]),
         timing=cast(ControlTiming, row["timing"]),
-        input=RunInput.from_data(input_raw) if isinstance(input_raw, Mapping) else None,
+        input=RunnableInput.from_data(input_raw)
+        if isinstance(input_raw, Mapping)
+        else None,
         bindings=(
             run_bindings_from_data(bindings_raw)
             if isinstance(bindings_raw, Mapping)

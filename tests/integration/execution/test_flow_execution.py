@@ -38,7 +38,7 @@ from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import StepPath, ThreadPrefix
-from toolang.lang.input import RunInput
+from toolang.lang.input import RunnableInput
 from toolang.lang.ast import (
     AgicDecl,
     Directive,
@@ -145,7 +145,7 @@ def _spec(
         bindings=RunBindings(runnable=runnable),
         limits=setup.limits,
         resource_filters=(resource_filter,) if resource_filter is not None else (),
-        input=RunInput.from_values(primary=primary, named=named),
+        input=RunnableInput.from_values(primary=primary, named=named),
     )
 
 
@@ -218,7 +218,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert start is not None and start.status == "applied"
     assert start.bindings == RunBindings(runnable="flow:pipeline")
     assert start.limits == _setup().limits
-    assert start.input == RunInput()
+    assert start.input == RunnableInput()
     assert start.resources is not None
     assert start.context == {}
     detail = RunHistory(store).get_run(record.id)
@@ -706,7 +706,7 @@ def test_parallel_children_preserve_input_and_output_types(
         root_run_id="run_root",
         thread="term_test",
         bindings=RunBindings(runnable="flow:parent"),
-        input=RunInput(primary=Message.user("input").percept),
+        input=RunnableInput(primary=Message.user("input").percept),
         state=state,
         setup=setup,
         agent_resources=resolve_agent_resources(setup, state, ResourceFilter()),
@@ -761,7 +761,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
         root_run_id="run_root",
         thread="term_test",
         bindings=RunBindings(runnable="flow:parent"),
-        input=RunInput(primary=Message.user("input").percept),
+        input=RunnableInput(primary=Message.user("input").percept),
         state=state,
         setup=setup,
         agent_resources=resolve_agent_resources(setup, state, ResourceFilter()),
@@ -1838,7 +1838,7 @@ def test_run_store_migrates_v22_run_preparation_snapshots(tmp_path: Path) -> Non
     try:
         control = reopened.get_run_control(run_id="run_v22", index=0)
         assert control is not None
-        assert control.input == RunInput.from_values(
+        assert control.input == RunnableInput.from_values(
             primary=Message.user("hello").percept,
             named={"count": 3},
         )

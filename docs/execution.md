@@ -188,7 +188,7 @@ A stop control that cancels a run is therefore `applied`. An unapplied steer
 left behind by a terminal run is `wontapply`.
 
 Every newly accepted preparation control stores top-level `RunBindings`,
-`RunLimits`, `RunInput`, and final `AgentResources` snapshots. Steer stores a
+`RunLimits`, `RunnableInput`, and final `AgentResources` snapshots. Steer stores a
 `Message`; stop stores an optional reason. These values are not duplicated in
 the control context. A durable run is a root exactly when `parent is None`;
 callers that need a root run ID derive it by following parent-run ownership.

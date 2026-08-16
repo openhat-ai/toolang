@@ -12,8 +12,8 @@ from toolang.base.types.message import (
 )
 from toolang.lang.ast import Field, Span, StructDecl
 from toolang.lang.input import (
-    RunInput,
-    RunInputText,
+    RunnableInput,
+    RunnableInputRaw,
     coerce_input,
     coerce_output,
     parse_input,
@@ -21,9 +21,9 @@ from toolang.lang.input import (
 )
 
 
-def test_run_input_round_trips_primary_named_values_and_declared_types() -> None:
+def test_runnable_input_round_trips_primary_named_values_and_declared_types() -> None:
     image = ImagePart(file_id="image-1")
-    input = RunInput.from_values(
+    input = RunnableInput.from_values(
         primary=(TextPart("review "), image),
         named={
             "count": 2,
@@ -39,27 +39,27 @@ def test_run_input_round_trips_primary_named_values_and_declared_types() -> None
         },
     )
 
-    restored = RunInput.from_data(input.to_data())
+    restored = RunnableInput.from_data(input.to_data())
 
     assert restored == input
     assert restored.values == input.values
     assert restored.types == input.types
 
 
-def test_run_input_rejects_values_without_a_durable_variant() -> None:
+def test_runnable_input_rejects_values_without_a_durable_variant() -> None:
     with pytest.raises(TypeError, match="unsupported run input value"):
-        RunInput.from_values(named={"unsupported": {"set"}})
+        RunnableInput.from_values(named={"unsupported": {"set"}})
 
 
 def test_parse_input_preserves_primary_and_validates_named_sources() -> None:
     assert parse_input(
         "  Review this.\n",
         named=(("focus", "security"), ("count", "2")),
-    ) == RunInputText(
+    ) == RunnableInputRaw(
         primary="  Review this.\n",
         named=(("focus", "security"), ("count", "2")),
     )
-    assert parse_input(" \t\n") == RunInputText()
+    assert parse_input(" \t\n") == RunnableInputRaw()
 
 
 @pytest.mark.parametrize(

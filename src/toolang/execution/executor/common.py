@@ -40,7 +40,7 @@ from toolang.lang.ast import (
     StormStmt,
     StructDecl,
 )
-from toolang.lang.input import RunInput, coerce_input, validate_value
+from toolang.lang.input import RunnableInput, coerce_input, validate_value
 from toolang.lang.format import format_statement_head
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
@@ -69,7 +69,7 @@ class BoundRun:
     root_run_id: str
     thread: str
     bindings: RunBindings
-    input: RunInput
+    input: RunnableInput
     state: AgentState
     setup: AgentSetup
     created_at: str

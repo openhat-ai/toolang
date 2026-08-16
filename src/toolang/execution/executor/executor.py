@@ -26,9 +26,9 @@ from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt, Parameter
 from toolang.lang.format import format_statement_head
 from toolang.lang.input import (
-    RunInput,
-    RunInputData,
-    RunInputValue,
+    RunnableInput,
+    RunnableInputData,
+    RunnableInputValue,
     coerce_input,
     validate_value,
 )
@@ -114,7 +114,7 @@ class RunSpec:
     bindings: RunBindings
     limits: RunLimits
     resource_filters: tuple[ResourceFilter, ...] = ()
-    input: RunInput = RunInput()
+    input: RunnableInput = RunnableInput()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1301,7 +1301,7 @@ def _child_binding(
             percept = (TextPart(value_text(primary.value)),)
     parameters = {parameter.name: parameter for parameter in executable.params}
     named = tuple(
-        RunInputValue(
+        RunnableInputValue(
             name=name,
             value=_argument_value(local, parameters[name]),
             type_name=parameters[name].type_name or "Part[]",
@@ -1317,7 +1317,7 @@ def _child_binding(
             model=parent.bindings.model,
             runnable=f"{executable.kind}:{executable.name}",
         ),
-        input=RunInput(primary=percept, named=named),
+        input=RunnableInput(primary=percept, named=named),
         state=parent.state,
         setup=parent.setup,
         limits=parent.limits,
@@ -1332,11 +1332,11 @@ def _child_binding(
     )
 
 
-def _argument_value(local: Local, parameter: Parameter) -> RunInputData:
+def _argument_value(local: Local, parameter: Parameter) -> RunnableInputData:
     """Represent one child argument according to its declared value type."""
 
     if (parameter.type_name or "Part[]") != "Part[]":
-        return cast(RunInputData, local.value)
+        return cast(RunnableInputData, local.value)
     percept = value_percept(local.value, type_name=local.type_name)
     if percept is not None:
         return percept
@@ -1348,7 +1348,7 @@ def _bind_run(
     *,
     executable: AgicDecl | FlowDecl,
     run_id: str,
-    input: RunInput,
+    input: RunnableInput,
     agent_resources: AgentResources,
     resources: AgentResources,
 ) -> BoundRun:
@@ -1429,7 +1429,7 @@ def _step_local(step: StepRecord) -> Local:
 
 def _prepare_start_spec(
     spec: RunSpec,
-) -> tuple[AgicDecl | FlowDecl, RunInput, AgentResources, AgentResources]:
+) -> tuple[AgicDecl | FlowDecl, RunnableInput, AgentResources, AgentResources]:
     if spec.bindings.runnable is None:
         raise ValueError("run spec requires a runnable binding")
     runnable_name, runnable_kind = parse_runnable_ref(spec.bindings.runnable)
@@ -1438,7 +1438,7 @@ def _prepare_start_spec(
         runnable_name,
         kind=runnable_kind,
     )
-    input = _typed_run_input(spec.input, executable)
+    input = _typed_runnable_input(spec.input, executable)
     _validate_inputs(state=spec.state, executable=executable, input=input)
     agent_resources = resolve_agent_resources(
         spec.setup,
@@ -1498,12 +1498,12 @@ def _prepare_child_run(
     )
 
 
-def _typed_run_input(
-    input: RunInput,
+def _typed_runnable_input(
+    input: RunnableInput,
     executable: AgicDecl | FlowDecl,
-) -> RunInput:
+) -> RunnableInput:
     parameters = {parameter.name: parameter for parameter in executable.params}
-    return RunInput(
+    return RunnableInput(
         primary=input.primary,
         named=tuple(
             replace(
@@ -1523,7 +1523,7 @@ def _validate_inputs(
     *,
     state: AgentState,
     executable: AgicDecl | FlowDecl,
-    input: RunInput,
+    input: RunnableInput,
 ) -> None:
     structs = {item.name: item for item in state.program.structs}
     params = {param.name: param for param in executable.params}

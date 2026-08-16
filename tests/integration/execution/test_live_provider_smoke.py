@@ -22,7 +22,7 @@ from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
-from toolang.lang.input import RunInput, perceive_input
+from toolang.lang.input import RunnableInput, perceive_input
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 from tests.support.live_provider import create_live_agent
@@ -90,7 +90,7 @@ class _LiveExecution:
                     thread=thread,
                     bindings=RunBindings(runnable=runnable),
                     limits=self.setup.limits,
-                    input=RunInput(primary=perceive_input(marker)),
+                    input=RunnableInput(primary=perceive_input(marker)),
                 )
             ),
             timeout=180,

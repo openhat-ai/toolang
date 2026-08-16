@@ -30,10 +30,9 @@ from toolang.common.template import render_text_template
 from .ast import Parameter, Program, StructDecl
 
 IncludeResolver = Callable[[str], PerceptPart]
-RunContent: TypeAlias = str
 NamedInputSources: TypeAlias = tuple[tuple[str, str], ...]
-RunInputData = TypeAliasType(
-    "RunInputData",
+RunnableInputData = TypeAliasType(
+    "RunnableInputData",
     str
     | int
     | float
@@ -41,9 +40,9 @@ RunInputData = TypeAliasType(
     | None
     | PerceptPart
     | Message
-    | tuple["RunInputData", ...]
-    | list["RunInputData"]
-    | Mapping[str, "RunInputData"],
+    | tuple["RunnableInputData", ...]
+    | list["RunnableInputData"]
+    | Mapping[str, "RunnableInputData"],
 )
 
 _ARGUMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -57,19 +56,19 @@ _JSON_OUTPUT_FENCE_RE = re.compile(
 
 
 @dataclass(frozen=True, slots=True)
-class RunInputText:
-    """Syntax-valid primary and named sources for one runnable invocation."""
+class RunnableInputRaw:
+    """Structured primary and named source text awaiting input resolution."""
 
     primary: str | None = None
     named: NamedInputSources = ()
 
 
 @dataclass(frozen=True, slots=True)
-class RunInputValue:
+class RunnableInputValue:
     """One resolved named input and its declared Toolang type."""
 
     name: str
-    value: RunInputData
+    value: RunnableInputData
     type_name: str | None = None
 
     def __post_init__(self) -> None:
@@ -82,7 +81,7 @@ class RunInputValue:
         _input_value_to_data(self.value)
 
     @classmethod
-    def from_data(cls, payload: Mapping[str, object]) -> RunInputValue:
+    def from_data(cls, payload: Mapping[str, object]) -> RunnableInputValue:
         """Decode one durable named input."""
 
         raw_type = payload.get("type")
@@ -104,17 +103,17 @@ class RunInputValue:
 
 
 @dataclass(frozen=True, slots=True)
-class RunInput:
+class RunnableInput:
     """Resolved primary and named inputs adopted by one run."""
 
     primary: Percept = ()
-    named: tuple[RunInputValue, ...] = ()
+    named: tuple[RunnableInputValue, ...] = ()
 
     def __post_init__(self) -> None:
         primary = _require_percept(tuple(self.primary))
         named = tuple(sorted(self.named, key=lambda item: item.name))
-        if not all(isinstance(item, RunInputValue) for item in named):
-            raise TypeError("run named inputs must be RunInputValue objects")
+        if not all(isinstance(item, RunnableInputValue) for item in named):
+            raise TypeError("run named inputs must be RunnableInputValue objects")
         names = tuple(item.name for item in named)
         if len(names) != len(set(names)):
             raise ValueError("run named inputs must be unique")
@@ -128,14 +127,14 @@ class RunInput:
         primary: Percept = (),
         named: Mapping[str, object] | None = None,
         types: Mapping[str, str] | None = None,
-    ) -> RunInput:
+    ) -> RunnableInput:
         """Build a canonical run input from resolved caller values."""
 
         type_names = types or {}
         return cls(
             primary=primary,
             named=tuple(
-                RunInputValue(
+                RunnableInputValue(
                     name=name,
                     value=_require_input_value(value),
                     type_name=type_names.get(name),
@@ -145,7 +144,7 @@ class RunInput:
         )
 
     @classmethod
-    def from_data(cls, payload: Mapping[str, object]) -> RunInput:
+    def from_data(cls, payload: Mapping[str, object]) -> RunnableInput:
         """Decode one durable run input."""
 
         raw_primary = payload.get("primary", ())
@@ -166,7 +165,7 @@ class RunInput:
         raw_named = payload.get("named", ())
         named = (
             tuple(
-                RunInputValue.from_data(cast(Mapping[str, object], item))
+                RunnableInputValue.from_data(cast(Mapping[str, object], item))
                 for item in raw_named
                 if isinstance(item, Mapping)
             )
@@ -207,7 +206,7 @@ def parse_input(
     source: str | None,
     *,
     named: NamedInputSources = (),
-) -> RunInputText:
+) -> RunnableInputRaw:
     """Parse runnable input without resolving includes or declared types."""
 
     primary = source if source and source.strip() else None
@@ -230,7 +229,7 @@ def parse_input(
             raise ValueError(f"duplicate named input: {name}")
         names.add(name)
         parsed_named.append((name, value))
-    return RunInputText(primary=primary, named=tuple(parsed_named))
+    return RunnableInputRaw(primary=primary, named=tuple(parsed_named))
 
 
 def perceive_input(
@@ -870,7 +869,7 @@ def _parse_text_json(
         ) from error
 
 
-def _input_value_to_data(value: RunInputData) -> dict[str, object]:
+def _input_value_to_data(value: RunnableInputData) -> dict[str, object]:
     if _is_percept_part(value):
         return {"kind": "part", "value": cast(PerceptPart, value).to_data()}
     if isinstance(value, Message):
@@ -890,7 +889,7 @@ def _input_value_to_data(value: RunInputData) -> dict[str, object]:
             "kind": "object",
             "value": {
                 str(name): _input_value_to_data(item)
-                for name, item in cast(Mapping[str, RunInputData], value).items()
+                for name, item in cast(Mapping[str, RunnableInputData], value).items()
             },
         }
     if value is None or isinstance(value, str | bool | int | float):
@@ -900,7 +899,7 @@ def _input_value_to_data(value: RunInputData) -> dict[str, object]:
     raise TypeError(f"unsupported run input value: {type(value).__name__}")
 
 
-def _input_value_from_data(value: object, type_name: str | None) -> RunInputData:
+def _input_value_from_data(value: object, type_name: str | None) -> RunnableInputData:
     del type_name
     if not isinstance(value, Mapping):
         raise ValueError("run input value must be an object")
@@ -930,8 +929,8 @@ def _input_value_from_data(value: object, type_name: str | None) -> RunInputData
     raise ValueError(f"unknown run input value kind: {kind}")
 
 
-def _require_input_value(value: object) -> RunInputData:
-    candidate = cast(RunInputData, value)
+def _require_input_value(value: object) -> RunnableInputData:
+    candidate = cast(RunnableInputData, value)
     _input_value_to_data(candidate)
     return candidate
 

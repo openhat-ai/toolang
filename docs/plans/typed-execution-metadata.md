@@ -7,21 +7,21 @@ execution concepts while preserving current behavior:
 
 - `RunBindings`: the model and runnable selected for a run;
 - `RunLimits`: the limits adopted by a run tree;
-- `RunInput`: resolved primary and named inputs adopted by a run;
+- `RunnableInput`: resolved primary and named inputs adopted by a run;
 - `AgentResources`: the concrete resources available at an execution point;
 - `ResourceFilter`: selector lists that can only narrow `AgentResources`.
 
-Raw caller text is `RunContent`. Parsing distinguishes quick commands,
-override-only input, and runnable input. `RunnableInput` becomes `RunInputText`
-for syntax-valid primary and named source text, and `PolicyCommand` becomes
-`RunOverride`.
+Raw chat input remains a `str`; there is no separate raw-text type alias. Chat
+parsing distinguishes quick commands, override-only input, and runnable input.
+`RunnableInputRaw` represents structured but unresolved primary and named source
+text, while `PolicyCommand` becomes `RunOverride`.
 
 ## Success Criteria
 
-- `RunContent` resolves as `QuickCommand | RunOverride+ | RunOverride* +
-  RunInput`; the parser uses `RunInputText` before producing `RunInput`.
-- `RunSpec` and bound runs carry one `RunInput` instead of separate primary and
-  named fields.
+- `parse_chat_input(str)` produces `QuickCommand | RunOverride+ |
+  RunOverride* + RunnableInputRaw`; execution resolution produces `RunnableInput`.
+- `RunSpec` and bound runs carry one `RunnableInput` instead of separate primary
+  and named fields.
 - `AgentCeiling`, `_ResolvedAgentCeiling`, and `_RunCeiling` are replaced by
   `ResourceFilter` and `AgentResources`; no `RunResources` or
   `AvailableResources` type exists.
@@ -47,27 +47,29 @@ plugin instances, provider credentials, or other new setup provenance.
 
 ## Input Model
 
-`RunContent` is the raw text supplied by chat, script, task, chore, or another
-text surface. Its semantic alternatives are:
+The term chat input covers both the original `str` accepted by chat parsing and
+the resulting `ChatInput` object. The parsed alternatives are:
 
 ```text
-RunContent -> QuickCommand
-            | RunOverride+
-            | RunOverride* + RunInput
+ChatInput -> QuickCommand
+           | RunOverride+
+           | RunOverride* + RunnableInputRaw
 ```
 
-The parsing boundary represents the runnable branch as `RunOverride* +
-RunInputText`; resolution expands includes and declared types to produce the
-final `RunInput`. Programmatic callers may construct `RunInput` directly.
+Run-only text surfaces parse directly to `RunOverride* + RunnableInputRaw` without
+the chat-only quick-command branch. Resolution expands includes and declared
+types to produce the final `RunnableInput`. Programmatic callers may construct
+`RunnableInput` directly.
 
-All input types are frozen, slotted dataclasses. `RunInputText` retains primary
-source text and immutable `(name, source)` pairs. `RunInput` retains one primary
-`Percept` and canonical immutable named values, including the declared type
-needed for durable round trips. Empty primary and named inputs remain valid.
+All input types are frozen, slotted dataclasses. `RunnableInputRaw` retains
+primary source text and immutable `(name, source)` pairs. `RunnableInput`
+retains one primary `Percept` and canonical immutable named values, including
+the declared type needed for durable round trips. Empty primary and named
+inputs remain valid.
 
-`RunSpec` and the bound executor value each expose `input: RunInput`. Child runs
-derive a new `RunInput` directly from parent locals; they do not round-trip
-through `RunContent` or `RunInputText`.
+`RunSpec` and the bound executor value each expose `input: RunnableInput`.
+Child runs derive a new `RunnableInput` directly from parent locals; they do
+not round-trip through raw text or `RunnableInputRaw`.
 
 ## Overrides And Resources
 
@@ -98,13 +100,13 @@ top-level typed fields:
 ```text
 bindings: RunBindings
 limits: RunLimits
-input: RunInput
+input: RunnableInput
 resources: AgentResources
 ```
 
 Each is the effective snapshot for that accepted preparation. Retry records a
 self-contained snapshot even when its input is unchanged. Steer uses a message
-and stop uses a reason rather than overloading `RunInput`.
+and stop uses a reason rather than overloading `RunnableInput`.
 
 `ResourceFilter` is not durable run truth and is not stored. Historical ceiling
 data may be decoded only for migration and is not projected as final resources.
@@ -129,10 +131,10 @@ shared limit accounting.
 
 ## Acceptance Tests
 
-- `RunContent` alternatives and `RunInputText` validation retain current parse
+- `ChatInput` alternatives and `RunnableInputRaw` validation retain current parse
   behavior, including override-only and empty runnable input.
-- Resolved primary/named values round-trip through `RunInput`, controls, events,
-  and SQLite without losing names or declared types.
+- Resolved primary/named values round-trip through `RunnableInput`, controls,
+  events, and SQLite without losing names or declared types.
 - Setup, session, run, runnable, flow, and agic resource restrictions select the
   same ordered resources as before and never widen a base set.
 - Root start, rerun, retry, direct child, and parallel child controls store the

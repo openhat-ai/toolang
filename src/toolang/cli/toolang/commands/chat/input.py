@@ -8,7 +8,7 @@ from typing import TypeAlias, TypeGuard
 
 from toolang.execution.policy import parse_policy_prefix
 from toolang.execution.types import RunOverride
-from toolang.lang.input import RunInputText, parse_input
+from toolang.lang.input import RunnableInputRaw, parse_input
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,7 +22,7 @@ class QuickCommand:
 ChatInput: TypeAlias = (
     QuickCommand
     | tuple[RunOverride, ...]
-    | tuple[tuple[RunOverride, ...], RunInputText]
+    | tuple[tuple[RunOverride, ...], RunnableInputRaw]
 )
 
 _POLICY_HEADS = frozenset(
@@ -67,18 +67,18 @@ _LEADING_BLANK_LINES_RE = re.compile(r"\A(?:[ \t]*(?:\r\n|\n))+")
 _TRAILING_BLANK_LINES_RE = re.compile(r"(?:(?:\r\n|\n)[ \t]*)+\Z")
 
 
-def normalize_chat_input(source: str) -> str:
+def normalize_chat_input(chat_input: str) -> str:
     """Remove chat-envelope blank lines and final horizontal whitespace."""
 
-    value = _LEADING_BLANK_LINES_RE.sub("", source)
+    value = _LEADING_BLANK_LINES_RE.sub("", chat_input)
     value = _TRAILING_BLANK_LINES_RE.sub("", value)
     return value.rstrip(" \t")
 
 
-def parse_chat_input(source: str) -> ChatInput:
+def parse_chat_input(chat_input: str) -> ChatInput:
     """Parse one complete terminal-chat input."""
 
-    body = normalize_chat_input(source)
+    body = normalize_chat_input(chat_input)
     if not body:
         raise ValueError("chat input is empty")
 
@@ -97,10 +97,10 @@ def parse_chat_input(source: str) -> ChatInput:
         combined = _parse_quick(primary_source.splitlines()[0])
         if combined is not None:
             raise ValueError("quick command cannot be combined with other input")
-    input_text = parse_input(primary_source or None, named=named)
-    if input_text.primary is None and not input_text.named:
+    runnable_input = parse_input(primary_source or None, named=named)
+    if runnable_input.primary is None and not runnable_input.named:
         raise ValueError("chat input is empty")
-    return commands, input_text
+    return commands, runnable_input
 
 
 def is_run_overrides(
@@ -113,16 +113,16 @@ def is_run_overrides(
     )
 
 
-def is_run_input_text(
+def is_runnable_input(
     value: ChatInput,
-) -> TypeGuard[tuple[tuple[RunOverride, ...], RunInputText]]:
+) -> TypeGuard[tuple[tuple[RunOverride, ...], RunnableInputRaw]]:
     """Return whether a chat input contains one runnable invocation."""
 
     return (
         isinstance(value, tuple)
         and len(value) == 2
         and isinstance(value[0], tuple)
-        and isinstance(value[1], RunInputText)
+        and isinstance(value[1], RunnableInputRaw)
     )
 
 
@@ -162,7 +162,7 @@ def _parse_quick(line: str) -> QuickCommand | None:
 __all__ = [
     "ChatInput",
     "QuickCommand",
-    "is_run_input_text",
+    "is_runnable_input",
     "is_run_overrides",
     "normalize_chat_input",
     "parse_chat_input",

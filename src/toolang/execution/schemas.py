@@ -9,7 +9,7 @@ from typing import Any, cast
 from toolang.base.types.message import Message, MessagePart, message_summary
 from toolang.base.types.policy import RunBindings, RunLimits
 from toolang.base.types.run import ModelCall
-from toolang.lang.input import RunInput
+from toolang.lang.input import RunnableInput
 from .records import (
     RunControlRecord,
     RunControlRef,
@@ -290,7 +290,7 @@ class RunControlInfo:
     anchor: StepPath | None
     request_id: str | None
     status: ControlStatus
-    input: RunInput | None
+    input: RunnableInput | None
     bindings: RunBindings | None
     limits: RunLimits | None
     resources: AgentResources | None

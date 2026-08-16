@@ -25,7 +25,7 @@ reconstructs a historical event stream.
 ```text
 RunBlock
 ├── RunHeader
-├── RunInput
+├── RunnableInput
 ├── Body
 │   ├── AtomicStep
 │   └── StatementBlock

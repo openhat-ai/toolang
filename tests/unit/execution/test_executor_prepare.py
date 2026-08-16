@@ -34,7 +34,7 @@ from toolang.execution.schemas import RunDetail
 from toolang.execution.store import RunStore
 from toolang.execution.types import AgentResources, AgentToolResource
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
-from toolang.lang.input import RunInput
+from toolang.lang.input import RunnableInput
 from toolang.plugin.tools.registry import tool_ref_for_model_tool
 from toolang.setup import AgentEnvironment, AgentSetup
 
@@ -197,7 +197,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         root_run_id="run_1",
         thread="term_1",
         bindings=RunBindings(runnable="agic:chat"),
-        input=RunInput.from_values(
+        input=RunnableInput.from_values(
             primary=Message.user("hello").percept,
             named={"focus": "events"},
         ),
@@ -292,7 +292,7 @@ def test_prepare_agic_includes_declared_output_contract(tmp_path: Path) -> None:
         root_run_id="run_1",
         thread="term_1",
         bindings=RunBindings(runnable="agic:queries"),
-        input=RunInput(primary=Message.user("topic").percept),
+        input=RunnableInput(primary=Message.user("topic").percept),
         state=state,
         setup=setup,
         resources=_resources(setup),
@@ -376,7 +376,7 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         root_run_id="run_1",
         thread="term_1",
         bindings=RunBindings(runnable="agic:review"),
-        input=RunInput.from_values(
+        input=RunnableInput.from_values(
             primary=(TextPart("this diagram "), image),
             named={"appendix": document},
         ),
@@ -495,7 +495,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                     thread="term_1",
                     bindings=RunBindings(runnable="chat"),
                     limits=setup.limits,
-                    input=RunInput.from_values(
+                    input=RunnableInput.from_values(
                         primary=(TextPart(text="hello"), image),
                         named={"focus": "events"},
                     ),

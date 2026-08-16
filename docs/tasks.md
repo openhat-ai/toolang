@@ -85,7 +85,7 @@ written into authored Markdown.
 ## Body
 
 The body is run-only input defined by [input-syntax.md](./input-syntax.md): a
-`RunOverride` prefix and one `RunInputText`. It has no ambient template
+`RunOverride` prefix and one `RunnableInputRaw`. It has no ambient template
 variables. Includes resolve relative to the Markdown file, and prompt templates
 receive only explicit arguments and input.
 

@@ -38,7 +38,7 @@ from toolang.execution.threads import ThreadManager
 from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.input import NamedInputSources, RunInputText
+from toolang.lang.input import NamedInputSources, RunnableInputRaw
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState
@@ -81,7 +81,7 @@ class _CollectorArgument(TyperArgument):
         return []
 
 
-class _IncompleteRunInputText(Exception):
+class _IncompleteRunnableInput(Exception):
     """A dynamic runnable command is missing required input."""
 
 
@@ -91,7 +91,7 @@ class _RunnableCommand(TyperCommand):
     def invoke(self, ctx: click.Context) -> Any:
         try:
             return TyperCommand.invoke(self, ctx)
-        except _IncompleteRunInputText:
+        except _IncompleteRunnableInput:
             click.echo(ctx.get_help())
             ctx.exit(2)
 
@@ -320,7 +320,7 @@ def _collect_call(
     *,
     items: tuple[str, ...],
     stdin: TextIO,
-) -> tuple[tuple[RunOverride, ...], RunInputText, NamedInputSources]:
+) -> tuple[tuple[RunOverride, ...], RunnableInputRaw, NamedInputSources]:
     params = {parameter.name: parameter for parameter in runnable.params}
     raw_args: dict[str, str] = {}
     input_items: list[str] = []
@@ -349,13 +349,13 @@ def _collect_call(
             if not parameter.optional and parameter.name not in raw_args
         ]
         if missing:
-            raise _IncompleteRunInputText
+            raise _IncompleteRunnableInput
         if (
             runnable.input is not None
             and not runnable.input.optional
             and input.primary is None
         ):
-            raise _IncompleteRunInputText
+            raise _IncompleteRunnableInput
     return commands, input, tuple(raw_args.items())
 
 
@@ -404,7 +404,7 @@ def _run(
     *,
     runnable: str,
     commands: tuple[RunOverride, ...],
-    input: RunInputText,
+    input: RunnableInputRaw,
     raw_named: NamedInputSources,
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
@@ -504,7 +504,7 @@ async def _execute(
     run_id: str,
     runnable: str,
     commands: tuple[RunOverride, ...],
-    input: RunInputText,
+    input: RunnableInputRaw,
     raw_named: NamedInputSources,
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],

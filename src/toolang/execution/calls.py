@@ -10,9 +10,8 @@ from toolang.base.types.policy import RunBindings
 from toolang.lang.ast import AgicDecl, FlowDecl
 from toolang.lang.input import (
     NamedInputSources,
-    RunContent,
-    RunInput,
-    RunInputText,
+    RunnableInput,
+    RunnableInputRaw,
     coerce_input,
     parse_input,
     perceive_input,
@@ -31,7 +30,7 @@ IncludeResolver = Callable[[str], PerceptPart]
 Runnable = AgicDecl | FlowDecl
 
 
-def parse_call(source: RunContent) -> tuple[tuple[RunOverride, ...], RunInputText]:
+def parse_call(source: str) -> tuple[tuple[RunOverride, ...], RunnableInputRaw]:
     """Parse one run-only source into policy commands and runnable input."""
 
     body = _strip_final_line_break(source)
@@ -41,7 +40,7 @@ def parse_call(source: RunContent) -> tuple[tuple[RunOverride, ...], RunInputTex
 
 def resolve_spec(
     commands: Sequence[RunOverride],
-    input: RunInputText,
+    input: RunnableInputRaw,
     *,
     setup: AgentSetup,
     state: AgentState,
@@ -104,7 +103,7 @@ def resolve_spec(
         ),
         limits=limits,
         resource_filters=resource_filters,
-        input=RunInput.from_values(
+        input=RunnableInput.from_values(
             primary=primary,
             named=named,
             types=parameter_types,

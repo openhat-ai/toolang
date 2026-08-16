@@ -28,7 +28,7 @@ from .base import ChatClient, chat_status_label, friendly_error as chat_friendly
 from .history import ChatInputHistoryStore
 from .input import (
     QuickCommand,
-    is_run_input_text,
+    is_runnable_input,
     is_run_overrides,
     normalize_chat_input,
     parse_chat_input,
@@ -223,7 +223,7 @@ def _chat_handle_scripted_command(
     except ValueError as exc:
         typer.echo(chat_friendly_error(str(exc)), err=True)
         return True
-    if is_run_input_text(chat_input):
+    if is_runnable_input(chat_input):
         return False
     if is_run_overrides(chat_input):
         try:

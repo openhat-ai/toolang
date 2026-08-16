@@ -11,7 +11,7 @@ from pydantic import TypeAdapter
 from toolang.base.types.message import Message, MessagePart, MessageRole
 from toolang.base.types.policy import RunBindings, RunLimits
 from toolang.base.types.run import ModelCall
-from toolang.lang.input import RunInput
+from toolang.lang.input import RunnableInput
 from .types import (
     ControlStatus,
     ControlTiming,
@@ -233,7 +233,7 @@ class RunControlRecord:
     index: int
     kind: RunControlKind
     timing: ControlTiming
-    input: RunInput | None = None
+    input: RunnableInput | None = None
     bindings: RunBindings | None = None
     limits: RunLimits | None = None
     resources: AgentResources | None = None

@@ -34,7 +34,7 @@ from toolang.execution.types import (
     StepStatus,
     StepPath,
 )
-from toolang.lang.input import RunInput
+from toolang.lang.input import RunnableInput
 
 
 def persist_event(store: RunStore, event: RunEvent) -> None:
@@ -53,7 +53,7 @@ def accept_run_start(
     run_id: str,
     parent: StepPath | None,
     thread: str,
-    input: Message | RunInput,
+    input: Message | RunnableInput,
     context: Mapping[str, Any],
     request_id: str | None,
     created_at: str,
@@ -71,7 +71,9 @@ def accept_run_start(
         thread=thread,
         bindings=bindings if bindings is not None else RunBindings(),
         limits=limits if limits is not None else RunLimits(),
-        input=input if isinstance(input, RunInput) else RunInput(primary=input.percept),
+        input=input
+        if isinstance(input, RunnableInput)
+        else RunnableInput(primary=input.percept),
         resources=resources if resources is not None else AgentResources(),
         context=context,
         request_id=request_id,
@@ -129,7 +131,7 @@ def project_run_start(
             )
         ),
         limits=RunLimits(),
-        input=RunInput(primary=input.percept),
+        input=RunnableInput(primary=input.percept),
         resources=AgentResources(),
         context=run_context,
         request_id=request_id,

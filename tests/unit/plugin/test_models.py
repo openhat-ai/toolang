@@ -44,7 +44,7 @@ from toolang.plugin.models.adapters import chat_completions as chat_completions_
 from toolang.plugin.models.adapters import responses as responses_models
 from toolang.plugin.models.adapters.responses import encode_message, response_payload
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
-from toolang.lang.input import RunInput
+from toolang.lang.input import RunnableInput
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 
 
@@ -2821,7 +2821,7 @@ def _prepared_agic(
             root_run_id="run-1",
             thread="thread-1",
             bindings=RunBindings(runnable="agic:main"),
-            input=RunInput(primary=Message.user("hello").percept),
+            input=RunnableInput(primary=Message.user("hello").percept),
             state=cast(Any, state),
             setup=AgentSetup(
                 layout=AgentLayout.resident(Path("/"), "alice"),

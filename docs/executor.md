@@ -95,7 +95,7 @@ class RunSpec:
     bindings: RunBindings
     limits: RunLimits
     resource_filters: tuple[ResourceFilter, ...] = ()
-    input: RunInput = RunInput()
+    input: RunnableInput = RunnableInput()
 ```
 
 `bindings.runnable` is required and resolves to exactly one agic or flow in the

@@ -506,8 +506,8 @@ chore   chore, else default
 file    file, else default
 ```
 
-Every run surface must resolve one `RunInput`, including all required named
-inputs, before execution. Text surfaces first parse `RunInputText`. Script
+Every run surface must resolve one `RunnableInput`, including all required named
+inputs, before execution. Text surfaces first parse `RunnableInputRaw`. Script
 derives its CLI from the selected
 signature; chat, task, and chore input may begin with `RunOverride` lines,
 and runnable shortcuts may carry `name=value` named sources.

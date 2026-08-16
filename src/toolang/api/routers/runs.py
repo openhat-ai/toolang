@@ -23,7 +23,7 @@ from toolang.execution.executor import RunHandle, RunSpec
 from toolang.execution.records import RunControlRecord, RunRecord
 from toolang.execution.schemas import RunControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
-from toolang.lang.input import RunInput
+from toolang.lang.input import RunnableInput
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -57,7 +57,7 @@ async def _start_run_stream(
                     ),
                 ),
                 limits=limits,
-                input=RunInput.from_values(
+                input=RunnableInput.from_values(
                     primary=parse_percept(payload.input),
                     named=payload.args,
                 ),
