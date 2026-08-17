@@ -49,7 +49,7 @@ from ..types import (
     ControlRef,
     ExecutionError,
     Local as RecordLocal,
-    RunControlKind,
+    ControlKind,
     StepPath,
     ValuePtr,
 )
@@ -58,6 +58,7 @@ from .common import (
     BoundRun,
     EventEmitter,
     Local,
+    _ExecutionFailed,
     _StepFailed,
     control_text,
     initial_locals,
@@ -324,6 +325,7 @@ class RunExecutor:
             request_id=request_id,
             created_at=bound.created_at,
         )
+        bound = replace(bound, control_index=control.index)
         return self._launch(
             bound,
             executable,
@@ -686,7 +688,7 @@ class RunExecutor:
         self,
         *,
         run_id: str,
-        kind: RunControlKind,
+        kind: ControlKind,
     ) -> tuple[RunControlRecord, ...]:
         self._refresh_controls()
         with self._active_lock:
@@ -941,12 +943,7 @@ class _Execution:
         await self.emit(
             RunBegin(
                 run=binding.run_id,
-                control=ControlRef(
-                    binding.run_id,
-                    self._retry.index
-                    if self._retry is not None and binding.run_id == self._retry.run
-                    else 0,
-                ),
+                control=ControlRef(binding.run_id, binding.control_index),
                 runnable=_bound_runnable(binding),
                 parent=binding.parent,
                 placement=(
@@ -1159,7 +1156,12 @@ class _Execution:
             run_id=binding.run_id,
             root_run_id=step.run,
         )
-        result = await self.execute(binding, executable, output_name=output_name)
+        try:
+            result = await self.execute(binding, executable, output_name=output_name)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            raise _ExecutionFailed(ValuePtr.run(binding.run_id), exc) from exc
         pointer = ValuePtr.run(binding.run_id)
         item_type = result.type_name or "Json"
         return replace(
@@ -1280,7 +1282,7 @@ class _Execution:
         )
 
     def pending_controls(
-        self, run_id: str, kind: RunControlKind
+        self, run_id: str, kind: ControlKind
     ) -> tuple[RunControlRecord, ...]:
         return self.executor._pending_controls(run_id=run_id, kind=kind)
 

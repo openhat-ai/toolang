@@ -80,9 +80,12 @@ agic reply(_: Part[], tone: Text) -> Part[]:
             assert harness.adapter.invocations[0].call.messages == [
                 Message.user("Reply to hello in brief.")
             ]
-            assert [
-                step.kind for step in harness.store.list_steps(run_id=record.id)
-            ] == ["model"]
+            steps = harness.store.list_steps(run_id=record.id)
+            assert [step.kind for step in steps] == ["model"]
+            assert steps[0].input == (
+                ValuePtr.control(record.id, 0, "_"),
+                ValuePtr.control(record.id, 0, "tone"),
+            )
             assert [event.type for event in tracer.events] == [
                 "run_begin",
                 "step_begin",
@@ -145,6 +148,38 @@ agic reply(_: Part[]) -> Part[]:
             assert [step.path.index for step in historical] == [0, 1]
             assert historical[0].ejected_by == RunControlRef(run.id, 1)
             assert historical[1].ejected_by is None
+            assert historical[1].input == (ValuePtr.control(run.id, 1, "_"),)
+
+    asyncio.run(scenario())
+
+
+def test_named_only_agic_records_only_the_local_it_reads(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic reply(topic: Text) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: Discuss {{topic}}.
+""",
+        responses=[ModelCallResult(message=Message.assistant("done"))],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            record = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    named={"topic": "provenance"},
+                )
+            )
+
+            steps = harness.store.list_steps(run_id=record.id)
+            assert len(steps) == 1
+            assert steps[0].input == (ValuePtr.control(record.id, 0, "topic"),)
 
     asyncio.run(scenario())
 

@@ -45,7 +45,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     elif state.last_step is not None:
         step_input = (ValuePtr.step(StepPath(run.run_id, (state.last_step,))),)
     else:
-        step_input = (ValuePtr.control(run.run_id, 0, "_"),)
+        step_input = state.initial_inputs
     _LOGGER.info(
         "Step started thread=%s run=%s step=%s kind=tool tool=%s",
         run.thread,

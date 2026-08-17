@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from collections.abc import Mapping, Sequence
 import re
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
@@ -17,9 +17,9 @@ from toolang.lang.types import Value
 
 
 RunId = str
+_EXECUTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _LOCAL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _VALUE_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[\])*$")
-_POINTER_RESERVED = frozenset(".^/@")
 PolicyGroup = Literal["allow", "default", "limit"]
 PolicyValue: TypeAlias = tuple[str, ...] | str | int | Decimal | None
 ALLOW_POLICY_FIELDS = frozenset(
@@ -228,7 +228,7 @@ class ValuePtr:
             target, marker, raw_index = anchor.partition("^")
             if (
                 marker != "^"
-                or not _valid_pointer_id(target)
+                or not valid_execution_id(target)
                 or not _canonical_index(raw_index)
                 or not separator
                 or not pointer
@@ -236,7 +236,7 @@ class ValuePtr:
                 raise ValueError(f"invalid control value pointer: {self.value!r}")
             return
         target, *indices = anchor.split(".")
-        if not _valid_pointer_id(target) or any(
+        if not valid_execution_id(target) or any(
             not _canonical_index(index) for index in indices
         ):
             raise ValueError(f"invalid value pointer: {self.value!r}")
@@ -402,7 +402,7 @@ class ControlRef:
     index: int
 
     def __post_init__(self) -> None:
-        if not _valid_pointer_id(self.target):
+        if not valid_execution_id(self.target):
             raise ValueError(f"invalid control target: {self.target!r}")
         if self.index < 0:
             raise ValueError("control index must be non-negative")
@@ -428,7 +428,7 @@ class StepPath:
     indices: tuple[int, ...]
 
     def __post_init__(self) -> None:
-        if not self.run or "/" in self.run:
+        if not valid_execution_id(self.run):
             raise ValueError(f"invalid step run id: {self.run!r}")
         if not self.indices or any(index < 0 for index in self.indices):
             raise ValueError("step path requires non-negative indices")
@@ -555,8 +555,16 @@ StepKind = Literal[
     "system",
 ]
 ControlTiming = Literal["immediate", "next_step", "next_call"]
-RunControlKind = Literal["start", "rerun", "retry", "steer", "stop"]
-ThreadControlKind = Literal["create", "fork", "rewind"]
+ControlKind = Literal[
+    "start",
+    "rerun",
+    "retry",
+    "steer",
+    "stop",
+    "create",
+    "fork",
+    "rewind",
+]
 ThreadPeerType = Literal["user", "agent"]
 
 
@@ -568,10 +576,18 @@ class ThreadPrefix(StrEnum):
     TERM = "term"
 
 
-def _valid_pointer_id(value: str) -> bool:
-    return bool(value) and not any(
-        character.isspace() or character in _POINTER_RESERVED for character in value
-    )
+def valid_execution_id(value: object) -> bool:
+    """Return whether a run or thread id has canonical durable syntax."""
+
+    return isinstance(value, str) and _EXECUTION_ID_RE.fullmatch(value) is not None
+
+
+def validate_execution_id(value: object, *, label: str) -> str:
+    """Return one canonical run or thread id, or reject it before persistence."""
+
+    if not valid_execution_id(value):
+        raise ValueError(f"invalid {label}: {value!r}")
+    return cast(str, value)
 
 
 def _canonical_index(value: str) -> bool:

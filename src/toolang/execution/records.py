@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
-from pydantic import TypeAdapter
+from pydantic import BeforeValidator, TypeAdapter, ValidationInfo
 
 from toolang.base.types.message import (
     AudioPart,
@@ -22,20 +22,19 @@ from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCall
 from .types import (
     ControlRef,
+    ControlKind,
     ControlStatus,
     ControlTiming,
     AgentResources,
     Local,
     LocalValue,
     ExecutionError,
-    RunControlKind,
     RunId,
     RunStatus,
     StepKind,
     StepPath,
     StepStatus,
     ThreadPeerType,
-    ThreadControlKind,
     ValuePtr,
 )
 
@@ -221,6 +220,34 @@ _CONTROL_PAYLOAD_TYPES = {
 }
 
 
+def _control_payload_variant(value: object, info: ValidationInfo) -> object:
+    """Decode a payload using the enclosing record's control kind."""
+
+    kind = info.data.get("kind")
+    if kind not in _CONTROL_PAYLOAD_TYPES:
+        raise ValueError(f"unknown control kind: {kind}")
+    expected = _CONTROL_PAYLOAD_TYPES[kind]
+    if isinstance(value, Mapping):
+        return control_payload_from_data(cast(ControlKind, kind), value)
+    if not isinstance(value, expected):
+        raise ValueError(f"{kind} control has an invalid payload")
+    return value
+
+
+ControlPayloadField = Annotated[
+    ControlPayload,
+    BeforeValidator(_control_payload_variant),
+]
+RunControlPayloadField = Annotated[
+    RunControlPayload,
+    BeforeValidator(_control_payload_variant),
+]
+ThreadControlPayloadField = Annotated[
+    ThreadControlPayload,
+    BeforeValidator(_control_payload_variant),
+]
+
+
 @dataclass(frozen=True, slots=True)
 class ThreadRecord:
     """Durable thread metadata."""
@@ -271,8 +298,8 @@ class ControlRecordBase:
 
     target: str
     index: int
-    kind: RunControlKind | ThreadControlKind
-    payload: ControlPayload
+    kind: ControlKind
+    payload: ControlPayloadField
     request: str | None = None
     status: ControlStatus = "pending"
     timing: ControlTiming = "immediate"
@@ -294,8 +321,8 @@ class ControlRecordBase:
 class RunControlRecord(ControlRecordBase):
     """One durable control sent to a run."""
 
-    kind: RunControlKind
-    payload: RunControlPayload
+    kind: Literal["start", "rerun", "retry", "steer", "stop"]
+    payload: RunControlPayloadField
 
     @property
     def run(self) -> RunId:
@@ -306,8 +333,8 @@ class RunControlRecord(ControlRecordBase):
 class ThreadControlRecord(ControlRecordBase):
     """One durable mutation applied to a thread."""
 
-    kind: ThreadControlKind
-    payload: ThreadControlPayload
+    kind: Literal["create", "fork", "rewind"]
+    payload: ThreadControlPayloadField
 
     @property
     def thread(self) -> str:
@@ -419,7 +446,7 @@ def local_value_to_data(value: LocalValue) -> object:
 
 
 def control_payload_from_data(
-    kind: RunControlKind | ThreadControlKind,
+    kind: ControlKind,
     data: object,
 ) -> ControlPayload:
     """Parse one typed control payload from durable data."""

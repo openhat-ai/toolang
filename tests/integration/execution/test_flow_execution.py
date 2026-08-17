@@ -829,7 +829,9 @@ def test_parallel_children_reuse_the_lane_that_finished(
     asyncio.run(executor.shutdown())
 
 
-def test_flow_step_events_carry_complete_input_references(tmp_path: Path) -> None:
+def test_flow_step_events_record_only_values_read_by_the_statement(
+    tmp_path: Path,
+) -> None:
     child = FlowDecl(
         name="child",
         stmts=(LetStmt(value="done", span=Span(line=2)),),
@@ -852,10 +854,7 @@ def test_flow_step_events_carry_complete_input_references(tmp_path: Path) -> Non
         for step in executor.store.list_steps(run_id=root.id)
         if step.parent is None
     ]
-    assert [step.input for step in steps] == [
-        (),
-        (ValuePtr.step(StepPath.parse(f"{root.id}/0")),),
-    ]
+    assert [step.input for step in steps] == [(), ()]
     assert [step.given["source"] for step in steps] == [
         {"line": 4, "head": "run child"},
         {"line": 5, "head": "run child"},
@@ -1722,11 +1721,11 @@ def test_private_event_projector_persists_run_and_step_records(
     store.close()
 
 
-def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
+def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
     store = RunStore(tmp_path / "runs.db")
     store.create_thread(thread_id="term_test")
     sink = _PersistSink(store)
-    for run_id, text in (("run_%", "literal"), ("run_ax", "other")):
+    for run_id, text in (("run_literal", "literal"), ("run_ax", "other")):
         accept_run_start(
             store,
             run_id=run_id,
@@ -1768,16 +1767,18 @@ def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
             )
         )
 
-    assert [step.path for step in store.list_steps(run_id="run_%")] == [
-        StepPath.parse("run_%/0")
+    assert [step.path for step in store.list_steps(run_id="run_literal")] == [
+        StepPath.parse("run_literal/0")
     ]
-    grouped = store.list_steps_for_runs(run_ids=("run_%", "run_ax"))
-    assert [step.path for step in grouped["run_%"]] == [StepPath.parse("run_%/0")]
+    grouped = store.list_steps_for_runs(run_ids=("run_literal", "run_ax"))
+    assert [step.path for step in grouped["run_literal"]] == [
+        StepPath.parse("run_literal/0")
+    ]
     assert [step.path for step in grouped["run_ax"]] == [StepPath.parse("run_ax/0")]
     with pytest.raises(ValueError, match="invalid run id"):
         accept_run_start(
             store,
-            run_id="run/invalid",
+            run_id="run.invalid",
             parent=None,
             thread="term_test",
             input=Message.user("invalid"),

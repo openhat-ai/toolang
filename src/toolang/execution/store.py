@@ -54,11 +54,11 @@ from .records import (
     value_ptrs_to_data,
 )
 from .types import (
+    ControlKind,
     ControlRef,
     ControlStatus,
     AgentResources,
     ExecutionError,
-    RunControlKind,
     ControlTiming,
     RunStatus,
     StepKind,
@@ -66,6 +66,7 @@ from .types import (
     StepPath,
     Local,
     ValuePtr,
+    validate_execution_id,
 )
 
 _SCHEMA_VERSION = 24
@@ -135,7 +136,7 @@ class RunStore:
         scope: Literal["run", "thread"],
         target: str,
         index: int,
-        kind: RunControlKind | Literal["create", "fork", "rewind"],
+        kind: ControlKind,
         timing: ControlTiming,
         payload: ControlPayload,
         request: str | None,
@@ -188,12 +189,14 @@ class RunStore:
     ) -> tuple[RunRecord, RunControlRecord]:
         """Atomically insert one new run and its start control."""
 
-        if not run_id or "/" in run_id:
-            raise ValueError(f"invalid run id: {run_id!r}")
+        validate_execution_id(run_id, label="run id")
+        validate_execution_id(thread, label="thread id")
         if kind == "start" and source is not None:
             raise ValueError("start control cannot have a source run")
         if kind == "rerun" and source is None:
             raise ValueError("rerun control requires a source run")
+        if source is not None:
+            validate_execution_id(source, label="source run id")
         _validate_request_id(request_id)
 
         with self._lock:
@@ -356,7 +359,7 @@ class RunStore:
         self,
         *,
         run_id: str,
-        kind: RunControlKind,
+        kind: ControlKind,
         timing: ControlTiming,
         locals: tuple[Local, ...],
         request_id: str | None,
@@ -364,6 +367,7 @@ class RunStore:
     ) -> RunControlRecord:
         """Atomically allocate and accept one steer or stop control."""
 
+        validate_execution_id(run_id, label="run id")
         if kind not in {"steer", "stop"}:
             raise ValueError(f"unsupported run control kind: {kind}")
         if timing not in {"immediate", "next_step", "next_call"}:
@@ -427,7 +431,7 @@ class RunStore:
                     if preparation_row is None:
                         raise ValueError(f"run control is missing: {run_id}")
                     preparation = control_payload_from_data(
-                        cast(RunControlKind, preparation_row["kind"]),
+                        cast(ControlKind, preparation_row["kind"]),
                         _load_json(str(preparation_row["payload"])),
                     )
                     if not isinstance(preparation, PreparationControlPayload) or not (
@@ -490,6 +494,7 @@ class RunStore:
     ) -> tuple[RunRecord, RunControlRecord, tuple[StepPath, ...]]:
         """Atomically cut one root run at a step and reopen it for execution."""
 
+        validate_execution_id(run_id, label="run id")
         _validate_request_id(request_id)
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -772,25 +777,19 @@ class RunStore:
     ) -> set[int]:
         """Atomically claim pending controls before runtime application."""
 
+        validate_execution_id(run_id, label="run id")
         control_indexes = tuple(dict.fromkeys(int(index) for index in indexes))
         if not control_indexes:
             return set()
         placeholders = ", ".join("?" for _ in control_indexes)
         with self.write_transaction():
-            self._conn.execute(
+            rows = self._conn.execute(
                 f"""
                 UPDATE controls
                 SET _claimed = 1
                 WHERE scope = 'run' AND target = ? AND "index" IN ({placeholders})
-                  AND status = 'pending'
-                """,
-                (run_id, *control_indexes),
-            )
-            rows = self._conn.execute(
-                f"""
-                SELECT "index" FROM controls
-                WHERE scope = 'run' AND target = ? AND "index" IN ({placeholders})
-                  AND status = 'pending' AND _claimed = 1
+                  AND status = 'pending' AND _claimed = 0
+                RETURNING "index"
                 """,
                 (run_id, *control_indexes),
             ).fetchall()
@@ -807,6 +806,7 @@ class RunStore:
     ) -> tuple[ThreadRecord, ThreadControlRecord]:
         """Atomically create one thread and its create control."""
 
+        validate_execution_id(thread_id, label="thread id")
         _validate_request_id(request_id)
         now = created_at or utc_now()
         effective_peer = peer or ThreadPeer()
@@ -881,6 +881,10 @@ class RunStore:
     ) -> tuple[ThreadRecord, ThreadControlRecord]:
         """Atomically fork from one terminal anchor without copying runs."""
 
+        validate_execution_id(thread_id, label="thread id")
+        validate_execution_id(source, label="source thread id")
+        if anchor is not None:
+            validate_execution_id(anchor, label="anchor run id")
         _validate_request_id(request_id)
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -976,6 +980,9 @@ class RunStore:
     ) -> tuple[ThreadRecord, ThreadControlRecord, tuple[str, ...]]:
         """Atomically rewind one idle thread using optimistic head comparison."""
 
+        validate_execution_id(thread_id, label="thread id")
+        if anchor is not None:
+            validate_execution_id(anchor, label="anchor run id")
         _validate_request_id(request_id)
         index: int | None = None
         with self._lock:
@@ -1267,6 +1274,18 @@ class RunStore:
         """Resolve one run or step error pointer to its concrete message."""
 
         return self._resolve_error(error, seen=set())
+
+    def control_scope(self, ref: ControlRef) -> Literal["run", "thread"]:
+        """Return the durable scope of one globally addressed control."""
+
+        with self._lock:
+            row = self._conn.execute(
+                'SELECT scope FROM controls WHERE target = ? AND "index" = ?',
+                (ref.target, ref.index),
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"control not found: {ref.target}^{ref.index}")
+        return cast(Literal["run", "thread"], row["scope"])
 
     def _resolve_error(
         self,
@@ -2163,7 +2182,7 @@ class RunStore:
         self,
         *,
         run_id: str,
-        kind: RunControlKind | None = None,
+        kind: ControlKind | None = None,
     ) -> tuple[RunControlRecord, ...]:
         clauses = ["scope = 'run'", "target = ?"]
         params: list[object] = [run_id]
@@ -2186,7 +2205,7 @@ class RunStore:
         self,
         *,
         run_ids: Sequence[str],
-        kind: RunControlKind | None = None,
+        kind: ControlKind | None = None,
     ) -> dict[str, tuple[RunControlRecord, ...]]:
         """Return controls for several runs, grouped by run id."""
 
@@ -2220,7 +2239,7 @@ class RunStore:
         self,
         *,
         run_id: str,
-        kind: RunControlKind,
+        kind: ControlKind,
     ) -> tuple[RunControlRecord, ...]:
         """Return accepted run_controls not yet consumed by an execution event."""
 
@@ -2707,7 +2726,10 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
 
 
 def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
-    kind = cast(RunControlKind, row["kind"])
+    kind = cast(
+        Literal["start", "rerun", "retry", "steer", "stop"],
+        row["kind"],
+    )
     payload = cast(
         RunControlPayload,
         control_payload_from_data(kind, _load_json(str(row["payload"]))),

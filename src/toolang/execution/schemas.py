@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
-from typing import Any
+from typing import Any, Literal
 
 from toolang.base.types.message import MessagePart, message_summary
 from toolang.base.types.run import ModelCall
 from .records import (
-    ControlPayload,
+    ControlPayloadField,
     PreparationControlPayload,
     RunControlRecord,
     RunRecord,
@@ -17,13 +17,12 @@ from .records import (
     ThreadPeer,
     ThreadRecord,
     model_call_to_data,
-    execution_error_message,
     step_message_role,
 )
 from .types import (
     ControlRef,
     ControlTiming,
-    RunControlKind,
+    ControlKind,
     ControlStatus,
     ExecutionError,
     Local,
@@ -204,6 +203,8 @@ class RunInfo:
         controls: Sequence[RunControlRecord],
         steps: Sequence[StepRecord],
         root_run_id: str,
+        error_message: str | None,
+        ejection_scope: Literal["run", "thread"] | None,
     ) -> RunInfo:
         """Build one run summary from durable records."""
 
@@ -223,7 +224,6 @@ class RunInfo:
             if last_message_step is not None
             else input_text
         )
-        error_message = execution_error_message(run.error, steps)
         if (
             run.status == "failed"
             and error_message
@@ -243,7 +243,7 @@ class RunInfo:
             summary=summary,
             status=run.status,
             error=run.error,
-            ejected=_ejection_ref_data(run.ejected_by),
+            ejected=_ejection_ref_data(run.ejected_by, scope=ejection_scope),
             created_at=run.created_at,
             started_at=run.started_at,
             finished_at=run.finished_at,
@@ -252,22 +252,22 @@ class RunInfo:
 
 
 @dataclass(frozen=True, slots=True)
-class RunControlInfo:
-    """One accepted control sent to a run."""
+class ControlInfo:
+    """One accepted execution control."""
 
     run_id: str
     index: int
-    kind: RunControlKind
+    kind: ControlKind
     timing: ControlTiming
     request_id: str | None
     status: ControlStatus
-    payload: ControlPayload
+    payload: ControlPayloadField
     error: str | None
     created_at: str
     finished_at: str | None
 
     @classmethod
-    def from_record(cls, run: RunRecord, control: RunControlRecord) -> RunControlInfo:
+    def from_record(cls, run: RunRecord, control: RunControlRecord) -> ControlInfo:
         return cls(
             run_id=run.id,
             index=control.index,
@@ -337,7 +337,7 @@ class RunDetail(RunInfo):
 
     control: RunControlRefData
     output: Local | None
-    controls: list[RunControlInfo]
+    controls: list[ControlInfo]
     steps: list[StepData] = field(default_factory=list)
 
     @classmethod
@@ -349,6 +349,8 @@ class RunDetail(RunInfo):
         controls: Sequence[RunControlRecord] = (),
         model_calls: Mapping[StepPath, ModelCall] | None = None,
         root_run_id: str,
+        error_message: str | None,
+        ejection_scope: Literal["run", "thread"] | None,
     ) -> RunDetail:
         """Build complete caller-facing run detail from durable records."""
 
@@ -357,12 +359,14 @@ class RunDetail(RunInfo):
             controls=controls,
             steps=steps,
             root_run_id=root_run_id,
+            error_message=error_message,
+            ejection_scope=ejection_scope,
         )
         return cls(
             **{item.name: getattr(info, item.name) for item in fields(RunInfo)},
             control=RunControlRefData.from_ref(run.control),
             output=run.output,
-            controls=[RunControlInfo.from_record(run, item) for item in controls],
+            controls=[ControlInfo.from_record(run, item) for item in controls],
             steps=[
                 StepData.from_record(
                     step,
@@ -429,9 +433,13 @@ def _local_parts(local: Local | None) -> tuple[MessagePart, ...]:
 
 def _ejection_ref_data(
     ref: ControlRef | None,
+    *,
+    scope: Literal["run", "thread"] | None,
 ) -> EjectionRefData | None:
     if ref is None:
         return None
-    if not ref.target.startswith("run_"):
+    if scope == "thread":
         return ThreadControlRefData.from_ref(ref)
-    return RunControlRefData.from_ref(ref)
+    if scope == "run":
+        return RunControlRefData.from_ref(ref)
+    raise ValueError(f"ejection scope is required: {ref.target}^{ref.index}")

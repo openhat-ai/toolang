@@ -79,6 +79,7 @@ async def execute(
     step = par_step if statement.predicate is not None else system_step
     return await step.execute(
         execution.emit,
+        binding=binding,
         path=path,
         statement=statement,
         locals=locals,

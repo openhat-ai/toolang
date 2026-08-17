@@ -342,12 +342,13 @@ def _step_input(state: _AgicState) -> tuple[ValuePtr, ...]:
         state.next_model_inputs = None
         return inputs
     if state.last_step is None:
-        return (ValuePtr.control(state.prepared.run.run_id, 0, "_"),)
+        return state.initial_inputs
     return (ValuePtr.step(StepPath(state.prepared.run.run_id, (state.last_step,))),)
 
 
 def _consume_pending_inputs(state: _AgicState) -> tuple[RunControlRecord, ...]:
-    inputs = state.pending_inputs()
+    inputs = state.claimed_inputs or state.pending_inputs()
+    state.claimed_inputs = ()
     for input in inputs:
         if isinstance(input.payload, SteerControlPayload):
             primary = next(

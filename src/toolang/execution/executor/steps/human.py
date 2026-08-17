@@ -7,12 +7,13 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from toolang.lang.ast import FlowStmt
 
 from ...records import RunControlRecord, StepPath
-from ..common import Local, EventEmitter, execute_step
+from ..common import BoundRun, EventEmitter, Local, execute_step
 
 
 async def execute(
     emit: EventEmitter,
     *,
+    binding: BoundRun,
     path: StepPath,
     statement: FlowStmt,
     locals: Mapping[str, Local],
@@ -26,6 +27,7 @@ async def execute(
         emit,
         kind="human",
         path=path,
+        binding=binding,
         statement=statement,
         locals=locals,
         controls=controls,

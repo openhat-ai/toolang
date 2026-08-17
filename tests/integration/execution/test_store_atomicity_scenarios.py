@@ -45,6 +45,38 @@ def _table_count(db_path: Path, table: str) -> int:
         connection.close()
 
 
+def test_invalid_execution_ids_are_rejected_before_any_rows_are_written(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "runs.db"
+    store = RunStore(db_path)
+    try:
+        store.create_thread(thread_id="term_valid")
+        before_runs = _table_count(db_path, "runs")
+        before_controls = _table_count(db_path, "controls")
+        before_threads = _table_count(db_path, "threads")
+
+        with pytest.raises(ValueError, match="invalid run id"):
+            accept_run_start(
+                store,
+                run_id="run.bad",
+                parent=None,
+                thread="term_valid",
+                input=Message.user("invalid"),
+                context={},
+                request_id=None,
+                created_at="2026-01-01T00:00:00Z",
+            )
+        with pytest.raises(ValueError, match="invalid thread id"):
+            store.create_thread(thread_id="thread.bad")
+
+        assert _table_count(db_path, "runs") == before_runs
+        assert _table_count(db_path, "controls") == before_controls
+        assert _table_count(db_path, "threads") == before_threads
+    finally:
+        store.close()
+
+
 def test_start_acceptance_rolls_back_the_run_when_control_insert_fails(
     tmp_path: Path,
 ) -> None:

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Literal
 
 from toolang.base.types.run import ModelCall
 from .records import StepRecord
 from .schemas import RunDetail, RunInfo, ThreadDetail, ThreadInfo
 from .store import RunStore
-from .types import RunStatus, StepPath
+from .types import ControlRef, ExecutionError, RunStatus, StepPath
 
 
 class RunHistory:
@@ -94,6 +95,8 @@ class RunHistory:
                     steps=steps_by_run.get(run.id, ()),
                     model_calls=model_calls,
                     root_run_id=self._store.root_run_id(run_id=run.id),
+                    error_message=self._error_message(run.error),
+                    ejection_scope=self._ejection_scope(run.ejected_by),
                 )
                 for run in visible_runs
             ],
@@ -122,6 +125,8 @@ class RunHistory:
                 controls=controls_by_run.get(run.id, ()),
                 steps=steps_by_run.get(run.id, ()),
                 root_run_id=self._store.root_run_id(run_id=run.id),
+                error_message=self._error_message(run.error),
+                ejection_scope=self._ejection_scope(run.ejected_by),
             )
             for run in runs
         ]
@@ -139,7 +144,21 @@ class RunHistory:
             steps=steps,
             model_calls=self._store.rebuild_model_calls(_model_steps(steps)),
             root_run_id=self._store.root_run_id(run_id=run.id),
+            error_message=self._error_message(run.error),
+            ejection_scope=self._ejection_scope(run.ejected_by),
         )
+
+    def _error_message(self, error: ExecutionError | None) -> str | None:
+        if error is None:
+            return None
+        return self._store.resolve_error(error)
+
+    def _ejection_scope(
+        self, ref: ControlRef | None
+    ) -> Literal["run", "thread"] | None:
+        if ref is None:
+            return None
+        return self._store.control_scope(ref)
 
     def _model_calls(
         self, steps_by_run: Mapping[str, Sequence[StepRecord]]

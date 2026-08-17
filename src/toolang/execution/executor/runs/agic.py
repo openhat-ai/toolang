@@ -58,6 +58,8 @@ class _AgicState:
     model_calls: int = 0
     tool_calls: int = 0
     tool_call_sources: dict[str, tuple[int, int]] = field(default_factory=dict)
+    initial_inputs: tuple[ValuePtr, ...] = ()
+    claimed_inputs: tuple[RunControlRecord, ...] = ()
 
     def before_model_call(self) -> None:
         """Apply one model-call checkpoint and reserve its agic-local count."""
@@ -111,6 +113,11 @@ async def execute(
         record_output=lambda ref: execution.record_output(binding.run_id, ref),
         messages=list(prepared.messages),
         next_step=execution.next_step(binding.run_id),
+        initial_inputs=tuple(
+            local.ref
+            for _name, local in sorted(locals.items())
+            if local.shape != "none" and local.ref is not None
+        ),
     )
     message = await _execute(state)
     if state.output is None:
@@ -153,7 +160,8 @@ async def _execute(state: _AgicState) -> Message | None:
                     _append_canceled_tool_results(state, result.tool_calls[index:])
                     break
             continue
-        if state.pending_inputs():
+        if inputs := state.pending_inputs():
+            state.claimed_inputs = inputs
             continue
         return result.message
 

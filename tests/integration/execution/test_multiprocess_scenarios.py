@@ -508,6 +508,41 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
         reopened.close()
 
 
+def test_only_one_process_can_claim_a_pending_control(tmp_path: Path) -> None:
+    db_path = tmp_path / "runs.db"
+    store = RunStore(db_path)
+    try:
+        store.create_thread(thread_id="term_claim_race")
+        accept_run_start(
+            store,
+            run_id="run_claim_race",
+            parent=None,
+            thread="term_claim_race",
+            input=Message.user("hello"),
+            context={},
+            request_id=None,
+            created_at="2026-01-01T00:00:00Z",
+        )
+        control = store.accept_run_control(
+            run_id="run_claim_race",
+            kind="steer",
+            timing="next_step",
+            locals=(Local("Part[]", Message.user("updated").parts, "_"),),
+            request_id=None,
+            created_at="2026-01-01T00:00:01Z",
+        )
+    finally:
+        store.close()
+
+    outcomes = _race_processes(
+        (_race_claim_control, (str(db_path), control.run, control.index)),
+        (_race_claim_control, (str(db_path), control.run, control.index)),
+    )
+
+    assert [outcome[0] for outcome in outcomes].count("claimed") == 1
+    assert [outcome[0] for outcome in outcomes].count("skipped") == 1
+
+
 def test_concurrent_forks_preserve_one_terminal_anchor(
     tmp_path: Path,
 ) -> None:

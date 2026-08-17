@@ -56,6 +56,7 @@ async def execute(
 
     return await loop_step.execute(
         execution.emit,
+        binding=binding,
         path=path,
         statement=statement,
         locals=locals,

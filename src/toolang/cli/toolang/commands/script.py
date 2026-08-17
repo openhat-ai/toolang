@@ -31,7 +31,7 @@ from toolang.cli.common.policy import (
 )
 from toolang.execution.calls import parse_call, resolve_spec
 from toolang.execution.executor import RunExecutor, RunHandle
-from toolang.execution.records import RunRecord, execution_error_message
+from toolang.execution.records import RunRecord
 from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
@@ -606,15 +606,22 @@ def _emit_result(
     log_path: Path | None,
     error_reported: bool = False,
 ) -> int:
-    if result.status != "succeeded":
-        if not error_reported:
-            _error(execution_error_message(result.error) or f"run {result.status}")
-        typer.echo(f"Run: {result.id}", err=True)
-        if log_path is not None and log_path.exists():
-            typer.echo(f"Log: {log_path}", err=True)
-        return 1
     store = RunStore(store_path)
     try:
+        if result.status != "succeeded":
+            if not error_reported:
+                _error(
+                    (
+                        store.resolve_error(result.error)
+                        if result.error is not None
+                        else None
+                    )
+                    or f"run {result.status}"
+                )
+            typer.echo(f"Run: {result.id}", err=True)
+            if log_path is not None and log_path.exists():
+                typer.echo(f"Log: {log_path}", err=True)
+            return 1
         output = store.run_output(run_id=result.id)
     finally:
         store.close()

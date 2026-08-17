@@ -13,7 +13,8 @@ from toolang.base.types.message import Message
 from toolang.base.types.policy import RunBindings
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.records import RunRecord, execution_error_message
+from toolang.execution.records import RunRecord
+from toolang.execution.store import RunStore
 from toolang.lang.input import RunnableInput
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
@@ -90,6 +91,7 @@ async def run(
             _record_completed_runs(
                 store,
                 active,
+                run_store=executor.store,
                 now=now,
             )
             for submission in collect_file_submissions(
@@ -144,7 +146,12 @@ async def run(
     finally:
         if active:
             await asyncio.gather(*active.values(), return_exceptions=True)
-            _record_completed_runs(store, active, now=datetime.now(timezone.utc))
+            _record_completed_runs(
+                store,
+                active,
+                run_store=executor.store,
+                now=datetime.now(timezone.utc),
+            )
         store.close()
 
 
@@ -229,6 +236,7 @@ def _record_completed_runs(
     store: files.FileRequestStore,
     active: dict[str, asyncio.Task[RunRecord]],
     *,
+    run_store: RunStore,
     now: datetime,
 ) -> None:
     for run_id, task in tuple(active.items()):
@@ -242,7 +250,9 @@ def _record_completed_runs(
             error = str(exc) or type(exc).__name__
         else:
             status = run.status
-            error = execution_error_message(run.error)
+            error = (
+                run_store.resolve_error(run.error) if run.error is not None else None
+            )
         store.finish_run(
             run_id=run_id,
             run_status=status,

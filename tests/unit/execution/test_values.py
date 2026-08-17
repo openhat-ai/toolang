@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+from typing import Literal
+
 import pytest
+from pydantic import TypeAdapter
 
 from toolang.base.types.message import TextPart, ToolCallPart
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
+    RunControlRecord,
     RetryControlPayload,
     StartControlPayload,
+    SteerControlPayload,
+    StopControlPayload,
     control_payload_from_data,
     control_payload_to_data,
     local_from_data,
     local_to_data,
 )
+from toolang.execution.schemas import ControlInfo
 from toolang.execution.types import AgentResources, Local, StepPath, ValuePtr
 
 
@@ -139,3 +146,47 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
         == inherited
     )
     assert control_payload_from_data("retry", control_payload_to_data(empty)) == empty
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    (
+        (
+            "steer",
+            SteerControlPayload((Local("Part[]", (TextPart("continue"),), "_", 0),)),
+        ),
+        ("stop", StopControlPayload()),
+    ),
+)
+def test_control_protocol_uses_kind_to_restore_payload_variant(
+    kind: Literal["steer", "stop"],
+    payload: SteerControlPayload | StopControlPayload,
+) -> None:
+    record = RunControlRecord(
+        target="run_test",
+        index=1,
+        kind=kind,
+        payload=payload,
+    )
+    info = ControlInfo(
+        run_id="run_test",
+        index=record.index,
+        kind=kind,
+        timing=record.timing,
+        request_id=None,
+        status=record.status,
+        payload=payload,
+        error=None,
+        created_at="",
+        finished_at=None,
+    )
+
+    restored_record = TypeAdapter(RunControlRecord).validate_python(
+        TypeAdapter(RunControlRecord).dump_python(record, mode="json")
+    )
+    restored_info = TypeAdapter(ControlInfo).validate_python(
+        TypeAdapter(ControlInfo).dump_python(info, mode="json")
+    )
+
+    assert type(restored_record.payload) is type(payload)
+    assert type(restored_info.payload) is type(payload)

@@ -147,6 +147,7 @@ flow staged(_: Part[]) -> Part[]:
                 (0, "succeeded"),
                 (1, "failed"),
             ]
+            assert before[1].input == (ValuePtr.control(failed.id, 0, "_"),)
 
             retried = await harness.executor.retry(
                 failed.id,
@@ -452,11 +453,14 @@ flow parallel(_: Part[]):
             root_step = harness.store.list_steps(run_id=root.id)[0]
             leaf_step = harness.store.list_steps(run_id=failed_child.id)[0]
             assert root.error == ValuePtr.step(root_path)
-            assert root_step.error == ValuePtr.step(leaf_path)
+            assert root_step.error == ValuePtr.run(failed_child.id)
             assert failed_child.error == ValuePtr.step(leaf_path)
             assert leaf_step.error == "worker failed"
             assert isinstance(root.error, ValuePtr)
             assert harness.store.resolve_error(root.error) == "worker failed"
+            detail = RunHistory(harness.store).get_run(root.id)
+            assert detail is not None
+            assert detail.summary == "worker failed"
             assert all(
                 step.status != "running"
                 for run in runs
@@ -513,6 +517,48 @@ flow fail(_: Part[]) -> Number:
                 f"step_end:{record.id}/0:system:succeeded",
                 f"run_end:{record.id}:failed",
             ]
+
+    asyncio.run(scenario())
+
+
+def test_parent_step_points_to_child_runtime_error_without_copying_it(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+flow child(_: Part[]) -> Number:
+  let note:
+    captured
+
+flow parent(_: Part[]) -> Number:
+  run child
+""",
+        responses=[],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="parent",
+                    primary=perceive_input("not a number"),
+                )
+            )
+
+            child = next(
+                run
+                for run in harness.store.list_runs(thread_id=thread, limit=None)
+                if run.parent is not None
+            )
+            parent_step = harness.store.list_steps(run_id=root.id)[0]
+            assert isinstance(child.error, str)
+            assert child.error.startswith("output is not valid Number")
+            assert isinstance(parent_step.error, ValuePtr)
+            assert parent_step.error == ValuePtr.run(child.id)
+            assert harness.store.resolve_error(parent_step.error) == child.error
 
     asyncio.run(scenario())
 
@@ -1526,6 +1572,11 @@ flow relay(_: Text, suffix: Text) -> Text:
                 local for local in start.payload.locals if local.name == "suffix"
             )
             assert suffix.value == ValuePtr.control(root.id, 0, "suffix")
+            parent_step = harness.store.list_steps(run_id=root.id)[0]
+            assert parent_step.input == (
+                ValuePtr.control(root.id, 0, "_"),
+                ValuePtr.control(root.id, 0, "suffix"),
+            )
             assert harness.store.run_output_text(run_id=root.id) == "hello!"
 
     asyncio.run(scenario())

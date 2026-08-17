@@ -90,7 +90,9 @@ run_id^0/name      named Local in control index 0
 Step paths use dots. A trailing RFC 6901 JSON Pointer addresses the resolved
 semantic value, for example `run_id.1/0` for the first output item and
 `run_id^0/_/1` for the second primary control item. A control anchor must name
-a local; bare `run_id^0` is invalid. Run IDs reserve `.`, `^`, `/`, and `@`.
+a local; bare `run_id^0` is invalid. Run and thread IDs must match
+`[A-Za-z0-9][A-Za-z0-9_-]*`; pointer syntax does not define identifier
+validity.
 
 In value contexts, run and step anchors resolve their output and control
 anchors resolve the named local. In error contexts, run and step anchors
@@ -111,6 +113,8 @@ monotonic polling cursor for visible changes.
 The common record fields are `target`, `index`, `kind`, `payload`, `request`,
 `status`, `timing`, `error`, `created_at`, and `finished_at`. Timing defaults to
 `immediate`; statuses are `pending`, `applied`, `wontapply`, and `revoked`.
+`ControlKind` names the complete run and thread control kind union. Caller-facing
+control projections use `ControlInfo`, not a run-only vocabulary.
 
 Preparation payloads use this order:
 
@@ -124,6 +128,12 @@ explicit empty argument set. Runnable and model are non-empty concrete values
 resolved from defaults and overrides before acceptance. `RunBindings` is
 flattened into `runnable` and `model`. Agent ceilings and state fingerprints
 are not durable run truth.
+
+This implementation may copy adopted locals into a retry payload. When it
+does, those locals belong to the new retry control and subsequent execution
+points to that control; earlier controls remain immutable. Avoiding the retry
+copy is a later storage optimization, not a reason to point new execution at
+control index zero.
 
 Steer and stop payloads contain only locals. Executor validation requires steer
 to provide a concrete primary `Part[]` and stop to provide no local or one
@@ -146,8 +156,9 @@ store context, root, or attempt. `parent is None` defines a root.
 Step records contain path, kind, `input: tuple[ValuePtr, ...]`, one optional
 Local output, placement, the currently open `given` and `noted` mappings,
 status, error, `ejected_by`, and timestamps. Input lists the durable values
-that existed and were read at `StepBegin`; it is not a complete invocation and
-does not repeat Local metadata. Exact model requests remain in `given.call`.
+actually read by the step at `StepBegin`; it is not a snapshot of every local,
+is not a complete invocation, and does not repeat Local metadata. Exact model
+requests remain in `given.call`.
 Values created inside the step are represented by nested records and the final
 output pointer.
 
@@ -181,13 +192,26 @@ unchanged. Known counts populate `iter` and `iters`; an until result uses
 
 Steer applies only to agic runs, whether root or child. `immediate` interrupts
 the active step and starts a model step. `next_step` waits for the active step
-to finish, replaces the normally scheduled next step with a model step, and
-skips all outstanding tool calls. `next_call` waits for the normal next model
-boundary. Before a replacement model call, every skipped call receives a
-synthetic canceled `ToolResultPart` in the exact `given.call`; no tool step is
-created for a call that never started. The model step input points to the
-skipped ToolCallParts and steer control locals, and its durable StepBegin
-atomically marks the steer applied.
+to finish and replaces the normally scheduled next step with a model step.
+When this happens before a tool batch starts, all outstanding tool calls are
+skipped. `next_call` waits for the normal next model boundary. Before a
+replacement model call, every skipped call receives a synthetic canceled
+`ToolResultPart` in the exact `given.call`; no tool step is created for a call
+that never started. The model step input points to the skipped ToolCallParts
+and steer control locals, and its durable StepBegin atomically marks the steer
+applied.
+
+For this change, a tool batch is committed once its first tool step begins. A
+`next_step` steer accepted during that batch waits for the normal model boundary
+after the batch; interrupting the remaining calls is deferred.
+
+Claims are exclusive: only a pending control whose `_claimed` value is false
+may be claimed, and concurrent claimers must observe at most one winner.
+
+Error pointers are resolved through the store across run and step records for
+caller-facing summaries. A parent step points to a failed child run instead of
+copying the child's runtime error. Ejection scope is read from the referenced
+control record and is never inferred from an identifier prefix.
 
 ## Implementation Touchpoints
 
@@ -202,19 +226,26 @@ atomically marks the steer applied.
 
 - Local and ValuePtr codecs round-trip scalar, struct, part, nested array,
   mixed-pointer collection, heterogeneous Json, and invalid type/dim cases.
-- Root, child, rerun, and repeated retry records point to the correct control
-  and reconstruct the adopted locals without copied values.
+- Root, child, rerun, and repeated retry records point to the correct control;
+  when retry copies adopted locals, the new copies belong to the retry control.
+- Initial model steps point only to the primary and named control locals they
+  actually read, including the current retry control rather than control zero.
 - Model part pointers address ToolCallParts; tool results and later model calls
   preserve valid history.
 - Scatter changes only dimension; keep and rank select or reorder by pointer;
   map and parallel outputs point to child values.
 - Repeat updates primary and named locals across iterations, records no wrapper
   output, preserves zero-iteration state, and reconstructs visible locals.
-- All steer timings work for root and child agics, flow steer is rejected, and
-  next-step steering cancels outstanding multi-tool batches without tool-step
-  records.
+- All steer timings work for root and child agics, flow steer is rejected,
+  next-step steering skips a not-yet-started tool batch, and steering during an
+  active batch waits for its normal model boundary.
 - Unified control status transitions, request uniqueness, claim/revoke races,
-  revisions, fork, and rewind compare-and-swap behavior are covered.
+  exclusive claim races, revisions, fork, and rewind compare-and-swap behavior
+  are covered.
+- Control records and caller-facing `ControlInfo` values use outer `kind` to
+  round-trip the concrete payload variant.
+- Runtime error chains resolve across child runs without copying their messages,
+  and ejection projections preserve the referenced control scope.
 - `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`, and
   `uv run pytest` pass.
 

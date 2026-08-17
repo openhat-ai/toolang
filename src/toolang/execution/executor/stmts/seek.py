@@ -26,13 +26,12 @@ async def execute(
     controls: Sequence[RunControlRecord],
     placement: Mapping[str, object] | None,
 ) -> Local:
-    del binding
-
     async def operation() -> Local:
         raise ToolangError("seek requires an agent execution bridge")
 
     return await agent_step.execute(
         execution.emit,
+        binding=binding,
         path=path,
         statement=statement,
         locals=locals,

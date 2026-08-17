@@ -21,7 +21,7 @@ from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
 from toolang.execution.executor import RunHandle, RunSpec
 from toolang.execution.records import RunControlRecord, RunRecord
-from toolang.execution.schemas import RunControlInfo, RunDetail, RunInfo
+from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
 from toolang.lang.input import RunnableInput
 from toolang.up import AgentCore
@@ -312,7 +312,7 @@ def _control_result(
         )
     return RunCommandResult(
         run=detail,
-        command=RunControlInfo.from_record(run, control),
+        command=ControlInfo.from_record(run, control),
     )
 
 

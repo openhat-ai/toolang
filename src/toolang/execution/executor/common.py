@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 import json
+import re
 from typing import Any, Literal, cast
 
 from toolang.base.types.message import (
@@ -47,18 +48,29 @@ from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
 from ..records import RunControlRecord, SteerControlPayload, StopControlPayload
+from ..runnables import resolve_runnable
 from ..types import AgentResources, Local as RecordLocal, StepKind, StepPath, ValuePtr
 
 Shape = Literal["none", "item", "list"]
 EventEmitter = Callable[[RunEvent], Awaitable[None]]
+_TEMPLATE_LOCAL_RE = re.compile(
+    r"{{\s*(?:[#^/]\s*)?([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][\w-]*)*\s*}}"
+)
 
 
-class _StepFailed(Exception):
+class _ExecutionFailed(Exception):
+    """Carry one durable failure reference across execution layers."""
+
+    def __init__(self, error: ValuePtr, cause: BaseException) -> None:
+        super().__init__(str(cause) or type(cause).__name__)
+        self.error = error
+
+
+class _StepFailed(_ExecutionFailed):
     """Carry one failed-step reference across enclosing execution layers."""
 
     def __init__(self, step: StepPath, cause: BaseException) -> None:
-        super().__init__(str(cause) or type(cause).__name__)
-        self.error = ValuePtr.step(step)
+        super().__init__(ValuePtr.step(step), cause)
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +86,7 @@ class BoundRun:
     state: AgentState
     setup: AgentSetup
     created_at: str
+    control_index: int = 0
     limits: RunLimits = RunLimits()
     ceilings: tuple[AgentCeiling, ...] = ()
     agent_resources: AgentResources | None = None
@@ -100,6 +113,7 @@ async def execute_step(
     *,
     kind: StepKind,
     path: StepPath,
+    binding: BoundRun,
     statement: FlowStmt,
     locals: Mapping[str, Local],
     controls: Sequence[RunControlRecord],
@@ -112,11 +126,7 @@ async def execute_step(
     inputs = _unique_step_inputs(
         (
             *(ValuePtr.control(item.run, item.index, "_") for item in controls),
-            *(
-                local.ref
-                for _name, local in sorted(locals.items())
-                if not isinstance(statement, LetStmt) and local.ref is not None
-            ),
+            *statement_input_refs(binding, statement, locals),
         )
     )
     await emit(
@@ -148,7 +158,7 @@ async def execute_step(
             )
         )
         raise
-    except _StepFailed as exc:
+    except _ExecutionFailed as exc:
         await emit(
             StepEnd(
                 step=path,
@@ -195,6 +205,62 @@ async def execute_step(
     return replace(result, ref=ValuePtr.step(path))
 
 
+def statement_input_refs(
+    binding: BoundRun,
+    statement: FlowStmt,
+    locals: Mapping[str, Local],
+) -> tuple[ValuePtr, ...]:
+    """Return the durable locals directly read by one flow statement."""
+
+    names: set[str] = set()
+    if isinstance(statement, LetStmt):
+        names.update(
+            match.group(1) for match in _TEMPLATE_LOCAL_RE.finditer(statement.value)
+        )
+    elif isinstance(statement, RepeatStmt | AskStmt | SeekStmt):
+        pass
+    else:
+        child_name = _statement_child_runnable(statement)
+        if child_name is not None:
+            try:
+                child = resolve_runnable(binding.state.program, child_name)
+            except (ToolangError, ValueError):
+                child = None
+            if child is not None:
+                if child.input is not None:
+                    names.add("_")
+                names.update(parameter.name for parameter in child.params)
+        if isinstance(
+            statement,
+            KeepStmt
+            | DropStmt
+            | GatherStmt
+            | SettleStmt
+            | MapStmt
+            | RankStmt
+            | StormStmt,
+        ):
+            names.add("_")
+    return tuple(
+        local.ref
+        for name, local in sorted(locals.items())
+        if name in names and local.ref is not None
+    )
+
+
+def _statement_child_runnable(statement: FlowStmt) -> str | None:
+    if isinstance(
+        statement,
+        RunStmt | ScatterStmt | GatherStmt | SettleStmt | MapStmt | StormStmt,
+    ):
+        return statement.runnable
+    if isinstance(statement, RankStmt):
+        return statement.scorer
+    if isinstance(statement, KeepStmt | DropStmt):
+        return statement.predicate
+    return None
+
+
 def initial_locals(
     binding: BoundRun, executable: AgicDecl | FlowDecl
 ) -> dict[str, Local]:
@@ -216,7 +282,7 @@ def initial_locals(
         locals[name] = Local(
             value,
             "item",
-            ValuePtr.control(binding.run_id, 0, name),
+            ValuePtr.control(binding.run_id, binding.control_index, name),
             parameter.type_name or "Part[]",
         )
     if executable.input is not None:
@@ -227,7 +293,7 @@ def initial_locals(
                 structs=structs,
             ),
             "item",
-            ValuePtr.control(binding.run_id, 0, "_"),
+            ValuePtr.control(binding.run_id, binding.control_index, "_"),
             executable.input.type_name or "Part[]",
         )
     else:

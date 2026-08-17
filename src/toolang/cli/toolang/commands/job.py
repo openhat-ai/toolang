@@ -14,7 +14,6 @@ from typer.core import TyperCommand
 from ....catalog import templates
 from ....catalog.types import JobStage
 from toolang.common.layout import AgentLayout
-from toolang.execution.records import execution_error_message
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.errors import CatalogError
 from toolang.work.errors import JobStoreSchemaError
@@ -167,13 +166,21 @@ def _list(kind: JobKind, title: str) -> Callable[..., None]:
             else ("ready",)
         )
         runs: Iterable[JobRun] = ()
+        error_messages: dict[str, str] = {}
         try:
             with open_execution(ctx) as resources:
                 if resources is not None:
-                    runs = cast(
-                        Iterable[JobRun],
-                        resources.store.list_runs(limit=None),
+                    runs = tuple(
+                        cast(
+                            Iterable[JobRun],
+                            resources.store.list_runs(limit=None),
+                        )
                     )
+                    error_messages = {
+                        run.id: resources.store.resolve_error(run.error)
+                        for run in runs
+                        if run.error is not None
+                    }
         except click.ClickException as exc:
             typer.echo(f"warning: {exc.message}", err=True)
         try:
@@ -181,6 +188,7 @@ def _list(kind: JobKind, title: str) -> Callable[..., None]:
                 layout=layout,
                 runs=runs,
                 read_only=True,
+                error_messages=error_messages,
             )
         except JobStoreSchemaError as exc:
             raise click.ClickException(
@@ -443,11 +451,7 @@ def _last_run_status(job: JobInfo) -> str:
 
 def _runtime_error(job: JobInfo) -> str:
     run = job.runtime.last_run
-    error = (
-        job.runtime.error
-        or (execution_error_message(run.error) if run is not None else None)
-        or ""
-    )
+    error = job.runtime.error or (run.error if run is not None else None) or ""
     compact = " ".join(error.split())
     return compact if len(compact) <= 56 else f"{compact[:53].rstrip()}..."
 
