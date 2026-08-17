@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from toolang.base.types.message import Message, TextPart
+from toolang.base.types.message import Message
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.common.errors import ToolangError
@@ -21,8 +21,6 @@ from ..common import (
     EventEmitter,
     Local,
     program_structs,
-    value_percept,
-    value_text,
 )
 from ..limits import _ModelAccounting
 from ..prepare import _AgicFrame, prepare_agic
@@ -84,30 +82,9 @@ async def execute(
 ) -> Local:
     """Execute one complete agic model-tool cycle."""
 
-    invoke = {name: local.value for name, local in locals.items() if name != "_"}
-    primary = locals.get("_", Local())
-    primary_parts = (
-        value_percept(primary.value, type_name=primary.type_name)
-        if primary.shape == "item"
-        else None
-    )
-    if primary.shape == "none":
-        primary_parts = ()
-    bound = replace(
-        binding,
-        input=Message(
-            role="user",
-            parts=(
-                primary_parts
-                if primary_parts is not None
-                else (TextPart(value_text(primary.value)),)
-            ),
-        ),
-        args=invoke,
-    )
     prepared = prepare_agic(
         execution,
-        bound,
+        binding,
         agic,
         variables={
             name: local.value for name, local in locals.items() if local.shape != "none"

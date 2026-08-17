@@ -25,7 +25,6 @@ from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer, StepBegin
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.executor.ceiling import _RunCeiling
 from toolang.execution.executor.common import BoundRun, Local, output_parts
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.prepare import prepare_agic
@@ -33,7 +32,10 @@ from toolang.execution.history import RunHistory
 from toolang.execution.records import model_call_from_data, model_call_to_data
 from toolang.execution.schemas import RunDetail
 from toolang.execution.store import RunStore
+from toolang.execution.types import AgentResources, AgentToolResource
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
+from toolang.lang.input import RunnableInput
+from toolang.plugin.tools.registry import tool_ref_for_model_tool
 from toolang.setup import AgentEnvironment, AgentSetup
 
 
@@ -99,6 +101,22 @@ class _Tracer(RunTracer):
 
     async def on_event(self, event: RunEvent) -> None:
         self.events.append(event)
+
+
+def _resources(setup: AgentSetup) -> AgentResources:
+    return AgentResources(
+        models=("default",),
+        tools=tuple(
+            AgentToolResource(
+                model_name=name,
+                plugin=ref.plugin,
+                namespace=ref.namespace,
+                name=ref.name,
+            )
+            for name, tool in setup.tools.items()
+            for ref in (tool_ref_for_model_tool(name, tool),)
+        ),
+    )
 
 
 def test_multimodal_list_shape_has_replayable_step_output() -> None:
@@ -178,12 +196,14 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         run_id="run_1",
         root_run_id="run_1",
         thread="term_1",
-        input=Message.user("hello"),
-        args={"focus": "events"},
-        model=None,
+        bindings=RunBindings(runnable="agic:chat"),
+        input=RunnableInput.from_values(
+            primary=Message.user("hello").percept,
+            named={"focus": "events"},
+        ),
         state=state,
         setup=setup,
-        ceiling=_RunCeiling(("default",), setup.tools, ()),
+        resources=_resources(setup),
         created_at="2026-01-01T00:00:00Z",
     )
     context = cast(
@@ -271,12 +291,11 @@ def test_prepare_agic_includes_declared_output_contract(tmp_path: Path) -> None:
         run_id="run_1",
         root_run_id="run_1",
         thread="term_1",
-        input=Message.user("topic"),
-        args={},
-        model=None,
+        bindings=RunBindings(runnable="agic:queries"),
+        input=RunnableInput(primary=Message.user("topic").percept),
         state=state,
         setup=setup,
-        ceiling=_RunCeiling(("default",), setup.tools, ()),
+        resources=_resources(setup),
         created_at="2026-01-01T00:00:00Z",
     )
     context = cast(
@@ -356,15 +375,14 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         run_id="run_1",
         root_run_id="run_1",
         thread="term_1",
-        input=Message(
-            role="user",
-            parts=(TextPart("this diagram "), image),
+        bindings=RunBindings(runnable="agic:review"),
+        input=RunnableInput.from_values(
+            primary=(TextPart("this diagram "), image),
+            named={"appendix": document},
         ),
-        args={"appendix": document},
-        model=None,
         state=state,
         setup=setup,
-        ceiling=_RunCeiling(("default",), setup.tools, ()),
+        resources=_resources(setup),
         created_at="2026-01-01T00:00:00Z",
     )
     context = cast(
@@ -477,8 +495,10 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                     thread="term_1",
                     bindings=RunBindings(runnable="chat"),
                     limits=setup.limits,
-                    primary=(TextPart(text="hello"), image),
-                    named={"focus": "events"},
+                    input=RunnableInput.from_values(
+                        primary=(TextPart(text="hello"), image),
+                        named={"focus": "events"},
+                    ),
                 ),
                 tracer=tracer,
             )

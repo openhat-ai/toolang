@@ -24,7 +24,7 @@ from toolang.base.types.run import ModelCallResult, ModelUsage
 from toolang.execution.events import RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
 from toolang.execution.history import RunHistory
-from toolang.execution.records import RunControlRef, run_limits_to_data
+from toolang.execution.records import RunControlRef
 from toolang.execution.types import StepErrorRef, StepPath, ThreadPrefix
 from toolang.lang.input import perceive_input
 
@@ -80,7 +80,13 @@ flow relay(_: Part[]) -> Part[]:
             child = children[0]
             assert child.status == "succeeded"
             assert child.parent == StepPath.parse(f"{root.id}/0")
-            assert child.root_run_id == root.id
+            assert harness.store.root_run_id(run_id=child.id) == root.id
+            child_start = harness.store.get_run_control(run_id=child.id, index=0)
+            assert child_start is not None
+            assert child_start.bindings is not None
+            assert child_start.limits is not None
+            assert child_start.input is not None
+            assert child_start.resources is not None
             assert harness.store.run_output(run_id=root.id) == (TextPart("relayed"),)
             assert _root_step_kinds(harness, root.id) == ["run"]
             assert [
@@ -163,8 +169,14 @@ flow staged(_: Part[]) -> Part[]:
             assert [step.path.index for step in historical] == [0, 1, 2]
             assert historical[1].ejected is not None
             retry = harness.store.list_run_controls(run_id=retried.id)[-1]
+            start = harness.store.get_run_control(run_id=retried.id, index=0)
+            assert start is not None
             assert retry.kind == "retry"
             assert retry.anchor is not None
+            assert retry.bindings == start.bindings
+            assert retry.limits == start.limits
+            assert retry.input == start.input
+            assert retry.resources == start.resources
             assert historical[1].ejected == RunControlRef(retried.id, retry.index)
             visible_runs = harness.store.list_runs(thread_id=thread, limit=None)
             assert all(
@@ -209,6 +221,11 @@ agic reply(_: Part[], tone: Text) -> Part[]:
                     named={"tone": "brief"},
                 )
             )
+            source_control = harness.store.get_run_control(
+                run_id=source.id,
+                index=0,
+            )
+            assert source_control is not None
             rerun = await harness.executor.rerun(
                 source.id,
                 setup=harness.setup,
@@ -228,6 +245,10 @@ agic reply(_: Part[], tone: Text) -> Part[]:
             assert rerun_control is not None
             assert rerun_control.kind == "rerun"
             assert rerun_control.source == source.id
+            assert rerun_control.bindings == source_control.bindings
+            assert rerun_control.limits == source_control.limits
+            assert rerun_control.input == source_control.input
+            assert rerun_control.resources == source_control.resources
             projected = RunHistory(harness.store).get_thread(thread)
             assert projected is not None
             assert [run.id for run in projected.runs] == [rerun.id]
@@ -354,15 +375,8 @@ flow twice(_: Part[]) -> Part[]:
             assert run.status == "failed"
             assert run.error == StepErrorRef(StepPath(run.id, (2,)))
             retry = harness.store.list_run_controls(run_id=run.id)[-1]
-            assert retry.context == {
-                "limits": {
-                    "agic_model_calls": 200,
-                    "agic_tool_calls": None,
-                    "tokens": 2,
-                    "cost": None,
-                    "time": None,
-                }
-            }
+            assert retry.context == {}
+            assert retry.limits == RunLimits(tokens=2)
 
     asyncio.run(scenario())
 
@@ -1194,7 +1208,8 @@ flow repeated(_: Text) -> Text:
             assert sorted(run.status for run in children) == ["failed", "succeeded"]
             root_start = harness.store.get_run_control(run_id=root.id, index=0)
             assert root_start is not None
-            assert root_start.context == {"limits": run_limits_to_data(limits)}
+            assert root_start.context == {}
+            assert root_start.limits == limits
             for child in children:
                 child_start = harness.store.get_run_control(
                     run_id=child.id,
@@ -1420,7 +1435,10 @@ flow relay(_: Text, suffix: Text) -> Text:
                 )
                 if run.parent is not None
             )
-            assert child.context["args"] == {"suffix": "!"}
+            start = harness.store.get_run_control(run_id=child.id, index=0)
+            assert start is not None
+            assert start.input is not None
+            assert start.input.values == {"suffix": "!"}
             assert harness.store.run_output_text(run_id=root.id) == "hello!"
 
     asyncio.run(scenario())

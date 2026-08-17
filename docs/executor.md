@@ -95,18 +95,18 @@ class RunSpec:
     bindings: RunBindings
     limits: RunLimits
     ceilings: tuple[AgentCeiling, ...] = ()
-    primary: Percept = ()
-    named: Mapping[str, object] | None = None
+    input: RunnableInput = RunnableInput()
 ```
 
 `bindings.runnable` is required and resolves to exactly one agic or flow in the
 captured program. `bindings.model` is the effective singular model choice.
 The spec does not carry an origin, run identity, request identity, or arbitrary
-transport context. Each item in `ceilings` is one independently resolved
+transport context. Each item in `ceilings` is one independently applied
 selector-based restriction inside `setup.ceiling`; retaining separate session
 and run restrictions preserves intersection semantics when selector lists use
-OR matching. `primary` is the primary multimodal input; `named` contains values
-for the runnable's declared `params`. The executor validates both before
+OR matching. `input.primary` is the primary multimodal input;
+`input.named` contains typed values for the runnable's declared `params`.
+The executor validates both before
 accepting the run and constructs the user message internally. It
 keeps the original canonical `Percept` for the start control and durable
 history, while language-owned input coercion initializes `_` with the
@@ -146,7 +146,8 @@ ID. The supplied or allocated ID must be globally unique in `RunStore`.
 1. validate the thread;
 2. reject a conflicting run ID;
 3. insert the pending `RunRecord`;
-4. insert start `RunControlRecord(index=0)`;
+4. insert start `RunControlRecord(index=0)` with effective `bindings`,
+   `limits`, `input`, and final `resources` snapshots;
 5. commit the accepted run before its owner task is scheduled.
 
 Duplicate run IDs and duplicate non-null request IDs are rejected. Request IDs
@@ -189,8 +190,8 @@ private `_Execution` that carries the state shared by its recursive run tree.
 The implementation is divided by semantic level:
 
 - `executor.py` binds `RunSpec` to immutable execution state and durable IDs;
-- `ceiling.py` resolves the public `AgentCeiling` into private `_ResolvedAgentCeiling`
-  and per-run `_RunCeiling` values;
+- `resources.py` builds and filters `AgentResources`, then applies runnable
+  directives to the selected resource base;
 - `prepare.py` resolves an agic's model, tools, caps, prompt, history, and
   adapter in one pass;
 - `runs/agic.py` owns the fixed model-tool cycle for one agic;
@@ -209,15 +210,14 @@ layers.
 `AgentSetup.ceiling` contains stable selector lists, not resolved resources. At
 `start()`, the executor resolves it against the captured `AgentSetup` and
 `AgentState`, intersects every `RunSpec.ceilings` restriction, and creates
-`_ResolvedAgentCeiling`, the absolute resource limit for a recursive run tree.
-A request cannot expand the setup ceiling. Invalid selectors or empty
-intersections are rejected before the run is durably accepted.
-Every flow invocation resets its `_RunCeiling` from
-`_ResolvedAgentCeiling`, whether or not that flow declares directives. Agics derive
-their `_RunCeiling` from the nearest containing flow ceiling, or directly from
-`_ResolvedAgentCeiling` at the root. Agic directives affect only that agic. A nested
-flow does not inherit its caller's flow correction; returning from it naturally
-restores the caller's immutable flow ceiling.
+the tree-level `AgentResources`. A ceiling cannot expand the preceding resource
+set. Invalid selectors are rejected before the run is durably accepted.
+Every flow invocation starts from the tree-level agent resources and applies
+its own directives, whether or not the flow declares any. Agics start from the
+nearest containing flow resources, or directly from the agent resources at the
+root. Agic directives affect only that agic. A nested flow does not inherit its
+caller's flow restriction; returning from it naturally restores the caller's
+immutable flow resources.
 
 Agic and flow bodies run natively on the owner event loop. Model adapters,
 tool invocation, step emission, and run tracing are asynchronous. A wrapper
@@ -253,10 +253,10 @@ usage, and a cost limit also requires captured input and output prices for every
 selected model. Time expiry cancels an in-flight operation while recording
 affected runs as failed rather than user-canceled.
 
-The effective value is persisted on the root entry control and on every retry
-control. Child runs inherit the same in-memory value and their start controls
-do not duplicate it. Decimal cost is serialized as text so durable round trips
-do not lose precision.
+The effective value is persisted on every preparation control. Child runs
+inherit the same in-memory value and their start controls repeat it so each
+accepted preparation is self-contained. Decimal cost is serialized as text so
+durable round trips do not lose precision.
 
 `AgentSetup.limits` is rebuilt from dynamic root and agent `[limit]` config plus
 frozen process overrides. A request may overlay individual fields for one root

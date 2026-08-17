@@ -18,13 +18,13 @@ from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.calls import parse_call, resolve_spec, validate_commands
 from toolang.execution.executor import RunExecutor
 from toolang.execution.runnables import runnable_binding_defaults
-from toolang.execution.executor.ceiling import (
+from toolang.execution.executor.resources import (
     agent_model_targets,
     validate_agent_ceiling,
 )
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import PolicyCommand, ThreadPrefix
+from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.includes import resolve_file_include
 from toolang.setup import SetupWatcher
 from toolang.state.state import AgentState
@@ -135,7 +135,7 @@ class LocalChatSession:
 
     def apply_settings(
         self,
-        commands: tuple[PolicyCommand, ...],
+        commands: tuple[RunOverride, ...],
         selects: Mapping[str, object],
     ) -> Mapping[str, object]:
         candidate = apply_session_commands(selects, commands)

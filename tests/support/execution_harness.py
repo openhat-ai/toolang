@@ -29,6 +29,7 @@ from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.lang import Program
+from toolang.lang.input import RunnableInput
 from toolang.state.state import AgentState, agent_state_version
 from toolang.setup import AgentSetup
 
@@ -333,8 +334,7 @@ class ExecutionHarness:
             bindings=RunBindings(model=model, runnable=runnable),
             limits=limits if limits is not None else self.setup.limits,
             ceilings=ceilings,
-            primary=primary,
-            named=named,
+            input=RunnableInput.from_values(primary=primary, named=named),
         )
 
     async def __aenter__(self) -> Self:

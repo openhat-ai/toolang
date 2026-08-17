@@ -8,17 +8,17 @@ input, shared `Content` syntax, and runnable-boundary coercion.
 The layers are independent values with separate parsers:
 
 ```text
-RunnableInput = PrimaryInput? + NamedInput*
+RunnableInputRaw = PrimaryInput? + NamedInput*
 
 ChatInput
     = QuickCommand
-    | PolicyCommand+
-    | PolicyCommand* + RunnableInput
+    | RunOverride+
+    | RunOverride* + RunnableInputRaw
 ```
 
-- `RunnableInput` is language-owned syntax-valid input. It contains only one
+- `RunnableInputRaw` is language-owned syntax-valid input. It contains only one
   optional primary source and zero or more named sources.
-- `PolicyCommand` is execution-owned policy input. It changes `allow`,
+- `RunOverride` is execution-owned policy input. It changes `allow`,
   `default`, or `limit` fields but contains no runnable input.
 - `QuickCommand` and the `ChatInput` classification are terminal-chat
   concepts. Only one `QuickCommand` is accepted, and it must occupy the whole
@@ -28,13 +28,14 @@ ChatInput
   runnable branch applies only to that run.
 
 Script, task, and chore surfaces parse the run-only pair of policy commands and
-`RunnableInput`; they do not parse `QuickCommand`. Agic, flow, and prompt
+`RunnableInputRaw`; they do not parse `QuickCommand`. Agic, flow, and prompt
 bodies are `Content` sources rather than caller-input envelopes.
 
-Parsing and resolution are separate. Parsing produces `PolicyCommand` and
-`RunnableInput` without loading an agent. Execution resolution later overlays
+Parsing and resolution are separate. Parsing produces `RunOverride` and
+`RunnableInputRaw` without loading an agent. Execution resolution later overlays
 the current `AgentSetup`, session policy, and run policy; selects the runnable;
-evaluates content; coerces named inputs; and constructs `RunSpec`.
+evaluates content; coerces named inputs; constructs `RunnableInput`; and then
+constructs `RunSpec`.
 
 ## Policy Commands
 
@@ -73,7 +74,7 @@ The common default shortcuts are:
 They map to `default model=...` or `default runnable=...`. `:agic` and `:flow`
 qualify the runnable kind. The reserved value `default` clears that explicit
 binding and returns to the surface binding. Named values on a runnable
-shortcut belong to `RunnableInput`, so the line starts a run even when there
+shortcut belong to `RunnableInputRaw`, so the line starts a run even when there
 is no primary input.
 
 The allow shortcuts are:
@@ -125,14 +126,14 @@ ordinary text.
 
 ## Runnable Input
 
-`RunnableInput.primary` is an optional `Content` source.
-`RunnableInput.named` is an ordered set of unique `Name=Content` sources.
+`RunnableInputRaw.primary` is an optional `Content` source.
+`RunnableInputRaw.named` is an ordered set of unique `Name=Content` sources.
 Chat obtains named sources from runnable shortcuts; script obtains them from
 its generated CLI. Resolution evaluates each source and coerces it against the
 selected runnable signature. Missing, duplicate, or unknown named inputs are
 rejected before a run is accepted.
 
-Run-only parsing permits an empty `RunnableInput` when the selected runnable
+Run-only parsing permits an empty `RunnableInputRaw` when the selected runnable
 accepts no primary or named input. Parsing is atomic: any invalid policy
 command, named input, include, prompt, or coerced value rejects the complete
 input.

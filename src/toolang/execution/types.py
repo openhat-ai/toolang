@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any, Literal, TypeAlias
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal, TypeAlias, cast
 
 from pydantic_core import core_schema
 
@@ -31,7 +32,7 @@ LIMIT_POLICY_FIELDS = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
-class PolicyCommand:
+class RunOverride:
     """One canonical caller command applied to execution policy."""
 
     group: PolicyGroup
@@ -70,6 +71,132 @@ class PolicyCommand:
             raise TypeError(
                 f"limit {self.field} policy value must be an integer or none"
             )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentToolResource:
+    """Stable identity of one model-facing tool available to an agent."""
+
+    model_name: str
+    plugin: str
+    namespace: str
+    name: str
+
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(value, str) and value
+            for value in (self.model_name, self.plugin, self.namespace, self.name)
+        ):
+            raise ValueError("agent tool resource fields must be non-empty text")
+
+
+@dataclass(frozen=True, slots=True)
+class AgentCapResource:
+    """Stable identity of one prepared cap available to an agent."""
+
+    kind: str
+    name: str
+    ref: str
+
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(value, str) and value
+            for value in (self.kind, self.name, self.ref)
+        ):
+            raise ValueError("agent cap resource fields must be non-empty text")
+
+
+@dataclass(frozen=True, slots=True)
+class AgentResources:
+    """Stable ordered resources available at one execution point."""
+
+    models: tuple[str, ...] = ()
+    tools: tuple[AgentToolResource, ...] = ()
+    caps: tuple[AgentCapResource, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not all(isinstance(item, str) and item for item in self.models):
+            raise ValueError("agent resource models must be non-empty selectors")
+        if not all(isinstance(item, AgentToolResource) for item in self.tools):
+            raise TypeError("agent resource tools must be AgentToolResource objects")
+        if not all(isinstance(item, AgentCapResource) for item in self.caps):
+            raise TypeError("agent resource caps must be AgentCapResource objects")
+        if len(self.models) != len(set(self.models)):
+            raise ValueError("agent resource models must be unique")
+        tool_names = tuple(item.model_name for item in self.tools)
+        if len(tool_names) != len(set(tool_names)):
+            raise ValueError("agent resource tools must be unique")
+        cap_ids = tuple((item.kind, item.name, item.ref) for item in self.caps)
+        if len(cap_ids) != len(set(cap_ids)):
+            raise ValueError("agent resource caps must be unique")
+
+    @classmethod
+    def from_data(cls, payload: Mapping[str, object]) -> AgentResources:
+        """Decode one durable resource snapshot."""
+
+        raw_models = payload.get("models", ())
+        raw_tools = payload.get("tools", ())
+        raw_caps = payload.get("caps", ())
+        models = (
+            tuple(str(item) for item in raw_models)
+            if isinstance(raw_models, Sequence)
+            and not isinstance(raw_models, (str, bytes, bytearray))
+            else ()
+        )
+        tools = (
+            tuple(
+                AgentToolResource(
+                    model_name=str(
+                        cast(Mapping[str, object], item).get("model_name", "")
+                    ),
+                    plugin=str(cast(Mapping[str, object], item).get("plugin", "")),
+                    namespace=str(
+                        cast(Mapping[str, object], item).get("namespace", "")
+                    ),
+                    name=str(cast(Mapping[str, object], item).get("name", "")),
+                )
+                for item in raw_tools
+                if isinstance(item, Mapping)
+            )
+            if isinstance(raw_tools, Sequence)
+            and not isinstance(raw_tools, (str, bytes, bytearray))
+            else ()
+        )
+        caps = (
+            tuple(
+                AgentCapResource(
+                    kind=str(cast(Mapping[str, object], item).get("kind", "")),
+                    name=str(cast(Mapping[str, object], item).get("name", "")),
+                    ref=str(cast(Mapping[str, object], item).get("ref", "")),
+                )
+                for item in raw_caps
+                if isinstance(item, Mapping)
+            )
+            if isinstance(raw_caps, Sequence)
+            and not isinstance(raw_caps, (str, bytes, bytearray))
+            else ()
+        )
+        return cls(models=models, tools=tools, caps=caps)
+
+    def to_data(self) -> dict[str, object]:
+        """Encode one resource snapshot using stable public identities."""
+
+        return {
+            "models": list(self.models),
+            "tools": [
+                {
+                    "model_name": item.model_name,
+                    "plugin": item.plugin,
+                    "namespace": item.namespace,
+                    "name": item.name,
+                }
+                for item in self.tools
+            ],
+            "caps": [
+                {"kind": item.kind, "name": item.name, "ref": item.ref}
+                for item in self.caps
+            ],
+        }
 
 
 @dataclass(frozen=True, slots=True)

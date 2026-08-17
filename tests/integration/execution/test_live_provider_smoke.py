@@ -22,7 +22,7 @@ from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
-from toolang.lang.input import perceive_input
+from toolang.lang.input import RunnableInput, perceive_input
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 from tests.support.live_provider import create_live_agent
@@ -90,7 +90,7 @@ class _LiveExecution:
                     thread=thread,
                     bindings=RunBindings(runnable=runnable),
                     limits=self.setup.limits,
-                    primary=perceive_input(marker),
+                    input=RunnableInput(primary=perceive_input(marker)),
                 )
             ),
             timeout=180,
@@ -128,7 +128,8 @@ def test_real_provider_executes_flow_with_nested_agic(
             children = [
                 run
                 for run in runtime.store.list_runs(limit=None)
-                if run.root_run_id == run_id and run.parent is not None
+                if runtime.store.root_run_id(run_id=run.id) == run_id
+                and run.parent is not None
             ]
             assert len(children) == 1
             assert [

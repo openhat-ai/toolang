@@ -35,10 +35,10 @@ from toolang.execution.records import RunRecord, execution_error_message
 from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import PolicyCommand, ThreadPrefix
+from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
-from toolang.lang.input import NamedInputSources, RunnableInput
+from toolang.lang.input import NamedInputSources, RunnableInputRaw
 from toolang.setup import SetupWatcher
 from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState
@@ -320,7 +320,7 @@ def _collect_call(
     *,
     items: tuple[str, ...],
     stdin: TextIO,
-) -> tuple[tuple[PolicyCommand, ...], RunnableInput, NamedInputSources]:
+) -> tuple[tuple[RunOverride, ...], RunnableInputRaw, NamedInputSources]:
     params = {parameter.name: parameter for parameter in runnable.params}
     raw_args: dict[str, str] = {}
     input_items: list[str] = []
@@ -403,8 +403,8 @@ def _run(
     source_path: Path,
     *,
     runnable: str,
-    commands: tuple[PolicyCommand, ...],
-    input: RunnableInput,
+    commands: tuple[RunOverride, ...],
+    input: RunnableInputRaw,
     raw_named: NamedInputSources,
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
@@ -503,8 +503,8 @@ async def _execute(
     ids: IdIssuer,
     run_id: str,
     runnable: str,
-    commands: tuple[PolicyCommand, ...],
-    input: RunnableInput,
+    commands: tuple[RunOverride, ...],
+    input: RunnableInputRaw,
     raw_named: NamedInputSources,
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
@@ -560,8 +560,8 @@ async def _execute(
             runnable_kind=selected.kind,
             runnable_name=selected.name,
             runnable_doc=selected.doc,
-            input_value=spec.primary,
-            args=dict(spec.named or {}),
+            input_value=spec.input.primary,
+            args=dict(spec.input.values),
         )
         if not quiet and (sys.stderr.isatty() or verbosity > 0)
         else None

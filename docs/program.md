@@ -432,8 +432,8 @@ Flows use the same parameters, output declaration, directives, and executable
 namespace as agics. Statement syntax, bindings, inline agics, and result shapes
 are defined in [flow-syntax.md](./flow-syntax.md).
 
-Each flow invocation resets its resource ceiling from the `_ResolvedAgentCeiling`
-resolved at root-run start. Its directives establish the ceiling used by agics
+Each flow invocation starts from the `AgentResources` resolved at root-run
+start. Its directives establish the resources used by agics
 executed in that flow. Nested flow calls reset again, even when the nested flow
 has no directives, so a flow's correction does not implicitly constrain
 another independently authored flow.
@@ -506,9 +506,10 @@ chore   chore, else default
 file    file, else default
 ```
 
-Every run surface must resolve one `RunnableInput`, including all required
-named inputs, before execution. Script derives its CLI from the selected
-signature; chat, task, and chore input may begin with `PolicyCommand` lines,
+Every run surface must resolve one `RunnableInput`, including all required named
+inputs, before execution. Text surfaces first parse `RunnableInputRaw`. Script
+derives its CLI from the selected
+signature; chat, task, and chore input may begin with `RunOverride` lines,
 and runnable shortcuts may carry `name=value` named sources.
 
 Content evaluation turns interactive or authored `Content` into a

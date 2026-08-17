@@ -9,7 +9,7 @@ from toolang.api.app import AgentCoreDep
 from toolang.common.errors import ToolangError
 from toolang.execution.runnables import effective_agics, runnable_binding_defaults
 from toolang.execution.schemas import ThreadInfo
-from toolang.execution.executor.ceiling import agent_model_targets
+from toolang.execution.executor.resources import agent_model_targets
 from toolang.up import AgentCore, process as agents
 
 

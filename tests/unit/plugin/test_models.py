@@ -20,6 +20,7 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.common.errors import ToolangError
@@ -43,6 +44,7 @@ from toolang.plugin.models.adapters import chat_completions as chat_completions_
 from toolang.plugin.models.adapters import responses as responses_models
 from toolang.plugin.models.adapters.responses import encode_message, response_payload
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
+from toolang.lang.input import RunnableInput
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 
 
@@ -435,7 +437,7 @@ def test_model_resolution_rejects_selector_outside_allowed_set() -> None:
         model_environ={},
     )
 
-    with pytest.raises(ToolangError, match="outside the current ceiling"):
+    with pytest.raises(ToolangError, match="outside the current resources"):
         resolve_model(
             context,
             selector="o3[openrouter]",
@@ -2488,7 +2490,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
             index=1,
             kind="steer",
             timing="next_call",
-            input=steer,
+            message=steer,
         )
     ]
     events: list[RunEvent] = []
@@ -2818,9 +2820,8 @@ def _prepared_agic(
             run_id="run-1",
             root_run_id="run-1",
             thread="thread-1",
-            input=Message.user("hello"),
-            args={},
-            model=None,
+            bindings=RunBindings(runnable="agic:main"),
+            input=RunnableInput(primary=Message.user("hello").percept),
             state=cast(Any, state),
             setup=AgentSetup(
                 layout=AgentLayout.resident(Path("/"), "alice"),

@@ -16,8 +16,8 @@ Chat uses the same runtime units as the rest of Toolang:
 | `step` | One execution unit inside the run |
 
 One terminal `ChatInput` resolves to one `QuickCommand`, one or more
-`PolicyCommand` values, or a policy-command sequence paired with
-`RunnableInput`. Only the runnable-input branch creates a start control and a
+`RunOverride` values, or a policy-command sequence paired with
+`RunnableInputRaw`. Only the runnable-input branch creates a start control and a
 run in an existing thread. A client creates the thread explicitly before the
 first run.
 

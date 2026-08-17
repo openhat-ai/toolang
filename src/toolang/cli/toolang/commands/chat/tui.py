@@ -46,8 +46,8 @@ from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 from .input import (
     QuickCommand,
-    is_policy_commands,
     is_runnable_input,
+    is_run_overrides,
     normalize_chat_input,
     parse_chat_input,
 )
@@ -435,7 +435,7 @@ class ChatTuiApp:
                     blocks.SlashBlock(message, slash_result.lines).render()
                 )
             return
-        if is_policy_commands(chat_input):
+        if is_run_overrides(chat_input):
             try:
                 updated = self.client.apply_settings(
                     chat_input,

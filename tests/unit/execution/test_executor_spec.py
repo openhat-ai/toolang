@@ -32,8 +32,7 @@ def test_run_spec_has_minimal_execution_contract() -> None:
         "bindings",
         "limits",
         "ceilings",
-        "primary",
-        "named",
+        "input",
     )
 
 
@@ -55,6 +54,6 @@ def test_run_spec_defaults_are_immutable() -> None:
         limits=second_setup.limits,
     )
 
-    assert first.primary == ()
-    assert first.named is None
-    assert second.named is None
+    assert first.input.primary == ()
+    assert first.input.named == ()
+    assert second.input.named == ()

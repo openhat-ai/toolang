@@ -15,7 +15,7 @@ from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import ChatResult
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEnd, RunEvent, StepEnd
-from toolang.execution.types import PolicyCommand, StepPath
+from toolang.execution.types import RunOverride, StepPath
 
 
 class _Client:
@@ -36,7 +36,7 @@ class _Client:
 
     def apply_settings(
         self,
-        commands: tuple[PolicyCommand, ...],
+        commands: tuple[RunOverride, ...],
         selects: Mapping[str, object],
     ) -> Mapping[str, object]:
         del commands

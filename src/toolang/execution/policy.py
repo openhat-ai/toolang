@@ -17,7 +17,7 @@ from .types import (
     ALLOW_POLICY_FIELDS,
     DEFAULT_POLICY_FIELDS,
     LIMIT_POLICY_FIELDS,
-    PolicyCommand,
+    RunOverride,
 )
 
 _ALLOW_SHORTCUTS = ALLOW_POLICY_FIELDS
@@ -30,9 +30,9 @@ _CAP_KIND_BY_FIELD = {
 }
 
 
-def parse_policy_command(
+def parse_run_override(
     line: str,
-) -> tuple[PolicyCommand, NamedInputSources]:
+) -> tuple[RunOverride, NamedInputSources]:
     """Parse one canonical policy command or supported shortcut."""
 
     try:
@@ -46,11 +46,11 @@ def parse_policy_command(
 
 def parse_policy_prefix(
     source: str,
-) -> tuple[tuple[PolicyCommand, ...], NamedInputSources, str]:
+) -> tuple[tuple[RunOverride, ...], NamedInputSources, str]:
     """Parse the leading policy section and return its remaining source."""
 
     lines = _lines(source)
-    commands: list[PolicyCommand] = []
+    commands: list[RunOverride] = []
     named: list[tuple[str, str]] = []
     index = 0
     while index < len(lines):
@@ -76,9 +76,9 @@ def parse_policy_prefix(
 
 
 def merge_commands(
-    current: Sequence[PolicyCommand],
-    updates: Sequence[PolicyCommand],
-) -> tuple[PolicyCommand, ...]:
+    current: Sequence[RunOverride],
+    updates: Sequence[RunOverride],
+) -> tuple[RunOverride, ...]:
     """Apply one policy-only edit to a compact session command sequence."""
 
     merged = list(_normalize_commands(current))
@@ -95,8 +95,8 @@ def resolve_commands(
     setup: AgentSetup,
     *,
     surface: RunBindings = RunBindings(),
-    session: Sequence[PolicyCommand] = (),
-    run: Sequence[PolicyCommand] = (),
+    session: Sequence[RunOverride] = (),
+    run: Sequence[RunOverride] = (),
 ) -> tuple[tuple[AgentCeiling, ...], RunBindings, RunLimits]:
     """Resolve policy layers against one current setup snapshot."""
 
@@ -112,17 +112,17 @@ def resolve_commands(
     bindings = _apply_binding_commands(bindings, base, run)
     limits = _apply_limit_commands(setup.limits, session)
     limits = _apply_limit_commands(limits, run)
-    restrictions = tuple(
+    ceilings = tuple(
         ceiling
         for commands in (session, run)
-        if (ceiling := _command_ceiling(commands)) is not None
+        if (ceiling := _command_agent_ceiling(commands)) is not None
     )
-    return restrictions, bindings, limits
+    return ceilings, bindings, limits
 
 
 def _try_parse_command(
     line: str,
-) -> tuple[PolicyCommand, NamedInputSources] | None:
+) -> tuple[RunOverride, NamedInputSources] | None:
     if not line.startswith(":") or line.startswith("::"):
         return None
     try:
@@ -154,7 +154,7 @@ def _canonical_command(
     group: str,
     field: str,
     raw_values: tuple[str, ...],
-) -> PolicyCommand:
+) -> RunOverride:
     if group == "allow":
         if field not in ALLOW_POLICY_FIELDS:
             raise ValueError(f"unknown allow field: {field}")
@@ -170,29 +170,29 @@ def _canonical_command(
     else:  # pragma: no cover - callers use the closed parser grammar
         raise ValueError(f"unknown policy command group: {group}")
     if group == "allow":
-        return PolicyCommand("allow", field, value)
+        return RunOverride("allow", field, value)
     if group == "default":
-        return PolicyCommand("default", field, value)
-    return PolicyCommand("limit", field, value)
+        return RunOverride("default", field, value)
+    return RunOverride("limit", field, value)
 
 
 def _default_shortcut(
     name: str,
     values: list[str],
-) -> tuple[PolicyCommand, NamedInputSources]:
+) -> tuple[RunOverride, NamedInputSources]:
     selector = values[0]
     if name == "model":
         if len(values) != 1:
             raise ValueError(":model accepts no named inputs")
         value = None if selector == "default" else _default_value("model", selector)
-        return PolicyCommand("default", "model", value), ()
+        return RunOverride("default", "model", value), ()
 
     if selector == "default":
         if len(values) != 1:
             raise ValueError(f":{name} default accepts no named inputs")
-        return PolicyCommand("default", "runnable", None), ()
+        return RunOverride("default", "runnable", None), ()
     runnable = f"{name}:{selector}" if name in {"agic", "flow"} else selector
-    command = PolicyCommand(
+    command = RunOverride(
         "default",
         "runnable",
         _default_value("runnable", runnable),
@@ -278,9 +278,9 @@ def _limit_value(field: str, raw: str) -> int | Decimal | None:
 
 
 def _normalize_commands(
-    commands: Sequence[PolicyCommand],
-) -> tuple[PolicyCommand, ...]:
-    result: list[PolicyCommand] = []
+    commands: Sequence[RunOverride],
+) -> tuple[RunOverride, ...]:
+    result: list[RunOverride] = []
     positions: dict[tuple[str, str], int] = {}
     for command in commands:
         key = (command.group, command.field)
@@ -300,7 +300,7 @@ def _normalize_commands(
             raise ValueError(
                 f"allow {command.field} cannot combine selectors with none"
             )
-        result[position] = PolicyCommand(
+        result[position] = RunOverride(
             "allow",
             command.field,
             tuple(dict.fromkeys((*previous.value, *command.value))),
@@ -311,7 +311,7 @@ def _normalize_commands(
 def _apply_binding_commands(
     current: RunBindings,
     base: RunBindings,
-    commands: Sequence[PolicyCommand],
+    commands: Sequence[RunOverride],
 ) -> RunBindings:
     fields: dict[str, str | None] = {
         "model": current.model,
@@ -329,7 +329,7 @@ def _apply_binding_commands(
 
 def _apply_limit_commands(
     current: RunLimits,
-    commands: Sequence[PolicyCommand],
+    commands: Sequence[RunOverride],
 ) -> RunLimits:
     fields: dict[str, object] = {}
     for command in commands:
@@ -338,8 +338,8 @@ def _apply_limit_commands(
     return replace(current, **fields)
 
 
-def _command_ceiling(
-    commands: Sequence[PolicyCommand],
+def _command_agent_ceiling(
+    commands: Sequence[RunOverride],
 ) -> AgentCeiling | None:
     fields: dict[str, tuple[str, ...]] = {}
     present: set[str] = set()

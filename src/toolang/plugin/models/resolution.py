@@ -683,7 +683,7 @@ def _require_allowed(
         return
     allowed_text = ", ".join(f"{item.ref}[{item.provider}]" for item in allowed)
     raise ToolangError(
-        f"model selector is outside the current ceiling: {selector} "
+        f"model selector is outside the current resources: {selector} "
         f"(allowed: {allowed_text})"
     )
 

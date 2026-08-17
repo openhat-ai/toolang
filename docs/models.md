@@ -287,10 +287,10 @@ Resolution proceeds in this order:
 3. default model route or selector from root config
 4. built-in default selector
 
-Every candidate must be inside the current private `_RunCeiling`.
+Every candidate must be inside the current private `AgentResources`.
 `--allow models=SELECTORS` contributes a selector list to
 `AgentSetup.ceiling`; it does not select one model and does not alter the
 complete model list cached by `SetupWatcher`. At start, the executor resolves
-the setup ceiling, applies any request restriction, and produces
-`_ResolvedAgentCeiling`. Agic `models` directives further intersect the nearest
-flow ceiling. A nested flow resets its ceiling from `_ResolvedAgentCeiling`.
+the setup ceiling, applies any request ceilings, and produces `AgentResources`.
+Agic `models` directives further intersect the nearest flow resources. A
+nested flow starts again from the tree-level agent resources.

@@ -70,7 +70,7 @@ class AgentSetup:
         adapters = dict(self.adapters)
         models = tuple(self.models)
         if not isinstance(self.ceiling, AgentCeiling):
-            raise TypeError("setup ceiling must be AgentCeiling")
+            raise TypeError("setup agent ceiling must be AgentCeiling")
         if not isinstance(self.bindings, RunBindings):
             raise TypeError("setup bindings must be RunBindings")
         if not isinstance(self.limits, RunLimits):

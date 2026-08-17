@@ -28,8 +28,8 @@ from .base import ChatClient, chat_status_label, friendly_error as chat_friendly
 from .history import ChatInputHistoryStore
 from .input import (
     QuickCommand,
-    is_policy_commands,
     is_runnable_input,
+    is_run_overrides,
     normalize_chat_input,
     parse_chat_input,
 )
@@ -225,7 +225,7 @@ def _chat_handle_scripted_command(
         return True
     if is_runnable_input(chat_input):
         return False
-    if is_policy_commands(chat_input):
+    if is_run_overrides(chat_input):
         try:
             updated = client.apply_settings(chat_input, selector_payload)
         except (click.ClickException, ToolangError, ValueError) as exc:

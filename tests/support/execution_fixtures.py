@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from toolang.base.types.message import Message, MessagePart
+from toolang.base.types.policy import RunBindings, RunLimits
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
@@ -25,6 +26,7 @@ from toolang.common.time import utc_now
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
+    AgentResources,
     ControlTiming,
     RunControlKind,
     RunStatus,
@@ -32,6 +34,7 @@ from toolang.execution.types import (
     StepStatus,
     StepPath,
 )
+from toolang.lang.input import RunnableInput
 
 
 def persist_event(store: RunStore, event: RunEvent) -> None:
@@ -42,6 +45,42 @@ def persist_event(store: RunStore, event: RunEvent) -> None:
         sink = _PersistSink(store)
         setattr(store, "_test_event_projector", sink)
     cast(_PersistSink, sink).on_event(event)
+
+
+def accept_run_start(
+    store: RunStore,
+    *,
+    run_id: str,
+    parent: StepPath | None,
+    thread: str,
+    input: Message | RunnableInput,
+    context: Mapping[str, Any],
+    request_id: str | None,
+    created_at: str,
+    kind: Literal["start", "rerun"] = "start",
+    source: str | None = None,
+    bindings: RunBindings | None = None,
+    limits: RunLimits | None = None,
+    resources: AgentResources | None = None,
+) -> tuple[RunRecord, RunControlRecord]:
+    """Accept a run with explicit default preparation snapshots for store tests."""
+
+    return store.accept_start(
+        run_id=run_id,
+        parent=parent,
+        thread=thread,
+        bindings=bindings if bindings is not None else RunBindings(),
+        limits=limits if limits is not None else RunLimits(),
+        input=input
+        if isinstance(input, RunnableInput)
+        else RunnableInput(primary=input.percept),
+        resources=resources if resources is not None else AgentResources(),
+        context=context,
+        request_id=request_id,
+        created_at=created_at,
+        kind=kind,
+        source=source,
+    )
 
 
 def project_run_start(
@@ -68,7 +107,7 @@ def project_run_start(
     started = started_at or created
     run_context = dict(context or metadata or {})
     run_context.setdefault("origin", origin)
-    run_context.setdefault("root", root_run_id or run_id)
+    del root_run_id
     run_context.setdefault(
         "runnable", {"kind": executable_kind, "name": executable_name}
     )
@@ -84,7 +123,16 @@ def project_run_start(
         run_id=run_id,
         parent=parent_path,
         thread=thread_id,
-        input=input,
+        bindings=RunBindings(
+            runnable=(
+                f"{executable_kind}:{executable_name}"
+                if executable_name is not None
+                else None
+            )
+        ),
+        limits=RunLimits(),
+        input=RunnableInput(primary=input.percept),
+        resources=AgentResources(),
         context=run_context,
         request_id=request_id,
         created_at=created,
@@ -127,7 +175,8 @@ def project_run_control(
         run_id=run_id,
         kind=kind,
         timing=timing,
-        input=input,
+        message=input if kind == "steer" else None,
+        reason=input.content if kind == "stop" and input is not None else None,
         context=dict(context or {}),
         request_id=request_id,
         created_at=created_at or utc_now(),

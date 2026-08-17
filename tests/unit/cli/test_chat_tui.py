@@ -39,7 +39,7 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.records import RunInputRef, StepOutputRef
-from toolang.execution.types import PolicyCommand, StepPath
+from toolang.execution.types import RunOverride, StepPath
 from tests.support import chat_tui_pty
 
 
@@ -1249,8 +1249,8 @@ def test_chat_default_settings_clear_explicit_model_and_runnable() -> None:
     updated = apply_session_commands(
         selects,
         (
-            PolicyCommand("default", "model", None),
-            PolicyCommand("default", "runnable", None),
+            RunOverride("default", "model", None),
+            RunOverride("default", "runnable", None),
         ),
     )
 
@@ -1328,7 +1328,7 @@ def test_chat_queue_captures_settings_at_submission_time() -> None:
     class SettingsClient(FakeClient):
         def apply_settings(
             self,
-            commands: tuple[PolicyCommand, ...],
+            commands: tuple[RunOverride, ...],
             selects: Mapping[str, object],
         ) -> Mapping[str, object]:
             result = dict(selects)
@@ -1788,7 +1788,7 @@ class FakeClient(ChatClient):
 
     def apply_settings(
         self,
-        commands: tuple[PolicyCommand, ...],
+        commands: tuple[RunOverride, ...],
         selects: Mapping[str, object],
     ) -> Mapping[str, object]:
         del commands

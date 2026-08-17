@@ -93,6 +93,7 @@ class RunHistory:
                     controls=controls_by_run.get(run.id, ()),
                     steps=steps_by_run.get(run.id, ()),
                     model_calls=model_calls,
+                    root_run_id=self._store.root_run_id(run_id=run.id),
                 )
                 for run in visible_runs
             ],
@@ -120,6 +121,7 @@ class RunHistory:
                 run,
                 controls=controls_by_run.get(run.id, ()),
                 steps=steps_by_run.get(run.id, ()),
+                root_run_id=self._store.root_run_id(run_id=run.id),
             )
             for run in runs
         ]
@@ -136,6 +138,7 @@ class RunHistory:
             controls=self._store.list_run_controls(run_id=run.id),
             steps=steps,
             model_calls=self._store.rebuild_model_calls(_model_steps(steps)),
+            root_run_id=self._store.root_run_id(run_id=run.id),
         )
 
     def _model_calls(

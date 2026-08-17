@@ -22,7 +22,9 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
+from toolang.base.types.policy import RunBindings, RunLimits
 from toolang.common.time import utc_now
+from toolang.lang.input import RunnableInput
 from .errors import RunStoreSchemaError
 from .records import (
     ValueRef,
@@ -40,12 +42,17 @@ from .records import (
     ThreadRecord,
     execution_error_from_data,
     execution_error_to_data,
+    run_bindings_from_data,
+    run_bindings_to_data,
+    run_limits_from_data,
+    run_limits_to_data,
     step_message_role,
     step_inputs_from_data,
     step_inputs_to_data,
 )
 from .types import (
     ControlStatus,
+    AgentResources,
     ExecutionError,
     RunControlKind,
     ControlTiming,
@@ -55,7 +62,7 @@ from .types import (
     StepPath,
 )
 
-_SCHEMA_VERSION = 22
+_SCHEMA_VERSION = 23
 _MIGRATABLE_SCHEMA_VERSIONS = (
     13,
     14,
@@ -66,6 +73,7 @@ _MIGRATABLE_SCHEMA_VERSIONS = (
     19,
     20,
     21,
+    22,
     _SCHEMA_VERSION,
 )
 
@@ -133,11 +141,13 @@ class RunStore:
         run_id: str,
         parent: StepPath | None,
         thread: str,
-        input: Message,
+        bindings: RunBindings,
+        limits: RunLimits,
+        input: RunnableInput,
+        resources: AgentResources,
         context: Mapping[str, Any],
         request_id: str | None,
         created_at: str,
-        control_context: Mapping[str, Any] | None = None,
         kind: Literal["start", "rerun"] = "start",
         source: str | None = None,
     ) -> tuple[RunRecord, RunControlRecord]:
@@ -178,6 +188,20 @@ class RunStore:
                     is None
                 ):
                     raise ValueError(f"thread not found: {thread}")
+                if parent is not None:
+                    parent_row = self._conn.execute(
+                        """
+                        SELECT runs.thread
+                        FROM steps
+                        JOIN runs ON runs.id = steps.run
+                        WHERE steps.run = ? AND steps.path = ?
+                        """,
+                        (parent.run, parent.local),
+                    ).fetchone()
+                    if parent_row is None:
+                        raise ValueError(f"parent step not found: {parent}")
+                    if str(parent_row["thread"]) != thread:
+                        raise ValueError("child run must share its parent's thread")
                 if kind == "rerun":
                     source_row = self._conn.execute(
                         """
@@ -234,10 +258,12 @@ class RunStore:
                     """
                     INSERT INTO run_controls(
                         run, "index", kind, timing, input, source, anchor,
-                        request, context,
+                        request, context, bindings, limits, resources,
+                        message, reason,
                         status, error, created_at, finished_at, revision
                     ) VALUES (
-                        ?, 0, ?, 'immediate', ?, ?, NULL, ?, ?,
+                        ?, 0, ?, 'immediate', ?, ?, NULL, ?, ?, ?, ?, ?,
+                        NULL, NULL,
                         'pending', NULL, ?, NULL, ?
                     )
                     """,
@@ -247,11 +273,10 @@ class RunStore:
                         _dump_json(input.to_data()),
                         source,
                         request_id,
-                        _dump_json(
-                            dict(context)
-                            if control_context is None
-                            else dict(control_context)
-                        ),
+                        _dump_json({}),
+                        _dump_json(run_bindings_to_data(bindings)),
+                        _dump_json(run_limits_to_data(limits)),
+                        _dump_json(resources.to_data()),
                         created_at,
                         self._next_run_control_revision(),
                     ),
@@ -291,7 +316,8 @@ class RunStore:
         run_id: str,
         kind: RunControlKind,
         timing: ControlTiming,
-        input: Message | None,
+        message: Message | None = None,
+        reason: str | None = None,
         context: Mapping[str, Any],
         request_id: str | None,
         created_at: str,
@@ -302,8 +328,10 @@ class RunStore:
             raise ValueError(f"unsupported run control kind: {kind}")
         if timing not in {"immediate", "next_step", "next_call"}:
             raise ValueError(f"unsupported run control timing: {timing}")
-        if kind == "steer" and input is None:
-            raise ValueError("steer control requires input")
+        if kind == "steer" and (message is None or reason is not None):
+            raise ValueError("steer control requires only a message")
+        if kind == "stop" and message is not None:
+            raise ValueError("stop control cannot carry a message")
         _validate_request_id(request_id)
 
         with self._lock:
@@ -336,10 +364,12 @@ class RunStore:
                     """
                     INSERT INTO run_controls(
                         run, "index", kind, timing, input, source, anchor,
-                        request, context,
+                        request, context, bindings, limits, resources,
+                        message, reason,
                         status, error, created_at, finished_at, revision
                     ) VALUES (
-                        ?, ?, ?, ?, ?, NULL, NULL, ?, ?,
+                        ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, NULL, NULL, NULL,
+                        ?, ?,
                         'pending', NULL, ?, NULL, ?
                     )
                     """,
@@ -348,9 +378,10 @@ class RunStore:
                         index,
                         kind,
                         timing,
-                        _dump_json(input.to_data()) if input is not None else None,
                         request_id,
                         _dump_json(dict(context)),
+                        _dump_json(message.to_data()) if message is not None else None,
+                        reason,
                         created_at,
                         self._next_run_control_revision(),
                     ),
@@ -376,7 +407,10 @@ class RunStore:
         *,
         run_id: str,
         anchor: StepPath | None,
-        context: Mapping[str, Any],
+        bindings: RunBindings,
+        limits: RunLimits,
+        input: RunnableInput,
+        resources: AgentResources,
         request_id: str | None,
         created_at: str,
     ) -> tuple[RunRecord, RunControlRecord, tuple[StepPath, ...]]:
@@ -431,19 +465,25 @@ class RunStore:
                     """
                     INSERT INTO run_controls(
                         run, "index", kind, timing, input, source, anchor,
-                        request, context, status, error, created_at, finished_at,
+                        request, context, bindings, limits, resources,
+                        message, reason, status, error, created_at, finished_at,
                         claimed, revision
                     ) VALUES (
-                        ?, ?, 'retry', 'immediate', NULL, NULL, ?, ?, ?,
+                        ?, ?, 'retry', 'immediate', ?, NULL, ?, ?, ?, ?, ?, ?,
+                        NULL, NULL,
                         'applied', NULL, ?, ?, 1, ?
                     )
                     """,
                     (
                         run_id,
                         index,
+                        _dump_json(input.to_data()),
                         str(resolved_anchor) if resolved_anchor is not None else None,
                         request_id,
-                        _dump_json(dict(context)),
+                        _dump_json({}),
+                        _dump_json(run_bindings_to_data(bindings)),
+                        _dump_json(run_limits_to_data(limits)),
+                        _dump_json(resources.to_data()),
                         created_at,
                         created_at,
                         self._next_run_control_revision(),
@@ -1124,6 +1164,35 @@ class RunStore:
             ).fetchone()
         return _run_from_row(row) if row is not None else None
 
+    def root_run_id(self, *, run_id: str) -> str:
+        """Derive one run tree's root by following durable parent ownership."""
+
+        seen: set[str] = set()
+        current = run_id
+        while current not in seen:
+            seen.add(current)
+            run = self.get_run(run_id=current)
+            if run is None:
+                raise ValueError(f"run ancestry is missing: {current}")
+            if run.parent is None:
+                return run.id
+            current = run.parent.run
+        raise ValueError(f"run ancestry contains a cycle: {run_id}")
+
+    def list_run_tree(self, *, root_run_id: str) -> list[RunRecord]:
+        """Return all runs structurally owned by one root run."""
+
+        with self._lock:
+            run_ids = self._root_tree_runs(root_run_id)
+            if not run_ids:
+                return []
+            placeholders = ", ".join("?" for _ in run_ids)
+            rows = self._conn.execute(
+                f"SELECT * FROM runs WHERE id IN ({placeholders}) ORDER BY rowid ASC",
+                run_ids,
+            ).fetchall()
+        return [_run_from_row(row) for row in rows]
+
     def run_output(self, *, run_id: str) -> tuple[MessagePart, ...]:
         """Return the parts referenced by one run's durable output edge."""
 
@@ -1136,7 +1205,7 @@ class RunStore:
             control = self.get_run_control(run_id=run_id, index=run.output.index)
             if control is None or control.input is None:
                 return ()
-            parts = control.input.parts
+            parts = control.input.primary
             if run.output.part is None:
                 return parts
             if 0 <= run.output.part < len(parts):
@@ -1882,8 +1951,11 @@ class RunStore:
         results: list[Message] = []
         for run in runs:
             inputs = self.list_run_controls(run_id=run.id)
-            if inputs:
-                results.extend(item.input for item in inputs if item.input is not None)
+            for item in inputs:
+                if item.kind in {"start", "rerun"} and item.input is not None:
+                    results.append(Message(role="user", parts=item.input.primary))
+                elif item.kind == "steer" and item.message is not None:
+                    results.append(item.message)
             for step in steps_by_run.get(run.id, ()):
                 results.extend(_replay_messages_from_step(step))
         return _recent_valid_model_history(results, limit=limit)
@@ -2132,6 +2204,11 @@ class RunStore:
                     anchor TEXT,
                     request TEXT,
                     context TEXT NOT NULL,
+                    bindings TEXT,
+                    limits TEXT,
+                    resources TEXT,
+                    message TEXT,
+                    reason TEXT,
                     status TEXT NOT NULL,
                     error TEXT,
                     created_at TEXT NOT NULL,
@@ -2185,6 +2262,13 @@ class RunStore:
                 self._conn.execute("ALTER TABLE run_controls ADD COLUMN source TEXT")
             if "anchor" not in run_control_columns:
                 self._conn.execute("ALTER TABLE run_controls ADD COLUMN anchor TEXT")
+            for name in ("bindings", "limits", "resources", "message", "reason"):
+                if name not in run_control_columns:
+                    self._conn.execute(
+                        f"ALTER TABLE run_controls ADD COLUMN {name} TEXT"
+                    )
+            if version < 23:
+                _migrate_run_control_preparation(self._conn)
             self._conn.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_run_controls_request
@@ -2359,6 +2443,158 @@ class RunStore:
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_steps_run ON steps(run)")
             self._conn.execute(f"PRAGMA user_version={_SCHEMA_VERSION}")
             self._conn.commit()
+
+
+def _migrate_run_control_preparation(connection: sqlite3.Connection) -> None:
+    rows = connection.execute(
+        """
+        SELECT run_controls.*, runs.context AS run_context
+        FROM run_controls
+        JOIN runs ON runs.id = run_controls.run
+        ORDER BY run_controls.run, run_controls."index"
+        """
+    ).fetchall()
+    for row in rows:
+        kind = str(row["kind"])
+        old_input = _load_json(str(row["input"])) if row["input"] is not None else None
+        if kind in {"steer", "stop"}:
+            existing_message_raw = (
+                _load_json(str(row["message"])) if row["message"] is not None else None
+            )
+            message = (
+                Message.from_data(old_input)
+                if isinstance(old_input, Mapping)
+                else Message.from_data(existing_message_raw)
+                if isinstance(existing_message_raw, Mapping)
+                else None
+            )
+            reason = str(row["reason"]) if row["reason"] is not None else None
+            connection.execute(
+                """
+                UPDATE run_controls
+                SET input = NULL, message = ?, reason = ?
+                WHERE run = ? AND "index" = ?
+                """,
+                (
+                    _dump_json(message.to_data())
+                    if kind == "steer" and message is not None
+                    else None,
+                    reason
+                    or (
+                        message_text(message.parts)
+                        if kind == "stop" and message is not None
+                        else None
+                    ),
+                    str(row["run"]),
+                    int(row["index"]),
+                ),
+            )
+            continue
+
+        run_context_raw = _load_json(str(row["run_context"]))
+        run_context = (
+            cast(Mapping[str, object], run_context_raw)
+            if isinstance(run_context_raw, Mapping)
+            else {}
+        )
+        if isinstance(old_input, Mapping) and (
+            "primary" in old_input or "named" in old_input
+        ):
+            runnable_input = RunnableInput.from_data(
+                cast(Mapping[str, object], old_input)
+            )
+        elif isinstance(old_input, Mapping):
+            message = Message.from_data(old_input)
+            raw_named = run_context.get("args")
+            named = (
+                {str(name): value for name, value in raw_named.items()}
+                if isinstance(raw_named, Mapping)
+                else {}
+            )
+            runnable_input = RunnableInput.from_values(
+                primary=message.percept,
+                named=named,
+            )
+        else:
+            start = connection.execute(
+                """
+                SELECT input FROM run_controls
+                WHERE run = ? AND "index" = 0
+                """,
+                (str(row["run"]),),
+            ).fetchone()
+            start_raw = (
+                _load_json(str(start["input"]))
+                if start is not None and start["input"] is not None
+                else {}
+            )
+            runnable_input = (
+                RunnableInput.from_data(cast(Mapping[str, object], start_raw))
+                if isinstance(start_raw, Mapping)
+                else RunnableInput()
+            )
+        raw_runnable = run_context.get("runnable")
+        runnable = None
+        if isinstance(raw_runnable, Mapping):
+            runnable_mapping = cast(Mapping[str, object], raw_runnable)
+            runnable_kind = str(runnable_mapping.get("kind") or "")
+            runnable_name = str(runnable_mapping.get("name") or "")
+            if runnable_name:
+                runnable = (
+                    f"{runnable_kind}:{runnable_name}"
+                    if runnable_kind
+                    else runnable_name
+                )
+        existing_bindings_raw = (
+            _load_json(str(row["bindings"])) if row["bindings"] is not None else None
+        )
+        bindings = (
+            run_bindings_from_data(existing_bindings_raw)
+            if isinstance(existing_bindings_raw, Mapping)
+            else RunBindings(
+                model=(
+                    str(run_context["model"])
+                    if run_context.get("model") is not None
+                    else None
+                ),
+                runnable=runnable,
+            )
+        )
+        control_context_raw = _load_json(str(row["context"]))
+        control_context = (
+            cast(Mapping[str, object], control_context_raw)
+            if isinstance(control_context_raw, Mapping)
+            else {}
+        )
+        existing_limits_raw = (
+            _load_json(str(row["limits"])) if row["limits"] is not None else None
+        )
+        raw_limits = (
+            existing_limits_raw
+            if isinstance(existing_limits_raw, Mapping)
+            else control_context.get("limits")
+        )
+        limits = (
+            run_limits_from_data(raw_limits)
+            if isinstance(raw_limits, Mapping)
+            else None
+        )
+        connection.execute(
+            """
+            UPDATE run_controls
+            SET input = ?, bindings = ?, limits = ?, context = ?,
+                message = NULL, reason = NULL
+            WHERE run = ? AND "index" = ?
+            """,
+            (
+                _dump_json(runnable_input.to_data()),
+                _dump_json(run_bindings_to_data(bindings)),
+                _dump_json(run_limits_to_data(limits)) if limits is not None else None,
+                _dump_json({}),
+                str(row["run"]),
+                int(row["index"]),
+            ),
+        )
 
 
 def _create_steps_table(connection: sqlite3.Connection) -> None:
@@ -2625,12 +2861,43 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
 def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
     input_raw = _load_json(str(row["input"])) if row["input"] is not None else None
     context_raw = _load_json(str(row["context"])) if row["context"] is not None else {}
+    bindings_raw = (
+        _load_json(str(row["bindings"])) if row["bindings"] is not None else None
+    )
+    limits_raw = _load_json(str(row["limits"])) if row["limits"] is not None else None
+    resources_raw = (
+        _load_json(str(row["resources"])) if row["resources"] is not None else None
+    )
+    message_raw = (
+        _load_json(str(row["message"])) if row["message"] is not None else None
+    )
     return RunControlRecord(
         run=str(row["run"]),
         index=int(row["index"]),
         kind=cast(RunControlKind, row["kind"]),
         timing=cast(ControlTiming, row["timing"]),
-        input=Message.from_data(input_raw) if isinstance(input_raw, Mapping) else None,
+        input=RunnableInput.from_data(input_raw)
+        if isinstance(input_raw, Mapping)
+        else None,
+        bindings=(
+            run_bindings_from_data(bindings_raw)
+            if isinstance(bindings_raw, Mapping)
+            else None
+        ),
+        limits=(
+            run_limits_from_data(limits_raw)
+            if isinstance(limits_raw, Mapping)
+            else None
+        ),
+        resources=(
+            AgentResources.from_data(resources_raw)
+            if isinstance(resources_raw, Mapping)
+            else None
+        ),
+        message=(
+            Message.from_data(message_raw) if isinstance(message_raw, Mapping) else None
+        ),
+        reason=str(row["reason"]) if row["reason"] is not None else None,
         source=str(row["source"]) if row["source"] is not None else None,
         anchor=(
             StepPath.parse(str(row["anchor"])) if row["anchor"] is not None else None

@@ -4,8 +4,8 @@ This document defines the public CLI and local agent HTTP API.
 
 Interactive CLI, TUI, and WebUI surfaces may parse the `ChatInput` forms
 defined by [input-syntax.md](./input-syntax.md). Quick commands remain local to
-the interaction surface. Execution surfaces resolve `PolicyCommand` and
-`RunnableInput` values into the structured run request described here.
+the interaction surface. Execution surfaces resolve `RunOverride` and
+`RunnableInputRaw` values into the structured run request described here.
 
 
 ## CLI
@@ -207,7 +207,7 @@ Arguments:
 - `SCRIPT` is the local Toolang script or agent file
 - `RUNNABLE` is the uniquely named public agic or flow to run
 - `ARGS` provide named runnable parameters, written as `NAME=VALUE`
-- `INPUT` values form the primary source of one `RunnableInput`; script mode
+- `INPUT` values form the primary source of one `RunnableInputRaw`; script mode
   parses policy prefixes but does not accept chat quick commands
 
 Behavior:

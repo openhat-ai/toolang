@@ -9,11 +9,13 @@ from typing import Any, cast
 from pydantic import TypeAdapter
 
 from toolang.base.types.message import Message, MessagePart, MessageRole
-from toolang.base.types.policy import RunLimits
+from toolang.base.types.policy import RunBindings, RunLimits
 from toolang.base.types.run import ModelCall
+from toolang.lang.input import RunnableInput
 from .types import (
     ControlStatus,
     ControlTiming,
+    AgentResources,
     ExecutionError,
     RunControlKind,
     RunId,
@@ -32,17 +34,21 @@ class RunInputRef:
     """Reference one control input within the current run."""
 
     index: int = 0
+    name: str | None = None
     part: int | None = None
 
     @classmethod
     def from_data(cls, payload: Mapping[str, Any]) -> "RunInputRef":
         return cls(
             index=int(payload.get("control", 0) or 0),
+            name=(str(payload["name"]) if payload.get("name") is not None else None),
             part=_optional_int(payload.get("part")),
         )
 
     def to_data(self) -> dict[str, Any]:
         data: dict[str, Any] = {"control": self.index}
+        if self.name is not None:
+            data["name"] = self.name
         if self.part is not None:
             data["part"] = self.part
         return data
@@ -85,6 +91,7 @@ ValueRef = RunInputRef | StepOutputRef
 StepInput = ValueRef | Message
 
 _MODEL_CALL_ADAPTER = TypeAdapter(ModelCall)
+_RUN_BINDINGS_ADAPTER = TypeAdapter(RunBindings)
 _RUN_LIMITS_ADAPTER = TypeAdapter(RunLimits)
 
 
@@ -120,11 +127,6 @@ class RunRecord:
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
-
-    @property
-    def root_run_id(self) -> str:
-        value = self.context.get("root")
-        return str(value) if value is not None else self.id
 
     @property
     def runnable_kind(self) -> str:
@@ -231,7 +233,12 @@ class RunControlRecord:
     index: int
     kind: RunControlKind
     timing: ControlTiming
-    input: Message | None
+    input: RunnableInput | None = None
+    bindings: RunBindings | None = None
+    limits: RunLimits | None = None
+    resources: AgentResources | None = None
+    message: Message | None = None
+    reason: str | None = None
     source: RunId | None = None
     anchor: StepPath | None = None
     request: str | None = None
@@ -240,6 +247,22 @@ class RunControlRecord:
     error: str | None = None
     created_at: str = ""
     finished_at: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind in {"start", "rerun", "retry"}:
+            if self.message is not None or self.reason is not None:
+                raise ValueError("run preparation control cannot carry a message")
+            return
+        if any(
+            value is not None
+            for value in (self.input, self.bindings, self.limits, self.resources)
+        ):
+            raise ValueError("steer and stop controls cannot carry run preparation")
+        if self.kind == "steer":
+            if self.message is None or self.reason is not None:
+                raise ValueError("steer control requires only a message")
+        elif self.message is not None:
+            raise ValueError("stop control cannot carry a message")
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,6 +356,27 @@ def run_limits_to_data(limits: RunLimits) -> dict[str, Any]:
         dict[str, Any],
         _RUN_LIMITS_ADAPTER.dump_python(limits, mode="json"),
     )
+
+
+def run_bindings_from_data(data: object) -> RunBindings:
+    """Parse effective run bindings from durable data."""
+
+    return _RUN_BINDINGS_ADAPTER.validate_python(data)
+
+
+def run_bindings_to_data(bindings: RunBindings) -> dict[str, Any]:
+    """Serialize effective run bindings."""
+
+    return cast(
+        dict[str, Any],
+        _RUN_BINDINGS_ADAPTER.dump_python(bindings, mode="json"),
+    )
+
+
+def run_limits_from_data(data: object) -> RunLimits:
+    """Parse effective run limits from durable data."""
+
+    return _RUN_LIMITS_ADAPTER.validate_python(data)
 
 
 def execution_error_from_data(data: object) -> ExecutionError:

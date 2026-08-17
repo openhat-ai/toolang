@@ -351,8 +351,8 @@ def _step_input(state: _AgicState) -> tuple[StepInput, ...]:
 def _consume_pending_inputs(state: _AgicState) -> tuple[RunControlRecord, ...]:
     inputs = state.pending_inputs()
     for input in inputs:
-        if input.kind == "steer" and input.input is not None:
-            state.messages.append(input.input)
+        if input.kind == "steer" and input.message is not None:
+            state.messages.append(input.message)
     return inputs
 
 

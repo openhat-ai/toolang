@@ -28,7 +28,7 @@ from toolang.catalog import CapsManager, JobsManager
 from toolang.common.config import resolve_ui_base_url
 from toolang.common.env_logger import PY_LOG_ENV_VAR
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor.ceiling import (
+from toolang.execution.executor.resources import (
     agent_model_targets,
     validate_agent_ceiling,
 )

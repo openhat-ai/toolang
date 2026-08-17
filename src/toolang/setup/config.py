@@ -89,7 +89,7 @@ def resolve_agent_ceiling(
         tools=fields.get("tools"),
         caps=tuple(cap_selectors) if caps_present else None,
     )
-    _validate_ceiling_syntax(ceiling)
+    _validate_agent_ceiling_syntax(ceiling)
     return ceiling
 
 
@@ -190,7 +190,7 @@ def _cap_kind_selector(kind: str, value: str) -> str:
     return f"{kind}/{parsed.pattern}{suffix}"
 
 
-def _validate_ceiling_syntax(ceiling: AgentCeiling) -> None:
+def _validate_agent_ceiling_syntax(ceiling: AgentCeiling) -> None:
     for selector in ceiling.models or ():
         parse_selector(selector, domain="model")
     for selector in ceiling.tools or ():

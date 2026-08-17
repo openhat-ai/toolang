@@ -7,7 +7,9 @@ from dataclasses import dataclass
 import json
 import re
 import shlex
-from typing import TypeAlias, cast
+from types import MappingProxyType
+from typing import Any, TypeAlias, cast
+from typing_extensions import TypeAliasType
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import (
@@ -19,6 +21,9 @@ from toolang.base.types.message import (
     PerceptPart,
     TextPart,
     message_text,
+    part_from_data,
+    parts_from_data,
+    parts_to_data,
 )
 from toolang.common.template import render_text_template
 
@@ -26,6 +31,19 @@ from .ast import Parameter, Program, StructDecl
 
 IncludeResolver = Callable[[str], PerceptPart]
 NamedInputSources: TypeAlias = tuple[tuple[str, str], ...]
+RunnableInputData = TypeAliasType(
+    "RunnableInputData",
+    str
+    | int
+    | float
+    | bool
+    | None
+    | PerceptPart
+    | Message
+    | tuple["RunnableInputData", ...]
+    | list["RunnableInputData"]
+    | Mapping[str, "RunnableInputData"],
+)
 
 _ARGUMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PROMPT_CALL_RE = re.compile(r"^/([A-Za-z_][\w-]*)(?:\s+(.*))?$")
@@ -38,18 +56,157 @@ _JSON_OUTPUT_FENCE_RE = re.compile(
 
 
 @dataclass(frozen=True, slots=True)
-class RunnableInput:
-    """Syntax-valid primary and named sources for one runnable invocation."""
+class RunnableInputRaw:
+    """Structured primary and named source text awaiting input resolution."""
 
     primary: str | None = None
     named: NamedInputSources = ()
+
+
+@dataclass(frozen=True, slots=True)
+class RunnableInputValue:
+    """One resolved named input and its declared Toolang type."""
+
+    name: str
+    value: RunnableInputData
+    type_name: str | None = None
+
+    def __post_init__(self) -> None:
+        if not _ARGUMENT_NAME_RE.fullmatch(self.name):
+            raise ValueError("run input value requires a canonical name")
+        if self.type_name is not None and (
+            not self.type_name or self.type_name != self.type_name.strip()
+        ):
+            raise ValueError("run input value requires a canonical type")
+        _input_value_to_data(self.value)
+
+    @classmethod
+    def from_data(cls, payload: Mapping[str, object]) -> RunnableInputValue:
+        """Decode one durable named input."""
+
+        raw_type = payload.get("type")
+        type_name = str(raw_type) if raw_type is not None else None
+        return cls(
+            name=str(payload.get("name", "")),
+            type_name=type_name,
+            value=_input_value_from_data(payload.get("value"), type_name),
+        )
+
+    def to_data(self) -> dict[str, object]:
+        """Encode one named input without runtime-only objects."""
+
+        return {
+            "name": self.name,
+            "type": self.type_name,
+            "value": _input_value_to_data(self.value),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RunnableInput:
+    """Resolved primary and named inputs adopted by one run."""
+
+    primary: Percept = ()
+    named: tuple[RunnableInputValue, ...] = ()
+
+    def __post_init__(self) -> None:
+        primary = _require_percept(tuple(self.primary))
+        named = tuple(sorted(self.named, key=lambda item: item.name))
+        if not all(isinstance(item, RunnableInputValue) for item in named):
+            raise TypeError("run named inputs must be RunnableInputValue objects")
+        names = tuple(item.name for item in named)
+        if len(names) != len(set(names)):
+            raise ValueError("run named inputs must be unique")
+        object.__setattr__(self, "primary", primary)
+        object.__setattr__(self, "named", named)
+
+    @classmethod
+    def from_values(
+        cls,
+        *,
+        primary: Percept = (),
+        named: Mapping[str, object] | None = None,
+        types: Mapping[str, str] | None = None,
+    ) -> RunnableInput:
+        """Build a canonical run input from resolved caller values."""
+
+        type_names = types or {}
+        return cls(
+            primary=primary,
+            named=tuple(
+                RunnableInputValue(
+                    name=name,
+                    value=_require_input_value(value),
+                    type_name=type_names.get(name),
+                )
+                for name, value in (named or {}).items()
+            ),
+        )
+
+    @classmethod
+    def from_data(cls, payload: Mapping[str, object]) -> RunnableInput:
+        """Decode one durable run input."""
+
+        raw_primary = payload.get("primary", ())
+        primary = (
+            _require_percept(
+                parts_from_data(
+                    [
+                        cast(Mapping[str, Any], item)
+                        for item in raw_primary
+                        if isinstance(item, Mapping)
+                    ]
+                )
+            )
+            if isinstance(raw_primary, Sequence)
+            and not isinstance(raw_primary, (str, bytes, bytearray))
+            else ()
+        )
+        raw_named = payload.get("named", ())
+        named = (
+            tuple(
+                RunnableInputValue.from_data(cast(Mapping[str, object], item))
+                for item in raw_named
+                if isinstance(item, Mapping)
+            )
+            if isinstance(raw_named, Sequence)
+            and not isinstance(raw_named, (str, bytes, bytearray))
+            else ()
+        )
+        return cls(primary=primary, named=named)
+
+    @property
+    def values(self) -> Mapping[str, object]:
+        """Expose named values through an immutable lookup."""
+
+        return MappingProxyType({item.name: item.value for item in self.named})
+
+    @property
+    def types(self) -> Mapping[str, str]:
+        """Expose known named input types through an immutable lookup."""
+
+        return MappingProxyType(
+            {
+                item.name: item.type_name
+                for item in self.named
+                if item.type_name is not None
+            }
+        )
+
+    def to_data(self) -> dict[str, object]:
+        """Encode one run input for a durable or protocol boundary."""
+
+        return {
+            "primary": parts_to_data(self.primary),
+            "named": [item.to_data() for item in self.named],
+        }
 
 
 def parse_input(
     source: str | None,
     *,
     named: NamedInputSources = (),
-) -> RunnableInput:
+) -> RunnableInputRaw:
     """Parse runnable input without resolving includes or declared types."""
 
     primary = source if source and source.strip() else None
@@ -72,7 +229,7 @@ def parse_input(
             raise ValueError(f"duplicate named input: {name}")
         names.add(name)
         parsed_named.append((name, value))
-    return RunnableInput(primary=primary, named=tuple(parsed_named))
+    return RunnableInputRaw(primary=primary, named=tuple(parsed_named))
 
 
 def perceive_input(
@@ -710,6 +867,72 @@ def _parse_text_json(
         raise ToolangError(
             f"{boundary} is not valid {type_name}: {error.msg}"
         ) from error
+
+
+def _input_value_to_data(value: RunnableInputData) -> dict[str, object]:
+    if _is_percept_part(value):
+        return {"kind": "part", "value": cast(PerceptPart, value).to_data()}
+    if isinstance(value, Message):
+        return {"kind": "message", "value": value.to_data()}
+    if isinstance(value, tuple):
+        return {
+            "kind": "tuple",
+            "value": [_input_value_to_data(item) for item in value],
+        }
+    if isinstance(value, list):
+        return {
+            "kind": "list",
+            "value": [_input_value_to_data(item) for item in value],
+        }
+    if isinstance(value, Mapping):
+        return {
+            "kind": "object",
+            "value": {
+                str(name): _input_value_to_data(item)
+                for name, item in cast(Mapping[str, RunnableInputData], value).items()
+            },
+        }
+    if value is None or isinstance(value, str | bool | int | float):
+        if isinstance(value, float) and not _is_json_value(value):
+            raise TypeError("run input value must be finite")
+        return {"kind": "scalar", "value": value}
+    raise TypeError(f"unsupported run input value: {type(value).__name__}")
+
+
+def _input_value_from_data(value: object, type_name: str | None) -> RunnableInputData:
+    del type_name
+    if not isinstance(value, Mapping):
+        raise ValueError("run input value must be an object")
+    mapping = cast(Mapping[str, object], value)
+    kind = mapping.get("kind")
+    payload = mapping.get("value")
+    if kind == "part" and isinstance(payload, Mapping):
+        return cast(PerceptPart, part_from_data(cast(Mapping[str, Any], payload)))
+    if kind == "message" and isinstance(payload, Mapping):
+        return Message.from_data(cast(Mapping[str, Any], payload))
+    if (
+        kind in {"tuple", "list"}
+        and isinstance(payload, Sequence)
+        and not isinstance(payload, (str, bytes, bytearray))
+    ):
+        items = tuple(_input_value_from_data(item, None) for item in payload)
+        return items if kind == "tuple" else list(items)
+    if kind == "object" and isinstance(payload, Mapping):
+        return {
+            str(name): _input_value_from_data(item, None)
+            for name, item in cast(Mapping[str, object], payload).items()
+        }
+    if kind == "scalar" and (
+        payload is None or isinstance(payload, str | bool | int | float)
+    ):
+        return payload
+    raise ValueError(f"unknown run input value kind: {kind}")
+
+
+def _require_input_value(value: object) -> RunnableInputData:
+    candidate = cast(RunnableInputData, value)
+    _input_value_to_data(candidate)
+    return candidate
 
 
 def _require_percept(value: object) -> Percept:

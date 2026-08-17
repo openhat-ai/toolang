@@ -8,7 +8,7 @@ from decimal import Decimal
 
 @dataclass(frozen=True, slots=True)
 class AgentCeiling:
-    """Stable selector lists used to resolve one execution-tree ceiling."""
+    """Stable selector lists that can only narrow agent resources."""
 
     models: tuple[str, ...] | None = None
     tools: tuple[str, ...] | None = None
@@ -32,11 +32,17 @@ class RunBindings:
         runnable = _normalize_optional(self.runnable, "runnable")
         if runnable is not None:
             kind, separator, name = runnable.partition(":")
+            generated_agic = (
+                kind == "agic"
+                and name.startswith("<agic:")
+                and name.endswith(">")
+                and name[6:-1].isdigit()
+            )
             if separator and (
                 kind not in {"agic", "flow"}
                 or not name
                 or name != name.strip()
-                or ":" in name
+                or (":" in name and not generated_agic)
             ):
                 raise ValueError(f"invalid run binding runnable: {runnable}")
         object.__setattr__(
@@ -77,10 +83,10 @@ def _normalize_selectors(
     normalized: list[str] = []
     for value in values:
         if not isinstance(value, str):
-            raise TypeError(f"{name} ceiling selectors must be strings")
+            raise TypeError(f"{name} resource selectors must be strings")
         text = value.strip()
         if not text:
-            raise ValueError(f"{name} ceiling selectors must not be empty")
+            raise ValueError(f"{name} resource selectors must not be empty")
         if text not in normalized:
             normalized.append(text)
     return tuple(normalized)

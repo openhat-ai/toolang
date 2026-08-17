@@ -9,11 +9,11 @@ from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.execution.policy import (
     merge_commands,
-    parse_policy_command,
+    parse_run_override,
     parse_policy_prefix,
     resolve_commands,
 )
-from toolang.execution.types import PolicyCommand
+from toolang.execution.types import RunOverride
 from toolang.setup import AgentSetup
 
 
@@ -36,44 +36,42 @@ def _setup() -> AgentSetup:
     [
         (
             ":allow models=openai/*,deepseek/*",
-            PolicyCommand("allow", "models", ("openai/*", "deepseek/*")),
+            RunOverride("allow", "models", ("openai/*", "deepseek/*")),
         ),
-        (":allow tools=none", PolicyCommand("allow", "tools", ())),
-        (":allow caps=all", PolicyCommand("allow", "caps", None)),
-        (":skills all", PolicyCommand("allow", "skills", None)),
+        (":allow tools=none", RunOverride("allow", "tools", ())),
+        (":allow caps=all", RunOverride("allow", "caps", None)),
+        (":skills all", RunOverride("allow", "skills", None)),
         (
             ":default model=openai/gpt-5",
-            PolicyCommand("default", "model", "openai/gpt-5"),
+            RunOverride("default", "model", "openai/gpt-5"),
         ),
         (
             ":default runnable=flow:research",
-            PolicyCommand("default", "runnable", "flow:research"),
+            RunOverride("default", "runnable", "flow:research"),
         ),
-        (":limit tokens=200", PolicyCommand("limit", "tokens", 200)),
-        (":limit cost=1.25", PolicyCommand("limit", "cost", Decimal("1.25"))),
-        (":limit time=none", PolicyCommand("limit", "time", None)),
-        (":model openai/gpt-5", PolicyCommand("default", "model", "openai/gpt-5")),
-        (":agic review", PolicyCommand("default", "runnable", "agic:review")),
-        (":flow research", PolicyCommand("default", "runnable", "flow:research")),
-        (":runnable custom", PolicyCommand("default", "runnable", "custom")),
+        (":limit tokens=200", RunOverride("limit", "tokens", 200)),
+        (":limit cost=1.25", RunOverride("limit", "cost", Decimal("1.25"))),
+        (":limit time=none", RunOverride("limit", "time", None)),
+        (":model openai/gpt-5", RunOverride("default", "model", "openai/gpt-5")),
+        (":agic review", RunOverride("default", "runnable", "agic:review")),
+        (":flow research", RunOverride("default", "runnable", "flow:research")),
+        (":runnable custom", RunOverride("default", "runnable", "custom")),
     ],
 )
-def test_parse_policy_command_forms(
+def test_parse_run_override_forms(
     source: str,
-    expected: PolicyCommand,
+    expected: RunOverride,
 ) -> None:
-    command, named = parse_policy_command(source)
+    command, named = parse_run_override(source)
 
     assert command == expected
     assert named == ()
 
 
 def test_runnable_shortcut_returns_named_input_sources() -> None:
-    command, named = parse_policy_command(
-        ':agic review focus="security review" count=2'
-    )
+    command, named = parse_run_override(':agic review focus="security review" count=2')
 
-    assert command == PolicyCommand("default", "runnable", "agic:review")
+    assert command == RunOverride("default", "runnable", "agic:review")
     assert named == (("focus", "security review"), ("count", "2"))
 
 
@@ -83,8 +81,8 @@ def test_parse_prefix_allows_structural_blank_lines() -> None:
     )
 
     assert commands == (
-        PolicyCommand("default", "model", "openai/gpt-5"),
-        PolicyCommand("default", "runnable", "agic:review"),
+        RunOverride("default", "model", "openai/gpt-5"),
+        RunOverride("default", "runnable", "agic:review"),
     )
     assert named == (("focus", "security"),)
     assert primary == "  Review this."
@@ -95,7 +93,7 @@ def test_repeated_allow_accumulates_but_scalar_fields_are_unique() -> None:
         ":models openai/*\n:models deepseek/*\nInput"
     )
     assert commands == (
-        PolicyCommand(
+        RunOverride(
             "allow",
             "models",
             ("openai/*", "deepseek/*"),
@@ -121,43 +119,43 @@ def test_repeated_allow_accumulates_but_scalar_fields_are_unique() -> None:
         (":agic review focus", "name=value"),
     ],
 )
-def test_invalid_policy_commands_are_rejected(source: str, message: str) -> None:
+def test_invalid_run_overrides_are_rejected(source: str, message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        parse_policy_command(source)
+        parse_run_override(source)
 
 
 def test_merge_commands_compacts_session_state_and_preserves_disabled_limit() -> None:
     merged = merge_commands(
         (
-            PolicyCommand("default", "model", "old/model"),
-            PolicyCommand("allow", "tools", ("filesystem/*",)),
-            PolicyCommand("limit", "time", 30),
+            RunOverride("default", "model", "old/model"),
+            RunOverride("allow", "tools", ("filesystem/*",)),
+            RunOverride("limit", "time", 30),
         ),
         (
-            PolicyCommand("default", "model", None),
-            PolicyCommand("allow", "tools", None),
-            PolicyCommand("limit", "time", None),
+            RunOverride("default", "model", None),
+            RunOverride("allow", "tools", None),
+            RunOverride("limit", "time", None),
         ),
     )
 
-    assert merged == (PolicyCommand("limit", "time", None),)
+    assert merged == (RunOverride("limit", "time", None),)
 
 
-def test_resolve_commands_overlays_bindings_limits_and_separate_ceilings() -> None:
-    restrictions, bindings, limits = resolve_commands(
+def test_resolve_commands_overlays_bindings_limits_and_ceilings() -> None:
+    ceilings, bindings, limits = resolve_commands(
         _setup(),
         surface=RunBindings(runnable="flow:surface"),
         session=(
-            PolicyCommand("default", "model", "session/model"),
-            PolicyCommand("default", "runnable", "agic:session"),
-            PolicyCommand("limit", "tokens", 80),
-            PolicyCommand("allow", "models", ("session/*",)),
+            RunOverride("default", "model", "session/model"),
+            RunOverride("default", "runnable", "agic:session"),
+            RunOverride("limit", "tokens", 80),
+            RunOverride("allow", "models", ("session/*",)),
         ),
         run=(
-            PolicyCommand("default", "runnable", None),
-            PolicyCommand("limit", "time", None),
-            PolicyCommand("allow", "models", ("run/*",)),
-            PolicyCommand("allow", "skills", ("reviewer",)),
+            RunOverride("default", "runnable", None),
+            RunOverride("limit", "time", None),
+            RunOverride("allow", "models", ("run/*",)),
+            RunOverride("allow", "skills", ("reviewer",)),
         ),
     )
 
@@ -166,7 +164,7 @@ def test_resolve_commands_overlays_bindings_limits_and_separate_ceilings() -> No
         runnable="flow:surface",
     )
     assert limits == RunLimits(tokens=80, cost=Decimal("5"), time=None)
-    assert restrictions == (
+    assert ceilings == (
         AgentCeiling(models=("session/*",)),
         AgentCeiling(models=("run/*",), caps=("skill/reviewer",)),
     )
@@ -175,15 +173,15 @@ def test_resolve_commands_overlays_bindings_limits_and_separate_ceilings() -> No
 def test_allow_all_removes_that_field_before_cap_kind_normalization() -> None:
     unrestricted, _bindings, _limits = resolve_commands(
         _setup(),
-        run=(PolicyCommand("allow", "skills", None),),
+        run=(RunOverride("allow", "skills", None),),
     )
-    restrictions, _bindings, _limits = resolve_commands(
+    ceilings, _bindings, _limits = resolve_commands(
         _setup(),
         run=(
-            PolicyCommand("allow", "caps", None),
-            PolicyCommand("allow", "skills", ("reviewer",)),
+            RunOverride("allow", "caps", None),
+            RunOverride("allow", "skills", ("reviewer",)),
         ),
     )
 
     assert unrestricted == ()
-    assert restrictions == (AgentCeiling(caps=("skill/reviewer",)),)
+    assert ceilings == (AgentCeiling(caps=("skill/reviewer",)),)
