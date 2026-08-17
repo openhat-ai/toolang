@@ -4,111 +4,64 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import TypeAdapter
 
-from toolang.base.types.message import Message, MessagePart, MessageRole
-from toolang.base.types.policy import RunBindings, RunLimits
+from toolang.base.types.message import (
+    AudioPart,
+    DocumentPart,
+    ImagePart,
+    MessageRole,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+    part_from_data,
+)
+from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCall
-from toolang.lang.input import RunnableInput
 from .types import (
+    ControlRef,
     ControlStatus,
     ControlTiming,
     AgentResources,
+    Local,
+    LocalValue,
     ExecutionError,
     RunControlKind,
     RunId,
     RunStatus,
-    StepErrorRef,
     StepKind,
     StepPath,
     StepStatus,
     ThreadPeerType,
     ThreadControlKind,
+    ValuePtr,
 )
 
 
-@dataclass(frozen=True, slots=True)
-class RunInputRef:
-    """Reference one control input within the current run."""
-
-    index: int = 0
-    name: str | None = None
-    part: int | None = None
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> "RunInputRef":
-        return cls(
-            index=int(payload.get("control", 0) or 0),
-            name=(str(payload["name"]) if payload.get("name") is not None else None),
-            part=_optional_int(payload.get("part")),
-        )
-
-    def to_data(self) -> dict[str, Any]:
-        data: dict[str, Any] = {"control": self.index}
-        if self.name is not None:
-            data["name"] = self.name
-        if self.part is not None:
-            data["part"] = self.part
-        return data
-
-
-@dataclass(frozen=True, slots=True)
-class StepOutputRef:
-    """Reference one step output or one step output part."""
-
-    step: StepPath
-    part: int | None = None
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, Any]) -> StepOutputRef:
-        return cls(
-            step=StepPath.parse(str(payload.get("step", ""))),
-            part=_optional_int(payload.get("part")),
-        )
-
-    def to_data(self) -> dict[str, Any]:
-        data: dict[str, Any] = {"step": str(self.step)}
-        if self.part is not None:
-            data["part"] = self.part
-        return data
-
-    def resolve(self, steps: Sequence[StepRecord]) -> tuple[MessagePart, ...]:
-        """Resolve this durable output edge against available step records."""
-
-        step = next((item for item in steps if item.path == self.step), None)
-        if step is None:
-            return ()
-        if self.part is None:
-            return step.output
-        if 0 <= self.part < len(step.output):
-            return (step.output[self.part],)
-        return ()
-
-
-ValueRef = RunInputRef | StepOutputRef
-StepInput = ValueRef | Message
-
 _MODEL_CALL_ADAPTER = TypeAdapter(ModelCall)
-_RUN_BINDINGS_ADAPTER = TypeAdapter(RunBindings)
 _RUN_LIMITS_ADAPTER = TypeAdapter(RunLimits)
+_PART_VALUE_TYPES = {
+    "Part": (
+        TextPart,
+        ImagePart,
+        AudioPart,
+        DocumentPart,
+        ToolCallPart,
+        ToolResultPart,
+    ),
+    "TextPart": TextPart,
+    "ImagePart": ImagePart,
+    "AudioPart": AudioPart,
+    "DocumentPart": DocumentPart,
+    "ToolCallPart": ToolCallPart,
+    "ToolResultPart": ToolResultPart,
+}
 
-
-@dataclass(frozen=True, slots=True)
-class RunControlRef:
-    """Reference one globally addressed run control."""
-
-    run: RunId
-    index: int
-
-
-@dataclass(frozen=True, slots=True)
-class ThreadControlRef:
-    """Reference one durable thread control."""
-
-    thread: str
-    index: int
+# Caller-facing names remain useful even though both references share one table.
+RunControlRef = ControlRef
+ThreadControlRef = ControlRef
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,34 +71,15 @@ class RunRecord:
     id: RunId
     parent: StepPath | None
     thread: str
-    input: RunInputRef
-    output: ValueRef | None
-    context: dict[str, Any] = field(default_factory=dict)
+    control: ControlRef
+    output: Local | None
+    placement: dict[str, object] | None = None
     status: RunStatus = "pending"
     error: ExecutionError | None = None
-    ejected: ThreadControlRef | RunControlRef | None = None
+    ejected_by: ControlRef | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
-
-    @property
-    def runnable_kind(self) -> str:
-        runnable = self.context.get("runnable")
-        if isinstance(runnable, Mapping):
-            return str(runnable.get("kind") or "")
-        return ""
-
-    @property
-    def runnable_name(self) -> str | None:
-        runnable = self.context.get("runnable")
-        if isinstance(runnable, Mapping) and runnable.get("name") is not None:
-            return str(runnable.get("name"))
-        return None
-
-    @property
-    def call_kind(self) -> str:
-        value = self.context.get("call")
-        return str(value) if value is not None else ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,14 +117,119 @@ class ThreadPeer:
 
 
 @dataclass(frozen=True, slots=True)
+class StartControlPayload:
+    """Resolved preparation snapshot for one new run."""
+
+    resources: AgentResources
+    limits: RunLimits
+    runnable: str
+    model: str
+    locals: tuple[Local, ...]
+
+    def __post_init__(self) -> None:
+        _validate_preparation_payload(self.runnable, self.model, self.locals)
+
+
+@dataclass(frozen=True, slots=True)
+class RerunControlPayload:
+    """Resolved preparation snapshot for one rerun."""
+
+    resources: AgentResources
+    limits: RunLimits
+    runnable: str
+    model: str
+    locals: tuple[Local, ...]
+    rerun_from: RunId
+
+    def __post_init__(self) -> None:
+        _validate_preparation_payload(self.runnable, self.model, self.locals)
+        if not self.rerun_from:
+            raise ValueError("rerun payload requires rerun_from")
+
+
+@dataclass(frozen=True, slots=True)
+class RetryControlPayload:
+    """Resolved preparation snapshot for one retry."""
+
+    resources: AgentResources
+    limits: RunLimits
+    runnable: str
+    model: str
+    locals: tuple[Local, ...] | None
+    retry_from: StepPath | None
+
+    def __post_init__(self) -> None:
+        _validate_preparation_payload(self.runnable, self.model, self.locals)
+
+
+@dataclass(frozen=True, slots=True)
+class SteerControlPayload:
+    """Values injected at one agic model boundary."""
+
+    locals: tuple[Local, ...]
+
+    def __post_init__(self) -> None:
+        _validate_control_locals(self.locals)
+
+
+@dataclass(frozen=True, slots=True)
+class StopControlPayload:
+    """Optional stop reason values."""
+
+    locals: tuple[Local, ...] = ()
+
+    def __post_init__(self) -> None:
+        _validate_control_locals(self.locals)
+
+
+@dataclass(frozen=True, slots=True)
+class CreateControlPayload:
+    """Create one empty thread."""
+
+
+@dataclass(frozen=True, slots=True)
+class ForkControlPayload:
+    """Fork one thread at a visible run."""
+
+    fork_from: str
+    fork_at: RunId
+
+
+@dataclass(frozen=True, slots=True)
+class RewindControlPayload:
+    """Rewind one thread with an optimistic head check."""
+
+    rewind_from: RunId
+    rewind_if: int
+
+
+PreparationControlPayload = (
+    StartControlPayload | RerunControlPayload | RetryControlPayload
+)
+RunControlPayload = PreparationControlPayload | SteerControlPayload | StopControlPayload
+ThreadControlPayload = CreateControlPayload | ForkControlPayload | RewindControlPayload
+ControlPayload = RunControlPayload | ThreadControlPayload
+_CONTROL_PAYLOAD_TYPES = {
+    "start": StartControlPayload,
+    "rerun": RerunControlPayload,
+    "retry": RetryControlPayload,
+    "steer": SteerControlPayload,
+    "stop": StopControlPayload,
+    "create": CreateControlPayload,
+    "fork": ForkControlPayload,
+    "rewind": RewindControlPayload,
+}
+
+
+@dataclass(frozen=True, slots=True)
 class ThreadRecord:
     """Durable thread metadata."""
 
     thread_id: str
     origin: str
     peer: ThreadPeer
-    created_by: ThreadControlRef
-    head: ThreadControlRef
+    created_by: ControlRef
+    head: ControlRef
     created_at: str
     updated_at: str
 
@@ -201,13 +240,14 @@ class StepRecord:
 
     path: StepPath
     kind: StepKind
-    input: tuple[StepInput, ...]
-    output: tuple[MessagePart, ...]
+    input: tuple[ValuePtr, ...]
+    output: Local | None
+    placement: dict[str, object] | None = None
     given: dict[str, Any] = field(default_factory=dict)
     noted: dict[str, Any] = field(default_factory=dict)
     status: StepStatus = "running"
     error: ExecutionError | None = None
-    ejected: RunControlRef | None = None
+    ejected_by: ControlRef | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
@@ -226,110 +266,301 @@ class StepRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class RunControlRecord:
-    """One durable control sent to a run."""
+class ControlRecordBase:
+    """Fields shared by durable run and thread controls."""
 
-    run: RunId
+    target: str
     index: int
-    kind: RunControlKind
-    timing: ControlTiming
-    input: RunnableInput | None = None
-    bindings: RunBindings | None = None
-    limits: RunLimits | None = None
-    resources: AgentResources | None = None
-    message: Message | None = None
-    reason: str | None = None
-    source: RunId | None = None
-    anchor: StepPath | None = None
+    kind: RunControlKind | ThreadControlKind
+    payload: ControlPayload
     request: str | None = None
-    context: dict[str, Any] = field(default_factory=dict)
     status: ControlStatus = "pending"
+    timing: ControlTiming = "immediate"
     error: str | None = None
     created_at: str = ""
     finished_at: str | None = None
 
     def __post_init__(self) -> None:
-        if self.kind in {"start", "rerun", "retry"}:
-            if self.message is not None or self.reason is not None:
-                raise ValueError("run preparation control cannot carry a message")
-            return
-        if any(
-            value is not None
-            for value in (self.input, self.bindings, self.limits, self.resources)
-        ):
-            raise ValueError("steer and stop controls cannot carry run preparation")
-        if self.kind == "steer":
-            if self.message is None or self.reason is not None:
-                raise ValueError("steer control requires only a message")
-        elif self.message is not None:
-            raise ValueError("stop control cannot carry a message")
+        if not self.target:
+            raise ValueError("control target must be non-empty")
+        if self.index < 0:
+            raise ValueError("control index must be non-negative")
+        expected = _CONTROL_PAYLOAD_TYPES[self.kind]
+        if not isinstance(self.payload, expected):
+            raise TypeError(f"{self.kind} control has an invalid payload")
 
 
 @dataclass(frozen=True, slots=True)
-class ThreadControlRecord:
+class RunControlRecord(ControlRecordBase):
+    """One durable control sent to a run."""
+
+    kind: RunControlKind
+    payload: RunControlPayload
+
+    @property
+    def run(self) -> RunId:
+        return self.target
+
+
+@dataclass(frozen=True, slots=True)
+class ThreadControlRecord(ControlRecordBase):
     """One durable mutation applied to a thread."""
 
-    thread: str
-    index: int
     kind: ThreadControlKind
-    source: str | None = None
-    anchor: str | None = None
-    request: str | None = None
-    expected_head: ThreadControlRef | None = None
-    context: dict[str, Any] = field(default_factory=dict)
-    status: ControlStatus = "pending"
-    created_at: str = ""
-    finished_at: str | None = None
+    payload: ThreadControlPayload
+
+    @property
+    def thread(self) -> str:
+        return self.target
 
 
-def value_ref_from_data(payload: Mapping[str, Any]) -> ValueRef:
-    """Parse one durable value reference."""
+def local_from_data(payload: Mapping[str, object]) -> Local:
+    """Parse one durable typed local."""
 
-    if "control" in payload:
-        return RunInputRef.from_data(payload)
-    if "step" in payload:
-        return StepOutputRef.from_data(payload)
-    raise ValueError("unknown value reference shape")
-
-
-def value_ref_to_data(ref: ValueRef) -> dict[str, Any]:
-    """Serialize one durable value reference."""
-
-    return ref.to_data()
-
-
-def step_input_from_data(payload: Mapping[str, Any]) -> StepInput:
-    """Return one step input item from one serialized payload."""
-
-    if "control" in payload or "step" in payload:
-        return value_ref_from_data(payload)
-    if "message" in payload:
-        return Message.from_data(_mapping(payload.get("message")))
-    if "role" in payload and "parts" in payload:
-        return Message.from_data(payload)
-    raise ValueError("unknown step input item shape")
+    type_name = str(payload.get("type", ""))
+    raw_dim = payload.get("dim", 0)
+    if isinstance(raw_dim, bool) or not isinstance(raw_dim, int):
+        raise ValueError("local dim must be 0 or 1")
+    dim = cast(Literal[0, 1], raw_dim)
+    raw_name = payload.get("name")
+    name = str(raw_name) if raw_name is not None else None
+    return Local(
+        type=type_name,
+        value=local_value_from_data(payload.get("value"), type_name),
+        name=name,
+        dim=dim,
+    )
 
 
-def step_inputs_from_data(
-    payloads: Sequence[Mapping[str, Any]],
-) -> tuple[StepInput, ...]:
-    """Return step input items from one serialized sequence."""
+def local_to_data(local: Local) -> dict[str, object]:
+    """Serialize one durable typed local."""
 
-    return tuple(step_input_from_data(item) for item in payloads)
-
-
-def step_input_to_data(item: StepInput) -> dict[str, Any]:
-    """Return one serialized step input item."""
-
-    if isinstance(item, RunInputRef | StepOutputRef):
-        return value_ref_to_data(item)
-    return {"message": item.to_data()}
+    return {
+        "type": local.type,
+        "value": local_value_to_data(local.value),
+        "name": local.name,
+        "dim": local.dim,
+    }
 
 
-def step_inputs_to_data(items: tuple[StepInput, ...]) -> list[dict[str, Any]]:
-    """Return serialized step input items."""
+def local_value_from_data(data: object, type_name: str) -> LocalValue:
+    """Parse one local value or pointer using its resolved Toolang type."""
 
-    return [step_input_to_data(item) for item in items]
+    if isinstance(data, Mapping) and "$ptr" in data:
+        pointer = cast(Mapping[str, object], data)
+        if set(pointer) != {"$ptr"} or not isinstance(pointer.get("$ptr"), str):
+            raise ValueError("value pointer object requires only a text $ptr field")
+        return ValuePtr(str(pointer["$ptr"]))
+    if type_name.endswith("[]"):
+        if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
+            raise ValueError(f"local value is not {type_name}")
+        item_type = type_name[:-2]
+        return cast(
+            LocalValue,
+            tuple(local_value_from_data(item, item_type) for item in data),
+        )
+    if type_name in _PART_VALUE_TYPES:
+        if not isinstance(data, Mapping):
+            raise ValueError(f"local value is not {type_name}")
+        part = part_from_data(cast(Mapping[str, Any], data))
+        expected = _PART_VALUE_TYPES[type_name]
+        if not isinstance(part, expected):
+            raise ValueError(f"local value is not {type_name}")
+        return part
+    if isinstance(data, Mapping):
+        if "$ptr" in data:
+            raise ValueError("$ptr is reserved for value pointers")
+        return cast(
+            LocalValue,
+            {
+                str(key): local_value_from_data(value, "Json")
+                for key, value in data.items()
+            },
+        )
+    if isinstance(data, list):
+        return cast(
+            LocalValue,
+            tuple(local_value_from_data(item, "Json") for item in data),
+        )
+    if data is None or isinstance(data, str | bool | int | float):
+        return cast(LocalValue, data)
+    raise ValueError(f"unsupported local value: {type(data).__name__}")
+
+
+def local_value_to_data(value: LocalValue) -> object:
+    """Serialize one local value while retaining embedded pointers."""
+
+    if isinstance(value, ValuePtr):
+        return {"$ptr": str(value)}
+    if isinstance(
+        value,
+        (
+            TextPart,
+            ImagePart,
+            AudioPart,
+            DocumentPart,
+            ToolCallPart,
+            ToolResultPart,
+        ),
+    ):
+        return value.to_data()
+    if isinstance(value, tuple | list):
+        return [local_value_to_data(cast(LocalValue, item)) for item in value]
+    if isinstance(value, Mapping):
+        if "$ptr" in value:
+            raise ValueError("$ptr is reserved for value pointers")
+        return {
+            str(key): local_value_to_data(cast(LocalValue, item))
+            for key, item in value.items()
+        }
+    if value is None or isinstance(value, str | bool | int | float):
+        return value
+    raise TypeError(f"unsupported local value: {type(value).__name__}")
+
+
+def control_payload_from_data(
+    kind: RunControlKind | ThreadControlKind,
+    data: object,
+) -> ControlPayload:
+    """Parse one typed control payload from durable data."""
+
+    if not isinstance(data, Mapping):
+        raise ValueError("control payload must be an object")
+    payload = cast(Mapping[str, object], data)
+    if kind in {"start", "rerun", "retry"}:
+        resources_raw = payload.get("resources")
+        limits_raw = payload.get("limits")
+        if not isinstance(resources_raw, Mapping) or not isinstance(
+            limits_raw, Mapping
+        ):
+            raise ValueError(f"{kind} payload requires resources and limits")
+        resources = AgentResources.from_data(cast(Mapping[str, object], resources_raw))
+        limits = run_limits_from_data(limits_raw)
+        runnable = _required_payload_text(payload, "runnable")
+        model = _required_payload_text(payload, "model")
+        raw_locals = payload.get("locals")
+        locals_value = (
+            tuple(
+                local_from_data(cast(Mapping[str, object], item))
+                for item in raw_locals
+                if isinstance(item, Mapping)
+            )
+            if isinstance(raw_locals, Sequence)
+            and not isinstance(raw_locals, (str, bytes, bytearray))
+            else None
+        )
+        if kind != "retry" and locals_value is None:
+            raise ValueError(f"{kind} payload requires locals")
+        if kind == "start":
+            return StartControlPayload(
+                resources=resources,
+                limits=limits,
+                runnable=runnable,
+                model=model,
+                locals=locals_value or (),
+            )
+        if kind == "rerun":
+            return RerunControlPayload(
+                resources=resources,
+                limits=limits,
+                runnable=runnable,
+                model=model,
+                locals=locals_value or (),
+                rerun_from=_required_payload_text(payload, "rerun_from"),
+            )
+        raw_retry_from = payload.get("retry_from")
+        return RetryControlPayload(
+            resources=resources,
+            limits=limits,
+            runnable=runnable,
+            model=model,
+            locals=locals_value,
+            retry_from=(
+                StepPath.parse(str(raw_retry_from))
+                if raw_retry_from is not None
+                else None
+            ),
+        )
+    if kind in {"steer", "stop"}:
+        raw_locals = payload.get("locals", ())
+        if not isinstance(raw_locals, Sequence) or isinstance(
+            raw_locals, (str, bytes, bytearray)
+        ):
+            raise ValueError(f"{kind} payload locals must be an array")
+        locals_value = tuple(
+            local_from_data(cast(Mapping[str, object], item))
+            for item in raw_locals
+            if isinstance(item, Mapping)
+        )
+        if len(locals_value) != len(raw_locals):
+            raise ValueError(f"{kind} payload contains an invalid local")
+        return (
+            SteerControlPayload(locals_value)
+            if kind == "steer"
+            else StopControlPayload(locals_value)
+        )
+    if kind == "create":
+        if payload:
+            raise ValueError("create payload must be empty")
+        return CreateControlPayload()
+    if kind == "fork":
+        return ForkControlPayload(
+            fork_from=_required_payload_text(payload, "fork_from"),
+            fork_at=_required_payload_text(payload, "fork_at"),
+        )
+    if kind == "rewind":
+        raw_rewind_if = payload.get("rewind_if")
+        if isinstance(raw_rewind_if, bool) or not isinstance(raw_rewind_if, int):
+            raise ValueError("rewind payload requires an integer rewind_if")
+        return RewindControlPayload(
+            rewind_from=_required_payload_text(payload, "rewind_from"),
+            rewind_if=raw_rewind_if,
+        )
+    raise ValueError(f"unknown control kind: {kind}")
+
+
+def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
+    """Serialize one typed control payload."""
+
+    if isinstance(payload, StartControlPayload):
+        return _preparation_payload_data(payload)
+    if isinstance(payload, RerunControlPayload):
+        return {**_preparation_payload_data(payload), "rerun_from": payload.rerun_from}
+    if isinstance(payload, RetryControlPayload):
+        return {
+            **_preparation_payload_data(payload),
+            "locals": (
+                [local_to_data(local) for local in payload.locals]
+                if payload.locals is not None
+                else None
+            ),
+            "retry_from": (
+                str(payload.retry_from) if payload.retry_from is not None else None
+            ),
+        }
+    if isinstance(payload, SteerControlPayload | StopControlPayload):
+        return {"locals": [local_to_data(local) for local in payload.locals]}
+    if isinstance(payload, CreateControlPayload):
+        return {}
+    if isinstance(payload, ForkControlPayload):
+        return {"fork_from": payload.fork_from, "fork_at": payload.fork_at}
+    return {"rewind_from": payload.rewind_from, "rewind_if": payload.rewind_if}
+
+
+def value_ptrs_from_data(data: object) -> tuple[ValuePtr, ...]:
+    """Parse a pointer-only record field."""
+
+    if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
+        raise ValueError("value pointers must be an array")
+    if not all(isinstance(item, str) for item in data):
+        raise ValueError("value pointers must contain only strings")
+    return tuple(ValuePtr(cast(str, item)) for item in data)
+
+
+def value_ptrs_to_data(items: Sequence[ValuePtr]) -> list[str]:
+    """Serialize a pointer-only record field."""
+
+    return [str(item) for item in items]
 
 
 def model_call_from_data(data: object) -> ModelCall:
@@ -358,21 +589,6 @@ def run_limits_to_data(limits: RunLimits) -> dict[str, Any]:
     )
 
 
-def run_bindings_from_data(data: object) -> RunBindings:
-    """Parse effective run bindings from durable data."""
-
-    return _RUN_BINDINGS_ADAPTER.validate_python(data)
-
-
-def run_bindings_to_data(bindings: RunBindings) -> dict[str, Any]:
-    """Serialize effective run bindings."""
-
-    return cast(
-        dict[str, Any],
-        _RUN_BINDINGS_ADAPTER.dump_python(bindings, mode="json"),
-    )
-
-
 def run_limits_from_data(data: object) -> RunLimits:
     """Parse effective run limits from durable data."""
 
@@ -384,11 +600,10 @@ def execution_error_from_data(data: object) -> ExecutionError:
 
     if isinstance(data, str):
         return data
-    if isinstance(data, Mapping) and set(data) == {"step"}:
-        mapping = cast(Mapping[str, object], data)
-        step = mapping.get("step")
-        if isinstance(step, str):
-            return StepErrorRef(step=StepPath.parse(step))
+    if isinstance(data, Mapping) and set(data) == {"$ptr"}:
+        pointer = cast(Mapping[str, object], data).get("$ptr")
+        if isinstance(pointer, str):
+            return ValuePtr(pointer)
     raise ValueError("invalid execution error")
 
 
@@ -397,7 +612,7 @@ def execution_error_to_data(error: ExecutionError) -> str | dict[str, str]:
 
     if isinstance(error, str):
         return error
-    return {"step": str(error.step)}
+    return {"$ptr": str(error)}
 
 
 def execution_error_message(
@@ -406,19 +621,19 @@ def execution_error_message(
 ) -> str | None:
     """Resolve one execution error to a displayable message when possible."""
 
-    by_path = {step.path: step for step in steps}
-    seen: set[StepPath] = set()
+    by_pointer = {ValuePtr(_step_pointer(step.path)): step for step in steps}
+    seen: set[ValuePtr] = set()
     current = error
-    while isinstance(current, StepErrorRef):
-        if current.step in seen:
+    while isinstance(current, ValuePtr):
+        if current in seen:
             break
-        seen.add(current.step)
-        step = by_path.get(current.step)
+        seen.add(current)
+        step = by_pointer.get(current)
         if step is None:
             break
         current = step.error
-    if isinstance(current, StepErrorRef):
-        return f"step {current.step} failed"
+    if isinstance(current, ValuePtr):
+        return f"execution value {current} failed"
     return current
 
 
@@ -432,11 +647,51 @@ def step_message_role(kind: StepKind) -> MessageRole | None:
     return None
 
 
-def _mapping(value: object) -> Mapping[str, Any]:
-    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+def _required_payload_text(payload: Mapping[str, object], name: str) -> str:
+    value = payload.get(name)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"control payload requires {name}")
+    return value
 
 
-def _optional_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    return int(value)
+def _preparation_payload_data(
+    payload: StartControlPayload | RerunControlPayload | RetryControlPayload,
+) -> dict[str, object]:
+    return {
+        "resources": payload.resources.to_data(),
+        "limits": run_limits_to_data(payload.limits),
+        "runnable": payload.runnable,
+        "model": payload.model,
+        "locals": (
+            [local_to_data(local) for local in payload.locals]
+            if payload.locals is not None
+            else None
+        ),
+    }
+
+
+def _validate_preparation_payload(
+    runnable: str,
+    model: str,
+    locals: tuple[Local, ...] | None,
+) -> None:
+    if not runnable:
+        raise ValueError("preparation payload requires runnable")
+    if not model:
+        raise ValueError("preparation payload requires model")
+    if locals is not None:
+        _validate_control_locals(locals)
+
+
+def _validate_control_locals(locals: tuple[Local, ...]) -> None:
+    if not all(isinstance(local, Local) for local in locals):
+        raise TypeError("control locals must contain Local values")
+    names = tuple(local.name for local in locals)
+    if any(name is None for name in names):
+        raise ValueError("control locals must be named")
+    if len(names) != len(set(names)):
+        raise ValueError("control local names must be unique")
+
+
+def _step_pointer(path: StepPath) -> str:
+    return ".".join((path.run, *(str(index) for index in path.indices)))

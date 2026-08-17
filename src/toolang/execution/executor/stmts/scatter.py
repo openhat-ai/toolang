@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from toolang.lang.ast import ScatterStmt
 
 from ...records import RunControlRecord, StepPath
+from ...types import Local as RecordLocal
 from ..common import BoundRun
 from ..common import Local, result_list
 from ..steps import run as run_step
@@ -32,7 +33,21 @@ async def execute(
             if result.type_name is not None and result.type_name.endswith("[]")
             else None
         )
-        return Local(values, "list", type_name=item_type)
+        output_type = result.type_name or "Json[]"
+        return Local(
+            values,
+            "list",
+            type_name=item_type,
+            record=(
+                RecordLocal(
+                    type=output_type,
+                    value=result.ref,
+                    dim=1,
+                )
+                if result.ref is not None
+                else None
+            ),
+        )
 
     return await run_step.execute(
         execution,

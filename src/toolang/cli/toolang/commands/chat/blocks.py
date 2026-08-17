@@ -36,6 +36,7 @@ from toolang.cli.common.execution_progress.formatting import (
     count,
     elapsed,
     model_label,
+    output_parts,
     statement_head,
     statement_index,
     statement_result,
@@ -679,7 +680,7 @@ class ModelStepBlock(MutableBlock):
                 self.message += delta.text
         else:
             self.status = event.status
-            self.output = _parts_text(event.output)
+            self.output = _parts_text(output_parts(event))
             self.tool_requests = self._tool_request_summary(event)
             self.error = friendly_error(event.error) if event.error else ""
             self.finished_at = event.finished_at
@@ -780,7 +781,7 @@ class ModelStepBlock(MutableBlock):
     @staticmethod
     def _tool_request_summary(event: StepEnd) -> list[str]:
         tools: list[str] = []
-        for part in event.output:
+        for part in output_parts(event):
             if not isinstance(part, ToolCallPart):
                 continue
             tools.append(
@@ -800,7 +801,7 @@ class AssistantResponseBlock(MutableBlock):
 
     @classmethod
     def create(cls, event: StepEnd) -> "AssistantResponseBlock":
-        return cls(text=_parts_text(event.output), shape=shape_label(event))
+        return cls(text=_parts_text(output_parts(event)), shape=shape_label(event))
 
     @classmethod
     def from_parts(cls, parts: Sequence[MessagePart]) -> "AssistantResponseBlock":
@@ -876,7 +877,7 @@ class ToolStepBlock(MutableBlock):
     def update(self, event: StepEnd) -> None:
         self.step = event.step
         self.status = "completed"
-        self.detail = _tool_call_display_from_parts(event.output)
+        self.detail = _tool_call_display_from_parts(output_parts(event))
         self.error = friendly_error(event.error) if event.error else ""
         self.output_messages = self._output_messages(event)
         self.finished_at = event.finished_at
@@ -916,7 +917,7 @@ class ToolStepBlock(MutableBlock):
     @staticmethod
     def _output_messages(event: StepEnd) -> list[str]:
         messages: list[str] = []
-        for part in event.output:
+        for part in output_parts(event):
             if not isinstance(part, ToolResultPart):
                 continue
             stdout = as_text(part.output.get("stdout"))

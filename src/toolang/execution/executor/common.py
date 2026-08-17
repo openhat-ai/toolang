@@ -46,8 +46,8 @@ from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
-from ..records import RunControlRecord, RunInputRef, StepInput, StepOutputRef, ValueRef
-from ..types import AgentResources, StepErrorRef, StepKind, StepPath
+from ..records import RunControlRecord, SteerControlPayload, StopControlPayload
+from ..types import AgentResources, Local as RecordLocal, StepKind, StepPath, ValuePtr
 
 Shape = Literal["none", "item", "list"]
 EventEmitter = Callable[[RunEvent], Awaitable[None]]
@@ -58,7 +58,7 @@ class _StepFailed(Exception):
 
     def __init__(self, step: StepPath, cause: BaseException) -> None:
         super().__init__(str(cause) or type(cause).__name__)
-        self.error = StepErrorRef(step)
+        self.error = ValuePtr.step(step)
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +70,7 @@ class BoundRun:
     thread: str
     bindings: RunBindings
     input: RunnableInput
+    control_locals: tuple[RecordLocal, ...]
     state: AgentState
     setup: AgentSetup
     created_at: str
@@ -89,8 +90,9 @@ class Local:
 
     value: Any = None
     shape: Shape = "none"
-    ref: ValueRef | None = None
+    ref: ValuePtr | None = None
     type_name: str | None = None
+    record: RecordLocal | None = None
 
 
 async def execute_step(
@@ -109,7 +111,7 @@ async def execute_step(
     started_at = utc_now()
     inputs = _unique_step_inputs(
         (
-            *(RunInputRef(index=item.index) for item in controls),
+            *(ValuePtr.control(item.run, item.index, "_") for item in controls),
             *(
                 local.ref
                 for _name, local in sorted(locals.items())
@@ -122,10 +124,10 @@ async def execute_step(
             step=path,
             kind=kind,
             input=inputs,
+            placement=dict(placement) if placement is not None else None,
             given={
                 **statement_context(statement),
                 "binding": statement.binding,
-                "placement": dict(placement or {}),
                 "source": {
                     "line": statement.span.line,
                     "head": format_statement_head(statement),
@@ -174,11 +176,8 @@ async def execute_step(
             step=path,
             kind=kind,
             status="succeeded",
-            output=output_parts(result),
+            output=record_local(result, name=statement.binding),
             noted={
-                "shape": result.shape,
-                "type": result.type_name,
-                "value": json_value(result.value),
                 **(
                     {"reshape": reshape}
                     if (reshape := statement_reshape(statement)) is not None
@@ -193,7 +192,7 @@ async def execute_step(
             finished_at=utc_now(),
         )
     )
-    return replace(result, ref=StepOutputRef(step=path))
+    return replace(result, ref=ValuePtr.step(path))
 
 
 def initial_locals(
@@ -201,7 +200,6 @@ def initial_locals(
 ) -> dict[str, Local]:
     """Build the initial locals for one executable run."""
 
-    start = RunInputRef()
     structs = program_structs(binding)
     params = {parameter.name: parameter for parameter in executable.params}
     locals: dict[str, Local] = {}
@@ -218,7 +216,7 @@ def initial_locals(
         locals[name] = Local(
             value,
             "item",
-            RunInputRef(name=name),
+            ValuePtr.control(binding.run_id, 0, name),
             parameter.type_name or "Part[]",
         )
     if executable.input is not None:
@@ -229,11 +227,11 @@ def initial_locals(
                 structs=structs,
             ),
             "item",
-            start,
+            ValuePtr.control(binding.run_id, 0, "_"),
             executable.input.type_name or "Part[]",
         )
     else:
-        locals.setdefault("_", Local(ref=start))
+        locals.setdefault("_", Local())
     return locals
 
 
@@ -254,16 +252,25 @@ def apply_steer(
     """Apply accepted steer inputs to the primary local."""
 
     for control in controls:
-        if control.message is not None:
+        if isinstance(control.payload, SteerControlPayload):
+            primary = next(
+                (item for item in control.payload.locals if item.name == "_"), None
+            )
+            if (
+                primary is None
+                or isinstance(primary.value, ValuePtr)
+                or not isinstance(primary.value, tuple | list)
+            ):
+                continue
             effective_type = input_type or "Part[]"
             locals["_"] = Local(
                 coerce_input(
-                    control.message.percept,
+                    cast(Percept, tuple(primary.value)),
                     effective_type,
                     structs=structs,
                 ),
                 "item",
-                RunInputRef(index=control.index),
+                ValuePtr.control(control.run, control.index, "_"),
                 effective_type,
             )
 
@@ -434,19 +441,43 @@ def value_text(value: Any) -> str:
 def control_text(control: RunControlRecord | None) -> str:
     if control is None:
         return ""
-    if control.reason is not None:
-        return control.reason
-    if control.message is None:
+    if not isinstance(control.payload, SteerControlPayload | StopControlPayload):
         return ""
-    return message_text(control.message.parts)
+    primary = next((item for item in control.payload.locals if item.name == "_"), None)
+    if primary is None or isinstance(primary.value, ValuePtr):
+        return ""
+    if isinstance(primary.value, str):
+        return primary.value
+    percept = value_percept(primary.value, type_name=primary.type)
+    return message_text(percept) if percept is not None else ""
 
 
-def _unique_step_inputs(items: Sequence[StepInput]) -> tuple[StepInput, ...]:
-    result: list[StepInput] = []
+def _unique_step_inputs(items: Sequence[ValuePtr]) -> tuple[ValuePtr, ...]:
+    result: list[ValuePtr] = []
     for item in items:
         if item not in result:
             result.append(item)
     return tuple(result)
+
+
+def record_local(local: Local, *, name: str | None) -> RecordLocal | None:
+    """Convert one runtime local into its durable output representation."""
+
+    if local.shape == "none":
+        return None
+    if local.record is not None:
+        return replace(local.record, name=name)
+    item_type = local.type_name or "Json"
+    return RecordLocal(
+        type=f"{item_type}[]" if local.shape == "list" else item_type,
+        value=(
+            tuple(local.value)
+            if local.shape == "list" and isinstance(local.value, list)
+            else local.value
+        ),
+        name=name,
+        dim=1 if local.shape == "list" else 0,
+    )
 
 
 def json_value(value: object) -> object:

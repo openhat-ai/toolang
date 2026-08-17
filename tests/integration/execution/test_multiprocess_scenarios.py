@@ -21,10 +21,10 @@ from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
 from toolang.common.ids import IdIssuer
 from toolang.execution.executor import RunExecutor
-from toolang.execution.records import ThreadControlRef
+from toolang.execution.records import SteerControlPayload, ThreadControlRef
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import Local, ThreadPrefix
 from toolang.lang.input import perceive_input
 
 _CHAT_SOURCE = """
@@ -43,8 +43,13 @@ def _accept_remote_steer(db_path: str, run_id: str) -> None:
             run_id=run_id,
             kind="steer",
             timing="next_call",
-            message=Message.user("Use the remote guidance."),
-            context={"source": "remote-process"},
+            locals=(
+                Local(
+                    "Part[]",
+                    Message.user("Use the remote guidance.").parts,
+                    "_",
+                ),
+            ),
             request_id="remote-steer",
             created_at="2026-01-01T00:00:01Z",
         )
@@ -81,8 +86,7 @@ def _accept_duplicate_request(
             run_id=run_id,
             kind="steer",
             timing="next_step",
-            message=Message.user(run_id),
-            context={},
+            locals=(Local("Part[]", Message.user(run_id).parts, "_"),),
             request_id="shared-control-request",
             created_at="2026-01-01T00:00:01Z",
         )
@@ -154,7 +158,6 @@ def _race_rewind(
             anchor=None,
             request_id="racing-rewind",
             expected_head=ThreadControlRef("term_race", 0),
-            context={},
             created_at="2026-01-01T00:00:04Z",
         )
         results.put(("rewind", "accepted", control.index, superseded))
@@ -286,7 +289,15 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
             control = harness.store.get_run_control(run_id=record.id, index=1)
             assert control is not None
             assert control.status == "applied"
-            assert control.context == {"source": "remote-process"}
+            assert control.payload == SteerControlPayload(
+                locals=(
+                    Local(
+                        "Part[]",
+                        Message.user("Use the remote guidance.").parts,
+                        "_",
+                    ),
+                )
+            )
 
     asyncio.run(scenario())
 
@@ -412,8 +423,7 @@ def test_pending_control_has_one_cross_process_cancellation_winner(
             run_id="run_cancel_race",
             kind="steer",
             timing="next_step",
-            message=Message.user("updated"),
-            context={},
+            locals=(Local("Part[]", Message.user("updated").parts, "_"),),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -466,8 +476,7 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
             run_id="run_claim_cancel_race",
             kind="steer",
             timing="next_step",
-            message=Message.user("updated"),
-            context={},
+            locals=(Local("Part[]", Message.user("updated").parts, "_"),),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -548,7 +557,7 @@ def test_concurrent_forks_preserve_one_terminal_anchor(
             ] == ["run_fork_anchor"]
         anchor = reopened.get_run(run_id="run_fork_anchor")
         assert anchor is not None
-        assert anchor.ejected is None
+        assert anchor.ejected_by is None
     finally:
         reopened.close()
 
@@ -580,7 +589,7 @@ def test_start_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
         new_run = reopened.get_run(run_id="run_racing_start")
         thread = reopened.get_thread(thread_id="term_race")
         assert new_run is not None
-        assert new_run.ejected is None
+        assert new_run.ejected_by is None
         assert thread is not None
 
         rewind = by_kind["rewind"]
@@ -589,7 +598,7 @@ def test_start_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
             assert thread.head == ThreadControlRef("term_race", 1)
             anchor = reopened.get_run(run_id="run_race_anchor")
             assert anchor is not None
-            assert anchor.ejected == (ThreadControlRef("term_race", 1))
+            assert anchor.ejected_by == ThreadControlRef("term_race", 1)
             assert [
                 run.id
                 for run in reopened.list_thread_history_chronological(

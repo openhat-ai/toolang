@@ -17,8 +17,7 @@ from toolang.common.layout import AgentLayout
 from toolang.common.time import elapsed_ms, utc_now
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
-from ...records import RunInputRef, StepInput, StepOutputRef
-from ...types import StepPath
+from ...types import Local, StepPath, ValuePtr
 from ..common import _StepFailed
 from ..diagnostics import log_tool_call_input, log_tool_call_output
 
@@ -40,18 +39,13 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     started_at = utc_now()
     plugin_name = _plugin_name(prepared.tools.get(call.name))
     source = state.tool_call_sources.get(call.tool_call_id)
-    step_input: tuple[StepInput, ...]
+    step_input: tuple[ValuePtr, ...]
     if source is not None:
-        step_input = (
-            StepOutputRef(
-                step=StepPath(run.run_id, (source[0],)),
-                part=source[1],
-            ),
-        )
+        step_input = (ValuePtr.step(StepPath(run.run_id, (source[0],)), source[1]),)
     elif state.last_step is not None:
-        step_input = (StepOutputRef(step=StepPath(run.run_id, (state.last_step,))),)
+        step_input = (ValuePtr.step(StepPath(run.run_id, (state.last_step,))),)
     else:
-        step_input = (RunInputRef(),)
+        step_input = (ValuePtr.control(run.run_id, 0, "_"),)
     _LOGGER.info(
         "Step started thread=%s run=%s step=%s kind=tool tool=%s",
         run.thread,
@@ -154,7 +148,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             step=StepPath(run.run_id, (step_index,)),
             kind="tool",
             status=status,
-            output=(part,),
+            output=Local(type="ToolResultPart", value=part, name=None, dim=0),
             finished_at=utc_now(),
             error=record.error,
         )

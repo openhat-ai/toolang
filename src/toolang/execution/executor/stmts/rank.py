@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from toolang.lang.ast import RankStmt
 
 from ...records import RunControlRecord, StepPath
+from ...types import Local as RecordLocal
 from ..common import BoundRun
 from ..common import Local, number, require_list, result_list
 from ..steps import par as par_step
@@ -26,7 +27,8 @@ async def execute(
     placement: Mapping[str, object] | None,
 ) -> Local:
     async def operation() -> Local:
-        input_type = locals.get("_", Local()).type_name
+        source = locals.get("_", Local())
+        input_type = source.type_name
         items = require_list(locals, operation="rank")
         evaluated = await execution.parallel_children(
             binding,
@@ -40,19 +42,31 @@ async def execute(
             number(value, operation="rank")
             for value in result_list(evaluated, operation="rank")
         ]
-        ranked = [
-            item
-            for _, item, _ in sorted(
-                zip(scores, items, range(len(items)), strict=True),
-                key=lambda entry: (-entry[0], entry[2]),
-            )
-        ]
+        ranked_entries = sorted(
+            zip(scores, items, range(len(items)), strict=True),
+            key=lambda entry: (-entry[0], entry[2]),
+        )
         if statement.limit == "top":
-            ranked = ranked[: statement.count or 0]
+            ranked_entries = ranked_entries[: statement.count or 0]
         elif statement.limit == "bottom":
             count = statement.count or 0
-            ranked = ranked[-count:] if count else []
-        return Local(ranked, "list", type_name=input_type)
+            ranked_entries = ranked_entries[-count:] if count else []
+        ranked = [item for _, item, _ in ranked_entries]
+        ranked_indexes = [index for _, _, index in ranked_entries]
+        return Local(
+            ranked,
+            "list",
+            type_name=input_type,
+            record=(
+                RecordLocal(
+                    type=f"{input_type or 'Json'}[]",
+                    value=tuple(source.ref.select(index) for index in ranked_indexes),
+                    dim=1,
+                )
+                if source.ref is not None
+                else None
+            ),
+        )
 
     return await par_step.execute(
         execution.emit,

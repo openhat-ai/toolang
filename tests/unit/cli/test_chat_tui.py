@@ -12,6 +12,7 @@ from rich.text import Text
 import pytest
 
 from toolang.base.types.message import (
+    MessagePart,
     TextDelta,
     TextPart,
     ToolCallPart,
@@ -38,9 +39,16 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import RunInputRef, StepOutputRef
-from toolang.execution.types import RunOverride, StepPath
+from toolang.execution.types import ControlRef, Local, RunOverride, StepPath, ValuePtr
 from tests.support import chat_tui_pty
+
+
+def _parts(*parts: MessagePart) -> Local:
+    return Local("Part[]", tuple(parts), "_", 0)
+
+
+def _output(step: StepPath) -> Local:
+    return Local("Part[]", ValuePtr.step(step), "_", 0)
 
 
 def test_chat_tui_pty_treats_linux_eio_as_eof(
@@ -345,7 +353,7 @@ def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
         "    run_child/1 · 1.0s · model · 1/1 tokens",
         "  ↳ run_child succeeded · 3.0s",
     ]
-    events.handle_run_event(_run_end(status="succeeded"), app)
+    events.handle_run_event(_run_end(status="succeeded", output_step_index=2), app)
 
     assert app.live_blocks == []
     assert [block.type for block in app.finalized] == [
@@ -379,13 +387,9 @@ def test_chat_failed_child_is_a_statement_diagnostic_fact() -> None:
     events.handle_run_event(
         RunBegin(
             run="run_child",
-            input=RunInputRef(index=0),
+            control=ControlRef("run_child", 0),
             parent=StepPath.parse("run_1/1"),
-            context={
-                "origin": "chat",
-                "root": "run_1",
-                "runnable": {"kind": "agic", "name": "expand_queries"},
-            },
+            runnable="agic:expand_queries",
             started_at="2026-01-01T00:00:01Z",
         ),
         app,
@@ -546,7 +550,7 @@ def test_chat_confirms_only_the_root_output_model_response() -> None:
         RunEnd(
             run="run_1",
             status="succeeded",
-            output=StepOutputRef(step=StepPath.parse("run_1/2")),
+            output=_output(StepPath.parse("run_1/2")),
             finished_at="2026-01-01T00:00:04Z",
         ),
         app,
@@ -589,16 +593,13 @@ def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
             RunBegin(
                 run=f"run_child_{item}",
                 parent=StepPath.parse("run_1/1"),
-                input=RunInputRef(),
-                context={
-                    "root": "run_1",
-                    "runnable": {"kind": "agic", "name": "summarize"},
-                    "placement": {
-                        "item": item,
-                        "items": 8,
-                        "lane": item,
-                        "lanes": 2,
-                    },
+                control=ControlRef(f"run_child_{item}", 0),
+                runnable="agic:summarize",
+                placement={
+                    "item": item,
+                    "items": 8,
+                    "lane": item,
+                    "lanes": 2,
                 },
             ),
             app,
@@ -635,7 +636,7 @@ def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
                 step=StepPath.parse(f"run_child_{item}/0"),
                 kind="model",
                 status="succeeded",
-                output=(TextPart(f"summary {item}"),),
+                output=_parts(TextPart(f"summary {item}")),
             ),
             app,
         )
@@ -690,7 +691,7 @@ def test_chat_flow_root_result_is_durable_and_hidden_until_requested() -> None:
             step=StepPath.parse("run_1/1"),
             kind="run",
             status="succeeded",
-            output=(TextPart("flow response"),),
+            output=_parts(TextPart("flow response")),
             noted={"shape": "item"},
         ),
         app,
@@ -699,7 +700,7 @@ def test_chat_flow_root_result_is_durable_and_hidden_until_requested() -> None:
         RunEnd(
             run="run_1",
             status="succeeded",
-            output=StepOutputRef(step=StepPath.parse("run_1/1")),
+            output=_output(StepPath.parse("run_1/1")),
         ),
         app,
     )
@@ -830,9 +831,9 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
             given={
                 "statement": "run",
                 "runnable": "revise",
-                "placement": {"loop": 0},
                 "source": {"head": "run revise"},
             },
+            placement={"iter": 0},
         ),
         app,
     )
@@ -840,12 +841,9 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
         RunBegin(
             run="run_revise",
             parent=StepPath.parse("run_1/1/0"),
-            input=RunInputRef(),
-            context={
-                "root": "run_1",
-                "runnable": {"kind": "agic", "name": "revise"},
-                "placement": {"loop": 0},
-            },
+            control=ControlRef("run_revise", 0),
+            runnable="agic:revise",
+            placement={"iter": 0},
         ),
         app,
     )
@@ -876,7 +874,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
             step=StepPath.parse("run_revise/0"),
             kind="model",
             status="succeeded",
-            output=(TextPart("revised"),),
+            output=_parts(TextPart("revised")),
         ),
         app,
     )
@@ -886,7 +884,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
             step=StepPath.parse("run_1/1/0"),
             kind="run",
             status="succeeded",
-            output=(TextPart("revised"),),
+            output=_parts(TextPart("revised")),
         ),
         app,
     )
@@ -895,7 +893,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
             step=StepPath.parse("run_1/1"),
             kind="loop",
             status="succeeded",
-            output=(TextPart("revised"),),
+            output=_parts(TextPart("revised")),
             finished_at="2026-01-01T00:00:03Z",
         ),
         app,
@@ -1550,16 +1548,12 @@ def _run_begin(
 ) -> RunBegin:
     return RunBegin(
         run=run_id,
-        input=RunInputRef(index=0),
+        control=ControlRef(run_id, 0),
         parent=(
             StepPath.parse(f"{parent_run_id}/2") if parent_run_id is not None else None
         ),
         started_at="2026-01-01T00:00:00Z",
-        context={
-            "origin": "chat",
-            "root": "run_1",
-            "runnable": {"kind": executable_kind, "name": "test"},
-        },
+        runnable=f"{executable_kind}:test",
     )
 
 
@@ -1567,12 +1561,13 @@ def _run_end(
     *,
     run_id: str = "run_1",
     status: Literal["running", "succeeded", "failed", "canceled"],
+    output_step_index: int = 1,
 ) -> RunEnd:
     return RunEnd(
         run=run_id,
         status=status,
         output=(
-            StepOutputRef(step=StepPath.parse(f"{run_id}/1"))
+            _output(StepPath.parse(f"{run_id}/{output_step_index}"))
             if run_id == "run_1" and status == "succeeded"
             else None
         ),
@@ -1615,7 +1610,7 @@ def _model_step_end(
         step=StepPath.parse(f"{run_id}/{step_index}"),
         kind="model",
         status="succeeded",
-        output=(TextPart(text=output),),
+        output=_parts(TextPart(text=output)),
         noted={"tokens": {"input": 1, "output": 1}},
         finished_at=finished_at,
     )
@@ -1640,7 +1635,7 @@ def _flow_step_end(*, step_index: int = 1) -> StepEnd:
         step=StepPath.parse(f"run_1/{step_index}"),
         kind="par",
         status="succeeded",
-        output=(),
+        output=Local("Json[]", (), "_", 1),
         noted={"shape": "list"},
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -1668,7 +1663,7 @@ def _child_run_step_end(
         step=StepPath.parse(step or f"run_1/{step_index}"),
         kind="run",
         status="succeeded",
-        output=(TextPart(text="done"),),
+        output=_parts(TextPart(text="done")),
         noted={"shape": "item"},
         finished_at="2026-01-01T00:00:02Z",
     )
@@ -1684,7 +1679,7 @@ def _tool_step_end(
         step=StepPath.parse(f"{run_id}/{step_index}"),
         kind="tool",
         status="succeeded",
-        output=(
+        output=_parts(
             ToolCallPart(
                 tool_call_id="call_1",
                 tool_name="shell__execute",

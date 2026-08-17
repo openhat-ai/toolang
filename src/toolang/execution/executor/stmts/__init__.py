@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 async def execute(
     execution: _Execution,
     binding: BoundRun,
-    locals: Mapping[str, Local],
+    locals: dict[str, Local],
     *,
     path: StepPath,
     statement: FlowStmt,

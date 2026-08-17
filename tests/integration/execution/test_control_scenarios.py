@@ -18,10 +18,9 @@ from tests.support.execution_harness import (
     RecordingTool,
     ScriptedModelTurn,
 )
-from toolang.base.types.message import Message, TextPart
+from toolang.base.types.message import Message, TextPart, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
-from toolang.execution.records import RunInputRef, StepOutputRef
-from toolang.execution.types import ControlTiming, StepPath, ThreadPrefix
+from toolang.execution.types import ControlTiming, StepPath, ThreadPrefix, ValuePtr
 from toolang.lang.input import perceive_input
 
 
@@ -141,13 +140,83 @@ agic revise(_: Part[]) -> Part[]:
             assert stored_control.status == "applied"
             steps = harness.store.list_steps(run_id=record.id)
             assert steps[1].input == (
-                StepOutputRef(step=StepPath.parse(f"{record.id}/0")),
-                RunInputRef(index=control.index),
+                ValuePtr.step(StepPath.parse(f"{record.id}/0")),
+                ValuePtr.control(record.id, control.index, "_"),
             )
             assert harness.store.run_output(run_id=record.id) == (TextPart("revised"),)
             assert_run_event_integrity(tracer.events)
             assert [event.type for event in tracer.events].count("run_begin") == 1
             assert [event.type for event in tracer.events].count("run_end") == 1
+
+    asyncio.run(scenario())
+
+
+def test_next_step_steer_replaces_a_pending_tool_batch(tmp_path: Path) -> None:
+    gate = AsyncGate()
+    tool = RecordingTool("math__slow", output={"value": 6})
+    tool_call = ToolCall(
+        tool_call_id="tool-1",
+        call_id="call-1",
+        name=tool.name,
+        input={"value": 3},
+    )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic calculate(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(tool_calls=(tool_call,)),
+                gate=gate,
+            ),
+            ModelCallResult(message=Message.assistant("revised")),
+        ],
+        tools={tool.name: tool},
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            handle = harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="calculate",
+                    primary=perceive_input("calculate"),
+                )
+            )
+            await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
+            control = handle.steer(Message.user("skip tools"), timing="next_step")
+            gate.release()
+            record = await asyncio.wait_for(handle, timeout=2)
+
+            assert record.status == "succeeded"
+            assert tool.calls == []
+            assert [
+                (step.kind, step.status)
+                for step in harness.store.list_steps(run_id=record.id)
+            ] == [("model", "succeeded"), ("model", "succeeded")]
+            messages = harness.adapter.invocations[1].call.messages
+            assert [message.role for message in messages] == [
+                "user",
+                "assistant",
+                "tool",
+                "user",
+            ]
+            canceled = messages[2].parts[0]
+            assert isinstance(canceled, ToolResultPart)
+            assert canceled.tool_call_id == tool_call.tool_call_id
+            assert canceled.error == "canceled by steer"
+            assert messages[3] == Message.user("skip tools")
+            second = harness.store.list_steps(run_id=record.id)[1]
+            assert second.input == (
+                ValuePtr.step(StepPath.parse(f"{record.id}/0"), 0),
+                ValuePtr.control(record.id, control.index, "_"),
+            )
 
     asyncio.run(scenario())
 
@@ -305,18 +374,10 @@ flow sequence(_: Text) -> Text:
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize(
-    ("timing", "consumer_index"),
-    [
-        ("immediate", 1),
-        ("next_step", 1),
-        ("next_call", 2),
-    ],
-)
-def test_steer_timing_selects_the_next_matching_flow_boundary(
+@pytest.mark.parametrize("timing", ["immediate", "next_step", "next_call"])
+def test_flow_runs_reject_steer_controls(
     tmp_path: Path,
     timing: ControlTiming,
-    consumer_index: int,
 ) -> None:
     gate = AsyncGate()
     guidance = Message.user(f"guidance for {timing}")
@@ -355,25 +416,12 @@ flow sequence(_: Text) -> Text:
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
-            control = handle.steer(guidance, timing=timing)
+            with pytest.raises(ValueError, match="steer controls require an agic run"):
+                handle.steer(guidance, timing=timing)
             gate.release()
             record = await asyncio.wait_for(handle, timeout=2)
 
             assert record.status == "succeeded"
-            assert harness.adapter.invocations[1].call.messages == [guidance]
-            stored = harness.store.get_run_control(
-                run_id=record.id,
-                index=control.index,
-            )
-            assert stored is not None and stored.status == "applied"
-            referencing_steps = [
-                step
-                for step in harness.store.list_steps(run_id=record.id)
-                if step.parent is None
-                and RunInputRef(index=control.index) in step.input
-            ]
-            assert referencing_steps[0].index == consumer_index
-            assert stored.finished_at == referencing_steps[0].started_at
             assert harness.store.run_output_text(run_id=record.id) == "final"
 
     asyncio.run(scenario())
@@ -430,7 +478,6 @@ agic revise(_: Text) -> Text:
             assert record.status == "succeeded"
             assert harness.adapter.invocations[1].call.messages == [
                 Message.user("start"),
-                Message.assistant("draft"),
                 Message.user("guidance 1"),
                 Message.user("guidance 2"),
                 Message.user("guidance 3"),
@@ -438,10 +485,10 @@ agic revise(_: Text) -> Text:
             assert [control.index for control in controls] == [1, 2, 3]
             second_step = harness.store.list_steps(run_id=record.id)[1]
             assert second_step.input == (
-                StepOutputRef(step=StepPath.parse(f"{record.id}/0")),
-                RunInputRef(index=1),
-                RunInputRef(index=2),
-                RunInputRef(index=3),
+                ValuePtr.control(record.id, 0, "_"),
+                ValuePtr.control(record.id, 1, "_"),
+                ValuePtr.control(record.id, 2, "_"),
+                ValuePtr.control(record.id, 3, "_"),
             )
             stored_controls = [
                 harness.store.get_run_control(

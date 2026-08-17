@@ -328,8 +328,10 @@ class _ScriptedRunRenderer:
         if isinstance(event, StepEnd):
             if event.kind != "model" or event.step in self._text_delta_steps:
                 return
+            value = event.output.value if event.output is not None else ()
+            parts = value if isinstance(value, tuple | list) else ()
             text = message_text(
-                tuple(part for part in event.output if isinstance(part, TextPart))
+                tuple(part for part in parts if isinstance(part, TextPart))
             ).strip()
             if text:
                 self._write(text)

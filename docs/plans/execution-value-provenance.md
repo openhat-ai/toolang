@@ -1,0 +1,234 @@
+# Define Execution Value Provenance
+
+## Goal
+
+Represent accepted run arguments, step dependencies, and run/step results with
+typed locals and immutable value pointers. Durable records must preserve the
+adopted value type, execution dimension, source control, and transformation
+boundaries without copying values between controls, child runs, and steps.
+
+## Success Criteria
+
+- Language-owned values use `T` for an arbitrary type and `S` for an authored
+  Toolang `struct`; execution modules do not leak into `toolang.lang`.
+- Every accepted run preparation stores resolved resources, limits, runnable,
+  model, and locals in one typed control payload.
+- A run points to its current preparation control instead of duplicating an
+  input, while a step records only pointers to values available at step start.
+- Concrete values are stored once. Aliases, child arguments, selection,
+  ordering, and dimension changes use immutable value pointers.
+- Model, tool, scatter, keep, map, rank, and repeat records use the canonical
+  local shapes defined below.
+- Steer timing is applied at explicit model boundaries, including valid model
+  history when outstanding tool calls are skipped.
+- New control and execution-record schemas round-trip through SQLite, events,
+  APIs, and inspection, and the default verification suite passes.
+
+## Scope
+
+This feature covers language value vocabulary, executor locals and pointers,
+typed control payloads, the unified controls table, run and step records,
+events, SQLite codecs, projections, retry/rerun/child derivation, steer timing,
+repeat locals, and acceptance tests.
+
+It does not type all `given` and `noted` variants, rename the public
+`RunControlRecord` and `ThreadControlRecord` concepts, redesign resource
+selection, or migrate legacy control and record tables. Caller-facing request
+fields remain `request_id`; durable storage uses `request`.
+
+## Values And Locals
+
+The language package owns concrete `Value` data. Type descriptions use `T` for
+an arbitrary type and `S` for a declared Toolang `struct`, alongside `Text`,
+`Number`, `Boolean`, `Json`, `Part`, concrete part variants, and `T[]`.
+`ToolCallPart` and `ToolResultPart` are concrete `Part` subtypes. `Json` is the
+unknown type; an item of `Json[]` may have any supported value type.
+
+Execution owns these immutable types:
+
+```python
+@dataclass(frozen=True, slots=True)
+class ValuePtr:
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class Local:
+    type: str
+    value: Value | ValuePtr
+    name: str | None = None
+    dim: Literal[0, 1] = 0
+```
+
+`Local.type` is the complete type after pointer resolution. `dim=0` treats the
+complete value as one item. `dim=1` requires a type ending in `[]` and treats
+that outer array as the execution collection; its item type is obtained by
+removing the rightmost `[]`. Thus `Part[]/dim=0` is one model response,
+`Part[]/dim=1` is a collection of parts, and `Part[][]/dim=1` is a collection
+whose items are each `Part[]`.
+
+`Local.value` may be concrete, one pointer, or an array containing concrete
+items and pointers. Pointer/concrete unions encode pointers as
+`{"$ptr": "..."}`. `$ptr` is reserved by Toolang built-in values and authored
+structs; there is no literal escape. Fields whose schema accepts only pointers
+encode their canonical pointer strings directly.
+
+Control locals must have unique names. `_` is the primary argument. A step or
+run output may use `name=None` to produce a value without updating the runtime
+local table.
+
+## Value Pointers
+
+Canonical anchors are:
+
+```text
+run_id             RunRecord.output
+run_id.1.2         StepRecord.output
+run_id^0/name      named Local in control index 0
+```
+
+Step paths use dots. A trailing RFC 6901 JSON Pointer addresses the resolved
+semantic value, for example `run_id.1/0` for the first output item and
+`run_id^0/_/1` for the second primary control item. A control anchor must name
+a local; bare `run_id^0` is invalid. Run IDs reserve `.`, `^`, `/`, and `@`.
+
+In value contexts, run and step anchors resolve their output and control
+anchors resolve the named local. In error contexts, run and step anchors
+resolve their error and control anchors are invalid. Pointers never address a
+step input. Value and error resolution use separate entry points so the
+pointer syntax needs no durable field selector.
+
+## Controls
+
+One `controls` table stores both run and thread controls. Its primary key is
+`(target, index)`; run and thread IDs must therefore be globally disjoint. The
+table stores `scope`, `target`, `index`, `kind`, `request`, `status`, `timing`,
+`error`, `payload`, timestamps, `_claimed`, and `_revision`. `scope` is derived
+from kind and is not part of the primary key. `request` is globally unique when
+present. `_claimed` coordinates apply versus revoke; `_revision` is the
+monotonic polling cursor for visible changes.
+
+The common record fields are `target`, `index`, `kind`, `payload`, `request`,
+`status`, `timing`, `error`, `created_at`, and `finished_at`. Timing defaults to
+`immediate`; statuses are `pending`, `applied`, `wontapply`, and `revoked`.
+
+Preparation payloads use this order:
+
+```text
+resources, limits, runnable, model, locals, rerun_from/retry_from
+```
+
+Start stores the first five values. Rerun adds `rerun_from`; retry adds
+`retry_from` and permits `locals=None` for inheritance while `()` means an
+explicit empty argument set. Runnable and model are non-empty concrete values
+resolved from defaults and overrides before acceptance. `RunBindings` is
+flattened into `runnable` and `model`. Agent ceilings and state fingerprints
+are not durable run truth.
+
+Steer and stop payloads contain only locals. Executor validation requires steer
+to provide a concrete primary `Part[]` and stop to provide no local or one
+concrete primary `Text`. Create has an empty payload. Fork stores `fork_from`
+and `fork_at`. Rewind stores `rewind_from` and `rewind_if`; `rewind_if` is an
+optimistic check against the target thread's current control head index.
+
+## Run And Step Records
+
+`RunRecord.control` references the current preparation control. Start, child
+start, and rerun-created runs point to their accepted control; retry updates the
+same run to its newest retry control. Steer and stop do not change this field.
+The run does not duplicate input data: its arguments are the referenced
+payload locals. `RunBegin` also uses `control`; `RunEnd` has no input field.
+
+Run records contain identity, parent, thread, control, one optional Local
+output, placement, status, error, `ejected_by`, and timestamps. They do not
+store context, root, or attempt. `parent is None` defines a root.
+
+Step records contain path, kind, `input: tuple[ValuePtr, ...]`, one optional
+Local output, placement, the currently open `given` and `noted` mappings,
+status, error, `ejected_by`, and timestamps. Input lists the durable values
+that existed and were read at `StepBegin`; it is not a complete invocation and
+does not repeat Local metadata. Exact model requests remain in `given.call`.
+Values created inside the step are represented by nested records and the final
+output pointer.
+
+Placement is shared by runs and steps and may contain `item`, `items`, `lane`,
+`lanes`, `iter`, and `iters`. `iter=-1` identifies a repeat control check.
+`ejected_by` is a control reference. Errors are a direct string or a ValuePtr
+to a run/step error.
+
+## Execution Semantics
+
+The executor maintains one local table per flow. Controls establish locals;
+step outputs update the binding named by their Local. Consumers point to the
+most recent Local that established the relevant type and dimension instead of
+collapsing the pointer chain to the original concrete value.
+
+Canonical outputs are:
+
+- model: `Local(type="Part[]", value=parts, name="_", dim=0)`;
+- tool: input points to one `ToolCallPart`, output is
+  `Local(type="ToolResultPart", ..., name=None, dim=0)`;
+- scatter: a pointer to one `Part[]` with `dim=1`, without copying parts;
+- keep/rank: `Local(type="T[]", value=[pointers...], ..., dim=1)`;
+- map/parallel: child control locals point to source items, and the parent
+  collection points to child run outputs.
+
+Repeat body steps update the current flow local table directly. Primary and
+named bindings survive iterations and remain visible after repeat. The repeat
+wrapper is structural and has no output. Zero iterations leave locals
+unchanged. Known counts populate `iter` and `iters`; an until result uses
+`name=None` and `iter=-1` because it affects control flow rather than locals.
+
+Steer applies only to agic runs, whether root or child. `immediate` interrupts
+the active step and starts a model step. `next_step` waits for the active step
+to finish, replaces the normally scheduled next step with a model step, and
+skips all outstanding tool calls. `next_call` waits for the normal next model
+boundary. Before a replacement model call, every skipped call receives a
+synthetic canceled `ToolResultPart` in the exact `given.call`; no tool step is
+created for a call that never started. The model step input points to the
+skipped ToolCallParts and steer control locals, and its durable StepBegin
+atomically marks the steer applied.
+
+## Implementation Touchpoints
+
+- `src/toolang/lang/input.py` and a language-owned value vocabulary module;
+- `src/toolang/execution/types.py`, `records.py`, `events.py`, `schemas.py`, and
+  `store.py`;
+- `src/toolang/execution/executor`, including model/tool steps, flow statements,
+  child preparation, retry, steer, and repeat;
+- execution, store, schema, API, inspection, CLI, and integration tests.
+
+## Acceptance Tests
+
+- Local and ValuePtr codecs round-trip scalar, struct, part, nested array,
+  mixed-pointer collection, heterogeneous Json, and invalid type/dim cases.
+- Root, child, rerun, and repeated retry records point to the correct control
+  and reconstruct the adopted locals without copied values.
+- Model part pointers address ToolCallParts; tool results and later model calls
+  preserve valid history.
+- Scatter changes only dimension; keep and rank select or reorder by pointer;
+  map and parallel outputs point to child values.
+- Repeat updates primary and named locals across iterations, records no wrapper
+  output, preserves zero-iteration state, and reconstructs visible locals.
+- All steer timings work for root and child agics, flow steer is rejected, and
+  next-step steering cancels outstanding multi-tool batches without tool-step
+  records.
+- Unified control status transitions, request uniqueness, claim/revoke races,
+  revisions, fork, and rewind compare-and-swap behavior are covered.
+- `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`, and
+  `uv run pytest` pass.
+
+## Risks
+
+- This is an intentional durable-schema break; all repository consumers must
+  update atomically and existing databases are not migrated.
+- Pointer resolution must reject cycles, missing records, type mismatches, and
+  invalid JSON paths without partially updating projections.
+- Retry and repeat reconstruction depend on append-only ordering and the newest
+  non-ejected Local for each binding.
+- Model adapters require complete tool-call/result pairing even when steering
+  skips execution; synthetic results must be deterministic and provider-neutral.
+
+## Open Questions
+
+None.

@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from multiprocessing import get_context
 from pathlib import Path
-import sqlite3
 import threading
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
-from toolang.base.types.message import ImagePart, Message, TextPart, message_text
-from toolang.base.types.policy import RunBindings, RunLimits
+from toolang.base.types.message import ImagePart, Message, TextPart
+from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCall
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
@@ -33,11 +31,21 @@ from toolang.execution.executor.common import BoundRun, Local
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.runs import agic as agic_run
 from toolang.execution.history import RunHistory
-from toolang.execution.records import RunInputRef, StepOutputRef, ThreadControlRef
+from toolang.execution.records import (
+    ForkControlPayload,
+    StartControlPayload,
+    ThreadControlRef,
+)
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import StepPath, ThreadPrefix
+from toolang.execution.types import (
+    ControlRef,
+    Local as RecordLocal,
+    StepPath,
+    ThreadPrefix,
+    ValuePtr,
+)
 from toolang.lang.input import RunnableInput
 from toolang.lang.ast import (
     AgicDecl,
@@ -216,22 +224,23 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert tracer.thread_ids == {owner_thread}
     start = store.get_run_control(run_id=record.id, index=0)
     assert start is not None and start.status == "applied"
-    assert start.bindings == RunBindings(runnable="flow:pipeline")
-    assert start.limits == _setup().limits
-    assert start.input == RunnableInput()
-    assert start.resources is not None
-    assert start.context == {}
+    assert isinstance(start.payload, StartControlPayload)
+    assert start.payload.runnable == "flow:pipeline"
+    assert start.payload.model == "none"
+    assert start.payload.limits == _setup().limits
+    assert start.payload.locals == ()
+    assert start.payload.resources is not None
     detail = RunHistory(store).get_run(record.id)
     assert detail is not None
     assert detail.runnable_kind == "flow"
     assert detail.runnable_name == "pipeline"
-    assert detail.input == Message(role="user")
+    assert detail.input_text == ""
     assert [control.index for control in detail.controls] == [0]
-    assert detail.controls[0].input is not None
-    assert detail.input is not None
-    assert detail.controls[0].input.primary == detail.input.percept
+    assert detail.controls[0].payload == start.payload
     assert [step.kind for step in detail.steps] == ["system"]
-    assert detail.steps[0].output == [TextPart(text="done")]
+    assert detail.steps[0].output == RecordLocal(
+        "Part[]", (TextPart(text="done"),), "_", 0
+    )
     assert not hasattr(detail.steps[0], "message")
     asyncio.run(executor.shutdown())
 
@@ -707,6 +716,7 @@ def test_parallel_children_preserve_input_and_output_types(
         thread="term_test",
         bindings=RunBindings(runnable="flow:parent"),
         input=RunnableInput(primary=Message.user("input").percept),
+        control_locals=(),
         state=state,
         setup=setup,
         agent_resources=resolve_agent_resources(setup, state, AgentCeiling()),
@@ -762,6 +772,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
         thread="term_test",
         bindings=RunBindings(runnable="flow:parent"),
         input=RunnableInput(primary=Message.user("input").percept),
+        control_locals=(),
         state=state,
         setup=setup,
         agent_resources=resolve_agent_resources(setup, state, AgentCeiling()),
@@ -842,8 +853,8 @@ def test_flow_step_events_carry_complete_input_references(tmp_path: Path) -> Non
         if step.parent is None
     ]
     assert [step.input for step in steps] == [
-        (RunInputRef(),),
-        (StepOutputRef(step=StepPath.parse(f"{root.id}/0")),),
+        (),
+        (ValuePtr.step(StepPath.parse(f"{root.id}/0")),),
     ]
     assert [step.given["source"] for step in steps] == [
         {"line": 4, "head": "run child"},
@@ -852,67 +863,29 @@ def test_flow_step_events_carry_complete_input_references(tmp_path: Path) -> Non
     asyncio.run(executor.shutdown())
 
 
-def test_steer_control_is_finished_when_step_consumes_it(tmp_path: Path) -> None:
-    flow = FlowDecl(
-        name="pipeline",
-        stmts=(LetStmt(value="default", span=Span(line=2)),),
-        span=Span(line=1),
-    )
+def test_flow_run_rejects_steer_controls(tmp_path: Path) -> None:
     executor = _executor(tmp_path)
     store = executor.store
-
-    class SteeringTracer(RunTracer):
-        control_index: int | None = None
-
-        async def on_event(self, event: RunEvent) -> None:
-            if isinstance(event, RunBegin) and self.control_index is None:
-                control = executor.steer(
-                    run_id=event.run,
-                    message=Message.user("steered"),
-                    timing="next_step",
-                    request_id="steer-1",
-                )
-                self.control_index = control.index
-
-    tracer = SteeringTracer()
-    record = asyncio.run(
-        _start(executor, _setup(), _state(flow), flow.name, tracer=tracer)
+    store.create_thread(thread_id="term_flow")
+    accept_run_start(
+        store,
+        run_id="run_flow",
+        parent=None,
+        thread="term_flow",
+        input=Message.user("hello"),
+        context={},
+        request_id=None,
+        created_at="2026-01-01T00:00:00Z",
+        bindings=RunBindings(runnable="flow:pipeline", model="none"),
     )
 
-    assert tracer.control_index is not None
-    control = store.get_run_control(run_id=record.id, index=tracer.control_index)
-    assert control is not None and control.status == "applied"
-    steps = store.list_steps(run_id=record.id)
-    assert steps[0].input == (RunInputRef(index=tracer.control_index),)
-    asyncio.run(executor.shutdown())
-
-
-def test_unreachable_control_fails_when_run_ends(tmp_path: Path) -> None:
-    flow = FlowDecl(name="pipeline", span=Span(line=1))
-    executor = _executor(tmp_path)
-    store = executor.store
-
-    class SteeringTracer(RunTracer):
-        control_index: int | None = None
-
-        async def on_event(self, event: RunEvent) -> None:
-            if isinstance(event, RunBegin):
-                self.control_index = executor.steer(
-                    run_id=event.run,
-                    message=Message.user("unused"),
-                    timing="next_call",
-                ).index
-
-    tracer = SteeringTracer()
-    record = asyncio.run(
-        _start(executor, _setup(), _state(flow), flow.name, tracer=tracer)
-    )
-
-    assert tracer.control_index is not None
-    control = store.get_run_control(run_id=record.id, index=tracer.control_index)
-    assert control is not None
-    assert control.status == "wontapply"
-    assert control.error == "run ended before the control could be applied"
+    with pytest.raises(ValueError, match="steer controls require an agic run"):
+        executor.steer(
+            run_id="run_flow",
+            message=Message.user("steered"),
+            timing="next_step",
+        )
+    assert len(store.list_run_controls(run_id="run_flow")) == 1
     asyncio.run(executor.shutdown())
 
 
@@ -945,8 +918,7 @@ def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
         run_id="run_test",
         kind="steer",
         timing="next_step",
-        message=Message.user("continue"),
-        context={},
+        locals=(RecordLocal("Part[]", Message.user("continue").parts, "_", 0),),
         request_id="steer-1",
         created_at="2026-01-01T00:00:01Z",
     )
@@ -955,8 +927,7 @@ def test_run_control_request_is_unique_across_runs(tmp_path: Path) -> None:
             run_id="run_other",
             kind="steer",
             timing="next_step",
-            message=Message.user("continue"),
-            context={},
+            locals=(RecordLocal("Part[]", Message.user("continue").parts, "_", 0),),
             request_id="steer-1",
             created_at="2026-01-01T00:00:03Z",
         )
@@ -984,8 +955,7 @@ def test_run_control_acceptance_rejects_invalid_runtime_values(tmp_path: Path) -
             run_id="run_test",
             kind=cast(Any, "start"),
             timing="immediate",
-            message=Message.user("duplicate start"),
-            context={},
+            locals=(),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -994,18 +964,16 @@ def test_run_control_acceptance_rejects_invalid_runtime_values(tmp_path: Path) -
             run_id="run_test",
             kind="stop",
             timing=cast(Any, "later"),
-            message=None,
-            context={},
+            locals=(),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
-    with pytest.raises(ValueError, match="steer control requires only a message"):
+    with pytest.raises(ValueError, match="steer control requires one primary local"):
         store.accept_run_control(
             run_id="run_test",
             kind="steer",
             timing="next_step",
-            message=None,
-            context={},
+            locals=(),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -1032,7 +1000,7 @@ def test_internal_event_projection_does_not_update_control_status(
     sink.on_event(
         RunBegin(
             run="run_test",
-            input=RunInputRef(index=0),
+            control=ControlRef("run_test", 0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1128,7 +1096,7 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
     sink.on_event(
         RunBegin(
             run=anchor_id,
-            input=RunInputRef(index=0),
+            control=ControlRef(anchor_id, 0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1153,7 +1121,7 @@ def test_thread_fork_and_rewind_use_control_refs_without_copying_runs(
     rewound = store.get_thread(thread_id=created)
     anchor = store.get_run(run_id=anchor_id)
     assert anchor is not None and rewound is not None
-    assert anchor.ejected == rewound.head
+    assert anchor.ejected_by == rewound.head
     assert [event.type for event in listener.events] == [
         "thread_created",
         "thread_forked",
@@ -1184,7 +1152,7 @@ def test_thread_fork_rejects_duplicate_request_without_starting_runs(
     sink.on_event(
         RunBegin(
             run="run_anchor",
-            input=RunInputRef(index=0),
+            control=ControlRef("run_anchor", 0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1245,7 +1213,7 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
         sink.on_event(
             RunBegin(
                 run=run_id,
-                input=RunInputRef(index=0),
+                control=ControlRef(run_id, 0),
                 started_at=timestamp,
             )
         )
@@ -1257,10 +1225,10 @@ def test_rewind_uses_durable_acceptance_order_instead_of_timestamps(
     anchor = store.get_run(run_id="run_anchor")
     after = store.get_run(run_id="run_after")
     rewound = store.get_thread(thread_id=created)
-    assert before is not None and before.ejected is None
+    assert before is not None and before.ejected_by is None
     assert rewound is not None
-    assert anchor is not None and anchor.ejected == rewound.head
-    assert after is not None and after.ejected == rewound.head
+    assert anchor is not None and anchor.ejected_by == rewound.head
+    assert after is not None and after.ejected_by == rewound.head
     asyncio.run(executor.shutdown())
 
 
@@ -1284,7 +1252,7 @@ def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
         sink.on_event(
             RunBegin(
                 run=run_id,
-                input=RunInputRef(index=0),
+                control=ControlRef(run_id, 0),
                 started_at="2026-01-01T00:00:01Z",
             )
         )
@@ -1303,7 +1271,7 @@ def test_rewind_can_trim_inherited_fork_history(tmp_path: Path) -> None:
         run.id for run in store.list_thread_history_chronological(thread_id=forked)
     ] == ["run_a"]
     source_anchor = store.get_run(run_id="run_b")
-    assert source_anchor is not None and source_anchor.ejected is None
+    assert source_anchor is not None and source_anchor.ejected_by is None
     asyncio.run(executor.shutdown())
 
 
@@ -1327,7 +1295,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
         sink.on_event(
             RunBegin(
                 run=run_id,
-                input=RunInputRef(index=0),
+                control=ControlRef(run_id, 0),
                 started_at="2026-01-01T00:00:01Z",
             )
         )
@@ -1335,7 +1303,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
             StepBegin(
                 step=StepPath.parse("run_root/0"),
                 kind="run",
-                input=(RunInputRef(index=0),),
+                input=(ValuePtr.control("run_root", 0, "_"),),
                 started_at="2026-01-01T00:00:02Z",
             )
         )
@@ -1353,7 +1321,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     sink.on_event(
         RunBegin(
             run="run_child",
-            input=RunInputRef(index=0),
+            control=ControlRef("run_child", 0),
             started_at="2026-01-01T00:00:04Z",
         )
     )
@@ -1383,7 +1351,9 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     forked = manager.fork(thread_id=source)
     control = store.get_thread_control(thread_id=forked, index=0)
 
-    assert control is not None and control.anchor == "run_root"
+    assert control is not None
+    assert isinstance(control.payload, ForkControlPayload)
+    assert control.payload.fork_at == "run_root"
     asyncio.run(executor.shutdown())
 
 
@@ -1394,8 +1364,7 @@ def _accept_controls(db_path: str, run_id: str, offset: int, count: int) -> list
             run_id=run_id,
             kind="steer",
             timing="next_step",
-            message=Message.user(str(index)),
-            context={},
+            locals=(RecordLocal("Part[]", Message.user(str(index)).parts, "_", 0),),
             request_id=f"worker-{offset + index}",
             created_at="2026-01-01T00:00:01Z",
         ).index
@@ -1439,8 +1408,7 @@ def _accept_remote_stop(db_path: str, run_id: str) -> None:
         run_id=run_id,
         kind="stop",
         timing="immediate",
-        reason="remote stop",
-        context={},
+        locals=(RecordLocal("Text", "remote stop", "_", 0),),
         request_id="remote-stop",
         created_at="2026-01-01T00:00:01Z",
     )
@@ -1455,7 +1423,6 @@ def _rewind_thread(db_path: str, request_id: str) -> int | None:
             anchor="run_thread_anchor",
             request_id=request_id,
             expected_head=ThreadControlRef("term_thread_controls", 0),
-            context={},
             created_at="2026-01-01T00:00:03Z",
         )
         return control.index
@@ -1535,7 +1502,7 @@ def test_remote_process_can_stop_an_owned_run(
         await runtime.emit(
             RunBegin(
                 run=binding.run_id,
-                input=RunInputRef(index=0),
+                control=ControlRef(binding.run_id, 0),
                 started_at="2026-01-01T00:00:00Z",
             )
         )
@@ -1590,7 +1557,7 @@ def test_executor_shutdown_cancels_and_persists_active_runs(
         await runtime.emit(
             RunBegin(
                 run=binding.run_id,
-                input=RunInputRef(index=0),
+                control=ControlRef(binding.run_id, 0),
                 started_at="2026-01-01T00:00:00Z",
             )
         )
@@ -1669,7 +1636,7 @@ def test_thread_control_indexes_and_head_are_process_safe(tmp_path: Path) -> Non
     sink.on_event(
         RunBegin(
             run="run_thread_anchor",
-            input=RunInputRef(index=0),
+            control=ControlRef("run_thread_anchor", 0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1716,7 +1683,7 @@ def test_private_event_projector_persists_run_and_step_records(
     sink.on_event(
         RunBegin(
             run="run_test",
-            input=RunInputRef(index=0),
+            control=ControlRef("run_test", 0),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -1724,7 +1691,7 @@ def test_private_event_projector_persists_run_and_step_records(
         StepBegin(
             step=StepPath.parse("run_test/0"),
             kind="system",
-            input=(RunInputRef(index=0),),
+            input=(ValuePtr.control("run_test", 0, "_"),),
             started_at="2026-01-01T00:00:02Z",
         )
     )
@@ -1733,7 +1700,7 @@ def test_private_event_projector_persists_run_and_step_records(
             step=StepPath.parse("run_test/0"),
             kind="system",
             status="succeeded",
-            output=(TextPart(text="done"),),
+            output=RecordLocal("Part[]", (TextPart(text="done"),), "_", 0),
             finished_at="2026-01-01T00:00:03Z",
         )
     )
@@ -1741,7 +1708,9 @@ def test_private_event_projector_persists_run_and_step_records(
         RunEnd(
             run="run_test",
             status="succeeded",
-            output=StepOutputRef(step=StepPath.parse("run_test/0")),
+            output=RecordLocal(
+                "Part[]", ValuePtr.step(StepPath.parse("run_test/0")), "_", 0
+            ),
             finished_at="2026-01-01T00:00:04Z",
         )
     )
@@ -1751,311 +1720,6 @@ def test_private_event_projector_persists_run_and_step_records(
     assert store.run_output_text(run_id="run_test") == "done"
     assert len(store.list_steps(run_id="run_test")) == 1
     store.close()
-
-
-def test_run_store_migrates_schema_without_deleting_history(tmp_path: Path) -> None:
-    path = tmp_path / "runs.db"
-    store = RunStore(path)
-    store.create_thread(thread_id="term_test")
-    accept_run_start(
-        store,
-        run_id="run_test",
-        parent=None,
-        thread="term_test",
-        input=Message.user("hello"),
-        context={"runnable": {"kind": "flow", "name": "pipeline"}},
-        request_id="start-test",
-        created_at="2026-01-01T00:00:00Z",
-    )
-    store.close()
-
-    connection = sqlite3.connect(path)
-    connection.execute("DROP INDEX idx_run_controls_request")
-    connection.execute("DROP INDEX idx_thread_controls_request")
-    connection.execute("ALTER TABLE run_controls RENAME COLUMN request TO request_id")
-    connection.execute(
-        "ALTER TABLE thread_controls RENAME COLUMN request TO request_id"
-    )
-    connection.execute(
-        """
-        CREATE UNIQUE INDEX idx_run_controls_request
-        ON run_controls(run, request_id)
-        WHERE request_id IS NOT NULL
-        """
-    )
-    connection.execute("PRAGMA user_version=13")
-    connection.commit()
-    connection.close()
-
-    reopened = RunStore(path)
-    try:
-        assert reopened.get_thread(thread_id="term_test") is not None
-        assert reopened.get_run(run_id="run_test") is not None
-        assert len(reopened.list_run_controls(run_id="run_test")) == 1
-    finally:
-        reopened.close()
-
-
-def test_run_store_migrates_v22_run_preparation_snapshots(tmp_path: Path) -> None:
-    path = tmp_path / "runs.db"
-    store = RunStore(path)
-    store.create_thread(thread_id="term_v22")
-    accept_run_start(
-        store,
-        run_id="run_v22",
-        parent=None,
-        thread="term_v22",
-        input=Message.user("hello"),
-        context={
-            "runnable": {"kind": "flow", "name": "pipeline"},
-            "model": "provider:model",
-            "args": {"count": 3},
-        },
-        request_id="start-v22",
-        created_at="2026-01-01T00:00:00Z",
-    )
-    store.close()
-
-    connection = sqlite3.connect(path)
-    connection.execute(
-        """
-        UPDATE run_controls
-        SET input = ?, bindings = NULL, limits = NULL, resources = NULL,
-            context = ?, message = NULL, reason = NULL
-        WHERE run = ? AND "index" = 0
-        """,
-        (
-            json.dumps(Message.user("hello").to_data()),
-            json.dumps({"limits": {"agic_model_calls": 7}}),
-            "run_v22",
-        ),
-    )
-    connection.execute("PRAGMA user_version=22")
-    connection.commit()
-    connection.close()
-
-    reopened = RunStore(path)
-    try:
-        control = reopened.get_run_control(run_id="run_v22", index=0)
-        assert control is not None
-        assert control.input == RunnableInput.from_values(
-            primary=Message.user("hello").percept,
-            named={"count": 3},
-        )
-        assert control.bindings == RunBindings(
-            model="provider:model",
-            runnable="flow:pipeline",
-        )
-        assert control.limits == RunLimits(agic_model_calls=7)
-        assert control.resources is None
-        assert control.context == {}
-    finally:
-        reopened.close()
-
-
-def test_run_store_removes_legacy_thread_control_error_without_deleting_history(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "runs.db"
-    store = RunStore(path)
-    store.create_thread(thread_id="term_test")
-    store.close()
-
-    connection = sqlite3.connect(path)
-    connection.execute("ALTER TABLE thread_controls ADD COLUMN error TEXT")
-    connection.execute("PRAGMA user_version=17")
-    connection.commit()
-    connection.close()
-
-    reopened = RunStore(path)
-    try:
-        assert reopened.get_thread(thread_id="term_test") is not None
-        assert len(reopened.list_thread_controls(thread_id="term_test")) == 1
-    finally:
-        reopened.close()
-
-    connection = sqlite3.connect(path)
-    try:
-        columns = {
-            str(row[1])
-            for row in connection.execute(
-                "PRAGMA table_info(thread_controls)"
-            ).fetchall()
-        }
-        assert "error" not in columns
-    finally:
-        connection.close()
-
-
-def test_run_store_migrates_step_and_model_text_names_in_place(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "runs.db"
-    store = RunStore(path)
-    store.create_thread(thread_id="term_test")
-    accept_run_start(
-        store,
-        run_id="run_test",
-        parent=None,
-        thread="term_test",
-        input=Message.user("hello"),
-        context={"runnable": {"kind": "flow", "name": "pipeline"}},
-        request_id=None,
-        created_at="2026-01-01T00:00:00Z",
-    )
-    sink = _PersistSink(store)
-    sink.on_event(
-        StepBegin(
-            step=StepPath.parse("run_test/0"),
-            kind="system",
-            given={"runtime": "test"},
-            started_at="2026-01-01T00:00:01Z",
-        )
-    )
-    sink.on_event(
-        StepEnd(
-            step=StepPath.parse("run_test/0"),
-            kind="system",
-            status="succeeded",
-            noted={"shape": "item"},
-            finished_at="2026-01-01T00:00:02Z",
-        )
-    )
-    text_hash = _capture_model_text(store, "stable")
-    store.close()
-
-    connection = sqlite3.connect(path)
-    connection.execute("ALTER TABLE steps RENAME COLUMN given TO context")
-    connection.execute("ALTER TABLE steps RENAME COLUMN noted TO detail")
-    connection.execute("ALTER TABLE model_texts RENAME TO prompts")
-    connection.execute("PRAGMA user_version=15")
-    connection.commit()
-    connection.close()
-
-    reopened = RunStore(path)
-    try:
-        step = reopened.list_steps(run_id="run_test")[0]
-        assert step.given == {"runtime": "test"}
-        assert step.noted == {"shape": "item"}
-        assert reopened.get_model_text(text_hash=text_hash) == "stable"
-    finally:
-        reopened.close()
-
-
-def test_run_store_migrates_v16_model_texts_in_place(tmp_path: Path) -> None:
-    path = tmp_path / "runs.db"
-    store = RunStore(path)
-    text_hash = _capture_model_text(store, "stable")
-    store.close()
-
-    connection = sqlite3.connect(path)
-    connection.execute("ALTER TABLE model_texts RENAME TO templates")
-    connection.execute("PRAGMA user_version=16")
-    connection.commit()
-    connection.close()
-
-    reopened = RunStore(path)
-    try:
-        assert reopened.get_model_text(text_hash=text_hash) == "stable"
-    finally:
-        reopened.close()
-
-
-def test_run_store_migrates_v19_step_identity_without_losing_history(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "runs.db"
-    store = RunStore(path)
-    store.create_thread(thread_id="term_test")
-    accept_run_start(
-        store,
-        run_id="run_test",
-        parent=None,
-        thread="term_test",
-        input=Message.user("hello"),
-        context={},
-        request_id=None,
-        created_at="2026-01-01T00:00:00Z",
-    )
-    sink = _PersistSink(store)
-    for step_path in (
-        StepPath.parse("run_test/0"),
-        StepPath.parse("run_test/0/1"),
-    ):
-        sink.on_event(
-            StepBegin(
-                step=step_path,
-                kind="system",
-                started_at="2026-01-01T00:00:01Z",
-            )
-        )
-        sink.on_event(
-            StepEnd(
-                step=step_path,
-                kind="system",
-                status="succeeded",
-                output=(TextPart(text=step_path.local),),
-                finished_at="2026-01-01T00:00:02Z",
-            )
-        )
-    store.close()
-
-    connection = sqlite3.connect(path)
-    rows = connection.execute(
-        """
-        SELECT run, path, kind, input, output, given, noted, status, error,
-               created_at, started_at, finished_at
-        FROM steps ORDER BY path
-        """
-    ).fetchall()
-    connection.execute("ALTER TABLE steps RENAME TO current_steps")
-    connection.execute(
-        """
-        CREATE TABLE steps (
-            parent TEXT NOT NULL,
-            "index" INTEGER NOT NULL,
-            kind TEXT NOT NULL,
-            input TEXT NOT NULL,
-            output TEXT NOT NULL,
-            given TEXT NOT NULL,
-            noted TEXT NOT NULL,
-            status TEXT NOT NULL,
-            error TEXT,
-            created_at TEXT NOT NULL,
-            started_at TEXT NOT NULL,
-            finished_at TEXT,
-            PRIMARY KEY(parent, "index")
-        )
-        """
-    )
-    for row in rows:
-        step_path = StepPath.from_local(str(row[0]), str(row[1]))
-        connection.execute(
-            "INSERT INTO steps VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                str(step_path.parent)
-                if step_path.parent is not None
-                else step_path.run,
-                step_path.index,
-                *row[2:],
-            ),
-        )
-    connection.execute("DROP TABLE current_steps")
-    connection.execute("PRAGMA user_version=19")
-    connection.commit()
-    connection.close()
-
-    reopened = RunStore(path)
-    try:
-        assert [step.path for step in reopened.list_steps(run_id="run_test")] == [
-            StepPath.parse("run_test/0"),
-            StepPath.parse("run_test/0/1"),
-        ]
-        assert [
-            message_text(step.output) for step in reopened.list_steps(run_id="run_test")
-        ] == ["0", "0/1"]
-    finally:
-        reopened.close()
 
 
 def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
@@ -2076,7 +1740,7 @@ def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
         sink.on_event(
             RunBegin(
                 run=run_id,
-                input=RunInputRef(index=0),
+                control=ControlRef(run_id, 0),
                 started_at="2026-01-01T00:00:01Z",
             )
         )
@@ -2092,7 +1756,7 @@ def test_step_queries_treat_run_ids_as_literal_prefixes(tmp_path: Path) -> None:
                 step=StepPath.parse(f"{run_id}/0"),
                 kind="system",
                 status="succeeded",
-                output=(TextPart(text=text),),
+                output=RecordLocal("Part[]", (TextPart(text=text),), "_", 0),
                 finished_at="2026-01-01T00:00:03Z",
             )
         )

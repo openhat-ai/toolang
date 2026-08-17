@@ -102,7 +102,6 @@ async def run(
                     executor.store.create_thread(
                         thread_id=submission.record.thread_id,
                         origin="file",
-                        context={"file_request_id": submission.record.request_id},
                     )
                 setup = get_agent_setup()
                 state = get_agent_state()

@@ -19,37 +19,40 @@ if TYPE_CHECKING:
 async def execute(
     execution: _Execution,
     binding: BoundRun,
-    locals: Mapping[str, Local],
+    locals: dict[str, Local],
     path: StepPath,
     statement: RepeatStmt,
     controls: Sequence[RunControlRecord],
     placement: Mapping[str, object] | None,
 ) -> Local:
     async def operation() -> Local:
-        working = dict(locals)
         child_index = 0
         iteration = 0
+        body_placement = (
+            {"iters": statement.count} if statement.count is not None else {}
+        )
         while statement.count is None or iteration < statement.count:
             child_index = await execution.execute_statements(
                 binding,
                 statement.stmts,
-                working,
+                locals,
                 parent=path,
                 start=child_index,
-                placement={"loop": iteration},
+                placement={**body_placement, "iter": iteration},
             )
             iteration += 1
             if statement.until is not None:
                 condition = await execution.execute_child(
                     binding,
-                    working,
+                    locals,
                     path,
                     statement.until,
-                    {"loop": iteration - 1, "role": "until"},
+                    {**body_placement, "iter": -1},
+                    output_name=None,
                 )
                 if boolean(condition.value, operation="until"):
                     break
-        return working.get("_", Local())
+        return Local()
 
     return await loop_step.execute(
         execution.emit,

@@ -83,13 +83,13 @@ class RunState:
 
     @classmethod
     def from_event(cls, event: RunBegin) -> Self:
-        runnable = mapping(event.context.get("runnable"))
+        kind, separator, name = event.runnable.partition(":")
         return cls(
             run_id=event.run,
             parent=event.parent,
-            kind=text(runnable.get("kind")) or "run",
-            name=runnable_label(text(runnable.get("name"))),
-            placement=mapping(event.context.get("placement")),
+            kind=kind if separator else "run",
+            name=runnable_label(name if separator else event.runnable),
+            placement=mapping(event.placement),
             started_at=event.started_at,
         )
 
@@ -200,9 +200,6 @@ class StatementState:
         self.active_activity = ""
 
     def begin_until(self, run: RunState) -> None:
-        iteration = integer(run.placement.get("loop"))
-        if iteration is not None:
-            self.current_iteration = iteration
         self.active_ordinal = None
         self.active_title = "until"
         self.active_work = f"Run {run.label}"

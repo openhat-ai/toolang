@@ -29,7 +29,8 @@ from toolang.execution.events import RunEvent, StepEnd
 from toolang.execution.executor.common import BoundRun
 from toolang.execution.executor.prepare import _AgicFrame
 from toolang.execution.executor.runs.agic import _AgicState, _execute
-from toolang.execution.records import RunControlRecord
+from toolang.execution.records import RunControlRecord, SteerControlPayload
+from toolang.execution.types import Local
 from toolang.plugin.models.discovery import missing_provider_env_vars
 from toolang.plugin.models.resolution import resolve_model, select_model_selectors
 from toolang.plugin.models.views import _format_decimal_unit, model_target_profile
@@ -2486,11 +2487,11 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
     )
     pending = [
         RunControlRecord(
-            run="run-1",
+            target="run-1",
             index=1,
             kind="steer",
             timing="next_call",
-            message=steer,
+            payload=SteerControlPayload((Local("Part[]", tuple(steer.parts), "_", 0),)),
         )
     ]
     events: list[RunEvent] = []
@@ -2510,6 +2511,8 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
                 layout=AgentLayout.resident(Path("/tmp"), "home"),
                 emit=emit,
                 pending_inputs=pending_inputs,
+                steer_before_next_step=lambda: False,
+                immediate_steer=lambda: False,
                 before_call=lambda: None,
                 messages=list(prepared.messages),
             )
@@ -2519,7 +2522,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
     assert result == Message(role="assistant", parts=(audio,))
     assert provider.requests[0].messages[-1] == steer
     step_end = next(event for event in events if isinstance(event, StepEnd))
-    assert step_end.output == (audio,)
+    assert step_end.output == Local("Part[]", (audio,), "_")
     assert [event.type for event in events] == [
         "step_begin",
         "part_begin",
@@ -2822,6 +2825,7 @@ def _prepared_agic(
             thread="thread-1",
             bindings=RunBindings(runnable="agic:main"),
             input=RunnableInput(primary=Message.user("hello").percept),
+            control_locals=(),
             state=cast(Any, state),
             setup=AgentSetup(
                 layout=AgentLayout.resident(Path("/"), "alice"),
@@ -2864,6 +2868,8 @@ def _run_agic(prepared: _AgicFrame) -> Message | None:
                 layout=AgentLayout.resident(Path("/tmp"), "home"),
                 emit=_ignore_event,
                 pending_inputs=tuple,
+                steer_before_next_step=lambda: False,
+                immediate_steer=lambda: False,
                 before_call=lambda: None,
                 messages=list(prepared.messages),
             )

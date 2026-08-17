@@ -11,6 +11,7 @@ from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
     ImagePart,
+    MessagePart,
     Percept,
     TextPart,
     ToolResultPart,
@@ -125,7 +126,9 @@ def value_summary(value: object) -> str:
 
 
 def output_preview(event: StepEnd) -> str:
-    value = " ".join(part.text for part in event.output if isinstance(part, TextPart))
+    value = " ".join(
+        part.text for part in output_parts(event) if isinstance(part, TextPart)
+    )
     return truncate(one_line(value), 180)
 
 
@@ -139,7 +142,7 @@ def tool_label(given: Mapping[str, Any]) -> str:
 
 
 def tool_result(event: StepEnd) -> str:
-    for part in event.output:
+    for part in output_parts(event):
         if not isinstance(part, ToolResultPart):
             continue
         results = part.output.get("results")
@@ -154,7 +157,7 @@ def tool_result(event: StepEnd) -> str:
 
 
 def tool_exit_code(event: StepEnd) -> int | None:
-    for part in event.output:
+    for part in output_parts(event):
         if not isinstance(part, ToolResultPart):
             continue
         for key in ("exit_code", "returncode", "status_code"):
@@ -165,6 +168,19 @@ def tool_exit_code(event: StepEnd) -> int | None:
         if match is not None:
             return int(match.group(1))
     return None
+
+
+def output_parts(event: StepEnd) -> tuple[MessagePart, ...]:
+    """Return message parts carried by one typed step output."""
+
+    if event.output is None:
+        return ()
+    value = event.output.value
+    if isinstance(value, ToolResultPart):
+        return (value,)
+    if isinstance(value, tuple | list):
+        return tuple(part for part in value if isinstance(part, MessagePart))
+    return ()
 
 
 def active_step_label(event: StepBegin) -> str:

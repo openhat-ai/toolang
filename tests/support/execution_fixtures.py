@@ -16,23 +16,23 @@ from toolang.execution.events import (
 )
 from toolang.execution.records import (
     RunControlRecord,
-    RunInputRef,
     RunRecord,
-    StepInput,
     StepRecord,
-    ValueRef,
 )
 from toolang.common.time import utc_now
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.store import RunStore
 from toolang.execution.types import (
     AgentResources,
+    ControlRef,
     ControlTiming,
     RunControlKind,
     RunStatus,
     StepKind,
     StepStatus,
     StepPath,
+    Local,
+    ValuePtr,
 )
 from toolang.lang.input import RunnableInput
 
@@ -65,17 +65,41 @@ def accept_run_start(
 ) -> tuple[RunRecord, RunControlRecord]:
     """Accept a run with explicit default preparation snapshots for store tests."""
 
+    resolved_input = (
+        input
+        if isinstance(input, RunnableInput)
+        else RunnableInput(primary=input.percept)
+    )
+    resolved_bindings = (
+        bindings
+        if bindings is not None
+        else RunBindings(runnable="agic:test", model="test")
+    )
+    locals_value = [Local("Part[]", tuple(resolved_input.primary), "_", 0)]
+    locals_value.extend(
+        Local(
+            item.type_name or "Json",
+            tuple(item.value.parts) if isinstance(item.value, Message) else item.value,
+            item.name,
+            0,
+        )
+        for item in resolved_input.named
+    )
+
     return store.accept_start(
         run_id=run_id,
         parent=parent,
         thread=thread,
-        bindings=bindings if bindings is not None else RunBindings(),
-        limits=limits if limits is not None else RunLimits(),
-        input=input
-        if isinstance(input, RunnableInput)
-        else RunnableInput(primary=input.percept),
         resources=resources if resources is not None else AgentResources(),
-        context=context,
+        limits=limits if limits is not None else RunLimits(),
+        runnable=resolved_bindings.runnable or "agic:test",
+        model=resolved_bindings.model or "test",
+        locals=tuple(locals_value),
+        placement=(
+            dict(value)
+            if isinstance((value := context.get("placement")), Mapping)
+            else None
+        ),
         request_id=request_id,
         created_at=created_at,
         kind=kind,
@@ -106,12 +130,8 @@ def project_run_start(
     created = created_at or utc_now()
     started = started_at or created
     run_context = dict(context or metadata or {})
-    run_context.setdefault("origin", origin)
     del root_run_id
-    run_context.setdefault(
-        "runnable", {"kind": executable_kind, "name": executable_name}
-    )
-    run_context.setdefault("call", call_kind)
+    del call_kind
     if store.get_thread(thread_id=thread_id) is None:
         store.create_thread(
             thread_id=thread_id,
@@ -123,17 +143,20 @@ def project_run_start(
         run_id=run_id,
         parent=parent_path,
         thread=thread_id,
-        bindings=RunBindings(
-            runnable=(
-                f"{executable_kind}:{executable_name}"
-                if executable_name is not None
-                else None
-            )
-        ),
-        limits=RunLimits(),
-        input=RunnableInput(primary=input.percept),
         resources=AgentResources(),
-        context=run_context,
+        limits=RunLimits(),
+        runnable=(
+            f"{executable_kind}:{executable_name}"
+            if executable_name is not None
+            else f"{executable_kind}:test"
+        ),
+        model="test",
+        locals=(Local("Part[]", tuple(input.percept), "_", 0),),
+        placement=(
+            dict(value)
+            if isinstance((value := run_context.get("placement")), Mapping)
+            else None
+        ),
         request_id=request_id,
         created_at=created,
     )
@@ -142,8 +165,17 @@ def project_run_start(
         RunBegin(
             run=run_id,
             parent=parent_path,
-            input=RunInputRef(index=0),
-            context=run_context,
+            control=ControlRef(run_id, 0),
+            runnable=(
+                f"{executable_kind}:{executable_name}"
+                if executable_name is not None
+                else f"{executable_kind}:test"
+            ),
+            placement=(
+                dict(value)
+                if isinstance((value := run_context.get("placement")), Mapping)
+                else None
+            ),
             started_at=started,
         ),
     )
@@ -175,9 +207,13 @@ def project_run_control(
         run_id=run_id,
         kind=kind,
         timing=timing,
-        message=input if kind == "steer" else None,
-        reason=input.content if kind == "stop" and input is not None else None,
-        context=dict(context or {}),
+        locals=(
+            (Local("Part[]", tuple(input.parts), "_", 0),)
+            if kind == "steer" and input is not None
+            else (Local("Text", input.content, "_", 0),)
+            if kind == "stop" and input is not None
+            else ()
+        ),
         request_id=request_id,
         created_at=created_at or utc_now(),
     )
@@ -192,8 +228,8 @@ def project_step(
     index: int | None = None,
     kind: StepKind,
     status: StepStatus,
-    input: Sequence[StepInput],
-    output: Sequence[MessagePart],
+    input: Sequence[ValuePtr],
+    output: Sequence[MessagePart] | Local | None,
     detail: Mapping[str, Any] | None = None,
     error: str | None = None,
     started_at: str,
@@ -216,6 +252,7 @@ def project_step(
             step=path,
             kind=kind,
             input=tuple(input),
+            placement=None,
             given=dict(context or {}),
             started_at=started_at,
         ),
@@ -227,7 +264,11 @@ def project_step(
                 step=path,
                 kind=kind,
                 status=status,
-                output=tuple(output),
+                output=(
+                    output
+                    if isinstance(output, Local) or output is None
+                    else Local("Part[]", tuple(output), "_", 0)
+                ),
                 noted=dict(detail or {}),
                 error=error,
                 finished_at=finished_at or started_at,
@@ -249,7 +290,7 @@ def project_run_end(
     status: RunStatus = "succeeded",
     error: str | None = None,
     finished_at: str | None = None,
-    output: ValueRef | None = None,
+    output: Local | ValuePtr | None = None,
 ) -> RunRecord:
     """Project one terminal run event, returning durable run truth."""
 
@@ -258,7 +299,11 @@ def project_run_end(
         RunEnd(
             run=run_id,
             status=status,
-            output=output,
+            output=(
+                Local("Part[]", output, "_", 0)
+                if isinstance(output, ValuePtr)
+                else output
+            ),
             error=error,
             finished_at=finished_at or utc_now(),
         ),

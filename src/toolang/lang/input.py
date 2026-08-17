@@ -9,7 +9,6 @@ import re
 import shlex
 from types import MappingProxyType
 from typing import Any, TypeAlias, cast
-from typing_extensions import TypeAliasType
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import (
@@ -28,23 +27,10 @@ from toolang.base.types.message import (
 from toolang.common.template import render_text_template
 
 from .ast import Parameter, Program, StructDecl
+from .types import Value
 
 IncludeResolver = Callable[[str], PerceptPart]
 NamedInputSources: TypeAlias = tuple[tuple[str, str], ...]
-RunnableInputData = TypeAliasType(
-    "RunnableInputData",
-    str
-    | int
-    | float
-    | bool
-    | None
-    | PerceptPart
-    | Message
-    | tuple["RunnableInputData", ...]
-    | list["RunnableInputData"]
-    | Mapping[str, "RunnableInputData"],
-)
-
 _ARGUMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PROMPT_CALL_RE = re.compile(r"^/([A-Za-z_][\w-]*)(?:\s+(.*))?$")
 _SLOT_RE = re.compile(r"\ue000(\d+)\ue001")
@@ -68,7 +54,7 @@ class RunnableInputValue:
     """One resolved named input and its declared Toolang type."""
 
     name: str
-    value: RunnableInputData
+    value: Value | Message
     type_name: str | None = None
 
     def __post_init__(self) -> None:
@@ -869,7 +855,7 @@ def _parse_text_json(
         ) from error
 
 
-def _input_value_to_data(value: RunnableInputData) -> dict[str, object]:
+def _input_value_to_data(value: Value | Message) -> dict[str, object]:
     if _is_percept_part(value):
         return {"kind": "part", "value": cast(PerceptPart, value).to_data()}
     if isinstance(value, Message):
@@ -889,7 +875,7 @@ def _input_value_to_data(value: RunnableInputData) -> dict[str, object]:
             "kind": "object",
             "value": {
                 str(name): _input_value_to_data(item)
-                for name, item in cast(Mapping[str, RunnableInputData], value).items()
+                for name, item in cast(Mapping[str, Value], value).items()
             },
         }
     if value is None or isinstance(value, str | bool | int | float):
@@ -899,7 +885,7 @@ def _input_value_to_data(value: RunnableInputData) -> dict[str, object]:
     raise TypeError(f"unsupported run input value: {type(value).__name__}")
 
 
-def _input_value_from_data(value: object, type_name: str | None) -> RunnableInputData:
+def _input_value_from_data(value: object, type_name: str | None) -> Value | Message:
     del type_name
     if not isinstance(value, Mapping):
         raise ValueError("run input value must be an object")
@@ -916,12 +902,15 @@ def _input_value_from_data(value: object, type_name: str | None) -> RunnableInpu
         and not isinstance(payload, (str, bytes, bytearray))
     ):
         items = tuple(_input_value_from_data(item, None) for item in payload)
-        return items if kind == "tuple" else list(items)
+        return cast(Value, items if kind == "tuple" else list(items))
     if kind == "object" and isinstance(payload, Mapping):
-        return {
-            str(name): _input_value_from_data(item, None)
-            for name, item in cast(Mapping[str, object], payload).items()
-        }
+        return cast(
+            Value,
+            {
+                str(name): _input_value_from_data(item, None)
+                for name, item in cast(Mapping[str, object], payload).items()
+            },
+        )
     if kind == "scalar" and (
         payload is None or isinstance(payload, str | bool | int | float)
     ):
@@ -929,8 +918,8 @@ def _input_value_from_data(value: object, type_name: str | None) -> RunnableInpu
     raise ValueError(f"unknown run input value kind: {kind}")
 
 
-def _require_input_value(value: object) -> RunnableInputData:
-    candidate = cast(RunnableInputData, value)
+def _require_input_value(value: object) -> Value | Message:
+    candidate = cast(Value | Message, value)
     _input_value_to_data(candidate)
     return candidate
 

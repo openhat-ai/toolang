@@ -21,7 +21,13 @@ from toolang.execution.events import (
     ThreadListener,
     ThreadRewound,
 )
-from toolang.execution.records import ThreadControlRef, ThreadPeer
+from toolang.execution.records import (
+    CreateControlPayload,
+    ForkControlPayload,
+    RewindControlPayload,
+    ThreadControlRef,
+    ThreadPeer,
+)
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
@@ -128,10 +134,7 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
         assert len(create_control) == 1
         assert create_control[0].kind == "create"
         assert create_control[0].request == "thread-create-1"
-        assert create_control[0].context == {"prefix": "web"}
-        assert create_control[0].source is None
-        assert create_control[0].anchor is None
-        assert create_control[0].expected_head is None
+        assert create_control[0].payload == CreateControlPayload()
         assert create_control[0].status == "applied"
         assert create_control[0].finished_at == create_control[0].created_at
 
@@ -143,10 +146,11 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
         fork_control = reopened.list_thread_controls(thread_id=forked)
         assert len(fork_control) == 1
         assert fork_control[0].kind == "fork"
-        assert fork_control[0].source == source
-        assert fork_control[0].anchor == first_run
+        assert fork_control[0].payload == ForkControlPayload(
+            fork_from=source,
+            fork_at=first_run,
+        )
         assert fork_control[0].request == "thread-fork-1"
-        assert fork_control[0].expected_head is None
         assert fork_control[0].status == "applied"
         assert [
             run.id
@@ -221,15 +225,10 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                 "rewind",
                 "rewind",
             ]
-            assert [control.expected_head for control in controls] == [
-                None,
-                ThreadControlRef(thread, 0),
-                ThreadControlRef(thread, 1),
-            ]
-            assert [control.anchor for control in controls] == [
-                None,
-                runs[1].id,
-                replacement.id,
+            assert [control.payload for control in controls] == [
+                CreateControlPayload(),
+                RewindControlPayload(rewind_from=runs[1].id, rewind_if=0),
+                RewindControlPayload(rewind_from=replacement.id, rewind_if=1),
             ]
             assert [control.request for control in controls] == [
                 None,
@@ -249,13 +248,13 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                 harness.store.get_run(run_id=run.id) for run in runs
             )
             replacement_record = harness.store.get_run(run_id=replacement.id)
-            assert first is not None and first.ejected is None
+            assert first is not None and first.ejected_by is None
             assert second is not None
-            assert second.ejected == ThreadControlRef(thread, 1)
+            assert second.ejected_by == ThreadControlRef(thread, 1)
             assert third is not None
-            assert third.ejected == ThreadControlRef(thread, 1)
+            assert third.ejected_by == ThreadControlRef(thread, 1)
             assert replacement_record is not None
-            assert replacement_record.ejected == ThreadControlRef(
+            assert replacement_record.ejected_by == ThreadControlRef(
                 thread,
                 2,
             )
@@ -343,7 +342,10 @@ def test_fork_accepts_an_earlier_terminal_anchor_while_source_runs(
                 index=0,
             )
             assert fork_control is not None
-            assert fork_control.anchor == terminal.id
+            assert fork_control.payload == ForkControlPayload(
+                fork_from=source,
+                fork_at=terminal.id,
+            )
             assert [event.type for event in listener.events] == [
                 "thread_created",
                 "thread_forked",
@@ -429,8 +431,10 @@ def test_rewind_rejects_a_running_thread_without_stopping_it(
                 index=1,
             )
             assert rewind is not None
-            assert rewind.anchor == stopped.id
-            assert rewind.expected_head == ThreadControlRef(thread, 0)
+            assert rewind.payload == RewindControlPayload(
+                rewind_from=stopped.id,
+                rewind_if=0,
+            )
             assert [
                 run.id
                 for run in harness.store.list_thread_history_chronological(
@@ -505,7 +509,7 @@ def test_failed_thread_controls_leave_no_record_or_event(
             assert len(harness.store.list_threads()) == 1
             stored_run = harness.store.get_run(run_id=run.id)
             assert stored_run is not None
-            assert stored_run.ejected is None
+            assert stored_run.ejected_by is None
             assert [event.type for event in listener.events] == ["thread_created"]
 
     asyncio.run(scenario())

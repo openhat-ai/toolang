@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from toolang.lang.ast import SettleStmt
+from toolang.base.types.message import TextPart
 
 from ...records import RunControlRecord, StepPath
 from ..common import BoundRun
@@ -26,19 +27,25 @@ async def execute(
     placement: Mapping[str, object] | None,
 ) -> Local:
     async def operation() -> Local:
-        item_type = locals.get("_", Local()).type_name
+        source = locals.get("_", Local())
+        item_type = source.type_name
         items = require_list(locals, operation="settle")
-        accumulator = Local("", "item", type_name="Part[]")
+        accumulator = Local((TextPart(""),), "item", type_name="Part[]")
         for index, item in enumerate(items):
             child_locals = dict(locals)
             child_locals["_"] = accumulator
-            child_locals["item"] = Local(item, "item", type_name=item_type)
+            child_locals["item"] = Local(
+                item,
+                "item",
+                ref=source.ref.select(index) if source.ref is not None else None,
+                type_name=item_type,
+            )
             accumulator = await execution.execute_child(
                 binding,
                 child_locals,
                 path,
                 statement.runnable,
-                {"item": index, "items": len(items), "loop": index},
+                {"item": index, "items": len(items), "iter": index},
             )
         return accumulator
 

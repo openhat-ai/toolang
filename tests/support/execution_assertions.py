@@ -14,8 +14,7 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import StepOutputRef
-from toolang.execution.types import StepPath
+from toolang.execution.types import StepPath, ValuePtr
 
 
 def event_labels(events: Sequence[RunEvent]) -> list[str]:
@@ -115,9 +114,13 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
                     if key[0] == event.step
                 )
                 if parts:
-                    assert event.output == parts, (
-                        f"step output differs from terminal parts at {where}"
-                    )
+                    assert event.output is not None
+                    output_value = event.output.value
+                    assert (
+                        tuple(output_value)
+                        if isinstance(output_value, tuple | list)
+                        else (output_value,)
+                    ) == parts, f"step output differs from terminal parts at {where}"
             else:
                 for key in open_parts:
                     active_parts.pop(key)
@@ -130,10 +133,10 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
         assert not any(step.run == event.run for step in active_steps), (
             f"run ended with active steps at {where}"
         )
-        if isinstance(event.output, StepOutputRef):
-            assert event.output.step in ended_steps, (
-                f"run output references an incomplete step at {where}"
-            )
+        if event.output is not None and isinstance(event.output.value, ValuePtr):
+            assert any(
+                ValuePtr.step(step) == event.output.value for step in ended_steps
+            ), f"run output references an incomplete step at {where}"
         active_runs.remove(event.run)
         ended_runs.add(event.run)
 

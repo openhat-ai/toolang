@@ -14,10 +14,9 @@ from tests.support.execution_fixtures import (
 from toolang.base.types.message import Message, TextPart
 from toolang.common.ids import IdIssuer
 from toolang.execution.history import RunHistory
-from toolang.execution.records import RunInputRef, StepOutputRef
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ControlRef, Local, ThreadPrefix, ValuePtr
 
 
 def test_run_history_batches_thread_and_run_summaries(
@@ -149,7 +148,7 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
         project_run_end(
             store,
             run_id=run.id,
-            output=StepOutputRef(step=step.path, part=1),
+            output=ValuePtr.step(step.path, 1),
         )
 
         history = RunHistory(store)
@@ -158,9 +157,10 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
 
         assert store.run_output(run_id=run.id) == (TextPart("result"),)
         assert detail is not None
-        assert detail.output == [TextPart("result")]
+        expected = Local("Part[]", ValuePtr.step(step.path, 1), "_", 0)
+        assert detail.output == expected
         assert thread is not None
-        assert thread.runs[0].output == [TextPart("result")]
+        assert thread.runs[0].output == expected
     finally:
         store.close()
 
@@ -178,17 +178,21 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
         project_run_end(
             store,
             run_id=run.id,
-            output=RunInputRef(index=0),
+            output=ValuePtr.control(run.id, 0, "_"),
         )
 
         stored = store.get_run(run_id=run.id)
         detail = RunHistory(store).get_run(run.id)
 
         assert stored is not None
-        assert stored.input == RunInputRef(index=0)
-        assert stored.output == RunInputRef(index=0)
+        assert stored.control == ControlRef(run.id, 0)
+        assert stored.output == Local(
+            "Part[]", ValuePtr.control(run.id, 0, "_"), "_", 0
+        )
         assert store.run_output(run_id=run.id) == Message.user("unchanged").parts
         assert detail is not None
-        assert detail.output == list(Message.user("unchanged").parts)
+        assert detail.output == Local(
+            "Part[]", ValuePtr.control(run.id, 0, "_"), "_", 0
+        )
     finally:
         store.close()

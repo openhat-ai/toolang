@@ -6,12 +6,20 @@ from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, TypeAlias, cast
+import re
+from typing import Annotated, Any, Literal, TypeAlias, cast
 
+from pydantic import BeforeValidator, PlainSerializer
 from pydantic_core import core_schema
+from typing_extensions import TypeAliasType
+
+from toolang.lang.types import Value
 
 
 RunId = str
+_LOCAL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_VALUE_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[\])*$")
+_POINTER_RESERVED = frozenset(".^/@")
 PolicyGroup = Literal["allow", "default", "limit"]
 PolicyValue: TypeAlias = tuple[str, ...] | str | int | Decimal | None
 ALLOW_POLICY_FIELDS = frozenset(
@@ -200,6 +208,219 @@ class AgentResources:
 
 
 @dataclass(frozen=True, slots=True)
+class ValuePtr:
+    """Reference one immutable control, step, or run value."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, str) or not self.value:
+            raise ValueError("value pointer must be non-empty text")
+        anchor, separator, pointer = self.value.partition("/")
+        if not anchor or any(character.isspace() for character in anchor):
+            raise ValueError(f"invalid value pointer: {self.value!r}")
+        if separator:
+            if pointer.endswith("/"):
+                raise ValueError(f"non-canonical JSON pointer: {self.value!r}")
+            if pointer:
+                _validate_json_pointer(pointer, source=self.value)
+        if "^" in anchor:
+            target, marker, raw_index = anchor.partition("^")
+            if (
+                marker != "^"
+                or not _valid_pointer_id(target)
+                or not _canonical_index(raw_index)
+                or not separator
+                or not pointer
+            ):
+                raise ValueError(f"invalid control value pointer: {self.value!r}")
+            return
+        target, *indices = anchor.split(".")
+        if not _valid_pointer_id(target) or any(
+            not _canonical_index(index) for index in indices
+        ):
+            raise ValueError(f"invalid value pointer: {self.value!r}")
+
+    @property
+    def anchor(self) -> str:
+        """Return the run, step, or control anchor."""
+
+        return self.value.partition("/")[0]
+
+    @property
+    def pointer(self) -> str | None:
+        """Return the RFC 6901 suffix without its leading slash."""
+
+        _anchor, separator, pointer = self.value.partition("/")
+        return pointer if separator else None
+
+    def __str__(self) -> str:
+        return self.value
+
+    def select(self, *path: str | int) -> ValuePtr:
+        """Return a pointer to a value nested below this pointer."""
+
+        if not path:
+            return self
+        suffix = _pointer_suffix(path)
+        separator = "" if self.value.endswith("/") else "/"
+        return ValuePtr(f"{self.value}{separator}{suffix}")
+
+    @classmethod
+    def run(cls, run_id: RunId, *path: str | int) -> ValuePtr:
+        """Point to one run output or a value within it."""
+
+        return cls(_pointer_value(run_id, path))
+
+    @classmethod
+    def step(cls, step: StepPath, *path: str | int) -> ValuePtr:
+        """Point to one step output or a value within it."""
+
+        anchor = ".".join((step.run, *(str(index) for index in step.indices)))
+        return cls(_pointer_value(anchor, path))
+
+    @classmethod
+    def control(
+        cls,
+        target: str,
+        index: int,
+        name: str,
+        *path: str | int,
+    ) -> ValuePtr:
+        """Point to one named local accepted by a run control."""
+
+        return cls(_pointer_value(f"{target}^{index}", (name, *path)))
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        _source_type: Any,
+        _handler: Any,
+    ) -> core_schema.CoreSchema:
+        return core_schema.json_or_python_schema(
+            json_schema=core_schema.no_info_after_validator_function(
+                cls,
+                core_schema.str_schema(),
+            ),
+            python_schema=core_schema.union_schema(
+                [
+                    core_schema.is_instance_schema(cls),
+                    core_schema.no_info_after_validator_function(
+                        cls,
+                        core_schema.str_schema(),
+                    ),
+                ]
+            ),
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                str,
+                return_schema=core_schema.str_schema(),
+            ),
+        )
+
+
+LocalValue = TypeAliasType(
+    "LocalValue",
+    Value | ValuePtr | tuple[Value | ValuePtr, ...] | list[Value | ValuePtr],
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Local:
+    """One typed value and its runtime binding semantics."""
+
+    type: str
+    value: LocalValue
+    name: str | None = None
+    dim: Literal[0, 1] = 0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.type, str) or not _VALUE_TYPE_RE.fullmatch(self.type):
+            raise ValueError(f"invalid Toolang value type: {self.type!r}")
+        if self.name is not None and not _LOCAL_NAME_RE.fullmatch(self.name):
+            raise ValueError(f"invalid local name: {self.name!r}")
+        if self.dim not in {0, 1}:
+            raise ValueError(f"unsupported local dimension: {self.dim!r}")
+        if self.dim == 1 and not self.type.endswith("[]"):
+            raise ValueError("dim=1 requires an array value type")
+        if self.dim == 1 and not isinstance(self.value, (ValuePtr, tuple, list)):
+            raise TypeError("dim=1 requires an array value or whole-value pointer")
+
+    @property
+    def item_type(self) -> str:
+        """Return the execution item type for this local."""
+
+        return self.type[:-2] if self.dim == 1 else self.type
+
+    @classmethod
+    def _validate_pydantic(cls, value: object) -> Local:
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, Mapping):
+            from .records import local_from_data
+
+            return local_from_data(cast(Mapping[str, object], value))
+        raise TypeError("local must be a Local or canonical object")
+
+    @staticmethod
+    def _serialize_pydantic(value: Local) -> dict[str, object]:
+        from .records import local_to_data
+
+        return local_to_data(value)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        _source_type: Any,
+        _handler: Any,
+    ) -> core_schema.CoreSchema:
+        return core_schema.json_or_python_schema(
+            json_schema=core_schema.no_info_plain_validator_function(
+                cls._validate_pydantic
+            ),
+            python_schema=core_schema.union_schema(
+                [
+                    core_schema.is_instance_schema(cls),
+                    core_schema.no_info_plain_validator_function(
+                        cls._validate_pydantic
+                    ),
+                ]
+            ),
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                cls._serialize_pydantic,
+                return_schema=core_schema.dict_schema(
+                    core_schema.str_schema(), core_schema.any_schema()
+                ),
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ControlRef:
+    """Reference one globally addressed durable control."""
+
+    target: str
+    index: int
+
+    def __post_init__(self) -> None:
+        if not _valid_pointer_id(self.target):
+            raise ValueError(f"invalid control target: {self.target!r}")
+        if self.index < 0:
+            raise ValueError("control index must be non-negative")
+
+    @property
+    def run(self) -> str:
+        """Return the target when this reference is used for a run control."""
+
+        return self.target
+
+    @property
+    def thread(self) -> str:
+        """Return the target when this reference is used for a thread control."""
+
+        return self.target
+
+
+@dataclass(frozen=True, slots=True)
 class StepPath:
     """Globally address one step within its owning run."""
 
@@ -292,14 +513,26 @@ class StepPath:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class StepErrorRef:
-    """Reference the step that owns one propagated record error."""
+def _parse_execution_error(value: object) -> str | ValuePtr:
+    if isinstance(value, ValuePtr | str):
+        return value
+    if isinstance(value, Mapping):
+        payload = cast(Mapping[str, object], value)
+        pointer = payload.get("$ptr") if set(payload) == {"$ptr"} else None
+        if isinstance(pointer, str):
+            return ValuePtr(pointer)
+    raise ValueError("invalid execution error")
 
-    step: StepPath
+
+def _serialize_execution_error(error: str | ValuePtr) -> str | dict[str, str]:
+    return error if isinstance(error, str) else {"$ptr": str(error)}
 
 
-ExecutionError: TypeAlias = str | StepErrorRef
+ExecutionError: TypeAlias = Annotated[
+    str | ValuePtr,
+    BeforeValidator(_parse_execution_error),
+    PlainSerializer(_serialize_execution_error, return_type=object),
+]
 
 RunStatus = Literal["pending", "running", "succeeded", "failed", "canceled"]
 StepStatus = Literal[
@@ -333,3 +566,36 @@ class ThreadPrefix(StrEnum):
     SCRIPT = "script"
     WEB = "web"
     TERM = "term"
+
+
+def _valid_pointer_id(value: str) -> bool:
+    return bool(value) and not any(
+        character.isspace() or character in _POINTER_RESERVED for character in value
+    )
+
+
+def _canonical_index(value: str) -> bool:
+    return (
+        bool(value) and value.isascii() and value.isdigit() and str(int(value)) == value
+    )
+
+
+def _validate_json_pointer(value: str, *, source: str) -> None:
+    index = 0
+    while index < len(value):
+        if value[index] != "~":
+            index += 1
+            continue
+        if index + 1 >= len(value) or value[index + 1] not in {"0", "1"}:
+            raise ValueError(f"invalid JSON pointer escape: {source!r}")
+        index += 2
+
+
+def _pointer_value(anchor: str, path: Sequence[str | int]) -> str:
+    if not path:
+        return anchor
+    return f"{anchor}/{_pointer_suffix(path)}"
+
+
+def _pointer_suffix(path: Sequence[str | int]) -> str:
+    return "/".join(str(item).replace("~", "~0").replace("/", "~1") for item in path)

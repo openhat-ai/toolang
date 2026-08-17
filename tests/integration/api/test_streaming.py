@@ -30,9 +30,14 @@ from toolang.execution.events import (
     run_event_from_data,
     run_event_to_data,
 )
-from toolang.execution.records import RunInputRef, ThreadControlRef, ThreadPeer
+from toolang.execution.records import (
+    RerunControlPayload,
+    RetryControlPayload,
+    ThreadControlRef,
+    ThreadPeer,
+)
 from toolang.execution.schemas import RunDetail, ThreadDetail
-from toolang.execution.types import StepPath
+from toolang.execution.types import ControlRef, Local, StepPath, ValuePtr
 from toolang.up import AgentCore
 from tests.support.execution_fixtures import project_run_start, project_step
 from tests.support.execution_harness import ExecutionHarness
@@ -186,9 +191,9 @@ agic answer(_: Part[]) -> Part[]:
             run_id = str(events[0][1]["run"])
             detail = client.get(f"/api/v1/runs/{run_id}").json()
 
-        error = {"step": f"{run_id}/0"}
-        assert events[-1][1]["error"] == error
-        assert detail["error"] == error
+        error = f"{run_id}.0"
+        assert events[-1][1]["error"] == {"$ptr": error}
+        assert detail["error"] == {"$ptr": error}
         assert detail["steps"][0]["error"] == "provider unavailable"
         assert "failure" not in detail
     finally:
@@ -260,8 +265,10 @@ agic chat(_: Part[]) -> Part[]:
             "step_end",
             "run_end",
         }
-        assert run_detail.output == [TextPart("chat reply")]
-        assert thread_detail.runs[0].output == [TextPart("chat reply")]
+        assert run_detail.output == Local(
+            "Part[]", ValuePtr.step(StepPath.parse(f"{run_id}/0")), "_", 0
+        )
+        assert thread_detail.runs[0].output == run_detail.output
         threads = core.store.list_threads()
         assert len(threads) == 1
         assert threads[0].thread_id == thread_id
@@ -398,13 +405,15 @@ agic answer(_: Part[]) -> Part[]:
         assert retry.json()["command"]["request_id"] == "retry-request"
         assert rerun.status_code == 202
         assert rerun.json()["command"]["kind"] == "rerun"
-        assert rerun.json()["command"]["source"] == source_id
+        assert rerun.json()["command"]["payload"]["rerun_from"] == source_id
 
         retry_control = core.store.list_run_controls(run_id=source_id)[-1]
         rerun_control = core.store.get_run_control(run_id=rerun_id, index=0)
-        assert retry_control.limits == RunLimits(tokens=10)
+        assert isinstance(retry_control.payload, RetryControlPayload)
+        assert retry_control.payload.limits == RunLimits(tokens=10)
         assert rerun_control is not None
-        assert rerun_control.limits == RunLimits(tokens=100, time=30)
+        assert isinstance(rerun_control.payload, RerunControlPayload)
+        assert rerun_control.payload.limits == RunLimits(tokens=100, time=30)
     finally:
         asyncio.run(core.close())
 
@@ -418,7 +427,7 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
         events = (
             RunBegin(
                 run="run_test",
-                input=RunInputRef(0),
+                control=ControlRef("run_test", 0),
                 started_at="2026-01-01T00:00:00Z",
             ),
             StepBegin(
@@ -428,7 +437,7 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
             ),
             RunBegin(
                 run="run_child",
-                input=RunInputRef(0),
+                control=ControlRef("run_child", 0),
                 started_at="2026-01-01T00:00:02Z",
             ),
             StepBegin(
@@ -538,7 +547,7 @@ def test_existing_run_stream_attaches_to_live_events(tmp_path: Path) -> None:
             await tracer.on_event(
                 RunBegin(
                     run="run_live",
-                    input=RunInputRef(0),
+                    control=ControlRef("run_live", 0),
                     started_at="2026-01-01T00:00:00Z",
                 )
             )
@@ -588,7 +597,7 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
         step_index=0,
         kind="run",
         status="running",
-        input=(RunInputRef(index=0),),
+        input=(ValuePtr.control("run_root", 0, "_"),),
         output=(),
         started_at="2026-01-01T00:00:01Z",
         finished_at=None,
@@ -674,7 +683,7 @@ def test_sse_generator_close_removes_subscription() -> None:
         await tracer.on_event(
             RunBegin(
                 run="run_test",
-                input=RunInputRef(0),
+                control=ControlRef("run_test", 0),
                 started_at="2026-01-01T00:00:00Z",
             )
         )

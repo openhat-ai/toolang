@@ -41,8 +41,8 @@ from toolang.base.types.run import (
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
-from toolang.execution.records import RunControlRef
-from toolang.execution.types import StepErrorRef, StepPath, ThreadPrefix
+from toolang.execution.records import RunControlRef, StartControlPayload
+from toolang.execution.types import StepPath, ThreadPrefix, ValuePtr
 from toolang.lang.input import perceive_input
 
 
@@ -143,8 +143,8 @@ agic reply(_: Part[]) -> Part[]:
                 include_ejected=True,
             )
             assert [step.path.index for step in historical] == [0, 1]
-            assert historical[0].ejected == RunControlRef(run.id, 1)
-            assert historical[1].ejected is None
+            assert historical[0].ejected_by == RunControlRef(run.id, 1)
+            assert historical[1].ejected_by is None
 
     asyncio.run(scenario())
 
@@ -437,7 +437,7 @@ agic stream(_: Text) -> Text:
             )
 
             assert record.status == "failed"
-            assert record.error == StepErrorRef(StepPath(record.id, (0,)))
+            assert record.error == ValuePtr.step(StepPath(record.id, (0,)))
             assert [
                 (step.kind, step.status, step.error)
                 for step in harness.store.list_steps(run_id=record.id)
@@ -834,12 +834,10 @@ agic reply(_: Text) -> Text:
             )
             assert rejected_start is not None
             assert accepted_start is not None
-            assert rejected_start.context == {}
-            assert rejected_start.limits == RunLimits(agic_model_calls=0)
-            assert accepted_start.context == {}
-            assert accepted_start.limits == RunLimits(agic_model_calls=1)
-            assert "limits" not in rejected.context
-            assert "limits" not in accepted.context
+            assert isinstance(rejected_start.payload, StartControlPayload)
+            assert isinstance(accepted_start.payload, StartControlPayload)
+            assert rejected_start.payload.limits == RunLimits(agic_model_calls=0)
+            assert accepted_start.payload.limits == RunLimits(agic_model_calls=1)
 
     asyncio.run(scenario())
 
@@ -1185,7 +1183,7 @@ agic fail(_: Part[]) -> Part[]:
             )
 
             assert record.status == "failed"
-            assert record.error == StepErrorRef(StepPath(record.id, (0,)))
+            assert record.error == ValuePtr.step(StepPath(record.id, (0,)))
             steps = harness.store.list_steps(run_id=record.id)
             assert [(step.kind, step.status) for step in steps] == [("model", "failed")]
             assert steps[0].error == "provider unavailable"

@@ -4,21 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
-from typing import Any, cast
+from typing import Any
 
-from toolang.base.types.message import Message, MessagePart, message_summary
-from toolang.base.types.policy import RunBindings, RunLimits
+from toolang.base.types.message import MessagePart, message_summary
 from toolang.base.types.run import ModelCall
-from toolang.lang.input import RunnableInput
 from .records import (
+    ControlPayload,
+    PreparationControlPayload,
     RunControlRecord,
-    RunControlRef,
-    RunInputRef,
     RunRecord,
-    StepInput,
-    StepOutputRef,
     StepRecord,
-    ThreadControlRef,
     ThreadPeer,
     ThreadRecord,
     model_call_to_data,
@@ -26,30 +21,19 @@ from .records import (
     step_message_role,
 )
 from .types import (
+    ControlRef,
     ControlTiming,
-    AgentResources,
     RunControlKind,
     ControlStatus,
     ExecutionError,
+    Local,
     RunStatus,
     StepKind,
     StepPath,
     StepStatus,
     ThreadPeerType,
+    ValuePtr,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class RunInputRefData:
-    """One caller-facing run input reference."""
-
-    index: int = 0
-    name: str | None = None
-    part: int | None = None
-
-    @classmethod
-    def from_ref(cls, ref: RunInputRef) -> RunInputRefData:
-        return cls(index=ref.index, name=ref.name, part=ref.part)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,8 +44,8 @@ class ThreadControlRefData:
     index: int
 
     @classmethod
-    def from_ref(cls, ref: ThreadControlRef) -> ThreadControlRefData:
-        return cls(thread=ref.thread, index=ref.index)
+    def from_ref(cls, ref: ControlRef) -> ThreadControlRefData:
+        return cls(thread=ref.target, index=ref.index)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,26 +56,14 @@ class RunControlRefData:
     index: int
 
     @classmethod
-    def from_ref(cls, ref: RunControlRef) -> RunControlRefData:
-        return cls(run=ref.run, index=ref.index)
+    def from_ref(cls, ref: ControlRef) -> RunControlRefData:
+        return cls(run=ref.target, index=ref.index)
 
 
 EjectionRefData = ThreadControlRefData | RunControlRefData
 
 
-@dataclass(frozen=True, slots=True)
-class StepOutputRefData:
-    """One caller-facing step-output reference."""
-
-    step: StepPath
-    part: int | None = None
-
-    @classmethod
-    def from_ref(cls, ref: StepOutputRef) -> StepOutputRefData:
-        return cls(step=ref.step, part=ref.part)
-
-
-StepInputData = RunInputRefData | StepOutputRefData | Message
+StepInputData = ValuePtr
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,12 +150,14 @@ class ThreadInfo:
         first = runs[0]
         last = runs[-1]
         active = next((run for run in reversed(runs) if run.status == "running"), None)
-        start = _start_control((controls_by_run or {}).get(first.id, ()))
-        if start.input is None:
-            raise ValueError(f"run start input has no message: {first.id}")
+        payload = _preparation_payload(
+            first,
+            (controls_by_run or {}).get(first.id, ()),
+        )
+        primary = _primary_parts(payload)
         return cls(
             id=thread.thread_id,
-            title=message_summary(start.input.primary) or thread.origin,
+            title=message_summary(primary) or thread.origin,
             created_at=thread.created_at,
             origin=thread.origin,
             channel=_thread_channel(thread.thread_id, thread.origin),
@@ -233,10 +207,9 @@ class RunInfo:
     ) -> RunInfo:
         """Build one run summary from durable records."""
 
-        start = _start_control(controls)
-        input_text = (
-            message_summary(start.input.primary) if start.input is not None else ""
-        )
+        preparation = _preparation_payload(run, controls)
+        input_text = message_summary(_primary_parts(preparation))
+        kind, separator, name = preparation.runnable.partition(":")
         last_message_step = next(
             (
                 step
@@ -246,7 +219,7 @@ class RunInfo:
             None,
         )
         summary = (
-            message_summary(last_message_step.output)
+            message_summary(_local_parts(last_message_step.output))
             if last_message_step is not None
             else input_text
         )
@@ -262,15 +235,15 @@ class RunInfo:
             parent=run.parent,
             thread_id=run.thread,
             root_run_id=root_run_id,
-            runnable_kind=run.runnable_kind,
-            runnable_name=run.runnable_name,
-            call_kind=run.call_kind,
-            metadata=cast(dict[str, object], dict(run.context)),
+            runnable_kind=kind if separator else "",
+            runnable_name=name if separator else preparation.runnable,
+            call_kind="top" if run.parent is None else "run",
+            metadata=dict(run.placement or {}),
             input_text=input_text,
             summary=summary,
             status=run.status,
             error=run.error,
-            ejected=_ejection_ref_data(run.ejected),
+            ejected=_ejection_ref_data(run.ejected_by),
             created_at=run.created_at,
             started_at=run.started_at,
             finished_at=run.finished_at,
@@ -286,17 +259,9 @@ class RunControlInfo:
     index: int
     kind: RunControlKind
     timing: ControlTiming
-    source: str | None
-    anchor: StepPath | None
     request_id: str | None
     status: ControlStatus
-    input: RunnableInput | None
-    bindings: RunBindings | None
-    limits: RunLimits | None
-    resources: AgentResources | None
-    message: Message | None
-    reason: str | None
-    context: dict[str, Any]
+    payload: ControlPayload
     error: str | None
     created_at: str
     finished_at: str | None
@@ -308,17 +273,9 @@ class RunControlInfo:
             index=control.index,
             kind=control.kind,
             timing=control.timing,
-            source=control.source,
-            anchor=control.anchor,
             request_id=control.request,
             status=control.status,
-            input=control.input,
-            bindings=control.bindings,
-            limits=control.limits,
-            resources=control.resources,
-            message=control.message,
-            reason=control.reason,
-            context=dict(control.context),
+            payload=control.payload,
             error=control.error,
             created_at=control.created_at,
             finished_at=control.finished_at,
@@ -332,12 +289,13 @@ class StepData:
     path: StepPath
     kind: StepKind
     input: list[StepInputData]
-    output: list[MessagePart]
+    output: Local | None
+    placement: dict[str, object] | None = None
     given: dict[str, Any] = field(default_factory=dict)
     noted: dict[str, Any] = field(default_factory=dict)
     status: StepStatus = "running"
     error: ExecutionError | None = None
-    ejected: RunControlRefData | None = None
+    ejected_by: RunControlRefData | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
@@ -355,15 +313,16 @@ class StepData:
         return cls(
             path=step.path,
             kind=step.kind,
-            input=[_step_input_data(item) for item in step.input],
-            output=list(step.output),
+            input=list(step.input),
+            output=step.output,
+            placement=step.placement,
             given=given,
             noted=dict(step.noted),
             status=step.status,
             error=step.error,
-            ejected=(
-                RunControlRefData.from_ref(step.ejected)
-                if step.ejected is not None
+            ejected_by=(
+                RunControlRefData.from_ref(step.ejected_by)
+                if step.ejected_by is not None
                 else None
             ),
             created_at=step.created_at,
@@ -376,8 +335,8 @@ class StepData:
 class RunDetail(RunInfo):
     """One complete run detail schema."""
 
-    input: Message | None
-    output: list[MessagePart] | None
+    control: RunControlRefData
+    output: Local | None
     controls: list[RunControlInfo]
     steps: list[StepData] = field(default_factory=list)
 
@@ -399,19 +358,10 @@ class RunDetail(RunInfo):
             steps=steps,
             root_run_id=root_run_id,
         )
-        start = _start_control(controls)
         return cls(
             **{item.name: getattr(info, item.name) for item in fields(RunInfo)},
-            input=(
-                Message(role="user", parts=start.input.primary)
-                if start.input is not None
-                else None
-            ),
-            output=(
-                list(_resolve_value_ref(run.output, controls=controls, steps=steps))
-                if run.output is not None
-                else None
-            ),
+            control=RunControlRefData.from_ref(run.control),
+            output=run.output,
             controls=[RunControlInfo.from_record(run, item) for item in controls],
             steps=[
                 StepData.from_record(
@@ -437,47 +387,6 @@ class ThreadDetail(ThreadInfo):
         )
 
 
-def _step_input_data(item: StepInput) -> StepInputData:
-    if isinstance(item, RunInputRef):
-        return RunInputRefData.from_ref(item)
-    if isinstance(item, StepOutputRef):
-        return StepOutputRefData.from_ref(item)
-    return item
-
-
-def _resolve_value_ref(
-    ref: RunInputRef | StepOutputRef,
-    *,
-    controls: Sequence[RunControlRecord],
-    steps: Sequence[StepRecord],
-) -> tuple[MessagePart, ...]:
-    if isinstance(ref, StepOutputRef):
-        return ref.resolve(steps)
-    control = next((item for item in controls if item.index == ref.index), None)
-    if control is None or control.input is None:
-        return ()
-    if ref.name is not None:
-        value = next(
-            (item.value for item in control.input.named if item.name == ref.name),
-            None,
-        )
-        if isinstance(value, MessagePart):
-            parts: tuple[MessagePart, ...] = (value,)
-        elif isinstance(value, tuple) and all(
-            isinstance(item, MessagePart) for item in value
-        ):
-            parts = cast(tuple[MessagePart, ...], value)
-        else:
-            return ()
-    else:
-        parts = control.input.primary
-    if ref.part is None:
-        return parts
-    if 0 <= ref.part < len(parts):
-        return (parts[ref.part],)
-    return ()
-
-
 def _thread_channel(thread_id: str, origin: str) -> str:
     if origin != "chat":
         return ""
@@ -488,18 +397,41 @@ def _thread_channel(thread_id: str, origin: str) -> str:
     return "terminal"
 
 
-def _start_control(controls: Sequence[RunControlRecord]) -> RunControlRecord:
+def _preparation_payload(
+    run: RunRecord,
+    controls: Sequence[RunControlRecord],
+) -> PreparationControlPayload:
     for control in controls:
-        if control.index == 0 and control.kind in {"start", "rerun"}:
-            return control
-    raise ValueError("run start input not found")
+        if control.index == run.control.index and isinstance(
+            control.payload, PreparationControlPayload
+        ):
+            return control.payload
+    raise ValueError(f"run preparation control not found: {run.id}^{run.control.index}")
+
+
+def _primary_parts(payload: PreparationControlPayload) -> tuple[MessagePart, ...]:
+    if payload.locals is None:
+        return ()
+    primary = next((local for local in payload.locals if local.name == "_"), None)
+    return _local_parts(primary)
+
+
+def _local_parts(local: Local | None) -> tuple[MessagePart, ...]:
+    if local is None:
+        return ()
+    value = local.value
+    if isinstance(value, MessagePart):
+        return (value,)
+    if isinstance(value, tuple | list):
+        return tuple(item for item in value if isinstance(item, MessagePart))
+    return ()
 
 
 def _ejection_ref_data(
-    ref: ThreadControlRef | RunControlRef | None,
+    ref: ControlRef | None,
 ) -> EjectionRefData | None:
-    if isinstance(ref, ThreadControlRef):
+    if ref is None:
+        return None
+    if not ref.target.startswith("run_"):
         return ThreadControlRefData.from_ref(ref)
-    if isinstance(ref, RunControlRef):
-        return RunControlRefData.from_ref(ref)
-    return None
+    return RunControlRefData.from_ref(ref)
