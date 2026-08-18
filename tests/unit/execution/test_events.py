@@ -124,7 +124,7 @@ def test_run_event_codec_serializes_step_error_references() -> None:
 
     data = run_event_to_data(event)
 
-    assert data["error"] == {"$ptr": "run_root.2"}
+    assert data["error"] == {"?": "@run_root.2"}
     assert run_event_from_data(data) == event
 
 
@@ -136,7 +136,7 @@ def test_run_event_codec_distinguishes_run_error_pointers_from_messages() -> Non
     )
     message = RunEnd(run="run_root", status="failed", error="timeout")
 
-    assert run_event_to_data(pointer)["error"] == {"$ptr": "run_child"}
+    assert run_event_to_data(pointer)["error"] == {"?": "@run_child"}
     assert run_event_from_data(run_event_to_data(pointer)) == pointer
     assert run_event_from_data(run_event_to_data(message)) == message
 

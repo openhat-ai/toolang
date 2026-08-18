@@ -707,14 +707,14 @@ def _parse_execution_error(value: object) -> str | Pointer:
         return value
     if isinstance(value, Mapping):
         payload = cast(Mapping[str, object], value)
-        pointer = payload.get("$ptr") if set(payload) == {"$ptr"} else None
-        if isinstance(pointer, str):
-            return Pointer(pointer)
+        tag = payload.get("?") if set(payload) == {"?"} else None
+        if isinstance(tag, str) and tag.startswith("@") and len(tag) > 1:
+            return Pointer(tag[1:])
     raise ValueError("invalid execution error")
 
 
 def _serialize_execution_error(error: str | Pointer) -> str | dict[str, str]:
-    return error if isinstance(error, str) else {"$ptr": str(error)}
+    return error if isinstance(error, str) else {"?": f"@{error}"}
 
 
 ExecutionError: TypeAlias = Annotated[

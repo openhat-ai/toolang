@@ -292,7 +292,7 @@ def test_local_storage_tags_do_not_leak_to_the_protocol_projection() -> None:
         "type": "Part[]",
         "value": [
             {"type": "text", "text": "hello"},
-            {"$ptr": "run_1.0/2"},
+            {"?": "@run_1.0/2"},
         ],
         "name": "_",
         "dim": 1,
@@ -323,7 +323,8 @@ def test_json_preserves_nested_struct_through_durable_projection() -> None:
     "value",
     (
         {"payload": {"type": "Text[]", "value": ["ordinary"]}},
-        {"payload": {"type": "Text", "$ptr": "ordinary"}},
+        {"payload": {"?": "ordinary"}},
+        {"payload": {"?": "Text@ordinary"}},
     ),
 )
 def test_protocol_projection_does_not_reinterpret_ordinary_json(

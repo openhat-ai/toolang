@@ -536,10 +536,10 @@ def _boxed_value_from_data(type_name: str, data: object) -> Value | TypedPointer
 
 
 def _protocol_value_from_data(data: object, type_name: str) -> Value | TypedPointer:
-    if isinstance(data, Mapping) and set(data) == {"$ptr"}:
-        raw_pointer = cast(Mapping[str, object], data).get("$ptr")
-        if isinstance(raw_pointer, str):
-            return TypedPointer(type_name, Pointer(raw_pointer))
+    if isinstance(data, Mapping) and set(data) == {"?"}:
+        raw_tag = cast(Mapping[str, object], data).get("?")
+        if isinstance(raw_tag, str) and raw_tag.startswith("@") and len(raw_tag) > 1:
+            return TypedPointer(type_name, Pointer(raw_tag[1:]))
     if type_name.endswith("[]"):
         if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
             raise ValueError(f"protocol {type_name} requires an array")
@@ -593,7 +593,7 @@ def _protocol_json_value_from_data(data: object) -> object:
 
 def _protocol_value_to_data(value: object) -> object:
     if isinstance(value, TypedPointer):
-        return {"$ptr": str(value.pointer)}
+        return {"?": f"@{value.pointer}"}
     if isinstance(
         value,
         (TextPart, ImagePart, AudioPart, DocumentPart, ToolCallPart, ToolResultPart),
@@ -812,10 +812,10 @@ def execution_error_from_data(data: object) -> ExecutionError:
 
     if isinstance(data, str):
         return data
-    if isinstance(data, Mapping) and set(data) == {"$ptr"}:
-        pointer = cast(Mapping[str, object], data).get("$ptr")
-        if isinstance(pointer, str):
-            return Pointer(pointer)
+    if isinstance(data, Mapping) and set(data) == {"?"}:
+        tag = cast(Mapping[str, object], data).get("?")
+        if isinstance(tag, str) and tag.startswith("@") and len(tag) > 1:
+            return Pointer(tag[1:])
     raise ValueError("invalid execution error")
 
 
@@ -824,7 +824,7 @@ def execution_error_to_data(error: ExecutionError) -> str | dict[str, str]:
 
     if isinstance(error, str):
         return error
-    return {"$ptr": str(error)}
+    return {"?": f"@{error}"}
 
 
 def execution_error_message(

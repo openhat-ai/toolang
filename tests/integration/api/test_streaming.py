@@ -192,8 +192,8 @@ agic answer(_: Part[]) -> Part[]:
             detail = client.get(f"/api/v1/runs/{run_id}").json()
 
         error = f"{run_id}.0"
-        assert events[-1][1]["error"] == {"$ptr": error}
-        assert detail["error"] == {"$ptr": error}
+        assert events[-1][1]["error"] == {"?": f"@{error}"}
+        assert detail["error"] == {"?": f"@{error}"}
         assert detail["steps"][0]["error"] == "provider unavailable"
         assert "failure" not in detail
     finally:

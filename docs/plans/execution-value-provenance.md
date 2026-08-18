@@ -90,13 +90,16 @@ Its value is self-describing: Text/Number/Boolean use raw scalar shortcuts,
 inline objects use `{"?": "T", ...}`, boxed values use
 `{"?": "T!", "!": value}`, and pointers use `{"?": "T@pointer"}`.
 For example, `Part@run_1.0/2` is the tag value for a pointer expected to resolve
-to Part. `?` and `!` are reserved with no literal escape. These tags are private
-to durable records. Events and APIs retain their existing Local projection
-with `type`, `value`, `name`, and `dim`, their existing `$ptr` projection, and
-the ordinary `type: text|image|audio|document|tool_call|tool_result` Part
+to Part. `?` and `!` are reserved with no literal escape. Events and APIs retain
+their Local projection with `type`, `value`, `name`, and `dim`; a pointer whose
+type is supplied by that enclosing schema uses `{"?": "@run_1.0/2"}`. Typed
+tags and `!` payloads remain private to durable records. Parts retain the
+ordinary `type: text|image|audio|document|tool_call|tool_result`
 representation. Runtime `Array`, `Struct`, Part, and `TypedPointer` classes do
 not introduce a second tagged protocol vocabulary. Fields whose schema accepts
-only pointers store canonical Pointer strings directly.
+only pointers store canonical Pointer strings directly, except error fields,
+which use the same untyped pointer object to distinguish pointers from error
+messages.
 
 Control locals must have unique names. `_` is the primary argument. A step or
 run output may use `name=None` to produce a value without updating the runtime
@@ -251,7 +254,8 @@ control record and is never inferred from an identifier prefix.
 
 - Local, Pointer, and TypedPointer codecs round-trip scalar, Struct, every Part
   variant, nested Array, mixed-pointer collection, heterogeneous Json, and
-  invalid type/dim cases; private value tags never leak through events or APIs.
+  invalid type/dim cases; typed value tags and `!` payloads never leak through
+  events or APIs.
 - Root, child, rerun, and repeated retry records point to the correct control;
   when retry copies adopted locals, the new copies belong to the retry control.
 - Initial model steps point only to the primary and named control locals they
