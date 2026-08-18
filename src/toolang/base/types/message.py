@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 
 
 MessageRole = Literal["user", "assistant", "tool"]
-MessagePartType = Literal[
+PartType = Literal[
     "text",
     "image",
     "audio",
@@ -273,9 +273,7 @@ class ToolResultPart:
         return data
 
 
-PerceptPart = TextPart | ImagePart | AudioPart | DocumentPart
-Percept = tuple[PerceptPart, ...]
-MessagePart = PerceptPart | ToolCallPart | ToolResultPart
+Part = TextPart | ImagePart | AudioPart | DocumentPart | ToolCallPart | ToolResultPart
 
 
 @dataclass(frozen=True, slots=True)
@@ -298,7 +296,7 @@ class ToolCallDelta:
 Delta = TextDelta | ToolCallDelta
 
 
-def part_from_data(payload: Mapping[str, Any]) -> MessagePart:
+def part_from_data(payload: Mapping[str, Any]) -> Part:
     """Return one canonical part from one serialized payload."""
 
     part_type = str(payload.get("type", "")).strip()
@@ -319,25 +317,25 @@ def part_from_data(payload: Mapping[str, Any]) -> MessagePart:
 
 def parts_from_data(
     payloads: Sequence[Mapping[str, Any]],
-) -> tuple[MessagePart, ...]:
+) -> tuple[Part, ...]:
     """Return canonical parts from one serialized sequence."""
 
     return tuple(part_from_data(item) for item in payloads)
 
 
-def parts_to_data(parts: Sequence[MessagePart]) -> list[dict[str, Any]]:
+def parts_to_data(parts: Sequence[Part]) -> list[dict[str, Any]]:
     """Return serialized canonical parts."""
 
     return [part.to_data() for part in parts]
 
 
-def message_text(parts: Sequence[MessagePart]) -> str:
+def message_text(parts: Sequence[Part]) -> str:
     """Return concatenated text from canonical message parts."""
 
     return "".join(part.text for part in parts if isinstance(part, TextPart))
 
 
-def message_summary(parts: Sequence[MessagePart]) -> str:
+def message_summary(parts: Sequence[Part]) -> str:
     """Return a compact human-readable summary for message parts."""
 
     items: list[str] = []
@@ -364,14 +362,14 @@ class Message:
     """Stable canonical message payload."""
 
     role: MessageRole
-    parts: tuple[MessagePart, ...] = field(default_factory=tuple)
+    parts: tuple[Part, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if self.role == "user" and not all(
             isinstance(part, (TextPart, ImagePart, AudioPart, DocumentPart))
             for part in self.parts
         ):
-            raise ValueError("user messages can only contain percept parts")
+            raise ValueError("user messages can only contain input parts")
         if self.role == "assistant" and not all(
             isinstance(
                 part,
@@ -380,7 +378,7 @@ class Message:
             for part in self.parts
         ):
             raise ValueError(
-                "assistant messages can only contain percept or tool-call parts"
+                "assistant messages can only contain content or tool-call parts"
             )
         if self.role == "tool" and (
             not self.parts
@@ -442,17 +440,6 @@ class Message:
         if not all(isinstance(part, TextPart) for part in self.parts):
             return None
         return message_text(self.parts)
-
-    @property
-    def percept(self) -> Percept:
-        """Return the message's content when it contains only percept parts."""
-
-        if not all(
-            isinstance(part, (TextPart, ImagePart, AudioPart, DocumentPart))
-            for part in self.parts
-        ):
-            raise ValueError(f"{self.role} message is not a Percept")
-        return cast(Percept, self.parts)
 
     def to_data(self) -> dict[str, Any]:
         return {"role": self.role, "parts": parts_to_data(self.parts)}

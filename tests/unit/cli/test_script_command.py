@@ -10,8 +10,8 @@ from click.utils import strip_ansi
 from toolang.base.errors import ToolangError
 from toolang.cli.toolang.commands import script
 from toolang.execution.calls import parse_call
-from toolang.execution.records import RunInputRef, RunRecord
-from toolang.execution.types import RunOverride
+from toolang.execution.records import RunRecord
+from toolang.execution.types import ControlRef, RunOverride
 from toolang.lang.input import RunnableInputRaw
 from tests.support.execution_harness import ExecutionHarness
 
@@ -546,7 +546,7 @@ def test_script_does_not_repeat_a_failure_reported_by_the_tracer(
             id="run_failed",
             parent=None,
             thread="script_thread",
-            input=RunInputRef(),
+            control=ControlRef("run_failed", 0),
             output=None,
             status="failed",
             error="output is not valid Number",

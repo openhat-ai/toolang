@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Protocol
+from typing import Mapping, Protocol
 
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.types import JobKind, JobStage
 from toolang.common.layout import AgentLayout
-from toolang.execution.records import execution_error_message
 from toolang.execution.types import ExecutionError
 from .authoring import assign_missing_authored_job_ids
 from .records import JobRecord
@@ -40,11 +39,13 @@ class JobInspection:
         home: Path,
         records: dict[str, JobRecord],
         latest_runs: dict[str, JobRun],
+        error_messages: Mapping[str, str] | None = None,
     ) -> None:
         self.catalog = catalog
         self.home = home
         self.records = records
         self.latest_runs = latest_runs
+        self.error_messages = dict(error_messages or {})
 
     @classmethod
     def load(
@@ -53,6 +54,7 @@ class JobInspection:
         layout: AgentLayout,
         runs: Iterable[JobRun],
         read_only: bool = False,
+        error_messages: Mapping[str, str] | None = None,
     ) -> JobInspection:
         """Load one consistent inspection snapshot from the owning stores."""
 
@@ -79,6 +81,7 @@ class JobInspection:
             home=layout.home,
             records={record.job_id: record for record in records},
             latest_runs=latest_runs,
+            error_messages=error_messages,
         )
 
     def list(
@@ -120,7 +123,8 @@ class JobInspection:
                 status=run.status,
                 started_at=run.started_at,
                 finished_at=run.finished_at,
-                error=execution_error_message(run.error),
+                error=self.error_messages.get(run.id)
+                or (run.error if isinstance(run.error, str) else None),
             )
             if run is not None
             else None

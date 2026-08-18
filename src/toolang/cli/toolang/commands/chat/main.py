@@ -21,6 +21,7 @@ from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, Step
 from toolang.execution.history import RunHistory
 from toolang.execution.records import execution_error_message
 from toolang.execution.types import StepPath
+from toolang.lang.types import Array
 from toolang.cli.common.context import context_layout, load_runtime_environ, user_call
 from toolang.cli.common.execution import open_execution
 from . import slashes as chat_slashes
@@ -328,8 +329,10 @@ class _ScriptedRunRenderer:
         if isinstance(event, StepEnd):
             if event.kind != "model" or event.step in self._text_delta_steps:
                 return
+            value = event.output.value if event.output is not None else ()
+            parts = value if isinstance(value, Array | tuple | list) else ()
             text = message_text(
-                tuple(part for part in event.output if isinstance(part, TextPart))
+                tuple(part for part in parts if isinstance(part, TextPart))
             ).strip()
             if text:
                 self._write(text)

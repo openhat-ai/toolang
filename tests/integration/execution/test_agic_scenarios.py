@@ -41,9 +41,9 @@ from toolang.base.types.run import (
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
-from toolang.execution.records import RunControlRef
-from toolang.execution.types import StepErrorRef, StepPath, ThreadPrefix
-from toolang.lang.input import perceive_input
+from toolang.execution.records import RunControlRef, StartControlPayload
+from toolang.execution.types import StepPath, ThreadPrefix, Pointer
+from toolang.lang.input import resolve_input_parts
 
 
 def test_agic_executes_perceived_text_and_typed_arguments(
@@ -69,7 +69,7 @@ agic reply(_: Part[], tone: Text) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                     named={"tone": "brief"},
                 ),
                 tracer=tracer,
@@ -80,9 +80,12 @@ agic reply(_: Part[], tone: Text) -> Part[]:
             assert harness.adapter.invocations[0].call.messages == [
                 Message.user("Reply to hello in brief.")
             ]
-            assert [
-                step.kind for step in harness.store.list_steps(run_id=record.id)
-            ] == ["model"]
+            steps = harness.store.list_steps(run_id=record.id)
+            assert [step.kind for step in steps] == ["model"]
+            assert steps[0].input == (
+                Pointer.control(record.id, 0, "_"),
+                Pointer.control(record.id, 0, "tone"),
+            )
             assert [event.type for event in tracer.events] == [
                 "run_begin",
                 "step_begin",
@@ -143,8 +146,44 @@ agic reply(_: Part[]) -> Part[]:
                 include_ejected=True,
             )
             assert [step.path.index for step in historical] == [0, 1]
-            assert historical[0].ejected == RunControlRef(run.id, 1)
-            assert historical[1].ejected is None
+            assert historical[0].ejected_by == RunControlRef(run.id, 1)
+            assert historical[1].ejected_by is None
+            assert historical[1].input == (Pointer.control(run.id, 1, "_"),)
+            assert [call.call.messages for call in harness.adapter.invocations] == [
+                [Message.user("hello")],
+                [Message.user("hello")],
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_named_only_agic_records_only_the_local_it_reads(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic reply(topic: Text) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: Discuss {{topic}}.
+""",
+        responses=[ModelCallResult(message=Message.assistant("done"))],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            record = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    named={"topic": "provenance"},
+                )
+            )
+
+            steps = harness.store.list_steps(run_id=record.id)
+            assert len(steps) == 1
+            assert steps[0].input == (Pointer.control(record.id, 0, "topic"),)
 
     asyncio.run(scenario())
 
@@ -171,7 +210,7 @@ agic inspect(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.WEB)
-            input = perceive_input((TextPart("Inspect this: "), image))
+            input = resolve_input_parts((TextPart("Inspect this: "), image))
             record = await harness.executor.start(
                 harness.run_spec(
                     thread=thread,
@@ -223,7 +262,7 @@ agic stream(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="stream",
-                    primary=perceive_input("say hello"),
+                    primary=resolve_input_parts("say hello"),
                 ),
                 tracer=tracer,
             )
@@ -303,7 +342,7 @@ agic calculate(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    primary=perceive_input("double three"),
+                    primary=resolve_input_parts("double three"),
                 ),
                 tracer=tracer,
             )
@@ -372,7 +411,7 @@ agic illustrate(_: Text) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="illustrate",
-                    primary=perceive_input("draw"),
+                    primary=resolve_input_parts("draw"),
                 ),
                 tracer=tracer,
             )
@@ -431,13 +470,13 @@ agic stream(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="stream",
-                    primary=perceive_input("start"),
+                    primary=resolve_input_parts("start"),
                 ),
                 tracer=tracer,
             )
 
             assert record.status == "failed"
-            assert record.error == StepErrorRef(StepPath(record.id, (0,)))
+            assert record.error == Pointer.step(StepPath(record.id, (0,)))
             assert [
                 (step.kind, step.status, step.error)
                 for step in harness.store.list_steps(run_id=record.id)
@@ -489,7 +528,7 @@ agic stream(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="stream",
-                    primary=perceive_input("start"),
+                    primary=resolve_input_parts("start"),
                 ),
                 tracer=tracer,
             )
@@ -560,7 +599,7 @@ agic calculate(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    primary=perceive_input("double three"),
+                    primary=resolve_input_parts("double three"),
                 )
             )
 
@@ -631,7 +670,7 @@ agic calculate(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    primary=perceive_input("calculate"),
+                    primary=resolve_input_parts("calculate"),
                 ),
                 tracer=tracer,
             )
@@ -706,7 +745,7 @@ agic calculate(_: Text) -> Number:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    primary=perceive_input("calculate"),
+                    primary=resolve_input_parts("calculate"),
                 )
             )
 
@@ -758,7 +797,7 @@ agic loop(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="loop",
-                    primary=perceive_input("continue"),
+                    primary=resolve_input_parts("continue"),
                     limits=RunLimits(agic_model_calls=8),
                 ),
                 tracer=tracer,
@@ -808,14 +847,14 @@ agic reply(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("first"),
+                    primary=resolve_input_parts("first"),
                 )
             )
             accepted = await harness.executor.start(
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("second"),
+                    primary=resolve_input_parts("second"),
                     limits=RunLimits(agic_model_calls=1),
                 ),
             )
@@ -834,12 +873,10 @@ agic reply(_: Text) -> Text:
             )
             assert rejected_start is not None
             assert accepted_start is not None
-            assert rejected_start.context == {}
-            assert rejected_start.limits == RunLimits(agic_model_calls=0)
-            assert accepted_start.context == {}
-            assert accepted_start.limits == RunLimits(agic_model_calls=1)
-            assert "limits" not in rejected.context
-            assert "limits" not in accepted.context
+            assert isinstance(rejected_start.payload, StartControlPayload)
+            assert isinstance(accepted_start.payload, StartControlPayload)
+            assert rejected_start.payload.limits == RunLimits(agic_model_calls=0)
+            assert accepted_start.payload.limits == RunLimits(agic_model_calls=1)
 
     asyncio.run(scenario())
 
@@ -877,7 +914,7 @@ agic loop(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="loop",
-                    primary=perceive_input("continue"),
+                    primary=resolve_input_parts("continue"),
                     limits=RunLimits(agic_tool_calls=1),
                 ),
             )
@@ -916,7 +953,7 @@ agic reply(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                     limits=RunLimits(tokens=10),
                 ),
             )
@@ -984,7 +1021,7 @@ agic reply(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                     limits=RunLimits(cost=cost_limit),
                 ),
             )
@@ -1024,7 +1061,7 @@ agic reply(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                     limits=RunLimits(cost=Decimal("1")),
                 ),
             )
@@ -1060,7 +1097,7 @@ agic reply(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                     limits=RunLimits(tokens=100),
                 ),
             )
@@ -1106,7 +1143,7 @@ agic reply(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                     limits=RunLimits(time=0),
                 ),
             )
@@ -1179,13 +1216,13 @@ agic fail(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="fail",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                 ),
                 tracer=tracer,
             )
 
             assert record.status == "failed"
-            assert record.error == StepErrorRef(StepPath(record.id, (0,)))
+            assert record.error == Pointer.step(StepPath(record.id, (0,)))
             steps = harness.store.list_steps(run_id=record.id)
             assert [(step.kind, step.status) for step in steps] == [("model", "failed")]
             assert steps[0].error == "provider unavailable"

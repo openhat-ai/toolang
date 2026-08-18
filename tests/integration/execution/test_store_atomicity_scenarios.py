@@ -16,9 +16,15 @@ from tests.support.execution_fixtures import (
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolDefinition
-from toolang.execution.records import RunControlRef, RunInputRef
+from toolang.execution.errors import RunStoreSchemaError
+from toolang.execution.records import (
+    RerunControlPayload,
+    RetryControlPayload,
+    RunControlRef,
+    StartControlPayload,
+)
 from toolang.execution.store import RunStore
-from toolang.execution.types import StepPath
+from toolang.execution.types import Local, StepPath, Pointer
 
 
 def _execute_sql(db_path: Path, sql: str) -> None:
@@ -39,6 +45,96 @@ def _table_count(db_path: Path, table: str) -> int:
         connection.close()
 
 
+@pytest.mark.parametrize(
+    ("table", "column", "invalid", "message"),
+    (
+        ("runs", "output", "[]", "stored run output must be an object"),
+        ("runs", "placement", "[]", "stored run placement must be an object"),
+        ("steps", "input", "{}", "stored step input must be an array"),
+        ("steps", "output", "[]", "stored step output must be an object"),
+        ("steps", "placement", "[]", "stored step placement must be an object"),
+        ("steps", "given", "[]", "stored step given must be an object"),
+        ("steps", "noted", "[]", "stored step noted must be an object"),
+    ),
+)
+def test_corrupted_run_and_step_fields_are_rejected(
+    tmp_path: Path,
+    table: str,
+    column: str,
+    invalid: str,
+    message: str,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_corrupted_record",
+            thread_id="term_corrupted_record",
+            origin="chat",
+            input=Message.user("hello"),
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="system",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        target = (
+            "id = 'run_corrupted_record'"
+            if table == "runs"
+            else "run = 'run_corrupted_record'"
+        )
+        _execute_sql(
+            store.db_path,
+            f"UPDATE {table} SET {column} = '{invalid}' WHERE {target}",
+        )
+
+        with pytest.raises(ValueError, match=message):
+            if table == "runs":
+                store.get_run(run_id=run.id)
+            else:
+                store.list_steps(run_id=run.id)
+    finally:
+        store.close()
+
+
+def test_invalid_execution_ids_are_rejected_before_any_rows_are_written(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "runs.db"
+    store = RunStore(db_path)
+    try:
+        store.create_thread(thread_id="term_valid")
+        before_runs = _table_count(db_path, "runs")
+        before_controls = _table_count(db_path, "controls")
+        before_threads = _table_count(db_path, "threads")
+
+        with pytest.raises(ValueError, match="invalid run id"):
+            accept_run_start(
+                store,
+                run_id="run.bad",
+                parent=None,
+                thread="term_valid",
+                input=Message.user("invalid"),
+                context={},
+                request_id=None,
+                created_at="2026-01-01T00:00:00Z",
+            )
+        with pytest.raises(ValueError, match="invalid thread id"):
+            store.create_thread(thread_id="thread.bad")
+
+        assert _table_count(db_path, "runs") == before_runs
+        assert _table_count(db_path, "controls") == before_controls
+        assert _table_count(db_path, "threads") == before_threads
+    finally:
+        store.close()
+
+
 def test_start_acceptance_rolls_back_the_run_when_control_insert_fails(
     tmp_path: Path,
 ) -> None:
@@ -49,7 +145,7 @@ def test_start_acceptance_rolls_back_the_run_when_control_insert_fails(
             store.db_path,
             """
             CREATE TRIGGER reject_start_control
-            BEFORE INSERT ON run_controls
+            BEFORE INSERT ON controls
             WHEN NEW.kind = 'start'
             BEGIN
                 SELECT RAISE(ABORT, 'injected start-control failure');
@@ -70,7 +166,7 @@ def test_start_acceptance_rolls_back_the_run_when_control_insert_fails(
             )
 
         assert store.get_run(run_id="run_atomic_start") is None
-        assert _table_count(store.db_path, "run_controls") == 0
+        assert _table_count(store.db_path, "controls") == 1
     finally:
         store.close()
 
@@ -132,17 +228,15 @@ def test_retry_reopens_root_and_ejects_the_failed_step_suffix(
 
         start = store.get_run_control(run_id=run.id, index=0)
         assert start is not None
-        assert start.bindings is not None
-        assert start.limits is not None
-        assert start.input is not None
-        assert start.resources is not None
+        assert isinstance(start.payload, StartControlPayload)
         reopened, control, ejected = store.accept_retry(
             run_id=run.id,
             anchor=None,
-            bindings=start.bindings,
-            limits=start.limits,
-            input=start.input,
-            resources=start.resources,
+            resources=start.payload.resources,
+            limits=start.payload.limits,
+            runnable=start.payload.runnable,
+            model=start.payload.model,
+            locals=start.payload.locals,
             request_id="retry-1",
             created_at="2026-01-01T00:00:03Z",
         )
@@ -152,7 +246,8 @@ def test_retry_reopens_root_and_ejects_the_failed_step_suffix(
         assert reopened.finished_at is None
         assert reopened.error is None
         assert control.kind == "retry"
-        assert control.anchor == failed.path
+        assert isinstance(control.payload, RetryControlPayload)
+        assert control.payload.retry_from == failed.path
         assert control.status == "applied"
         assert ejected == (failed.path, failure.path)
         assert store.list_steps(run_id=run.id) == [first]
@@ -162,11 +257,11 @@ def test_retry_reopens_root_and_ejects_the_failed_step_suffix(
             failed.path,
             failure.path,
         ]
-        assert historical[0].ejected is None
-        assert historical[1].ejected is not None
-        assert historical[1].ejected.run == run.id
-        assert historical[1].ejected.index == control.index
-        assert historical[2].ejected == historical[1].ejected
+        assert historical[0].ejected_by is None
+        assert historical[1].ejected_by is not None
+        assert historical[1].ejected_by.run == run.id
+        assert historical[1].ejected_by.index == control.index
+        assert historical[2].ejected_by == historical[1].ejected_by
     finally:
         store.close()
 
@@ -206,10 +301,10 @@ def test_rerun_acceptance_ejects_the_source_with_the_new_start_control(
 
         stored_source = store.get_run(run_id=source.id)
         assert stored_source is not None
-        assert stored_source.ejected == RunControlRef(rerun.id, 0)
+        assert stored_source.ejected_by == RunControlRef(rerun.id, 0)
         assert control.kind == "rerun"
-        assert control.source == source.id
-        assert control.anchor is None
+        assert isinstance(control.payload, RerunControlPayload)
+        assert control.payload.rerun_from == source.id
         assert [run.id for run in store.list_runs(limit=None)] == [rerun.id]
         assert [
             run.id for run in store.list_runs(limit=None, include_ejected=True)
@@ -238,8 +333,7 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
             run_id="run_atomic_event",
             kind="steer",
             timing="next_step",
-            message=Message.user("updated"),
-            context={},
+            locals=(Local.typed("Part[]", Message.user("updated").parts, "_", 0),),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -247,8 +341,8 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
             store.db_path,
             f"""
             CREATE TRIGGER reject_control_finish
-            BEFORE UPDATE OF status ON run_controls
-            WHEN OLD.run = 'run_atomic_event' AND OLD."index" = {control.index}
+            BEFORE UPDATE OF status ON controls
+            WHEN OLD.target = 'run_atomic_event' AND OLD."index" = {control.index}
             BEGIN
                 SELECT RAISE(ABORT, 'injected control-finish failure');
             END;
@@ -260,7 +354,8 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
                 store.begin_step(
                     path=StepPath("run_atomic_event", (0,)),
                     kind="system",
-                    input=(RunInputRef(index=control.index),),
+                    input=(Pointer.control("run_atomic_event", control.index, "_"),),
+                    placement=None,
                     given={},
                     started_at="2026-01-01T00:00:02Z",
                 )
@@ -329,6 +424,7 @@ def test_model_blobs_roll_back_when_the_model_step_cannot_be_inserted(
                     path=StepPath("run_atomic_model", (0,)),
                     kind="model",
                     input=(),
+                    placement=None,
                     given=given,
                     started_at="2026-01-01T00:00:00Z",
                 )
@@ -367,8 +463,7 @@ def test_run_control_revision_only_advances_when_control_state_changes(
             run_id="run_control_revision",
             kind="steer",
             timing="next_step",
-            message=Message.user("updated"),
-            context={},
+            locals=(Local.typed("Part[]", Message.user("updated").parts, "_", 0),),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -397,7 +492,7 @@ def test_run_control_revision_only_advances_when_control_state_changes(
         store.close()
 
 
-def test_run_store_adds_control_revisions_without_deleting_v18_history(
+def test_run_store_rejects_a_legacy_execution_schema(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "runs.db"
@@ -417,31 +512,13 @@ def test_run_store_adds_control_revisions_without_deleting_v18_history(
 
     connection = sqlite3.connect(path)
     try:
-        connection.execute("DROP INDEX idx_run_controls_revision")
-        connection.execute("ALTER TABLE run_controls DROP COLUMN revision")
-        connection.execute("ALTER TABLE run_controls DROP COLUMN claimed")
-        connection.execute("PRAGMA user_version=18")
+        connection.execute("PRAGMA user_version=23")
         connection.commit()
     finally:
         connection.close()
 
-    reopened = RunStore(path)
-    try:
-        assert reopened.get_run(run_id="run_v18_revision") is not None
-        assert len(reopened.list_run_controls(run_id="run_v18_revision")) == 1
-        assert reopened.latest_run_control_revision() == 0
-        reopened.accept_run_control(
-            run_id="run_v18_revision",
-            kind="steer",
-            timing="next_step",
-            message=Message.user("updated"),
-            context={},
-            request_id=None,
-            created_at="2026-01-01T00:00:01Z",
-        )
-        assert reopened.latest_run_control_revision() == 1
-    finally:
-        reopened.close()
+    with pytest.raises(RunStoreSchemaError):
+        RunStore(path)
 
 
 def test_claimed_control_cannot_be_canceled_before_its_event_is_persisted(
@@ -464,8 +541,7 @@ def test_claimed_control_cannot_be_canceled_before_its_event_is_persisted(
             run_id="run_claimed_control",
             kind="steer",
             timing="next_step",
-            message=Message.user("updated"),
-            context={},
+            locals=(Local.typed("Part[]", Message.user("updated").parts, "_", 0),),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )

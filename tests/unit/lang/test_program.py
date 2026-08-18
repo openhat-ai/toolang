@@ -10,7 +10,7 @@ from toolang.common.errors import ToolangError
 from toolang.lang import Program, to_data
 from toolang.lang.ast import LetStmt, RepeatStmt, SettleStmt
 from toolang.base.types.message import TextPart
-from toolang.lang.input import perceive_input
+from toolang.lang.input import resolve_input_parts
 from toolang.state.source import read_authored_source
 
 
@@ -375,6 +375,14 @@ service github:
 """
         )
 
+    with pytest.raises(ToolangError, match="conflicts with a built-in type"):
+        Program.from_source(
+            """
+struct Json:
+  value: Text
+"""
+        )
+
     with pytest.raises(ToolangError, match="Duplicate runnable name"):
         Program.from_source(
             """
@@ -484,7 +492,7 @@ agic:
     )
     program = read_authored_source(root, "alice").load_program().parse()
 
-    expanded = perceive_input(
+    expanded = resolve_input_parts(
         '/review path=src/app.py focus="only errors" -\n\nAlso inspect tests.',
         program=program,
     )

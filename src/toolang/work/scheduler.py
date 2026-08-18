@@ -503,7 +503,6 @@ class JobScheduler:
                 self.executor.store.create_thread(
                     thread_id=job.thread_id,
                     origin=job.kind,
-                    context={"job": {"id": job.id, "kind": job.kind}},
                 )
             return await self.executor.start(spec, run_id=run_id)
 

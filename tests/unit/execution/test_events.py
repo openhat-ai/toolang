@@ -6,7 +6,7 @@ from typing import get_args
 
 import pytest
 
-from toolang.base.types.message import Message, TextDelta, TextPart
+from toolang.base.types.message import TextDelta, TextPart
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -19,11 +19,12 @@ from toolang.execution.events import (
     run_event_from_data,
     run_event_to_data,
 )
-from toolang.execution.records import RunInputRef, StepOutputRef
 from toolang.execution.types import (
+    ControlRef,
     ControlStatus,
+    Local,
+    Pointer,
     RunStatus,
-    StepErrorRef,
     StepPath,
     StepStatus,
 )
@@ -32,17 +33,16 @@ from toolang.execution.types import (
 _EVENTS: tuple[RunEvent, ...] = (
     RunBegin(
         run="run_root",
-        input=RunInputRef(index=0),
-        context={"root": "run_root"},
+        control=ControlRef("run_root", 0),
+        runnable="agic:test",
         started_at="2026-01-01T00:00:00Z",
     ),
     StepBegin(
         step=StepPath.parse("run_root/0"),
         kind="model",
         input=(
-            RunInputRef(index=0),
-            StepOutputRef(step=StepPath.parse("run_root/1")),
-            Message.user("steer"),
+            Pointer.control("run_root", 0, "_"),
+            Pointer.step(StepPath.parse("run_root/1")),
         ),
         started_at="2026-01-01T00:00:01Z",
     ),
@@ -53,14 +53,18 @@ _EVENTS: tuple[RunEvent, ...] = (
         step=StepPath.parse("run_root/0"),
         kind="model",
         status="succeeded",
-        output=(TextPart("hello"),),
+        output=Local.typed("Part[]", (TextPart("hello"),), "_", 0),
         finished_at="2026-01-01T00:00:02Z",
     ),
     RunEnd(
         run="run_root",
         status="succeeded",
-        input=RunInputRef(index=0),
-        output=StepOutputRef(step=StepPath.parse("run_root/0")),
+        output=Local.typed(
+            "Part[]",
+            Pointer.step(StepPath.parse("run_root/0")),
+            "_",
+            0,
+        ),
         finished_at="2026-01-01T00:00:03Z",
     ),
 )
@@ -115,10 +119,34 @@ def test_run_event_codec_serializes_step_error_references() -> None:
     event = RunEnd(
         run="run_root",
         status="failed",
-        error=StepErrorRef(StepPath.parse("run_root/2")),
+        error=Pointer.step(StepPath.parse("run_root/2")),
     )
 
     data = run_event_to_data(event)
 
-    assert data["error"] == {"step": "run_root/2"}
+    assert data["error"] == {"?": "@run_root.2"}
     assert run_event_from_data(data) == event
+
+
+def test_run_event_codec_distinguishes_run_error_pointers_from_messages() -> None:
+    pointer = RunEnd(
+        run="run_root",
+        status="failed",
+        error=Pointer.run("run_child"),
+    )
+    message = RunEnd(run="run_root", status="failed", error="timeout")
+
+    assert run_event_to_data(pointer)["error"] == {"?": "@run_child"}
+    assert run_event_from_data(run_event_to_data(pointer)) == pointer
+    assert run_event_from_data(run_event_to_data(message)) == message
+
+
+def test_run_event_codec_round_trips_struct_output() -> None:
+    event = StepEnd(
+        step=StepPath.parse("run_root/0"),
+        kind="run",
+        status="succeeded",
+        output=Local.typed("Review", {"score": 1}, "_"),
+    )
+
+    assert run_event_from_data(run_event_to_data(event)) == event

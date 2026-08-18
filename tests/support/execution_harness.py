@@ -12,7 +12,7 @@ from types import TracebackType
 from typing import Any, Self
 
 from toolang.base.protocols.tool import AgentTool
-from toolang.base.types.message import Percept
+from toolang.base.types.message import Part
 from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import (
@@ -26,10 +26,11 @@ from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.executor import RunExecutor, RunSpec
+from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.lang import Program
-from toolang.lang.input import RunnableInput
+from toolang.lang.input import resolve_runnable_input
 from toolang.state.state import AgentState, agent_state_version
 from toolang.setup import AgentSetup
 
@@ -319,7 +320,7 @@ class ExecutionHarness:
         *,
         thread: str,
         runnable: str,
-        primary: Percept = (),
+        primary: tuple[Part, ...] | None = None,
         named: Mapping[str, object] | None = None,
         model: str | None = None,
         limits: RunLimits | None = None,
@@ -327,6 +328,12 @@ class ExecutionHarness:
     ) -> RunSpec:
         """Build a run spec while keeping scenario tests focused on behavior."""
 
+        runnable_name, runnable_kind = parse_runnable_ref(runnable)
+        executable = resolve_runnable(
+            self.state.program,
+            runnable_name,
+            kind=runnable_kind,
+        )
         return RunSpec(
             setup=self.setup,
             state=self.state,
@@ -334,7 +341,12 @@ class ExecutionHarness:
             bindings=RunBindings(model=model, runnable=runnable),
             limits=limits if limits is not None else self.setup.limits,
             ceilings=ceilings,
-            input=RunnableInput.from_values(primary=primary, named=named),
+            input=resolve_runnable_input(
+                executable,
+                primary=primary,
+                named=named,
+                structs={item.name: item for item in self.state.program.structs},
+            ),
         )
 
     async def __aenter__(self) -> Self:

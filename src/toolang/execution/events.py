@@ -8,16 +8,21 @@ from typing import Annotated, Any, Literal, cast
 
 from pydantic import Field, TypeAdapter
 
-from toolang.base.types.message import Delta, MessagePart, MessagePartType
+from toolang.base.types.message import Delta, Part, PartType
 
-from .records import (
-    RunInputRef,
-    StepInput,
-    ThreadControlRef,
-    ThreadPeer,
-    ValueRef,
+from .records import ThreadPeer
+from .types import (
+    ControlRef,
+    ExecutionError,
+    Local,
+    RunStatus,
+    StepKind,
+    StepPath,
+    StepStatus,
+    Pointer,
+    local_from_protocol_data,
+    local_to_protocol_data,
 )
-from .types import ExecutionError, RunStatus, StepKind, StepPath, StepStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,9 +30,10 @@ class RunBegin:
     """A run started executing."""
 
     run: str
-    input: RunInputRef
+    control: ControlRef
+    runnable: str = ""
     parent: StepPath | None = None
-    context: dict[str, Any] = field(default_factory=dict)
+    placement: dict[str, object] | None = None
     started_at: str = ""
     type: Literal["run_begin"] = field(default="run_begin", init=False)
 
@@ -38,7 +44,8 @@ class StepBegin:
 
     step: StepPath
     kind: StepKind
-    input: tuple[StepInput, ...] = ()
+    input: tuple[Pointer, ...] = ()
+    placement: dict[str, object] | None = None
     given: dict[str, Any] = field(default_factory=dict)
     started_at: str = ""
     type: Literal["step_begin"] = field(default="step_begin", init=False)
@@ -50,7 +57,7 @@ class PartBegin:
 
     step: StepPath
     part: int
-    part_type: MessagePartType
+    part_type: PartType
     type: Literal["part_begin"] = field(default="part_begin", init=False)
 
 
@@ -70,7 +77,7 @@ class PartEnd:
 
     step: StepPath
     part: int
-    data: MessagePart
+    data: Part
     type: Literal["part_end"] = field(default="part_end", init=False)
 
 
@@ -81,7 +88,7 @@ class StepEnd:
     step: StepPath
     kind: StepKind
     status: StepStatus
-    output: tuple[MessagePart, ...] = ()
+    output: Local | None = None
     noted: dict[str, Any] = field(default_factory=dict)
     error: ExecutionError | None = None
     finished_at: str = ""
@@ -94,8 +101,8 @@ class RunEnd:
 
     run: str
     status: RunStatus
-    input: RunInputRef | None = None
-    output: ValueRef | None = None
+    control: ControlRef | None = None
+    output: Local | None = None
     error: ExecutionError | None = None
     finished_at: str = ""
     type: Literal["run_end"] = field(default="run_end", init=False)
@@ -120,7 +127,7 @@ class ThreadCreated:
     """A thread was created successfully."""
 
     thread: str
-    control: ThreadControlRef
+    control: ControlRef
     origin: str
     peer: ThreadPeer
     created_at: str
@@ -132,7 +139,7 @@ class ThreadForked:
     """A thread was forked successfully."""
 
     thread: str
-    control: ThreadControlRef
+    control: ControlRef
     source_thread: str
     anchor_run: str
     created_at: str
@@ -144,7 +151,7 @@ class ThreadRewound:
     """A thread was rewound successfully."""
 
     thread: str
-    control: ThreadControlRef
+    control: ControlRef
     anchor_run: str
     ejected_runs: tuple[str, ...]
     created_at: str
@@ -164,24 +171,35 @@ _EXECUTION_EVENT_ADAPTER = TypeAdapter(ExecutionEvent)
 def event_to_data(event: ExecutionEvent) -> dict[str, Any]:
     """Serialize one canonical execution event for a protocol boundary."""
 
-    return cast(
+    data = cast(
         dict[str, Any],
         _EXECUTION_EVENT_ADAPTER.dump_python(event, mode="json"),
     )
+    return _with_canonical_output(event, data)
 
 
 def run_event_to_data(event: RunEvent) -> dict[str, Any]:
     """Serialize one canonical run event."""
 
-    return cast(
+    data = cast(
         dict[str, Any],
         _RUN_EVENT_ADAPTER.dump_python(event, mode="json"),
     )
+    return _with_canonical_output(event, data)
 
 
 def run_event_from_data(data: object) -> RunEvent:
     """Parse one canonical run event."""
 
+    if isinstance(data, dict):
+        payload = cast(dict[str, Any], data)
+    else:
+        payload = None
+    if payload is not None and payload.get("type") in {"step_end", "run_end"}:
+        output = payload.get("output")
+        if isinstance(output, dict):
+            payload = {**payload, "output": local_from_protocol_data(output)}
+        data = payload
     return _RUN_EVENT_ADAPTER.validate_python(data)
 
 
@@ -191,3 +209,12 @@ class ThreadListener(ABC):
     @abstractmethod
     def on_event(self, event: ThreadEvent) -> None:
         """Observe one successful thread mutation."""
+
+
+def _with_canonical_output(
+    event: ExecutionEvent,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    if isinstance(event, StepEnd | RunEnd) and event.output is not None:
+        return {**data, "output": local_to_protocol_data(event.output)}
+    return data

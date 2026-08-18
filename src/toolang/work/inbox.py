@@ -13,8 +13,10 @@ from toolang.base.types.message import Message
 from toolang.base.types.policy import RunBindings
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
-from toolang.execution.records import RunRecord, execution_error_message
-from toolang.lang.input import RunnableInput
+from toolang.execution.records import RunRecord
+from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
+from toolang.execution.store import RunStore
+from toolang.lang.input import resolve_runnable_input
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 from toolang.work import files
@@ -90,6 +92,7 @@ async def run(
             _record_completed_runs(
                 store,
                 active,
+                run_store=executor.store,
                 now=now,
             )
             for submission in collect_file_submissions(
@@ -102,25 +105,35 @@ async def run(
                     executor.store.create_thread(
                         thread_id=submission.record.thread_id,
                         origin="file",
-                        context={"file_request_id": submission.record.request_id},
                     )
                 setup = get_agent_setup()
                 state = get_agent_state()
+                runnable_ref = (
+                    "agic:file"
+                    if state.program.find_agic("file") is not None
+                    else "agic:default"
+                )
+                runnable_name, runnable_kind = parse_runnable_ref(runnable_ref)
+                runnable = resolve_runnable(
+                    state.program,
+                    runnable_name,
+                    kind=runnable_kind,
+                )
                 handle = executor.start(
                     RunSpec(
                         setup=setup,
                         state=state,
                         thread=submission.record.thread_id,
                         bindings=RunBindings(
-                            runnable=(
-                                "agic:file"
-                                if state.program.find_agic("file") is not None
-                                else "agic:default"
-                            ),
+                            runnable=runnable_ref,
                             model=setup.bindings.model,
                         ),
                         limits=setup.limits,
-                        input=RunnableInput(primary=submission.input.percept),
+                        input=resolve_runnable_input(
+                            runnable,
+                            primary=submission.input.parts,
+                            structs={item.name: item for item in state.program.structs},
+                        ),
                     )
                 )
                 try:
@@ -145,7 +158,12 @@ async def run(
     finally:
         if active:
             await asyncio.gather(*active.values(), return_exceptions=True)
-            _record_completed_runs(store, active, now=datetime.now(timezone.utc))
+            _record_completed_runs(
+                store,
+                active,
+                run_store=executor.store,
+                now=datetime.now(timezone.utc),
+            )
         store.close()
 
 
@@ -230,6 +248,7 @@ def _record_completed_runs(
     store: files.FileRequestStore,
     active: dict[str, asyncio.Task[RunRecord]],
     *,
+    run_store: RunStore,
     now: datetime,
 ) -> None:
     for run_id, task in tuple(active.items()):
@@ -243,7 +262,9 @@ def _record_completed_runs(
             error = str(exc) or type(exc).__name__
         else:
             status = run.status
-            error = execution_error_message(run.error)
+            error = (
+                run_store.resolve_error(run.error) if run.error is not None else None
+            )
         store.finish_run(
             run_id=run_id,
             run_status=status,

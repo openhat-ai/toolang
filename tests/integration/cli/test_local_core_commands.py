@@ -25,9 +25,14 @@ import toolang.cli.toolang.commands.thread as thread_commands
 import toolang.cli.toolang.main as cli
 from toolang.common.layout import AgentLayout
 from toolang.execution.history import RunHistory
+from toolang.execution.records import (
+    RerunControlPayload,
+    RetryControlPayload,
+    SteerControlPayload,
+)
 from toolang.execution.store import RunStore
-from toolang.execution.types import ThreadPrefix
-from toolang.lang.input import perceive_input
+from toolang.execution.types import Local, ThreadPrefix
+from toolang.lang.input import resolve_input_parts
 from toolang.setup import AgentSetup
 from toolang.up import process as agents
 from toolang.work.state import load_ready_jobs
@@ -56,17 +61,10 @@ def test_read_only_thread_commands_do_not_create_execution_store(
     assert not layout.run_store.exists()
 
 
-@pytest.mark.parametrize(
-    ("schema_version", "advice"),
-    [
-        (11, "backup"),
-        (18, "upgrade"),
-    ],
-)
+@pytest.mark.parametrize("schema_version", [11, 18, 24])
 def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     tmp_path: Path,
     schema_version: int,
-    advice: str,
 ) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
@@ -86,8 +84,8 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     assert "Traceback" not in error_output
     assert "execution history is incompatible with toolang" in error_output
     assert f"uses schema {schema_version}" in error_output
-    assert "requires schema 23" in error_output
-    assert advice in error_output
+    assert "requires schema 25" in error_output
+    assert "backup" in error_output
     assert "database was not changed" in error_output.lower()
     connection = sqlite3.connect(layout.run_store)
     try:
@@ -238,7 +236,12 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
     assert document["run"]["id"] == "run_inspect"
     assert document["step"]["path"] == "run_inspect/0"
     assert document["step"]["kind"] == "system"
-    assert document["step"]["output"] == [{"text": "prepared", "type": "text"}]
+    assert document["step"]["output"] == {
+        "type": "Part[]",
+        "value": [{"text": "prepared", "type": "text"}],
+        "name": "_",
+        "dim": 0,
+    }
 
 
 def test_roaming_source_reads_threads_runs_and_inspection(
@@ -288,7 +291,12 @@ def test_roaming_source_reads_threads_runs_and_inspection(
     document = json.loads(inspect_output.out)
     assert document["kind"] == "step"
     assert document["run"]["id"] == "run_roaming"
-    assert document["step"]["output"] == [{"text": "ready", "type": "text"}]
+    assert document["step"]["output"] == {
+        "type": "Part[]",
+        "value": [{"text": "ready", "type": "text"}],
+        "name": "_",
+        "dim": 0,
+    }
 
 
 def test_visiting_selector_reads_inspection_without_fetching(
@@ -339,7 +347,12 @@ def test_visiting_selector_reads_inspection_without_fetching(
     document = json.loads(output.out)
     assert document["kind"] == "step"
     assert document["run"]["id"] == "run_visiting"
-    assert document["step"]["output"] == [{"text": "cached", "type": "text"}]
+    assert document["step"]["output"] == {
+        "type": "Part[]",
+        "value": [{"text": "cached", "type": "text"}],
+        "name": "_",
+        "dim": 0,
+    }
 
 
 def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> None:
@@ -375,7 +388,10 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
         ("steer", "next_step", "pending"),
         ("stop", "immediate", "pending"),
     ]
-    assert controls[1].message == Message.user("Focus on tests")
+    assert isinstance(controls[1].payload, SteerControlPayload)
+    assert controls[1].payload.locals == (
+        Local.typed("Part[]", Message.user("Focus on tests").parts, "_", 0),
+    )
 
 
 def test_retry_and_rerun_execute_locally_with_limit_overrides(
@@ -437,7 +453,7 @@ agic reply(_: Part[]) -> Part[]:
             harness.run_spec(
                 thread=thread,
                 runnable="reply",
-                primary=perceive_input("hello"),
+                primary=resolve_input_parts("hello"),
             )
         )
         await harness.executor.shutdown()
@@ -482,13 +498,13 @@ agic reply(_: Part[]) -> Part[]:
         retry_control = harness.store.list_run_controls(run_id=source.id)[-1]
         rerun_control = harness.store.get_run_control(run_id=rerun_id, index=0)
         assert retry_control.kind == "retry"
-        assert retry_control.limits is not None
-        assert retry_control.limits.tokens == 10
+        assert isinstance(retry_control.payload, RetryControlPayload)
+        assert retry_control.payload.limits.tokens == 10
         assert rerun_control is not None
         assert rerun_control.kind == "rerun"
-        assert rerun_control.source == source.id
-        assert rerun_control.limits is not None
-        assert rerun_control.limits.time == 30
+        assert isinstance(rerun_control.payload, RerunControlPayload)
+        assert rerun_control.payload.rerun_from == source.id
+        assert rerun_control.payload.limits.time == 30
     finally:
         harness.store.close()
 

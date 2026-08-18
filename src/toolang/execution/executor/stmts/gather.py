@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from toolang.lang.ast import GatherStmt
@@ -26,7 +27,7 @@ async def execute(
     placement: Mapping[str, object] | None,
 ) -> Local:
     def transform(result: Local) -> Local:
-        return Local(result.value, "item", type_name=result.type_name)
+        return replace(result, shape="item")
 
     return await run_step.execute(
         execution,

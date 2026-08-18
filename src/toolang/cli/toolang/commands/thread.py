@@ -24,7 +24,7 @@ from toolang.execution.history import RunHistory
 from toolang.execution.records import RunRecord
 from toolang.execution.schemas import RunDetail, StepData
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import RunStatus, StepPath
+from toolang.execution.types import Local, RunStatus, StepPath, local_to_protocol_data
 from toolang.setup import SetupWatcher
 from toolang.state.watcher import StateWatcher
 
@@ -505,6 +505,8 @@ def _run_data(run: RunDetail, *, include_steps: bool) -> dict[str, Any]:
 def _inspect_data(value: Any) -> Any:
     if isinstance(value, StepPath):
         return str(value)
+    if isinstance(value, Local):
+        return local_to_protocol_data(value)
     if is_dataclass(value) and not isinstance(value, type):
         return _record_data(value)
     if isinstance(value, dict):

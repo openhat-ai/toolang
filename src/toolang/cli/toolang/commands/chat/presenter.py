@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-
 from toolang.base.types.message import TextDelta
 from toolang.execution.events import (
     PartBegin,
@@ -15,8 +13,7 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import StepOutputRef
-from toolang.execution.types import ExecutionError, StepPath
+from toolang.execution.types import ExecutionError, StepPath, Pointer, TypedPointer
 
 from toolang.cli.common.execution_progress.formatting import (
     integer,
@@ -127,7 +124,7 @@ class ChatRunPresenter:
         live_owner = self._live_owner(owner)
         if owner.live_owner is not None:
             live_owner.active_run = run.run_id
-            live_owner.active_item = integer(run.placement.get("loop"))
+            live_owner.active_item = integer(run.placement.get("iter"))
             live_owner.active_work = owner.work_line(run)
             live_owner.active_activity = "starting…"
 
@@ -160,10 +157,9 @@ class ChatRunPresenter:
         live_owner = direct_repeat or self._repeat_owner(run)
         ordinal: int | None = None
         if direct_repeat is not None:
-            placement = event.given.get("placement")
             iteration = (
-                integer(placement.get("loop"))
-                if isinstance(placement, Mapping)
+                integer(event.placement.get("iter"))
+                if event.placement is not None
                 else None
             )
             ordinal = direct_repeat.note_iteration(iteration or 0)
@@ -277,9 +273,7 @@ class ChatRunPresenter:
         event: RunEnd,
         app: AppContext,
     ) -> None:
-        output_step = (
-            event.output.step if isinstance(event.output, StepOutputRef) else None
-        )
+        output_step = self._output_step(event)
         show_inline_result = run.kind != "flow"
         output_finalized = False
         for step, block in list(self._blocks.items()):
@@ -355,9 +349,8 @@ class ChatRunPresenter:
         return self._statements.get(statement.live_owner, statement)
 
     def _until_decision(self, event: RunEnd) -> bool | None:
-        if not isinstance(event.output, StepOutputRef):
-            return None
-        outcome = self._outcomes.get(event.output.step)
+        output_step = self._output_step(event)
+        outcome = self._outcomes.get(output_step) if output_step is not None else None
         value = output_preview(outcome).strip() if outcome is not None else ""
         if value == "true":
             return True
@@ -367,7 +360,16 @@ class ChatRunPresenter:
 
     @staticmethod
     def _is_until(run: RunState, owner: StatementState) -> bool:
-        return owner.statement == "repeat" and run.placement.get("role") == "until"
+        return owner.statement == "repeat" and run.placement.get("iter") == -1
+
+    def _output_step(self, event: RunEnd) -> StepPath | None:
+        if event.output is None or not isinstance(event.output.value, TypedPointer):
+            return None
+        pointer = event.output.value.pointer
+        return next(
+            (path for path in self._outcomes if Pointer.step(path) == pointer),
+            None,
+        )
 
     def _discard_pending_models(self, next_step: StepPath, app: AppContext) -> None:
         next_run = next_step.run

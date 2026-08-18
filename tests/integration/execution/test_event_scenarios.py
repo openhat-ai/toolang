@@ -18,7 +18,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import StepPath, ThreadPrefix
-from toolang.lang.input import perceive_input
+from toolang.lang.input import resolve_input_parts
 
 
 def test_tool_loop_events_are_complete_ordered_and_non_redundant(
@@ -55,7 +55,7 @@ agic calculate(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    primary=perceive_input("double three"),
+                    primary=resolve_input_parts("double three"),
                 ),
                 tracer=tracer,
             )
@@ -107,7 +107,7 @@ flow relay(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="relay",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                 ),
                 tracer=tracer,
             )
@@ -167,7 +167,7 @@ flow parallel(_: Text) -> Text[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="parallel",
-                    primary=perceive_input("work"),
+                    primary=resolve_input_parts("work"),
                 ),
                 tracer=tracer,
             )

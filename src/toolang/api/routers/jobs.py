@@ -398,9 +398,15 @@ def _refresh_jobs(scheduler: JobScheduler) -> None:
 
 
 def _inspection(core: AgentCore) -> JobInspection:
+    runs = tuple(cast(Iterable[JobRun], core.store.list_runs(limit=None)))
     return JobInspection.load(
         layout=core.layout,
-        runs=cast(Iterable[JobRun], core.store.list_runs(limit=None)),
+        runs=runs,
+        error_messages={
+            run.id: core.store.resolve_error(run.error)
+            for run in runs
+            if run.error is not None
+        },
     )
 
 

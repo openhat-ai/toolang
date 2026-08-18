@@ -6,7 +6,7 @@ from collections.abc import Mapping
 import sys
 from typing import TextIO
 
-from toolang.base.types.message import Percept, TextDelta
+from toolang.base.types.message import Part, TextDelta
 from toolang.execution.events import (
     PartDelta,
     RunBegin,
@@ -16,8 +16,8 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.records import StepOutputRef, execution_error_message
-from toolang.execution.types import ExecutionError, StepPath
+from toolang.execution.records import execution_error_message
+from toolang.execution.types import ExecutionError, StepPath, Pointer, TypedPointer
 
 from .blocks import CallBlock, RunBlock, StatementBlock
 from .console import ProgressConsole
@@ -41,7 +41,7 @@ class ConsoleRunTracer(RunTracer):
         runnable_kind: str | None = None,
         runnable_name: str | None = None,
         runnable_doc: str | None = None,
-        input_value: Percept = (),
+        input_value: tuple[Part, ...] = (),
         args: Mapping[str, object] | None = None,
         width: int | None = None,
     ) -> None:
@@ -92,7 +92,7 @@ class ConsoleRunTracer(RunTracer):
                 doc=self.runnable_doc,
                 input_value=self.input_value,
                 args=self.args,
-                control_index=event.input.index,
+                control_index=event.control.index,
             )
             return
         if owner is None:
@@ -113,7 +113,7 @@ class ConsoleRunTracer(RunTracer):
         live_owner = self._live_owner(owner)
         if owner.hidden:
             live_owner.active_run = run.run_id
-            live_owner.active_item = integer(run.placement.get("loop"))
+            live_owner.active_item = integer(run.placement.get("iter"))
             live_owner.active_work = owner.work_line(run)
             live_owner.active_activity = "starting…"
         self._show_statement_live(live_owner, event.started_at)
@@ -124,10 +124,9 @@ class ConsoleRunTracer(RunTracer):
             return
         run.finish(event)
         if event.run == self.run_id:
+            output_step = self._output_step(event)
             output = (
-                self._outcomes.get(event.output.step)
-                if isinstance(event.output, StepOutputRef)
-                else None
+                self._outcomes.get(output_step) if output_step is not None else None
             )
             run.render_result(
                 self.console,
@@ -179,10 +178,9 @@ class ConsoleRunTracer(RunTracer):
             live_owner = self._repeat_owner(event.step, run)
             ordinal: int | None = None
             if direct_repeat is not None:
-                placement = event.given.get("placement")
                 iteration = (
-                    integer(placement.get("loop"))
-                    if isinstance(placement, Mapping)
+                    integer(event.placement.get("iter"))
+                    if event.placement is not None
                     else None
                 )
                 ordinal = direct_repeat.enter_iteration(
@@ -333,9 +331,17 @@ class ConsoleRunTracer(RunTracer):
             self.console.show_live(lines)
 
     def _until_decision(self, event: RunEnd) -> bool | None:
-        if not isinstance(event.output, StepOutputRef):
+        if event.output is None or not isinstance(event.output.value, TypedPointer):
             return None
-        outcome = self._outcomes.get(event.output.step)
+        pointer = event.output.value.pointer
+        outcome = next(
+            (
+                item
+                for path, item in self._outcomes.items()
+                if Pointer.step(path) == pointer
+            ),
+            None,
+        )
         if outcome is None:
             return None
         value = output_preview(outcome).strip()
@@ -345,18 +351,27 @@ class ConsoleRunTracer(RunTracer):
             return False
         return None
 
+    def _output_step(self, event: RunEnd) -> StepPath | None:
+        if event.output is None or not isinstance(event.output.value, TypedPointer):
+            return None
+        pointer = event.output.value.pointer
+        return next(
+            (path for path in self._outcomes if Pointer.step(path) == pointer),
+            None,
+        )
+
     @staticmethod
     def _is_until(event: RunBegin, owner: StatementBlock) -> bool:
-        placement = event.context.get("placement")
+        placement = event.placement
         return (
             owner.statement == "repeat"
             and isinstance(placement, Mapping)
-            and placement.get("role") == "until"
+            and placement.get("iter") == -1
         )
 
     @staticmethod
     def _is_until_run(run: RunBlock, owner: StatementBlock) -> bool:
-        return owner.statement == "repeat" and run.placement.get("role") == "until"
+        return owner.statement == "repeat" and run.placement.get("iter") == -1
 
     @staticmethod
     def _record_metrics(run: RunBlock | None, event: StepEnd) -> None:

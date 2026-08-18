@@ -11,7 +11,7 @@ from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
     ImagePart,
-    Percept,
+    Part,
     TextPart,
     ToolResultPart,
     message_text,
@@ -19,6 +19,7 @@ from toolang.base.types.message import (
 from toolang.execution.events import StepBegin, StepEnd
 from toolang.execution.records import execution_error_message
 from toolang.execution.types import StepPath
+from toolang.lang.types import Array
 
 from ..output import parse_utc_timestamp
 
@@ -95,14 +96,14 @@ def usage_facts(noted: Mapping[str, Any]) -> list[str]:
     return [token_fact(input_tokens or 0, output_tokens or 0)]
 
 
-def percept_lines(percept: Percept) -> list[str]:
+def part_lines(parts: tuple[Part, ...]) -> list[str]:
     lines: list[str] = []
     rendered_text = one_line(
-        message_text(tuple(part for part in percept if isinstance(part, TextPart)))
+        message_text(tuple(part for part in parts if isinstance(part, TextPart)))
     )
     if rendered_text:
         lines.append(truncate(rendered_text, 160))
-    for part in percept:
+    for part in parts:
         if isinstance(part, ImagePart):
             lines.append(f"[image] {part.filename or 'image'}")
         elif isinstance(part, AudioPart):
@@ -125,7 +126,9 @@ def value_summary(value: object) -> str:
 
 
 def output_preview(event: StepEnd) -> str:
-    value = " ".join(part.text for part in event.output if isinstance(part, TextPart))
+    value = " ".join(
+        part.text for part in output_parts(event) if isinstance(part, TextPart)
+    )
     return truncate(one_line(value), 180)
 
 
@@ -139,7 +142,7 @@ def tool_label(given: Mapping[str, Any]) -> str:
 
 
 def tool_result(event: StepEnd) -> str:
-    for part in event.output:
+    for part in output_parts(event):
         if not isinstance(part, ToolResultPart):
             continue
         results = part.output.get("results")
@@ -154,7 +157,7 @@ def tool_result(event: StepEnd) -> str:
 
 
 def tool_exit_code(event: StepEnd) -> int | None:
-    for part in event.output:
+    for part in output_parts(event):
         if not isinstance(part, ToolResultPart):
             continue
         for key in ("exit_code", "returncode", "status_code"):
@@ -165,6 +168,19 @@ def tool_exit_code(event: StepEnd) -> int | None:
         if match is not None:
             return int(match.group(1))
     return None
+
+
+def output_parts(event: StepEnd) -> tuple[Part, ...]:
+    """Return message parts carried by one typed step output."""
+
+    if event.output is None:
+        return ()
+    value = event.output.value
+    if isinstance(value, ToolResultPart):
+        return (value,)
+    if isinstance(value, Array | tuple | list):
+        return tuple(part for part in value if isinstance(part, Part))
+    return ()
 
 
 def active_step_label(event: StepBegin) -> str:

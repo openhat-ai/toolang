@@ -8,12 +8,12 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from toolang.base.types.message import (
     Message,
-    MessagePart,
-    MessagePartType,
+    Part,
+    PartType,
     TextDelta,
     TextPart,
     ToolCallDelta,
@@ -30,16 +30,15 @@ from toolang.base.types.run import (
     ToolCall,
 )
 from toolang.common.time import elapsed_ms, utc_now
+from toolang.lang.types import Array
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...records import (
     RunControlRecord,
-    RunInputRef,
-    StepInput,
-    StepOutputRef,
+    SteerControlPayload,
     model_call_to_data,
 )
-from ...types import StepPath
+from ...types import Local, StepPath, Pointer
 from ..common import _StepFailed
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
@@ -72,7 +71,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
     consumed_inputs = _consume_pending_inputs(state)
     step_input = (
         *_step_input(state),
-        *(RunInputRef(index=item.index) for item in consumed_inputs),
+        *(Pointer.control(run.run_id, item.index, "_") for item in consumed_inputs),
     )
     stream = _ModelStream(step=step_index)
     _LOGGER.info(
@@ -205,8 +204,8 @@ async def _apply_response(
         if isinstance(part, ToolCallPart):
             state.tool_call_sources[part.tool_call_id] = (step_index, part_index)
     output = tuple(part for _, part in sorted(output_parts, key=lambda item: item[0]))
-    if current.message is not None:
-        state.messages.append(current.message)
+    if output:
+        state.messages.append(Message(role="assistant", parts=output))
     state.model_state = current.state
     accounting = state.account_usage(current.usage)
     await state.emit(
@@ -214,7 +213,7 @@ async def _apply_response(
             step=StepPath(run.run_id, (step_index,)),
             kind="model",
             status="succeeded",
-            output=output,
+            output=Local.typed("Part[]", output, "_", 0),
             noted={
                 **_accounting_data(accounting),
                 "reasoning_content": _message_reasoning_content(current.message),
@@ -297,8 +296,8 @@ def _output_parts(
     *,
     current: ModelCallResult,
     tool_calls: Sequence[ToolCall],
-) -> list[tuple[int, MessagePart]]:
-    items: list[tuple[int, MessagePart]] = []
+) -> list[tuple[int, Part]]:
+    items: list[tuple[int, Part]] = []
     seen_tool_calls: set[str] = set()
     saw_text = False
     message = current.message
@@ -338,21 +337,35 @@ def _output_parts(
     return items
 
 
-def _step_input(state: _AgicState) -> tuple[StepInput, ...]:
+def _step_input(state: _AgicState) -> tuple[Pointer, ...]:
+    if state.next_model_inputs is not None:
+        inputs = state.next_model_inputs
+        state.next_model_inputs = None
+        return inputs
     if state.last_step is None:
-        return (RunInputRef(),)
-    return (
-        StepOutputRef(
-            step=StepPath(state.prepared.run.run_id, (state.last_step,)),
-        ),
-    )
+        return state.initial_inputs
+    return (Pointer.step(StepPath(state.prepared.run.run_id, (state.last_step,))),)
 
 
 def _consume_pending_inputs(state: _AgicState) -> tuple[RunControlRecord, ...]:
-    inputs = state.pending_inputs()
+    inputs = state.claimed_inputs or state.pending_inputs()
+    state.claimed_inputs = ()
     for input in inputs:
-        if input.kind == "steer" and input.message is not None:
-            state.messages.append(input.message)
+        if isinstance(input.payload, SteerControlPayload):
+            primary = next(
+                (item for item in input.payload.locals if item.name == "_"), None
+            )
+            if (
+                primary is not None
+                and isinstance(primary.value, Array)
+                and all(isinstance(item, Part) for item in primary.value)
+            ):
+                state.messages.append(
+                    Message(
+                        role="user",
+                        parts=cast(tuple[Part, ...], tuple(primary.value)),
+                    )
+                )
     return inputs
 
 
@@ -383,7 +396,7 @@ async def _emit_part_begin(
     stream: _ModelStream,
     *,
     part_index: int,
-    kind: MessagePartType,
+    kind: PartType,
 ) -> None:
     if part_index in stream.started_parts:
         return

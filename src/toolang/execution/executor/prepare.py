@@ -13,8 +13,7 @@ from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import (
     Message,
-    Percept,
-    PerceptPart,
+    Part,
     TextPart,
     message_text,
 )
@@ -29,13 +28,13 @@ from toolang.lang.ast import (
     Message as AstMessage,
     Program,
 )
-from toolang.lang.input import coerce_input, perceive_input
+from toolang.lang.input import resolve_input_parts
 from toolang.plugin.models.resolution import resolve_model
 from toolang.state import state as cap_store
 from toolang.state.state import PreparedCap
 
 from . import prompts
-from .common import BoundRun
+from .common import BoundRun, value_parts, value_text
 from .resources import resource_caps, resource_tools
 
 if TYPE_CHECKING:
@@ -68,11 +67,9 @@ def prepare_agic(
     run: BoundRun,
     agic: AgicDecl,
     *,
-    variables: Mapping[str, object] | None = None,
+    variables: Mapping[str, object],
 ) -> _AgicFrame:
     """Resolve runtime resources and render the complete model input."""
-
-    args = dict(run.input.values)
 
     resources = run.resources
     if resources is None:
@@ -92,18 +89,6 @@ def prepare_agic(
     skills = tuple(item for item in caps if item.kind == "skill")
     services = tuple(item for item in caps if item.kind == "service")
 
-    if variables is None:
-        default_variables: dict[str, object] = dict(args)
-        if agic.input is not None:
-            percept = run.input.primary
-            if percept is None:
-                raise ToolangError("user run input is not a Percept")
-            default_variables["_"] = coerce_input(
-                percept,
-                agic.input.type_name or "Part[]",
-                structs={item.name: item for item in run.state.program.structs},
-            )
-        variables = default_variables
     body_variables = _body_variables(agic, variables)
     body_types = _body_types(agic)
     system_runtime = _runtime_context(context, run=run, agic=agic)
@@ -126,10 +111,10 @@ def prepare_agic(
     )
     prompt_context = _render_context(run.state.program, agic, system_runtime)
     fallback = _run_message(
-        run,
         agic=agic,
         rendered=rendered,
         prompt_context=prompt_context,
+        primary=_primary_parts(agic, variables),
     )
     history = (
         tuple(
@@ -181,12 +166,12 @@ def _render_messages(
     *,
     values: Mapping[str, object],
     types: Mapping[str, str],
-) -> tuple[tuple[AstMessage, Percept], ...]:
+) -> tuple[tuple[AstMessage, tuple[Part, ...]], ...]:
     return tuple(
         (
             block,
-            _strip_percept(
-                perceive_input(
+            _strip_parts(
+                resolve_input_parts(
                     block.content,
                     program=program,
                     values=values,
@@ -243,26 +228,25 @@ def _render_context(
 
 
 def _run_message(
-    run: BoundRun,
     *,
     agic: AgicDecl,
-    rendered: tuple[tuple[AstMessage, Percept], ...],
+    rendered: tuple[tuple[AstMessage, tuple[Part, ...]], ...],
     prompt_context: str,
+    primary: tuple[Part, ...],
 ) -> Message:
     implicit = tuple(
         parts
         for block, parts in rendered
         if block.role == "user" and not block.explicit
     )
-    authored = _join_percepts(*implicit)
-    primary = run.input.primary
+    authored = _join_parts(*implicit)
     references_primary = any(
         block.role == "user"
         and not block.explicit
         and _PRIMARY_REFERENCE_RE.search(block.content) is not None
         for block in agic.messages
     )
-    parts = _join_percepts(
+    parts = _join_parts(
         (TextPart(prompt_context.strip()),) if prompt_context.strip() else (),
         authored,
         primary if (not authored or not references_primary) else (),
@@ -274,7 +258,7 @@ def _run_message(
 
 def _authored_messages(
     *,
-    rendered: tuple[tuple[AstMessage, Percept], ...],
+    rendered: tuple[tuple[AstMessage, tuple[Part, ...]], ...],
     prompt_context: str,
     fallback: Message,
 ) -> tuple[Message, ...]:
@@ -296,7 +280,7 @@ def _authored_messages(
     messages: list[Message] = []
     for index, (block, parts) in enumerate(blocks):
         if index == last_user and prompt_context.strip():
-            parts = _join_percepts((TextPart(prompt_context.strip()),), parts)
+            parts = _join_parts((TextPart(prompt_context.strip()),), parts)
         if not parts:
             continue
         try:
@@ -426,7 +410,18 @@ def _metadata_items(meta: Mapping[str, object]) -> list[dict[str, str]]:
     return items
 
 
-def _strip_percept(parts: Percept) -> Percept:
+def _primary_parts(
+    agic: AgicDecl,
+    variables: Mapping[str, object],
+) -> tuple[Part, ...]:
+    if agic.input is None or "_" not in variables:
+        return ()
+    value = variables["_"]
+    parts = value_parts(value, type_name=agic.input.type_name or "Part[]")
+    return parts if parts is not None else (TextPart(value_text(value)),)
+
+
+def _strip_parts(parts: tuple[Part, ...]) -> tuple[Part, ...]:
     result = list(parts)
     if result and isinstance(result[0], TextPart):
         result[0] = TextPart(result[0].text.lstrip())
@@ -435,19 +430,19 @@ def _strip_percept(parts: Percept) -> Percept:
     return tuple(part for part in result if not isinstance(part, TextPart) or part.text)
 
 
-def _join_percepts(*groups: Percept) -> Percept:
-    result: list[PerceptPart] = []
+def _join_parts(*groups: tuple[Part, ...]) -> tuple[Part, ...]:
+    result: list[Part] = []
     for group in groups:
         if not group:
             continue
         if result:
-            _append_percept_part(result, TextPart("\n\n"))
+            _append_part(result, TextPart("\n\n"))
         for part in group:
-            _append_percept_part(result, part)
+            _append_part(result, part)
     return tuple(result)
 
 
-def _append_percept_part(parts: list[PerceptPart], part: PerceptPart) -> None:
+def _append_part(parts: list[Part], part: Part) -> None:
     if isinstance(part, TextPart) and parts and isinstance(parts[-1], TextPart):
         parts[-1] = TextPart(parts[-1].text + part.text)
     else:

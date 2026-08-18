@@ -1,50 +1,30 @@
-"""Input perceiving and executable boundary coercion."""
+"""Runnable input parsing, part resolution, and typed boundary coercion."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
+import math
 import re
 import shlex
 from types import MappingProxyType
-from typing import Any, TypeAlias, cast
-from typing_extensions import TypeAliasType
+from typing import TypeAlias, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import (
-    AudioPart,
-    DocumentPart,
-    ImagePart,
     Message,
-    Percept,
-    PerceptPart,
+    Part,
     TextPart,
     message_text,
-    part_from_data,
-    parts_from_data,
-    parts_to_data,
 )
 from toolang.common.template import render_text_template
 
-from .ast import Parameter, Program, StructDecl
+from .ast import AgicDecl, FlowDecl, Parameter, Program, StructDecl
+from .types import Array, Struct, Value
 
-IncludeResolver = Callable[[str], PerceptPart]
+IncludeResolver = Callable[[str], Part]
 NamedInputSources: TypeAlias = tuple[tuple[str, str], ...]
-RunnableInputData = TypeAliasType(
-    "RunnableInputData",
-    str
-    | int
-    | float
-    | bool
-    | None
-    | PerceptPart
-    | Message
-    | tuple["RunnableInputData", ...]
-    | list["RunnableInputData"]
-    | Mapping[str, "RunnableInputData"],
-)
-
 _ARGUMENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PROMPT_CALL_RE = re.compile(r"^/([A-Za-z_][\w-]*)(?:\s+(.*))?$")
 _SLOT_RE = re.compile(r"\ue000(\d+)\ue001")
@@ -64,142 +44,76 @@ class RunnableInputRaw:
 
 
 @dataclass(frozen=True, slots=True)
-class RunnableInputValue:
-    """One resolved named input and its declared Toolang type."""
-
-    name: str
-    value: RunnableInputData
-    type_name: str | None = None
-
-    def __post_init__(self) -> None:
-        if not _ARGUMENT_NAME_RE.fullmatch(self.name):
-            raise ValueError("run input value requires a canonical name")
-        if self.type_name is not None and (
-            not self.type_name or self.type_name != self.type_name.strip()
-        ):
-            raise ValueError("run input value requires a canonical type")
-        _input_value_to_data(self.value)
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, object]) -> RunnableInputValue:
-        """Decode one durable named input."""
-
-        raw_type = payload.get("type")
-        type_name = str(raw_type) if raw_type is not None else None
-        return cls(
-            name=str(payload.get("name", "")),
-            type_name=type_name,
-            value=_input_value_from_data(payload.get("value"), type_name),
-        )
-
-    def to_data(self) -> dict[str, object]:
-        """Encode one named input without runtime-only objects."""
-
-        return {
-            "name": self.name,
-            "type": self.type_name,
-            "value": _input_value_to_data(self.value),
-        }
-
-
-@dataclass(frozen=True, slots=True)
 class RunnableInput:
     """Resolved primary and named inputs adopted by one run."""
 
-    primary: Percept = ()
-    named: tuple[RunnableInputValue, ...] = ()
+    primary: Value | None = None
+    named: Mapping[str, Value] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        primary = _require_percept(tuple(self.primary))
-        named = tuple(sorted(self.named, key=lambda item: item.name))
-        if not all(isinstance(item, RunnableInputValue) for item in named):
-            raise TypeError("run named inputs must be RunnableInputValue objects")
-        names = tuple(item.name for item in named)
-        if len(names) != len(set(names)):
-            raise ValueError("run named inputs must be unique")
-        object.__setattr__(self, "primary", primary)
-        object.__setattr__(self, "named", named)
-
-    @classmethod
-    def from_values(
-        cls,
-        *,
-        primary: Percept = (),
-        named: Mapping[str, object] | None = None,
-        types: Mapping[str, str] | None = None,
-    ) -> RunnableInput:
-        """Build a canonical run input from resolved caller values."""
-
-        type_names = types or {}
-        return cls(
-            primary=primary,
-            named=tuple(
-                RunnableInputValue(
-                    name=name,
-                    value=_require_input_value(value),
-                    type_name=type_names.get(name),
-                )
-                for name, value in (named or {}).items()
-            ),
-        )
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, object]) -> RunnableInput:
-        """Decode one durable run input."""
-
-        raw_primary = payload.get("primary", ())
         primary = (
-            _require_percept(
-                parts_from_data(
-                    [
-                        cast(Mapping[str, Any], item)
-                        for item in raw_primary
-                        if isinstance(item, Mapping)
-                    ]
-                )
-            )
-            if isinstance(raw_primary, Sequence)
-            and not isinstance(raw_primary, (str, bytes, bytearray))
-            else ()
+            _require_input_value(self.primary) if self.primary is not None else None
         )
-        raw_named = payload.get("named", ())
-        named = (
-            tuple(
-                RunnableInputValue.from_data(cast(Mapping[str, object], item))
-                for item in raw_named
-                if isinstance(item, Mapping)
-            )
-            if isinstance(raw_named, Sequence)
-            and not isinstance(raw_named, (str, bytes, bytearray))
-            else ()
+        if not isinstance(self.named, Mapping):
+            raise TypeError("run named inputs must be a mapping")
+        named: dict[str, Value] = {}
+        for name, value in sorted(self.named.items()):
+            if not isinstance(name, str) or not _ARGUMENT_NAME_RE.fullmatch(name):
+                raise ValueError("run input value requires a canonical name")
+            named[name] = _require_input_value(value)
+        object.__setattr__(self, "primary", primary)
+        object.__setattr__(self, "named", MappingProxyType(named))
+
+
+def resolve_runnable_input(
+    runnable: AgicDecl | FlowDecl,
+    *,
+    primary: object | None = None,
+    named: Mapping[str, object] | None = None,
+    structs: Mapping[str, StructDecl] | None = None,
+) -> RunnableInput:
+    """Resolve caller values once against one runnable signature."""
+
+    parameters = {parameter.name: parameter for parameter in runnable.params}
+    arguments = dict(named or {})
+    unknown = sorted(set(arguments) - set(parameters))
+    if unknown:
+        raise ValueError(
+            f"unknown named inputs for {runnable.name}: {', '.join(unknown)}"
         )
-        return cls(primary=primary, named=named)
-
-    @property
-    def values(self) -> Mapping[str, object]:
-        """Expose named values through an immutable lookup."""
-
-        return MappingProxyType({item.name: item.value for item in self.named})
-
-    @property
-    def types(self) -> Mapping[str, str]:
-        """Expose known named input types through an immutable lookup."""
-
-        return MappingProxyType(
-            {
-                item.name: item.type_name
-                for item in self.named
-                if item.type_name is not None
-            }
+    missing = sorted(
+        name
+        for name, parameter in parameters.items()
+        if not parameter.optional and name not in arguments
+    )
+    if missing:
+        raise ValueError(
+            f"missing named inputs for {runnable.name}: {', '.join(missing)}"
         )
+    if runnable.input is None and primary is not None:
+        raise ValueError(f"{runnable.name} does not accept primary input")
+    if runnable.input is not None and not runnable.input.optional and primary is None:
+        raise ValueError(f"{runnable.name} requires primary input")
 
-    def to_data(self) -> dict[str, object]:
-        """Encode one run input for a durable or protocol boundary."""
-
-        return {
-            "primary": parts_to_data(self.primary),
-            "named": [item.to_data() for item in self.named],
-        }
+    declared_structs = structs or {}
+    resolved_primary = (
+        coerce_input(
+            primary,
+            runnable.input.type_name or "Part[]",
+            structs=declared_structs,
+        )
+        if runnable.input is not None and primary is not None
+        else None
+    )
+    resolved_named = {
+        name: coerce_input(
+            value,
+            parameters[name].type_name or "Part[]",
+            structs=declared_structs,
+        )
+        for name, value in arguments.items()
+    }
+    return RunnableInput(primary=resolved_primary, named=resolved_named)
 
 
 def parse_input(
@@ -232,19 +146,19 @@ def parse_input(
     return RunnableInputRaw(primary=primary, named=tuple(parsed_named))
 
 
-def perceive_input(
-    source: str | Percept,
+def resolve_input_parts(
+    source: str | Sequence[Part],
     *,
     program: Program | None = None,
     values: Mapping[str, object] | None = None,
     types: Mapping[str, str] | None = None,
     include: IncludeResolver | None = None,
-) -> Percept:
-    """Interpret one supported input as an ordered canonical percept."""
+) -> tuple[Part, ...]:
+    """Resolve one textual or structured input into ordered canonical parts."""
 
     if not isinstance(source, str):
-        return _require_percept(source)
-    return _perceive_body(
+        return _require_parts(source)
+    return _resolve_parts_body(
         source,
         program=program,
         values=values or {},
@@ -256,15 +170,15 @@ def perceive_input(
 
 
 def coerce_input(
-    percept: Percept,
+    value: object,
     type_name: str,
     *,
     structs: Mapping[str, StructDecl] | None = None,
-) -> object:
-    """Coerce one canonical percept to a runnable primary input type."""
+) -> Value:
+    """Coerce one caller value to a declared runnable input type."""
 
     return _coerce_value(
-        _require_percept(percept),
+        value,
         type_name,
         structs=structs or {},
         boundary="input",
@@ -276,13 +190,13 @@ def coerce_output(
     type_name: str | None,
     *,
     structs: Mapping[str, StructDecl] | None = None,
-) -> object:
+) -> Value:
     """Coerce one runnable result to its declared output type."""
 
     if type_name is None:
         if isinstance(value, Message):
-            return _message_percept(value)
-        return value
+            return _canonical_value(_message_parts(value), "Part[]", structs or {})
+        return _require_input_value(value)
     return _coerce_value(
         value,
         type_name,
@@ -301,10 +215,9 @@ def validate_value(
     """Validate one Toolang runtime value against a declared type."""
 
     if type_name.endswith("[]"):
-        if type_name == "Part[]":
-            _require_percept(value)
-            return
-        if not isinstance(value, list | tuple):
+        if isinstance(value, Array) and value.type != type_name:
+            raise ToolangError(f"{path} is {value.type}, not {type_name}")
+        if not isinstance(value, Array | list | tuple):
             raise ToolangError(f"{path} is not {type_name}")
         item_type = type_name[:-2]
         for index, item in enumerate(value):
@@ -319,14 +232,20 @@ def validate_value(
     if type_name == "Text":
         valid = isinstance(value, str)
     elif type_name == "Number":
-        valid = not isinstance(value, bool) and isinstance(value, int | float)
+        valid = (
+            not isinstance(value, bool)
+            and isinstance(value, int | float)
+            and (not isinstance(value, float) or math.isfinite(value))
+        )
     elif type_name == "Boolean":
         valid = isinstance(value, bool)
     elif type_name == "Json":
         valid = _is_json_value(value)
     elif type_name == "Part":
-        valid = _is_percept_part(value)
+        valid = _is_part(value)
     elif struct := structs.get(type_name):
+        if isinstance(value, Struct) and value.type != type_name:
+            raise ToolangError(f"{path} is {value.type}, not {type_name}")
         if not isinstance(value, Mapping):
             valid = False
         else:
@@ -358,7 +277,7 @@ def validate_value(
         raise ToolangError(f"{path} is not {type_name}")
 
 
-def _perceive_body(
+def _resolve_parts_body(
     body: str,
     *,
     program: Program | None,
@@ -367,12 +286,12 @@ def _perceive_body(
     include: IncludeResolver | None,
     prompt_stack: tuple[str, ...],
     depth: int,
-) -> Percept:
+) -> tuple[Part, ...]:
     if depth > 16:
         raise ToolangError("Prompt composition exceeded the maximum depth of 16.")
     rendered, slots = _render_body(body, values=values, types=types)
     lines = rendered.splitlines(keepends=True)
-    output: list[PerceptPart] = []
+    output: list[Part] = []
     markdown_fence: tuple[str, int] | None = None
     index = 0
     while index < len(lines):
@@ -401,7 +320,7 @@ def _perceive_body(
             reference = _include_reference(text)
             if include is None:
                 raise ToolangError(f"Include resolver is required for: {reference}")
-            _append_part(output, _require_percept_part(include(reference)))
+            _append_part(output, _require_part(include(reference)))
             if line_break:
                 _append_part(output, TextPart(line_break))
             index += 1
@@ -437,7 +356,7 @@ def _perceive_body(
                 attached_body = "".join(lines[index + 1 : closing_index])
                 _, following_break = _split_line(lines[closing_index])
                 consumed = closing_index - index + 1
-            prompt_input = _perceive_body(
+            prompt_input = _resolve_parts_body(
                 attached_body,
                 program=program,
                 values=values,
@@ -448,7 +367,7 @@ def _perceive_body(
             )
             _extend_parts(
                 output,
-                _perceive_prompt(
+                _resolve_prompt_parts(
                     program,
                     prompt_name=prompt_name,
                     raw_args=call.raw_args,
@@ -473,25 +392,25 @@ def _render_body(
     *,
     values: Mapping[str, object],
     types: Mapping[str, str],
-) -> tuple[str, tuple[PerceptPart, ...]]:
+) -> tuple[str, tuple[Part, ...]]:
     if "\ue000" in body or "\ue001" in body:
         raise ToolangError("ContentBody contains a reserved marker.")
     if not values:
         return body, ()
     template = body
     context: dict[str, object] = {}
-    slots: list[PerceptPart] = []
+    slots: list[Part] = []
     for name, value in values.items():
         type_name = types.get(name)
         if type_name == "Part":
-            part = _require_percept_part(value)
+            part = _require_part(value)
             marker = _slot_marker(slots, part)
             template = _replace_direct_value(template, name, marker)
             context[name] = marker
             continue
         if type_name == "Part[]":
-            percept = _require_percept(value)
-            markers = [_slot_marker(slots, part) for part in percept]
+            parts = _require_parts(value)
+            markers = [_slot_marker(slots, part) for part in parts]
             template = _replace_direct_value(template, name, "".join(markers))
             context[name] = markers
             continue
@@ -499,16 +418,16 @@ def _render_body(
     return render_text_template(template, context), tuple(slots)
 
 
-def _perceive_prompt(
+def _resolve_prompt_parts(
     program: Program | None,
     *,
     prompt_name: str,
     raw_args: str,
-    input: Percept,
+    input: tuple[Part, ...],
     include: IncludeResolver | None,
     prompt_stack: tuple[str, ...],
     depth: int,
-) -> Percept:
+) -> tuple[Part, ...]:
     if program is None:
         raise ToolangError(f"Prompt not found: {prompt_name}")
     if prompt_name in prompt_stack:
@@ -530,7 +449,7 @@ def _perceive_prompt(
         prompt_name=prompt_name,
     )
     return _strip_text_boundaries(
-        _perceive_body(
+        _resolve_parts_body(
             prompt.body,
             program=program,
             values={"_": input, **bindings},
@@ -672,9 +591,9 @@ def _include_reference(line: str) -> str:
 
 def _text_parts(
     value: str,
-    slots: Sequence[PerceptPart],
-) -> list[PerceptPart]:
-    parts: list[PerceptPart] = []
+    slots: Sequence[Part],
+) -> list[Part]:
+    parts: list[Part] = []
     cursor = 0
     for match in _SLOT_RE.finditer(value):
         if match.start() > cursor:
@@ -690,14 +609,14 @@ def _text_parts(
 
 
 def _extend_parts(
-    output: list[PerceptPart],
-    parts: Sequence[PerceptPart],
+    output: list[Part],
+    parts: Sequence[Part],
 ) -> None:
     for part in parts:
         _append_part(output, part)
 
 
-def _append_part(output: list[PerceptPart], part: PerceptPart) -> None:
+def _append_part(output: list[Part], part: Part) -> None:
     if isinstance(part, TextPart) and not part.text:
         return
     if isinstance(part, TextPart) and output and isinstance(output[-1], TextPart):
@@ -706,7 +625,7 @@ def _append_part(output: list[PerceptPart], part: PerceptPart) -> None:
     output.append(part)
 
 
-def _strip_text_boundaries(parts: Percept) -> Percept:
+def _strip_text_boundaries(parts: tuple[Part, ...]) -> tuple[Part, ...]:
     result = list(parts)
     if result and isinstance(result[0], TextPart):
         result[0] = TextPart(result[0].text.lstrip())
@@ -720,7 +639,7 @@ def _replace_direct_value(template: str, name: str, value: str) -> str:
     return pattern.sub(lambda _match: value, template)
 
 
-def _slot_marker(slots: list[PerceptPart], part: PerceptPart) -> str:
+def _slot_marker(slots: list[Part], part: Part) -> str:
     marker = f"\ue000{len(slots)}\ue001"
     slots.append(part)
     return marker
@@ -738,18 +657,28 @@ def _template_value(value: object, *, type_name: str | None) -> object:
         and (type_name.endswith("[]") or type_name not in {"Text", "Number", "Boolean"})
     ):
         return json.dumps(
-            value,
+            _plain_value(value),
             ensure_ascii=False,
             separators=(",", ":"),
             allow_nan=False,
         )
     if isinstance(value, Mapping | list | tuple):
         return json.dumps(
-            value,
+            _plain_value(value),
             ensure_ascii=False,
             separators=(",", ":"),
             allow_nan=False,
         )
+    return value
+
+
+def _plain_value(value: object) -> object:
+    if isinstance(value, Array):
+        return [_plain_value(item) for item in value]
+    if isinstance(value, Struct | Mapping):
+        return {str(name): _plain_value(item) for name, item in value.items()}
+    if isinstance(value, tuple | list):
+        return [_plain_value(item) for item in value]
     return value
 
 
@@ -759,16 +688,16 @@ def _coerce_value(
     *,
     structs: Mapping[str, StructDecl],
     boundary: str,
-) -> object:
+) -> Value:
     if type_name == "Part[]":
-        result = _as_percept(value)
+        result = _as_parts(value)
     elif type_name == "Part":
-        percept = _as_percept(value)
-        if len(percept) != 1:
+        parts = _as_parts(value)
+        if len(parts) != 1:
             raise ToolangError(
-                f"{boundary} is not Part: expected 1 part, got {len(percept)}"
+                f"{boundary} is not Part: expected 1 part, got {len(parts)}"
             )
-        result = percept[0]
+        result = parts[0]
     elif type_name == "Text":
         result = _text_value(value, boundary=boundary)
     elif type_name == "Number":
@@ -778,35 +707,77 @@ def _coerce_value(
     else:
         result = _structured_value(value, type_name=type_name, boundary=boundary)
     validate_value(result, type_name, structs=structs, path=boundary)
-    return result
+    return _canonical_value(result, type_name, structs)
 
 
-def _as_percept(value: object) -> Percept:
+def _canonical_value(
+    value: object,
+    type_name: str,
+    structs: Mapping[str, StructDecl],
+) -> Value:
+    if type_name.endswith("[]"):
+        items = (
+            value.value
+            if isinstance(value, Array)
+            else tuple(cast(Sequence[object], value))
+        )
+        item_type = type_name[:-2]
+        return Array(
+            type_name,
+            tuple(_canonical_value(item, item_type, structs) for item in items),
+        )
+    if struct := structs.get(type_name):
+        fields = {field.name: field for field in struct.fields}
+        return Struct(
+            type_name,
+            {
+                name: _canonical_value(item, fields[name].type_name, structs)
+                for name, item in cast(Mapping[str, object], value).items()
+            },
+        )
+    if type_name == "Json":
+        return cast(Value, _canonical_json(value))
+    return _require_input_value(value)
+
+
+def _canonical_json(value: object) -> object:
+    if isinstance(value, Array):
+        return Array(value.type, tuple(_canonical_json(item) for item in value))
+    if isinstance(value, Struct):
+        return Struct(
+            value.type,
+            {name: _canonical_json(item) for name, item in value.items()},
+        )
+    if isinstance(value, Mapping):
+        return {str(name): _canonical_json(item) for name, item in value.items()}
+    if isinstance(value, tuple | list):
+        return tuple(_canonical_json(item) for item in value)
+    return value
+
+
+def _as_parts(value: object) -> tuple[Part, ...]:
     if isinstance(value, Message):
-        return _message_percept(value)
-    if _is_percept_part(value):
-        return (cast(PerceptPart, value),)
-    return _require_percept(value)
+        return _message_parts(value)
+    if _is_part(value):
+        return (cast(Part, value),)
+    return _require_parts(value)
 
 
-def _message_percept(message: Message) -> Percept:
-    try:
-        return message.percept
-    except ValueError as exc:
-        raise ToolangError(str(exc)) from exc
+def _message_parts(message: Message) -> tuple[Part, ...]:
+    return message.parts
 
 
 def _text_value(value: object, *, boundary: str) -> str:
     if isinstance(value, str):
         return value
-    percept = _as_percept(value)
-    if not all(isinstance(part, TextPart) for part in percept):
+    parts = _as_parts(value)
+    if not all(isinstance(part, TextPart) for part in parts):
         raise ToolangError(f"{boundary} is not Text: non-text parts are present")
-    return message_text(percept)
+    return message_text(parts)
 
 
 def _number_value(value: object, *, boundary: str) -> int | float:
-    if not isinstance(value, (str, Message, tuple, list)):
+    if not isinstance(value, (str, Message, Array, tuple, list)):
         if isinstance(value, bool) or not isinstance(value, int | float):
             raise ToolangError(f"{boundary} is not Number")
         return value
@@ -834,7 +805,8 @@ def _structured_value(
     boundary: str,
 ) -> object:
     if isinstance(value, (str, Message)) or (
-        isinstance(value, tuple) and all(_is_percept_part(part) for part in value)
+        isinstance(value, Array | tuple | list)
+        and all(_is_part(part) for part in value)
     ):
         return _parse_text_json(
             value,
@@ -869,99 +841,66 @@ def _parse_text_json(
         ) from error
 
 
-def _input_value_to_data(value: RunnableInputData) -> dict[str, object]:
-    if _is_percept_part(value):
-        return {"kind": "part", "value": cast(PerceptPart, value).to_data()}
-    if isinstance(value, Message):
-        return {"kind": "message", "value": value.to_data()}
-    if isinstance(value, tuple):
-        return {
-            "kind": "tuple",
-            "value": [_input_value_to_data(item) for item in value],
-        }
-    if isinstance(value, list):
-        return {
-            "kind": "list",
-            "value": [_input_value_to_data(item) for item in value],
-        }
-    if isinstance(value, Mapping):
-        return {
-            "kind": "object",
-            "value": {
-                str(name): _input_value_to_data(item)
-                for name, item in cast(Mapping[str, RunnableInputData], value).items()
-            },
-        }
+def _validate_input_value(value: object) -> None:
+    if _is_part(value):
+        return
+    if isinstance(value, Array | tuple | list):
+        for item in value:
+            _validate_input_value(item)
+        return
+    if isinstance(value, Struct | Mapping):
+        for item in value.values():
+            _validate_input_value(item)
+        return
     if value is None or isinstance(value, str | bool | int | float):
         if isinstance(value, float) and not _is_json_value(value):
             raise TypeError("run input value must be finite")
-        return {"kind": "scalar", "value": value}
+        return
     raise TypeError(f"unsupported run input value: {type(value).__name__}")
 
 
-def _input_value_from_data(value: object, type_name: str | None) -> RunnableInputData:
-    del type_name
-    if not isinstance(value, Mapping):
-        raise ValueError("run input value must be an object")
-    mapping = cast(Mapping[str, object], value)
-    kind = mapping.get("kind")
-    payload = mapping.get("value")
-    if kind == "part" and isinstance(payload, Mapping):
-        return cast(PerceptPart, part_from_data(cast(Mapping[str, Any], payload)))
-    if kind == "message" and isinstance(payload, Mapping):
-        return Message.from_data(cast(Mapping[str, Any], payload))
-    if (
-        kind in {"tuple", "list"}
-        and isinstance(payload, Sequence)
-        and not isinstance(payload, (str, bytes, bytearray))
-    ):
-        items = tuple(_input_value_from_data(item, None) for item in payload)
-        return items if kind == "tuple" else list(items)
-    if kind == "object" and isinstance(payload, Mapping):
-        return {
-            str(name): _input_value_from_data(item, None)
-            for name, item in cast(Mapping[str, object], payload).items()
-        }
-    if kind == "scalar" and (
-        payload is None or isinstance(payload, str | bool | int | float)
-    ):
-        return payload
-    raise ValueError(f"unknown run input value kind: {kind}")
-
-
-def _require_input_value(value: object) -> RunnableInputData:
-    candidate = cast(RunnableInputData, value)
-    _input_value_to_data(candidate)
+def _require_input_value(value: object) -> Value:
+    candidate = cast(Value, value)
+    _validate_input_value(candidate)
     return candidate
 
 
-def _require_percept(value: object) -> Percept:
-    if not isinstance(value, tuple | list):
-        raise ToolangError("Percept must be an ordered part sequence")
+def _require_parts(value: object) -> tuple[Part, ...]:
+    if not isinstance(value, Array | tuple | list):
+        raise ToolangError("Part[] requires an ordered part sequence")
+    if isinstance(value, Array) and value.type != "Part[]":
+        raise ToolangError(f"Part[] cannot use {value.type}")
     parts = tuple(value)
-    if not all(_is_percept_part(part) for part in parts):
-        raise ToolangError(
-            "Percept can only contain text, image, audio, or document parts"
-        )
-    return cast(Percept, parts)
+    if not all(_is_part(part) for part in parts):
+        raise ToolangError("Part[] can only contain Part values")
+    return cast(tuple[Part, ...], parts)
 
 
-def _require_percept_part(value: object) -> PerceptPart:
-    if not _is_percept_part(value):
-        raise ToolangError("Part must be text, image, audio, or document")
-    return cast(PerceptPart, value)
+def _require_part(value: object) -> Part:
+    if not _is_part(value):
+        raise ToolangError("value is not Part")
+    return cast(Part, value)
 
 
-def _is_percept_part(value: object) -> bool:
-    return isinstance(value, (TextPart, ImagePart, AudioPart, DocumentPart))
+def _is_part(value: object) -> bool:
+    return isinstance(value, Part)
 
 
 def _is_json_value(value: object) -> bool:
-    try:
-        json.dumps(value, allow_nan=False)
-    except (TypeError, ValueError):
-        return False
-    return True
+    if _is_part(value):
+        return True
+    if value is None or isinstance(value, str | bool | int):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, Array | tuple | list):
+        return all(_is_json_value(item) for item in value)
+    if isinstance(value, Struct | Mapping):
+        return all(
+            isinstance(name, str) and _is_json_value(item)
+            for name, item in value.items()
+        )
+    return False
 
 
 def _parse_prompt_args(

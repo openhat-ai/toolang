@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from toolang.catalog.types import DEFAULT_CHORE_SCHEDULE
 from toolang.base.types.policy import RunLimits
 from toolang.execution.schemas import (
-    RunControlInfo,
+    ControlInfo,
     RunDetail,
     ThreadInfo,
 )
@@ -237,4 +237,4 @@ class RunCommandResult(BaseModel):
     """One accepted HTTP run control."""
 
     run: RunDetail
-    command: RunControlInfo
+    command: ControlInfo

@@ -15,55 +15,51 @@ from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
-from toolang.base.types.message import (
-    Message,
-    Percept,
-    TextPart,
-    part_from_data,
-)
+from toolang.base.types.message import Message, TextPart
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
-from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt, Parameter
+from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt, Parameter, RepeatStmt
 from toolang.lang.format import format_statement_head
 from toolang.lang.input import (
     RunnableInput,
-    RunnableInputData,
-    RunnableInputValue,
-    coerce_input,
+    resolve_runnable_input,
     validate_value,
 )
+from toolang.lang.types import Value
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 
 from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin
 from ..records import (
+    PreparationControlPayload,
     RunControlRecord,
-    RunInputRef,
     RunRecord,
-    StepOutputRef,
     StepRecord,
-    ValueRef,
 )
 from ..store import RunStore
 from ..types import (
     ControlTiming,
     AgentResources,
+    ControlRef,
     ExecutionError,
-    RunControlKind,
+    Local as RecordLocal,
+    ControlKind,
     StepPath,
+    Pointer,
+    TypedPointer,
 )
 from ..runnables import parse_runnable_ref, resolve_runnable
 from .common import (
     BoundRun,
     EventEmitter,
     Local,
-    Shape,
+    _ExecutionFailed,
     _StepFailed,
     control_text,
     initial_locals,
     statement_has_call,
-    value_percept,
+    value_parts,
     value_text,
 )
 from .resources import (
@@ -218,11 +214,12 @@ class RunExecutor:
             run_id=bound.run_id,
             parent=None,
             thread=bound.thread,
-            bindings=bound.bindings,
-            limits=bound.limits,
-            input=bound.input,
             resources=resources,
-            context=_run_context(bound, executable),
+            limits=bound.limits,
+            runnable=_bound_runnable(bound),
+            model=_bound_model(bound),
+            locals=bound.control_locals,
+            placement=bound.placement,
             request_id=request_id,
             created_at=bound.created_at,
         )
@@ -266,11 +263,12 @@ class RunExecutor:
             run_id=bound.run_id,
             parent=None,
             thread=bound.thread,
-            bindings=bound.bindings,
-            limits=bound.limits,
-            input=bound.input,
             resources=resources,
-            context=_run_context(bound, executable),
+            limits=bound.limits,
+            runnable=_bound_runnable(bound),
+            model=_bound_model(bound),
+            locals=bound.control_locals,
+            placement=bound.placement,
             request_id=request_id,
             created_at=bound.created_at,
             kind="rerun",
@@ -315,13 +313,15 @@ class RunExecutor:
         _reopened, control, _ejected = self.store.accept_retry(
             run_id=run_id,
             anchor=StepPath.parse(anchor) if anchor is not None else None,
-            bindings=bound.bindings,
-            limits=bound.limits,
-            input=bound.input,
             resources=resources,
+            limits=bound.limits,
+            runnable=_bound_runnable(bound),
+            model=_bound_model(bound),
+            locals=bound.control_locals,
             request_id=request_id,
             created_at=bound.created_at,
         )
+        bound = replace(bound, control_index=control.index)
         return self._launch(
             bound,
             executable,
@@ -343,13 +343,15 @@ class RunExecutor:
         run = self.store.get_run(run_id=run_id)
         if run is None or run.parent is not None:
             raise ValueError(f"root run not found: {run_id}")
-        control = self.store.get_run_control(run_id=run_id, index=0)
-        if control is None or control.input is None:
+        control = self.store.get_run_control(
+            run_id=run.control.target,
+            index=run.control.index,
+        )
+        if control is None or not isinstance(
+            control.payload, PreparationControlPayload
+        ):
             raise ValueError(f"run input not found: {run_id}")
-        runnable = control.bindings.runnable if control.bindings is not None else None
-        if runnable is not None:
-            _kind, _separator, runnable = runnable.partition(":")
-        runnable = runnable or run.runnable_name
+        _kind, _separator, runnable = control.payload.runnable.partition(":")
         if not runnable:
             raise ValueError(f"run runnable not found: {run_id}")
         executable = resolve_runnable(state.program, runnable)
@@ -359,13 +361,7 @@ class RunExecutor:
             thread=run.thread,
             bindings=RunBindings(
                 runnable=f"{executable.kind}:{runnable}",
-                model=(
-                    model
-                    if model is not None
-                    else control.bindings.model
-                    if control.bindings is not None
-                    else _source_model(run)
-                ),
+                model=model if model is not None else control.payload.model,
             ),
             limits=limits,
             ceilings=(
@@ -380,7 +376,14 @@ class RunExecutor:
                 )
                 else ()
             ),
-            input=control.input,
+            input=_runnable_input_from_locals(
+                self.store,
+                _adopted_control_locals(
+                    self.store,
+                    run_id=run.id,
+                    through=control.index,
+                ),
+            ),
         )
 
     def _launch(
@@ -481,9 +484,9 @@ class RunExecutor:
             run_id=run_id,
             kind="stop",
             timing=timing,
-            message=None,
-            reason=reason,
-            context={},
+            locals=(RecordLocal.typed("Text", reason, "_", 0),)
+            if reason is not None
+            else (),
             request_id=request_id,
             created_at=utc_now(),
         )
@@ -503,14 +506,12 @@ class RunExecutor:
         self._require_available()
         if message.role != "user":
             raise ValueError("run steer requires a user message")
-        _ = message.percept
+        _ = message.parts
         control = self.store.accept_run_control(
             run_id=run_id,
             kind="steer",
             timing=timing,
-            message=message,
-            reason=None,
-            context={},
+            locals=(RecordLocal.typed("Part[]", tuple(message.parts), "_", 0),),
             request_id=request_id,
             created_at=utc_now(),
         )
@@ -606,14 +607,12 @@ class RunExecutor:
         if isinstance(event, RunBegin):
             self.store.finish_run_controls(
                 run_id=event.run,
-                indexes=(event.input.index,),
+                indexes=(event.control.index,),
                 finished_at=event.started_at,
             )
             return
         if isinstance(event, StepBegin):
-            indexes = tuple(
-                item.index for item in event.input if isinstance(item, RunInputRef)
-            )
+            indexes = _control_indexes(event.input, run_id=event.step.run)
             self.store.finish_run_controls(
                 run_id=event.step.run,
                 indexes=indexes,
@@ -621,10 +620,10 @@ class RunExecutor:
             )
             return
         if isinstance(event, RunEnd):
-            if event.input is not None:
+            if event.control is not None:
                 self.store.finish_run_controls(
                     run_id=event.run,
-                    indexes=(event.input.index,),
+                    indexes=(event.control.index,),
                     finished_at=event.finished_at,
                 )
             self.store.fail_pending_run_controls(
@@ -664,7 +663,7 @@ class RunExecutor:
                 controls[control.index] = control
                 if (
                     not observed
-                    and control.kind == "stop"
+                    and control.kind in {"steer", "stop"}
                     and control.timing == "immediate"
                 ):
                     cancel = active.task
@@ -674,19 +673,20 @@ class RunExecutor:
                 if not controls:
                     active.controls.pop(control.run, None)
         if cancel is not None and loop is not None and not cancel.done():
-            claimed = self.store.claim_run_controls(
-                run_id=control.run,
-                indexes=(control.index,),
-            )
-            if control.index not in claimed:
-                return
+            if control.kind == "stop":
+                claimed = self.store.claim_run_controls(
+                    run_id=control.run,
+                    indexes=(control.index,),
+                )
+                if control.index not in claimed:
+                    return
             loop.call_soon_threadsafe(cancel.cancel)
 
     def _pending_controls(
         self,
         *,
         run_id: str,
-        kind: RunControlKind,
+        kind: ControlKind,
     ) -> tuple[RunControlRecord, ...]:
         self._refresh_controls()
         with self._active_lock:
@@ -719,9 +719,7 @@ class RunExecutor:
             return
         if isinstance(event, StepBegin):
             run_id = event.step.run
-            indexes = {
-                item.index for item in event.input if isinstance(item, RunInputRef)
-            }
+            indexes = set(_control_indexes(event.input, run_id=run_id))
         elif isinstance(event, RunEnd):
             run_id = event.run
             indexes = None
@@ -782,7 +780,7 @@ class RunExecutor:
             RunEnd(
                 run=run_id,
                 status=status,
-                input=RunInputRef(index=stop.index) if stop is not None else None,
+                control=ControlRef(run_id, stop.index) if stop is not None else None,
                 error=error or control_text(stop) or status,
                 finished_at=utc_now(),
             )
@@ -816,7 +814,7 @@ class _Execution:
         self._retry = retry
         if retry is not None:
             self._restore_model_limits(root.run_id)
-        self._run_outputs: dict[str, ValueRef] = {}
+        self._run_outputs: dict[str, RecordLocal] = {}
 
     def next_step(self, run_id: str) -> int:
         """Return the next unused top-level physical step index."""
@@ -926,6 +924,7 @@ class _Execution:
         executable: AgicDecl | FlowDecl,
         *,
         locals: Mapping[str, Local] | None = None,
+        output_name: str | None = "_",
     ) -> Local:
         """Execute one accepted agic or flow run and emit its lifecycle."""
 
@@ -942,9 +941,12 @@ class _Execution:
         await self.emit(
             RunBegin(
                 run=binding.run_id,
-                input=RunInputRef(index=0),
+                control=ControlRef(binding.run_id, binding.control_index),
+                runnable=_bound_runnable(binding),
                 parent=binding.parent,
-                context=_run_context(binding, executable),
+                placement=(
+                    dict(binding.placement) if binding.placement is not None else None
+                ),
                 started_at=utc_now(),
             )
         )
@@ -1002,7 +1004,7 @@ class _Execution:
                 RunEnd(
                     run=binding.run_id,
                     status="canceled",
-                    input=RunInputRef(index=control.index)
+                    control=ControlRef(binding.run_id, control.index)
                     if control is not None
                     else None,
                     output=self.run_output(binding.run_id),
@@ -1038,7 +1040,7 @@ class _Execution:
             RunEnd(
                 run=binding.run_id,
                 status="succeeded",
-                output=result.ref,
+                output=_run_result_local(result, name=output_name),
                 finished_at=utc_now(),
             )
         )
@@ -1069,14 +1071,41 @@ class _Execution:
                 )
             if step.status != "succeeded":
                 raise ValueError(f"retry prefix step is not committed: {step.path}")
-            local = _step_local(step)
+            if isinstance(statement, RepeatStmt):
+                for descendant in self.store.list_steps(run_id=binding.run_id):
+                    if (
+                        len(descendant.path.indices) <= len(step.path.indices)
+                        or descendant.path.indices[: len(step.path.indices)]
+                        != step.path.indices
+                    ):
+                        continue
+                    if descendant.status != "succeeded":
+                        raise ValueError(
+                            f"retry prefix step is not committed: {descendant.path}"
+                        )
+                    self._restore_step_local(binding.run_id, descendant, current)
+                continue
+            local = _step_local(step, self.store)
             if statement.binding is not None:
                 current[statement.binding] = local
             if statement.binding == "_":
-                self.record_output(
-                    binding.run_id, local.ref or StepOutputRef(step.path)
-                )
+                self.record_output(binding.run_id, local.ref or Pointer.step(step.path))
         return current, len(committed)
+
+    def _restore_step_local(
+        self,
+        run_id: str,
+        step: StepRecord,
+        current: dict[str, Local],
+    ) -> None:
+        """Restore one named local produced inside a committed structural step."""
+
+        if step.output is None or step.output.name is None:
+            return
+        local = _step_local(step, self.store)
+        current[step.output.name] = local
+        if step.output.name == "_":
+            self.record_output(run_id, local.ref or Pointer.step(step.path))
 
     async def execute_child(
         self,
@@ -1085,6 +1114,8 @@ class _Execution:
         step: StepPath,
         name: str,
         placement: Mapping[str, object] | None,
+        *,
+        output_name: str | None = "_",
     ) -> Local:
         """Accept and execute one recursive child agic or flow run."""
 
@@ -1098,22 +1129,19 @@ class _Execution:
             placement=placement,
         )
         binding = _prepare_child_run(binding, executable)
-        _validate_inputs(
-            state=binding.state, executable=executable, input=binding.input
-        )
         resources = binding.resources
         if resources is None:
             raise RuntimeError(f"run resources missing: {binding.run_id}")
-        context = _run_context(binding, executable)
         self.store.accept_start(
             run_id=binding.run_id,
             parent=step,
             thread=binding.thread,
-            bindings=binding.bindings,
-            limits=binding.limits,
-            input=binding.input,
             resources=resources,
-            context=context,
+            limits=binding.limits,
+            runnable=_bound_runnable(binding),
+            model=_bound_model(binding),
+            locals=binding.control_locals,
+            placement=binding.placement,
             request_id=None,
             created_at=binding.created_at,
         )
@@ -1121,7 +1149,23 @@ class _Execution:
             run_id=binding.run_id,
             root_run_id=step.run,
         )
-        return await self.execute(binding, executable)
+        try:
+            result = await self.execute(binding, executable, output_name=output_name)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            raise _ExecutionFailed(Pointer.run(binding.run_id), exc) from exc
+        pointer = Pointer.run(binding.run_id)
+        item_type = result.type_name or "Json"
+        return replace(
+            result,
+            ref=pointer,
+            record=RecordLocal.typed(
+                type_name=(f"{item_type}[]" if result.shape == "list" else item_type),
+                value=pointer,
+                dim=1 if result.shape == "list" else 0,
+            ),
+        )
 
     async def parallel_children(
         self,
@@ -1132,6 +1176,7 @@ class _Execution:
         inputs: Sequence[Any],
         *,
         limit: int | None,
+        select_source: bool = True,
     ) -> Local:
         """Execute child runs concurrently and preserve their output type."""
 
@@ -1140,13 +1185,27 @@ class _Execution:
         available_lanes: asyncio.Queue[int] = asyncio.Queue()
         for lane in range(lanes):
             available_lanes.put_nowait(lane)
-        input_type = locals.get("_", Local()).type_name
+        source_local = locals.get("_", Local())
+        input_type = source_local.type_name
 
         async def execute(index: int, value: Any) -> Local:
             lane = await available_lanes.get()
             try:
                 child_locals = dict(locals)
-                child_locals["_"] = Local(value, "item", type_name=input_type)
+                child_locals["_"] = Local(
+                    value,
+                    "item",
+                    ref=(
+                        (
+                            source_local.ref.select(index)
+                            if select_source
+                            else source_local.ref
+                        )
+                        if source_local.ref is not None
+                        else None
+                    ),
+                    type_name=input_type,
+                )
                 return await self.execute_child(
                     binding,
                     child_locals,
@@ -1174,10 +1233,21 @@ class _Execution:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
+        output_type = _parallel_output_type(results, executable) or "Json"
+        result_refs = tuple(result.ref for result in results if result.ref is not None)
         return Local(
             [result.value for result in results],
             "list",
-            type_name=_parallel_output_type(results, executable),
+            type_name=output_type,
+            record=(
+                RecordLocal.typed(
+                    type_name=f"{output_type}[]",
+                    value=result_refs,
+                    dim=1,
+                )
+                if len(result_refs) == len(results)
+                else None
+            ),
         )
 
     async def execute_statements(
@@ -1205,7 +1275,7 @@ class _Execution:
         )
 
     def pending_controls(
-        self, run_id: str, kind: RunControlKind
+        self, run_id: str, kind: ControlKind
     ) -> tuple[RunControlRecord, ...]:
         return self.executor._pending_controls(run_id=run_id, kind=kind)
 
@@ -1234,6 +1304,22 @@ class _Execution:
             controls=self.pending_controls(run_id, "steer"),
         )
 
+    def steer_before_next_step(self, run_id: str) -> bool:
+        """Return whether a steer replaces the next planned non-model step."""
+
+        return any(
+            control.timing in {"immediate", "next_step"}
+            for control in self.pending_controls(run_id, "steer")
+        )
+
+    def immediate_steer(self, run_id: str) -> bool:
+        """Return whether an immediate steer interrupted the active step."""
+
+        return any(
+            control.timing == "immediate"
+            for control in self.pending_controls(run_id, "steer")
+        )
+
     def raise_if_stopping(self, run_id: str, *, call: bool) -> None:
         allowed = {"immediate", "next_step"}
         if call:
@@ -1255,10 +1341,23 @@ class _Execution:
         if claimed:
             raise _RunStopped(claimed[0])
 
-    def record_output(self, run_id: str, ref: ValueRef) -> None:
-        self._run_outputs[run_id] = ref
+    def record_output(self, run_id: str, ref: Pointer) -> None:
+        step = next(
+            (
+                item
+                for item in reversed(self.store.list_steps(run_id=run_id))
+                if Pointer.step(item.path) == ref and item.output is not None
+            ),
+            None,
+        )
+        if step is not None and step.output is not None:
+            self._run_outputs[run_id] = replace(
+                step.output,
+                value=TypedPointer(step.output.type, ref),
+                name="_",
+            )
 
-    def run_output(self, run_id: str) -> ValueRef | None:
+    def run_output(self, run_id: str) -> RecordLocal | None:
         return self._run_outputs.get(run_id)
 
     async def emit(self, event: RunEvent) -> None:
@@ -1286,29 +1385,52 @@ def _child_binding(
     parent_step: StepPath,
     placement: Mapping[str, object] | None,
 ) -> BoundRun:
-    if executable.input is None:
-        percept: Percept = ()
-    else:
+    structs = {item.name: item for item in parent.state.program.structs}
+    source_locals: dict[str, Local] = {}
+    primary_value: object | None = None
+    if executable.input is not None:
         primary = locals.get("_", Local())
-        percept = (
-            value_percept(primary.value, type_name=primary.type_name)
-            if primary.shape == "item"
-            else None
-        )
-        if primary.shape == "none":
-            percept = ()
-        if percept is None:
-            percept = (TextPart(value_text(primary.value)),)
-    parameters = {parameter.name: parameter for parameter in executable.params}
-    named = tuple(
-        RunnableInputValue(
-            name=name,
-            value=_argument_value(local, parameters[name]),
-            type_name=parameters[name].type_name or "Part[]",
-        )
-        for name, local in locals.items()
-        if name in parameters and local.shape != "none"
+        if primary.shape != "none":
+            primary_value = _argument_value(primary, executable.input)
+            source_locals["_"] = primary
+    named: dict[str, object] = {}
+    for parameter in executable.params:
+        local = locals.get(parameter.name)
+        if local is None or local.shape == "none":
+            continue
+        named[parameter.name] = _argument_value(local, parameter)
+        source_locals[parameter.name] = local
+    input = resolve_runnable_input(
+        executable,
+        primary=primary_value,
+        named=named,
+        structs=structs,
     )
+    declared_types = {
+        **(
+            {"_": executable.input.type_name or "Part[]"}
+            if executable.input is not None
+            else {}
+        ),
+        **{
+            parameter.name: parameter.type_name or "Part[]"
+            for parameter in executable.params
+        },
+    }
+    control_locals: list[RecordLocal] = []
+    resolved_values = {
+        **({"_": input.primary} if input.primary is not None else {}),
+        **input.named,
+    }
+    for name, value in resolved_values.items():
+        control_locals.append(
+            _child_control_local(
+                name,
+                source_locals[name],
+                declared_types[name],
+                cast(Value, value),
+            )
+        )
     return BoundRun(
         run_id=context.executor.ids.issue_run(),
         root_run_id=parent.root_run_id,
@@ -1317,7 +1439,8 @@ def _child_binding(
             model=parent.bindings.model,
             runnable=f"{executable.kind}:{executable.name}",
         ),
-        input=RunnableInput(primary=percept, named=named),
+        input=input,
+        control_locals=tuple(control_locals),
         state=parent.state,
         setup=parent.setup,
         limits=parent.limits,
@@ -1332,14 +1455,14 @@ def _child_binding(
     )
 
 
-def _argument_value(local: Local, parameter: Parameter) -> RunnableInputData:
+def _argument_value(local: Local, parameter: Parameter) -> Value:
     """Represent one child argument according to its declared value type."""
 
     if (parameter.type_name or "Part[]") != "Part[]":
-        return cast(RunnableInputData, local.value)
-    percept = value_percept(local.value, type_name=local.type_name)
-    if percept is not None:
-        return percept
+        return cast(Value, local.value)
+    parts = value_parts(local.value, type_name=local.type_name)
+    if parts is not None:
+        return parts
     return (TextPart(value_text(local.value)),)
 
 
@@ -1354,15 +1477,18 @@ def _bind_run(
 ) -> BoundRun:
     if not spec.thread or spec.thread != spec.thread.strip():
         raise ValueError("run spec requires a canonical thread id")
+    control_locals = _input_locals(input, executable)
     return BoundRun(
         run_id=run_id,
         root_run_id=run_id,
         thread=spec.thread,
-        bindings=replace(
-            spec.bindings,
+        bindings=RunBindings(
             runnable=f"{executable.kind}:{executable.name}",
+            model=spec.bindings.model
+            or (resources.models[0] if resources.models else "none"),
         ),
-        input=input,
+        input=_runnable_input_from_values(control_locals),
+        control_locals=control_locals,
         state=spec.state,
         setup=spec.setup,
         limits=spec.limits,
@@ -1374,56 +1500,14 @@ def _bind_run(
     )
 
 
-def _run_context(
-    binding: BoundRun,
-    executable: AgicDecl | FlowDecl,
-) -> dict[str, object]:
-    context: dict[str, object] = {
-        "state_fingerprint": binding.state.fingerprint,
-        "runnable": {"kind": executable.kind, "name": executable.name},
-        "call": binding.call,
-    }
-    if binding.placement:
-        context["placement"] = dict(binding.placement)
-    return context
-
-
-def _source_model(run: RunRecord) -> str | None:
-    value = run.context.get("model")
-    return str(value) if value is not None else None
-
-
-def _stored_value(value: object, type_name: str | None) -> object:
-    if type_name == "Part" and isinstance(value, Mapping):
-        return part_from_data(cast(Mapping[str, Any], value))
-    if (
-        type_name == "Part[]"
-        and isinstance(value, Sequence)
-        and not isinstance(value, (str, bytes, bytearray))
-    ):
-        return tuple(
-            part_from_data(cast(Mapping[str, Any], item))
-            if isinstance(item, Mapping)
-            else item
-            for item in value
-        )
-    return value
-
-
-def _step_local(step: StepRecord) -> Local:
-    if "value" not in step.noted:
-        raise ValueError(f"retry step result snapshot is missing: {step.path}")
-    shape = str(step.noted.get("shape", "none"))
-    if shape not in {"none", "item", "list"}:
-        raise ValueError(f"retry step shape is invalid: {step.path}")
-    raw_type = step.noted.get("type")
-    type_name = str(raw_type) if raw_type is not None else None
-    value = _stored_value(step.noted.get("value"), type_name)
+def _step_local(step: StepRecord, store: RunStore) -> Local:
+    if step.output is None:
+        return Local()
     return Local(
-        value=value,
-        shape=cast(Shape, shape),
-        ref=StepOutputRef(step.path),
-        type_name=type_name,
+        value=store.resolve_value(step.output.value),
+        shape="list" if step.output.dim == 1 else "item",
+        ref=Pointer.step(step.path),
+        type_name=step.output.item_type,
     )
 
 
@@ -1438,7 +1522,7 @@ def _prepare_start_spec(
         runnable_name,
         kind=runnable_kind,
     )
-    input = _typed_runnable_input(spec.input, executable)
+    input = spec.input
     _validate_inputs(state=spec.state, executable=executable, input=input)
     agent_resources = resolve_agent_resources(
         spec.setup,
@@ -1498,27 +1582,6 @@ def _prepare_child_run(
     )
 
 
-def _typed_runnable_input(
-    input: RunnableInput,
-    executable: AgicDecl | FlowDecl,
-) -> RunnableInput:
-    parameters = {parameter.name: parameter for parameter in executable.params}
-    return RunnableInput(
-        primary=input.primary,
-        named=tuple(
-            replace(
-                item,
-                type_name=(
-                    parameters[item.name].type_name or "Part[]"
-                    if item.name in parameters
-                    else item.type_name
-                ),
-            )
-            for item in input.named
-        ),
-    )
-
-
 def _validate_inputs(
     *,
     state: AgentState,
@@ -1527,7 +1590,7 @@ def _validate_inputs(
 ) -> None:
     structs = {item.name: item for item in state.program.structs}
     params = {param.name: param for param in executable.params}
-    args = input.values
+    args = input.named
     unknown = sorted(set(args) - set(params))
     if unknown:
         joined = ", ".join(unknown)
@@ -1540,19 +1603,20 @@ def _validate_inputs(
     if missing:
         joined = ", ".join(missing)
         raise ValueError(f"missing named inputs for {executable.name}: {joined}")
-    if executable.input is None and input.primary:
+    if executable.input is None and input.primary is not None:
         raise ValueError(f"{executable.name} does not accept primary input")
     if (
         executable.input is not None
         and not executable.input.optional
-        and not input.primary
+        and input.primary is None
     ):
         raise ValueError(f"{executable.name} requires primary input")
-    if executable.input is not None:
-        coerce_input(
+    if executable.input is not None and input.primary is not None:
+        validate_value(
             input.primary,
             executable.input.type_name or "Part[]",
             structs=structs,
+            path="primary input",
         )
     for name, value in args.items():
         validate_value(
@@ -1567,3 +1631,157 @@ def _run_event_id(event: RunEvent) -> str:
     if isinstance(event, RunBegin | RunEnd):
         return event.run
     return event.step.run
+
+
+def _input_locals(
+    input: RunnableInput,
+    executable: AgicDecl | FlowDecl,
+) -> tuple[RecordLocal, ...]:
+    parameters = {item.name: item for item in executable.params}
+    result: list[RecordLocal] = []
+    if executable.input is not None and input.primary is not None:
+        type_name = executable.input.type_name or "Part[]"
+        result.append(
+            RecordLocal.typed(
+                type_name=type_name,
+                value=input.primary,
+                name="_",
+            )
+        )
+    for name, item in input.named.items():
+        result.append(
+            RecordLocal.typed(
+                type_name=parameters[name].type_name or "Part[]",
+                value=item,
+                name=name,
+            )
+        )
+    return tuple(result)
+
+
+def _child_control_local(
+    name: str,
+    local: Local,
+    type_name: str,
+    value: Value,
+) -> RecordLocal:
+    source_type = _runtime_local_type(local)
+    return RecordLocal.typed(
+        type_name=type_name,
+        value=(
+            local.ref if local.ref is not None and source_type == type_name else value
+        ),
+        name=name,
+        dim=0,
+    )
+
+
+def _runtime_local_type(local: Local) -> str | None:
+    if local.record is not None:
+        return local.record.type
+    if local.type_name is None:
+        return None
+    return f"{local.type_name}[]" if local.shape == "list" else local.type_name
+
+
+def _runnable_input_from_locals(
+    store: RunStore,
+    locals: Sequence[RecordLocal],
+) -> RunnableInput:
+    primary: Value | None = None
+    named: dict[str, Value] = {}
+    for local in locals:
+        value = cast(Value, store.resolve_value(local.value))
+        if local.name == "_":
+            primary = value
+        elif local.name is not None:
+            named[local.name] = value
+    return RunnableInput(primary=primary, named=named)
+
+
+def _runnable_input_from_values(
+    locals: Sequence[RecordLocal],
+) -> RunnableInput:
+    primary: Value | None = None
+    named: dict[str, Value] = {}
+    for local in locals:
+        if isinstance(local.value, TypedPointer):
+            raise TypeError("top-level input local cannot be a pointer")
+        if local.name == "_":
+            primary = local.value
+        elif local.name is not None:
+            named[local.name] = local.value
+    return RunnableInput(primary=primary, named=named)
+
+
+def _adopted_control_locals(
+    store: RunStore,
+    *,
+    run_id: str,
+    through: int,
+) -> tuple[RecordLocal, ...]:
+    for control in reversed(store.list_run_controls(run_id=run_id)):
+        if control.index > through or not isinstance(
+            control.payload, PreparationControlPayload
+        ):
+            continue
+        if control.payload.locals is not None:
+            return control.payload.locals
+    raise ValueError(f"run control locals are missing: {run_id}^{through}")
+
+
+def _bound_runnable(binding: BoundRun) -> str:
+    runnable = binding.bindings.runnable
+    if not runnable:
+        raise RuntimeError(f"run runnable binding is missing: {binding.run_id}")
+    return runnable
+
+
+def _bound_model(binding: BoundRun) -> str:
+    model = binding.bindings.model
+    if not model:
+        raise RuntimeError(f"run model binding is missing: {binding.run_id}")
+    return model
+
+
+def _run_result_local(
+    result: Local,
+    *,
+    name: str | None = "_",
+) -> RecordLocal | None:
+    if result.shape == "none":
+        return None
+    item_type = result.type_name or "Json"
+    reference = (
+        result.ref
+        if result.ref is not None
+        and (result.record is not None or result.type_name == "Part[]")
+        else None
+    )
+    concrete = (
+        tuple(result.value)
+        if item_type.endswith("[]") and isinstance(result.value, list)
+        else result.value
+    )
+    return RecordLocal.typed(
+        type_name=f"{item_type}[]" if result.shape == "list" else item_type,
+        value=reference if reference is not None else cast(Value, concrete),
+        name=name,
+        dim=1 if result.shape == "list" else 0,
+    )
+
+
+def _control_indexes(
+    pointers: Sequence[Pointer],
+    *,
+    run_id: str,
+) -> tuple[int, ...]:
+    indexes: list[int] = []
+    for pointer in pointers:
+        anchor = pointer.anchor
+        if "^" not in anchor:
+            continue
+        target, raw_index = anchor.split("^", 1)
+        if target == run_id:
+            indexes.append(int(raw_index))
+    return tuple(dict.fromkeys(indexes))

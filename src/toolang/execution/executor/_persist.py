@@ -21,7 +21,8 @@ class _PersistSink:
         if isinstance(event, RunBegin):
             self._store.begin_run(
                 run_id=event.run,
-                context=event.context,
+                control=event.control,
+                placement=event.placement,
                 started_at=event.started_at,
             )
             return
@@ -49,6 +50,7 @@ class _PersistSink:
             path=event.step,
             kind=event.kind,
             input=event.input,
+            placement=event.placement,
             given=given,
             started_at=event.started_at,
         )

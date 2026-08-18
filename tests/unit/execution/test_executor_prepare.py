@@ -29,12 +29,21 @@ from toolang.execution.executor.common import BoundRun, Local, output_parts
 from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.prepare import prepare_agic
 from toolang.execution.history import RunHistory
-from toolang.execution.records import model_call_from_data, model_call_to_data
+from toolang.execution.records import (
+    StartControlPayload,
+    model_call_from_data,
+    model_call_to_data,
+)
 from toolang.execution.schemas import RunDetail
 from toolang.execution.store import RunStore
-from toolang.execution.types import AgentResources, AgentToolResource
+from toolang.execution.types import (
+    AgentResources,
+    AgentToolResource,
+    Local as RecordLocal,
+    Pointer,
+)
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
-from toolang.lang.input import RunnableInput
+from toolang.lang.input import resolve_runnable_input
 from toolang.plugin.tools.registry import tool_ref_for_model_tool
 from toolang.setup import AgentEnvironment, AgentSetup
 
@@ -137,7 +146,7 @@ def test_multimodal_list_shape_has_replayable_step_output() -> None:
     )
 
 
-def test_empty_structured_list_is_not_treated_as_an_empty_percept() -> None:
+def test_empty_structured_list_is_not_treated_as_empty_parts() -> None:
     assert output_parts(Local(value=[], shape="item", type_name="Text[]")) == (
         TextPart("[]"),
     )
@@ -197,10 +206,12 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         root_run_id="run_1",
         thread="term_1",
         bindings=RunBindings(runnable="agic:chat"),
-        input=RunnableInput.from_values(
-            primary=Message.user("hello").percept,
+        input=resolve_runnable_input(
+            agic,
+            primary=Message.user("hello").parts,
             named={"focus": "events"},
         ),
+        control_locals=(),
         state=state,
         setup=setup,
         resources=_resources(setup),
@@ -230,7 +241,12 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
         ),
     )
 
-    prepared = prepare_agic(context, run, agic)
+    prepared = prepare_agic(
+        context,
+        run,
+        agic,
+        variables={"_": run.input.primary, **run.input.named},
+    )
 
     assert prepared.run is run
     assert prepared.agic is agic
@@ -292,7 +308,11 @@ def test_prepare_agic_includes_declared_output_contract(tmp_path: Path) -> None:
         root_run_id="run_1",
         thread="term_1",
         bindings=RunBindings(runnable="agic:queries"),
-        input=RunnableInput(primary=Message.user("topic").percept),
+        input=resolve_runnable_input(
+            agic,
+            primary=Message.user("topic").parts,
+        ),
+        control_locals=(),
         state=state,
         setup=setup,
         resources=_resources(setup),
@@ -322,7 +342,12 @@ def test_prepare_agic_includes_declared_output_contract(tmp_path: Path) -> None:
         ),
     )
 
-    prepared = prepare_agic(context, run, agic)
+    prepared = prepare_agic(
+        context,
+        run,
+        agic,
+        variables={"_": run.input.primary, **run.input.named},
+    )
 
     assert "<output-contract>" in prepared.instructions
     assert "type: Text[]" in prepared.instructions
@@ -376,10 +401,12 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         root_run_id="run_1",
         thread="term_1",
         bindings=RunBindings(runnable="agic:review"),
-        input=RunnableInput.from_values(
+        input=resolve_runnable_input(
+            agic,
             primary=(TextPart("this diagram "), image),
             named={"appendix": document},
         ),
+        control_locals=(),
         state=state,
         setup=setup,
         resources=_resources(setup),
@@ -408,7 +435,12 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
         ),
     )
 
-    prepared = prepare_agic(context, run, agic)
+    prepared = prepare_agic(
+        context,
+        run,
+        agic,
+        variables={"_": run.input.primary, **run.input.named},
+    )
 
     assert prepared.messages[-1].parts == (
         TextPart(prepared.prompt_context + "\n\nReview this diagram "),
@@ -495,7 +527,8 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                     thread="term_1",
                     bindings=RunBindings(runnable="chat"),
                     limits=setup.limits,
-                    input=RunnableInput.from_values(
+                    input=resolve_runnable_input(
+                        agic,
                         primary=(TextPart(text="hello"), image),
                         named={"focus": "events"},
                     ),
@@ -507,7 +540,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert record.status == "succeeded"
         steps = store.list_steps(run_id=record.id)
         assert [step.kind for step in steps] == ["model"]
-        assert steps[0].output == (audio,)
+        assert steps[0].output == RecordLocal.typed("Part[]", (audio,), "_")
         assert store.run_output(run_id=record.id) == (audio,)
         assert len(adapter.requests) == 1
         request_text = message_text(adapter.requests[0].messages[-1].parts)
@@ -537,9 +570,17 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert "adapter_request" not in steps[0].noted
         detail = RunHistory(store).get_run(record.id)
         assert detail is not None
-        assert detail.input is not None
-        assert detail.input.parts == (TextPart("hello"), image)
-        assert detail.output == [audio]
+        start_payload = detail.controls[0].payload
+        assert isinstance(start_payload, StartControlPayload)
+        assert start_payload.locals == (
+            RecordLocal.typed("Part[]", (TextPart("hello"), image), "_"),
+            RecordLocal.typed("Text", "events", "focus"),
+        )
+        assert detail.output == RecordLocal.typed(
+            "Part[]",
+            Pointer.step(steps[0].path),
+            "_",
+        )
         assert detail.steps[0].given["call"] == model_call_to_data(adapter.requests[0])
         payload = TypeAdapter(RunDetail).dump_python(detail, mode="json")
         serialized_call = cast(

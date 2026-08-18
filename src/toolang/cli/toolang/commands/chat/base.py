@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import json
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from toolang.base.types.message import MessagePart
+from toolang.base.types.message import Part
 from toolang.execution.events import RunEvent
 from toolang.execution.records import execution_error_message
 from toolang.execution.types import ExecutionError, RunOverride
@@ -23,7 +23,7 @@ class ChatResult:
     """One durable run result requested by the chat presentation."""
 
     run_id: str
-    output: tuple[MessagePart, ...]
+    output: tuple[Part, ...]
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests.support.execution_fixtures import (
+    accept_run_start,
     project_run_end,
     project_run_start,
     project_step,
@@ -14,10 +15,10 @@ from tests.support.execution_fixtures import (
 from toolang.base.types.message import Message, TextPart
 from toolang.common.ids import IdIssuer
 from toolang.execution.history import RunHistory
-from toolang.execution.records import RunInputRef, StepOutputRef
+from toolang.execution.schemas import RunControlRefData, ThreadControlRefData
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ThreadPrefix
+from toolang.execution.types import ControlRef, Local, ThreadPrefix, Pointer
 
 
 def test_run_history_batches_thread_and_run_summaries(
@@ -149,7 +150,7 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
         project_run_end(
             store,
             run_id=run.id,
-            output=StepOutputRef(step=step.path, part=1),
+            output=Local.typed("Part", Pointer.step(step.path, 1), "_", 0),
         )
 
         history = RunHistory(store)
@@ -158,9 +159,10 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
 
         assert store.run_output(run_id=run.id) == (TextPart("result"),)
         assert detail is not None
-        assert detail.output == [TextPart("result")]
+        expected = Local.typed("Part", Pointer.step(step.path, 1), "_", 0)
+        assert detail.output == expected
         assert thread is not None
-        assert thread.runs[0].output == [TextPart("result")]
+        assert thread.runs[0].output == expected
     finally:
         store.close()
 
@@ -178,17 +180,114 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
         project_run_end(
             store,
             run_id=run.id,
-            output=RunInputRef(index=0),
+            output=Pointer.control(run.id, 0, "_"),
         )
 
         stored = store.get_run(run_id=run.id)
         detail = RunHistory(store).get_run(run.id)
 
         assert stored is not None
-        assert stored.input == RunInputRef(index=0)
-        assert stored.output == RunInputRef(index=0)
+        assert stored.control == ControlRef(run.id, 0)
+        assert stored.output == Local.typed(
+            "Part[]", Pointer.control(run.id, 0, "_"), "_", 0
+        )
         assert store.run_output(run_id=run.id) == Message.user("unchanged").parts
         assert detail is not None
-        assert detail.output == list(Message.user("unchanged").parts)
+        assert detail.output == Local.typed(
+            "Part[]", Pointer.control(run.id, 0, "_"), "_", 0
+        )
+    finally:
+        store.close()
+
+
+def test_resolve_local_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_mismatch",
+            thread_id="term_mismatch",
+            origin="chat",
+            input=Message.user("not a number"),
+        )
+
+        with pytest.raises(TypeError, match="Number"):
+            store.resolve_local(
+                Local.typed(
+                    "Number",
+                    Pointer.control(run.id, 0, "_"),
+                    "_",
+                    0,
+                )
+            )
+    finally:
+        store.close()
+
+
+def test_run_history_reads_ejection_scope_from_the_control_record(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        source = project_run_start(
+            store,
+            run_id="custom",
+            thread_id="term_custom",
+            origin="chat",
+            input=Message.user("source"),
+        )
+        project_run_end(store, run_id=source.id)
+        accept_run_start(
+            store,
+            run_id="replacement",
+            parent=None,
+            thread=source.thread,
+            input=Message.user("replacement"),
+            context={},
+            request_id=None,
+            created_at="2026-01-01T00:00:02Z",
+            kind="rerun",
+            source=source.id,
+        )
+
+        rerun_ejected = RunHistory(store).get_run(source.id)
+        assert rerun_ejected is not None
+        assert rerun_ejected.ejected == RunControlRefData(
+            run="replacement",
+            index=0,
+        )
+
+        first = project_run_start(
+            store,
+            run_id="first",
+            thread_id="run_thread",
+            origin="chat",
+            input=Message.user("first"),
+        )
+        project_run_end(store, run_id=first.id)
+        second = project_run_start(
+            store,
+            run_id="second",
+            thread_id="run_thread",
+            origin="chat",
+            input=Message.user("second"),
+        )
+        project_run_end(store, run_id=second.id)
+        thread = store.get_thread(thread_id="run_thread")
+        assert thread is not None
+        store.rewind_thread(
+            thread_id="run_thread",
+            anchor=first.id,
+            request_id=None,
+            expected_head=thread.head,
+            created_at="2026-01-01T00:00:05Z",
+        )
+
+        rewind_ejected = RunHistory(store).get_run(second.id)
+        assert rewind_ejected is not None
+        assert rewind_ejected.ejected == ThreadControlRefData(
+            thread="run_thread",
+            index=1,
+        )
     finally:
         store.close()

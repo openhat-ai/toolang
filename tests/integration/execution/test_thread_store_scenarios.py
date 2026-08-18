@@ -25,7 +25,7 @@ from toolang.execution.history import RunHistory
 from toolang.execution.records import StepRecord, model_call_to_data
 from toolang.execution.store import RunStore
 from toolang.execution.types import StepPath, ThreadPrefix
-from toolang.lang.input import perceive_input
+from toolang.lang.input import resolve_input_parts
 
 
 def _capture_replayable_model_step(store: RunStore) -> StepRecord:
@@ -85,7 +85,7 @@ agic chat(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread_id,
                     runnable="chat",
-                    primary=perceive_input("question"),
+                    primary=resolve_input_parts("question"),
                 )
             )
             return (
@@ -114,6 +114,65 @@ agic chat(_: Part[]) -> Part[]:
         reopened.close()
 
 
+def test_typed_primary_input_is_projected_into_history_and_summaries(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic chat(_: Text) -> Text:
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            ModelCallResult(message=Message.assistant("first answer")),
+            ModelCallResult(message=Message.assistant("second answer")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            first = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="chat",
+                    primary=resolve_input_parts("first question"),
+                )
+            )
+            await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="chat",
+                    primary=resolve_input_parts("second question"),
+                )
+            )
+
+            detail = RunHistory(harness.store).get_run(first.id)
+            summary = next(
+                item
+                for item in RunHistory(harness.store).list_threads(limit=None)
+                if item.id == thread
+            )
+            assert detail is not None
+            assert detail.input_text == "first question"
+            assert summary.title == "first question"
+            assert harness.adapter.invocations[1].call.messages == [
+                Message.user("first question"),
+                Message.assistant("first answer"),
+                Message.user("second question"),
+            ]
+            assert harness.store.recent_conversation_messages(thread_id=thread) == [
+                Message.user("first question"),
+                Message.assistant("first answer"),
+                Message.user("second question"),
+                Message.assistant("second answer"),
+            ]
+
+    asyncio.run(scenario())
+
+
 def test_thread_history_supports_followup_fork_and_rewind(
     tmp_path: Path,
 ) -> None:
@@ -139,14 +198,14 @@ agic chat(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    primary=perceive_input("first question"),
+                    primary=resolve_input_parts("first question"),
                 )
             )
             second = await harness.executor.start(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    primary=perceive_input("second question"),
+                    primary=resolve_input_parts("second question"),
                 )
             )
             assert harness.adapter.invocations[1].call.messages == [
@@ -163,7 +222,7 @@ agic chat(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=branch,
                     runnable="chat",
-                    primary=perceive_input("branch question"),
+                    primary=resolve_input_parts("branch question"),
                 )
             )
             assert harness.adapter.invocations[2].call.messages == [
@@ -236,7 +295,7 @@ agic calculate(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    primary=perceive_input("double three"),
+                    primary=resolve_input_parts("double three"),
                 )
             )
 

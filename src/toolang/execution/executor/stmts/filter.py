@@ -9,6 +9,7 @@ from toolang.common.errors import ToolangError
 from toolang.lang.ast import DropStmt, KeepStmt
 
 from ...records import RunControlRecord, StepPath
+from ...types import Local as RecordLocal
 from ..common import BoundRun
 from ..common import Local, boolean, require_list, result_list
 from ..steps import par as par_step
@@ -28,7 +29,8 @@ async def execute(
     placement: Mapping[str, object] | None,
 ) -> Local:
     async def operation() -> Local:
-        input_type = locals.get("_", Local()).type_name
+        source = locals.get("_", Local())
+        input_type = source.type_name
         items = require_list(locals, operation=statement.kind)
         if statement.position is not None:
             count = statement.count or 0
@@ -53,16 +55,31 @@ async def execute(
                 boolean(value, operation=statement.kind)
                 for value in result_list(evaluated, operation=statement.kind)
             ]
-        kept = [
-            item
-            for item, matched in zip(items, matches, strict=True)
+        kept_indexes = [
+            index
+            for index, matched in enumerate(matches)
             if matched == isinstance(statement, KeepStmt)
         ]
-        return Local(kept, "list", type_name=input_type)
+        kept = [items[index] for index in kept_indexes]
+        return Local(
+            kept,
+            "list",
+            type_name=input_type,
+            record=(
+                RecordLocal.typed(
+                    type_name=f"{input_type or 'Json'}[]",
+                    value=tuple(source.ref.select(index) for index in kept_indexes),
+                    dim=1,
+                )
+                if source.ref is not None
+                else None
+            ),
+        )
 
     step = par_step if statement.predicate is not None else system_step
     return await step.execute(
         execution.emit,
+        binding=binding,
         path=path,
         statement=statement,
         locals=locals,

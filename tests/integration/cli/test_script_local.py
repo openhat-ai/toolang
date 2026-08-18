@@ -10,6 +10,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands import script
 from toolang.execution.store import RunStore
+from toolang.execution.records import StartControlPayload
 from toolang.up import process as agents
 from tests.support.execution_harness import (
     AsyncGate,
@@ -17,7 +18,7 @@ from tests.support.execution_harness import (
     ScriptedModelTurn,
 )
 from toolang.execution.types import ThreadPrefix
-from toolang.lang.input import perceive_input
+from toolang.lang.input import resolve_input_parts
 
 
 _SOURCE = """
@@ -89,6 +90,7 @@ def test_local_script_runs_through_execution_and_persists_script_thread(
     try:
         threads = store.list_threads()
         runs = store.list_runs(thread_id=threads[0].thread_id, limit=None)
+        control = store.get_run_control(run_id=runs[0].id, index=0)
     finally:
         store.close()
         asyncio.run(harness.executor.shutdown())
@@ -98,7 +100,9 @@ def test_local_script_runs_through_execution_and_persists_script_thread(
     assert threads[0].origin == "script"
     assert len(runs) == 1
     assert runs[0].status == "succeeded"
-    assert runs[0].runnable_name == "echo"
+    assert control is not None
+    assert isinstance(control.payload, StartControlPayload)
+    assert control.payload.runnable == "agic:echo"
 
 
 def test_local_script_renders_composite_flow_progress(
@@ -182,7 +186,7 @@ def test_script_cancellation_stops_its_owned_run(tmp_path: Path) -> None:
                 harness.run_spec(
                     thread=thread,
                     runnable="echo",
-                    primary=perceive_input("wait"),
+                    primary=resolve_input_parts("wait"),
                 )
             )
             waiter = asyncio.create_task(script._await_script_run(handle))

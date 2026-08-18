@@ -11,7 +11,7 @@ from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
     ImagePart,
-    PerceptPart,
+    Part,
     TextPart,
 )
 
@@ -47,7 +47,7 @@ _DOCUMENT_EXTENSIONS = frozenset(
 )
 
 
-def resolve_file_include(reference: str, *, base: Path) -> PerceptPart:
+def resolve_file_include(reference: str, *, base: Path) -> Part:
     """Resolve one local Content reference relative to an explicit base."""
 
     path = Path(reference).expanduser()

@@ -8,6 +8,8 @@ import threading
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog.job import AuthoredJobs, JobFile
+from toolang.execution.records import CreateControlPayload, StartControlPayload
+from toolang.execution.types import Local
 from toolang.work.authoring import new_job_file
 from toolang.work.records import JobRecord
 from toolang.work.scheduler import JobScheduler
@@ -158,19 +160,20 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
             runs = harness.store.list_runs(limit=None)
             assert len(runs) == 1
             assert runs[0].thread == "task_review"
-            assert runs[0].runnable_name == "review"
-            assert "job" not in runs[0].context
             control = harness.store.get_run_control(run_id=runs[0].id, index=0)
             assert control is not None
-            assert control.input is not None
-            assert control.input.primary == Message.user("Review this.").percept
-            assert control.input.values == {"focus": "security"}
+            assert isinstance(control.payload, StartControlPayload)
+            assert control.payload.runnable == "agic:review"
+            assert control.payload.locals == (
+                Local.typed("Part[]", Message.user("Review this.").parts, "_"),
+                Local.typed("Text", "security", "focus"),
+            )
             created = harness.store.get_thread_control(
                 thread_id="task_review",
                 index=0,
             )
             assert created is not None
-            assert created.context == {"job": {"id": "review", "kind": "task"}}
+            assert created.payload == CreateControlPayload()
         finally:
             await _close_scheduler(scheduler, harness)
 

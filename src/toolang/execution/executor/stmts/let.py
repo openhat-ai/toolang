@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from toolang.lang.ast import LetStmt
-from toolang.lang.input import perceive_input
+from toolang.lang.input import resolve_input_parts
 
 from ...records import RunControlRecord, StepPath
 from ..common import BoundRun
@@ -28,7 +28,7 @@ async def execute(
 ) -> Local:
     async def operation() -> Local:
         return Local(
-            perceive_input(
+            resolve_input_parts(
                 statement.value,
                 program=binding.state.program,
                 values={
@@ -48,6 +48,7 @@ async def execute(
 
     return await system_step.execute(
         execution.emit,
+        binding=binding,
         path=path,
         statement=statement,
         locals=locals,

@@ -46,6 +46,7 @@ async def execute(
         execution.emit,
         kind="run",
         path=path,
+        binding=binding,
         statement=statement,
         locals=locals,
         controls=controls,

@@ -16,7 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from toolang.base.types.message import (
-    MessagePart,
+    Part,
     TextDelta,
     TextPart,
     ToolCallPart,
@@ -36,6 +36,7 @@ from toolang.cli.common.execution_progress.formatting import (
     count,
     elapsed,
     model_label,
+    output_parts,
     statement_head,
     statement_index,
     statement_result,
@@ -679,7 +680,7 @@ class ModelStepBlock(MutableBlock):
                 self.message += delta.text
         else:
             self.status = event.status
-            self.output = _parts_text(event.output)
+            self.output = _parts_text(output_parts(event))
             self.tool_requests = self._tool_request_summary(event)
             self.error = friendly_error(event.error) if event.error else ""
             self.finished_at = event.finished_at
@@ -780,7 +781,7 @@ class ModelStepBlock(MutableBlock):
     @staticmethod
     def _tool_request_summary(event: StepEnd) -> list[str]:
         tools: list[str] = []
-        for part in event.output:
+        for part in output_parts(event):
             if not isinstance(part, ToolCallPart):
                 continue
             tools.append(
@@ -800,10 +801,10 @@ class AssistantResponseBlock(MutableBlock):
 
     @classmethod
     def create(cls, event: StepEnd) -> "AssistantResponseBlock":
-        return cls(text=_parts_text(event.output), shape=shape_label(event))
+        return cls(text=_parts_text(output_parts(event)), shape=shape_label(event))
 
     @classmethod
-    def from_parts(cls, parts: Sequence[MessagePart]) -> "AssistantResponseBlock":
+    def from_parts(cls, parts: Sequence[Part]) -> "AssistantResponseBlock":
         text = _parts_text(parts)
         if not text and parts:
             text = json.dumps(
@@ -828,7 +829,7 @@ class AssistantResponseBlock(MutableBlock):
 class SlashResultBlock:
     """Render a structured slash-command result with a terminal boundary."""
 
-    parts: Sequence[MessagePart]
+    parts: Sequence[Part]
 
     def render(self) -> RenderableType:
         response = AssistantResponseBlock.from_parts(self.parts).render()
@@ -876,7 +877,7 @@ class ToolStepBlock(MutableBlock):
     def update(self, event: StepEnd) -> None:
         self.step = event.step
         self.status = "completed"
-        self.detail = _tool_call_display_from_parts(event.output)
+        self.detail = _tool_call_display_from_parts(output_parts(event))
         self.error = friendly_error(event.error) if event.error else ""
         self.output_messages = self._output_messages(event)
         self.finished_at = event.finished_at
@@ -916,7 +917,7 @@ class ToolStepBlock(MutableBlock):
     @staticmethod
     def _output_messages(event: StepEnd) -> list[str]:
         messages: list[str] = []
-        for part in event.output:
+        for part in output_parts(event):
             if not isinstance(part, ToolResultPart):
                 continue
             stdout = as_text(part.output.get("stdout"))
@@ -1059,7 +1060,7 @@ def _plain_value(value: object) -> str:
     )
 
 
-def _tool_call_display_from_parts(parts: Sequence[MessagePart]) -> str:
+def _tool_call_display_from_parts(parts: Sequence[Part]) -> str:
     for part in parts:
         if isinstance(part, ToolCallPart):
             return _tool_call_display(
@@ -1085,5 +1086,5 @@ def _tool_call_display(name: str, tool_input: dict[str, Any]) -> str:
     return f"{name}: {summary}"
 
 
-def _parts_text(parts: Sequence[MessagePart]) -> str:
+def _parts_text(parts: Sequence[Part]) -> str:
     return "".join(part.text for part in parts if isinstance(part, TextPart)).strip()

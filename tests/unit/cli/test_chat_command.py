@@ -15,7 +15,7 @@ from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import ChatResult
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEnd, RunEvent, StepEnd
-from toolang.execution.types import RunOverride, StepPath
+from toolang.execution.types import Local, RunOverride, StepPath
 
 
 class _Client:
@@ -175,7 +175,7 @@ def test_scripted_renderer_uses_model_step_output_without_deltas(
             step=StepPath.parse("run_success/1"),
             kind="model",
             status="succeeded",
-            output=(TextPart("complete answer"),),
+            output=Local.typed("Part[]", (TextPart("complete answer"),), "_"),
         )
     )
     renderer.render(RunEnd(run="run_success", status="succeeded"))

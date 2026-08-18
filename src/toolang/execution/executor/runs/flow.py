@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from toolang.common.errors import ToolangError
-from toolang.lang.ast import FlowDecl, FlowStmt
+from toolang.lang.ast import FlowDecl, FlowStmt, RepeatStmt
 from toolang.lang.input import coerce_output
 
 from ...types import StepPath
@@ -47,6 +47,16 @@ async def execute(
     if flow.output is not None:
         if result.shape == "none":
             raise ToolangError(f"flow output is missing; expected {flow.output}")
+        source_type = (
+            result.record.type
+            if result.record is not None
+            else (
+                f"{result.type_name}[]"
+                if result.shape == "list" and result.type_name is not None
+                else result.type_name
+            )
+        )
+        preserves_provenance = source_type == flow.output
         result = Local(
             coerce_output(
                 result.value,
@@ -54,8 +64,13 @@ async def execute(
                 structs=program_structs(binding),
             ),
             result.shape,
-            result.ref,
-            flow.output,
+            result.ref if preserves_provenance else None,
+            (
+                flow.output[:-2]
+                if result.shape == "list" and flow.output.endswith("[]")
+                else flow.output
+            ),
+            result.record if preserves_provenance else None,
         )
     return result
 
@@ -93,14 +108,15 @@ async def execute_statements(
         result = await stmts.execute(
             execution,
             binding,
-            dict(locals),
+            locals if isinstance(statement, RepeatStmt) else dict(locals),
             path=path,
             statement=statement,
             controls=controls,
             placement=placement,
         )
-        update_locals(locals, statement.binding, result)
-        if statement.binding == "_" and result.ref is not None:
-            execution.record_output(binding.run_id, result.ref)
+        if not isinstance(statement, RepeatStmt):
+            update_locals(locals, statement.binding, result)
+            if statement.binding == "_" and result.ref is not None:
+                execution.record_output(binding.run_id, result.ref)
         index += 1
     return index

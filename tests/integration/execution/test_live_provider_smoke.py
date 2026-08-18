@@ -19,10 +19,11 @@ import pytest
 from toolang.base.types.policy import RunBindings
 from toolang.common.ids import IdIssuer
 from toolang.execution.executor import RunExecutor, RunSpec
+from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
-from toolang.lang.input import RunnableInput, perceive_input
+from toolang.lang.input import resolve_input_parts, resolve_runnable_input
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 from tests.support.live_provider import create_live_agent
@@ -82,6 +83,12 @@ class _LiveExecution:
 
     async def run(self, runnable: str, marker: str) -> tuple[str, str]:
         thread = self.threads.create(prefix=ThreadPrefix.TERM)
+        runnable_name, runnable_kind = parse_runnable_ref(runnable)
+        executable = resolve_runnable(
+            self.state.program,
+            runnable_name,
+            kind=runnable_kind,
+        )
         record = await asyncio.wait_for(
             self.executor.start(
                 RunSpec(
@@ -90,7 +97,13 @@ class _LiveExecution:
                     thread=thread,
                     bindings=RunBindings(runnable=runnable),
                     limits=self.setup.limits,
-                    input=RunnableInput(primary=perceive_input(marker)),
+                    input=resolve_runnable_input(
+                        executable,
+                        primary=resolve_input_parts(marker),
+                        structs={
+                            item.name: item for item in self.state.program.structs
+                        },
+                    ),
                 )
             ),
             timeout=180,

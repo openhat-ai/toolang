@@ -34,10 +34,12 @@ async def execute(
             statement.runnable,
             [basis] * statement.count,
             limit=statement.par,
+            select_source=False,
         )
 
     return await par_step.execute(
         execution.emit,
+        binding=binding,
         path=path,
         statement=statement,
         locals=locals,
