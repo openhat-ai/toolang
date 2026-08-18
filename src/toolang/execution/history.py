@@ -5,11 +5,18 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Literal
 
+from toolang.base.types.message import MessagePart
 from toolang.base.types.run import ModelCall
-from .records import StepRecord
+from .records import (
+    PreparationControlPayload,
+    RunControlRecord,
+    RunRecord,
+    StepRecord,
+)
 from .schemas import RunDetail, RunInfo, ThreadDetail, ThreadInfo
 from .store import RunStore
 from .types import ControlRef, ExecutionError, RunStatus, StepPath
+from .values import parts_from_local
 
 
 class RunHistory:
@@ -39,14 +46,23 @@ class RunHistory:
         controls_by_run = self._store.list_run_controls_for_runs(
             run_ids=run_ids,
         )
-        items = [
-            ThreadInfo.from_records(
-                thread,
-                runs_by_thread.get(thread.thread_id, ()),
-                controls_by_run=controls_by_run,
+        items: list[ThreadInfo] = []
+        for thread in threads:
+            runs = runs_by_thread.get(thread.thread_id, ())
+            items.append(
+                ThreadInfo.from_records(
+                    thread,
+                    runs,
+                    input_parts=(
+                        self._input_parts(
+                            runs[0],
+                            controls_by_run.get(runs[0].id, ()),
+                        )
+                        if runs
+                        else ()
+                    ),
+                )
             )
-            for thread in threads
-        ]
         filtered = [
             item
             for item in items
@@ -77,7 +93,11 @@ class RunHistory:
         info = ThreadInfo.from_records(
             thread,
             runs,
-            controls_by_run=controls_by_run,
+            input_parts=(
+                self._input_parts(runs[0], controls_by_run.get(runs[0].id, ()))
+                if runs
+                else ()
+            ),
         )
         visible_runs = (
             runs if run_limit is None else [] if run_limit == 0 else runs[-run_limit:]
@@ -97,6 +117,10 @@ class RunHistory:
                     root_run_id=self._store.root_run_id(run_id=run.id),
                     error_message=self._error_message(run.error),
                     ejection_scope=self._ejection_scope(run.ejected_by),
+                    input_parts=self._input_parts(
+                        run,
+                        controls_by_run.get(run.id, ()),
+                    ),
                 )
                 for run in visible_runs
             ],
@@ -127,6 +151,10 @@ class RunHistory:
                 root_run_id=self._store.root_run_id(run_id=run.id),
                 error_message=self._error_message(run.error),
                 ejection_scope=self._ejection_scope(run.ejected_by),
+                input_parts=self._input_parts(
+                    run,
+                    controls_by_run.get(run.id, ()),
+                ),
             )
             for run in runs
         ]
@@ -138,14 +166,16 @@ class RunHistory:
         if run is None:
             return None
         steps = self._store.list_steps(run_id=run.id)
+        controls = self._store.list_run_controls(run_id=run.id)
         return RunDetail.from_record(
             run,
-            controls=self._store.list_run_controls(run_id=run.id),
+            controls=controls,
             steps=steps,
             model_calls=self._store.rebuild_model_calls(_model_steps(steps)),
             root_run_id=self._store.root_run_id(run_id=run.id),
             error_message=self._error_message(run.error),
             ejection_scope=self._ejection_scope(run.ejected_by),
+            input_parts=self._input_parts(run, controls),
         )
 
     def _error_message(self, error: ExecutionError | None) -> str | None:
@@ -168,6 +198,30 @@ class RunHistory:
                 step for steps in steps_by_run.values() for step in _model_steps(steps)
             )
         )
+
+    def _input_parts(
+        self,
+        run: RunRecord,
+        controls: Sequence[RunControlRecord],
+    ) -> tuple[MessagePart, ...]:
+        for control in reversed(controls):
+            if control.index > run.control.index or not isinstance(
+                control.payload, PreparationControlPayload
+            ):
+                continue
+            locals_value = control.payload.locals
+            if locals_value is None:
+                continue
+            primary = next(
+                (local for local in locals_value if local.name == "_"),
+                None,
+            )
+            return (
+                parts_from_local(self._store.resolve_local(primary))
+                if primary is not None
+                else ()
+            )
+        return ()
 
 
 def _model_steps(steps: Sequence[StepRecord]) -> tuple[StepRecord, ...]:

@@ -150,7 +150,7 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
         project_run_end(
             store,
             run_id=run.id,
-            output=ValuePtr.step(step.path, 1),
+            output=Local("Part", ValuePtr.step(step.path, 1), "_", 0),
         )
 
         history = RunHistory(store)
@@ -159,7 +159,7 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
 
         assert store.run_output(run_id=run.id) == (TextPart("result"),)
         assert detail is not None
-        expected = Local("Part[]", ValuePtr.step(step.path, 1), "_", 0)
+        expected = Local("Part", ValuePtr.step(step.path, 1), "_", 0)
         assert detail.output == expected
         assert thread is not None
         assert thread.runs[0].output == expected
@@ -196,6 +196,30 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
         assert detail.output == Local(
             "Part[]", ValuePtr.control(run.id, 0, "_"), "_", 0
         )
+    finally:
+        store.close()
+
+
+def test_resolve_local_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_mismatch",
+            thread_id="term_mismatch",
+            origin="chat",
+            input=Message.user("not a number"),
+        )
+
+        with pytest.raises(TypeError, match="Number"):
+            store.resolve_local(
+                Local(
+                    "Number",
+                    ValuePtr.control(run.id, 0, "_"),
+                    "_",
+                    0,
+                )
+            )
     finally:
         store.close()
 

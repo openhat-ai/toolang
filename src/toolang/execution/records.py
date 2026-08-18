@@ -41,23 +41,6 @@ from .types import (
 
 _MODEL_CALL_ADAPTER = TypeAdapter(ModelCall)
 _RUN_LIMITS_ADAPTER = TypeAdapter(RunLimits)
-_PART_VALUE_TYPES = {
-    "Part": (
-        TextPart,
-        ImagePart,
-        AudioPart,
-        DocumentPart,
-        ToolCallPart,
-        ToolResultPart,
-    ),
-    "TextPart": TextPart,
-    "ImagePart": ImagePart,
-    "AudioPart": AudioPart,
-    "DocumentPart": DocumentPart,
-    "ToolCallPart": ToolCallPart,
-    "ToolResultPart": ToolResultPart,
-}
-
 # Caller-facing names remain useful even though both references share one table.
 RunControlRef = ControlRef
 ThreadControlRef = ControlRef
@@ -344,13 +327,20 @@ class ThreadControlRecord(ControlRecordBase):
 def local_from_data(payload: Mapping[str, object]) -> Local:
     """Parse one durable typed local."""
 
-    type_name = str(payload.get("type", ""))
-    raw_dim = payload.get("dim", 0)
+    if set(payload) != {"type", "value", "name", "dim"}:
+        raise ValueError("local requires type, value, name, and dim fields")
+    raw_type = payload.get("type")
+    if not isinstance(raw_type, str):
+        raise ValueError("local type must be text")
+    type_name = raw_type
+    raw_dim = payload.get("dim")
     if isinstance(raw_dim, bool) or not isinstance(raw_dim, int):
         raise ValueError("local dim must be 0 or 1")
     dim = cast(Literal[0, 1], raw_dim)
     raw_name = payload.get("name")
-    name = str(raw_name) if raw_name is not None else None
+    if raw_name is not None and not isinstance(raw_name, str):
+        raise ValueError("local name must be text or null")
+    name = raw_name
     return Local(
         type=type_name,
         value=local_value_from_data(payload.get("value"), type_name),
@@ -370,38 +360,28 @@ def local_to_data(local: Local) -> dict[str, object]:
     }
 
 
-def local_value_from_data(data: object, type_name: str) -> LocalValue:
-    """Parse one local value or pointer using its resolved Toolang type."""
+def local_value_from_data(data: object, _type_name: str) -> LocalValue:
+    """Parse one self-describing local value or pointer."""
 
-    if isinstance(data, Mapping) and "$ptr" in data:
-        pointer = cast(Mapping[str, object], data)
-        if set(pointer) != {"$ptr"} or not isinstance(pointer.get("$ptr"), str):
-            raise ValueError("value pointer object requires only a text $ptr field")
-        return ValuePtr(str(pointer["$ptr"]))
-    if type_name.endswith("[]"):
-        if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
-            raise ValueError(f"local value is not {type_name}")
-        item_type = type_name[:-2]
-        return cast(
-            LocalValue,
-            tuple(local_value_from_data(item, item_type) for item in data),
-        )
-    if type_name in _PART_VALUE_TYPES:
-        if not isinstance(data, Mapping):
-            raise ValueError(f"local value is not {type_name}")
-        part = part_from_data(cast(Mapping[str, Any], data))
-        expected = _PART_VALUE_TYPES[type_name]
-        if not isinstance(part, expected):
-            raise ValueError(f"local value is not {type_name}")
-        return part
     if isinstance(data, Mapping):
-        if "$ptr" in data:
-            raise ValueError("$ptr is reserved for value pointers")
+        mapping = cast(Mapping[str, object], data)
+        if "$ptr" in mapping:
+            if set(mapping) != {"$ptr"} or not isinstance(mapping.get("$ptr"), str):
+                raise ValueError("value pointer object requires only a text $ptr field")
+            return ValuePtr(cast(str, mapping["$ptr"]))
+        if "$part" in mapping:
+            if set(mapping) != {"$part"} or not isinstance(
+                mapping.get("$part"), Mapping
+            ):
+                raise ValueError("part object requires only an object $part field")
+            return part_from_data(cast(Mapping[str, Any], mapping["$part"]))
+        if not all(isinstance(key, str) for key in mapping):
+            raise ValueError("local object keys must be strings")
         return cast(
             LocalValue,
             {
-                str(key): local_value_from_data(value, "Json")
-                for key, value in data.items()
+                key: local_value_from_data(value, "Json")
+                for key, value in mapping.items()
             },
         )
     if isinstance(data, list):
@@ -430,12 +410,14 @@ def local_value_to_data(value: LocalValue) -> object:
             ToolResultPart,
         ),
     ):
-        return value.to_data()
+        return {"$part": value.to_data()}
     if isinstance(value, tuple | list):
         return [local_value_to_data(cast(LocalValue, item)) for item in value]
     if isinstance(value, Mapping):
-        if "$ptr" in value:
-            raise ValueError("$ptr is reserved for value pointers")
+        reserved = {"$ptr", "$part"}.intersection(value)
+        if reserved:
+            marker = sorted(reserved)[0]
+            raise ValueError(f"{marker} is reserved for execution values")
         return {
             str(key): local_value_to_data(cast(LocalValue, item))
             for key, item in value.items()
@@ -466,16 +448,18 @@ def control_payload_from_data(
         runnable = _required_payload_text(payload, "runnable")
         model = _required_payload_text(payload, "model")
         raw_locals = payload.get("locals")
-        locals_value = (
-            tuple(
-                local_from_data(cast(Mapping[str, object], item))
-                for item in raw_locals
-                if isinstance(item, Mapping)
+        if raw_locals is None:
+            locals_value = None
+        elif isinstance(raw_locals, Sequence) and not isinstance(
+            raw_locals, (str, bytes, bytearray)
+        ):
+            if not all(isinstance(item, Mapping) for item in raw_locals):
+                raise ValueError(f"{kind} payload contains an invalid local")
+            locals_value = tuple(
+                local_from_data(cast(Mapping[str, object], item)) for item in raw_locals
             )
-            if isinstance(raw_locals, Sequence)
-            and not isinstance(raw_locals, (str, bytes, bytearray))
-            else None
-        )
+        else:
+            raise ValueError(f"{kind} payload locals must be an array or null")
         if kind != "retry" and locals_value is None:
             raise ValueError(f"{kind} payload requires locals")
         if kind == "start":

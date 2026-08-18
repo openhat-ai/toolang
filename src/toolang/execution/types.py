@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
+import math
 import re
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
@@ -13,6 +14,14 @@ from pydantic import BeforeValidator, PlainSerializer
 from pydantic_core import core_schema
 from typing_extensions import TypeAliasType
 
+from toolang.base.types.message import (
+    AudioPart,
+    DocumentPart,
+    ImagePart,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+)
 from toolang.lang.types import Value
 
 
@@ -323,6 +332,24 @@ LocalValue = TypeAliasType(
     Value | ValuePtr | tuple[Value | ValuePtr, ...] | list[Value | ValuePtr],
 )
 
+_PART_TYPES = (
+    TextPart,
+    ImagePart,
+    AudioPart,
+    DocumentPart,
+    ToolCallPart,
+    ToolResultPart,
+)
+_PART_TYPES_BY_NAME = {
+    "Part": _PART_TYPES,
+    "TextPart": TextPart,
+    "ImagePart": ImagePart,
+    "AudioPart": AudioPart,
+    "DocumentPart": DocumentPart,
+    "ToolCallPart": ToolCallPart,
+    "ToolResultPart": ToolResultPart,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class Local:
@@ -340,10 +367,13 @@ class Local:
             raise ValueError(f"invalid local name: {self.name!r}")
         if self.dim not in {0, 1}:
             raise ValueError(f"unsupported local dimension: {self.dim!r}")
+        value = _normalize_local_value(self.value)
+        object.__setattr__(self, "value", value)
         if self.dim == 1 and not self.type.endswith("[]"):
             raise ValueError("dim=1 requires an array value type")
-        if self.dim == 1 and not isinstance(self.value, (ValuePtr, tuple, list)):
+        if self.dim == 1 and not isinstance(value, (ValuePtr, tuple)):
             raise TypeError("dim=1 requires an array value or whole-value pointer")
+        _validate_local_value(value, self.type)
 
     @property
     def item_type(self) -> str:
@@ -392,6 +422,88 @@ class Local:
                 ),
             ),
         )
+
+
+def _normalize_local_value(value: object) -> LocalValue:
+    if isinstance(value, (ValuePtr, *_PART_TYPES)):
+        return cast(LocalValue, value)
+    if isinstance(value, tuple | list):
+        return cast(
+            LocalValue,
+            tuple(_normalize_local_value(item) for item in value),
+        )
+    if isinstance(value, Mapping):
+        if not all(isinstance(name, str) for name in value):
+            raise TypeError("local object keys must be strings")
+        return cast(
+            LocalValue,
+            {
+                cast(str, name): _normalize_local_value(item)
+                for name, item in value.items()
+            },
+        )
+    return cast(LocalValue, value)
+
+
+def _validate_local_value(
+    value: object, type_name: str, *, path: str = "local"
+) -> None:
+    if isinstance(value, ValuePtr):
+        return
+    if type_name.endswith("[]"):
+        if not isinstance(value, tuple):
+            raise TypeError(f"{path} is not {type_name}")
+        item_type = type_name[:-2]
+        for index, item in enumerate(value):
+            _validate_local_value(item, item_type, path=f"{path}[{index}]")
+        return
+    expected_part = _PART_TYPES_BY_NAME.get(type_name)
+    if expected_part is not None:
+        if not isinstance(value, expected_part):
+            raise TypeError(f"{path} is not {type_name}")
+        return
+    if type_name == "Text":
+        valid = isinstance(value, str)
+    elif type_name == "Number":
+        valid = (
+            not isinstance(value, bool)
+            and isinstance(value, int | float)
+            and (not isinstance(value, float) or math.isfinite(value))
+        )
+    elif type_name == "Boolean":
+        valid = isinstance(value, bool)
+    elif type_name == "Json":
+        _validate_open_local_value(value, path=path)
+        return
+    else:
+        valid = isinstance(value, Mapping)
+        if valid:
+            _validate_open_local_value(value, path=path)
+            return
+    if not valid:
+        raise TypeError(f"{path} is not {type_name}")
+
+
+def _validate_open_local_value(value: object, *, path: str) -> None:
+    if isinstance(value, (ValuePtr, *_PART_TYPES)):
+        return
+    if value is None or isinstance(value, str | bool | int):
+        return
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return
+        raise TypeError(f"{path} contains a non-finite number")
+    if isinstance(value, tuple):
+        for index, item in enumerate(value):
+            _validate_open_local_value(item, path=f"{path}[{index}]")
+        return
+    if isinstance(value, Mapping):
+        for name, item in value.items():
+            if not isinstance(name, str):
+                raise TypeError(f"{path} contains a non-text key")
+            _validate_open_local_value(item, path=f"{path}.{name}")
+        return
+    raise TypeError(f"{path} contains unsupported {type(value).__name__}")
 
 
 @dataclass(frozen=True, slots=True)

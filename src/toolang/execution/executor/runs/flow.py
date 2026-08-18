@@ -47,6 +47,16 @@ async def execute(
     if flow.output is not None:
         if result.shape == "none":
             raise ToolangError(f"flow output is missing; expected {flow.output}")
+        source_type = (
+            result.record.type
+            if result.record is not None
+            else (
+                f"{result.type_name}[]"
+                if result.shape == "list" and result.type_name is not None
+                else result.type_name
+            )
+        )
+        preserves_provenance = source_type == flow.output
         result = Local(
             coerce_output(
                 result.value,
@@ -54,13 +64,13 @@ async def execute(
                 structs=program_structs(binding),
             ),
             result.shape,
-            result.ref,
+            result.ref if preserves_provenance else None,
             (
                 flow.output[:-2]
                 if result.shape == "list" and flow.output.endswith("[]")
                 else flow.output
             ),
-            result.record,
+            result.record if preserves_provenance else None,
         )
     return result
 

@@ -1388,6 +1388,8 @@ def _child_binding(
     parent_step: StepPath,
     placement: Mapping[str, object] | None,
 ) -> BoundRun:
+    structs = {item.name: item for item in parent.state.program.structs}
+    control_locals: list[RecordLocal] = []
     if executable.input is None:
         percept: Percept = ()
     else:
@@ -1401,40 +1403,41 @@ def _child_binding(
             percept = ()
         if percept is None:
             percept = (TextPart(value_text(primary.value)),)
-    parameters = {parameter.name: parameter for parameter in executable.params}
-    named = tuple(
-        RunnableInputValue(
-            name=name,
-            value=_argument_value(local, parameters[name]),
-            type_name=parameters[name].type_name or "Part[]",
+        input_type = executable.input.type_name or "Part[]"
+        primary_value = cast(
+            Value,
+            coerce_input(percept, input_type, structs=structs),
         )
-        for name, local in locals.items()
-        if name in parameters and local.shape != "none"
-    )
-    control_locals = tuple(
-        item
-        for item in (
-            (
-                _child_control_local(
-                    "_",
-                    locals.get("_", Local()),
-                    executable.input.type_name or "Part[]",
-                )
-                if executable.input is not None
-                else None
-            ),
-            *(
-                _child_control_local(
-                    parameter.name,
-                    locals[parameter.name],
-                    parameter.type_name or "Part[]",
-                )
-                for parameter in executable.params
-                if parameter.name in locals and locals[parameter.name].shape != "none"
-            ),
+        control_locals.append(
+            _child_control_local(
+                "_",
+                primary,
+                input_type,
+                primary_value,
+            )
         )
-        if item is not None
-    )
+    named: list[RunnableInputValue] = []
+    for parameter in executable.params:
+        local = locals.get(parameter.name)
+        if local is None or local.shape == "none":
+            continue
+        type_name = parameter.type_name or "Part[]"
+        value = _argument_value(local, parameter)
+        named.append(
+            RunnableInputValue(
+                name=parameter.name,
+                value=value,
+                type_name=type_name,
+            )
+        )
+        control_locals.append(
+            _child_control_local(
+                parameter.name,
+                local,
+                type_name,
+                value,
+            )
+        )
     return BoundRun(
         run_id=context.executor.ids.issue_run(),
         root_run_id=parent.root_run_id,
@@ -1443,8 +1446,8 @@ def _child_binding(
             model=parent.bindings.model,
             runnable=f"{executable.kind}:{executable.name}",
         ),
-        input=RunnableInput(primary=percept, named=named),
-        control_locals=control_locals,
+        input=RunnableInput(primary=percept, named=tuple(named)),
+        control_locals=tuple(control_locals),
         state=parent.state,
         setup=parent.setup,
         limits=parent.limits,
@@ -1694,15 +1697,25 @@ def _child_control_local(
     name: str,
     local: Local,
     type_name: str,
-) -> RecordLocal | None:
-    if local.shape == "none":
-        return None
+    value: Value,
+) -> RecordLocal:
+    source_type = _runtime_local_type(local)
     return RecordLocal(
         type=type_name,
-        value=local.ref if local.ref is not None else cast(Value, local.value),
+        value=(
+            local.ref if local.ref is not None and source_type == type_name else value
+        ),
         name=name,
         dim=0,
     )
+
+
+def _runtime_local_type(local: Local) -> str | None:
+    if local.record is not None:
+        return local.record.type
+    if local.type_name is None:
+        return None
+    return f"{local.type_name}[]" if local.shape == "list" else local.type_name
 
 
 def _runnable_input_from_locals(

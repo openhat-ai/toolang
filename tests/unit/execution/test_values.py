@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
 import pytest
 from pydantic import TypeAdapter
@@ -20,6 +20,7 @@ from toolang.execution.records import (
 )
 from toolang.execution.schemas import ControlInfo
 from toolang.execution.types import AgentResources, Local, StepPath, ValuePtr
+from toolang.execution.values import parts_from_local
 
 
 def test_value_pointer_accepts_run_step_control_and_json_paths() -> None:
@@ -102,6 +103,49 @@ def test_local_codec_round_trips_mixed_concrete_and_pointer_items() -> None:
     assert local_from_data(local_to_data(local)) == local
 
 
+def test_local_part_projection_preserves_tool_parts() -> None:
+    part = ToolCallPart(
+        tool_call_id="call_1",
+        tool_name="search",
+        tool_family="search",
+        input={"query": "toolang"},
+    )
+
+    assert parts_from_local(Local("Part[]", (part,), "_", 0)) == (part,)
+
+
+def test_local_codec_normalizes_collections_and_tags_nested_parts() -> None:
+    part = TextPart("nested")
+    local = Local(
+        type="Json",
+        value={"items": [part, {"ok": True}]},
+        name="_",
+    )
+
+    data = local_to_data(local)
+
+    assert local.value == {"items": (part, {"ok": True})}
+    assert data["value"] == {
+        "items": [
+            {"$part": {"type": "text", "text": "nested"}},
+            {"ok": True},
+        ]
+    }
+    assert local_from_data(data) == local
+
+
+def test_local_codec_rejects_values_that_do_not_match_the_declared_type() -> None:
+    with pytest.raises(TypeError, match="Text"):
+        local_from_data(
+            {
+                "type": "Text",
+                "value": 42,
+                "name": "_",
+                "dim": 0,
+            }
+        )
+
+
 def test_local_codec_reserves_the_pointer_marker() -> None:
     local = Local(type="Json", value={"$ptr": "ordinary data"})
 
@@ -121,6 +165,23 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
     assert (
         control_payload_from_data("start", control_payload_to_data(payload)) == payload
     )
+
+
+def test_preparation_payload_rejects_instead_of_dropping_invalid_locals() -> None:
+    payload = StartControlPayload(
+        resources=AgentResources(models=("test/model",)),
+        limits=RunLimits(),
+        runnable="agic:worker",
+        model="test/model",
+        locals=(Local("Text", "hello", "_", 0),),
+    )
+    data = control_payload_to_data(payload)
+    raw_locals = data["locals"]
+    assert isinstance(raw_locals, list)
+    cast(list[object], raw_locals).append("invalid")
+
+    with pytest.raises(ValueError, match="invalid local"):
+        control_payload_from_data("start", data)
 
 
 def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:

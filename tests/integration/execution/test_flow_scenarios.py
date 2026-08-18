@@ -30,7 +30,7 @@ from toolang.execution.records import (
     RunControlRef,
     StartControlPayload,
 )
-from toolang.execution.types import StepPath, ThreadPrefix, ValuePtr
+from toolang.execution.types import Local, StepPath, ThreadPrefix, ValuePtr
 from toolang.lang.input import perceive_input
 
 
@@ -1578,5 +1578,85 @@ flow relay(_: Text, suffix: Text) -> Text:
                 ValuePtr.control(root.id, 0, "suffix"),
             )
             assert harness.store.run_output_text(run_id=root.id) == "hello!"
+
+    asyncio.run(scenario())
+
+
+def test_recursive_run_persists_the_coerced_child_primary_value(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic number(_: Number) -> Number:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow relay(_: Text) -> Number:
+  run number
+""",
+        responses=[ModelCallResult(message=Message.assistant("7"))],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="relay",
+                    primary=perceive_input("42"),
+                )
+            )
+
+            child = next(
+                run
+                for run in harness.store.list_runs(thread_id=thread, limit=None)
+                if run.parent is not None
+            )
+            start = harness.store.get_run_control(run_id=child.id, index=0)
+            assert start is not None
+            assert isinstance(start.payload, StartControlPayload)
+            assert start.payload.locals == (Local("Number", 42, "_", 0),)
+            assert harness.store.resolve_local(start.payload.locals[0]).value == 42
+            assert harness.store.run_output_text(run_id=root.id) == "7"
+
+    asyncio.run(scenario())
+
+
+def test_flow_output_coercion_drops_incompatible_step_provenance(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic text_number(_: Text) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow number(_: Text) -> Number:
+  run text_number
+""",
+        responses=[ModelCallResult(message=Message.assistant("7"))],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="number",
+                    primary=perceive_input("input"),
+                )
+            )
+
+            assert root.output == Local("Number", 7, "_", 0)
+            assert root.output is not None
+            assert harness.store.resolve_local(root.output).value == 7
 
     asyncio.run(scenario())

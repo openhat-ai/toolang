@@ -114,6 +114,65 @@ agic chat(_: Part[]) -> Part[]:
         reopened.close()
 
 
+def test_typed_primary_input_is_projected_into_history_and_summaries(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic chat(_: Text) -> Text:
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            ModelCallResult(message=Message.assistant("first answer")),
+            ModelCallResult(message=Message.assistant("second answer")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            first = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="chat",
+                    primary=perceive_input("first question"),
+                )
+            )
+            await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="chat",
+                    primary=perceive_input("second question"),
+                )
+            )
+
+            detail = RunHistory(harness.store).get_run(first.id)
+            summary = next(
+                item
+                for item in RunHistory(harness.store).list_threads(limit=None)
+                if item.id == thread
+            )
+            assert detail is not None
+            assert detail.input_text == "first question"
+            assert summary.title == "first question"
+            assert harness.adapter.invocations[1].call.messages == [
+                Message.user("first question"),
+                Message.assistant("first answer"),
+                Message.user("second question"),
+            ]
+            assert harness.store.recent_conversation_messages(thread_id=thread) == [
+                Message.user("first question"),
+                Message.assistant("first answer"),
+                Message.user("second question"),
+                Message.assistant("second answer"),
+            ]
+
+    asyncio.run(scenario())
+
+
 def test_thread_history_supports_followup_fork_and_rewind(
     tmp_path: Path,
 ) -> None:

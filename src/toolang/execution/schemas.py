@@ -33,6 +33,7 @@ from .types import (
     ThreadPeerType,
     ValuePtr,
 )
+from .values import parts_from_local
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,7 +126,7 @@ class ThreadInfo:
         thread: ThreadRecord,
         runs: Sequence[RunRecord] = (),
         *,
-        controls_by_run: Mapping[str, Sequence[RunControlRecord]] | None = None,
+        input_parts: Sequence[MessagePart],
     ) -> ThreadInfo:
         """Build one thread summary from durable records."""
 
@@ -146,17 +147,11 @@ class ThreadInfo:
                 latest_run=None,
                 active_run=None,
             )
-        first = runs[0]
         last = runs[-1]
         active = next((run for run in reversed(runs) if run.status == "running"), None)
-        payload = _preparation_payload(
-            first,
-            (controls_by_run or {}).get(first.id, ()),
-        )
-        primary = _primary_parts(payload)
         return cls(
             id=thread.thread_id,
-            title=message_summary(primary) or thread.origin,
+            title=message_summary(input_parts) or thread.origin,
             created_at=thread.created_at,
             origin=thread.origin,
             channel=_thread_channel(thread.thread_id, thread.origin),
@@ -205,11 +200,12 @@ class RunInfo:
         root_run_id: str,
         error_message: str | None,
         ejection_scope: Literal["run", "thread"] | None,
+        input_parts: Sequence[MessagePart],
     ) -> RunInfo:
         """Build one run summary from durable records."""
 
         preparation = _preparation_payload(run, controls)
-        input_text = message_summary(_primary_parts(preparation))
+        input_text = message_summary(input_parts)
         kind, separator, name = preparation.runnable.partition(":")
         last_message_step = next(
             (
@@ -351,6 +347,7 @@ class RunDetail(RunInfo):
         root_run_id: str,
         error_message: str | None,
         ejection_scope: Literal["run", "thread"] | None,
+        input_parts: Sequence[MessagePart],
     ) -> RunDetail:
         """Build complete caller-facing run detail from durable records."""
 
@@ -361,6 +358,7 @@ class RunDetail(RunInfo):
             root_run_id=root_run_id,
             error_message=error_message,
             ejection_scope=ejection_scope,
+            input_parts=input_parts,
         )
         return cls(
             **{item.name: getattr(info, item.name) for item in fields(RunInfo)},
@@ -413,22 +411,10 @@ def _preparation_payload(
     raise ValueError(f"run preparation control not found: {run.id}^{run.control.index}")
 
 
-def _primary_parts(payload: PreparationControlPayload) -> tuple[MessagePart, ...]:
-    if payload.locals is None:
-        return ()
-    primary = next((local for local in payload.locals if local.name == "_"), None)
-    return _local_parts(primary)
-
-
 def _local_parts(local: Local | None) -> tuple[MessagePart, ...]:
     if local is None:
         return ()
-    value = local.value
-    if isinstance(value, MessagePart):
-        return (value,)
-    if isinstance(value, tuple | list):
-        return tuple(item for item in value if isinstance(item, MessagePart))
-    return ()
+    return parts_from_local(local)
 
 
 def _ejection_ref_data(

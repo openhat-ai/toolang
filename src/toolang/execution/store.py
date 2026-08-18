@@ -14,7 +14,6 @@ from typing import Any, Literal, cast
 from toolang.base.types.message import (
     Message,
     MessagePart,
-    TextPart,
     ToolCallPart,
     ToolResultPart,
     message_text,
@@ -65,9 +64,11 @@ from .types import (
     StepStatus,
     StepPath,
     Local,
+    LocalValue,
     ValuePtr,
     validate_execution_id,
 )
+from .values import parts_from_local
 
 _SCHEMA_VERSION = 24
 _MIGRATABLE_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
@@ -1255,15 +1256,17 @@ class RunStore:
             raise ValueError(f"run not found: {run_id}")
         if run.output is None:
             return ()
-        resolved = self.resolve_value(run.output.value)
-        parts = _message_parts_from_value(resolved)
-        if parts:
-            return parts
-        if resolved is None:
-            return ()
-        if isinstance(resolved, str):
-            return (TextPart(resolved),)
-        return (TextPart(_dump_json(resolved)),)
+        return parts_from_local(self.resolve_local(run.output))
+
+    def resolve_local(self, local: Local) -> Local:
+        """Resolve and validate every pointer in one durable typed local."""
+
+        return Local(
+            type=local.type,
+            value=cast(LocalValue, self.resolve_value(local.value)),
+            name=local.name,
+            dim=local.dim,
+        )
 
     def resolve_value(self, value: object) -> object:
         """Resolve every immutable pointer contained in one durable value."""
@@ -2157,7 +2160,7 @@ class RunStore:
                 )
                 if primary is None:
                     continue
-                parts = _message_parts_from_value(self.resolve_value(primary.value))
+                parts = parts_from_local(self.resolve_local(primary))
                 if parts:
                     results.append(Message(role="user", parts=parts))
             for step in steps_by_run.get(run.id, ()):
@@ -2775,15 +2778,7 @@ def _replay_messages_from_step(step: StepRecord) -> list[Message]:
 
 
 def _message_parts_from_local(local: Local) -> tuple[MessagePart, ...]:
-    return _message_parts_from_value(local.value)
-
-
-def _message_parts_from_value(value: object) -> tuple[MessagePart, ...]:
-    if isinstance(value, MessagePart):
-        return (value,)
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return tuple(item for item in value if isinstance(item, MessagePart))
-    return ()
+    return parts_from_local(local)
 
 
 def _json_pointer_segments(pointer: str | None) -> tuple[str, ...]:
