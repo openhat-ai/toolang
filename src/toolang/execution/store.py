@@ -1716,23 +1716,68 @@ class RunStore:
                 raise ValueError(
                     f"retry anchor is not visible in run {run_id}: {anchor}"
                 )
-            return anchor
-        incomplete = tuple(
-            row
-            for row in rows
-            if str(row["status"]) in {"running", "failed", "canceled"}
-        )
-        candidate = incomplete[-1] if incomplete else None
-        if candidate is None and run_status == "succeeded":
-            candidate = next(
-                (row for row in reversed(rows) if str(row["kind"]) != "value"),
-                rows[-1] if rows else None,
+            candidate = match
+        else:
+            incomplete = tuple(
+                row
+                for row in rows
+                if str(row["status"]) in {"running", "failed", "canceled"}
             )
-        elif candidate is None:
-            candidate = rows[-1] if rows else None
+            candidate = incomplete[-1] if incomplete else None
+            if candidate is None and run_status == "succeeded":
+                candidate = next(
+                    (row for row in reversed(rows) if str(row["kind"]) != "value"),
+                    rows[-1] if rows else None,
+                )
+            elif candidate is None:
+                candidate = rows[-1] if rows else None
         if candidate is None:
             return None
-        return StepPath.from_local(str(candidate["run"]), str(candidate["path"]))
+        selected = StepPath.from_local(str(candidate["run"]), str(candidate["path"]))
+        resolved = self._root_retry_step(
+            run_id=run_id,
+            tree_runs=tree_runs,
+            selected=selected,
+        )
+        visible = {
+            StepPath.from_local(str(row["run"]), str(row["path"])) for row in rows
+        }
+        if resolved not in visible:
+            raise ValueError(f"retry resume step is not visible: {resolved}")
+        return resolved
+
+    def _root_retry_step(
+        self,
+        *,
+        run_id: str,
+        tree_runs: Sequence[str],
+        selected: StepPath,
+    ) -> StepPath:
+        """Map one tree Step to its owning top-level root Step."""
+
+        placeholders = ", ".join("?" for _ in tree_runs)
+        run_rows = self._conn.execute(
+            f"SELECT * FROM runs WHERE id IN ({placeholders})",
+            tuple(tree_runs),
+        ).fetchall()
+        parents = {
+            run.id: run.parent
+            for run in (_run_from_row(row) for row in run_rows)
+            if run.parent is not None
+        }
+        current = selected
+        visited: set[str] = set()
+        while current.run != run_id:
+            if current.run in visited:
+                raise ValueError(f"cyclic retry run ancestry: {selected}")
+            visited.add(current.run)
+            parent = parents.get(current.run)
+            if parent is None:
+                raise ValueError(
+                    f"retry step is not owned by root run {run_id}: {selected}"
+                )
+            current = parent
+        return StepPath(run_id, current.indices[:1])
 
     def _retry_step_suffix(
         self,
