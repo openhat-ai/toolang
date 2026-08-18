@@ -14,8 +14,9 @@ from toolang.base.types.policy import RunBindings
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
+from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
-from toolang.lang.input import RunnableInput
+from toolang.lang.input import resolve_runnable_input
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 from toolang.work import files
@@ -107,21 +108,32 @@ async def run(
                     )
                 setup = get_agent_setup()
                 state = get_agent_state()
+                runnable_ref = (
+                    "agic:file"
+                    if state.program.find_agic("file") is not None
+                    else "agic:default"
+                )
+                runnable_name, runnable_kind = parse_runnable_ref(runnable_ref)
+                runnable = resolve_runnable(
+                    state.program,
+                    runnable_name,
+                    kind=runnable_kind,
+                )
                 handle = executor.start(
                     RunSpec(
                         setup=setup,
                         state=state,
                         thread=submission.record.thread_id,
                         bindings=RunBindings(
-                            runnable=(
-                                "agic:file"
-                                if state.program.find_agic("file") is not None
-                                else "agic:default"
-                            ),
+                            runnable=runnable_ref,
                             model=setup.bindings.model,
                         ),
                         limits=setup.limits,
-                        input=RunnableInput(primary=submission.input.percept),
+                        input=resolve_runnable_input(
+                            runnable,
+                            primary=submission.input.parts,
+                            structs={item.name: item for item in state.program.structs},
+                        ),
                     )
                 )
                 try:

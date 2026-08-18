@@ -21,7 +21,7 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message, TextPart, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.types import ControlTiming, StepPath, ThreadPrefix, Pointer
-from toolang.lang.input import perceive_input
+from toolang.lang.input import resolve_input_parts
 
 
 def test_stop_cancels_an_active_model_step_and_finishes_its_control(
@@ -53,7 +53,7 @@ agic wait(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="wait",
-                    primary=perceive_input("wait"),
+                    primary=resolve_input_parts("wait"),
                 ),
                 tracer=tracer,
             )
@@ -114,7 +114,7 @@ agic revise(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="revise",
-                    primary=perceive_input("write"),
+                    primary=resolve_input_parts("write"),
                 ),
                 tracer=tracer,
             )
@@ -186,7 +186,7 @@ agic calculate(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    primary=perceive_input("calculate"),
+                    primary=resolve_input_parts("calculate"),
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
@@ -258,7 +258,7 @@ agic calculate(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    primary=perceive_input("slow calculation"),
+                    primary=resolve_input_parts("slow calculation"),
                 ),
                 tracer=tracer,
             )
@@ -342,7 +342,7 @@ flow sequence(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="sequence",
-                    primary=perceive_input("start"),
+                    primary=resolve_input_parts("start"),
                 ),
                 tracer=tracer,
             )
@@ -412,7 +412,7 @@ flow sequence(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="sequence",
-                    primary=perceive_input("start"),
+                    primary=resolve_input_parts("start"),
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
@@ -456,7 +456,7 @@ agic revise(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="revise",
-                    primary=perceive_input("start"),
+                    primary=resolve_input_parts("start"),
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)

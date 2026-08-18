@@ -16,7 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from toolang.base.types.message import (
-    MessagePart,
+    Part,
     TextDelta,
     TextPart,
     ToolCallPart,
@@ -804,7 +804,7 @@ class AssistantResponseBlock(MutableBlock):
         return cls(text=_parts_text(output_parts(event)), shape=shape_label(event))
 
     @classmethod
-    def from_parts(cls, parts: Sequence[MessagePart]) -> "AssistantResponseBlock":
+    def from_parts(cls, parts: Sequence[Part]) -> "AssistantResponseBlock":
         text = _parts_text(parts)
         if not text and parts:
             text = json.dumps(
@@ -829,7 +829,7 @@ class AssistantResponseBlock(MutableBlock):
 class SlashResultBlock:
     """Render a structured slash-command result with a terminal boundary."""
 
-    parts: Sequence[MessagePart]
+    parts: Sequence[Part]
 
     def render(self) -> RenderableType:
         response = AssistantResponseBlock.from_parts(self.parts).render()
@@ -1060,7 +1060,7 @@ def _plain_value(value: object) -> str:
     )
 
 
-def _tool_call_display_from_parts(parts: Sequence[MessagePart]) -> str:
+def _tool_call_display_from_parts(parts: Sequence[Part]) -> str:
     for part in parts:
         if isinstance(part, ToolCallPart):
             return _tool_call_display(
@@ -1086,5 +1086,5 @@ def _tool_call_display(name: str, tool_input: dict[str, Any]) -> str:
     return f"{name}: {summary}"
 
 
-def _parts_text(parts: Sequence[MessagePart]) -> str:
+def _parts_text(parts: Sequence[Part]) -> str:
     return "".join(part.text for part in parts if isinstance(part, TextPart)).strip()

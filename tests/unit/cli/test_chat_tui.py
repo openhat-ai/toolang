@@ -12,7 +12,7 @@ from rich.text import Text
 import pytest
 
 from toolang.base.types.message import (
-    MessagePart,
+    Part,
     TextDelta,
     TextPart,
     ToolCallPart,
@@ -43,7 +43,7 @@ from toolang.execution.types import ControlRef, Local, RunOverride, StepPath, Po
 from tests.support import chat_tui_pty
 
 
-def _parts(*parts: MessagePart) -> Local:
+def _parts(*parts: Part) -> Local:
     return Local.typed("Part[]", tuple(parts), "_", 0)
 
 

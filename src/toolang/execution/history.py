@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Literal
 
-from toolang.base.types.message import MessagePart
+from toolang.base.types.message import Part
 from toolang.base.types.run import ModelCall
 from .records import (
     PreparationControlPayload,
@@ -203,7 +203,7 @@ class RunHistory:
         self,
         run: RunRecord,
         controls: Sequence[RunControlRecord],
-    ) -> tuple[MessagePart, ...]:
+    ) -> tuple[Part, ...]:
         for control in reversed(controls):
             if control.index > run.control.index or not isinstance(
                 control.payload, PreparationControlPayload

@@ -25,7 +25,7 @@ from toolang.execution.history import RunHistory
 from toolang.execution.records import StepRecord, model_call_to_data
 from toolang.execution.store import RunStore
 from toolang.execution.types import StepPath, ThreadPrefix
-from toolang.lang.input import perceive_input
+from toolang.lang.input import resolve_input_parts
 
 
 def _capture_replayable_model_step(store: RunStore) -> StepRecord:
@@ -85,7 +85,7 @@ agic chat(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread_id,
                     runnable="chat",
-                    primary=perceive_input("question"),
+                    primary=resolve_input_parts("question"),
                 )
             )
             return (
@@ -138,14 +138,14 @@ agic chat(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    primary=perceive_input("first question"),
+                    primary=resolve_input_parts("first question"),
                 )
             )
             await harness.executor.start(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    primary=perceive_input("second question"),
+                    primary=resolve_input_parts("second question"),
                 )
             )
 
@@ -198,14 +198,14 @@ agic chat(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    primary=perceive_input("first question"),
+                    primary=resolve_input_parts("first question"),
                 )
             )
             second = await harness.executor.start(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    primary=perceive_input("second question"),
+                    primary=resolve_input_parts("second question"),
                 )
             )
             assert harness.adapter.invocations[1].call.messages == [
@@ -222,7 +222,7 @@ agic chat(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=branch,
                     runnable="chat",
-                    primary=perceive_input("branch question"),
+                    primary=resolve_input_parts("branch question"),
                 )
             )
             assert harness.adapter.invocations[2].call.messages == [
@@ -295,7 +295,7 @@ agic calculate(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    primary=perceive_input("double three"),
+                    primary=resolve_input_parts("double three"),
                 )
             )
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from toolang.base.types.message import Percept
+from toolang.base.types.message import Part
 from toolang.execution.events import RunEnd, StepEnd
 
 from ..execution_progress.state import CallState, RunState, StatementState
@@ -18,7 +18,7 @@ from ..execution_progress.formatting import (
     model_label,
     one_line,
     output_preview,
-    percept_lines,
+    part_lines,
     shape_label,
     statement_head,
     statement_index,
@@ -50,7 +50,7 @@ class RunBlock(RunState):
         kind: str,
         name: str,
         doc: str,
-        input_value: Percept,
+        input_value: tuple[Part, ...],
         args: Mapping[str, object],
         control_index: int,
     ) -> None:
@@ -63,7 +63,7 @@ class RunBlock(RunState):
         console.blank()
         if verbosity < 2:
             return
-        input_lines = percept_lines(input_value)
+        input_lines = part_lines(input_value)
         if input_lines:
             console.wrapped(input_lines[0], prefix="> ", continuation="  ")
             for line in input_lines[1:]:

@@ -2,7 +2,7 @@
 
 from fastapi import HTTPException
 
-from toolang.base.types.message import Message, Percept
+from toolang.base.types.message import Message, Part
 from .schemas import InputMessagePayload, InputPart
 
 
@@ -20,7 +20,7 @@ def parse_user_message(payload: InputMessagePayload) -> Message:
     return message
 
 
-def parse_percept(parts: list[InputPart]) -> Percept:
+def parse_parts(parts: list[InputPart]) -> tuple[Part, ...]:
     """Parse and validate canonical HTTP input parts."""
 
     try:
@@ -31,6 +31,6 @@ def parse_percept(parts: list[InputPart]) -> Percept:
                     part.model_dump(mode="python", exclude_none=True) for part in parts
                 ],
             }
-        ).percept
+        ).parts
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

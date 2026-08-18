@@ -15,16 +15,16 @@ from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
-from toolang.base.types.message import (
-    Message,
-    Percept,
-    TextPart,
-)
+from toolang.base.types.message import Message, TextPart
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt, Parameter, RepeatStmt
 from toolang.lang.format import format_statement_head
-from toolang.lang.input import RunnableInput, coerce_input, validate_value
+from toolang.lang.input import (
+    RunnableInput,
+    resolve_runnable_input,
+    validate_value,
+)
 from toolang.lang.types import Value
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 from toolang.state.state import AgentState
@@ -59,7 +59,7 @@ from .common import (
     control_text,
     initial_locals,
     statement_has_call,
-    value_percept,
+    value_parts,
     value_text,
 )
 from .resources import (
@@ -506,7 +506,7 @@ class RunExecutor:
         self._require_available()
         if message.role != "user":
             raise ValueError("run steer requires a user message")
-        _ = message.percept
+        _ = message.parts
         control = self.store.accept_run_control(
             run_id=run_id,
             kind="steer",
@@ -1129,9 +1129,6 @@ class _Execution:
             placement=placement,
         )
         binding = _prepare_child_run(binding, executable)
-        _validate_inputs(
-            state=binding.state, executable=executable, input=binding.input
-        )
         resources = binding.resources
         if resources is None:
             raise RuntimeError(f"run resources missing: {binding.run_id}")
@@ -1389,47 +1386,49 @@ def _child_binding(
     placement: Mapping[str, object] | None,
 ) -> BoundRun:
     structs = {item.name: item for item in parent.state.program.structs}
-    control_locals: list[RecordLocal] = []
-    if executable.input is None:
-        percept: Percept = ()
-    else:
+    source_locals: dict[str, Local] = {}
+    primary_value: object | None = None
+    if executable.input is not None:
         primary = locals.get("_", Local())
-        percept = (
-            value_percept(primary.value, type_name=primary.type_name)
-            if primary.shape == "item"
-            else None
-        )
-        if primary.shape == "none":
-            percept = ()
-        if percept is None:
-            percept = (TextPart(value_text(primary.value)),)
-        input_type = executable.input.type_name or "Part[]"
-        primary_value = cast(
-            Value,
-            coerce_input(percept, input_type, structs=structs),
-        )
-        control_locals.append(
-            _child_control_local(
-                "_",
-                primary,
-                input_type,
-                primary_value,
-            )
-        )
-    named: dict[str, Value] = {}
+        if primary.shape != "none":
+            primary_value = _argument_value(primary, executable.input)
+            source_locals["_"] = primary
+    named: dict[str, object] = {}
     for parameter in executable.params:
         local = locals.get(parameter.name)
         if local is None or local.shape == "none":
             continue
-        type_name = parameter.type_name or "Part[]"
-        value = _argument_value(local, parameter)
-        named[parameter.name] = value
+        named[parameter.name] = _argument_value(local, parameter)
+        source_locals[parameter.name] = local
+    input = resolve_runnable_input(
+        executable,
+        primary=primary_value,
+        named=named,
+        structs=structs,
+    )
+    declared_types = {
+        **(
+            {"_": executable.input.type_name or "Part[]"}
+            if executable.input is not None
+            else {}
+        ),
+        **{
+            parameter.name: parameter.type_name or "Part[]"
+            for parameter in executable.params
+        },
+    }
+    control_locals: list[RecordLocal] = []
+    resolved_values = {
+        **({"_": input.primary} if input.primary is not None else {}),
+        **input.named,
+    }
+    for name, value in resolved_values.items():
         control_locals.append(
             _child_control_local(
-                parameter.name,
-                local,
-                type_name,
-                value,
+                name,
+                source_locals[name],
+                declared_types[name],
+                cast(Value, value),
             )
         )
     return BoundRun(
@@ -1440,7 +1439,7 @@ def _child_binding(
             model=parent.bindings.model,
             runnable=f"{executable.kind}:{executable.name}",
         ),
-        input=RunnableInput(primary=percept, named=named),
+        input=input,
         control_locals=tuple(control_locals),
         state=parent.state,
         setup=parent.setup,
@@ -1461,9 +1460,9 @@ def _argument_value(local: Local, parameter: Parameter) -> Value:
 
     if (parameter.type_name or "Part[]") != "Part[]":
         return cast(Value, local.value)
-    percept = value_percept(local.value, type_name=local.type_name)
-    if percept is not None:
-        return percept
+    parts = value_parts(local.value, type_name=local.type_name)
+    if parts is not None:
+        return parts
     return (TextPart(value_text(local.value)),)
 
 
@@ -1478,6 +1477,7 @@ def _bind_run(
 ) -> BoundRun:
     if not spec.thread or spec.thread != spec.thread.strip():
         raise ValueError("run spec requires a canonical thread id")
+    control_locals = _input_locals(input, executable)
     return BoundRun(
         run_id=run_id,
         root_run_id=run_id,
@@ -1487,8 +1487,8 @@ def _bind_run(
             model=spec.bindings.model
             or (resources.models[0] if resources.models else "none"),
         ),
-        input=input,
-        control_locals=_input_locals(input, executable, state=spec.state),
+        input=_runnable_input_from_values(control_locals),
+        control_locals=control_locals,
         state=spec.state,
         setup=spec.setup,
         limits=spec.limits,
@@ -1603,19 +1603,20 @@ def _validate_inputs(
     if missing:
         joined = ", ".join(missing)
         raise ValueError(f"missing named inputs for {executable.name}: {joined}")
-    if executable.input is None and input.primary:
+    if executable.input is None and input.primary is not None:
         raise ValueError(f"{executable.name} does not accept primary input")
     if (
         executable.input is not None
         and not executable.input.optional
-        and not input.primary
+        and input.primary is None
     ):
         raise ValueError(f"{executable.name} requires primary input")
-    if executable.input is not None:
-        coerce_input(
+    if executable.input is not None and input.primary is not None:
+        validate_value(
             input.primary,
             executable.input.type_name or "Part[]",
             structs=structs,
+            path="primary input",
         )
     for name, value in args.items():
         validate_value(
@@ -1635,30 +1636,23 @@ def _run_event_id(event: RunEvent) -> str:
 def _input_locals(
     input: RunnableInput,
     executable: AgicDecl | FlowDecl,
-    *,
-    state: AgentState,
 ) -> tuple[RecordLocal, ...]:
-    structs = {item.name: item for item in state.program.structs}
     parameters = {item.name: item for item in executable.params}
     result: list[RecordLocal] = []
-    if executable.input is not None:
+    if executable.input is not None and input.primary is not None:
         type_name = executable.input.type_name or "Part[]"
         result.append(
             RecordLocal.typed(
                 type_name=type_name,
-                value=cast(
-                    Value,
-                    coerce_input(input.primary, type_name, structs=structs),
-                ),
+                value=input.primary,
                 name="_",
             )
         )
     for name, item in input.named.items():
-        value = tuple(item.parts) if isinstance(item, Message) else item
         result.append(
             RecordLocal.typed(
                 type_name=parameters[name].type_name or "Part[]",
-                value=cast(Value, value),
+                value=item,
                 name=name,
             )
         )
@@ -1694,15 +1688,29 @@ def _runnable_input_from_locals(
     store: RunStore,
     locals: Sequence[RecordLocal],
 ) -> RunnableInput:
-    primary: Percept = ()
+    primary: Value | None = None
     named: dict[str, Value] = {}
     for local in locals:
-        value = store.resolve_value(local.value)
+        value = cast(Value, store.resolve_value(local.value))
         if local.name == "_":
-            percept = value_percept(value, type_name=local.type)
-            primary = percept or (TextPart(value_text(value)),)
+            primary = value
         elif local.name is not None:
-            named[local.name] = cast(Value, value)
+            named[local.name] = value
+    return RunnableInput(primary=primary, named=named)
+
+
+def _runnable_input_from_values(
+    locals: Sequence[RecordLocal],
+) -> RunnableInput:
+    primary: Value | None = None
+    named: dict[str, Value] = {}
+    for local in locals:
+        if isinstance(local.value, TypedPointer):
+            raise TypeError("top-level input local cannot be a pointer")
+        if local.name == "_":
+            primary = local.value
+        elif local.name is not None:
+            named[local.name] = local.value
     return RunnableInput(primary=primary, named=named)
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from toolang.base.errors import ToolangError
@@ -8,22 +10,64 @@ from toolang.base.types.message import (
     DocumentPart,
     ImagePart,
     Message,
+    Part,
     TextPart,
+    ToolCallPart,
+    ToolResultPart,
 )
-from toolang.lang.ast import Field, Span, StructDecl
+from toolang.lang.ast import AgicDecl, Field, Parameter, Span, StructDecl
 from toolang.lang.input import (
     RunnableInput,
     RunnableInputRaw,
     coerce_input,
     coerce_output,
     parse_input,
-    perceive_input,
+    resolve_input_parts,
+    resolve_runnable_input,
 )
+from toolang.lang.types import Array, Struct
+
+
+@pytest.mark.parametrize(
+    "part",
+    (
+        TextPart("text"),
+        ImagePart(file_id="image-1"),
+        AudioPart(data="ZGF0YQ==", format="wav"),
+        DocumentPart(file_id="document-1"),
+        ToolCallPart(
+            tool_call_id="call-1",
+            tool_name="lookup",
+            tool_family="lookup",
+        ),
+        ToolResultPart(
+            tool_call_id="call-1",
+            tool_name="lookup",
+            tool_family="lookup",
+        ),
+    ),
+)
+def test_part_boundaries_accept_every_concrete_part(part: Part) -> None:
+    assert resolve_input_parts((part,)) == (part,)
+    assert coerce_input((part,), "Part") is part
+    assert coerce_input((part,), "Part[]") == Array("Part[]", (part,))
 
 
 def test_runnable_input_preserves_primary_and_named_values() -> None:
     image = ImagePart(file_id="image-1")
-    input = RunnableInput.from_values(
+    runnable = AgicDecl(
+        name="review",
+        input=Parameter(name="_", type_name="Part[]", span=Span(1)),
+        params=(
+            Parameter(name="count", type_name="Number", span=Span(1)),
+            Parameter(name="metadata", type_name="Json", span=Span(1)),
+            Parameter(name="part", type_name="Part", span=Span(1)),
+            Parameter(name="parts", type_name="Part[]", span=Span(1)),
+        ),
+        span=Span(1),
+    )
+    input = resolve_runnable_input(
+        runnable,
         primary=(TextPart("review "), image),
         named={
             "count": 2,
@@ -33,18 +77,18 @@ def test_runnable_input_preserves_primary_and_named_values() -> None:
         },
     )
 
-    assert input.primary == (TextPart("review "), image)
+    assert input.primary == Array("Part[]", (TextPart("review "), image))
     assert input.named == {
         "count": 2,
-        "metadata": {"enabled": True, "labels": ["one", "two"]},
+        "metadata": {"enabled": True, "labels": ("one", "two")},
         "part": image,
-        "parts": (TextPart("appendix"), image),
+        "parts": Array("Part[]", (TextPart("appendix"), image)),
     }
 
 
 def test_runnable_input_rejects_unsupported_runtime_values() -> None:
     with pytest.raises(TypeError, match="unsupported run input value"):
-        RunnableInput.from_values(named={"unsupported": {"set"}})
+        RunnableInput(named=cast(Any, {"unsupported": {"set"}}))
 
 
 def test_parse_input_preserves_primary_and_validates_named_sources() -> None:
@@ -76,14 +120,16 @@ def test_parse_input_rejects_invalid_sources(
 
 
 def test_plain_input_is_one_text_part_without_rendering_unknown_tags() -> None:
-    assert perceive_input("Review {{target}}.\n") == (TextPart("Review {{target}}.\n"),)
+    assert resolve_input_parts("Review {{target}}.\n") == (
+        TextPart("Review {{target}}.\n"),
+    )
 
 
 def test_typed_part_splice_preserves_multimodal_order() -> None:
     image = ImagePart(image_url="https://example.com/diagram.png")
     document = DocumentPart(file_id="file-1")
 
-    result = perceive_input(
+    result = resolve_input_parts(
         "Review {{_}} then {{appendix}}.",
         values={
             "_": (TextPart("this "), image),
@@ -101,16 +147,16 @@ def test_typed_part_splice_preserves_multimodal_order() -> None:
     )
 
 
-def test_structured_percept_is_canonical_data_not_source_syntax() -> None:
-    percept = (TextPart("@README.md\n/review target"),)
+def test_structured_parts_are_canonical_data_not_source_syntax() -> None:
+    parts = (TextPart("@README.md\n/review target"),)
 
-    assert perceive_input(percept) is percept
+    assert resolve_input_parts(parts) is parts
 
 
 def test_include_resolver_inserts_one_typed_part() -> None:
     image = ImagePart(file_id="image-1")
 
-    result = perceive_input(
+    result = resolve_input_parts(
         "Before\n@diagram.png\nAfter",
         include=lambda reference: (
             image if reference == "diagram.png" else pytest.fail("unexpected include")
@@ -125,7 +171,7 @@ def test_include_resolver_inserts_one_typed_part() -> None:
 
 
 def test_content_markers_are_special_only_at_the_start_of_a_line() -> None:
-    assert perceive_input(
+    assert resolve_input_parts(
         " //review\n @file.md\n::model gpt-5\n//review\n@@file.md"
     ) == (TextPart(" //review\n @file.md\n:model gpt-5\n/review\n@file.md"),)
 
@@ -133,7 +179,7 @@ def test_content_markers_are_special_only_at_the_start_of_a_line() -> None:
 def test_markdown_fences_suspend_content_recognition() -> None:
     source = "```text\n/review\n@file.md\n```\nAfter"
 
-    assert perceive_input(source) == (TextPart(source),)
+    assert resolve_input_parts(source) == (TextPart(source),)
 
 
 def test_prompt_without_input_leaves_following_content_outside() -> None:
@@ -152,7 +198,7 @@ def test_prompt_without_input_leaves_following_content_outside() -> None:
         ),
     )
 
-    assert perceive_input("/label\nFollowing", program=program) == (
+    assert resolve_input_parts("/label\nFollowing", program=program) == (
         TextPart("LABEL\nFollowing"),
     )
 
@@ -173,7 +219,7 @@ def test_tail_prompt_consumes_all_remaining_content() -> None:
         ),
     )
 
-    assert perceive_input("/wrap -\nOne\nTwo", program=program) == (
+    assert resolve_input_parts("/wrap -\nOne\nTwo", program=program) == (
         TextPart("Before One\nTwo after"),
     )
 
@@ -194,13 +240,13 @@ def test_fenced_prompt_consumes_only_its_exact_backtick_scope() -> None:
         ),
     )
 
-    assert perceive_input(
+    assert resolve_input_parts(
         "/wrap ```\nInside\n```\nOutside",
         program=program,
     ) == (TextPart("[Inside\n]\nOutside"),)
 
     with pytest.raises(ToolangError, match="Unclosed prompt fence"):
-        perceive_input("/wrap ````\nInside\n```", program=program)
+        resolve_input_parts("/wrap ````\nInside\n```", program=program)
 
 
 def test_prompt_arguments_require_named_syntax() -> None:
@@ -220,7 +266,7 @@ def test_prompt_arguments_require_named_syntax() -> None:
     )
 
     with pytest.raises(ToolangError, match="name=value syntax"):
-        perceive_input("/review security", program=program)
+        resolve_input_parts("/review security", program=program)
 
 
 def test_input_coercion_preserves_parts_and_parses_declared_values() -> None:
@@ -231,16 +277,22 @@ def test_input_coercion_preserves_parts_and_parses_declared_values() -> None:
     assert coerce_input((TextPart("true"),), "Boolean") is True
     assert coerce_input((TextPart('{"ok":true}'),), "Json") == {"ok": True}
     assert coerce_input((image,), "Part") is image
-    assert coerce_input((TextPart("look"), image), "Part[]") == (
-        TextPart("look"),
-        image,
+    assert coerce_input((TextPart("look"), image), "Part[]") == Array(
+        "Part[]",
+        (TextPart("look"), image),
     )
 
     with pytest.raises(ToolangError, match="non-text parts"):
         coerce_input((TextPart("look"), image), "Text")
 
     assert coerce_output(TextPart("done"), "Text") == "done"
-    assert coerce_output((1, 2), "Number[]") == (1, 2)
+    assert coerce_output((1, 2), "Number[]") == Array("Number[]", (1, 2))
+    assert coerce_input(Array("Number[]", (1, 2)), "Number[]") == Array(
+        "Number[]", (1, 2)
+    )
+
+    with pytest.raises(ToolangError, match="input is not Number"):
+        coerce_input(float("inf"), "Number")
 
 
 def test_output_coercion_accepts_one_explicit_json_fence() -> None:
@@ -248,7 +300,7 @@ def test_output_coercion_accepts_one_explicit_json_fence() -> None:
         'Here is the requested value:\n\n```json\n["one", "two"]\n```'
     )
 
-    assert coerce_output(value, "Text[]") == ["one", "two"]
+    assert coerce_output(value, "Text[]") == Array("Text[]", ("one", "two"))
 
 
 def test_output_coercion_does_not_guess_unfenced_or_ambiguous_json() -> None:
@@ -281,7 +333,7 @@ def test_struct_coercion_validates_fields() -> None:
         (TextPart('{"title":"good","score":1}'),),
         "Review",
         structs={"Review": review},
-    ) == {"title": "good", "score": 1}
+    ) == Struct("Review", {"title": "good", "score": 1})
 
     with pytest.raises(ToolangError, match="unknown Review fields"):
         coerce_input(
@@ -291,7 +343,7 @@ def test_struct_coercion_validates_fields() -> None:
         )
 
 
-def test_output_coercion_keeps_undeclared_assistant_percept() -> None:
+def test_output_coercion_keeps_undeclared_assistant_parts() -> None:
     audio = AudioPart(
         data="ZGF0YQ==",
         format="wav",
@@ -299,5 +351,5 @@ def test_output_coercion_keeps_undeclared_assistant_percept() -> None:
     )
     message = Message(role="assistant", parts=(audio,))
 
-    assert coerce_output(message, None) == (audio,)
+    assert coerce_output(message, None) == Array("Part[]", (audio,))
     assert coerce_output(Message.assistant("3"), "Number") == 3

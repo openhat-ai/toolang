@@ -8,7 +8,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 
 from toolang.api.app import AgentCoreDep, LiveEventRelayDep
 from toolang.api.common import EventSubscription, sse_stream
-from toolang.api.conversion import parse_percept, parse_user_message
+from toolang.api.conversion import parse_parts, parse_user_message
 from toolang.api.schemas import (
     RunCancelRequest,
     RunCommandResult,
@@ -23,7 +23,8 @@ from toolang.execution.executor import RunHandle, RunSpec
 from toolang.execution.records import RunControlRecord, RunRecord
 from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
-from toolang.lang.input import RunnableInput
+from toolang.lang.input import resolve_runnable_input
+from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -43,10 +44,17 @@ async def _start_run_stream(
         else setup.limits
     )
     try:
+        state = core.state.current()
+        runnable_name, runnable_kind = parse_runnable_ref(payload.runnable)
+        runnable = resolve_runnable(
+            state.program,
+            runnable_name,
+            kind=runnable_kind,
+        )
         handle = core.executor.start(
             RunSpec(
                 setup=setup,
-                state=core.state.current(),
+                state=state,
                 thread=thread_id,
                 bindings=RunBindings(
                     runnable=payload.runnable,
@@ -57,9 +65,11 @@ async def _start_run_stream(
                     ),
                 ),
                 limits=limits,
-                input=RunnableInput.from_values(
-                    primary=parse_percept(payload.input),
+                input=resolve_runnable_input(
+                    runnable,
+                    primary=parse_parts(payload.input) if payload.input else None,
                     named=payload.args,
+                    structs={item.name: item for item in state.program.structs},
                 ),
             ),
             request_id=payload.request_id,

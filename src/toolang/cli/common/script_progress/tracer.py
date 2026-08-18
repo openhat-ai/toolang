@@ -6,7 +6,7 @@ from collections.abc import Mapping
 import sys
 from typing import TextIO
 
-from toolang.base.types.message import Percept, TextDelta
+from toolang.base.types.message import Part, TextDelta
 from toolang.execution.events import (
     PartDelta,
     RunBegin,
@@ -41,7 +41,7 @@ class ConsoleRunTracer(RunTracer):
         runnable_kind: str | None = None,
         runnable_name: str | None = None,
         runnable_doc: str | None = None,
-        input_value: Percept = (),
+        input_value: tuple[Part, ...] = (),
         args: Mapping[str, object] | None = None,
         width: int | None = None,
     ) -> None:

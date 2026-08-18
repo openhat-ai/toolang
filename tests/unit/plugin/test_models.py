@@ -2826,7 +2826,7 @@ def _prepared_agic(
             root_run_id="run-1",
             thread="thread-1",
             bindings=RunBindings(runnable="agic:main"),
-            input=RunnableInput(primary=Message.user("hello").percept),
+            input=RunnableInput(),
             control_locals=(),
             state=cast(Any, state),
             setup=AgentSetup(

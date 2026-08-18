@@ -10,6 +10,7 @@ from toolang.base.types.message import TextPart
 from toolang.base.types.policy import RunBindings
 from toolang.execution.calls import parse_call, resolve_spec
 from toolang.execution.types import RunOverride, ThreadPrefix
+from toolang.lang.types import Array
 from tests.support.execution_harness import ExecutionHarness
 
 
@@ -47,7 +48,7 @@ def test_resolve_spec_binds_policy_primary_and_typed_named_inputs(
             runnable="agic:review",
         )
         assert spec.input.named == {"count": 2}
-        assert spec.input.primary == (TextPart("Review this."),)
+        assert spec.input.primary == Array("Part[]", (TextPart("Review this."),))
         harness.executor.validate(spec)
     finally:
         harness.store.close()

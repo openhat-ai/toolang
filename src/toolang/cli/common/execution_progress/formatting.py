@@ -11,8 +11,7 @@ from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
     ImagePart,
-    MessagePart,
-    Percept,
+    Part,
     TextPart,
     ToolResultPart,
     message_text,
@@ -97,14 +96,14 @@ def usage_facts(noted: Mapping[str, Any]) -> list[str]:
     return [token_fact(input_tokens or 0, output_tokens or 0)]
 
 
-def percept_lines(percept: Percept) -> list[str]:
+def part_lines(parts: tuple[Part, ...]) -> list[str]:
     lines: list[str] = []
     rendered_text = one_line(
-        message_text(tuple(part for part in percept if isinstance(part, TextPart)))
+        message_text(tuple(part for part in parts if isinstance(part, TextPart)))
     )
     if rendered_text:
         lines.append(truncate(rendered_text, 160))
-    for part in percept:
+    for part in parts:
         if isinstance(part, ImagePart):
             lines.append(f"[image] {part.filename or 'image'}")
         elif isinstance(part, AudioPart):
@@ -171,7 +170,7 @@ def tool_exit_code(event: StepEnd) -> int | None:
     return None
 
 
-def output_parts(event: StepEnd) -> tuple[MessagePart, ...]:
+def output_parts(event: StepEnd) -> tuple[Part, ...]:
     """Return message parts carried by one typed step output."""
 
     if event.output is None:
@@ -180,7 +179,7 @@ def output_parts(event: StepEnd) -> tuple[MessagePart, ...]:
     if isinstance(value, ToolResultPart):
         return (value,)
     if isinstance(value, Array | tuple | list):
-        return tuple(part for part in value if isinstance(part, MessagePart))
+        return tuple(part for part in value if isinstance(part, Part))
     return ()
 
 

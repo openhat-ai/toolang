@@ -31,7 +31,7 @@ from toolang.execution.records import (
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import ThreadPrefix
-from toolang.lang.input import perceive_input
+from toolang.lang.input import resolve_input_parts
 
 _CHAT_SOURCE = """
 agic chat(_: Text) -> Text:
@@ -91,14 +91,14 @@ def test_create_and_fork_controls_preserve_identity_and_anchor(
                 harness.run_spec(
                     thread=source,
                     runnable="chat",
-                    primary=perceive_input("first"),
+                    primary=resolve_input_parts("first"),
                 )
             )
             second = await harness.executor.start(
                 harness.run_spec(
                     thread=source,
                     runnable="chat",
-                    primary=perceive_input("second"),
+                    primary=resolve_input_parts("second"),
                 )
             )
             forked = manager.fork(
@@ -190,7 +190,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                         harness.run_spec(
                             thread=thread,
                             runnable="chat",
-                            primary=perceive_input(prompt),
+                            primary=resolve_input_parts(prompt),
                         )
                     )
                 )
@@ -207,7 +207,7 @@ def test_rewind_controls_form_a_monotonic_head_chain(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    primary=perceive_input("replacement"),
+                    primary=resolve_input_parts("replacement"),
                 )
             )
             assert (
@@ -303,14 +303,14 @@ def test_fork_accepts_an_earlier_terminal_anchor_while_source_runs(
                 harness.run_spec(
                     thread=source,
                     runnable="chat",
-                    primary=perceive_input("first"),
+                    primary=resolve_input_parts("first"),
                 )
             )
             active = harness.executor.start(
                 harness.run_spec(
                     thread=source,
                     runnable="chat",
-                    primary=perceive_input("second"),
+                    primary=resolve_input_parts("second"),
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
@@ -383,14 +383,14 @@ def test_rewind_rejects_a_running_thread_without_stopping_it(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    primary=perceive_input("first"),
+                    primary=resolve_input_parts("first"),
                 )
             )
             active = harness.executor.start(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    primary=perceive_input("second"),
+                    primary=resolve_input_parts("second"),
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
@@ -468,7 +468,7 @@ def test_failed_thread_controls_leave_no_record_or_event(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    primary=perceive_input("question"),
+                    primary=resolve_input_parts("question"),
                 )
             )
 

@@ -10,12 +10,8 @@ import re
 from typing import Any, Literal, cast
 
 from toolang.base.types.message import (
-    AudioPart,
-    DocumentPart,
-    ImagePart,
     Message,
-    MessagePart,
-    Percept,
+    Part,
     TextPart,
     message_text,
 )
@@ -41,7 +37,7 @@ from toolang.lang.ast import (
     StormStmt,
     StructDecl,
 )
-from toolang.lang.input import RunnableInput, coerce_input, validate_value
+from toolang.lang.input import RunnableInput, coerce_input
 from toolang.lang.format import format_statement_head
 from toolang.lang.types import Array
 from toolang.state.state import AgentState
@@ -203,7 +199,7 @@ async def execute_step(
                 ),
                 **(
                     {"items": len(result.value)}
-                    if result.shape == "list" and isinstance(result.value, list)
+                    if result.shape == "list" and isinstance(result.value, Array | list)
                     else {}
                 ),
             },
@@ -274,35 +270,33 @@ def initial_locals(
 ) -> dict[str, Local]:
     """Build the initial locals for one executable run."""
 
-    structs = program_structs(binding)
-    params = {parameter.name: parameter for parameter in executable.params}
+    records = {
+        local.name: local for local in binding.control_locals if local.name is not None
+    }
     locals: dict[str, Local] = {}
     for name, value in binding.input.named.items():
-        parameter = params.get(name)
-        if parameter is None:
+        record = records.get(name)
+        if record is None:
             continue
-        validate_value(
-            value,
-            parameter.type_name or "Part[]",
-            structs=structs,
-            path=f"argument {name}",
-        )
+        pointer = Pointer.control(binding.run_id, binding.control_index, name)
         locals[name] = Local(
             value,
             "item",
-            Pointer.control(binding.run_id, binding.control_index, name),
-            parameter.type_name or "Part[]",
+            pointer,
+            record.type,
+            RecordLocal.typed(record.type, pointer, name, record.dim),
         )
-    if executable.input is not None:
+    if executable.input is not None and binding.input.primary is not None:
+        record = records.get("_")
+        if record is None:
+            raise RuntimeError(f"run primary control local missing: {binding.run_id}")
+        pointer = Pointer.control(binding.run_id, binding.control_index, "_")
         locals["_"] = Local(
-            coerce_input(
-                binding.input.primary,
-                executable.input.type_name or "Part[]",
-                structs=structs,
-            ),
+            binding.input.primary,
             "item",
-            Pointer.control(binding.run_id, binding.control_index, "_"),
-            executable.input.type_name or "Part[]",
+            pointer,
+            record.type,
+            RecordLocal.typed(record.type, pointer, "_", record.dim),
         )
     else:
         locals.setdefault("_", Local())
@@ -337,15 +331,21 @@ def apply_steer(
             ):
                 continue
             effective_type = input_type or "Part[]"
+            pointer = Pointer.control(control.run, control.index, "_")
             locals["_"] = Local(
                 coerce_input(
-                    cast(Percept, tuple(primary.value)),
+                    tuple(primary.value),
                     effective_type,
                     structs=structs,
                 ),
                 "item",
-                Pointer.control(control.run, control.index, "_"),
+                pointer,
                 effective_type,
+                (
+                    RecordLocal.typed(effective_type, pointer, "_", 0)
+                    if primary.type == effective_type
+                    else None
+                ),
             )
 
 
@@ -426,7 +426,7 @@ def require_item(locals: Mapping[str, Local], *, operation: str) -> Any:
 
 def require_list(locals: Mapping[str, Local], *, operation: str) -> list[Any]:
     current = locals.get("_", Local())
-    if current.shape != "list" or not isinstance(current.value, list):
+    if current.shape != "list" or not isinstance(current.value, Array | list):
         raise ToolangError(
             f"{operation} requires current shape list, got {current.shape}"
         )
@@ -434,7 +434,7 @@ def require_list(locals: Mapping[str, Local], *, operation: str) -> list[Any]:
 
 
 def result_list(result: Local, *, operation: str) -> list[Any]:
-    if isinstance(result.value, list | tuple):
+    if isinstance(result.value, Array | list | tuple):
         return list(result.value)
     raise ToolangError(f"{operation} requires a list result")
 
@@ -457,40 +457,33 @@ def program_structs(binding: BoundRun) -> dict[str, StructDecl]:
     return {item.name: item for item in binding.state.program.structs}
 
 
-def output_parts(local: Local) -> tuple[MessagePart, ...]:
+def output_parts(local: Local) -> tuple[Part, ...]:
     if local.shape == "none":
         return ()
     if (
         local.shape == "item"
-        and (percept := value_percept(local.value, type_name=local.type_name))
-        is not None
+        and (parts := value_parts(local.value, type_name=local.type_name)) is not None
     ):
-        return tuple(percept)
+        return tuple(parts)
     return (TextPart(text=value_text(local.value)),)
 
 
-def value_percept(
+def value_parts(
     value: object,
     *,
     type_name: str | None = None,
-) -> Percept | None:
-    """Return a canonical percept when one value already represents content."""
+) -> tuple[Part, ...] | None:
+    """Return canonical parts when one value already represents content."""
 
     if isinstance(value, Message):
-        try:
-            return value.percept
-        except ValueError as exc:
-            raise ToolangError(str(exc)) from exc
-    if isinstance(value, (TextPart, ImagePart, AudioPart, DocumentPart)):
+        return value.parts
+    if isinstance(value, Part):
         return (value,)
     if isinstance(value, Array | tuple | list):
         if not value:
             return () if type_name == "Part[]" else None
-        if all(
-            isinstance(part, (TextPart, ImagePart, AudioPart, DocumentPart))
-            for part in value
-        ):
-            return cast(Percept, tuple(value))
+        if all(isinstance(part, Part) for part in value):
+            return cast(tuple[Part, ...], tuple(value))
     return None
 
 
@@ -501,8 +494,8 @@ def value_text(value: Any) -> str:
         return value
     if isinstance(value, Message):
         return message_text(value.parts)
-    if (percept := value_percept(value)) is not None:
-        return message_text(percept)
+    if (parts := value_parts(value)) is not None:
+        return message_text(parts)
     if isinstance(value, bool | int | float | Array | list | dict | tuple):
         return json.dumps(
             json_value(value),
@@ -522,8 +515,8 @@ def control_text(control: RunControlRecord | None) -> str:
         return ""
     if isinstance(primary.value, str):
         return primary.value
-    percept = value_percept(primary.value, type_name=primary.type)
-    return message_text(percept) if percept is not None else ""
+    parts = value_parts(primary.value, type_name=primary.type)
+    return message_text(parts) if parts is not None else ""
 
 
 def _unique_step_inputs(items: Sequence[Pointer]) -> tuple[Pointer, ...]:
@@ -557,7 +550,7 @@ def record_local(local: Local, *, name: str | None) -> RecordLocal | None:
 def json_value(value: object) -> object:
     """Return a JSON-compatible representation of one runtime value."""
 
-    if isinstance(value, (TextPart, ImagePart, AudioPart, DocumentPart)):
+    if isinstance(value, Part):
         return value.to_data()
     if isinstance(value, Mapping):
         return {str(name): json_value(item) for name, item in value.items()}

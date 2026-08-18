@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from typing import Any, Literal
 
-from toolang.base.types.message import MessagePart, message_summary
+from toolang.base.types.message import Part, message_summary
 from toolang.base.types.run import ModelCall
 from .records import (
     ControlPayloadField,
@@ -126,7 +126,7 @@ class ThreadInfo:
         thread: ThreadRecord,
         runs: Sequence[RunRecord] = (),
         *,
-        input_parts: Sequence[MessagePart],
+        input_parts: Sequence[Part],
     ) -> ThreadInfo:
         """Build one thread summary from durable records."""
 
@@ -200,7 +200,7 @@ class RunInfo:
         root_run_id: str,
         error_message: str | None,
         ejection_scope: Literal["run", "thread"] | None,
-        input_parts: Sequence[MessagePart],
+        input_parts: Sequence[Part],
     ) -> RunInfo:
         """Build one run summary from durable records."""
 
@@ -347,7 +347,7 @@ class RunDetail(RunInfo):
         root_run_id: str,
         error_message: str | None,
         ejection_scope: Literal["run", "thread"] | None,
-        input_parts: Sequence[MessagePart],
+        input_parts: Sequence[Part],
     ) -> RunDetail:
         """Build complete caller-facing run detail from durable records."""
 
@@ -411,7 +411,7 @@ def _preparation_payload(
     raise ValueError(f"run preparation control not found: {run.id}^{run.control.index}")
 
 
-def _local_parts(local: Local | None) -> tuple[MessagePart, ...]:
+def _local_parts(local: Local | None) -> tuple[Part, ...]:
     if local is None:
         return ()
     return parts_from_local(local)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, cast
 
-from toolang.base.types.message import Message, MessagePart
+from toolang.base.types.message import Message, Part
 from toolang.base.types.policy import RunBindings, RunLimits
 from toolang.execution.events import (
     RunBegin,
@@ -35,6 +35,7 @@ from toolang.execution.types import (
     Pointer,
 )
 from toolang.lang.input import RunnableInput
+from toolang.lang.types import Array
 
 
 def persist_event(store: RunStore, event: RunEvent) -> None:
@@ -68,18 +69,22 @@ def accept_run_start(
     resolved_input = (
         input
         if isinstance(input, RunnableInput)
-        else RunnableInput(primary=input.percept)
+        else RunnableInput(primary=Array("Part[]", input.parts))
     )
     resolved_bindings = (
         bindings
         if bindings is not None
         else RunBindings(runnable="agic:test", model="test")
     )
-    locals_value = [Local.typed("Part[]", tuple(resolved_input.primary), "_", 0)]
+    locals_value = (
+        [Local.typed("Part[]", resolved_input.primary, "_", 0)]
+        if resolved_input.primary is not None
+        else []
+    )
     locals_value.extend(
         Local.typed(
             "Json",
-            tuple(value.parts) if isinstance(value, Message) else value,
+            value,
             name,
             0,
         )
@@ -151,7 +156,7 @@ def project_run_start(
             else f"{executable_kind}:test"
         ),
         model="test",
-        locals=(Local.typed("Part[]", tuple(input.percept), "_", 0),),
+        locals=(Local.typed("Part[]", tuple(input.parts), "_", 0),),
         placement=(
             dict(value)
             if isinstance((value := run_context.get("placement")), Mapping)
@@ -229,7 +234,7 @@ def project_step(
     kind: StepKind,
     status: StepStatus,
     input: Sequence[Pointer],
-    output: Sequence[MessagePart] | Local | None,
+    output: Sequence[Part] | Local | None,
     detail: Mapping[str, Any] | None = None,
     error: str | None = None,
     started_at: str,

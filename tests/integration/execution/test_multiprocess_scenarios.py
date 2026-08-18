@@ -25,7 +25,7 @@ from toolang.execution.records import SteerControlPayload, ThreadControlRef
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import Local, ThreadPrefix
-from toolang.lang.input import perceive_input
+from toolang.lang.input import resolve_input_parts
 
 _CHAT_SOURCE = """
 agic chat(_: Text) -> Text:
@@ -265,7 +265,7 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    primary=perceive_input("initial input"),
+                    primary=resolve_input_parts("initial input"),
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
@@ -323,7 +323,7 @@ def test_remote_process_can_cancel_a_pending_steer(tmp_path: Path) -> None:
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
-                    primary=perceive_input("initial input"),
+                    primary=resolve_input_parts("initial input"),
                 )
             )
             await asyncio.wait_for(gate.wait_until_entered(), timeout=1)

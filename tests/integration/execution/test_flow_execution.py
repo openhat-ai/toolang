@@ -46,7 +46,8 @@ from toolang.execution.types import (
     ThreadPrefix,
     Pointer,
 )
-from toolang.lang.input import RunnableInput
+from toolang.lang.input import RunnableInput, resolve_runnable_input
+from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.lang.ast import (
     AgicDecl,
     Directive,
@@ -146,6 +147,12 @@ def _spec(
     primary: tuple[Any, ...] = (),
     named: dict[str, object] | None = None,
 ) -> RunSpec:
+    runnable_name, runnable_kind = parse_runnable_ref(runnable)
+    executable = resolve_runnable(
+        state.program,
+        runnable_name,
+        kind=runnable_kind,
+    )
     return RunSpec(
         setup=setup,
         state=state,
@@ -153,7 +160,12 @@ def _spec(
         bindings=RunBindings(runnable=runnable),
         limits=setup.limits,
         ceilings=(ceiling,) if ceiling is not None else (),
-        input=RunnableInput.from_values(primary=primary, named=named),
+        input=resolve_runnable_input(
+            executable,
+            primary=primary if primary else None,
+            named=named,
+            structs={item.name: item for item in state.program.structs},
+        ),
     )
 
 
@@ -715,7 +727,7 @@ def test_parallel_children_preserve_input_and_output_types(
         root_run_id="run_root",
         thread="term_test",
         bindings=RunBindings(runnable="flow:parent"),
-        input=RunnableInput(primary=Message.user("input").percept),
+        input=RunnableInput(),
         control_locals=(),
         state=state,
         setup=setup,
@@ -771,7 +783,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
         root_run_id="run_root",
         thread="term_test",
         bindings=RunBindings(runnable="flow:parent"),
-        input=RunnableInput(primary=Message.user("input").percept),
+        input=RunnableInput(),
         control_locals=(),
         state=state,
         setup=setup,

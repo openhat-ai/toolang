@@ -43,7 +43,7 @@ from toolang.execution.events import PartDelta, RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
 from toolang.execution.records import RunControlRef, StartControlPayload
 from toolang.execution.types import StepPath, ThreadPrefix, Pointer
-from toolang.lang.input import perceive_input
+from toolang.lang.input import resolve_input_parts
 
 
 def test_agic_executes_perceived_text_and_typed_arguments(
@@ -69,7 +69,7 @@ agic reply(_: Part[], tone: Text) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                     named={"tone": "brief"},
                 ),
                 tracer=tracer,
@@ -149,6 +149,10 @@ agic reply(_: Part[]) -> Part[]:
             assert historical[0].ejected_by == RunControlRef(run.id, 1)
             assert historical[1].ejected_by is None
             assert historical[1].input == (Pointer.control(run.id, 1, "_"),)
+            assert [call.call.messages for call in harness.adapter.invocations] == [
+                [Message.user("hello")],
+                [Message.user("hello")],
+            ]
 
     asyncio.run(scenario())
 
@@ -206,7 +210,7 @@ agic inspect(_: Part[]) -> Part[]:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.WEB)
-            input = perceive_input((TextPart("Inspect this: "), image))
+            input = resolve_input_parts((TextPart("Inspect this: "), image))
             record = await harness.executor.start(
                 harness.run_spec(
                     thread=thread,
@@ -258,7 +262,7 @@ agic stream(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="stream",
-                    primary=perceive_input("say hello"),
+                    primary=resolve_input_parts("say hello"),
                 ),
                 tracer=tracer,
             )
@@ -338,7 +342,7 @@ agic calculate(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    primary=perceive_input("double three"),
+                    primary=resolve_input_parts("double three"),
                 ),
                 tracer=tracer,
             )
@@ -407,7 +411,7 @@ agic illustrate(_: Text) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="illustrate",
-                    primary=perceive_input("draw"),
+                    primary=resolve_input_parts("draw"),
                 ),
                 tracer=tracer,
             )
@@ -466,7 +470,7 @@ agic stream(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="stream",
-                    primary=perceive_input("start"),
+                    primary=resolve_input_parts("start"),
                 ),
                 tracer=tracer,
             )
@@ -524,7 +528,7 @@ agic stream(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="stream",
-                    primary=perceive_input("start"),
+                    primary=resolve_input_parts("start"),
                 ),
                 tracer=tracer,
             )
@@ -595,7 +599,7 @@ agic calculate(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    primary=perceive_input("double three"),
+                    primary=resolve_input_parts("double three"),
                 )
             )
 
@@ -666,7 +670,7 @@ agic calculate(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    primary=perceive_input("calculate"),
+                    primary=resolve_input_parts("calculate"),
                 ),
                 tracer=tracer,
             )
@@ -741,7 +745,7 @@ agic calculate(_: Text) -> Number:
                 harness.run_spec(
                     thread=thread,
                     runnable="calculate",
-                    primary=perceive_input("calculate"),
+                    primary=resolve_input_parts("calculate"),
                 )
             )
 
@@ -793,7 +797,7 @@ agic loop(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="loop",
-                    primary=perceive_input("continue"),
+                    primary=resolve_input_parts("continue"),
                     limits=RunLimits(agic_model_calls=8),
                 ),
                 tracer=tracer,
@@ -843,14 +847,14 @@ agic reply(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("first"),
+                    primary=resolve_input_parts("first"),
                 )
             )
             accepted = await harness.executor.start(
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("second"),
+                    primary=resolve_input_parts("second"),
                     limits=RunLimits(agic_model_calls=1),
                 ),
             )
@@ -910,7 +914,7 @@ agic loop(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="loop",
-                    primary=perceive_input("continue"),
+                    primary=resolve_input_parts("continue"),
                     limits=RunLimits(agic_tool_calls=1),
                 ),
             )
@@ -949,7 +953,7 @@ agic reply(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                     limits=RunLimits(tokens=10),
                 ),
             )
@@ -1017,7 +1021,7 @@ agic reply(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                     limits=RunLimits(cost=cost_limit),
                 ),
             )
@@ -1057,7 +1061,7 @@ agic reply(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                     limits=RunLimits(cost=Decimal("1")),
                 ),
             )
@@ -1093,7 +1097,7 @@ agic reply(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                     limits=RunLimits(tokens=100),
                 ),
             )
@@ -1139,7 +1143,7 @@ agic reply(_: Text) -> Text:
                 harness.run_spec(
                     thread=thread,
                     runnable="reply",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                     limits=RunLimits(time=0),
                 ),
             )
@@ -1212,7 +1216,7 @@ agic fail(_: Part[]) -> Part[]:
                 harness.run_spec(
                     thread=thread,
                     runnable="fail",
-                    primary=perceive_input("hello"),
+                    primary=resolve_input_parts("hello"),
                 ),
                 tracer=tracer,
             )

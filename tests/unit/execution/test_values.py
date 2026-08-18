@@ -10,7 +10,7 @@ from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
     ImagePart,
-    MessagePart,
+    Part,
     TextPart,
     ToolCallPart,
     ToolResultPart,
@@ -141,7 +141,7 @@ def test_local_codec_round_trips_mixed_concrete_and_pointer_items() -> None:
         ),
     ),
 )
-def test_local_codec_round_trips_every_concrete_part(part: MessagePart) -> None:
+def test_local_codec_round_trips_every_concrete_part(part: Part) -> None:
     local = Local(value=part, name="_")
 
     data = local_to_data(local)

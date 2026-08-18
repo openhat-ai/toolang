@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal, cast
 
 from pydantic import Field, TypeAdapter
 
-from toolang.base.types.message import Delta, MessagePart, MessagePartType
+from toolang.base.types.message import Delta, Part, PartType
 
 from .records import ThreadPeer
 from .types import (
@@ -57,7 +57,7 @@ class PartBegin:
 
     step: StepPath
     part: int
-    part_type: MessagePartType
+    part_type: PartType
     type: Literal["part_begin"] = field(default="part_begin", init=False)
 
 
@@ -77,7 +77,7 @@ class PartEnd:
 
     step: StepPath
     part: int
-    data: MessagePart
+    data: Part
     type: Literal["part_end"] = field(default="part_end", init=False)
 
 

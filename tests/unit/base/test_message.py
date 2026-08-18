@@ -140,5 +140,5 @@ def test_tool_part_metadata_round_trips_without_message_meta() -> None:
 
     assert Message.from_data(message.to_data()) == message
     assert Message.from_data(result.to_data()) == result
-    with pytest.raises(ValueError, match="not a Percept"):
-        _ = message.percept
+    assert message.parts[0].type == "tool_call"
+    assert result.parts[0].type == "tool_result"

@@ -13,7 +13,7 @@ from typing import Any, Literal, cast
 
 from toolang.base.types.message import (
     Message,
-    MessagePart,
+    Part,
     ToolCallPart,
     ToolResultPart,
     message_text,
@@ -385,7 +385,7 @@ class RunStore:
                 or primary.dim != 0
                 or isinstance(primary.value, TypedPointer)
                 or not isinstance(primary.value, Array)
-                or not all(isinstance(item, MessagePart) for item in primary.value)
+                or not all(isinstance(item, Part) for item in primary.value)
             ):
                 raise ValueError("steer control requires a concrete primary Part[]")
         elif len(locals) > 1 or (
@@ -1250,7 +1250,7 @@ class RunStore:
             ).fetchall()
         return [_run_from_row(row) for row in rows]
 
-    def run_output(self, *, run_id: str) -> tuple[MessagePart, ...]:
+    def run_output(self, *, run_id: str) -> tuple[Part, ...]:
         """Return the message parts represented by one run's durable output."""
 
         run = self.get_run(run_id=run_id)

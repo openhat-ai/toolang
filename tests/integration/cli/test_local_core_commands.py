@@ -32,7 +32,7 @@ from toolang.execution.records import (
 )
 from toolang.execution.store import RunStore
 from toolang.execution.types import Local, ThreadPrefix
-from toolang.lang.input import perceive_input
+from toolang.lang.input import resolve_input_parts
 from toolang.setup import AgentSetup
 from toolang.up import process as agents
 from toolang.work.state import load_ready_jobs
@@ -453,7 +453,7 @@ agic reply(_: Part[]) -> Part[]:
             harness.run_spec(
                 thread=thread,
                 runnable="reply",
-                primary=perceive_input("hello"),
+                primary=resolve_input_parts("hello"),
             )
         )
         await harness.executor.shutdown()

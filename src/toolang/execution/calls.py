@@ -5,16 +5,14 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from toolang.base.types.message import PerceptPart
+from toolang.base.types.message import Part
 from toolang.base.types.policy import RunBindings
-from toolang.lang.ast import AgicDecl, FlowDecl
 from toolang.lang.input import (
     NamedInputSources,
-    RunnableInput,
     RunnableInputRaw,
-    coerce_input,
     parse_input,
-    perceive_input,
+    resolve_input_parts,
+    resolve_runnable_input,
 )
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
@@ -26,8 +24,7 @@ from .types import RunOverride
 if TYPE_CHECKING:
     from .executor.executor import RunSpec
 
-IncludeResolver = Callable[[str], PerceptPart]
-Runnable = AgicDecl | FlowDecl
+IncludeResolver = Callable[[str], Part]
 
 
 def parse_call(source: str) -> tuple[tuple[RunOverride, ...], RunnableInputRaw]:
@@ -75,20 +72,22 @@ def resolve_spec(
         raise ValueError("named inputs cannot be supplied by both source and surface")
     raw_named = input.named or surface_named_sources
     named = (
-        _bind_named_sources(
+        _resolve_named_sources(
             raw_named,
-            runnable=runnable,
             state=state,
             include=include,
         )
         if raw_named
         else dict(surface_named or {})
     )
-    _validate_named(runnable, named)
-    primary = perceive_input(
-        input.primary or "",
-        program=state.program,
-        include=include,
+    primary = (
+        resolve_input_parts(
+            input.primary,
+            program=state.program,
+            include=include,
+        )
+        if input.primary is not None
+        else None
     )
     return RunSpec(
         setup=setup,
@@ -100,9 +99,11 @@ def resolve_spec(
         ),
         limits=limits,
         ceilings=ceilings,
-        input=RunnableInput.from_values(
+        input=resolve_runnable_input(
+            runnable,
             primary=primary,
             named=named,
+            structs={struct.name: struct for struct in state.program.structs},
         ),
     )
 
@@ -161,52 +162,20 @@ def validate_commands(
     )
 
 
-def _bind_named_sources(
+def _resolve_named_sources(
     sources: NamedInputSources,
     *,
-    runnable: Runnable,
     state: AgentState,
     include: IncludeResolver | None,
 ) -> dict[str, object]:
-    params = {parameter.name: parameter for parameter in runnable.params}
-    structs = {struct.name: struct for struct in state.program.structs}
     result: dict[str, object] = {}
     for name, source in sources:
-        parameter = params.get(name)
-        if parameter is None:
-            raise ValueError(f"unknown named inputs for {runnable.name}: {name}")
-        percept = perceive_input(
+        result[name] = resolve_input_parts(
             source,
             program=state.program,
             include=include,
         )
-        result[name] = coerce_input(
-            percept,
-            parameter.type_name or "Part[]",
-            structs=structs,
-        )
     return result
-
-
-def _validate_named(
-    runnable: Runnable,
-    named: Mapping[str, object],
-) -> None:
-    params = {parameter.name: parameter for parameter in runnable.params}
-    unknown = sorted(set(named) - set(params))
-    if unknown:
-        raise ValueError(
-            f"unknown named inputs for {runnable.name}: {', '.join(unknown)}"
-        )
-    missing = sorted(
-        name
-        for name, parameter in params.items()
-        if not parameter.optional and name not in named
-    )
-    if missing:
-        raise ValueError(
-            f"missing named inputs for {runnable.name}: {', '.join(missing)}"
-        )
 
 
 def _strip_final_line_break(source: str) -> str:

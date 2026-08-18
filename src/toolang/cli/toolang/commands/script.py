@@ -35,7 +35,8 @@ from toolang.execution.records import RunRecord
 from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import RunOverride, ThreadPrefix
+from toolang.execution.types import Local, RunOverride, ThreadPrefix
+from toolang.execution.values import parts_from_local
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
 from toolang.lang.input import NamedInputSources, RunnableInputRaw
@@ -560,7 +561,16 @@ async def _execute(
             runnable_kind=selected.kind,
             runnable_name=selected.name,
             runnable_doc=selected.doc,
-            input_value=spec.input.primary,
+            input_value=(
+                parts_from_local(
+                    Local.typed(
+                        selected.input.type_name or "Part[]",
+                        spec.input.primary,
+                    )
+                )
+                if selected.input is not None and spec.input.primary is not None
+                else ()
+            ),
             args=dict(spec.input.named),
         )
         if not quiet and (sys.stderr.isatty() or verbosity > 0)

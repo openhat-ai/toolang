@@ -15,7 +15,7 @@ from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
     ImagePart,
-    MessagePart,
+    Part,
     TextPart,
     ToolCallPart,
     ToolResultPart,
@@ -25,7 +25,6 @@ from toolang.base.types.message import (
 Text: TypeAlias = str
 Number: TypeAlias = int | float
 Boolean: TypeAlias = bool
-Part: TypeAlias = MessagePart
 
 _VALUE_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[\])*$")
 _PART_TYPES = (

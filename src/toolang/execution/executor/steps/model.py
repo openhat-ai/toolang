@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, cast
 
 from toolang.base.types.message import (
     Message,
-    MessagePart,
-    MessagePartType,
+    Part,
+    PartType,
     TextDelta,
     TextPart,
     ToolCallDelta,
@@ -296,8 +296,8 @@ def _output_parts(
     *,
     current: ModelCallResult,
     tool_calls: Sequence[ToolCall],
-) -> list[tuple[int, MessagePart]]:
-    items: list[tuple[int, MessagePart]] = []
+) -> list[tuple[int, Part]]:
+    items: list[tuple[int, Part]] = []
     seen_tool_calls: set[str] = set()
     saw_text = False
     message = current.message
@@ -358,12 +358,12 @@ def _consume_pending_inputs(state: _AgicState) -> tuple[RunControlRecord, ...]:
             if (
                 primary is not None
                 and isinstance(primary.value, Array)
-                and all(isinstance(item, MessagePart) for item in primary.value)
+                and all(isinstance(item, Part) for item in primary.value)
             ):
                 state.messages.append(
                     Message(
                         role="user",
-                        parts=cast(tuple[MessagePart, ...], tuple(primary.value)),
+                        parts=cast(tuple[Part, ...], tuple(primary.value)),
                     )
                 )
     return inputs
@@ -396,7 +396,7 @@ async def _emit_part_begin(
     stream: _ModelStream,
     *,
     part_index: int,
-    kind: MessagePartType,
+    kind: PartType,
 ) -> None:
     if part_index in stream.started_parts:
         return

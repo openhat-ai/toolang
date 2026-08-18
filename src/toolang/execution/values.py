@@ -10,7 +10,7 @@ from toolang.base.types.message import (
     AudioPart,
     DocumentPart,
     ImagePart,
-    MessagePart,
+    Part,
     TextPart,
     ToolCallPart,
     ToolResultPart,
@@ -38,7 +38,7 @@ _PART_ARRAY_TYPES = {
 }
 
 
-def parts_from_local(local: Local) -> tuple[MessagePart, ...]:
+def parts_from_local(local: Local) -> tuple[Part, ...]:
     """Project one resolved typed local into canonical message parts."""
 
     value = local.value
@@ -51,7 +51,7 @@ def parts_from_local(local: Local) -> tuple[MessagePart, ...]:
             isinstance(item, _PART_TYPES) for item in value
         ):
             raise TypeError("Part[] local requires an ordered part sequence")
-        return cast(tuple[MessagePart, ...], tuple(value))
+        return cast(tuple[Part, ...], tuple(value))
     if local.type == "Text":
         if not isinstance(value, str):
             raise TypeError("Text local requires text")

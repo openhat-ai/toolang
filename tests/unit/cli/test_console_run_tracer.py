@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Mapping
 from io import StringIO
 
-from toolang.base.types.message import MessagePart, TextDelta, TextPart, ToolResultPart
+from toolang.base.types.message import Part, TextDelta, TextPart, ToolResultPart
 from toolang.cli.common.script_progress import ConsoleRunTracer
 from toolang.execution.events import (
     PartDelta,
@@ -17,7 +17,7 @@ from toolang.execution.events import (
 from toolang.execution.types import ControlRef, Local, StepPath, Pointer
 
 
-def _parts(*parts: MessagePart) -> Local:
+def _parts(*parts: Part) -> Local:
     return Local.typed("Part[]", tuple(parts), "_", 0)
 
 
