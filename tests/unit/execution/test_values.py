@@ -25,9 +25,7 @@ from toolang.execution.records import (
     control_payload_from_data,
     control_payload_to_data,
     local_from_data,
-    local_from_protocol_data,
     local_to_data,
-    local_to_protocol_data,
 )
 from toolang.execution.schemas import ControlInfo
 from toolang.execution.types import (
@@ -35,6 +33,8 @@ from toolang.execution.types import (
     Local,
     Pointer,
     StepPath,
+    local_from_protocol_data,
+    local_to_protocol_data,
 )
 from toolang.execution.values import parts_from_local
 from toolang.lang.types import Array, Struct

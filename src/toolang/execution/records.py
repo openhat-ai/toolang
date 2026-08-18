@@ -37,6 +37,7 @@ from .types import (
     ThreadPeerType,
     Pointer,
     TypedPointer,
+    local_from_protocol_data,
     validate_runtime_value,
 )
 
@@ -334,7 +335,6 @@ _PART_STORAGE_TYPES = {
     "ToolCallPart": "tool_call",
     "ToolResultPart": "tool_result",
 }
-_PART_PROTOCOL_TYPES = frozenset(_PART_STORAGE_TYPES.values())
 
 
 def local_from_data(payload: Mapping[str, object]) -> Local:
@@ -478,40 +478,6 @@ def local_value_to_data(value: Value | TypedPointer) -> object:
     raise TypeError(f"unsupported stored value: {type(value).__name__}")
 
 
-def local_from_protocol_data(payload: Mapping[str, object]) -> Local:
-    """Parse one caller-facing local projection."""
-
-    if set(payload) != {"type", "value", "name", "dim"}:
-        raise ValueError("local requires type, value, name, and dim fields")
-    raw_type = payload.get("type")
-    if not isinstance(raw_type, str):
-        raise ValueError("local type must be text")
-    type_name = validate_type(raw_type)
-    raw_dim = payload.get("dim")
-    if isinstance(raw_dim, bool) or not isinstance(raw_dim, int):
-        raise ValueError("local dim must be 0 or 1")
-    raw_name = payload.get("name")
-    if raw_name is not None and not isinstance(raw_name, str):
-        raise ValueError("local name must be text or null")
-    return Local.typed(
-        type_name,
-        _protocol_value_from_data(payload.get("value"), type_name),
-        name=raw_name,
-        dim=cast(Literal[0, 1], raw_dim),
-    )
-
-
-def local_to_protocol_data(local: Local) -> dict[str, object]:
-    """Serialize one caller-facing local projection."""
-
-    return {
-        "type": local.type,
-        "value": _protocol_value_to_data(local.value),
-        "name": local.name,
-        "dim": local.dim,
-    }
-
-
 def _boxed_value_from_data(type_name: str, data: object) -> Value | TypedPointer:
     if type_name.endswith("[]"):
         if not isinstance(data, list):
@@ -533,81 +499,6 @@ def _boxed_value_from_data(type_name: str, data: object) -> Value | TypedPointer
         if value_type(data) == type_name:
             return cast(Value, data)
     raise ValueError(f"invalid boxed {type_name} value")
-
-
-def _protocol_value_from_data(data: object, type_name: str) -> Value | TypedPointer:
-    if isinstance(data, Mapping) and set(data) == {"?"}:
-        raw_tag = cast(Mapping[str, object], data).get("?")
-        if isinstance(raw_tag, str) and raw_tag.startswith("@") and len(raw_tag) > 1:
-            return TypedPointer(type_name, Pointer(raw_tag[1:]))
-    if type_name.endswith("[]"):
-        if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
-            raise ValueError(f"protocol {type_name} requires an array")
-        return cast(
-            Value,
-            Array(
-                type_name,
-                tuple(_protocol_value_from_data(item, type_name[:-2]) for item in data),
-            ),
-        )
-    if type_name in _PART_STORAGE_TYPES:
-        if not isinstance(data, Mapping):
-            raise ValueError(f"protocol {type_name} requires an object")
-        return part_from_data(cast(Mapping[str, Any], data))
-    if type_name == "Part":
-        if not isinstance(data, Mapping):
-            raise ValueError("protocol Part requires an object")
-        return part_from_data(cast(Mapping[str, Any], data))
-    if type_name not in {"Text", "Number", "Boolean", "Json"}:
-        if not isinstance(data, Mapping):
-            raise ValueError(f"protocol {type_name} requires an object")
-        if not all(isinstance(name, str) for name in data):
-            raise ValueError("protocol struct fields must be text")
-        return cast(
-            Value,
-            Struct(
-                type_name,
-                {
-                    cast(str, name): _protocol_json_value_from_data(item)
-                    for name, item in data.items()
-                },
-            ),
-        )
-    return cast(Value, _protocol_json_value_from_data(data))
-
-
-def _protocol_json_value_from_data(data: object) -> object:
-    if isinstance(data, Mapping):
-        mapping = cast(Mapping[str, object], data)
-        if not all(isinstance(name, str) for name in mapping):
-            raise ValueError("protocol object keys must be text")
-        if mapping.get("type") in _PART_PROTOCOL_TYPES:
-            return part_from_data(cast(Mapping[str, Any], mapping))
-        return {
-            name: _protocol_json_value_from_data(item) for name, item in mapping.items()
-        }
-    if isinstance(data, list):
-        return tuple(_protocol_json_value_from_data(item) for item in data)
-    return data
-
-
-def _protocol_value_to_data(value: object) -> object:
-    if isinstance(value, TypedPointer):
-        return {"?": f"@{value.pointer}"}
-    if isinstance(
-        value,
-        (TextPart, ImagePart, AudioPart, DocumentPart, ToolCallPart, ToolResultPart),
-    ):
-        return value.to_data()
-    if isinstance(value, Array):
-        return [_protocol_value_to_data(item) for item in value]
-    if isinstance(value, Struct | Mapping):
-        return {
-            str(name): _protocol_value_to_data(item) for name, item in value.items()
-        }
-    if isinstance(value, tuple | list):
-        return [_protocol_value_to_data(item) for item in value]
-    return value
 
 
 def control_payload_from_data(

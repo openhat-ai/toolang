@@ -2807,12 +2807,8 @@ def _replay_messages_from_step(step: StepRecord) -> list[Message]:
     role = step_message_role(step.kind)
     if role is None or not step.output:
         return []
-    parts = _message_parts_from_local(step.output)
+    parts = parts_from_local(step.output)
     return [Message(role=role, parts=parts)] if parts else []
-
-
-def _message_parts_from_local(local: Local) -> tuple[MessagePart, ...]:
-    return parts_from_local(local)
 
 
 def _json_pointer_segments(pointer: str | None) -> tuple[str, ...]:

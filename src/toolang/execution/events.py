@@ -10,11 +10,7 @@ from pydantic import Field, TypeAdapter
 
 from toolang.base.types.message import Delta, MessagePart, MessagePartType
 
-from .records import (
-    ThreadPeer,
-    local_from_protocol_data,
-    local_to_protocol_data,
-)
+from .records import ThreadPeer
 from .types import (
     ControlRef,
     ExecutionError,
@@ -24,6 +20,8 @@ from .types import (
     StepPath,
     StepStatus,
     Pointer,
+    local_from_protocol_data,
+    local_to_protocol_data,
 )
 
 

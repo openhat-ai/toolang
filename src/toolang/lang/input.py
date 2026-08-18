@@ -8,7 +8,7 @@ import json
 import re
 import shlex
 from types import MappingProxyType
-from typing import Any, TypeAlias, cast
+from typing import TypeAlias, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import (
@@ -20,9 +20,6 @@ from toolang.base.types.message import (
     PerceptPart,
     TextPart,
     message_text,
-    part_from_data,
-    parts_from_data,
-    parts_to_data,
 )
 from toolang.common.template import render_text_template
 
@@ -64,28 +61,7 @@ class RunnableInputValue:
             not self.type_name or self.type_name != self.type_name.strip()
         ):
             raise ValueError("run input value requires a canonical type")
-        _input_value_to_data(self.value)
-
-    @classmethod
-    def from_data(cls, payload: Mapping[str, object]) -> RunnableInputValue:
-        """Decode one durable named input."""
-
-        raw_type = payload.get("type")
-        type_name = str(raw_type) if raw_type is not None else None
-        return cls(
-            name=str(payload.get("name", "")),
-            type_name=type_name,
-            value=_input_value_from_data(payload.get("value"), type_name),
-        )
-
-    def to_data(self) -> dict[str, object]:
-        """Encode one named input without runtime-only objects."""
-
-        return {
-            "name": self.name,
-            "type": self.type_name,
-            "value": _input_value_to_data(self.value),
-        }
+        _validate_input_value(self.value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,63 +105,11 @@ class RunnableInput:
             ),
         )
 
-    @classmethod
-    def from_data(cls, payload: Mapping[str, object]) -> RunnableInput:
-        """Decode one durable run input."""
-
-        raw_primary = payload.get("primary", ())
-        primary = (
-            _require_percept(
-                parts_from_data(
-                    [
-                        cast(Mapping[str, Any], item)
-                        for item in raw_primary
-                        if isinstance(item, Mapping)
-                    ]
-                )
-            )
-            if isinstance(raw_primary, Sequence)
-            and not isinstance(raw_primary, (str, bytes, bytearray))
-            else ()
-        )
-        raw_named = payload.get("named", ())
-        named = (
-            tuple(
-                RunnableInputValue.from_data(cast(Mapping[str, object], item))
-                for item in raw_named
-                if isinstance(item, Mapping)
-            )
-            if isinstance(raw_named, Sequence)
-            and not isinstance(raw_named, (str, bytes, bytearray))
-            else ()
-        )
-        return cls(primary=primary, named=named)
-
     @property
     def values(self) -> Mapping[str, object]:
         """Expose named values through an immutable lookup."""
 
         return MappingProxyType({item.name: item.value for item in self.named})
-
-    @property
-    def types(self) -> Mapping[str, str]:
-        """Expose known named input types through an immutable lookup."""
-
-        return MappingProxyType(
-            {
-                item.name: item.type_name
-                for item in self.named
-                if item.type_name is not None
-            }
-        )
-
-    def to_data(self) -> dict[str, object]:
-        """Encode one run input for a durable or protocol boundary."""
-
-        return {
-            "primary": parts_to_data(self.primary),
-            "named": [item.to_data() for item in self.named],
-        }
 
 
 def parse_input(
@@ -855,72 +779,27 @@ def _parse_text_json(
         ) from error
 
 
-def _input_value_to_data(value: Value | Message) -> dict[str, object]:
-    if _is_percept_part(value):
-        return {"kind": "part", "value": cast(PerceptPart, value).to_data()}
-    if isinstance(value, Message):
-        return {"kind": "message", "value": value.to_data()}
-    if isinstance(value, tuple):
-        return {
-            "kind": "tuple",
-            "value": [_input_value_to_data(item) for item in value],
-        }
-    if isinstance(value, list):
-        return {
-            "kind": "list",
-            "value": [_input_value_to_data(item) for item in value],
-        }
+def _validate_input_value(value: object) -> None:
+    if _is_percept_part(value) or isinstance(value, Message):
+        return
+    if isinstance(value, tuple | list):
+        for item in value:
+            _validate_input_value(item)
+        return
     if isinstance(value, Mapping):
-        return {
-            "kind": "object",
-            "value": {
-                str(name): _input_value_to_data(item)
-                for name, item in cast(Mapping[str, Value], value).items()
-            },
-        }
+        for item in value.values():
+            _validate_input_value(item)
+        return
     if value is None or isinstance(value, str | bool | int | float):
         if isinstance(value, float) and not _is_json_value(value):
             raise TypeError("run input value must be finite")
-        return {"kind": "scalar", "value": value}
+        return
     raise TypeError(f"unsupported run input value: {type(value).__name__}")
-
-
-def _input_value_from_data(value: object, type_name: str | None) -> Value | Message:
-    del type_name
-    if not isinstance(value, Mapping):
-        raise ValueError("run input value must be an object")
-    mapping = cast(Mapping[str, object], value)
-    kind = mapping.get("kind")
-    payload = mapping.get("value")
-    if kind == "part" and isinstance(payload, Mapping):
-        return cast(PerceptPart, part_from_data(cast(Mapping[str, Any], payload)))
-    if kind == "message" and isinstance(payload, Mapping):
-        return Message.from_data(cast(Mapping[str, Any], payload))
-    if (
-        kind in {"tuple", "list"}
-        and isinstance(payload, Sequence)
-        and not isinstance(payload, (str, bytes, bytearray))
-    ):
-        items = tuple(_input_value_from_data(item, None) for item in payload)
-        return cast(Value, items if kind == "tuple" else list(items))
-    if kind == "object" and isinstance(payload, Mapping):
-        return cast(
-            Value,
-            {
-                str(name): _input_value_from_data(item, None)
-                for name, item in cast(Mapping[str, object], payload).items()
-            },
-        )
-    if kind == "scalar" and (
-        payload is None or isinstance(payload, str | bool | int | float)
-    ):
-        return payload
-    raise ValueError(f"unknown run input value kind: {kind}")
 
 
 def _require_input_value(value: object) -> Value | Message:
     candidate = cast(Value | Message, value)
-    _input_value_to_data(candidate)
+    _validate_input_value(candidate)
     return candidate
 
 
