@@ -386,6 +386,12 @@ class Local:
             raise ValueError(f"invalid local name: {self.name!r}")
         if self.dim not in {0, 1}:
             raise ValueError(f"unsupported local dimension: {self.dim!r}")
+        if not isinstance(self.value, TypedPointer):
+            object.__setattr__(
+                self,
+                "value",
+                value_for_type(value_type(self.value), self.value),
+            )
         validate_runtime_value(self.value, self.type)
         if self.dim == 1 and not self.type.endswith("[]"):
             raise ValueError("dim=1 requires an array value type")

@@ -92,8 +92,11 @@ to Part. `?` and `!` are reserved with no literal escape. These tags are private
 to durable records. Events and APIs retain their existing Local projection
 with `type`, `value`, `name`, and `dim`, their existing `$ptr` projection, and
 the ordinary `type: text|image|audio|document|tool_call|tool_result` Part
-representation. Fields whose schema accepts only pointers store canonical
-Pointer strings directly.
+representation. When an open Json or Struct field contains a typed Array,
+Struct, or pointer whose type cannot be inferred from the enclosing Local, the
+protocol uses a readable `{"type": "T", "value": ...}` or
+`{"type": "T", "$ptr": "..."}` wrapper. Fields whose schema accepts only
+pointers store canonical Pointer strings directly.
 
 Control locals must have unique names. `_` is the primary argument. A step or
 run output may use `name=None` to produce a value without updating the runtime

@@ -30,7 +30,13 @@ from toolang.execution.records import (
     local_to_protocol_data,
 )
 from toolang.execution.schemas import ControlInfo
-from toolang.execution.types import AgentResources, Local, StepPath, Pointer
+from toolang.execution.types import (
+    AgentResources,
+    Local,
+    Pointer,
+    StepPath,
+    TypedPointer,
+)
 from toolang.execution.values import parts_from_local
 from toolang.lang.types import Array, Struct
 
@@ -163,6 +169,18 @@ def test_local_codec_round_trips_structs_and_nested_arrays() -> None:
     assert local_from_data(local_to_data(local)) == local
 
 
+def test_local_codec_canonicalizes_untyped_collections_before_storage() -> None:
+    local = Local.typed(
+        "Review",
+        {"items": [1, {"labels": ["one", "two"]}]},
+        "result",
+    )
+
+    assert isinstance(local.value, Struct)
+    assert local.value["items"] == (1, {"labels": ("one", "two")})
+    assert local_from_data(local_to_data(local)) == local
+
+
 def test_local_part_projection_preserves_tool_parts() -> None:
     part = ToolCallPart(
         tool_call_id="call_1",
@@ -265,6 +283,45 @@ def test_protocol_projection_round_trips_parts_nested_in_json() -> None:
     local = Local.typed("Json", {"answer": TextPart("hello")}, "_")
 
     assert local_from_protocol_data(local_to_protocol_data(local)) == local
+
+
+def test_protocol_projection_round_trips_nested_typed_values() -> None:
+    local = Local.typed(
+        "Review",
+        {
+            "evidence": Array("Text[]", ("first", "second")),
+            "label": Struct("text", {"content": "not a part"}),
+            "source": TypedPointer("Text", Pointer("run_1.0")),
+        },
+        "_",
+    )
+
+    data = local_to_protocol_data(local)
+
+    assert data["value"] == {
+        "evidence": {"type": "Text[]", "value": ["first", "second"]},
+        "label": {"type": "text", "value": {"content": "not a part"}},
+        "source": {"type": "Text", "$ptr": "run_1.0"},
+    }
+    assert local_from_protocol_data(data) == local
+
+
+def test_protocol_projection_preserves_pointer_subtypes_in_arrays() -> None:
+    local = Local(
+        value=Array(
+            "Part[]",
+            (TypedPointer("TextPart", Pointer("run_1.0/0")),),
+        ),
+        name="_",
+        dim=1,
+    )
+
+    data = local_to_protocol_data(local)
+
+    assert data["value"] == [
+        {"type": "TextPart", "$ptr": "run_1.0/0"},
+    ]
+    assert local_from_protocol_data(data) == local
 
 
 def test_preparation_payload_round_trips_resolved_locals() -> None:

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import math
 import re
 from types import MappingProxyType
-from typing import Generic, TypeAlias, TypeVar, overload
+from typing import Generic, TypeAlias, TypeVar, cast, overload
 
 from typing_extensions import TypeAliasType
 
@@ -59,7 +59,11 @@ class Array(Sequence[_T_co], Generic[_T_co]):
         validate_type(self.type)
         if not self.type.endswith("[]"):
             raise ValueError("array type must end in []")
-        object.__setattr__(self, "value", tuple(self.value))
+        object.__setattr__(
+            self,
+            "value",
+            tuple(cast(_T_co, _snapshot_container(item)) for item in self.value),
+        )
 
     @property
     def item_type(self) -> str:
@@ -98,7 +102,16 @@ class Struct(Mapping[str, _T_co], Generic[_T_co]):
             raise ValueError("struct type cannot be an array")
         if not all(isinstance(name, str) for name in self.value):
             raise TypeError("struct field names must be strings")
-        object.__setattr__(self, "value", MappingProxyType(dict(self.value)))
+        object.__setattr__(
+            self,
+            "value",
+            MappingProxyType(
+                {
+                    name: cast(_T_co, _snapshot_container(item))
+                    for name, item in self.value.items()
+                }
+            ),
+        )
 
     def __getitem__(self, name: str) -> _T_co:
         return self.value[name]
@@ -108,6 +121,18 @@ class Struct(Mapping[str, _T_co], Generic[_T_co]):
 
     def __len__(self) -> int:
         return len(self.value)
+
+
+def _snapshot_container(value: object) -> object:
+    if isinstance(value, Array | Struct):
+        return value
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {name: _snapshot_container(item) for name, item in value.items()}
+        )
+    if isinstance(value, tuple | list):
+        return tuple(_snapshot_container(item) for item in value)
+    return value
 
 
 Json = TypeAliasType(

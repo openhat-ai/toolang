@@ -506,7 +506,7 @@ def local_to_protocol_data(local: Local) -> dict[str, object]:
 
     return {
         "type": local.type,
-        "value": _protocol_value_to_data(local.value),
+        "value": _protocol_value_to_data(local.value, expected_type=local.type),
         "name": local.name,
         "dim": local.dim,
     }
@@ -536,10 +536,18 @@ def _boxed_value_from_data(type_name: str, data: object) -> Value | TypedPointer
 
 
 def _protocol_value_from_data(data: object, type_name: str) -> Value | TypedPointer:
-    if isinstance(data, Mapping) and set(data) == {"$ptr"}:
-        raw_pointer = cast(Mapping[str, object], data).get("$ptr")
-        if isinstance(raw_pointer, str):
-            return TypedPointer(type_name, Pointer(raw_pointer))
+    if isinstance(data, Mapping):
+        mapping = cast(Mapping[str, object], data)
+        if set(mapping) == {"$ptr"}:
+            raw_pointer = mapping.get("$ptr")
+            if isinstance(raw_pointer, str):
+                return TypedPointer(type_name, Pointer(raw_pointer))
+        if set(mapping) == {"type", "$ptr"}:
+            raw_type = mapping.get("type")
+            raw_pointer = mapping.get("$ptr")
+            if not isinstance(raw_type, str) or not isinstance(raw_pointer, str):
+                raise ValueError("typed protocol pointer requires text fields")
+            return TypedPointer(validate_type(raw_type), Pointer(raw_pointer))
     if type_name.endswith("[]"):
         if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
             raise ValueError(f"protocol {type_name} requires an array")
@@ -581,6 +589,20 @@ def _protocol_json_value_from_data(data: object) -> object:
         mapping = cast(Mapping[str, object], data)
         if not all(isinstance(name, str) for name in mapping):
             raise ValueError("protocol object keys must be text")
+        if set(mapping) == {"type", "$ptr"}:
+            raw_type = mapping.get("type")
+            raw_pointer = mapping.get("$ptr")
+            if not isinstance(raw_type, str) or not isinstance(raw_pointer, str):
+                raise ValueError("typed protocol pointer requires text fields")
+            return TypedPointer(validate_type(raw_type), Pointer(raw_pointer))
+        if set(mapping) == {"type", "value"}:
+            raw_type = mapping.get("type")
+            if not isinstance(raw_type, str):
+                raise ValueError("typed protocol value requires a text type")
+            return _protocol_value_from_data(
+                mapping.get("value"),
+                validate_type(raw_type),
+            )
         if mapping.get("type") in _PART_PROTOCOL_TYPES:
             return part_from_data(cast(Mapping[str, Any], mapping))
         return {
@@ -591,17 +613,37 @@ def _protocol_json_value_from_data(data: object) -> object:
     return data
 
 
-def _protocol_value_to_data(value: object) -> object:
+def _protocol_value_to_data(
+    value: object,
+    *,
+    expected_type: str | None = None,
+) -> object:
     if isinstance(value, TypedPointer):
-        return {"$ptr": str(value.pointer)}
+        pointer = {"$ptr": str(value.pointer)}
+        if value.type == expected_type:
+            return pointer
+        return {"type": value.type, **pointer}
     if isinstance(
         value,
         (TextPart, ImagePart, AudioPart, DocumentPart, ToolCallPart, ToolResultPart),
     ):
         return value.to_data()
     if isinstance(value, Array):
-        return [_protocol_value_to_data(item) for item in value]
-    if isinstance(value, Struct | Mapping):
+        items = [
+            _protocol_value_to_data(item, expected_type=value.item_type)
+            for item in value
+        ]
+        if value.type == expected_type:
+            return items
+        return {"type": value.type, "value": items}
+    if isinstance(value, Struct):
+        fields = {
+            str(name): _protocol_value_to_data(item) for name, item in value.items()
+        }
+        if value.type == expected_type:
+            return fields
+        return {"type": value.type, "value": fields}
+    if isinstance(value, Mapping):
         return {
             str(name): _protocol_value_to_data(item) for name, item in value.items()
         }
