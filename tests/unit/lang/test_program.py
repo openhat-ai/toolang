@@ -375,6 +375,14 @@ service github:
 """
         )
 
+    with pytest.raises(ToolangError, match="conflicts with a built-in type"):
+        Program.from_source(
+            """
+struct Json:
+  value: Text
+"""
+        )
+
     with pytest.raises(ToolangError, match="Duplicate runnable name"):
         Program.from_source(
             """

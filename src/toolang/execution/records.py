@@ -334,7 +334,8 @@ _PART_STORAGE_TYPES = {
     "ToolCallPart": "tool_call",
     "ToolResultPart": "tool_result",
 }
-_PART_PROTOCOL_TYPES = frozenset(_PART_STORAGE_TYPES.values())
+_PROTOCOL_TYPED_VALUE_FIELDS = frozenset({"$type", "$value"})
+_PROTOCOL_TYPED_POINTER_FIELDS = frozenset({"$type", "$ptr"})
 
 
 def local_from_data(payload: Mapping[str, object]) -> Local:
@@ -536,18 +537,9 @@ def _boxed_value_from_data(type_name: str, data: object) -> Value | TypedPointer
 
 
 def _protocol_value_from_data(data: object, type_name: str) -> Value | TypedPointer:
-    if isinstance(data, Mapping):
-        mapping = cast(Mapping[str, object], data)
-        if set(mapping) == {"$ptr"}:
-            raw_pointer = mapping.get("$ptr")
-            if isinstance(raw_pointer, str):
-                return TypedPointer(type_name, Pointer(raw_pointer))
-        if set(mapping) == {"type", "$ptr"}:
-            raw_type = mapping.get("type")
-            raw_pointer = mapping.get("$ptr")
-            if not isinstance(raw_type, str) or not isinstance(raw_pointer, str):
-                raise ValueError("typed protocol pointer requires text fields")
-            return TypedPointer(validate_type(raw_type), Pointer(raw_pointer))
+    pointer = _protocol_pointer_from_data(data, expected_type=type_name)
+    if pointer is not None:
+        return pointer
     if type_name.endswith("[]"):
         if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
             raise ValueError(f"protocol {type_name} requires an array")
@@ -589,22 +581,17 @@ def _protocol_json_value_from_data(data: object) -> object:
         mapping = cast(Mapping[str, object], data)
         if not all(isinstance(name, str) for name in mapping):
             raise ValueError("protocol object keys must be text")
-        if set(mapping) == {"type", "$ptr"}:
-            raw_type = mapping.get("type")
-            raw_pointer = mapping.get("$ptr")
-            if not isinstance(raw_type, str) or not isinstance(raw_pointer, str):
-                raise ValueError("typed protocol pointer requires text fields")
-            return TypedPointer(validate_type(raw_type), Pointer(raw_pointer))
-        if set(mapping) == {"type", "value"}:
-            raw_type = mapping.get("type")
+        pointer = _protocol_pointer_from_data(mapping, expected_type=None)
+        if pointer is not None:
+            return pointer
+        if set(mapping) == _PROTOCOL_TYPED_VALUE_FIELDS:
+            raw_type = mapping.get("$type")
             if not isinstance(raw_type, str):
                 raise ValueError("typed protocol value requires a text type")
             return _protocol_value_from_data(
-                mapping.get("value"),
+                mapping.get("$value"),
                 validate_type(raw_type),
             )
-        if mapping.get("type") in _PART_PROTOCOL_TYPES:
-            return part_from_data(cast(Mapping[str, Any], mapping))
         return {
             name: _protocol_json_value_from_data(item) for name, item in mapping.items()
         }
@@ -622,12 +609,16 @@ def _protocol_value_to_data(
         pointer = {"$ptr": str(value.pointer)}
         if value.type == expected_type:
             return pointer
-        return {"type": value.type, **pointer}
+        return {"$type": value.type, **pointer}
     if isinstance(
         value,
         (TextPart, ImagePart, AudioPart, DocumentPart, ToolCallPart, ToolResultPart),
     ):
-        return value.to_data()
+        data = value.to_data()
+        type_name = type(value).__name__
+        if expected_type in {"Part", type_name}:
+            return data
+        return {"$type": type_name, "$value": data}
     if isinstance(value, Array):
         items = [
             _protocol_value_to_data(item, expected_type=value.item_type)
@@ -635,21 +626,50 @@ def _protocol_value_to_data(
         ]
         if value.type == expected_type:
             return items
-        return {"type": value.type, "value": items}
+        return {"$type": value.type, "$value": items}
     if isinstance(value, Struct):
         fields = {
             str(name): _protocol_value_to_data(item) for name, item in value.items()
         }
         if value.type == expected_type:
             return fields
-        return {"type": value.type, "value": fields}
+        return {"$type": value.type, "$value": fields}
     if isinstance(value, Mapping):
+        if frozenset(value) in {
+            _PROTOCOL_TYPED_VALUE_FIELDS,
+            _PROTOCOL_TYPED_POINTER_FIELDS,
+        }:
+            raise ValueError("$type with $value or $ptr is reserved for typed values")
         return {
             str(name): _protocol_value_to_data(item) for name, item in value.items()
         }
     if isinstance(value, tuple | list):
         return [_protocol_value_to_data(item) for item in value]
     return value
+
+
+def _protocol_pointer_from_data(
+    data: object,
+    *,
+    expected_type: str | None,
+) -> TypedPointer | None:
+    if not isinstance(data, Mapping):
+        return None
+    mapping = cast(Mapping[str, object], data)
+    if set(mapping) == {"$ptr"}:
+        if expected_type is None:
+            return None
+        raw_pointer = mapping.get("$ptr")
+        if not isinstance(raw_pointer, str):
+            raise ValueError("protocol pointer requires text")
+        return TypedPointer(expected_type, Pointer(raw_pointer))
+    if set(mapping) != _PROTOCOL_TYPED_POINTER_FIELDS:
+        return None
+    raw_type = mapping.get("$type")
+    raw_pointer = mapping.get("$ptr")
+    if not isinstance(raw_type, str) or not isinstance(raw_pointer, str):
+        raise ValueError("typed protocol pointer requires text fields")
+    return TypedPointer(validate_type(raw_type), Pointer(raw_pointer))
 
 
 def control_payload_from_data(

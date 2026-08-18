@@ -535,6 +535,8 @@ def value_for_type(type_name: str, value: object) -> Value | TypedPointer:
 
 
 def _normalize_json_value(value: object) -> object:
+    if isinstance(value, Struct):
+        return value
     if isinstance(value, Mapping):
         if not all(isinstance(name, str) for name in value):
             raise TypeError("Json object keys must be strings")

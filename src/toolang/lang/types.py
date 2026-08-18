@@ -36,6 +36,16 @@ _PART_TYPES = (
     ToolCallPart,
     ToolResultPart,
 )
+_RESERVED_STRUCT_TYPES = frozenset(
+    {
+        "Text",
+        "Number",
+        "Boolean",
+        "Json",
+        "Part",
+        *(part_type.__name__ for part_type in _PART_TYPES),
+    }
+)
 
 _T_co = TypeVar("_T_co", covariant=True)
 
@@ -45,6 +55,15 @@ def validate_type(type_name: str) -> str:
 
     if not isinstance(type_name, str) or not _VALUE_TYPE_RE.fullmatch(type_name):
         raise ValueError(f"invalid Toolang value type: {type_name!r}")
+    return type_name
+
+
+def validate_struct_type(type_name: str) -> str:
+    """Return one unambiguous authored struct type."""
+
+    validate_type(type_name)
+    if type_name in _RESERVED_STRUCT_TYPES:
+        raise ValueError(f"struct type conflicts with built-in type: {type_name}")
     return type_name
 
 
@@ -97,7 +116,7 @@ class Struct(Mapping[str, _T_co], Generic[_T_co]):
     value: Mapping[str, _T_co]
 
     def __post_init__(self) -> None:
-        validate_type(self.type)
+        validate_struct_type(self.type)
         if self.type.endswith("[]"):
             raise ValueError("struct type cannot be an array")
         if not all(isinstance(name, str) for name in self.value):
@@ -197,5 +216,6 @@ __all__ = [
     "Text",
     "Value",
     "validate_type",
+    "validate_struct_type",
     "value_type",
 ]

@@ -8,6 +8,7 @@ from typing import Any
 
 from . import ast
 from .errors import ToolangValidationError
+from .types import validate_struct_type
 
 _SERVICE_FIELDS = frozenset(
     {"description", "transport", "protocol", "target", "headers", "env"}
@@ -20,7 +21,7 @@ def _validate(program: ast.Program) -> None:
     """Validate one complete semantic AST."""
 
     _validate_caps(program.caps)
-    _unique((item.name for item in program.structs), label="struct")
+    _validate_structs(program.structs)
     contexts = _namespace(program.contexts, label="context")
     instructs = _namespace(program.instructs, label="instruct")
     runnables = _runnable_namespace(program)
@@ -141,6 +142,17 @@ def _unique(values: Iterable[str], *, label: str) -> None:
         if value in seen:
             raise ToolangValidationError(f"Duplicate {label} name {value!r}.")
         seen.add(value)
+
+
+def _validate_structs(structs: tuple[ast.StructDecl, ...]) -> None:
+    _unique((item.name for item in structs), label="struct")
+    for item in structs:
+        try:
+            validate_struct_type(item.name)
+        except ValueError as exc:
+            raise ToolangValidationError(
+                f"Struct name {item.name!r} conflicts with a built-in type."
+            ) from exc
 
 
 def _validate_parameters(

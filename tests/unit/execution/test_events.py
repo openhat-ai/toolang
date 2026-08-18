@@ -29,7 +29,7 @@ from toolang.execution.types import (
     StepStatus,
     TypedPointer,
 )
-from toolang.lang.types import Array
+from toolang.lang.types import Array, Struct
 
 
 _EVENTS: tuple[RunEvent, ...] = (
@@ -152,6 +152,7 @@ def test_run_event_codec_round_trips_nested_typed_output_values() -> None:
             "Review",
             {
                 "matches": Array("Text[]", ("one", "two")),
+                "review": Struct("Review", {"score": 1}),
                 "source": TypedPointer("Text", Pointer("run_source.0")),
             },
             "_",
