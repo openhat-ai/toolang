@@ -24,7 +24,6 @@ from .console import ProgressConsole
 from ..execution_progress.formatting import (
     integer,
     output_preview,
-    runtime_failure,
     status_label,
 )
 
@@ -167,8 +166,6 @@ class ConsoleRunTracer(RunTracer):
         self._show_statement_live(live_owner, event.finished_at)
 
     def _begin_step(self, event: StepBegin) -> None:
-        if runtime_failure(event):
-            return
         statement = event.given.get("statement")
         if isinstance(statement, str) and statement:
             run = self._runs.get(event.step.run)

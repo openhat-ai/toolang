@@ -13,7 +13,7 @@ from ...types import Local as RecordLocal
 from ..common import BoundRun
 from ..common import Local, boolean, require_list, result_list
 from ..steps import par as par_step
-from ..steps import system as system_step
+from ..steps import value as value_step
 
 if TYPE_CHECKING:
     from ..executor import _Execution
@@ -76,7 +76,7 @@ async def execute(
             ),
         )
 
-    step = par_step if statement.predicate is not None else system_step
+    step = par_step if statement.predicate is not None else value_step
     return await step.execute(
         execution.emit,
         binding=binding,

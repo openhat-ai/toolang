@@ -13,7 +13,6 @@ from ...types import StepPath
 from ..common import BoundRun
 from ..common import (
     Local,
-    apply_steer,
     program_structs,
     statement_has_call,
     update_locals,
@@ -93,13 +92,6 @@ async def execute_statements(
             binding.run_id,
             call=statement_has_call(statement),
         )
-        controls = execution.steer_controls(binding.run_id, statement)
-        apply_steer(
-            locals,
-            controls,
-            input_type=locals.get("_", Local()).type_name,
-            structs=program_structs(binding),
-        )
         path = (
             StepPath(binding.run_id, (index,))
             if parent is None
@@ -111,7 +103,7 @@ async def execute_statements(
             locals if isinstance(statement, RepeatStmt) else dict(locals),
             path=path,
             statement=statement,
-            controls=controls,
+            controls=(),
             placement=placement,
         )
         if not isinstance(statement, RepeatStmt):

@@ -1,4 +1,4 @@
-"""Deterministic local statement steps."""
+"""Deterministic local value steps."""
 
 from __future__ import annotations
 
@@ -21,11 +21,11 @@ async def execute(
     placement: Mapping[str, object] | None,
     operation: Callable[[], Awaitable[Local]],
 ) -> Local:
-    """Execute one deterministic local operation and emit its step events."""
+    """Produce one local value and emit its step events."""
 
     return await execute_step(
         emit,
-        kind="system",
+        kind="value",
         path=path,
         binding=binding,
         statement=statement,

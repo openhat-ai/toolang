@@ -113,7 +113,7 @@ class LaneState:
 
 @dataclass(slots=True)
 class CallState:
-    """Semantic state for one atomic model, tool, or system step."""
+    """Semantic state for one atomic call step."""
 
     begin: StepBegin
     preview: str = ""

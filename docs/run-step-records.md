@@ -75,7 +75,7 @@ ExecutionError = string | StepErrorRef(step: StepPath)
 The step that directly catches an exception stores its message string. An
 enclosing step or run stores `{"step": "run_id/path"}` to reference the step
 that owns the next error detail. A runtime failure outside a step stores its
-message directly on the run and does not create a synthetic system step.
+message directly on the run and does not create a synthetic diagnostic step.
 
 
 ## RunControlRecord
@@ -190,7 +190,7 @@ limits.
 Step kinds remain intentionally small:
 
 ```text
-run | agent | human | model | tool | par | loop | system
+run | agent | human | model | tool | par | loop | value
 ```
 
 

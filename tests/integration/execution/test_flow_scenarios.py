@@ -187,7 +187,7 @@ flow staged(_: Part[]) -> Part[]:
             assert retry.kind == "retry"
             assert isinstance(retry.payload, RetryControlPayload)
             assert isinstance(start.payload, StartControlPayload)
-            assert retry.payload.retry_from is not None
+            assert retry.payload.retry_from == historical[1].path
             assert retry.payload.runnable == start.payload.runnable
             assert retry.payload.model == start.payload.model
             assert retry.payload.limits == start.payload.limits
@@ -206,6 +206,75 @@ flow staged(_: Part[]) -> Part[]:
             )
             assert any(run.parent == historical[1].path for run in audit_runs)
             assert len(harness.adapter.invocations) == 2
+
+    asyncio.run(scenario())
+
+
+def test_retry_succeeded_flow_replays_call_before_trailing_value(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic worker(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow staged(_: Part[]) -> Part[]:
+  run worker
+  let note:
+    committed
+""",
+        responses=[
+            ModelCallResult(message=Message.assistant("first")),
+            ModelCallResult(message=Message.assistant("second")),
+        ],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            run = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="staged",
+                    primary=resolve_input_parts("hello"),
+                )
+            )
+            original = harness.store.list_steps(run_id=run.id)
+            assert [(step.kind, step.status) for step in original] == [
+                ("run", "succeeded"),
+                ("value", "succeeded"),
+            ]
+
+            retried = await harness.executor.retry(
+                run.id,
+                setup=harness.setup,
+                state=harness.state,
+            )
+
+            assert retried.status == "succeeded"
+            assert len(harness.adapter.invocations) == 2
+            retry = harness.store.list_run_controls(run_id=run.id)[-1]
+            assert retry.kind == "retry"
+            assert isinstance(retry.payload, RetryControlPayload)
+            assert retry.payload.retry_from == original[0].path
+            historical = harness.store.list_steps(
+                run_id=run.id,
+                include_ejected=True,
+            )
+            assert [(step.path.index, step.kind) for step in historical] == [
+                (0, "run"),
+                (1, "value"),
+                (2, "run"),
+                (3, "value"),
+            ]
+            assert historical[0].ejected_by == RunControlRef(run.id, retry.index)
+            assert historical[1].ejected_by == RunControlRef(run.id, retry.index)
+            assert historical[2].ejected_by is None
+            assert historical[3].ejected_by is None
 
     asyncio.run(scenario())
 
@@ -516,13 +585,13 @@ flow fail(_: Part[]) -> Number:
             assert record.error.startswith("output is not valid Number")
             steps = harness.store.list_steps(run_id=record.id)
             assert [(step.kind, step.status) for step in steps] == [
-                ("system", "succeeded"),
+                ("value", "succeeded"),
             ]
             assert_run_event_integrity(tracer.events)
             assert event_labels(tracer.events) == [
                 f"run_begin:{record.id}",
-                f"step_begin:{record.id}/0:system",
-                f"step_end:{record.id}/0:system:succeeded",
+                f"step_begin:{record.id}/0:value",
+                f"step_end:{record.id}/0:value:succeeded",
                 f"run_end:{record.id}:failed",
             ]
 
@@ -686,7 +755,7 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
             assert root.status == "succeeded", root.error
             assert harness.store.run_output_text(run_id=root.id) == "report"
             assert _root_step_kinds(harness, root.id) == [
-                "system",
+                "value",
                 "run",
                 "par",
                 "par",
@@ -1060,7 +1129,7 @@ flow selected(_: Text) -> Text[]:
 
             assert root.status == "succeeded"
             assert _output_value(harness, root.id) == expected
-            assert _root_step_kinds(harness, root.id) == ["run", "system"]
+            assert _root_step_kinds(harness, root.id) == ["run", "value"]
 
     asyncio.run(scenario())
 

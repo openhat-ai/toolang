@@ -442,12 +442,12 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
             ),
             StepBegin(
                 step=StepPath.parse("run_child/0"),
-                kind="system",
+                kind="value",
                 started_at="2026-01-01T00:00:03Z",
             ),
             StepEnd(
                 step=StepPath.parse("run_child/0"),
-                kind="system",
+                kind="value",
                 status="succeeded",
                 finished_at="2026-01-01T00:00:04Z",
             ),

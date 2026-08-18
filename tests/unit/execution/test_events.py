@@ -109,7 +109,7 @@ def test_execution_status_vocabulary_has_canonical_order() -> None:
     )
     reserved = StepEnd(
         step=StepPath.parse("run_root/0"),
-        kind="system",
+        kind="value",
         status="pending",
     )
     assert run_event_from_data(run_event_to_data(reserved)) == reserved

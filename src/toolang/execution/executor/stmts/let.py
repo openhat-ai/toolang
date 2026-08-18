@@ -11,7 +11,7 @@ from toolang.lang.input import resolve_input_parts
 from ...records import RunControlRecord, StepPath
 from ..common import BoundRun
 from ..common import Local
-from ..steps import system as system_step
+from ..steps import value as value_step
 
 if TYPE_CHECKING:
     from ..executor import _Execution
@@ -46,7 +46,7 @@ async def execute(
             type_name="Part[]",
         )
 
-    return await system_step.execute(
+    return await value_step.execute(
         execution.emit,
         binding=binding,
         path=path,

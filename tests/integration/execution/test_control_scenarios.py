@@ -300,7 +300,7 @@ agic calculate(_: Part[]) -> Part[]:
         ("next_step", [("run", "succeeded")]),
         (
             "next_call",
-            [("run", "succeeded"), ("system", "succeeded")],
+            [("run", "succeeded"), ("value", "succeeded")],
         ),
     ],
 )

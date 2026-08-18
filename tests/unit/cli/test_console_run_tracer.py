@@ -425,7 +425,7 @@ def test_statement_spacing_is_compact_at_every_verbosity() -> None:
         _flow_begin(),
         StepBegin(
             step=StepPath.parse("run_one/0"),
-            kind="system",
+            kind="value",
             given={
                 "statement": "let",
                 "binding": "project",
@@ -434,7 +434,7 @@ def test_statement_spacing_is_compact_at_every_verbosity() -> None:
         ),
         StepEnd(
             step=StepPath.parse("run_one/0"),
-            kind="system",
+            kind="value",
             status="succeeded",
             output=_parts(TextPart("project")),
             noted={"shape": "item"},

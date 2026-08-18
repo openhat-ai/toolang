@@ -121,10 +121,10 @@ and `retry()` create an owner task and return an awaitable `RunHandle`.
 `rerun()` loads the source invocation from durable truth and starts a new root
 against the supplied current setup and state. `retry()` keeps the root ID,
 reopens a terminal run, and resumes after its effective committed prefix. An
-omitted retry anchor prefers the latest visible failed, canceled, or running
-non-system step. If no incomplete step exists, retry restarts at the latest
-visible non-system step, or from the beginning when the run has no steps. The handle
-exposes its run ID, executor, and task, and
+omitted retry anchor uses the latest visible failed, canceled, or running Step.
+For a failed or canceled Run with no incomplete Step, it uses the latest visible
+Step. For a succeeded Run, it prefers the latest non-value Step and falls back
+to the latest value Step. The handle exposes its run ID, executor, and task, and
 delegates same-process `stop()`, `steer()`, and `cancel_control()` operations.
 Its await path shields the owner task so
 canceling a waiting HTTP request or TUI action does not cancel the durable run.

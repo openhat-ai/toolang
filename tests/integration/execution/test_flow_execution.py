@@ -249,7 +249,7 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
     assert detail.input_text == ""
     assert [control.index for control in detail.controls] == [0]
     assert detail.controls[0].payload == start.payload
-    assert [step.kind for step in detail.steps] == ["system"]
+    assert [step.kind for step in detail.steps] == ["value"]
     assert detail.steps[0].output == RecordLocal.typed(
         "Part[]", (TextPart(text="done"),), "_", 0
     )
@@ -1705,7 +1705,7 @@ def test_private_event_projector_persists_run_and_step_records(
     sink.on_event(
         StepBegin(
             step=StepPath.parse("run_test/0"),
-            kind="system",
+            kind="value",
             input=(Pointer.control("run_test", 0, "_"),),
             started_at="2026-01-01T00:00:02Z",
         )
@@ -1713,7 +1713,7 @@ def test_private_event_projector_persists_run_and_step_records(
     sink.on_event(
         StepEnd(
             step=StepPath.parse("run_test/0"),
-            kind="system",
+            kind="value",
             status="succeeded",
             output=RecordLocal.typed("Part[]", (TextPart(text="done"),), "_", 0),
             finished_at="2026-01-01T00:00:03Z",
@@ -1762,14 +1762,14 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
         sink.on_event(
             StepBegin(
                 step=StepPath.parse(f"{run_id}/0"),
-                kind="system",
+                kind="value",
                 started_at="2026-01-01T00:00:02Z",
             )
         )
         sink.on_event(
             StepEnd(
                 step=StepPath.parse(f"{run_id}/0"),
-                kind="system",
+                kind="value",
                 status="succeeded",
                 output=RecordLocal.typed("Part[]", (TextPart(text=text),), "_", 0),
                 finished_at="2026-01-01T00:00:03Z",

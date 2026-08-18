@@ -72,7 +72,7 @@ from .types import (
 )
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 25
+_SCHEMA_VERSION = 26
 _MIGRATABLE_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -528,6 +528,7 @@ class RunStore:
                     run_id=run_id,
                     tree_runs=tree_runs,
                     anchor=anchor,
+                    run_status=run.status,
                 )
                 index_row = self._conn.execute(
                     'SELECT COALESCE(MAX("index"), -1) + 1 AS next_index '
@@ -1690,6 +1691,7 @@ class RunStore:
         run_id: str,
         tree_runs: Sequence[str],
         anchor: StepPath | None,
+        run_status: RunStatus,
     ) -> StepPath | None:
         placeholders = ", ".join("?" for _ in tree_runs)
         rows = self._conn.execute(
@@ -1714,24 +1716,68 @@ class RunStore:
                 raise ValueError(
                     f"retry anchor is not visible in run {run_id}: {anchor}"
                 )
-            return anchor
-        retryable = tuple(
-            row
-            for row in rows
-            if str(row["status"]) in {"running", "failed", "canceled"}
-        )
-        candidate = next(
-            (row for row in reversed(retryable) if str(row["kind"]) != "system"),
-            retryable[-1] if retryable else None,
-        )
-        if candidate is None:
-            candidate = next(
-                (row for row in reversed(rows) if str(row["kind"]) != "system"),
-                rows[-1] if rows else None,
+            candidate = match
+        else:
+            incomplete = tuple(
+                row
+                for row in rows
+                if str(row["status"]) in {"running", "failed", "canceled"}
             )
+            candidate = incomplete[-1] if incomplete else None
+            if candidate is None and run_status == "succeeded":
+                candidate = next(
+                    (row for row in reversed(rows) if str(row["kind"]) != "value"),
+                    rows[-1] if rows else None,
+                )
+            elif candidate is None:
+                candidate = rows[-1] if rows else None
         if candidate is None:
             return None
-        return StepPath.from_local(str(candidate["run"]), str(candidate["path"]))
+        selected = StepPath.from_local(str(candidate["run"]), str(candidate["path"]))
+        resolved = self._root_retry_step(
+            run_id=run_id,
+            tree_runs=tree_runs,
+            selected=selected,
+        )
+        visible = {
+            StepPath.from_local(str(row["run"]), str(row["path"])) for row in rows
+        }
+        if resolved not in visible:
+            raise ValueError(f"retry resume step is not visible: {resolved}")
+        return resolved
+
+    def _root_retry_step(
+        self,
+        *,
+        run_id: str,
+        tree_runs: Sequence[str],
+        selected: StepPath,
+    ) -> StepPath:
+        """Map one tree Step to its owning top-level root Step."""
+
+        placeholders = ", ".join("?" for _ in tree_runs)
+        run_rows = self._conn.execute(
+            f"SELECT * FROM runs WHERE id IN ({placeholders})",
+            tuple(tree_runs),
+        ).fetchall()
+        parents = {
+            run.id: run.parent
+            for run in (_run_from_row(row) for row in run_rows)
+            if run.parent is not None
+        }
+        current = selected
+        visited: set[str] = set()
+        while current.run != run_id:
+            if current.run in visited:
+                raise ValueError(f"cyclic retry run ancestry: {selected}")
+            visited.add(current.run)
+            parent = parents.get(current.run)
+            if parent is None:
+                raise ValueError(
+                    f"retry step is not owned by root run {run_id}: {selected}"
+                )
+            current = parent
+        return StepPath(run_id, current.indices[:1])
 
     def _retry_step_suffix(
         self,
@@ -2739,7 +2785,7 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
     noted_data = _load_stored_object(raw["noted"], label="step noted")
     return StepRecord(
         path=StepPath.from_local(str(raw["run"]), str(raw["path"])),
-        kind=cast(StepKind, raw["kind"]),
+        kind=_step_kind_from_data(raw["kind"]),
         input=pointers_from_data(input_data),
         output=(local_from_data(output_data) if output_data is not None else None),
         placement=placement_data,
@@ -2760,6 +2806,21 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         started_at=str(raw["started_at"]),
         finished_at=str(raw["finished_at"]) if raw["finished_at"] is not None else None,
     )
+
+
+def _step_kind_from_data(value: object) -> StepKind:
+    if not isinstance(value, str) or value not in {
+        "run",
+        "agent",
+        "human",
+        "model",
+        "tool",
+        "par",
+        "loop",
+        "value",
+    }:
+        raise ValueError(f"invalid stored step kind: {value!r}")
+    return cast(StepKind, value)
 
 
 def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:

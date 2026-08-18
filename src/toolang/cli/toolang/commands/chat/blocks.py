@@ -317,21 +317,14 @@ class DefaultStepBlock(MutableBlock):
     @classmethod
     def create(cls, event: StepBegin) -> "DefaultStepBlock":
         step_kind = event.kind
-        payload = event.given
         return cls(
             step=event.step,
             step_kind=step_kind,
-            label=cls._initial_label(step_kind, payload),
+            label=cls._initial_label(step_kind),
         )
 
     @staticmethod
-    def _initial_label(step_kind: str, payload: Mapping[str, Any]) -> str:
-        if step_kind == "system":
-            return (
-                as_text(payload.get("message"))
-                or as_text(payload.get("statement"))
-                or step_kind
-            )
+    def _initial_label(step_kind: str) -> str:
         return f"running {step_kind}"
 
     def update(self, event: StepEnd) -> None:
@@ -348,12 +341,6 @@ class DefaultStepBlock(MutableBlock):
         if running:
             line = progress_tail(f"{marker} {self.label}")
             return Text.from_markup(f"[none]{escape(line)}[/]")
-
-        if kind == "system":
-            message = self.error or self.final_label or self.label or "runtime event"
-            tone = "red" if self.error else "dim"
-            prefix = "!" if self.error else marker
-            return Text.from_markup(f"[{tone}]{escape(f'{prefix} {message}')}[/]")
 
         label = kind or "step"
         if self.error:

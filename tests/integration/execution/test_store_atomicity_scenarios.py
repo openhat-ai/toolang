@@ -24,7 +24,7 @@ from toolang.execution.records import (
     StartControlPayload,
 )
 from toolang.execution.store import RunStore
-from toolang.execution.types import Local, StepPath, Pointer
+from toolang.execution.types import Local, RunStatus, StepPath, Pointer
 
 
 def _execute_sql(db_path: Path, sql: str) -> None:
@@ -77,7 +77,7 @@ def test_corrupted_run_and_step_fields_are_rejected(
             store,
             run_id=run.id,
             step_index=0,
-            kind="system",
+            kind="value",
             status="succeeded",
             input=(),
             output=(),
@@ -99,6 +99,35 @@ def test_corrupted_run_and_step_fields_are_rejected(
                 store.get_run(run_id=run.id)
             else:
                 store.list_steps(run_id=run.id)
+    finally:
+        store.close()
+
+
+def test_removed_system_step_kind_is_rejected(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_corrupted_kind",
+            thread_id="term_corrupted_kind",
+            origin="chat",
+            input=Message.user("hello"),
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        _execute_sql(store.db_path, "UPDATE steps SET kind = 'system'")
+
+        with pytest.raises(ValueError, match="invalid stored step kind"):
+            store.list_steps(run_id=run.id)
     finally:
         store.close()
 
@@ -171,7 +200,7 @@ def test_start_acceptance_rolls_back_the_run_when_control_insert_fails(
         store.close()
 
 
-def test_retry_reopens_root_and_ejects_the_failed_step_suffix(
+def test_retry_reopens_root_from_a_failed_value_step(
     tmp_path: Path,
 ) -> None:
     store = RunStore(tmp_path / "runs.db")
@@ -188,30 +217,29 @@ def test_retry_reopens_root_and_ejects_the_failed_step_suffix(
             store,
             run_id=run.id,
             step_index=0,
-            kind="system",
+            kind="value",
             status="succeeded",
             input=(),
             output=(),
             started_at="2026-01-01T00:00:00Z",
             finished_at="2026-01-01T00:00:01Z",
         )
-        failed = project_step(
+        upstream = project_step(
             store,
             run_id=run.id,
             step_index=1,
             kind="tool",
-            status="failed",
+            status="succeeded",
             input=(),
             output=(),
-            error="temporary failure",
             started_at="2026-01-01T00:00:01Z",
             finished_at="2026-01-01T00:00:02Z",
         )
-        failure = project_step(
+        failed = project_step(
             store,
             run_id=run.id,
             step_index=2,
-            kind="system",
+            kind="value",
             status="failed",
             input=(),
             output=(),
@@ -249,19 +277,108 @@ def test_retry_reopens_root_and_ejects_the_failed_step_suffix(
         assert isinstance(control.payload, RetryControlPayload)
         assert control.payload.retry_from == failed.path
         assert control.status == "applied"
-        assert ejected == (failed.path, failure.path)
-        assert store.list_steps(run_id=run.id) == [first]
+        assert ejected == (failed.path,)
+        assert store.list_steps(run_id=run.id) == [first, upstream]
         historical = store.list_steps(run_id=run.id, include_ejected=True)
         assert [step.path for step in historical] == [
             first.path,
+            upstream.path,
             failed.path,
-            failure.path,
         ]
         assert historical[0].ejected_by is None
-        assert historical[1].ejected_by is not None
-        assert historical[1].ejected_by.run == run.id
-        assert historical[1].ejected_by.index == control.index
-        assert historical[2].ejected_by == historical[1].ejected_by
+        assert historical[1].ejected_by is None
+        assert historical[2].ejected_by is not None
+        assert historical[2].ejected_by.run == run.id
+        assert historical[2].ejected_by.index == control.index
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    (
+        "run_status",
+        "include_call",
+        "explicit_anchor",
+        "expected_anchor",
+        "expected_ejected",
+    ),
+    [
+        ("failed", True, None, 1, (1,)),
+        ("succeeded", True, None, 0, (0, 1)),
+        ("succeeded", True, 1, 1, (1,)),
+        ("succeeded", False, None, 0, (0,)),
+    ],
+)
+def test_retry_anchor_selection_distinguishes_run_outcomes_and_explicit_values(
+    tmp_path: Path,
+    run_status: RunStatus,
+    include_call: bool,
+    explicit_anchor: int | None,
+    expected_anchor: int,
+    expected_ejected: tuple[int, ...],
+) -> None:
+    store = RunStore(tmp_path / f"{run_status}.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id=f"run_retry_{run_status}",
+            thread_id=f"term_retry_{run_status}",
+            origin="chat",
+            input=Message.user("hello"),
+            executable_kind="flow",
+        )
+        steps = []
+        if include_call:
+            steps.append(
+                project_step(
+                    store,
+                    run_id=run.id,
+                    step_index=0,
+                    kind="model",
+                    status="succeeded",
+                    input=(),
+                    output=(),
+                    started_at="2026-01-01T00:00:00Z",
+                    finished_at="2026-01-01T00:00:01Z",
+                )
+            )
+        value = project_step(
+            store,
+            run_id=run.id,
+            step_index=len(steps),
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:01Z",
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        steps.append(value)
+        project_run_end(
+            store,
+            run_id=run.id,
+            status=run_status,
+            error="runtime failure" if run_status == "failed" else None,
+        )
+
+        start = store.get_run_control(run_id=run.id, index=0)
+        assert start is not None
+        assert isinstance(start.payload, StartControlPayload)
+        _reopened, control, ejected = store.accept_retry(
+            run_id=run.id,
+            anchor=steps[explicit_anchor].path if explicit_anchor is not None else None,
+            resources=start.payload.resources,
+            limits=start.payload.limits,
+            runnable=start.payload.runnable,
+            model=start.payload.model,
+            locals=start.payload.locals,
+            request_id=None,
+            created_at="2026-01-01T00:00:03Z",
+        )
+
+        assert isinstance(control.payload, RetryControlPayload)
+        assert control.payload.retry_from == steps[expected_anchor].path
+        assert ejected == tuple(steps[index].path for index in expected_ejected)
     finally:
         store.close()
 
@@ -353,7 +470,7 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
             with store.write_transaction():
                 store.begin_step(
                     path=StepPath("run_atomic_event", (0,)),
-                    kind="system",
+                    kind="value",
                     input=(Pointer.control("run_atomic_event", control.index, "_"),),
                     placement=None,
                     given={},
@@ -512,7 +629,7 @@ def test_run_store_rejects_a_legacy_execution_schema(
 
     connection = sqlite3.connect(path)
     try:
-        connection.execute("PRAGMA user_version=23")
+        connection.execute("PRAGMA user_version=25")
         connection.commit()
     finally:
         connection.close()
