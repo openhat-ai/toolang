@@ -2516,6 +2516,34 @@ def _load_json(value: str) -> Any:
     return json.loads(value)
 
 
+def _load_stored_object(value: object, *, label: str) -> dict[str, Any]:
+    if value is None:
+        raise ValueError(f"stored {label} must be an object")
+    decoded = _load_json(str(value))
+    if not isinstance(decoded, Mapping) or not all(
+        isinstance(name, str) for name in decoded
+    ):
+        raise ValueError(f"stored {label} must be an object")
+    return dict(cast(Mapping[str, Any], decoded))
+
+
+def _load_optional_stored_object(
+    value: object,
+    *,
+    label: str,
+) -> dict[str, Any] | None:
+    return None if value is None else _load_stored_object(value, label=label)
+
+
+def _load_stored_array(value: object, *, label: str) -> list[Any]:
+    if value is None:
+        raise ValueError(f"stored {label} must be an array")
+    decoded = _load_json(str(value))
+    if not isinstance(decoded, list):
+        raise ValueError(f"stored {label} must be an array")
+    return decoded
+
+
 def _dump_execution_error(error: ExecutionError | None) -> str | None:
     return _dump_json(execution_error_to_data(error)) if error is not None else None
 
@@ -2639,9 +2667,13 @@ def _history_tail(
 
 
 def _run_from_row(row: sqlite3.Row) -> RunRecord:
-    output_raw = _load_json(str(row["output"])) if row["output"] is not None else None
-    placement_raw = (
-        _load_json(str(row["placement"])) if row["placement"] is not None else None
+    output_data = _load_optional_stored_object(
+        row["output"],
+        label="run output",
+    )
+    placement_data = _load_optional_stored_object(
+        row["placement"],
+        label="run placement",
     )
     return RunRecord(
         id=str(row["id"]),
@@ -2653,16 +2685,8 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
             target=str(row["control_target"]),
             index=int(row["control_index"]),
         ),
-        output=(
-            local_from_data(cast(Mapping[str, object], output_raw))
-            if isinstance(output_raw, Mapping)
-            else None
-        ),
-        placement=(
-            {str(key): value for key, value in placement_raw.items()}
-            if isinstance(placement_raw, Mapping)
-            else None
-        ),
+        output=(local_from_data(output_data) if output_data is not None else None),
+        placement=placement_data,
         status=cast(RunStatus, row["status"]),
         error=_load_execution_error(row["error"]),
         ejected_by=(
@@ -2702,35 +2726,25 @@ def _thread_from_row(row: sqlite3.Row) -> ThreadRecord:
 
 def _step_from_row(row: sqlite3.Row) -> StepRecord:
     raw = dict(row)
-    input_raw = _load_json(str(raw["input"]))
-    output_raw = _load_json(str(raw["output"])) if raw["output"] is not None else None
-    given_raw = _load_json(str(raw["given"]))
-    noted_raw = _load_json(str(raw["noted"]))
-    input_items = (
-        input_raw
-        if isinstance(input_raw, Sequence)
-        and not isinstance(input_raw, (str, bytes, bytearray))
-        else []
+    input_data = _load_stored_array(raw["input"], label="step input")
+    output_data = _load_optional_stored_object(
+        raw["output"],
+        label="step output",
     )
-    placement_raw = (
-        _load_json(str(raw["placement"])) if raw["placement"] is not None else None
+    placement_data = _load_optional_stored_object(
+        raw["placement"],
+        label="step placement",
     )
+    given_data = _load_stored_object(raw["given"], label="step given")
+    noted_data = _load_stored_object(raw["noted"], label="step noted")
     return StepRecord(
         path=StepPath.from_local(str(raw["run"]), str(raw["path"])),
         kind=cast(StepKind, raw["kind"]),
-        input=pointers_from_data(input_items),
-        output=(
-            local_from_data(cast(Mapping[str, object], output_raw))
-            if isinstance(output_raw, Mapping)
-            else None
-        ),
-        placement=(
-            {str(key): value for key, value in placement_raw.items()}
-            if isinstance(placement_raw, Mapping)
-            else None
-        ),
-        given=dict(given_raw) if isinstance(given_raw, Mapping) else {},
-        noted=dict(noted_raw) if isinstance(noted_raw, Mapping) else {},
+        input=pointers_from_data(input_data),
+        output=(local_from_data(output_data) if output_data is not None else None),
+        placement=placement_data,
+        given=given_data,
+        noted=noted_data,
         status=cast(StepStatus, raw["status"]),
         error=_load_execution_error(raw["error"]),
         ejected_by=(

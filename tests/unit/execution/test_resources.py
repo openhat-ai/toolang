@@ -17,7 +17,11 @@ from toolang.execution.executor.resources import (
     resolve_runnable_resources,
     snapshot_model_selection,
 )
-from toolang.execution.types import AgentResources
+from toolang.execution.types import (
+    AgentCapResource,
+    AgentResources,
+    AgentToolResource,
+)
 from toolang.lang.ast import AgicDecl, Directive, FlowDecl, Span
 from toolang.setup import AgentSetup
 from tests.support.execution_harness import FakeModelProvider
@@ -116,6 +120,41 @@ def test_agent_resources_never_filter_setup_snapshot(tmp_path: Path) -> None:
     with pytest.raises(TypeError):
         cast(Any, alpha.tools)["beta__two"] = setup.tools["beta__two"]
     assert AgentResources.from_data(alpha.to_data()) == alpha
+
+
+def test_agent_resources_durable_data_round_trips_every_resource_kind() -> None:
+    resources = AgentResources(
+        models=("test/model",),
+        tools=(
+            AgentToolResource(
+                model_name="search",
+                plugin="test",
+                namespace="test",
+                name="search",
+            ),
+        ),
+        caps=(AgentCapResource(kind="skill", name="review", ref="skill:review"),),
+    )
+
+    assert AgentResources.from_data(resources.to_data()) == resources
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {},
+        {"models": "test/model", "tools": [], "caps": []},
+        {"models": [1], "tools": [], "caps": []},
+        {"models": [], "tools": ["invalid"], "caps": []},
+        {"models": [], "tools": [], "caps": ["invalid"]},
+        {"models": [], "tools": [], "caps": [], "extra": []},
+    ),
+)
+def test_agent_resources_rejects_noncanonical_durable_data(
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="agent resources"):
+        AgentResources.from_data(payload)
 
 
 def test_agent_ceiling_normalizes_stable_selector_lists() -> None:

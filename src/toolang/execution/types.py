@@ -149,47 +149,20 @@ class AgentResources:
     def from_data(cls, payload: Mapping[str, object]) -> AgentResources:
         """Decode one durable resource snapshot."""
 
-        raw_models = payload.get("models", ())
-        raw_tools = payload.get("tools", ())
-        raw_caps = payload.get("caps", ())
-        models = (
-            tuple(str(item) for item in raw_models)
-            if isinstance(raw_models, Sequence)
-            and not isinstance(raw_models, (str, bytes, bytearray))
-            else ()
+        if set(payload) != {"models", "tools", "caps"}:
+            raise ValueError("agent resources require models, tools, and caps")
+        raw_models = _resource_array(payload.get("models"), label="models")
+        raw_tools = _resource_array(payload.get("tools"), label="tools")
+        raw_caps = _resource_array(payload.get("caps"), label="caps")
+        if not all(isinstance(item, str) for item in raw_models):
+            raise ValueError("agent resources models must contain text")
+        models = cast(tuple[str, ...], tuple(raw_models))
+        tools = tuple(
+            AgentToolResource(**_resource_object(item, kind="tool"))
+            for item in raw_tools
         )
-        tools = (
-            tuple(
-                AgentToolResource(
-                    model_name=str(
-                        cast(Mapping[str, object], item).get("model_name", "")
-                    ),
-                    plugin=str(cast(Mapping[str, object], item).get("plugin", "")),
-                    namespace=str(
-                        cast(Mapping[str, object], item).get("namespace", "")
-                    ),
-                    name=str(cast(Mapping[str, object], item).get("name", "")),
-                )
-                for item in raw_tools
-                if isinstance(item, Mapping)
-            )
-            if isinstance(raw_tools, Sequence)
-            and not isinstance(raw_tools, (str, bytes, bytearray))
-            else ()
-        )
-        caps = (
-            tuple(
-                AgentCapResource(
-                    kind=str(cast(Mapping[str, object], item).get("kind", "")),
-                    name=str(cast(Mapping[str, object], item).get("name", "")),
-                    ref=str(cast(Mapping[str, object], item).get("ref", "")),
-                )
-                for item in raw_caps
-                if isinstance(item, Mapping)
-            )
-            if isinstance(raw_caps, Sequence)
-            and not isinstance(raw_caps, (str, bytes, bytearray))
-            else ()
+        caps = tuple(
+            AgentCapResource(**_resource_object(item, kind="cap")) for item in raw_caps
         )
         return cls(models=models, tools=tools, caps=caps)
 
@@ -212,6 +185,30 @@ class AgentResources:
                 for item in self.caps
             ],
         }
+
+
+def _resource_array(value: object, *, label: str) -> tuple[object, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError(f"agent resources {label} must be an array")
+    return tuple(value)
+
+
+def _resource_object(
+    value: object,
+    *,
+    kind: Literal["tool", "cap"],
+) -> dict[str, str]:
+    fields = (
+        {"model_name", "plugin", "namespace", "name"}
+        if kind == "tool"
+        else {"kind", "name", "ref"}
+    )
+    if not isinstance(value, Mapping) or set(value) != fields:
+        raise ValueError(f"agent resources {kind} must contain canonical fields")
+    if not all(isinstance(item, str) for item in value.values()):
+        raise ValueError(f"agent resources {kind} fields must be text")
+    data = cast(Mapping[str, object], value)
+    return {name: cast(str, data[name]) for name in fields}
 
 
 @dataclass(frozen=True, slots=True)

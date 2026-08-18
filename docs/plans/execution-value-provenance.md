@@ -256,6 +256,8 @@ control record and is never inferred from an identifier prefix.
   variant, nested Array, mixed-pointer collection, heterogeneous Json, and
   invalid type/dim cases; typed value tags and `!` payloads never leak through
   events or APIs.
+- AgentResources and run/step row codecs reject malformed non-null durable
+  fields instead of coercing or dropping data.
 - Root, child, rerun, and repeated retry records point to the correct control;
   when retry copies adopted locals, the new copies belong to the retry control.
 - Initial model steps point only to the primary and named control locals they

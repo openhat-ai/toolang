@@ -45,6 +45,64 @@ def _table_count(db_path: Path, table: str) -> int:
         connection.close()
 
 
+@pytest.mark.parametrize(
+    ("table", "column", "invalid", "message"),
+    (
+        ("runs", "output", "[]", "stored run output must be an object"),
+        ("runs", "placement", "[]", "stored run placement must be an object"),
+        ("steps", "input", "{}", "stored step input must be an array"),
+        ("steps", "output", "[]", "stored step output must be an object"),
+        ("steps", "placement", "[]", "stored step placement must be an object"),
+        ("steps", "given", "[]", "stored step given must be an object"),
+        ("steps", "noted", "[]", "stored step noted must be an object"),
+    ),
+)
+def test_corrupted_run_and_step_fields_are_rejected(
+    tmp_path: Path,
+    table: str,
+    column: str,
+    invalid: str,
+    message: str,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_corrupted_record",
+            thread_id="term_corrupted_record",
+            origin="chat",
+            input=Message.user("hello"),
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="system",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        target = (
+            "id = 'run_corrupted_record'"
+            if table == "runs"
+            else "run = 'run_corrupted_record'"
+        )
+        _execute_sql(
+            store.db_path,
+            f"UPDATE {table} SET {column} = '{invalid}' WHERE {target}",
+        )
+
+        with pytest.raises(ValueError, match=message):
+            if table == "runs":
+                store.get_run(run_id=run.id)
+            else:
+                store.list_steps(run_id=run.id)
+    finally:
+        store.close()
+
+
 def test_invalid_execution_ids_are_rejected_before_any_rows_are_written(
     tmp_path: Path,
 ) -> None:
