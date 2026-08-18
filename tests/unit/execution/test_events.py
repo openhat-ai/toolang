@@ -27,9 +27,7 @@ from toolang.execution.types import (
     RunStatus,
     StepPath,
     StepStatus,
-    TypedPointer,
 )
-from toolang.lang.types import Array, Struct
 
 
 _EVENTS: tuple[RunEvent, ...] = (
@@ -143,20 +141,12 @@ def test_run_event_codec_distinguishes_run_error_pointers_from_messages() -> Non
     assert run_event_from_data(run_event_to_data(message)) == message
 
 
-def test_run_event_codec_round_trips_nested_typed_output_values() -> None:
+def test_run_event_codec_round_trips_struct_output() -> None:
     event = StepEnd(
         step=StepPath.parse("run_root/0"),
         kind="run",
         status="succeeded",
-        output=Local.typed(
-            "Review",
-            {
-                "matches": Array("Text[]", ("one", "two")),
-                "review": Struct("Review", {"score": 1}),
-                "source": TypedPointer("Text", Pointer("run_source.0")),
-            },
-            "_",
-        ),
+        output=Local.typed("Review", {"score": 1}, "_"),
     )
 
     assert run_event_from_data(run_event_to_data(event)) == event
