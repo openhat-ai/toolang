@@ -32,7 +32,7 @@ from toolang.execution.types import (
     StepStatus,
     StepPath,
     Local,
-    ValuePtr,
+    Pointer,
 )
 from toolang.lang.input import RunnableInput
 
@@ -75,9 +75,9 @@ def accept_run_start(
         if bindings is not None
         else RunBindings(runnable="agic:test", model="test")
     )
-    locals_value = [Local("Part[]", tuple(resolved_input.primary), "_", 0)]
+    locals_value = [Local.typed("Part[]", tuple(resolved_input.primary), "_", 0)]
     locals_value.extend(
-        Local(
+        Local.typed(
             item.type_name or "Json",
             tuple(item.value.parts) if isinstance(item.value, Message) else item.value,
             item.name,
@@ -151,7 +151,7 @@ def project_run_start(
             else f"{executable_kind}:test"
         ),
         model="test",
-        locals=(Local("Part[]", tuple(input.percept), "_", 0),),
+        locals=(Local.typed("Part[]", tuple(input.percept), "_", 0),),
         placement=(
             dict(value)
             if isinstance((value := run_context.get("placement")), Mapping)
@@ -208,9 +208,9 @@ def project_run_control(
         kind=kind,
         timing=timing,
         locals=(
-            (Local("Part[]", tuple(input.parts), "_", 0),)
+            (Local.typed("Part[]", tuple(input.parts), "_", 0),)
             if kind == "steer" and input is not None
-            else (Local("Text", input.content, "_", 0),)
+            else (Local.typed("Text", input.content, "_", 0),)
             if kind == "stop" and input is not None
             else ()
         ),
@@ -228,7 +228,7 @@ def project_step(
     index: int | None = None,
     kind: StepKind,
     status: StepStatus,
-    input: Sequence[ValuePtr],
+    input: Sequence[Pointer],
     output: Sequence[MessagePart] | Local | None,
     detail: Mapping[str, Any] | None = None,
     error: str | None = None,
@@ -267,7 +267,7 @@ def project_step(
                 output=(
                     output
                     if isinstance(output, Local) or output is None
-                    else Local("Part[]", tuple(output), "_", 0)
+                    else Local.typed("Part[]", tuple(output), "_", 0)
                 ),
                 noted=dict(detail or {}),
                 error=error,
@@ -290,7 +290,7 @@ def project_run_end(
     status: RunStatus = "succeeded",
     error: str | None = None,
     finished_at: str | None = None,
-    output: Local | ValuePtr | None = None,
+    output: Local | Pointer | None = None,
 ) -> RunRecord:
     """Project one terminal run event, returning durable run truth."""
 
@@ -300,8 +300,8 @@ def project_run_end(
             run=run_id,
             status=status,
             output=(
-                Local("Part[]", output, "_", 0)
-                if isinstance(output, ValuePtr)
+                Local.typed("Part[]", output, "_", 0)
+                if isinstance(output, Pointer)
                 else output
             ),
             error=error,

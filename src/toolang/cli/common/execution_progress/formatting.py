@@ -20,6 +20,7 @@ from toolang.base.types.message import (
 from toolang.execution.events import StepBegin, StepEnd
 from toolang.execution.records import execution_error_message
 from toolang.execution.types import StepPath
+from toolang.lang.types import Array
 
 from ..output import parse_utc_timestamp
 
@@ -178,7 +179,7 @@ def output_parts(event: StepEnd) -> tuple[MessagePart, ...]:
     value = event.output.value
     if isinstance(value, ToolResultPart):
         return (value,)
-    if isinstance(value, tuple | list):
+    if isinstance(value, Array | tuple | list):
         return tuple(part for part in value if isinstance(part, MessagePart))
     return ()
 

@@ -17,7 +17,7 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.records import execution_error_message
-from toolang.execution.types import ExecutionError, StepPath, ValuePtr
+from toolang.execution.types import ExecutionError, StepPath, Pointer, TypedPointer
 
 from .blocks import CallBlock, RunBlock, StatementBlock
 from .console import ProgressConsole
@@ -331,13 +331,14 @@ class ConsoleRunTracer(RunTracer):
             self.console.show_live(lines)
 
     def _until_decision(self, event: RunEnd) -> bool | None:
-        if event.output is None or not isinstance(event.output.value, ValuePtr):
+        if event.output is None or not isinstance(event.output.value, TypedPointer):
             return None
+        pointer = event.output.value.pointer
         outcome = next(
             (
                 item
                 for path, item in self._outcomes.items()
-                if ValuePtr.step(path) == event.output.value
+                if Pointer.step(path) == pointer
             ),
             None,
         )
@@ -351,14 +352,11 @@ class ConsoleRunTracer(RunTracer):
         return None
 
     def _output_step(self, event: RunEnd) -> StepPath | None:
-        if event.output is None or not isinstance(event.output.value, ValuePtr):
+        if event.output is None or not isinstance(event.output.value, TypedPointer):
             return None
+        pointer = event.output.value.pointer
         return next(
-            (
-                path
-                for path in self._outcomes
-                if ValuePtr.step(path) == event.output.value
-            ),
+            (path for path in self._outcomes if Pointer.step(path) == pointer),
             None,
         )
 

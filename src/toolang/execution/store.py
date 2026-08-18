@@ -19,6 +19,7 @@ from toolang.base.types.message import (
     message_text,
 )
 from toolang.base.types.run import ModelCall
+from toolang.lang.types import Array, Struct, Value
 from toolang.base.types.tool import ToolDefinition
 from toolang.base.types.policy import RunLimits
 from toolang.common.time import utc_now
@@ -49,8 +50,8 @@ from .records import (
     step_message_role,
     local_from_data,
     local_to_data,
-    value_ptrs_from_data,
-    value_ptrs_to_data,
+    pointers_from_data,
+    pointers_to_data,
 )
 from .types import (
     ControlKind,
@@ -64,13 +65,14 @@ from .types import (
     StepStatus,
     StepPath,
     Local,
-    LocalValue,
-    ValuePtr,
+    Pointer,
+    TypedPointer,
+    validate_runtime_value,
     validate_execution_id,
 )
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 24
+_SCHEMA_VERSION = 25
 _MIGRATABLE_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -381,8 +383,8 @@ class RunStore:
                 primary.name != "_"
                 or primary.type != "Part[]"
                 or primary.dim != 0
-                or isinstance(primary.value, ValuePtr)
-                or not isinstance(primary.value, tuple | list)
+                or isinstance(primary.value, TypedPointer)
+                or not isinstance(primary.value, Array)
                 or not all(isinstance(item, MessagePart) for item in primary.value)
             ):
                 raise ValueError("steer control requires a concrete primary Part[]")
@@ -1261,9 +1263,11 @@ class RunStore:
     def resolve_local(self, local: Local) -> Local:
         """Resolve and validate every pointer in one durable typed local."""
 
+        type_name = local.type
+        value = cast(Value | TypedPointer, self.resolve_value(local.value))
+        validate_runtime_value(value, type_name)
         return Local(
-            type=local.type,
-            value=cast(LocalValue, self.resolve_value(local.value)),
+            value=value,
             name=local.name,
             dim=local.dim,
         )
@@ -1294,7 +1298,7 @@ class RunStore:
         self,
         error: ExecutionError,
         *,
-        seen: set[ValuePtr],
+        seen: set[Pointer],
     ) -> str:
         if isinstance(error, str):
             return error
@@ -1324,15 +1328,31 @@ class RunStore:
         finally:
             seen.remove(error)
 
-    def _resolve_value(self, value: object, *, seen: set[ValuePtr]) -> object:
-        if isinstance(value, ValuePtr):
-            if value in seen:
-                raise ValueError(f"value pointer cycle: {value}")
-            seen.add(value)
+    def _resolve_value(self, value: object, *, seen: set[Pointer]) -> object:
+        if isinstance(value, TypedPointer):
+            pointer = value.pointer
+            if pointer in seen:
+                raise ValueError(f"value pointer cycle: {pointer}")
+            seen.add(pointer)
             try:
-                return self._resolve_pointer(value, seen=seen)
+                result = self._resolve_pointer(pointer, seen=seen)
+                validate_runtime_value(result, value.type, path=f"pointer {pointer}")
+                return result
             finally:
-                seen.remove(value)
+                seen.remove(pointer)
+        if isinstance(value, Array):
+            return Array(
+                value.type,
+                tuple(self._resolve_value(item, seen=seen) for item in value),
+            )
+        if isinstance(value, Struct):
+            return Struct(
+                value.type,
+                {
+                    str(name): self._resolve_value(item, seen=seen)
+                    for name, item in value.items()
+                },
+            )
         if isinstance(value, Mapping):
             return {
                 str(name): self._resolve_value(item, seen=seen)
@@ -1342,7 +1362,7 @@ class RunStore:
             return tuple(self._resolve_value(item, seen=seen) for item in value)
         return value
 
-    def _resolve_pointer(self, pointer: ValuePtr, *, seen: set[ValuePtr]) -> object:
+    def _resolve_pointer(self, pointer: Pointer, *, seen: set[Pointer]) -> object:
         anchor = pointer.anchor
         suffix = pointer.pointer
         if "^" in anchor:
@@ -1784,7 +1804,7 @@ class RunStore:
         *,
         path: StepPath,
         kind: StepKind,
-        input: Sequence[ValuePtr],
+        input: Sequence[Pointer],
         placement: Mapping[str, object] | None = None,
         given: Mapping[str, Any],
         started_at: str,
@@ -1804,7 +1824,7 @@ class RunStore:
                     path.run,
                     path.local,
                     kind,
-                    _dump_json(value_ptrs_to_data(tuple(input))),
+                    _dump_json(pointers_to_data(tuple(input))),
                     _dump_json(dict(placement)) if placement is not None else None,
                     _dump_json(dict(given)),
                     started_at,
@@ -2698,7 +2718,7 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
     return StepRecord(
         path=StepPath.from_local(str(raw["run"]), str(raw["path"])),
         kind=cast(StepKind, raw["kind"]),
-        input=value_ptrs_from_data(input_items),
+        input=pointers_from_data(input_items),
         output=(
             local_from_data(cast(Mapping[str, object], output_raw))
             if isinstance(output_raw, Mapping)
@@ -2793,7 +2813,7 @@ def _select_json_value(
     value: object,
     segments: Sequence[str],
     *,
-    source: ValuePtr,
+    source: Pointer,
 ) -> object:
     current = value
     for segment in segments:

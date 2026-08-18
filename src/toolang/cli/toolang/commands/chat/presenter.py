@@ -13,7 +13,7 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.types import ExecutionError, StepPath, ValuePtr
+from toolang.execution.types import ExecutionError, StepPath, Pointer, TypedPointer
 
 from toolang.cli.common.execution_progress.formatting import (
     integer,
@@ -363,14 +363,11 @@ class ChatRunPresenter:
         return owner.statement == "repeat" and run.placement.get("iter") == -1
 
     def _output_step(self, event: RunEnd) -> StepPath | None:
-        if event.output is None or not isinstance(event.output.value, ValuePtr):
+        if event.output is None or not isinstance(event.output.value, TypedPointer):
             return None
+        pointer = event.output.value.pointer
         return next(
-            (
-                path
-                for path in self._outcomes
-                if ValuePtr.step(path) == event.output.value
-            ),
+            (path for path in self._outcomes if Pointer.step(path) == pointer),
             None,
         )
 

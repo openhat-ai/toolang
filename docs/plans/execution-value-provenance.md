@@ -38,46 +38,68 @@ fields remain `request_id`; durable storage uses `request`.
 
 ## Values And Locals
 
-The language package owns concrete `Value` data. Type descriptions use `T` for
-an arbitrary type and `S` for a declared Toolang `struct`, alongside `Text`,
-`Number`, `Boolean`, `Json`, `Part`, concrete part variants, and `T[]`.
-`ToolCallPart` and `ToolResultPart` are concrete `Part` subtypes. `Json` is the
-unknown type; an item of `Json[]` may have any supported value type.
+The language package owns `Text`, `Number`, `Boolean`, `Json`, `Struct`,
+`Array`, `Part`, and `Value`. Type descriptions use `T` for an arbitrary type
+and `S` for a declared Toolang `struct`. `Struct` is an immutable Mapping-like
+runtime object, and `Array` is an immutable Sequence-like runtime object that
+retains its complete `T[]` type. `ToolCallPart` and `ToolResultPart` are concrete
+`Part` subtypes alongside `TextPart`, `ImagePart`, `AudioPart`, and
+`DocumentPart`. `Json` is the unknown type; Json scalars normalize to native
+Text, Number, or Boolean values, while a containing Struct or Array retains its
+declared boundary.
 
 Execution owns these immutable types:
 
 ```python
 @dataclass(frozen=True, slots=True)
-class ValuePtr:
+class Pointer:
     value: str
 
 
 @dataclass(frozen=True, slots=True)
-class Local:
+class TypedPointer:
     type: str
-    value: Value | ValuePtr
+    pointer: Pointer
+
+
+@dataclass(frozen=True, slots=True)
+class Local:
+    value: Value | TypedPointer
     name: str | None = None
     dim: Literal[0, 1] = 0
 ```
 
-`Local.type` is the complete type after pointer resolution. `dim=0` treats the
-complete value as one item. `dim=1` requires a type ending in `[]` and treats
-that outer array as the execution collection; its item type is obtained by
-removing the rightmost `[]`. Thus `Part[]/dim=0` is one model response,
-`Part[]/dim=1` is a collection of parts, and `Part[][]/dim=1` is a collection
-whose items are each `Part[]`.
+`Local.type` is derived from its concrete runtime value or TypedPointer rather
+than stored as an independent field. `Local.typed(type, value, ...)` applies an
+explicit boundary when adapting executor values. `dim=0` treats the complete
+value as one item. `dim=1` requires a type ending in `[]` and treats that outer
+Array as the execution collection; its item type is obtained by removing the
+rightmost `[]`. Thus `Part[]/dim=0` is one model response, `Part[]/dim=1` is a
+collection of parts, and `Part[][]/dim=1` is a collection whose items are each
+`Part[]`.
 
-`Local.value` may be concrete, one pointer, or an array containing concrete
-items and pointers. Pointer/concrete unions encode pointers as
-`{"$ptr": "..."}`. `$ptr` is reserved by Toolang built-in values and authored
-structs; there is no literal escape. Fields whose schema accepts only pointers
-encode their canonical pointer strings directly.
+`Pointer` contains only the record address. `TypedPointer` combines the
+expected result type with that address whenever a pointer occupies a value
+position. A Local value may be concrete, one TypedPointer, or an Array/Struct
+containing concrete values and TypedPointers.
+
+The private durable Local object contains exactly `value`, `name`, and `dim`.
+Its value is self-describing: Text/Number/Boolean use raw scalar shortcuts,
+inline objects use `{"?": "T", ...}`, boxed values use
+`{"?": "T!", "!": value}`, and pointers use `{"?": "T@pointer"}`.
+For example, `Part@run_1.0/2` is the tag value for a pointer expected to resolve
+to Part. `?` and `!` are reserved with no literal escape. These tags are private
+to durable records. Events and APIs retain their existing Local projection
+with `type`, `value`, `name`, and `dim`, their existing `$ptr` projection, and
+the ordinary `type: text|image|audio|document|tool_call|tool_result` Part
+representation. Fields whose schema accepts only pointers store canonical
+Pointer strings directly.
 
 Control locals must have unique names. `_` is the primary argument. A step or
 run output may use `name=None` to produce a value without updating the runtime
 local table.
 
-## Value Pointers
+## Pointers
 
 Canonical anchors are:
 
@@ -153,7 +175,7 @@ Run records contain identity, parent, thread, control, one optional Local
 output, placement, status, error, `ejected_by`, and timestamps. They do not
 store context, root, or attempt. `parent is None` defines a root.
 
-Step records contain path, kind, `input: tuple[ValuePtr, ...]`, one optional
+Step records contain path, kind, `input: tuple[Pointer, ...]`, one optional
 Local output, placement, the currently open `given` and `noted` mappings,
 status, error, `ejected_by`, and timestamps. Input lists the durable values
 actually read by the step at `StepBegin`; it is not a snapshot of every local,
@@ -164,7 +186,7 @@ output pointer.
 
 Placement is shared by runs and steps and may contain `item`, `items`, `lane`,
 `lanes`, `iter`, and `iters`. `iter=-1` identifies a repeat control check.
-`ejected_by` is a control reference. Errors are a direct string or a ValuePtr
+`ejected_by` is a control reference. Errors are a direct string or a Pointer
 to a run/step error.
 
 ## Execution Semantics
@@ -176,11 +198,11 @@ collapsing the pointer chain to the original concrete value.
 
 Canonical outputs are:
 
-- model: `Local(type="Part[]", value=parts, name="_", dim=0)`;
+- model: `Local.typed("Part[]", parts, name="_", dim=0)`;
 - tool: input points to one `ToolCallPart`, output is
-  `Local(type="ToolResultPart", ..., name=None, dim=0)`;
+  `Local.typed("ToolResultPart", ..., name=None, dim=0)`;
 - scatter: a pointer to one `Part[]` with `dim=1`, without copying parts;
-- keep/rank: `Local(type="T[]", value=[pointers...], ..., dim=1)`;
+- keep/rank: `Local.typed("T[]", [pointers...], ..., dim=1)`;
 - map/parallel: child control locals point to source items, and the parent
   collection points to child run outputs.
 
@@ -224,8 +246,9 @@ control record and is never inferred from an identifier prefix.
 
 ## Acceptance Tests
 
-- Local and ValuePtr codecs round-trip scalar, struct, part, nested array,
-  mixed-pointer collection, heterogeneous Json, and invalid type/dim cases.
+- Local, Pointer, and TypedPointer codecs round-trip scalar, Struct, every Part
+  variant, nested Array, mixed-pointer collection, heterogeneous Json, and
+  invalid type/dim cases; private value tags never leak through events or APIs.
 - Root, child, rerun, and repeated retry records point to the correct control;
   when retry copies adopted locals, the new copies belong to the retry control.
 - Initial model steps point only to the primary and named control locals they

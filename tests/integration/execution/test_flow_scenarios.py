@@ -30,8 +30,15 @@ from toolang.execution.records import (
     RunControlRef,
     StartControlPayload,
 )
-from toolang.execution.types import Local, StepPath, ThreadPrefix, ValuePtr
+from toolang.execution.types import (
+    Local,
+    StepPath,
+    ThreadPrefix,
+    Pointer,
+    TypedPointer,
+)
 from toolang.lang.input import perceive_input
+from toolang.lang.types import Array
 
 
 def _output_value(harness: ExecutionHarness, run_id: str) -> object:
@@ -147,7 +154,7 @@ flow staged(_: Part[]) -> Part[]:
                 (0, "succeeded"),
                 (1, "failed"),
             ]
-            assert before[1].input == (ValuePtr.control(failed.id, 0, "_"),)
+            assert before[1].input == (Pointer.control(failed.id, 0, "_"),)
 
             retried = await harness.executor.retry(
                 failed.id,
@@ -166,7 +173,8 @@ flow staged(_: Part[]) -> Part[]:
                 (2, "succeeded"),
             ]
             assert active[0].output is not None
-            assert active[0].output.value == (TextPart("committed"),)
+            assert isinstance(active[0].output.value, Array)
+            assert tuple(active[0].output.value) == (TextPart("committed"),)
             historical = harness.store.list_steps(
                 run_id=retried.id,
                 include_ejected=True,
@@ -386,7 +394,7 @@ flow twice(_: Part[]) -> Part[]:
             )
 
             assert run.status == "failed"
-            assert run.error == ValuePtr.step(StepPath(run.id, (2,)))
+            assert run.error == Pointer.step(StepPath(run.id, (2,)))
             retry = harness.store.list_run_controls(run_id=run.id)[-1]
             assert isinstance(retry.payload, RetryControlPayload)
             assert retry.payload.limits == RunLimits(tokens=2)
@@ -452,11 +460,11 @@ flow parallel(_: Part[]):
             root_path = StepPath(root.id, (0,))
             root_step = harness.store.list_steps(run_id=root.id)[0]
             leaf_step = harness.store.list_steps(run_id=failed_child.id)[0]
-            assert root.error == ValuePtr.step(root_path)
-            assert root_step.error == ValuePtr.run(failed_child.id)
-            assert failed_child.error == ValuePtr.step(leaf_path)
+            assert root.error == Pointer.step(root_path)
+            assert root_step.error == Pointer.run(failed_child.id)
+            assert failed_child.error == Pointer.step(leaf_path)
             assert leaf_step.error == "worker failed"
-            assert isinstance(root.error, ValuePtr)
+            assert isinstance(root.error, Pointer)
             assert harness.store.resolve_error(root.error) == "worker failed"
             detail = RunHistory(harness.store).get_run(root.id)
             assert detail is not None
@@ -556,8 +564,8 @@ flow parent(_: Part[]) -> Number:
             parent_step = harness.store.list_steps(run_id=root.id)[0]
             assert isinstance(child.error, str)
             assert child.error.startswith("output is not valid Number")
-            assert isinstance(parent_step.error, ValuePtr)
-            assert parent_step.error == ValuePtr.run(child.id)
+            assert isinstance(parent_step.error, Pointer)
+            assert parent_step.error == Pointer.run(child.id)
             assert harness.store.resolve_error(parent_step.error) == child.error
 
     asyncio.run(scenario())
@@ -1324,7 +1332,7 @@ flow repeated(_: Text) -> Text:
                 if run.parent is not None
             ]
             assert root.status == "failed"
-            assert root.error == ValuePtr.step(StepPath(root.id, (0,)))
+            assert root.error == Pointer.step(StepPath(root.id, (0,)))
             assert len(harness.adapter.invocations) == 2
             assert sorted(run.status for run in children) == ["failed", "succeeded"]
             root_start = harness.store.get_run_control(run_id=root.id, index=0)
@@ -1445,7 +1453,7 @@ flow invalid(_: Text) -> Text:
 
             error = f"{operation} requires current shape list, got item"
             assert root.status == "failed"
-            assert root.error == ValuePtr.step(StepPath(root.id, (0,)))
+            assert root.error == Pointer.step(StepPath(root.id, (0,)))
             steps = [
                 step
                 for step in harness.store.list_steps(run_id=root.id)
@@ -1571,11 +1579,13 @@ flow relay(_: Text, suffix: Text) -> Text:
             suffix = next(
                 local for local in start.payload.locals if local.name == "suffix"
             )
-            assert suffix.value == ValuePtr.control(root.id, 0, "suffix")
+            assert suffix.value == TypedPointer(
+                "Text", Pointer.control(root.id, 0, "suffix")
+            )
             parent_step = harness.store.list_steps(run_id=root.id)[0]
             assert parent_step.input == (
-                ValuePtr.control(root.id, 0, "_"),
-                ValuePtr.control(root.id, 0, "suffix"),
+                Pointer.control(root.id, 0, "_"),
+                Pointer.control(root.id, 0, "suffix"),
             )
             assert harness.store.run_output_text(run_id=root.id) == "hello!"
 
@@ -1619,7 +1629,7 @@ flow relay(_: Text) -> Number:
             start = harness.store.get_run_control(run_id=child.id, index=0)
             assert start is not None
             assert isinstance(start.payload, StartControlPayload)
-            assert start.payload.locals == (Local("Number", 42, "_", 0),)
+            assert start.payload.locals == (Local.typed("Number", 42, "_", 0),)
             assert harness.store.resolve_local(start.payload.locals[0]).value == 42
             assert harness.store.run_output_text(run_id=root.id) == "7"
 
@@ -1655,7 +1665,7 @@ flow number(_: Text) -> Number:
                 )
             )
 
-            assert root.output == Local("Number", 7, "_", 0)
+            assert root.output == Local.typed("Number", 7, "_", 0)
             assert root.output is not None
             assert harness.store.resolve_local(root.output).value == 7
 

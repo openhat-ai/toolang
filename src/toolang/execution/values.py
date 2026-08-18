@@ -15,8 +15,9 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
+from toolang.lang.types import Array, Struct
 
-from .types import Local, ValuePtr
+from .types import Local, TypedPointer
 
 _PART_TYPES = (
     TextPart,
@@ -46,11 +47,11 @@ def parts_from_local(local: Local) -> tuple[MessagePart, ...]:
     if isinstance(value, _PART_TYPES):
         return (value,)
     if local.type in _PART_ARRAY_TYPES:
-        if not isinstance(value, tuple) or not all(
+        if not isinstance(value, Array) or not all(
             isinstance(item, _PART_TYPES) for item in value
         ):
             raise TypeError("Part[] local requires an ordered part sequence")
-        return cast(tuple[MessagePart, ...], value)
+        return cast(tuple[MessagePart, ...], tuple(value))
     if local.type == "Text":
         if not isinstance(value, str):
             raise TypeError("Text local requires text")
@@ -68,11 +69,11 @@ def parts_from_local(local: Local) -> tuple[MessagePart, ...]:
 
 
 def _contains_pointer(value: object) -> bool:
-    if isinstance(value, ValuePtr):
+    if isinstance(value, TypedPointer):
         return True
-    if isinstance(value, tuple):
+    if isinstance(value, Array | tuple):
         return any(_contains_pointer(item) for item in value)
-    if isinstance(value, Mapping):
+    if isinstance(value, Struct | Mapping):
         return any(_contains_pointer(item) for item in value.values())
     return False
 
@@ -80,9 +81,9 @@ def _contains_pointer(value: object) -> bool:
 def _presentation_data(value: object) -> object:
     if isinstance(value, _PART_TYPES):
         return {"$part": value.to_data()}
-    if isinstance(value, tuple):
+    if isinstance(value, Array | tuple):
         return [_presentation_data(item) for item in value]
-    if isinstance(value, Mapping):
+    if isinstance(value, Struct | Mapping):
         return {str(name): _presentation_data(item) for name, item in value.items()}
     return value
 

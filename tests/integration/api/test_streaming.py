@@ -37,7 +37,7 @@ from toolang.execution.records import (
     ThreadPeer,
 )
 from toolang.execution.schemas import RunDetail, ThreadDetail
-from toolang.execution.types import ControlRef, Local, StepPath, ValuePtr
+from toolang.execution.types import ControlRef, Local, StepPath, Pointer
 from toolang.up import AgentCore
 from tests.support.execution_fixtures import project_run_start, project_step
 from tests.support.execution_harness import ExecutionHarness
@@ -265,8 +265,8 @@ agic chat(_: Part[]) -> Part[]:
             "step_end",
             "run_end",
         }
-        assert run_detail.output == Local(
-            "Part[]", ValuePtr.step(StepPath.parse(f"{run_id}/0")), "_", 0
+        assert run_detail.output == Local.typed(
+            "Part[]", Pointer.step(StepPath.parse(f"{run_id}/0")), "_", 0
         )
         assert thread_detail.runs[0].output == run_detail.output
         threads = core.store.list_threads()
@@ -597,7 +597,7 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
         step_index=0,
         kind="run",
         status="running",
-        input=(ValuePtr.control("run_root", 0, "_"),),
+        input=(Pointer.control("run_root", 0, "_"),),
         output=(),
         started_at="2026-01-01T00:00:01Z",
         finished_at=None,

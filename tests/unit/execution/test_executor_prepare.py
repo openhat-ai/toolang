@@ -40,7 +40,7 @@ from toolang.execution.types import (
     AgentResources,
     AgentToolResource,
     Local as RecordLocal,
-    ValuePtr,
+    Pointer,
 )
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
 from toolang.lang.input import RunnableInput
@@ -519,7 +519,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert record.status == "succeeded"
         steps = store.list_steps(run_id=record.id)
         assert [step.kind for step in steps] == ["model"]
-        assert steps[0].output == RecordLocal("Part[]", (audio,), "_")
+        assert steps[0].output == RecordLocal.typed("Part[]", (audio,), "_")
         assert store.run_output(run_id=record.id) == (audio,)
         assert len(adapter.requests) == 1
         request_text = message_text(adapter.requests[0].messages[-1].parts)
@@ -552,12 +552,12 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         start_payload = detail.controls[0].payload
         assert isinstance(start_payload, StartControlPayload)
         assert start_payload.locals == (
-            RecordLocal("Part[]", (TextPart("hello"), image), "_"),
-            RecordLocal("Text", "events", "focus"),
+            RecordLocal.typed("Part[]", (TextPart("hello"), image), "_"),
+            RecordLocal.typed("Text", "events", "focus"),
         )
-        assert detail.output == RecordLocal(
+        assert detail.output == RecordLocal.typed(
             "Part[]",
-            ValuePtr.step(steps[0].path),
+            Pointer.step(steps[0].path),
             "_",
         )
         assert detail.steps[0].given["call"] == model_call_to_data(adapter.requests[0])

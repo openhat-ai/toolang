@@ -58,8 +58,8 @@ async def execute(
             "list",
             type_name=input_type,
             record=(
-                RecordLocal(
-                    type=f"{input_type or 'Json'}[]",
+                RecordLocal.typed(
+                    type_name=f"{input_type or 'Json'}[]",
                     value=tuple(source.ref.select(index) for index in ranked_indexes),
                     dim=1,
                 )

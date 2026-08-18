@@ -16,7 +16,7 @@ from toolang.lang.ast import AgicDecl
 from toolang.lang.input import coerce_output
 
 from ...records import RunControlRecord
-from ...types import StepPath, ValuePtr
+from ...types import StepPath, Pointer
 from ..common import (
     BoundRun,
     EventEmitter,
@@ -49,16 +49,16 @@ class _AgicState:
     )
     record_accounting: Callable[[_ModelAccounting], None] = lambda _accounting: None
     limits: RunLimits = RunLimits()
-    record_output: Callable[[ValuePtr], None] = lambda _ref: None
-    output: ValuePtr | None = None
+    record_output: Callable[[Pointer], None] = lambda _ref: None
+    output: Pointer | None = None
     model_state: dict[str, Any] | None = None
     next_step: int = 0
     last_step: int | None = None
-    next_model_inputs: tuple[ValuePtr, ...] | None = None
+    next_model_inputs: tuple[Pointer, ...] | None = None
     model_calls: int = 0
     tool_calls: int = 0
     tool_call_sources: dict[str, tuple[int, int]] = field(default_factory=dict)
-    initial_inputs: tuple[ValuePtr, ...] = ()
+    initial_inputs: tuple[Pointer, ...] = ()
     claimed_inputs: tuple[RunControlRecord, ...] = ()
 
     def before_model_call(self) -> None:
@@ -144,7 +144,7 @@ async def _execute(state: _AgicState) -> Message | None:
             raise
         if state.last_step is None:
             raise RuntimeError("model step did not record its index")
-        ref = ValuePtr.step(StepPath(state.prepared.run.run_id, (state.last_step,)))
+        ref = Pointer.step(StepPath(state.prepared.run.run_id, (state.last_step,)))
         state.output = ref
         state.record_output(ref)
         if result.tool_calls:
@@ -173,7 +173,7 @@ def _append_canceled_tool_results(
     """Complete skipped tool calls in model history without executing them."""
 
     state.next_model_inputs = tuple(
-        ValuePtr.step(
+        Pointer.step(
             StepPath(state.prepared.run.run_id, (source[0],)),
             source[1],
         )

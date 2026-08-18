@@ -42,7 +42,7 @@ from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
 from toolang.execution.records import RunControlRef, StartControlPayload
-from toolang.execution.types import StepPath, ThreadPrefix, ValuePtr
+from toolang.execution.types import StepPath, ThreadPrefix, Pointer
 from toolang.lang.input import perceive_input
 
 
@@ -83,8 +83,8 @@ agic reply(_: Part[], tone: Text) -> Part[]:
             steps = harness.store.list_steps(run_id=record.id)
             assert [step.kind for step in steps] == ["model"]
             assert steps[0].input == (
-                ValuePtr.control(record.id, 0, "_"),
-                ValuePtr.control(record.id, 0, "tone"),
+                Pointer.control(record.id, 0, "_"),
+                Pointer.control(record.id, 0, "tone"),
             )
             assert [event.type for event in tracer.events] == [
                 "run_begin",
@@ -148,7 +148,7 @@ agic reply(_: Part[]) -> Part[]:
             assert [step.path.index for step in historical] == [0, 1]
             assert historical[0].ejected_by == RunControlRef(run.id, 1)
             assert historical[1].ejected_by is None
-            assert historical[1].input == (ValuePtr.control(run.id, 1, "_"),)
+            assert historical[1].input == (Pointer.control(run.id, 1, "_"),)
 
     asyncio.run(scenario())
 
@@ -179,7 +179,7 @@ agic reply(topic: Text) -> Part[]:
 
             steps = harness.store.list_steps(run_id=record.id)
             assert len(steps) == 1
-            assert steps[0].input == (ValuePtr.control(record.id, 0, "topic"),)
+            assert steps[0].input == (Pointer.control(record.id, 0, "topic"),)
 
     asyncio.run(scenario())
 
@@ -472,7 +472,7 @@ agic stream(_: Text) -> Text:
             )
 
             assert record.status == "failed"
-            assert record.error == ValuePtr.step(StepPath(record.id, (0,)))
+            assert record.error == Pointer.step(StepPath(record.id, (0,)))
             assert [
                 (step.kind, step.status, step.error)
                 for step in harness.store.list_steps(run_id=record.id)
@@ -1218,7 +1218,7 @@ agic fail(_: Part[]) -> Part[]:
             )
 
             assert record.status == "failed"
-            assert record.error == ValuePtr.step(StepPath(record.id, (0,)))
+            assert record.error == Pointer.step(StepPath(record.id, (0,)))
             steps = harness.store.list_steps(run_id=record.id)
             assert [(step.kind, step.status) for step in steps] == [("model", "failed")]
             assert steps[0].error == "provider unavailable"

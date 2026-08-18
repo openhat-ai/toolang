@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, cast
 
@@ -20,6 +20,7 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelCall
+from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 from .types import (
     ControlRef,
     ControlKind,
@@ -27,7 +28,6 @@ from .types import (
     ControlTiming,
     AgentResources,
     Local,
-    LocalValue,
     ExecutionError,
     RunId,
     RunStatus,
@@ -35,7 +35,9 @@ from .types import (
     StepPath,
     StepStatus,
     ThreadPeerType,
-    ValuePtr,
+    Pointer,
+    TypedPointer,
+    validate_runtime_value,
 )
 
 
@@ -211,7 +213,7 @@ def _control_payload_variant(value: object, info: ValidationInfo) -> object:
         raise ValueError(f"unknown control kind: {kind}")
     expected = _CONTROL_PAYLOAD_TYPES[kind]
     if isinstance(value, Mapping):
-        return control_payload_from_data(cast(ControlKind, kind), value)
+        return control_payload_from_protocol_data(cast(ControlKind, kind), value)
     if not isinstance(value, expected):
         raise ValueError(f"{kind} control has an invalid payload")
     return value
@@ -250,7 +252,7 @@ class StepRecord:
 
     path: StepPath
     kind: StepKind
-    input: tuple[ValuePtr, ...]
+    input: tuple[Pointer, ...]
     output: Local | None
     placement: dict[str, object] | None = None
     given: dict[str, Any] = field(default_factory=dict)
@@ -324,15 +326,22 @@ class ThreadControlRecord(ControlRecordBase):
         return self.target
 
 
-def local_from_data(payload: Mapping[str, object]) -> Local:
-    """Parse one durable typed local."""
+_PART_STORAGE_TYPES = {
+    "TextPart": "text",
+    "ImagePart": "image",
+    "AudioPart": "audio",
+    "DocumentPart": "document",
+    "ToolCallPart": "tool_call",
+    "ToolResultPart": "tool_result",
+}
+_PART_PROTOCOL_TYPES = frozenset(_PART_STORAGE_TYPES.values())
 
-    if set(payload) != {"type", "value", "name", "dim"}:
-        raise ValueError("local requires type, value, name, and dim fields")
-    raw_type = payload.get("type")
-    if not isinstance(raw_type, str):
-        raise ValueError("local type must be text")
-    type_name = raw_type
+
+def local_from_data(payload: Mapping[str, object]) -> Local:
+    """Parse one local from its private durable representation."""
+
+    if set(payload) != {"value", "name", "dim"}:
+        raise ValueError("stored local requires value, name, and dim fields")
     raw_dim = payload.get("dim")
     if isinstance(raw_dim, bool) or not isinstance(raw_dim, int):
         raise ValueError("local dim must be 0 or 1")
@@ -342,63 +351,76 @@ def local_from_data(payload: Mapping[str, object]) -> Local:
         raise ValueError("local name must be text or null")
     name = raw_name
     return Local(
-        type=type_name,
-        value=local_value_from_data(payload.get("value"), type_name),
+        value=local_value_from_data(payload.get("value")),
         name=name,
         dim=dim,
     )
 
 
 def local_to_data(local: Local) -> dict[str, object]:
-    """Serialize one durable typed local."""
+    """Serialize one local using its private durable representation."""
 
     return {
-        "type": local.type,
         "value": local_value_to_data(local.value),
         "name": local.name,
         "dim": local.dim,
     }
 
 
-def local_value_from_data(data: object, _type_name: str) -> LocalValue:
-    """Parse one self-describing local value or pointer."""
+def local_value_from_data(data: object) -> Value | TypedPointer:
+    """Parse one self-describing stored value."""
 
     if isinstance(data, Mapping):
         mapping = cast(Mapping[str, object], data)
-        if "$ptr" in mapping:
-            if set(mapping) != {"$ptr"} or not isinstance(mapping.get("$ptr"), str):
-                raise ValueError("value pointer object requires only a text $ptr field")
-            return ValuePtr(cast(str, mapping["$ptr"]))
-        if "$part" in mapping:
-            if set(mapping) != {"$part"} or not isinstance(
-                mapping.get("$part"), Mapping
-            ):
-                raise ValueError("part object requires only an object $part field")
-            return part_from_data(cast(Mapping[str, Any], mapping["$part"]))
-        if not all(isinstance(key, str) for key in mapping):
-            raise ValueError("local object keys must be strings")
-        return cast(
-            LocalValue,
-            {
-                key: local_value_from_data(value, "Json")
-                for key, value in mapping.items()
-            },
-        )
+        if not all(isinstance(name, str) for name in mapping):
+            raise ValueError("stored object keys must be text")
+        raw_tag = mapping.get("?")
+        if not isinstance(raw_tag, str):
+            raise ValueError("stored object requires a text ? tag")
+        if raw_tag.endswith("!"):
+            type_name = validate_type(raw_tag[:-1])
+            if set(mapping) != {"?", "!"}:
+                raise ValueError("boxed stored value requires only ? and ! fields")
+            return _boxed_value_from_data(type_name, mapping.get("!"))
+        type_name, separator, raw_pointer = raw_tag.partition("@")
+        validate_type(type_name)
+        if separator:
+            if set(mapping) != {"?"} or not raw_pointer:
+                raise ValueError("stored pointer requires only one typed ? tag")
+            return TypedPointer(type_name, Pointer(raw_pointer))
+        fields = {name: item for name, item in mapping.items() if name != "?"}
+        if "!" in fields:
+            raise ValueError("inline stored value cannot contain !")
+        if type_name in _PART_STORAGE_TYPES:
+            discriminator = _PART_STORAGE_TYPES[type_name]
+            return part_from_data(
+                cast(Mapping[str, Any], {**fields, "type": discriminator})
+            )
+        decoded = {name: local_value_from_data(item) for name, item in fields.items()}
+        if type_name == "Json":
+            return cast(Value, decoded)
+        if type_name.endswith("[]") or type_name in {
+            "Text",
+            "Number",
+            "Boolean",
+            "Part",
+        }:
+            raise ValueError(f"{type_name} cannot use inline stored fields")
+        return cast(Value, Struct(type_name, decoded))
     if isinstance(data, list):
-        return cast(
-            LocalValue,
-            tuple(local_value_from_data(item, "Json") for item in data),
-        )
+        raise ValueError("stored arrays require a typed boxed value")
     if data is None or isinstance(data, str | bool | int | float):
-        return cast(LocalValue, data)
-    raise ValueError(f"unsupported local value: {type(data).__name__}")
+        if data is None:
+            raise ValueError("null requires an explicit stored type")
+        return cast(Value, data)
+    raise ValueError(f"unsupported stored value: {type(data).__name__}")
 
 
-def local_value_to_data(value: LocalValue) -> object:
-    """Serialize one local value while retaining embedded pointers."""
+def local_value_to_data(value: Value | TypedPointer) -> object:
+    """Serialize one self-describing stored value."""
 
-    if isinstance(value, ValuePtr):
-        return {"$ptr": str(value)}
+    if isinstance(value, TypedPointer):
+        return {"?": f"{value.type}@{value.pointer}"}
     if isinstance(
         value,
         (
@@ -410,21 +432,182 @@ def local_value_to_data(value: LocalValue) -> object:
             ToolResultPart,
         ),
     ):
-        return {"$part": value.to_data()}
-    if isinstance(value, tuple | list):
-        return [local_value_to_data(cast(LocalValue, item)) for item in value]
+        payload = value.to_data()
+        payload.pop("type", None)
+        return {"?": type(value).__name__, **payload}
+    if isinstance(value, Array):
+        return {
+            "?": f"{value.type}!",
+            "!": [
+                local_value_to_data(cast(Value | TypedPointer, item)) for item in value
+            ],
+        }
+    if isinstance(value, Struct):
+        if {"?", "!"}.intersection(value):
+            raise ValueError("? and ! are reserved for stored values")
+        return {
+            "?": value.type,
+            **{
+                name: local_value_to_data(cast(Value | TypedPointer, item))
+                for name, item in value.items()
+            },
+        }
     if isinstance(value, Mapping):
-        reserved = {"$ptr", "$part"}.intersection(value)
+        reserved = {"?", "!"}.intersection(value)
         if reserved:
             marker = sorted(reserved)[0]
             raise ValueError(f"{marker} is reserved for execution values")
         return {
-            str(key): local_value_to_data(cast(LocalValue, item))
-            for key, item in value.items()
+            "?": "Json",
+            **{
+                str(key): local_value_to_data(cast(Value | TypedPointer, item))
+                for key, item in value.items()
+            },
         }
-    if value is None or isinstance(value, str | bool | int | float):
+    if isinstance(value, tuple | list):
+        return {
+            "?": "Json!",
+            "!": [
+                local_value_to_data(cast(Value | TypedPointer, item)) for item in value
+            ],
+        }
+    if value is None:
+        return {"?": "Json!", "!": None}
+    if isinstance(value, str | bool | int | float):
         return value
-    raise TypeError(f"unsupported local value: {type(value).__name__}")
+    raise TypeError(f"unsupported stored value: {type(value).__name__}")
+
+
+def local_from_protocol_data(payload: Mapping[str, object]) -> Local:
+    """Parse one caller-facing local projection."""
+
+    if set(payload) != {"type", "value", "name", "dim"}:
+        raise ValueError("local requires type, value, name, and dim fields")
+    raw_type = payload.get("type")
+    if not isinstance(raw_type, str):
+        raise ValueError("local type must be text")
+    type_name = validate_type(raw_type)
+    raw_dim = payload.get("dim")
+    if isinstance(raw_dim, bool) or not isinstance(raw_dim, int):
+        raise ValueError("local dim must be 0 or 1")
+    raw_name = payload.get("name")
+    if raw_name is not None and not isinstance(raw_name, str):
+        raise ValueError("local name must be text or null")
+    return Local.typed(
+        type_name,
+        _protocol_value_from_data(payload.get("value"), type_name),
+        name=raw_name,
+        dim=cast(Literal[0, 1], raw_dim),
+    )
+
+
+def local_to_protocol_data(local: Local) -> dict[str, object]:
+    """Serialize one caller-facing local projection."""
+
+    return {
+        "type": local.type,
+        "value": _protocol_value_to_data(local.value),
+        "name": local.name,
+        "dim": local.dim,
+    }
+
+
+def _boxed_value_from_data(type_name: str, data: object) -> Value | TypedPointer:
+    if type_name.endswith("[]"):
+        if not isinstance(data, list):
+            raise ValueError(f"stored {type_name} requires an array ! value")
+        result = Array(
+            type_name,
+            tuple(local_value_from_data(item) for item in data),
+        )
+        validate_runtime_value(result, type_name, path="stored value")
+        return cast(Value, result)
+    if type_name == "Json":
+        if isinstance(data, list):
+            return cast(Value, tuple(local_value_from_data(item) for item in data))
+        if isinstance(data, Mapping):
+            raise ValueError("stored Json objects must use inline fields")
+        if data is None or isinstance(data, str | bool | int | float):
+            return cast(Value, data)
+    if type_name in {"Text", "Number", "Boolean"}:
+        if value_type(data) == type_name:
+            return cast(Value, data)
+    raise ValueError(f"invalid boxed {type_name} value")
+
+
+def _protocol_value_from_data(data: object, type_name: str) -> Value | TypedPointer:
+    if isinstance(data, Mapping) and set(data) == {"$ptr"}:
+        raw_pointer = cast(Mapping[str, object], data).get("$ptr")
+        if isinstance(raw_pointer, str):
+            return TypedPointer(type_name, Pointer(raw_pointer))
+    if type_name.endswith("[]"):
+        if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
+            raise ValueError(f"protocol {type_name} requires an array")
+        return cast(
+            Value,
+            Array(
+                type_name,
+                tuple(_protocol_value_from_data(item, type_name[:-2]) for item in data),
+            ),
+        )
+    if type_name in _PART_STORAGE_TYPES:
+        if not isinstance(data, Mapping):
+            raise ValueError(f"protocol {type_name} requires an object")
+        return part_from_data(cast(Mapping[str, Any], data))
+    if type_name == "Part":
+        if not isinstance(data, Mapping):
+            raise ValueError("protocol Part requires an object")
+        return part_from_data(cast(Mapping[str, Any], data))
+    if type_name not in {"Text", "Number", "Boolean", "Json"}:
+        if not isinstance(data, Mapping):
+            raise ValueError(f"protocol {type_name} requires an object")
+        if not all(isinstance(name, str) for name in data):
+            raise ValueError("protocol struct fields must be text")
+        return cast(
+            Value,
+            Struct(
+                type_name,
+                {
+                    cast(str, name): _protocol_json_value_from_data(item)
+                    for name, item in data.items()
+                },
+            ),
+        )
+    return cast(Value, _protocol_json_value_from_data(data))
+
+
+def _protocol_json_value_from_data(data: object) -> object:
+    if isinstance(data, Mapping):
+        mapping = cast(Mapping[str, object], data)
+        if not all(isinstance(name, str) for name in mapping):
+            raise ValueError("protocol object keys must be text")
+        if mapping.get("type") in _PART_PROTOCOL_TYPES:
+            return part_from_data(cast(Mapping[str, Any], mapping))
+        return {
+            name: _protocol_json_value_from_data(item) for name, item in mapping.items()
+        }
+    if isinstance(data, list):
+        return tuple(_protocol_json_value_from_data(item) for item in data)
+    return data
+
+
+def _protocol_value_to_data(value: object) -> object:
+    if isinstance(value, TypedPointer):
+        return {"$ptr": str(value.pointer)}
+    if isinstance(
+        value,
+        (TextPart, ImagePart, AudioPart, DocumentPart, ToolCallPart, ToolResultPart),
+    ):
+        return value.to_data()
+    if isinstance(value, Array):
+        return [_protocol_value_to_data(item) for item in value]
+    if isinstance(value, Struct | Mapping):
+        return {
+            str(name): _protocol_value_to_data(item) for name, item in value.items()
+        }
+    if isinstance(value, tuple | list):
+        return [_protocol_value_to_data(item) for item in value]
+    return value
 
 
 def control_payload_from_data(
@@ -432,6 +615,24 @@ def control_payload_from_data(
     data: object,
 ) -> ControlPayload:
     """Parse one typed control payload from durable data."""
+
+    return _control_payload_from_data(kind, data, local_from_data)
+
+
+def control_payload_from_protocol_data(
+    kind: ControlKind,
+    data: object,
+) -> ControlPayload:
+    """Parse one typed control payload from its caller-facing projection."""
+
+    return _control_payload_from_data(kind, data, local_from_protocol_data)
+
+
+def _control_payload_from_data(
+    kind: ControlKind,
+    data: object,
+    local_decoder: Callable[[Mapping[str, object]], Local],
+) -> ControlPayload:
 
     if not isinstance(data, Mapping):
         raise ValueError("control payload must be an object")
@@ -456,7 +657,7 @@ def control_payload_from_data(
             if not all(isinstance(item, Mapping) for item in raw_locals):
                 raise ValueError(f"{kind} payload contains an invalid local")
             locals_value = tuple(
-                local_from_data(cast(Mapping[str, object], item)) for item in raw_locals
+                local_decoder(cast(Mapping[str, object], item)) for item in raw_locals
             )
         else:
             raise ValueError(f"{kind} payload locals must be an array or null")
@@ -499,7 +700,7 @@ def control_payload_from_data(
         ):
             raise ValueError(f"{kind} payload locals must be an array")
         locals_value = tuple(
-            local_from_data(cast(Mapping[str, object], item))
+            local_decoder(cast(Mapping[str, object], item))
             for item in raw_locals
             if isinstance(item, Mapping)
         )
@@ -558,17 +759,17 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
     return {"rewind_from": payload.rewind_from, "rewind_if": payload.rewind_if}
 
 
-def value_ptrs_from_data(data: object) -> tuple[ValuePtr, ...]:
+def pointers_from_data(data: object) -> tuple[Pointer, ...]:
     """Parse a pointer-only record field."""
 
     if not isinstance(data, Sequence) or isinstance(data, (str, bytes, bytearray)):
         raise ValueError("value pointers must be an array")
     if not all(isinstance(item, str) for item in data):
         raise ValueError("value pointers must contain only strings")
-    return tuple(ValuePtr(cast(str, item)) for item in data)
+    return tuple(Pointer(cast(str, item)) for item in data)
 
 
-def value_ptrs_to_data(items: Sequence[ValuePtr]) -> list[str]:
+def pointers_to_data(items: Sequence[Pointer]) -> list[str]:
     """Serialize a pointer-only record field."""
 
     return [str(item) for item in items]
@@ -614,7 +815,7 @@ def execution_error_from_data(data: object) -> ExecutionError:
     if isinstance(data, Mapping) and set(data) == {"$ptr"}:
         pointer = cast(Mapping[str, object], data).get("$ptr")
         if isinstance(pointer, str):
-            return ValuePtr(pointer)
+            return Pointer(pointer)
     raise ValueError("invalid execution error")
 
 
@@ -632,10 +833,10 @@ def execution_error_message(
 ) -> str | None:
     """Resolve one execution error to a displayable message when possible."""
 
-    by_pointer = {ValuePtr(_step_pointer(step.path)): step for step in steps}
-    seen: set[ValuePtr] = set()
+    by_pointer = {Pointer(_step_pointer(step.path)): step for step in steps}
+    seen: set[Pointer] = set()
     current = error
-    while isinstance(current, ValuePtr):
+    while isinstance(current, Pointer):
         if current in seen:
             break
         seen.add(current)
@@ -643,7 +844,7 @@ def execution_error_message(
         if step is None:
             break
         current = step.error
-    if isinstance(current, ValuePtr):
+    if isinstance(current, Pointer):
         return f"execution value {current} failed"
     return current
 

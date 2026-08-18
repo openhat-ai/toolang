@@ -61,7 +61,7 @@ def test_read_only_thread_commands_do_not_create_execution_store(
     assert not layout.run_store.exists()
 
 
-@pytest.mark.parametrize("schema_version", [11, 18])
+@pytest.mark.parametrize("schema_version", [11, 18, 24])
 def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     tmp_path: Path,
     schema_version: int,
@@ -84,7 +84,7 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     assert "Traceback" not in error_output
     assert "execution history is incompatible with toolang" in error_output
     assert f"uses schema {schema_version}" in error_output
-    assert "requires schema 24" in error_output
+    assert "requires schema 25" in error_output
     assert "backup" in error_output
     assert "database was not changed" in error_output.lower()
     connection = sqlite3.connect(layout.run_store)
@@ -390,7 +390,7 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
     ]
     assert isinstance(controls[1].payload, SteerControlPayload)
     assert controls[1].payload.locals == (
-        Local("Part[]", Message.user("Focus on tests").parts, "_", 0),
+        Local.typed("Part[]", Message.user("Focus on tests").parts, "_", 0),
     )
 
 

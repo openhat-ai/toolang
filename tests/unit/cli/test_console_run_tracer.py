@@ -14,15 +14,15 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.types import ControlRef, Local, StepPath, ValuePtr
+from toolang.execution.types import ControlRef, Local, StepPath, Pointer
 
 
 def _parts(*parts: MessagePart) -> Local:
-    return Local("Part[]", tuple(parts), "_", 0)
+    return Local.typed("Part[]", tuple(parts), "_", 0)
 
 
 def _output(step: StepPath) -> Local:
-    return Local("Part[]", ValuePtr.step(step), "_", 0)
+    return Local.typed("Part[]", Pointer.step(step), "_", 0)
 
 
 class _TtyStream(StringIO):

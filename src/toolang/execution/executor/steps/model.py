@@ -30,6 +30,7 @@ from toolang.base.types.run import (
     ToolCall,
 )
 from toolang.common.time import elapsed_ms, utc_now
+from toolang.lang.types import Array
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...records import (
@@ -37,7 +38,7 @@ from ...records import (
     SteerControlPayload,
     model_call_to_data,
 )
-from ...types import Local, StepPath, ValuePtr
+from ...types import Local, StepPath, Pointer
 from ..common import _StepFailed
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
@@ -70,7 +71,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
     consumed_inputs = _consume_pending_inputs(state)
     step_input = (
         *_step_input(state),
-        *(ValuePtr.control(run.run_id, item.index, "_") for item in consumed_inputs),
+        *(Pointer.control(run.run_id, item.index, "_") for item in consumed_inputs),
     )
     stream = _ModelStream(step=step_index)
     _LOGGER.info(
@@ -212,7 +213,7 @@ async def _apply_response(
             step=StepPath(run.run_id, (step_index,)),
             kind="model",
             status="succeeded",
-            output=Local(type="Part[]", value=output, name="_", dim=0),
+            output=Local.typed("Part[]", output, "_", 0),
             noted={
                 **_accounting_data(accounting),
                 "reasoning_content": _message_reasoning_content(current.message),
@@ -336,14 +337,14 @@ def _output_parts(
     return items
 
 
-def _step_input(state: _AgicState) -> tuple[ValuePtr, ...]:
+def _step_input(state: _AgicState) -> tuple[Pointer, ...]:
     if state.next_model_inputs is not None:
         inputs = state.next_model_inputs
         state.next_model_inputs = None
         return inputs
     if state.last_step is None:
         return state.initial_inputs
-    return (ValuePtr.step(StepPath(state.prepared.run.run_id, (state.last_step,))),)
+    return (Pointer.step(StepPath(state.prepared.run.run_id, (state.last_step,))),)
 
 
 def _consume_pending_inputs(state: _AgicState) -> tuple[RunControlRecord, ...]:
@@ -356,7 +357,7 @@ def _consume_pending_inputs(state: _AgicState) -> tuple[RunControlRecord, ...]:
             )
             if (
                 primary is not None
-                and isinstance(primary.value, tuple | list)
+                and isinstance(primary.value, Array)
                 and all(isinstance(item, MessagePart) for item in primary.value)
             ):
                 state.messages.append(

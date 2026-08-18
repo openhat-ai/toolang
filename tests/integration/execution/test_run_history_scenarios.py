@@ -18,7 +18,7 @@ from toolang.execution.history import RunHistory
 from toolang.execution.schemas import RunControlRefData, ThreadControlRefData
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import ControlRef, Local, ThreadPrefix, ValuePtr
+from toolang.execution.types import ControlRef, Local, ThreadPrefix, Pointer
 
 
 def test_run_history_batches_thread_and_run_summaries(
@@ -150,7 +150,7 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
         project_run_end(
             store,
             run_id=run.id,
-            output=Local("Part", ValuePtr.step(step.path, 1), "_", 0),
+            output=Local.typed("Part", Pointer.step(step.path, 1), "_", 0),
         )
 
         history = RunHistory(store)
@@ -159,7 +159,7 @@ def test_run_history_resolves_run_output_for_run_and_thread_details(
 
         assert store.run_output(run_id=run.id) == (TextPart("result"),)
         assert detail is not None
-        expected = Local("Part", ValuePtr.step(step.path, 1), "_", 0)
+        expected = Local.typed("Part", Pointer.step(step.path, 1), "_", 0)
         assert detail.output == expected
         assert thread is not None
         assert thread.runs[0].output == expected
@@ -180,7 +180,7 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
         project_run_end(
             store,
             run_id=run.id,
-            output=ValuePtr.control(run.id, 0, "_"),
+            output=Pointer.control(run.id, 0, "_"),
         )
 
         stored = store.get_run(run_id=run.id)
@@ -188,13 +188,13 @@ def test_run_history_resolves_pass_through_control_output(tmp_path: Path) -> Non
 
         assert stored is not None
         assert stored.control == ControlRef(run.id, 0)
-        assert stored.output == Local(
-            "Part[]", ValuePtr.control(run.id, 0, "_"), "_", 0
+        assert stored.output == Local.typed(
+            "Part[]", Pointer.control(run.id, 0, "_"), "_", 0
         )
         assert store.run_output(run_id=run.id) == Message.user("unchanged").parts
         assert detail is not None
-        assert detail.output == Local(
-            "Part[]", ValuePtr.control(run.id, 0, "_"), "_", 0
+        assert detail.output == Local.typed(
+            "Part[]", Pointer.control(run.id, 0, "_"), "_", 0
         )
     finally:
         store.close()
@@ -213,9 +213,9 @@ def test_resolve_local_rejects_a_pointer_to_a_different_type(tmp_path: Path) -> 
 
         with pytest.raises(TypeError, match="Number"):
             store.resolve_local(
-                Local(
+                Local.typed(
                     "Number",
-                    ValuePtr.control(run.id, 0, "_"),
+                    Pointer.control(run.id, 0, "_"),
                     "_",
                     0,
                 )

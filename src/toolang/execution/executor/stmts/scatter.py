@@ -39,8 +39,8 @@ async def execute(
             "list",
             type_name=item_type,
             record=(
-                RecordLocal(
-                    type=output_type,
+                RecordLocal.typed(
+                    type_name=output_type,
                     value=result.ref,
                     dim=1,
                 )

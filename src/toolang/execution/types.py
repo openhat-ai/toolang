@@ -12,7 +12,6 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BeforeValidator, PlainSerializer
 from pydantic_core import core_schema
-from typing_extensions import TypeAliasType
 
 from toolang.base.types.message import (
     AudioPart,
@@ -22,13 +21,12 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
-from toolang.lang.types import Value
+from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 
 
 RunId = str
 _EXECUTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _LOCAL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_VALUE_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[\])*$")
 PolicyGroup = Literal["allow", "default", "limit"]
 PolicyValue: TypeAlias = tuple[str, ...] | str | int | Decimal | None
 ALLOW_POLICY_FIELDS = frozenset(
@@ -217,7 +215,7 @@ class AgentResources:
 
 
 @dataclass(frozen=True, slots=True)
-class ValuePtr:
+class Pointer:
     """Reference one immutable control, step, or run value."""
 
     value: str
@@ -266,23 +264,23 @@ class ValuePtr:
     def __str__(self) -> str:
         return self.value
 
-    def select(self, *path: str | int) -> ValuePtr:
+    def select(self, *path: str | int) -> Pointer:
         """Return a pointer to a value nested below this pointer."""
 
         if not path:
             return self
         suffix = _pointer_suffix(path)
         separator = "" if self.value.endswith("/") else "/"
-        return ValuePtr(f"{self.value}{separator}{suffix}")
+        return Pointer(f"{self.value}{separator}{suffix}")
 
     @classmethod
-    def run(cls, run_id: RunId, *path: str | int) -> ValuePtr:
+    def run(cls, run_id: RunId, *path: str | int) -> Pointer:
         """Point to one run output or a value within it."""
 
         return cls(_pointer_value(run_id, path))
 
     @classmethod
-    def step(cls, step: StepPath, *path: str | int) -> ValuePtr:
+    def step(cls, step: StepPath, *path: str | int) -> Pointer:
         """Point to one step output or a value within it."""
 
         anchor = ".".join((step.run, *(str(index) for index in step.indices)))
@@ -295,7 +293,7 @@ class ValuePtr:
         index: int,
         name: str,
         *path: str | int,
-    ) -> ValuePtr:
+    ) -> Pointer:
         """Point to one named local accepted by a run control."""
 
         return cls(_pointer_value(f"{target}^{index}", (name, *path)))
@@ -327,10 +325,18 @@ class ValuePtr:
         )
 
 
-LocalValue = TypeAliasType(
-    "LocalValue",
-    Value | ValuePtr | tuple[Value | ValuePtr, ...] | list[Value | ValuePtr],
-)
+@dataclass(frozen=True, slots=True)
+class TypedPointer:
+    """One value pointer paired with its expected resolved type."""
+
+    type: str
+    pointer: Pointer
+
+    def __post_init__(self) -> None:
+        validate_type(self.type)
+        if not isinstance(self.pointer, Pointer):
+            raise TypeError("typed pointer requires a Pointer")
+
 
 _PART_TYPES = (
     TextPart,
@@ -353,27 +359,46 @@ _PART_TYPES_BY_NAME = {
 
 @dataclass(frozen=True, slots=True)
 class Local:
-    """One typed value and its runtime binding semantics."""
+    """One runtime value and its local-table binding semantics."""
 
-    type: str
-    value: LocalValue
+    value: Value | TypedPointer
     name: str | None = None
     dim: Literal[0, 1] = 0
 
+    @classmethod
+    def typed(
+        cls,
+        type_name: str,
+        value: object,
+        name: str | None = None,
+        dim: Literal[0, 1] = 0,
+    ) -> Local:
+        """Build a local by applying one explicit typed boundary."""
+
+        return cls(
+            value=value_for_type(type_name, value),
+            name=name,
+            dim=dim,
+        )
+
     def __post_init__(self) -> None:
-        if not isinstance(self.type, str) or not _VALUE_TYPE_RE.fullmatch(self.type):
-            raise ValueError(f"invalid Toolang value type: {self.type!r}")
         if self.name is not None and not _LOCAL_NAME_RE.fullmatch(self.name):
             raise ValueError(f"invalid local name: {self.name!r}")
         if self.dim not in {0, 1}:
             raise ValueError(f"unsupported local dimension: {self.dim!r}")
-        value = _normalize_local_value(self.value)
-        object.__setattr__(self, "value", value)
+        validate_runtime_value(self.value, self.type)
         if self.dim == 1 and not self.type.endswith("[]"):
             raise ValueError("dim=1 requires an array value type")
-        if self.dim == 1 and not isinstance(value, (ValuePtr, tuple)):
+        if self.dim == 1 and not isinstance(self.value, Array | TypedPointer):
             raise TypeError("dim=1 requires an array value or whole-value pointer")
-        _validate_local_value(value, self.type)
+
+    @property
+    def type(self) -> str:
+        """Return the canonical runtime or expected pointer type."""
+
+        if isinstance(self.value, TypedPointer):
+            return self.value.type
+        return value_type(self.value)
 
     @property
     def item_type(self) -> str:
@@ -386,16 +411,16 @@ class Local:
         if isinstance(value, cls):
             return value
         if isinstance(value, Mapping):
-            from .records import local_from_data
+            from .records import local_from_protocol_data
 
-            return local_from_data(cast(Mapping[str, object], value))
+            return local_from_protocol_data(cast(Mapping[str, object], value))
         raise TypeError("local must be a Local or canonical object")
 
     @staticmethod
     def _serialize_pydantic(value: Local) -> dict[str, object]:
-        from .records import local_to_data
+        from .records import local_to_protocol_data
 
-        return local_to_data(value)
+        return local_to_protocol_data(value)
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -424,68 +449,99 @@ class Local:
         )
 
 
-def _normalize_local_value(value: object) -> LocalValue:
-    if isinstance(value, (ValuePtr, *_PART_TYPES)):
-        return cast(LocalValue, value)
-    if isinstance(value, tuple | list):
-        return cast(
-            LocalValue,
-            tuple(_normalize_local_value(item) for item in value),
-        )
-    if isinstance(value, Mapping):
-        if not all(isinstance(name, str) for name in value):
-            raise TypeError("local object keys must be strings")
-        return cast(
-            LocalValue,
-            {
-                cast(str, name): _normalize_local_value(item)
-                for name, item in value.items()
-            },
-        )
-    return cast(LocalValue, value)
-
-
-def _validate_local_value(
+def validate_runtime_value(
     value: object, type_name: str, *, path: str = "local"
 ) -> None:
-    if isinstance(value, ValuePtr):
+    """Validate one concrete or referenced execution value against a type."""
+
+    validate_type(type_name)
+    if isinstance(value, TypedPointer):
+        if not type_assignable(value.type, type_name):
+            raise TypeError(f"{path} pointer is {value.type}, not {type_name}")
         return
     if type_name.endswith("[]"):
-        if not isinstance(value, tuple):
+        if not isinstance(value, Array) or value.type != type_name:
             raise TypeError(f"{path} is not {type_name}")
         item_type = type_name[:-2]
         for index, item in enumerate(value):
-            _validate_local_value(item, item_type, path=f"{path}[{index}]")
+            validate_runtime_value(item, item_type, path=f"{path}[{index}]")
         return
     expected_part = _PART_TYPES_BY_NAME.get(type_name)
     if expected_part is not None:
         if not isinstance(value, expected_part):
             raise TypeError(f"{path} is not {type_name}")
         return
-    if type_name == "Text":
-        valid = isinstance(value, str)
-    elif type_name == "Number":
-        valid = (
-            not isinstance(value, bool)
-            and isinstance(value, int | float)
-            and (not isinstance(value, float) or math.isfinite(value))
-        )
-    elif type_name == "Boolean":
-        valid = isinstance(value, bool)
+    if type_name in {"Text", "Number", "Boolean"}:
+        valid = value_type(value) == type_name
     elif type_name == "Json":
         _validate_open_local_value(value, path=path)
         return
     else:
-        valid = isinstance(value, Mapping)
-        if valid:
+        valid = isinstance(value, Struct) and value.type == type_name
+        if valid and isinstance(value, Struct):
             _validate_open_local_value(value, path=path)
             return
     if not valid:
         raise TypeError(f"{path} is not {type_name}")
 
 
+def value_for_type(type_name: str, value: object) -> Value | TypedPointer:
+    """Normalize one value at an explicit Toolang typed boundary."""
+
+    validate_type(type_name)
+    if isinstance(value, TypedPointer):
+        result: object = value
+    elif isinstance(value, Pointer):
+        result = TypedPointer(type_name, value)
+    elif type_name.endswith("[]"):
+        if isinstance(value, Array):
+            result = value
+        elif isinstance(value, Sequence) and not isinstance(
+            value, (str, bytes, bytearray)
+        ):
+            item_type = type_name[:-2]
+            result = Array(
+                type_name,
+                tuple(value_for_type(item_type, item) for item in value),
+            )
+        else:
+            result = value
+    elif type_name == "Json":
+        result = _normalize_json_value(value)
+    elif type_name not in {
+        "Text",
+        "Number",
+        "Boolean",
+        "Json",
+        "Part",
+        *_PART_TYPES_BY_NAME,
+    } and isinstance(value, Mapping):
+        if not all(isinstance(name, str) for name in value):
+            raise TypeError("struct field names must be strings")
+        result = Struct(
+            type_name,
+            {cast(str, name): item for name, item in value.items()},
+        )
+    else:
+        result = value
+    validate_runtime_value(result, type_name)
+    return cast(Value | TypedPointer, result)
+
+
+def _normalize_json_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        if not all(isinstance(name, str) for name in value):
+            raise TypeError("Json object keys must be strings")
+        return {
+            cast(str, name): _normalize_json_value(item) for name, item in value.items()
+        }
+    if isinstance(value, tuple | list):
+        return tuple(_normalize_json_value(item) for item in value)
+    return value
+
+
 def _validate_open_local_value(value: object, *, path: str) -> None:
-    if isinstance(value, (ValuePtr, *_PART_TYPES)):
+    if isinstance(value, (TypedPointer, *_PART_TYPES)):
         return
     if value is None or isinstance(value, str | bool | int):
         return
@@ -493,7 +549,10 @@ def _validate_open_local_value(value: object, *, path: str) -> None:
         if math.isfinite(value):
             return
         raise TypeError(f"{path} contains a non-finite number")
-    if isinstance(value, tuple):
+    if isinstance(value, Array):
+        validate_runtime_value(value, value.type, path=path)
+        return
+    if isinstance(value, tuple | list):
         for index, item in enumerate(value):
             _validate_open_local_value(item, path=f"{path}[{index}]")
         return
@@ -504,6 +563,16 @@ def _validate_open_local_value(value: object, *, path: str) -> None:
             _validate_open_local_value(item, path=f"{path}.{name}")
         return
     raise TypeError(f"{path} contains unsupported {type(value).__name__}")
+
+
+def type_assignable(actual: str, expected: str) -> bool:
+    """Return whether one runtime type satisfies an expected boundary."""
+
+    validate_type(actual)
+    validate_type(expected)
+    if expected == "Json" or actual == expected:
+        return True
+    return expected == "Part" and actual in set(_PART_TYPES_BY_NAME) - {"Part"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -625,23 +694,23 @@ class StepPath:
         )
 
 
-def _parse_execution_error(value: object) -> str | ValuePtr:
-    if isinstance(value, ValuePtr | str):
+def _parse_execution_error(value: object) -> str | Pointer:
+    if isinstance(value, Pointer | str):
         return value
     if isinstance(value, Mapping):
         payload = cast(Mapping[str, object], value)
         pointer = payload.get("$ptr") if set(payload) == {"$ptr"} else None
         if isinstance(pointer, str):
-            return ValuePtr(pointer)
+            return Pointer(pointer)
     raise ValueError("invalid execution error")
 
 
-def _serialize_execution_error(error: str | ValuePtr) -> str | dict[str, str]:
+def _serialize_execution_error(error: str | Pointer) -> str | dict[str, str]:
     return error if isinstance(error, str) else {"$ptr": str(error)}
 
 
 ExecutionError: TypeAlias = Annotated[
-    str | ValuePtr,
+    str | Pointer,
     BeforeValidator(_parse_execution_error),
     PlainSerializer(_serialize_execution_error, return_type=object),
 ]

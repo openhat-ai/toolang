@@ -20,7 +20,7 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import Message, TextPart, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
-from toolang.execution.types import ControlTiming, StepPath, ThreadPrefix, ValuePtr
+from toolang.execution.types import ControlTiming, StepPath, ThreadPrefix, Pointer
 from toolang.lang.input import perceive_input
 
 
@@ -140,8 +140,8 @@ agic revise(_: Part[]) -> Part[]:
             assert stored_control.status == "applied"
             steps = harness.store.list_steps(run_id=record.id)
             assert steps[1].input == (
-                ValuePtr.step(StepPath.parse(f"{record.id}/0")),
-                ValuePtr.control(record.id, control.index, "_"),
+                Pointer.step(StepPath.parse(f"{record.id}/0")),
+                Pointer.control(record.id, control.index, "_"),
             )
             assert harness.store.run_output(run_id=record.id) == (TextPart("revised"),)
             assert_run_event_integrity(tracer.events)
@@ -214,8 +214,8 @@ agic calculate(_: Part[]) -> Part[]:
             assert messages[3] == Message.user("skip tools")
             second = harness.store.list_steps(run_id=record.id)[1]
             assert second.input == (
-                ValuePtr.step(StepPath.parse(f"{record.id}/0"), 0),
-                ValuePtr.control(record.id, control.index, "_"),
+                Pointer.step(StepPath.parse(f"{record.id}/0"), 0),
+                Pointer.control(record.id, control.index, "_"),
             )
 
     asyncio.run(scenario())
@@ -485,10 +485,10 @@ agic revise(_: Text) -> Text:
             assert [control.index for control in controls] == [1, 2, 3]
             second_step = harness.store.list_steps(run_id=record.id)[1]
             assert second_step.input == (
-                ValuePtr.control(record.id, 0, "_"),
-                ValuePtr.control(record.id, 1, "_"),
-                ValuePtr.control(record.id, 2, "_"),
-                ValuePtr.control(record.id, 3, "_"),
+                Pointer.control(record.id, 0, "_"),
+                Pointer.control(record.id, 1, "_"),
+                Pointer.control(record.id, 2, "_"),
+                Pointer.control(record.id, 3, "_"),
             )
             stored_controls = [
                 harness.store.get_run_control(

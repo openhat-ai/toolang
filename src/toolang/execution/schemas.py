@@ -31,7 +31,7 @@ from .types import (
     StepPath,
     StepStatus,
     ThreadPeerType,
-    ValuePtr,
+    Pointer,
 )
 from .values import parts_from_local
 
@@ -63,7 +63,7 @@ class RunControlRefData:
 EjectionRefData = ThreadControlRefData | RunControlRefData
 
 
-StepInputData = ValuePtr
+StepInputData = Pointer
 
 
 @dataclass(frozen=True, slots=True)

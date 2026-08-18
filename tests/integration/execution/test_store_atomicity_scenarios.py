@@ -24,7 +24,7 @@ from toolang.execution.records import (
     StartControlPayload,
 )
 from toolang.execution.store import RunStore
-from toolang.execution.types import Local, StepPath, ValuePtr
+from toolang.execution.types import Local, StepPath, Pointer
 
 
 def _execute_sql(db_path: Path, sql: str) -> None:
@@ -275,7 +275,7 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
             run_id="run_atomic_event",
             kind="steer",
             timing="next_step",
-            locals=(Local("Part[]", Message.user("updated").parts, "_", 0),),
+            locals=(Local.typed("Part[]", Message.user("updated").parts, "_", 0),),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -296,7 +296,7 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
                 store.begin_step(
                     path=StepPath("run_atomic_event", (0,)),
                     kind="system",
-                    input=(ValuePtr.control("run_atomic_event", control.index, "_"),),
+                    input=(Pointer.control("run_atomic_event", control.index, "_"),),
                     placement=None,
                     given={},
                     started_at="2026-01-01T00:00:02Z",
@@ -405,7 +405,7 @@ def test_run_control_revision_only_advances_when_control_state_changes(
             run_id="run_control_revision",
             kind="steer",
             timing="next_step",
-            locals=(Local("Part[]", Message.user("updated").parts, "_", 0),),
+            locals=(Local.typed("Part[]", Message.user("updated").parts, "_", 0),),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -483,7 +483,7 @@ def test_claimed_control_cannot_be_canceled_before_its_event_is_persisted(
             run_id="run_claimed_control",
             kind="steer",
             timing="next_step",
-            locals=(Local("Part[]", Message.user("updated").parts, "_", 0),),
+            locals=(Local.typed("Part[]", Message.user("updated").parts, "_", 0),),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )

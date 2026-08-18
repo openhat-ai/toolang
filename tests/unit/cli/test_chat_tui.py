@@ -39,16 +39,16 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.types import ControlRef, Local, RunOverride, StepPath, ValuePtr
+from toolang.execution.types import ControlRef, Local, RunOverride, StepPath, Pointer
 from tests.support import chat_tui_pty
 
 
 def _parts(*parts: MessagePart) -> Local:
-    return Local("Part[]", tuple(parts), "_", 0)
+    return Local.typed("Part[]", tuple(parts), "_", 0)
 
 
 def _output(step: StepPath) -> Local:
-    return Local("Part[]", ValuePtr.step(step), "_", 0)
+    return Local.typed("Part[]", Pointer.step(step), "_", 0)
 
 
 def test_chat_tui_pty_treats_linux_eio_as_eof(
@@ -1635,7 +1635,7 @@ def _flow_step_end(*, step_index: int = 1) -> StepEnd:
         step=StepPath.parse(f"run_1/{step_index}"),
         kind="par",
         status="succeeded",
-        output=Local("Json[]", (), "_", 1),
+        output=Local.typed("Json[]", (), "_", 1),
         noted={"shape": "list"},
         finished_at="2026-01-01T00:00:02Z",
     )

@@ -10,7 +10,11 @@ from pydantic import Field, TypeAdapter
 
 from toolang.base.types.message import Delta, MessagePart, MessagePartType
 
-from .records import ThreadPeer, local_from_data, local_to_data
+from .records import (
+    ThreadPeer,
+    local_from_protocol_data,
+    local_to_protocol_data,
+)
 from .types import (
     ControlRef,
     ExecutionError,
@@ -19,7 +23,7 @@ from .types import (
     StepKind,
     StepPath,
     StepStatus,
-    ValuePtr,
+    Pointer,
 )
 
 
@@ -42,7 +46,7 @@ class StepBegin:
 
     step: StepPath
     kind: StepKind
-    input: tuple[ValuePtr, ...] = ()
+    input: tuple[Pointer, ...] = ()
     placement: dict[str, object] | None = None
     given: dict[str, Any] = field(default_factory=dict)
     started_at: str = ""
@@ -196,7 +200,7 @@ def run_event_from_data(data: object) -> RunEvent:
     if payload is not None and payload.get("type") in {"step_end", "run_end"}:
         output = payload.get("output")
         if isinstance(output, dict):
-            payload = {**payload, "output": local_from_data(output)}
+            payload = {**payload, "output": local_from_protocol_data(output)}
         data = payload
     return _RUN_EVENT_ADAPTER.validate_python(data)
 
@@ -214,5 +218,5 @@ def _with_canonical_output(
     data: dict[str, Any],
 ) -> dict[str, Any]:
     if isinstance(event, StepEnd | RunEnd) and event.output is not None:
-        return {**data, "output": local_to_data(event.output)}
+        return {**data, "output": local_to_protocol_data(event.output)}
     return data

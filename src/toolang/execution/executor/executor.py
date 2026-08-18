@@ -51,7 +51,8 @@ from ..types import (
     Local as RecordLocal,
     ControlKind,
     StepPath,
-    ValuePtr,
+    Pointer,
+    TypedPointer,
 )
 from ..runnables import parse_runnable_ref, resolve_runnable
 from .common import (
@@ -488,7 +489,9 @@ class RunExecutor:
             run_id=run_id,
             kind="stop",
             timing=timing,
-            locals=(RecordLocal("Text", reason, "_", 0),) if reason is not None else (),
+            locals=(RecordLocal.typed("Text", reason, "_", 0),)
+            if reason is not None
+            else (),
             request_id=request_id,
             created_at=utc_now(),
         )
@@ -513,7 +516,7 @@ class RunExecutor:
             run_id=run_id,
             kind="steer",
             timing=timing,
-            locals=(RecordLocal("Part[]", tuple(message.parts), "_", 0),),
+            locals=(RecordLocal.typed("Part[]", tuple(message.parts), "_", 0),),
             request_id=request_id,
             created_at=utc_now(),
         )
@@ -1091,9 +1094,7 @@ class _Execution:
             if statement.binding is not None:
                 current[statement.binding] = local
             if statement.binding == "_":
-                self.record_output(
-                    binding.run_id, local.ref or ValuePtr.step(step.path)
-                )
+                self.record_output(binding.run_id, local.ref or Pointer.step(step.path))
         return current, len(committed)
 
     def _restore_step_local(
@@ -1109,7 +1110,7 @@ class _Execution:
         local = _step_local(step, self.store)
         current[step.output.name] = local
         if step.output.name == "_":
-            self.record_output(run_id, local.ref or ValuePtr.step(step.path))
+            self.record_output(run_id, local.ref or Pointer.step(step.path))
 
     async def execute_child(
         self,
@@ -1161,14 +1162,14 @@ class _Execution:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            raise _ExecutionFailed(ValuePtr.run(binding.run_id), exc) from exc
-        pointer = ValuePtr.run(binding.run_id)
+            raise _ExecutionFailed(Pointer.run(binding.run_id), exc) from exc
+        pointer = Pointer.run(binding.run_id)
         item_type = result.type_name or "Json"
         return replace(
             result,
             ref=pointer,
-            record=RecordLocal(
-                type=(f"{item_type}[]" if result.shape == "list" else item_type),
+            record=RecordLocal.typed(
+                type_name=(f"{item_type}[]" if result.shape == "list" else item_type),
                 value=pointer,
                 dim=1 if result.shape == "list" else 0,
             ),
@@ -1247,8 +1248,8 @@ class _Execution:
             "list",
             type_name=output_type,
             record=(
-                RecordLocal(
-                    type=f"{output_type}[]",
+                RecordLocal.typed(
+                    type_name=f"{output_type}[]",
                     value=result_refs,
                     dim=1,
                 )
@@ -1348,17 +1349,21 @@ class _Execution:
         if claimed:
             raise _RunStopped(claimed[0])
 
-    def record_output(self, run_id: str, ref: ValuePtr) -> None:
+    def record_output(self, run_id: str, ref: Pointer) -> None:
         step = next(
             (
                 item
                 for item in reversed(self.store.list_steps(run_id=run_id))
-                if ValuePtr.step(item.path) == ref and item.output is not None
+                if Pointer.step(item.path) == ref and item.output is not None
             ),
             None,
         )
         if step is not None and step.output is not None:
-            self._run_outputs[run_id] = replace(step.output, value=ref, name="_")
+            self._run_outputs[run_id] = replace(
+                step.output,
+                value=TypedPointer(step.output.type, ref),
+                name="_",
+            )
 
     def run_output(self, run_id: str) -> RecordLocal | None:
         return self._run_outputs.get(run_id)
@@ -1512,7 +1517,7 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
     return Local(
         value=store.resolve_value(step.output.value),
         shape="list" if step.output.dim == 1 else "item",
-        ref=ValuePtr.step(step.path),
+        ref=Pointer.step(step.path),
         type_name=step.output.item_type,
     )
 
@@ -1670,8 +1675,8 @@ def _input_locals(
     if executable.input is not None:
         type_name = executable.input.type_name or "Part[]"
         result.append(
-            RecordLocal(
-                type=type_name,
+            RecordLocal.typed(
+                type_name=type_name,
                 value=cast(
                     Value,
                     coerce_input(input.primary, type_name, structs=structs),
@@ -1684,8 +1689,8 @@ def _input_locals(
             tuple(item.value.parts) if isinstance(item.value, Message) else item.value
         )
         result.append(
-            RecordLocal(
-                type=item.type_name or "Json",
+            RecordLocal.typed(
+                type_name=item.type_name or "Json",
                 value=cast(Value, value),
                 name=item.name,
             )
@@ -1700,8 +1705,8 @@ def _child_control_local(
     value: Value,
 ) -> RecordLocal:
     source_type = _runtime_local_type(local)
-    return RecordLocal(
-        type=type_name,
+    return RecordLocal.typed(
+        type_name=type_name,
         value=(
             local.ref if local.ref is not None and source_type == type_name else value
         ),
@@ -1789,8 +1794,8 @@ def _run_result_local(
         if item_type.endswith("[]") and isinstance(result.value, list)
         else result.value
     )
-    return RecordLocal(
-        type=f"{item_type}[]" if result.shape == "list" else item_type,
+    return RecordLocal.typed(
+        type_name=f"{item_type}[]" if result.shape == "list" else item_type,
         value=reference if reference is not None else cast(Value, concrete),
         name=name,
         dim=1 if result.shape == "list" else 0,
@@ -1798,7 +1803,7 @@ def _run_result_local(
 
 
 def _control_indexes(
-    pointers: Sequence[ValuePtr],
+    pointers: Sequence[Pointer],
     *,
     run_id: str,
 ) -> tuple[int, ...]:

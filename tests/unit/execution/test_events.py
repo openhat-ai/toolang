@@ -26,7 +26,7 @@ from toolang.execution.types import (
     RunStatus,
     StepPath,
     StepStatus,
-    ValuePtr,
+    Pointer,
 )
 
 
@@ -41,8 +41,8 @@ _EVENTS: tuple[RunEvent, ...] = (
         step=StepPath.parse("run_root/0"),
         kind="model",
         input=(
-            ValuePtr.control("run_root", 0, "_"),
-            ValuePtr.step(StepPath.parse("run_root/1")),
+            Pointer.control("run_root", 0, "_"),
+            Pointer.step(StepPath.parse("run_root/1")),
         ),
         started_at="2026-01-01T00:00:01Z",
     ),
@@ -53,15 +53,15 @@ _EVENTS: tuple[RunEvent, ...] = (
         step=StepPath.parse("run_root/0"),
         kind="model",
         status="succeeded",
-        output=Local("Part[]", (TextPart("hello"),), "_", 0),
+        output=Local.typed("Part[]", (TextPart("hello"),), "_", 0),
         finished_at="2026-01-01T00:00:02Z",
     ),
     RunEnd(
         run="run_root",
         status="succeeded",
-        output=Local(
+        output=Local.typed(
             "Part[]",
-            ValuePtr.step(StepPath.parse("run_root/0")),
+            Pointer.step(StepPath.parse("run_root/0")),
             "_",
             0,
         ),
@@ -119,7 +119,7 @@ def test_run_event_codec_serializes_step_error_references() -> None:
     event = RunEnd(
         run="run_root",
         status="failed",
-        error=ValuePtr.step(StepPath.parse("run_root/2")),
+        error=Pointer.step(StepPath.parse("run_root/2")),
     )
 
     data = run_event_to_data(event)
@@ -132,7 +132,7 @@ def test_run_event_codec_distinguishes_run_error_pointers_from_messages() -> Non
     pointer = RunEnd(
         run="run_root",
         status="failed",
-        error=ValuePtr.run("run_child"),
+        error=Pointer.run("run_child"),
     )
     message = RunEnd(run="run_root", status="failed", error="timeout")
 

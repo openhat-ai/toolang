@@ -44,7 +44,7 @@ def _accept_remote_steer(db_path: str, run_id: str) -> None:
             kind="steer",
             timing="next_call",
             locals=(
-                Local(
+                Local.typed(
                     "Part[]",
                     Message.user("Use the remote guidance.").parts,
                     "_",
@@ -86,7 +86,7 @@ def _accept_duplicate_request(
             run_id=run_id,
             kind="steer",
             timing="next_step",
-            locals=(Local("Part[]", Message.user(run_id).parts, "_"),),
+            locals=(Local.typed("Part[]", Message.user(run_id).parts, "_"),),
             request_id="shared-control-request",
             created_at="2026-01-01T00:00:01Z",
         )
@@ -291,7 +291,7 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
             assert control.status == "applied"
             assert control.payload == SteerControlPayload(
                 locals=(
-                    Local(
+                    Local.typed(
                         "Part[]",
                         Message.user("Use the remote guidance.").parts,
                         "_",
@@ -423,7 +423,7 @@ def test_pending_control_has_one_cross_process_cancellation_winner(
             run_id="run_cancel_race",
             kind="steer",
             timing="next_step",
-            locals=(Local("Part[]", Message.user("updated").parts, "_"),),
+            locals=(Local.typed("Part[]", Message.user("updated").parts, "_"),),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -476,7 +476,7 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
             run_id="run_claim_cancel_race",
             kind="steer",
             timing="next_step",
-            locals=(Local("Part[]", Message.user("updated").parts, "_"),),
+            locals=(Local.typed("Part[]", Message.user("updated").parts, "_"),),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )
@@ -527,7 +527,7 @@ def test_only_one_process_can_claim_a_pending_control(tmp_path: Path) -> None:
             run_id="run_claim_race",
             kind="steer",
             timing="next_step",
-            locals=(Local("Part[]", Message.user("updated").parts, "_"),),
+            locals=(Local.typed("Part[]", Message.user("updated").parts, "_"),),
             request_id=None,
             created_at="2026-01-01T00:00:01Z",
         )

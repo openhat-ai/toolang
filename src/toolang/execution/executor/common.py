@@ -43,13 +43,21 @@ from toolang.lang.ast import (
 )
 from toolang.lang.input import RunnableInput, coerce_input, validate_value
 from toolang.lang.format import format_statement_head
+from toolang.lang.types import Array
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
 from ..records import RunControlRecord, SteerControlPayload, StopControlPayload
 from ..runnables import resolve_runnable
-from ..types import AgentResources, Local as RecordLocal, StepKind, StepPath, ValuePtr
+from ..types import (
+    AgentResources,
+    Local as RecordLocal,
+    StepKind,
+    StepPath,
+    Pointer,
+    TypedPointer,
+)
 
 Shape = Literal["none", "item", "list"]
 EventEmitter = Callable[[RunEvent], Awaitable[None]]
@@ -61,7 +69,7 @@ _TEMPLATE_LOCAL_RE = re.compile(
 class _ExecutionFailed(Exception):
     """Carry one durable failure reference across execution layers."""
 
-    def __init__(self, error: ValuePtr, cause: BaseException) -> None:
+    def __init__(self, error: Pointer, cause: BaseException) -> None:
         super().__init__(str(cause) or type(cause).__name__)
         self.error = error
 
@@ -70,7 +78,7 @@ class _StepFailed(_ExecutionFailed):
     """Carry one failed-step reference across enclosing execution layers."""
 
     def __init__(self, step: StepPath, cause: BaseException) -> None:
-        super().__init__(ValuePtr.step(step), cause)
+        super().__init__(Pointer.step(step), cause)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +111,7 @@ class Local:
 
     value: Any = None
     shape: Shape = "none"
-    ref: ValuePtr | None = None
+    ref: Pointer | None = None
     type_name: str | None = None
     record: RecordLocal | None = None
 
@@ -125,7 +133,7 @@ async def execute_step(
     started_at = utc_now()
     inputs = _unique_step_inputs(
         (
-            *(ValuePtr.control(item.run, item.index, "_") for item in controls),
+            *(Pointer.control(item.run, item.index, "_") for item in controls),
             *statement_input_refs(binding, statement, locals),
         )
     )
@@ -202,14 +210,14 @@ async def execute_step(
             finished_at=utc_now(),
         )
     )
-    return replace(result, ref=ValuePtr.step(path))
+    return replace(result, ref=Pointer.step(path))
 
 
 def statement_input_refs(
     binding: BoundRun,
     statement: FlowStmt,
     locals: Mapping[str, Local],
-) -> tuple[ValuePtr, ...]:
+) -> tuple[Pointer, ...]:
     """Return the durable locals directly read by one flow statement."""
 
     names: set[str] = set()
@@ -282,7 +290,7 @@ def initial_locals(
         locals[name] = Local(
             value,
             "item",
-            ValuePtr.control(binding.run_id, binding.control_index, name),
+            Pointer.control(binding.run_id, binding.control_index, name),
             parameter.type_name or "Part[]",
         )
     if executable.input is not None:
@@ -293,7 +301,7 @@ def initial_locals(
                 structs=structs,
             ),
             "item",
-            ValuePtr.control(binding.run_id, binding.control_index, "_"),
+            Pointer.control(binding.run_id, binding.control_index, "_"),
             executable.input.type_name or "Part[]",
         )
     else:
@@ -324,8 +332,8 @@ def apply_steer(
             )
             if (
                 primary is None
-                or isinstance(primary.value, ValuePtr)
-                or not isinstance(primary.value, tuple | list)
+                or isinstance(primary.value, TypedPointer)
+                or not isinstance(primary.value, Array)
             ):
                 continue
             effective_type = input_type or "Part[]"
@@ -336,7 +344,7 @@ def apply_steer(
                     structs=structs,
                 ),
                 "item",
-                ValuePtr.control(control.run, control.index, "_"),
+                Pointer.control(control.run, control.index, "_"),
                 effective_type,
             )
 
@@ -475,7 +483,7 @@ def value_percept(
             raise ToolangError(str(exc)) from exc
     if isinstance(value, (TextPart, ImagePart, AudioPart, DocumentPart)):
         return (value,)
-    if isinstance(value, tuple | list):
+    if isinstance(value, Array | tuple | list):
         if not value:
             return () if type_name == "Part[]" else None
         if all(
@@ -495,7 +503,7 @@ def value_text(value: Any) -> str:
         return message_text(value.parts)
     if (percept := value_percept(value)) is not None:
         return message_text(percept)
-    if isinstance(value, bool | int | float | list | dict | tuple):
+    if isinstance(value, bool | int | float | Array | list | dict | tuple):
         return json.dumps(
             json_value(value),
             ensure_ascii=False,
@@ -510,7 +518,7 @@ def control_text(control: RunControlRecord | None) -> str:
     if not isinstance(control.payload, SteerControlPayload | StopControlPayload):
         return ""
     primary = next((item for item in control.payload.locals if item.name == "_"), None)
-    if primary is None or isinstance(primary.value, ValuePtr):
+    if primary is None or isinstance(primary.value, TypedPointer):
         return ""
     if isinstance(primary.value, str):
         return primary.value
@@ -518,8 +526,8 @@ def control_text(control: RunControlRecord | None) -> str:
     return message_text(percept) if percept is not None else ""
 
 
-def _unique_step_inputs(items: Sequence[ValuePtr]) -> tuple[ValuePtr, ...]:
-    result: list[ValuePtr] = []
+def _unique_step_inputs(items: Sequence[Pointer]) -> tuple[Pointer, ...]:
+    result: list[Pointer] = []
     for item in items:
         if item not in result:
             result.append(item)
@@ -534,8 +542,8 @@ def record_local(local: Local, *, name: str | None) -> RecordLocal | None:
     if local.record is not None:
         return replace(local.record, name=name)
     item_type = local.type_name or "Json"
-    return RecordLocal(
-        type=f"{item_type}[]" if local.shape == "list" else item_type,
+    return RecordLocal.typed(
+        type_name=f"{item_type}[]" if local.shape == "list" else item_type,
         value=(
             tuple(local.value)
             if local.shape == "list" and isinstance(local.value, list)
@@ -553,6 +561,6 @@ def json_value(value: object) -> object:
         return value.to_data()
     if isinstance(value, Mapping):
         return {str(name): json_value(item) for name, item in value.items()}
-    if isinstance(value, tuple | list):
+    if isinstance(value, Array | tuple | list):
         return [json_value(item) for item in value]
     return value

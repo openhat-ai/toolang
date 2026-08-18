@@ -165,8 +165,8 @@ def test_scheduler_submits_and_awaits_runs_on_the_execution_loop(
             assert isinstance(control.payload, StartControlPayload)
             assert control.payload.runnable == "agic:review"
             assert control.payload.locals == (
-                Local("Part[]", Message.user("Review this.").percept, "_"),
-                Local("Text", "security", "focus"),
+                Local.typed("Part[]", Message.user("Review this.").percept, "_"),
+                Local.typed("Text", "security", "focus"),
             )
             created = harness.store.get_thread_control(
                 thread_id="task_review",

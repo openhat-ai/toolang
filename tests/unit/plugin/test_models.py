@@ -2491,7 +2491,9 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
             index=1,
             kind="steer",
             timing="next_call",
-            payload=SteerControlPayload((Local("Part[]", tuple(steer.parts), "_", 0),)),
+            payload=SteerControlPayload(
+                (Local.typed("Part[]", tuple(steer.parts), "_", 0),)
+            ),
         )
     ]
     events: list[RunEvent] = []
@@ -2522,7 +2524,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
     assert result == Message(role="assistant", parts=(audio,))
     assert provider.requests[0].messages[-1] == steer
     step_end = next(event for event in events if isinstance(event, StepEnd))
-    assert step_end.output == Local("Part[]", (audio,), "_")
+    assert step_end.output == Local.typed("Part[]", (audio,), "_")
     assert [event.type for event in events] == [
         "step_begin",
         "part_begin",

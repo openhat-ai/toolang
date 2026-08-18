@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal, cast
 
 import pytest
 from pydantic import TypeAdapter
 
-from toolang.base.types.message import TextPart, ToolCallPart
+from toolang.base.types.message import (
+    AudioPart,
+    DocumentPart,
+    ImagePart,
+    MessagePart,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+)
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
     RunControlRecord,
@@ -16,18 +25,21 @@ from toolang.execution.records import (
     control_payload_from_data,
     control_payload_to_data,
     local_from_data,
+    local_from_protocol_data,
     local_to_data,
+    local_to_protocol_data,
 )
 from toolang.execution.schemas import ControlInfo
-from toolang.execution.types import AgentResources, Local, StepPath, ValuePtr
+from toolang.execution.types import AgentResources, Local, StepPath, Pointer
 from toolang.execution.values import parts_from_local
+from toolang.lang.types import Array, Struct
 
 
-def test_value_pointer_accepts_run_step_control_and_json_paths() -> None:
-    assert str(ValuePtr("run_1")) == "run_1"
-    assert ValuePtr("run_1.0.2/key~1name/1").anchor == "run_1.0.2"
-    assert ValuePtr("run_1.0.2/key~1name/1").pointer == "key~1name/1"
-    assert ValuePtr("run_1^3/_/1").anchor == "run_1^3"
+def test_pointer_accepts_run_step_control_and_json_paths() -> None:
+    assert str(Pointer("run_1")) == "run_1"
+    assert Pointer("run_1.0.2/key~1name/1").anchor == "run_1.0.2"
+    assert Pointer("run_1.0.2/key~1name/1").pointer == "key~1name/1"
+    assert Pointer("run_1^3/_/1").anchor == "run_1^3"
 
 
 @pytest.mark.parametrize(
@@ -42,31 +54,31 @@ def test_value_pointer_accepts_run_step_control_and_json_paths() -> None:
         "run@file",
     ),
 )
-def test_value_pointer_rejects_noncanonical_values(value: str) -> None:
+def test_pointer_rejects_noncanonical_values(value: str) -> None:
     with pytest.raises(ValueError):
-        ValuePtr(value)
+        Pointer(value)
 
 
-def test_value_pointer_accepts_a_whole_value_slash() -> None:
-    assert ValuePtr("run/").pointer == ""
+def test_pointer_accepts_a_whole_value_slash() -> None:
+    assert Pointer("run/").pointer == ""
 
 
 def test_local_keeps_complete_type_separate_from_execution_dimension() -> None:
-    response = Local(
-        type="Part[]",
+    response = Local.typed(
+        type_name="Part[]",
         value=(),
         name="_",
         dim=0,
     )
-    scattered = Local(
-        type="Part[]",
-        value=ValuePtr("run_1.0"),
+    scattered = Local.typed(
+        type_name="Part[]",
+        value=Pointer("run_1.0"),
         name="_",
         dim=1,
     )
-    batches = Local(
-        type="Part[][]",
-        value=(ValuePtr("run_a"), ValuePtr("run_b")),
+    batches = Local.typed(
+        type_name="Part[][]",
+        value=(Pointer("run_a"), Pointer("run_b")),
         name="_",
         dim=1,
     )
@@ -78,17 +90,17 @@ def test_local_keeps_complete_type_separate_from_execution_dimension() -> None:
 
 def test_dim_one_requires_an_array_type_and_value() -> None:
     with pytest.raises(ValueError, match="array value type"):
-        Local(type="Text", value=("one",), dim=1)
-    with pytest.raises(TypeError, match="array value"):
-        Local(type="Text[]", value="one", dim=1)
+        Local(value="one", dim=1)
+    with pytest.raises(TypeError, match="Text"):
+        Local.typed(type_name="Text[]", value="one", dim=1)
 
 
 def test_local_codec_round_trips_mixed_concrete_and_pointer_items() -> None:
-    local = Local(
-        type="Part[]",
+    local = Local.typed(
+        type_name="Part[]",
         value=(
             TextPart("kept"),
-            ValuePtr("run_1.0/2"),
+            Pointer("run_1.0/2"),
             ToolCallPart(
                 tool_call_id="call_1",
                 tool_name="search",
@@ -103,6 +115,54 @@ def test_local_codec_round_trips_mixed_concrete_and_pointer_items() -> None:
     assert local_from_data(local_to_data(local)) == local
 
 
+@pytest.mark.parametrize(
+    "part",
+    (
+        TextPart("hello"),
+        ImagePart(file_id="image_1", filename="image.png"),
+        AudioPart(data="YXVkaW8=", format="mp3", filename="audio.mp3"),
+        DocumentPart(url="https://example.test/document.pdf"),
+        ToolCallPart(
+            tool_call_id="call_1",
+            tool_name="search",
+            tool_family="search",
+            input={"query": "toolang"},
+        ),
+        ToolResultPart(
+            tool_call_id="call_1",
+            tool_name="search",
+            tool_family="search",
+            output={"matches": 1},
+        ),
+    ),
+)
+def test_local_codec_round_trips_every_concrete_part(part: MessagePart) -> None:
+    local = Local(value=part, name="_")
+
+    data = local_to_data(local)
+
+    stored = cast(Mapping[str, object], data["value"])
+    assert stored["?"] == type(part).__name__
+    assert local_from_data(data) == local
+
+
+def test_local_codec_round_trips_structs_and_nested_arrays() -> None:
+    local = Local.typed(
+        "Review",
+        {
+            "score": 1,
+            "evidence": Array(
+                "Part[][]",
+                (Array("Part[]", (TextPart("first"),)),),
+            ),
+        },
+        "result",
+    )
+
+    assert isinstance(local.value, Struct)
+    assert local_from_data(local_to_data(local)) == local
+
+
 def test_local_part_projection_preserves_tool_parts() -> None:
     part = ToolCallPart(
         tool_call_id="call_1",
@@ -111,13 +171,13 @@ def test_local_part_projection_preserves_tool_parts() -> None:
         input={"query": "toolang"},
     )
 
-    assert parts_from_local(Local("Part[]", (part,), "_", 0)) == (part,)
+    assert parts_from_local(Local.typed("Part[]", (part,), "_", 0)) == (part,)
 
 
 def test_local_codec_normalizes_collections_and_tags_nested_parts() -> None:
     part = TextPart("nested")
-    local = Local(
-        type="Json",
+    local = Local.typed(
+        type_name="Json",
         value={"items": [part, {"ok": True}]},
         name="_",
     )
@@ -126,31 +186,85 @@ def test_local_codec_normalizes_collections_and_tags_nested_parts() -> None:
 
     assert local.value == {"items": (part, {"ok": True})}
     assert data["value"] == {
-        "items": [
-            {"$part": {"type": "text", "text": "nested"}},
-            {"ok": True},
-        ]
+        "?": "Json",
+        "items": {
+            "?": "Json!",
+            "!": [
+                {"?": "TextPart", "text": "nested"},
+                {"?": "Json", "ok": True},
+            ],
+        },
     }
     assert local_from_data(data) == local
 
 
 def test_local_codec_rejects_values_that_do_not_match_the_declared_type() -> None:
-    with pytest.raises(TypeError, match="Text"):
+    with pytest.raises(ValueError, match="boxed Text"):
         local_from_data(
             {
-                "type": "Text",
-                "value": 42,
+                "value": {"?": "Text!", "!": 42},
                 "name": "_",
                 "dim": 0,
             }
         )
 
+    with pytest.raises(TypeError, match="Text"):
+        local_from_data(
+            {
+                "value": {
+                    "?": "Json",
+                    "items": {"?": "Text[]!", "!": [42]},
+                },
+                "name": "_",
+                "dim": 0,
+            }
+        )
+
+    with pytest.raises(TypeError, match="Text"):
+        local_from_protocol_data({"type": "Text", "value": 42, "name": "_", "dim": 0})
+
 
 def test_local_codec_reserves_the_pointer_marker() -> None:
-    local = Local(type="Json", value={"$ptr": "ordinary data"})
+    local = Local.typed(type_name="Json", value={"?": "ordinary data"})
 
     with pytest.raises(ValueError, match="reserved"):
         local_to_data(local)
+
+
+def test_local_storage_tags_do_not_leak_to_the_protocol_projection() -> None:
+    local = Local.typed(
+        "Part[]",
+        (TextPart("hello"), Pointer("run_1.0/2")),
+        "_",
+        1,
+    )
+
+    assert local_to_data(local) == {
+        "value": {
+            "?": "Part[]!",
+            "!": [
+                {"?": "TextPart", "text": "hello"},
+                {"?": "Part@run_1.0/2"},
+            ],
+        },
+        "name": "_",
+        "dim": 1,
+    }
+    assert local_to_protocol_data(local) == {
+        "type": "Part[]",
+        "value": [
+            {"type": "text", "text": "hello"},
+            {"$ptr": "run_1.0/2"},
+        ],
+        "name": "_",
+        "dim": 1,
+    }
+
+
+def test_protocol_projection_round_trips_parts_nested_in_json() -> None:
+    local = Local.typed("Json", {"answer": TextPart("hello")}, "_")
+
+    assert local_from_protocol_data(local_to_protocol_data(local)) == local
 
 
 def test_preparation_payload_round_trips_resolved_locals() -> None:
@@ -159,7 +273,7 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
         limits=RunLimits(tokens=10),
         runnable="agic:worker",
         model="test/model",
-        locals=(Local("Part[]", (TextPart("hello"),), "_", 0),),
+        locals=(Local.typed("Part[]", (TextPart("hello"),), "_", 0),),
     )
 
     assert (
@@ -173,7 +287,7 @@ def test_preparation_payload_rejects_instead_of_dropping_invalid_locals() -> Non
         limits=RunLimits(),
         runnable="agic:worker",
         model="test/model",
-        locals=(Local("Text", "hello", "_", 0),),
+        locals=(Local.typed("Text", "hello", "_", 0),),
     )
     data = control_payload_to_data(payload)
     raw_locals = data["locals"]
@@ -214,7 +328,9 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
     (
         (
             "steer",
-            SteerControlPayload((Local("Part[]", (TextPart("continue"),), "_", 0),)),
+            SteerControlPayload(
+                (Local.typed("Part[]", (TextPart("continue"),), "_", 0),)
+            ),
         ),
         ("stop", StopControlPayload()),
     ),
