@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import re
 import shlex
@@ -47,40 +47,23 @@ class RunnableInputRaw:
 
 
 @dataclass(frozen=True, slots=True)
-class RunnableInputValue:
-    """One resolved named input and its declared Toolang type."""
-
-    name: str
-    value: Value | Message
-    type_name: str | None = None
-
-    def __post_init__(self) -> None:
-        if not _ARGUMENT_NAME_RE.fullmatch(self.name):
-            raise ValueError("run input value requires a canonical name")
-        if self.type_name is not None and (
-            not self.type_name or self.type_name != self.type_name.strip()
-        ):
-            raise ValueError("run input value requires a canonical type")
-        _validate_input_value(self.value)
-
-
-@dataclass(frozen=True, slots=True)
 class RunnableInput:
     """Resolved primary and named inputs adopted by one run."""
 
     primary: Percept = ()
-    named: tuple[RunnableInputValue, ...] = ()
+    named: Mapping[str, Value | Message] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         primary = _require_percept(tuple(self.primary))
-        named = tuple(sorted(self.named, key=lambda item: item.name))
-        if not all(isinstance(item, RunnableInputValue) for item in named):
-            raise TypeError("run named inputs must be RunnableInputValue objects")
-        names = tuple(item.name for item in named)
-        if len(names) != len(set(names)):
-            raise ValueError("run named inputs must be unique")
+        if not isinstance(self.named, Mapping):
+            raise TypeError("run named inputs must be a mapping")
+        named: dict[str, Value | Message] = {}
+        for name, value in sorted(self.named.items()):
+            if not isinstance(name, str) or not _ARGUMENT_NAME_RE.fullmatch(name):
+                raise ValueError("run input value requires a canonical name")
+            named[name] = _require_input_value(value)
         object.__setattr__(self, "primary", primary)
-        object.__setattr__(self, "named", named)
+        object.__setattr__(self, "named", MappingProxyType(named))
 
     @classmethod
     def from_values(
@@ -88,28 +71,12 @@ class RunnableInput:
         *,
         primary: Percept = (),
         named: Mapping[str, object] | None = None,
-        types: Mapping[str, str] | None = None,
     ) -> RunnableInput:
         """Build a canonical run input from resolved caller values."""
 
-        type_names = types or {}
         return cls(
-            primary=primary,
-            named=tuple(
-                RunnableInputValue(
-                    name=name,
-                    value=_require_input_value(value),
-                    type_name=type_names.get(name),
-                )
-                for name, value in (named or {}).items()
-            ),
+            primary=primary, named=cast(Mapping[str, Value | Message], named or {})
         )
-
-    @property
-    def values(self) -> Mapping[str, object]:
-        """Expose named values through an immutable lookup."""
-
-        return MappingProxyType({item.name: item.value for item in self.named})
 
 
 def parse_input(

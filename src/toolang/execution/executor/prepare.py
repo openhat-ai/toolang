@@ -72,7 +72,7 @@ def prepare_agic(
 ) -> _AgicFrame:
     """Resolve runtime resources and render the complete model input."""
 
-    args = dict(run.input.values)
+    args = dict(run.input.named)
 
     resources = run.resources
     if resources is None:

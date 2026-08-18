@@ -561,7 +561,7 @@ async def _execute(
             runnable_name=selected.name,
             runnable_doc=selected.doc,
             input_value=spec.input.primary,
-            args=dict(spec.input.values),
+            args=dict(spec.input.named),
         )
         if not quiet and (sys.stderr.isatty() or verbosity > 0)
         else None

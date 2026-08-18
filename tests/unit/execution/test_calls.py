@@ -46,7 +46,7 @@ def test_resolve_spec_binds_policy_primary_and_typed_named_inputs(
             model="test/scripted",
             runnable="agic:review",
         )
-        assert spec.input.values == {"count": 2}
+        assert spec.input.named == {"count": 2}
         assert spec.input.primary == (TextPart("Review this."),)
         harness.executor.validate(spec)
     finally:
@@ -71,7 +71,7 @@ def test_run_default_returns_to_surface_binding_not_session_binding(
         )
 
         assert spec.bindings.runnable == "agic:default"
-        assert spec.input.named == ()
+        assert spec.input.named == {}
     finally:
         harness.store.close()
 
@@ -126,7 +126,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
             model="test/scripted",
             runnable="agic:bound",
         )
-        assert (session.bindings.runnable, session.input.values) == (
+        assert (session.bindings.runnable, session.input.named) == (
             "agic:review",
             {"count": 2},
         )

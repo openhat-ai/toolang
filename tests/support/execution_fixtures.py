@@ -78,12 +78,12 @@ def accept_run_start(
     locals_value = [Local.typed("Part[]", tuple(resolved_input.primary), "_", 0)]
     locals_value.extend(
         Local.typed(
-            item.type_name or "Json",
-            tuple(item.value.parts) if isinstance(item.value, Message) else item.value,
-            item.name,
+            "Json",
+            tuple(value.parts) if isinstance(value, Message) else value,
+            name,
             0,
         )
-        for item in resolved_input.named
+        for name, value in resolved_input.named.items()
     )
 
     return store.accept_start(

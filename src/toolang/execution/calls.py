@@ -90,9 +90,6 @@ def resolve_spec(
         program=state.program,
         include=include,
     )
-    parameter_types = {
-        parameter.name: parameter.type_name or "Part[]" for parameter in runnable.params
-    }
     return RunSpec(
         setup=setup,
         state=state,
@@ -106,7 +103,6 @@ def resolve_spec(
         input=RunnableInput.from_values(
             primary=primary,
             named=named,
-            types=parameter_types,
         ),
     )
 

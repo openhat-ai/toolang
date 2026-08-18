@@ -55,5 +55,5 @@ def test_run_spec_defaults_are_immutable() -> None:
     )
 
     assert first.input.primary == ()
-    assert first.input.named == ()
-    assert second.input.named == ()
+    assert first.input.named == {}
+    assert second.input.named == {}

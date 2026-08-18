@@ -277,7 +277,7 @@ def initial_locals(
     structs = program_structs(binding)
     params = {parameter.name: parameter for parameter in executable.params}
     locals: dict[str, Local] = {}
-    for name, value in binding.input.values.items():
+    for name, value in binding.input.named.items():
         parameter = params.get(name)
         if parameter is None:
             continue

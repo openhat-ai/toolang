@@ -24,12 +24,7 @@ from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt, Parameter, RepeatStmt
 from toolang.lang.format import format_statement_head
-from toolang.lang.input import (
-    RunnableInput,
-    RunnableInputValue,
-    coerce_input,
-    validate_value,
-)
+from toolang.lang.input import RunnableInput, coerce_input, validate_value
 from toolang.lang.types import Value
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 from toolang.state.state import AgentState
@@ -1421,20 +1416,14 @@ def _child_binding(
                 primary_value,
             )
         )
-    named: list[RunnableInputValue] = []
+    named: dict[str, Value] = {}
     for parameter in executable.params:
         local = locals.get(parameter.name)
         if local is None or local.shape == "none":
             continue
         type_name = parameter.type_name or "Part[]"
         value = _argument_value(local, parameter)
-        named.append(
-            RunnableInputValue(
-                name=parameter.name,
-                value=value,
-                type_name=type_name,
-            )
-        )
+        named[parameter.name] = value
         control_locals.append(
             _child_control_local(
                 parameter.name,
@@ -1451,7 +1440,7 @@ def _child_binding(
             model=parent.bindings.model,
             runnable=f"{executable.kind}:{executable.name}",
         ),
-        input=RunnableInput(primary=percept, named=tuple(named)),
+        input=RunnableInput(primary=percept, named=named),
         control_locals=tuple(control_locals),
         state=parent.state,
         setup=parent.setup,
@@ -1533,7 +1522,7 @@ def _prepare_start_spec(
         runnable_name,
         kind=runnable_kind,
     )
-    input = _typed_runnable_input(spec.input, executable)
+    input = spec.input
     _validate_inputs(state=spec.state, executable=executable, input=input)
     agent_resources = resolve_agent_resources(
         spec.setup,
@@ -1593,27 +1582,6 @@ def _prepare_child_run(
     )
 
 
-def _typed_runnable_input(
-    input: RunnableInput,
-    executable: AgicDecl | FlowDecl,
-) -> RunnableInput:
-    parameters = {parameter.name: parameter for parameter in executable.params}
-    return RunnableInput(
-        primary=input.primary,
-        named=tuple(
-            replace(
-                item,
-                type_name=(
-                    parameters[item.name].type_name or "Part[]"
-                    if item.name in parameters
-                    else item.type_name
-                ),
-            )
-            for item in input.named
-        ),
-    )
-
-
 def _validate_inputs(
     *,
     state: AgentState,
@@ -1622,7 +1590,7 @@ def _validate_inputs(
 ) -> None:
     structs = {item.name: item for item in state.program.structs}
     params = {param.name: param for param in executable.params}
-    args = input.values
+    args = input.named
     unknown = sorted(set(args) - set(params))
     if unknown:
         joined = ", ".join(unknown)
@@ -1671,6 +1639,7 @@ def _input_locals(
     state: AgentState,
 ) -> tuple[RecordLocal, ...]:
     structs = {item.name: item for item in state.program.structs}
+    parameters = {item.name: item for item in executable.params}
     result: list[RecordLocal] = []
     if executable.input is not None:
         type_name = executable.input.type_name or "Part[]"
@@ -1684,15 +1653,13 @@ def _input_locals(
                 name="_",
             )
         )
-    for item in input.named:
-        value = (
-            tuple(item.value.parts) if isinstance(item.value, Message) else item.value
-        )
+    for name, item in input.named.items():
+        value = tuple(item.parts) if isinstance(item, Message) else item
         result.append(
             RecordLocal.typed(
-                type_name=item.type_name or "Json",
+                type_name=parameters[name].type_name or "Part[]",
                 value=cast(Value, value),
-                name=item.name,
+                name=name,
             )
         )
     return tuple(result)
@@ -1728,21 +1695,15 @@ def _runnable_input_from_locals(
     locals: Sequence[RecordLocal],
 ) -> RunnableInput:
     primary: Percept = ()
-    named: list[RunnableInputValue] = []
+    named: dict[str, Value] = {}
     for local in locals:
         value = store.resolve_value(local.value)
         if local.name == "_":
             percept = value_percept(value, type_name=local.type)
             primary = percept or (TextPart(value_text(value)),)
         elif local.name is not None:
-            named.append(
-                RunnableInputValue(
-                    name=local.name,
-                    value=cast(Value, value),
-                    type_name=local.type,
-                )
-            )
-    return RunnableInput(primary=primary, named=tuple(named))
+            named[local.name] = cast(Value, value)
+    return RunnableInput(primary=primary, named=named)
 
 
 def _adopted_control_locals(
