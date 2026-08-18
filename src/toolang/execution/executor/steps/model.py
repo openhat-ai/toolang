@@ -68,7 +68,8 @@ async def execute(state: _AgicState) -> ModelCallResult:
     state.next_step += 1
     step_started = time.perf_counter()
     started_at = utc_now()
-    consumed_inputs = _consume_pending_inputs(state)
+    consumed_inputs = state.claimed_inputs or state.pending_inputs()
+    next_messages = _messages_with_inputs(state.messages, consumed_inputs)
     step_input = (
         *_step_input(state),
         *(Pointer.control(run.run_id, item.index, "_") for item in consumed_inputs),
@@ -82,7 +83,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
     )
     request = ModelCall(
         instructions=prepared.instructions,
-        messages=list(state.messages),
+        messages=list(next_messages),
         tools=(
             tuple(
                 tool.definition()
@@ -105,6 +106,8 @@ async def execute(state: _AgicState) -> ModelCallResult:
             },
         )
     )
+    state.claimed_inputs = ()
+    state.messages = next_messages
     log_model_target(
         prepared.model,
         thread_id=run.thread,
@@ -347,9 +350,11 @@ def _step_input(state: _AgicState) -> tuple[Pointer, ...]:
     return (Pointer.step(StepPath(state.prepared.run.run_id, (state.last_step,))),)
 
 
-def _consume_pending_inputs(state: _AgicState) -> tuple[RunControlRecord, ...]:
-    inputs = state.claimed_inputs or state.pending_inputs()
-    state.claimed_inputs = ()
+def _messages_with_inputs(
+    current: Sequence[Message],
+    inputs: Sequence[RunControlRecord],
+) -> list[Message]:
+    messages = list(current)
     for input in inputs:
         if isinstance(input.payload, SteerControlPayload):
             primary = next(
@@ -360,13 +365,13 @@ def _consume_pending_inputs(state: _AgicState) -> tuple[RunControlRecord, ...]:
                 and isinstance(primary.value, Array)
                 and all(isinstance(item, Part) for item in primary.value)
             ):
-                state.messages.append(
+                messages.append(
                     Message(
                         role="user",
                         parts=cast(tuple[Part, ...], tuple(primary.value)),
                     )
                 )
-    return inputs
+    return messages
 
 
 def _ensure_text_part_index(stream: _ModelStream) -> int:

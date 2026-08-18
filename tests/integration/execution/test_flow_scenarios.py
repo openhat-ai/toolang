@@ -516,13 +516,13 @@ flow fail(_: Part[]) -> Number:
             assert record.error.startswith("output is not valid Number")
             steps = harness.store.list_steps(run_id=record.id)
             assert [(step.kind, step.status) for step in steps] == [
-                ("system", "succeeded"),
+                ("value", "succeeded"),
             ]
             assert_run_event_integrity(tracer.events)
             assert event_labels(tracer.events) == [
                 f"run_begin:{record.id}",
-                f"step_begin:{record.id}/0:system",
-                f"step_end:{record.id}/0:system:succeeded",
+                f"step_begin:{record.id}/0:value",
+                f"step_end:{record.id}/0:value:succeeded",
                 f"run_end:{record.id}:failed",
             ]
 
@@ -686,7 +686,7 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
             assert root.status == "succeeded", root.error
             assert harness.store.run_output_text(run_id=root.id) == "report"
             assert _root_step_kinds(harness, root.id) == [
-                "system",
+                "value",
                 "run",
                 "par",
                 "par",
@@ -1060,7 +1060,7 @@ flow selected(_: Text) -> Text[]:
 
             assert root.status == "succeeded"
             assert _output_value(harness, root.id) == expected
-            assert _root_step_kinds(harness, root.id) == ["run", "system"]
+            assert _root_step_kinds(harness, root.id) == ["run", "value"]
 
     asyncio.run(scenario())
 

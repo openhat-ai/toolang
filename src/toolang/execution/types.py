@@ -840,7 +840,7 @@ StepKind = Literal[
     "tool",
     "par",
     "loop",
-    "system",
+    "value",
 ]
 ControlTiming = Literal["immediate", "next_step", "next_call"]
 ControlKind = Literal[

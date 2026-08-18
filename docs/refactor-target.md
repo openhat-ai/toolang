@@ -287,7 +287,7 @@ execution/
     ├── diagnostics.py      # bounded model and tool diagnostics
     ├── _persist.py         # private run-event projection
     ├── runs/               # agic and flow run bodies
-    ├── steps/              # event-owning run, model, tool, and system steps
+    ├── steps/              # event-owning run, model, tool, and value steps
     ├── stmts/              # lowered flow-statement semantics
     └── prompts/            # default execution prompt resources
 ```

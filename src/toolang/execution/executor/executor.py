@@ -58,7 +58,6 @@ from .common import (
     _StepFailed,
     control_text,
     initial_locals,
-    statement_has_call,
     value_parts,
     value_text,
 )
@@ -1278,22 +1277,6 @@ class _Execution:
         self, run_id: str, kind: ControlKind
     ) -> tuple[RunControlRecord, ...]:
         return self.executor._pending_controls(run_id=run_id, kind=kind)
-
-    def steer_controls(
-        self, run_id: str, statement: FlowStmt
-    ) -> tuple[RunControlRecord, ...]:
-        allowed = {"immediate", "next_step"}
-        if statement_has_call(statement):
-            allowed.add("next_call")
-        selected = tuple(
-            control
-            for control in self.pending_controls(run_id, "steer")
-            if control.timing in allowed
-        )
-        return self.executor._claim_controls(
-            run_id=run_id,
-            controls=selected,
-        )
 
     def steer_controls_for_call(
         self,

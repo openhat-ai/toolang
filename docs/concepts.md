@@ -243,7 +243,7 @@ Current step kinds are:
 - `tool`
 - `par`
 - `loop`
-- `system`
+- `value`
 
 Steps record execution truth. They do not define transport behavior.
 

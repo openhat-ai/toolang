@@ -2533,6 +2533,55 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
     ]
 
 
+def test_agic_commits_steer_messages_after_step_begin() -> None:
+    steer = Message.user("inspect")
+    provider = _FakeModelProvider(
+        name="openai",
+        responses=[ModelCallResult(message=Message.assistant("unused"))],
+    )
+    prepared = _prepared_agic(
+        provider,
+        ModelTarget(
+            ref="openai/gpt-test",
+            provider="openai",
+            name="gpt-test",
+            model="gpt-test",
+            adapter="chat_completions",
+        ),
+    )
+    control = RunControlRecord(
+        target="run-1",
+        index=1,
+        kind="steer",
+        timing="next_call",
+        payload=SteerControlPayload(
+            (Local.typed("Part[]", tuple(steer.parts), "_", 0),)
+        ),
+    )
+    original_messages = list(prepared.messages)
+
+    async def emit(_event: RunEvent) -> None:
+        assert state.messages == original_messages
+        raise RuntimeError("step begin persistence failed")
+
+    state = _AgicState(
+        prepared=prepared,
+        layout=AgentLayout.resident(Path("/tmp"), "home"),
+        emit=emit,
+        pending_inputs=lambda: (control,),
+        steer_before_next_step=lambda: False,
+        immediate_steer=lambda: False,
+        before_call=lambda: None,
+        messages=list(original_messages),
+    )
+
+    with pytest.raises(RuntimeError, match="step begin persistence failed"):
+        asyncio.run(_execute(state))
+
+    assert state.messages == original_messages
+    assert provider.requests == []
+
+
 def test_responses_replays_assistant_multimodal_output_as_text() -> None:
     assert encode_message(
         Message(

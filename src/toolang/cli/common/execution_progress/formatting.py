@@ -295,10 +295,6 @@ def statement_result(
     return " · ".join(value for value in (result, effect) if value)
 
 
-def runtime_failure(event: StepBegin) -> bool:
-    return event.kind == "system" and event.given.get("runtime") == "failure"
-
-
 def _selection_result(
     given: Mapping[str, Any],
     *,

@@ -84,7 +84,7 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     assert "Traceback" not in error_output
     assert "execution history is incompatible with toolang" in error_output
     assert f"uses schema {schema_version}" in error_output
-    assert "requires schema 25" in error_output
+    assert "requires schema 26" in error_output
     assert "backup" in error_output
     assert "database was not changed" in error_output.lower()
     connection = sqlite3.connect(layout.run_store)
@@ -217,7 +217,7 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
             store,
             run_id=run.id,
             step_index=0,
-            kind="system",
+            kind="value",
             status="succeeded",
             input=(),
             output=(TextPart(text="prepared"),),
@@ -235,7 +235,7 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
     assert document["kind"] == "step"
     assert document["run"]["id"] == "run_inspect"
     assert document["step"]["path"] == "run_inspect/0"
-    assert document["step"]["kind"] == "system"
+    assert document["step"]["kind"] == "value"
     assert document["step"]["output"] == {
         "type": "Part[]",
         "value": [{"text": "prepared", "type": "text"}],
@@ -264,7 +264,7 @@ def test_roaming_source_reads_threads_runs_and_inspection(
             store,
             run_id=run.id,
             step_index=0,
-            kind="system",
+            kind="value",
             status="succeeded",
             input=(),
             output=(TextPart(text="ready"),),
@@ -323,7 +323,7 @@ def test_visiting_selector_reads_inspection_without_fetching(
             store,
             run_id=run.id,
             step_index=0,
-            kind="system",
+            kind="value",
             status="succeeded",
             input=(),
             output=(TextPart(text="cached"),),

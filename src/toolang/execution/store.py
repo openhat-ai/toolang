@@ -72,7 +72,7 @@ from .types import (
 )
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 25
+_SCHEMA_VERSION = 26
 _MIGRATABLE_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -528,6 +528,7 @@ class RunStore:
                     run_id=run_id,
                     tree_runs=tree_runs,
                     anchor=anchor,
+                    run_status=run.status,
                 )
                 index_row = self._conn.execute(
                     'SELECT COALESCE(MAX("index"), -1) + 1 AS next_index '
@@ -1690,6 +1691,7 @@ class RunStore:
         run_id: str,
         tree_runs: Sequence[str],
         anchor: StepPath | None,
+        run_status: RunStatus,
     ) -> StepPath | None:
         placeholders = ", ".join("?" for _ in tree_runs)
         rows = self._conn.execute(
@@ -1715,20 +1717,19 @@ class RunStore:
                     f"retry anchor is not visible in run {run_id}: {anchor}"
                 )
             return anchor
-        retryable = tuple(
+        incomplete = tuple(
             row
             for row in rows
             if str(row["status"]) in {"running", "failed", "canceled"}
         )
-        candidate = next(
-            (row for row in reversed(retryable) if str(row["kind"]) != "system"),
-            retryable[-1] if retryable else None,
-        )
-        if candidate is None:
+        candidate = incomplete[-1] if incomplete else None
+        if candidate is None and run_status == "succeeded":
             candidate = next(
-                (row for row in reversed(rows) if str(row["kind"]) != "system"),
+                (row for row in reversed(rows) if str(row["kind"]) != "value"),
                 rows[-1] if rows else None,
             )
+        elif candidate is None:
+            candidate = rows[-1] if rows else None
         if candidate is None:
             return None
         return StepPath.from_local(str(candidate["run"]), str(candidate["path"]))
@@ -2739,7 +2740,7 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
     noted_data = _load_stored_object(raw["noted"], label="step noted")
     return StepRecord(
         path=StepPath.from_local(str(raw["run"]), str(raw["path"])),
-        kind=cast(StepKind, raw["kind"]),
+        kind=_step_kind_from_data(raw["kind"]),
         input=pointers_from_data(input_data),
         output=(local_from_data(output_data) if output_data is not None else None),
         placement=placement_data,
@@ -2760,6 +2761,21 @@ def _step_from_row(row: sqlite3.Row) -> StepRecord:
         started_at=str(raw["started_at"]),
         finished_at=str(raw["finished_at"]) if raw["finished_at"] is not None else None,
     )
+
+
+def _step_kind_from_data(value: object) -> StepKind:
+    if not isinstance(value, str) or value not in {
+        "run",
+        "agent",
+        "human",
+        "model",
+        "tool",
+        "par",
+        "loop",
+        "value",
+    }:
+        raise ValueError(f"invalid stored step kind: {value!r}")
+    return cast(StepKind, value)
 
 
 def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:

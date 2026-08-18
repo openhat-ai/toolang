@@ -19,7 +19,6 @@ from toolang.cli.common.execution_progress.formatting import (
     integer,
     one_line,
     output_preview,
-    runtime_failure,
     status_label,
     truncate,
 )
@@ -131,8 +130,6 @@ class ChatRunPresenter:
     def _begin_step(self, event: StepBegin, app: AppContext) -> None:
         self._finalize_commands(app, blocks.RunSteerBlock, event)
         self._discard_pending_models(event.step, app)
-        if runtime_failure(event):
-            return
         statement = event.given.get("statement")
         if isinstance(statement, str) and statement:
             self._begin_statement(event, app)

@@ -126,7 +126,7 @@ class RunBlock(RunState):
 
 @dataclass(slots=True)
 class CallBlock(CallState):
-    """One model, tool, or system step within an agic."""
+    """One model or tool step within an agic."""
 
     def render_begin(
         self,

@@ -37,7 +37,7 @@ from toolang.lang.ast import (
     StormStmt,
     StructDecl,
 )
-from toolang.lang.input import RunnableInput, coerce_input
+from toolang.lang.input import RunnableInput
 from toolang.lang.format import format_statement_head
 from toolang.lang.types import Array
 from toolang.state.state import AgentState
@@ -308,45 +308,6 @@ def update_locals(locals: dict[str, Local], binding: str | None, result: Local) 
 
     if binding is not None:
         locals[binding] = result
-
-
-def apply_steer(
-    locals: dict[str, Local],
-    controls: Sequence[RunControlRecord],
-    *,
-    input_type: str | None,
-    structs: Mapping[str, StructDecl],
-) -> None:
-    """Apply accepted steer inputs to the primary local."""
-
-    for control in controls:
-        if isinstance(control.payload, SteerControlPayload):
-            primary = next(
-                (item for item in control.payload.locals if item.name == "_"), None
-            )
-            if (
-                primary is None
-                or isinstance(primary.value, TypedPointer)
-                or not isinstance(primary.value, Array)
-            ):
-                continue
-            effective_type = input_type or "Part[]"
-            pointer = Pointer.control(control.run, control.index, "_")
-            locals["_"] = Local(
-                coerce_input(
-                    tuple(primary.value),
-                    effective_type,
-                    structs=structs,
-                ),
-                "item",
-                pointer,
-                effective_type,
-                (
-                    RecordLocal.typed(effective_type, pointer, "_", 0)
-                    if primary.type == effective_type
-                    else None
-                ),
-            )
 
 
 def statement_has_call(statement: FlowStmt) -> bool:
