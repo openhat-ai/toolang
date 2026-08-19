@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-from typing import cast
 
 from toolang.base.types.message import (
     AudioPart,
@@ -15,23 +14,31 @@ from toolang.base.types.message import (
     ToolResultPart,
     message_text,
 )
-from toolang.execution.events import StepBegin, StepEnd
+from toolang.execution.events import StepEnd
 from toolang.execution.records import execution_error_message
 from toolang.execution.types import (
     ModelStepGiven,
     ModelStepNoted,
     StepGiven,
     StepNoted,
-    StepPath,
     ToolStepGiven,
 )
 from toolang.lang.ast import (
+    AskStmt,
+    DropStmt,
     FlowStmt,
+    GatherStmt,
     KeepStmt,
+    LetStmt,
+    MapStmt,
     RankStmt,
+    RepeatStmt,
+    RunStmt,
+    ScatterStmt,
     SeekStmt,
+    SettleStmt,
+    StormStmt,
 )
-from toolang.lang.format import format_statement_head
 from toolang.lang.types import Array
 
 from ..output import parse_utc_timestamp
@@ -93,9 +100,14 @@ def token_fact(input_tokens: int, output_tokens: int) -> str:
 
 
 def usage_facts(noted: StepNoted) -> list[str]:
-    if not isinstance(noted, ModelStepNoted) or noted.tokens is None:
+    if not isinstance(noted, ModelStepNoted):
         return []
-    return [token_fact(noted.tokens.input, noted.tokens.output)]
+    facts = []
+    if noted.tokens is not None:
+        facts.append(token_fact(noted.tokens.input, noted.tokens.output))
+    if noted.cost is not None:
+        facts.append(f"${noted.cost}")
+    return facts
 
 
 def part_lines(parts: tuple[Part, ...]) -> list[str]:
@@ -134,6 +146,20 @@ def output_preview(event: StepEnd) -> str:
     return truncate(one_line(value), 180)
 
 
+def step_output_summary(event: StepEnd) -> str:
+    """Return one bounded human-readable Step output summary."""
+
+    if text := output_preview(event):
+        return text
+    if event.output is None:
+        return ""
+    if event.output.dim == 1:
+        return shape_label(event)
+    if isinstance(event.output.value, str):
+        return truncate(json.dumps(event.output.value, ensure_ascii=False), 80)
+    return value_summary(event.output.value)
+
+
 def model_label(given: StepGiven) -> str:
     return given.model if isinstance(given, ModelStepGiven) else "model"
 
@@ -154,6 +180,23 @@ def tool_result(event: StepEnd) -> str:
             return f"exit {code}"
         if part.error:
             return part.error
+    return ""
+
+
+def tool_output_summary(event: StepEnd) -> str:
+    """Return one bounded Tool output summary suitable for one logical row."""
+
+    if result := tool_result(event):
+        return result
+    for part in output_parts(event):
+        if not isinstance(part, ToolResultPart):
+            continue
+        for key in ("stdout", "stderr"):
+            value = part.output.get(key)
+            if isinstance(value, str) and value.strip():
+                return truncate(one_line(value), 160)
+        if part.output:
+            return value_summary(part.output)
     return ""
 
 
@@ -184,41 +227,119 @@ def output_parts(event: StepEnd) -> tuple[Part, ...]:
     return ()
 
 
-def active_step_label(event: StepBegin) -> str:
-    if event.kind == "model":
-        return "thinking…"
-    if event.kind == "tool":
-        return f"executing {tool_label(event.given)}…"
-    return f"{event.kind}…"
+def progress_statement_header(statement: FlowStmt) -> str:
+    """Return one concise presentation header from a typed Flow statement."""
+
+    if statement.doc and (doc := one_line(statement.doc.strip())):
+        return doc
+
+    if isinstance(statement, LetStmt):
+        return _statement_words("Set", statement.binding or "value")
+    if isinstance(statement, RunStmt):
+        action = _named_or_inline(
+            statement.runnable,
+            named="Run {name}",
+            inline="Run the inline task",
+        )
+    elif isinstance(statement, SeekStmt):
+        action = _named_or_inline(
+            statement.runnable,
+            named=f"Ask {statement.name} to run {{name}}",
+            inline=f"Ask {statement.name} for help",
+        )
+    elif isinstance(statement, AskStmt):
+        action = (
+            f"Ask {statement.name} for input"
+            if statement.name
+            else "Ask for human input"
+        )
+    elif isinstance(statement, ScatterStmt):
+        action = _named_or_inline(
+            statement.runnable,
+            named=f"Expand into {count(statement.count, 'item')} with {{name}}",
+            inline=f"Expand into {count(statement.count, 'item')}",
+        )
+    elif isinstance(statement, StormStmt):
+        action = _named_or_inline(
+            statement.runnable,
+            named=f"Run {{name}} {count(statement.count, 'time')}",
+            inline=f"Generate {count(statement.count, 'item')}",
+        )
+    elif isinstance(statement, GatherStmt):
+        action = _named_or_inline(
+            statement.runnable,
+            named="Combine the items with {name}",
+            inline="Combine the items",
+        )
+    elif isinstance(statement, SettleStmt):
+        action = _named_or_inline(
+            statement.runnable,
+            named="Reduce the items with {name}",
+            inline="Reduce the items",
+        )
+    elif isinstance(statement, MapStmt):
+        action = _named_or_inline(
+            statement.runnable,
+            named="Run {name} for each item",
+            inline="Process each item",
+        )
+    elif isinstance(statement, KeepStmt | DropStmt):
+        verb = "Keep" if isinstance(statement, KeepStmt) else "Drop"
+        if statement.position is not None and statement.count is not None:
+            quantity = "item" if statement.count == 1 else f"{statement.count} items"
+            action = f"{verb} the {statement.position} {quantity}"
+        else:
+            action = _named_or_inline(
+                statement.runnable or "",
+                named=f"{verb} items selected by {{name}}",
+                inline=f"{verb} selected items",
+            )
+    elif isinstance(statement, RankStmt):
+        action = _named_or_inline(
+            statement.runnable,
+            named="Rank items with {name}",
+            inline="Rank the items",
+        )
+        if statement.selection is not None and statement.limit is not None:
+            action += (
+                f" and keep the {statement.selection} {count(statement.limit, 'item')}"
+            )
+    elif isinstance(statement, RepeatStmt):
+        if statement.count is not None and statement.runnable is not None:
+            return f"Repeat up to {count(statement.count, 'time')}"
+        if statement.count is not None:
+            return f"Repeat {count(statement.count, 'time')}"
+        return "Repeat until complete"
+    else:
+        raise TypeError(f"unsupported flow statement: {type(statement).__name__}")
+
+    lanes = getattr(statement, "lanes", None)
+    if isinstance(lanes, int):
+        action += f", up to {lanes} at once"
+    if statement.binding == "_":
+        return action
+    if statement.binding is None:
+        return f"{action} without saving the result"
+    return f"{action} and save as {statement.binding}"
 
 
-def completed_step_label(begin: StepBegin, event: StepEnd) -> str:
-    if event.status != "succeeded":
-        return status_label(event.status)
-    if begin.kind == "model":
-        return output_preview(event) or "model completed"
-    if begin.kind == "tool":
-        return tool_result(event) or f"{tool_label(begin.given)} completed"
-    return f"{begin.kind} completed"
+def progress_until_header(statement: RepeatStmt) -> str:
+    """Return the Repeat until boundary label without exposing generated names."""
+
+    runnable = statement.runnable or ""
+    return "Check whether to stop" if _generated_runnable(runnable) else runnable
 
 
-def statement_head(given: StepGiven) -> str:
-    statement = flow_statement(given)
-    return format_statement_head(statement) if statement is not None else "statement"
+def _named_or_inline(value: str, *, named: str, inline: str) -> str:
+    return inline if _generated_runnable(value) else named.format(name=value)
 
 
-def statement_target(given: StepGiven) -> str:
-    statement = flow_statement(given)
-    if statement is None:
-        return ""
-    target = (
-        statement.name
-        if isinstance(statement, SeekStmt)
-        else getattr(statement, "runnable", None)
-    )
-    if not isinstance(target, str):
-        return ""
-    return runnable_label(target)
+def _generated_runnable(value: str) -> bool:
+    return not value or value.startswith("<agic:")
+
+
+def _statement_words(*values: str | None) -> str:
+    return " ".join(value for value in values if value)
 
 
 def flow_statement(given: StepGiven) -> FlowStmt | None:
@@ -234,10 +355,6 @@ def runnable_label(value: str) -> str:
     return f"<agic:L{match.group(1)}>" if match is not None else value
 
 
-def statement_index(step: StepPath) -> int:
-    return step.index
-
-
 def shape_label(event: StepEnd) -> str:
     if event.output is None:
         return ""
@@ -245,125 +362,6 @@ def shape_label(event: StepEnd) -> str:
     if event.output.dim == 1:
         return f"{items}-item list" if items is not None else "list"
     return "1 item"
-
-
-def statement_result_level(given: StepGiven) -> int | None:
-    """Return the minimum verbosity for one successful statement result."""
-
-    statement = flow_statement(given)
-    if statement is None:
-        return None
-    kind = statement.kind
-    if kind in {"run", "repeat"}:
-        return None
-    if kind in {"scatter", "keep", "drop"}:
-        return 0
-    if isinstance(statement, RankStmt) and statement.selection is not None:
-        return 0
-    return 2
-
-
-def statement_result(
-    given: StepGiven,
-    event: StepEnd,
-    *,
-    source_items: int | None,
-) -> str:
-    shape = shape_label(event)
-    statement = flow_statement(given)
-    if statement is None:
-        return ""
-    kind = statement.kind
-    items = output_item_count(event)
-    source_count = getattr(statement, "count", None)
-    if kind in {"run", "repeat"}:
-        return ""
-    if kind == "scatter":
-        effect = "scattered from 1 item"
-    elif kind == "storm":
-        effect = f"produced by {source_count or items or 0} runs"
-    elif kind == "gather":
-        effect = _list_source("gathered from", source_items)
-    elif kind == "settle":
-        effect = _list_source("reduced from", source_items)
-    elif kind == "map":
-        effect = _list_source("mapped from", source_items)
-    elif kind in {"keep", "drop"}:
-        effect = _selection_result(
-            statement,
-            selected=items,
-            source_items=source_items,
-        )
-    elif kind == "rank":
-        effect = _rank_result(
-            cast(RankStmt, statement),
-            selected=items,
-            source_items=source_items,
-        )
-    elif kind == "let":
-        effect = "perceived from authored content"
-    else:
-        effect = "produced"
-    if not shape:
-        return effect
-    result = (
-        f"{shape} discarded"
-        if statement.binding is None
-        else f"{shape} saved to {statement.binding}"
-    )
-    return f"{result} · {effect}"
-
-
-def _selection_result(
-    given: FlowStmt,
-    *,
-    selected: int | None,
-    source_items: int | None,
-) -> str:
-    statement = given.kind
-    position = (
-        given.position
-        if isinstance(given, KeepStmt)
-        else getattr(given, "position", None)
-    )
-    count_value = getattr(given, "count", None)
-    if position and count_value is not None:
-        actual = selected or 0
-        location = "start" if position == "first" else "end"
-        count_label = _fraction(actual, source_items)
-        if statement == "keep":
-            return f"{count_label} items kept from the {location}"
-        return f"{count_label} items retained after dropping from the {location}"
-    if statement == "keep":
-        return f"{_fraction(selected, source_items)} items kept"
-    if statement == "drop":
-        return f"{_fraction(selected, source_items)} items retained"
-    return "filtered"
-
-
-def _rank_result(
-    given: RankStmt,
-    *,
-    selected: int | None,
-    source_items: int | None,
-) -> str:
-    if given.selection:
-        return f"{given.selection} {_fraction(selected, source_items)} items selected"
-    return "ranked"
-
-
-def _list_source(
-    verb: str,
-    source_items: int | None,
-) -> str:
-    if source_items is None:
-        return f"{verb} a list"
-    return f"{verb} {count(source_items, 'item')}"
-
-
-def _fraction(selected: int | None, source_items: int | None) -> str:
-    actual = selected or 0
-    return f"{actual}/{source_items}" if source_items is not None else str(actual)
 
 
 def output_item_count(event: StepEnd) -> int | None:

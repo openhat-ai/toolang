@@ -58,16 +58,16 @@ def test_chat_tui_bounds_long_live_output_in_a_small_terminal(
     try:
         session.wait_for("Toolang", "^d exit")
         session.send(b"show long output\r")
-        live_output = session.wait_for(
-            "earlier live lines",
-            "terminal e2e line 099",
-            timeout=10,
-        )
+        live_output = session.wait_for("· thinking…", timeout=10)
         assert "Window too small" not in live_output
 
-        final_output = session.wait_for("succeeded", timeout=10)
+        final_output = session.wait_for(
+            "· executed terminal e2e line 000",
+            "succeeded",
+            timeout=10,
+        )
         assert "terminal e2e line 000" in final_output
-        assert "terminal e2e line 099" in final_output
+        assert "terminal e2e line 099" not in final_output
         assert "Window too small" not in final_output
 
         session.send(b"\x04")
@@ -88,7 +88,7 @@ def test_chat_tui_reopens_a_durable_flow_result(
         session.wait_for("Toolang", "flow:relay")
         session.send(b"hello flow\r")
         output = session.wait_for(
-            "[0] run chat",
+            "[0] Run chat",
             "1 run",
             "succeeded",
             "result saved",

@@ -569,14 +569,15 @@ flow parallel(_: Part[]):
             root_step = harness.store.list_steps(run_id=root.id)[0]
             leaf_step = harness.store.list_steps(run_id=failed_child.id)[0]
             assert root.error == Pointer.step(root_path)
-            assert root_step.error == Pointer.run(failed_child.id)
+            boundary_error = "parallel step stopped because lane 0 (#0) failed"
+            assert root_step.error == boundary_error
             assert failed_child.error == Pointer.step(leaf_path)
             assert leaf_step.error == "worker failed"
             assert isinstance(root.error, Pointer)
-            assert harness.store.resolve_error(root.error) == "worker failed"
+            assert harness.store.resolve_error(root.error) == boundary_error
             detail = RunHistory(harness.store).get_run(root.id)
             assert detail is not None
-            assert detail.summary == "worker failed"
+            assert detail.summary == boundary_error
             assert all(
                 step.status != "running"
                 for run in runs

@@ -153,11 +153,10 @@ def test_local_script_renders_composite_flow_progress(
         assert output.out == '["one","two"]\n'
         assert "Run flow research" in output.err
         assert "> agent framework" not in output.err
-        assert "[0] scatter 2 expand" in output.err
-        assert "[0] scatter 2 expand ·" not in output.err
+        assert "[0] Expand the topic." in output.err
         assert "line 10" not in output.err
-        assert "Run agic expand" in output.err
-        assert '· ["one","two"]' in output.err
+        assert "Run agic expand" not in output.err
+        assert '· executed ["one","two"]' in output.err
         assert "--- run_" in output.err
         assert "list returned" in output.err
         assert "~~~" not in output.err

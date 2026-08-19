@@ -1,34 +1,26 @@
-"""Terminal-independent state derived from ordered execution events."""
+"""Shared execution progress metrics."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Self
+from dataclasses import dataclass
+from decimal import Decimal
 
-from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
-from toolang.execution.types import ModelStepNoted, Occurrence, StepPath
+from toolang.execution.events import StepEnd
+from toolang.execution.types import ModelStepNoted
 
-from .formatting import (
-    active_step_label,
-    completed_step_label,
-    count,
-    flow_statement,
-    runnable_label,
-    statement_head,
-    statement_target,
-    token_fact,
-)
+from .formatting import count, token_fact
 
 
 @dataclass(slots=True)
 class Metrics:
-    """Aggregate work performed by one run tree or statement."""
+    """Aggregate work performed by one Run tree or Flow statement."""
 
     runs: int = 0
     model_calls: int = 0
     tool_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    cost: Decimal = Decimal("0")
 
     def add(self, other: Metrics) -> None:
         self.runs += other.runs
@@ -36,6 +28,7 @@ class Metrics:
         self.tool_calls += other.tool_calls
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
+        self.cost += other.cost
 
     def record_step(self, event: StepEnd) -> None:
         if event.kind == "model":
@@ -43,6 +36,8 @@ class Metrics:
             if isinstance(event.noted, ModelStepNoted) and event.noted.tokens:
                 self.input_tokens += event.noted.tokens.input
                 self.output_tokens += event.noted.tokens.output
+            if isinstance(event.noted, ModelStepNoted) and event.noted.cost:
+                self.cost += Decimal(event.noted.cost)
         elif event.kind == "tool":
             self.tool_calls += 1
 
@@ -51,234 +46,17 @@ class Metrics:
         *,
         duration: str = "",
         include_runs: bool = True,
+        include_cost: bool = True,
     ) -> list[str]:
         facts = [duration]
         if include_runs and self.runs:
             facts.append(count(self.runs, "run"))
-        if self.input_tokens or self.output_tokens:
-            facts.append(token_fact(self.input_tokens, self.output_tokens))
         if self.model_calls:
             facts.append(count(self.model_calls, "model call"))
         if self.tool_calls:
             facts.append(count(self.tool_calls, "tool call"))
+        if self.input_tokens or self.output_tokens:
+            facts.append(token_fact(self.input_tokens, self.output_tokens))
+        if include_cost and self.cost:
+            facts.append(f"${self.cost}")
         return [fact for fact in facts if fact]
-
-
-@dataclass(slots=True)
-class RunState:
-    """Semantic state for one root or recursive run."""
-
-    run_id: str
-    parent: StepPath | None
-    kind: str
-    name: str
-    occurrence: Occurrence | None
-    started_at: str
-    metrics: Metrics = field(default_factory=lambda: Metrics(runs=1))
-    status: str = "running"
-    finished_at: str = ""
-
-    @classmethod
-    def from_event(cls, event: RunBegin) -> Self:
-        kind, separator, name = event.runnable.partition(":")
-        return cls(
-            run_id=event.run,
-            parent=event.parent,
-            kind=kind if separator else "run",
-            name=runnable_label(name if separator else event.runnable),
-            occurrence=event.occurrence,
-            started_at=event.started_at,
-        )
-
-    @property
-    def label(self) -> str:
-        return " ".join(value for value in (self.kind, self.name) if value)
-
-    def finish(self, event: RunEnd) -> None:
-        self.status = event.status
-        self.finished_at = event.finished_at
-
-
-@dataclass(slots=True)
-class LaneState:
-    """Current work assigned to one bounded parallel presentation lane."""
-
-    run_id: str
-    item: int
-    activity: str = "starting…"
-
-
-@dataclass(slots=True)
-class CallState:
-    """Semantic state for one atomic call step."""
-
-    begin: StepBegin
-    preview: str = ""
-    end: StepEnd | None = None
-
-    @property
-    def active_label(self) -> str:
-        return active_step_label(self.begin)
-
-    def completed_label(self, event: StepEnd) -> str:
-        return completed_step_label(self.begin, event)
-
-    def append_delta(self, delta: str) -> str:
-        self.preview = (self.preview + delta)[-800:]
-        return self.preview
-
-    def finish(self, event: StepEnd) -> None:
-        self.end = event
-
-
-@dataclass(slots=True)
-class StatementState:
-    """Semantic state for one authored flow statement and its child work."""
-
-    begin: StepBegin
-    children: list[str] = field(default_factory=list)
-    completed: int = 0
-    failed: int = 0
-    failed_item: int | None = None
-    total: int | None = None
-    lane_count: int | None = None
-    lanes: dict[int, LaneState] = field(default_factory=dict)
-    metrics: Metrics = field(default_factory=Metrics)
-    active_run: str | None = None
-    active_item: int | None = None
-    active_activity: str = "starting…"
-    live_owner: StepPath | None = None
-    ordinal: int | None = None
-    current_iteration: int | None = None
-    next_ordinal: int = 0
-    active_ordinal: int | None = None
-    active_title: str = ""
-    active_work: str = ""
-    until_decision: bool | None = None
-    end: StepEnd | None = None
-
-    @property
-    def statement(self) -> str:
-        statement = flow_statement(self.begin.given)
-        return statement.kind if statement is not None else ""
-
-    @property
-    def batched(self) -> bool:
-        return self.begin.kind in {"par", "loop"}
-
-    def child_started(self, run: RunState) -> None:
-        self.children.append(run.run_id)
-        self.active_run = run.run_id
-        item = (
-            run.occurrence.item.index
-            if run.occurrence and run.occurrence.item
-            else None
-        )
-        self.active_item = item
-        self.active_activity = "starting…"
-        total = (
-            run.occurrence.item.count
-            if run.occurrence and run.occurrence.item
-            else None
-        )
-        if total is not None:
-            self.total = max(self.total or 0, total)
-        lane = (
-            run.occurrence.lane.index
-            if run.occurrence and run.occurrence.lane
-            else None
-        )
-        lanes = (
-            run.occurrence.lane.count
-            if run.occurrence and run.occurrence.lane
-            else None
-        )
-        if lane is not None and item is not None:
-            self.lanes[lane] = LaneState(run.run_id, item)
-        if lanes is not None:
-            self.lane_count = max(self.lane_count or 0, lanes)
-
-    def note_iteration(self, iteration: int) -> int:
-        """Enter one repeat iteration and allocate its local ordinal."""
-
-        if self.current_iteration != iteration:
-            self.current_iteration = iteration
-            self.next_ordinal = 0
-        ordinal = self.next_ordinal
-        self.next_ordinal += 1
-        return ordinal
-
-    def activate_nested(self, block: StatementState) -> None:
-        self.active_ordinal = block.ordinal
-        self.active_title = statement_head(block.begin.given)
-        self.active_work = ""
-        self.active_activity = ""
-
-    def begin_until(self, run: RunState) -> None:
-        self.active_ordinal = None
-        self.active_title = "until"
-        self.active_work = f"Run {run.label}"
-        self.active_activity = "starting…"
-
-    def record_until_decision(self, decision: bool | None) -> None:
-        self.until_decision = decision
-        if decision is not None:
-            self.active_activity = f"↳ {'stop repeating' if decision else 'continue'}"
-
-    def child_finished(self, run: RunState) -> None:
-        self.metrics.add(run.metrics)
-        if run.status == "succeeded":
-            self.completed += 1
-        elif run.status == "failed":
-            self.failed += 1
-            self.failed_item = (
-                run.occurrence.item.index
-                if run.occurrence and run.occurrence.item
-                else None
-            )
-        lane = (
-            run.occurrence.lane.index
-            if run.occurrence and run.occurrence.lane
-            else None
-        )
-        if (
-            lane is not None
-            and (current := self.lanes.get(lane)) is not None
-            and current.run_id == run.run_id
-        ):
-            self.lanes.pop(lane, None)
-        if self.active_run == run.run_id:
-            self.active_run = None
-            self.active_item = None
-
-    def work_line(self, run: RunState | None = None) -> str:
-        label = run.label if run is not None else self._unresolved_run_label()
-        total = self.total or len(self.children)
-        statement = flow_statement(self.begin.given)
-        declared_lanes = getattr(statement, "lanes", None)
-        lanes = self.lane_count or (
-            declared_lanes if isinstance(declared_lanes, int) else None
-        )
-        if self.begin.kind == "par":
-            unit = "times" if self.statement == "storm" else "items"
-            details = count(total, "item") if unit == "items" else f"{total} times"
-            if lanes is not None:
-                details = f"{details}, {count(lanes, 'lane')}"
-            return f"Run {label} in parallel ({details})"
-        if self.statement == "settle":
-            return f"Run {label} sequentially ({count(total, 'item')})"
-        return f"Run {label}"
-
-    def _unresolved_run_label(self) -> str:
-        target = statement_target(self.begin.given)
-        return f"agic {target}" if target else "agic"
-
-    def set_activity(self, run_id: str, activity: str) -> None:
-        if self.active_run == run_id:
-            self.active_activity = activity
-        for lane in self.lanes.values():
-            if lane.run_id == run_id:
-                lane.activity = activity
-
-    def finish(self, event: StepEnd) -> None:
-        self.end = event

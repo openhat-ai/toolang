@@ -1228,6 +1228,10 @@ class _Execution:
                         lane=OccurrencePosition(index=lane, count=lanes),
                     ),
                 )
+            except _ExecutionFailed as exc:
+                raise RuntimeError(
+                    f"parallel step stopped because lane {lane} (#{index}) failed"
+                ) from exc
             finally:
                 available_lanes.put_nowait(lane)
 

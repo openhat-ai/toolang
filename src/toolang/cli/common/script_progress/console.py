@@ -6,6 +6,7 @@ import shutil
 import textwrap
 from typing import Literal, TextIO
 
+from ..execution_progress import ProgressRow, ProgressUpdate
 from ..execution_progress.formatting import one_line, truncate
 
 Tone = Literal["progress", "active", "error", "warning"]
@@ -63,16 +64,25 @@ class ProgressConsole:
         for line in lines[1:]:
             self.write(f"{continuation}{line}", tone=tone)
 
-    def show_live(self, lines: list[str]) -> None:
+    def apply(self, update: ProgressUpdate) -> None:
+        """Append stable rows and atomically replace the current live snapshot."""
+
+        self.clear_live()
+        for block in update.stable:
+            for row in block.rows:
+                self._write_progress_row(row)
+        self.show_live_rows([row for block in update.live for row in block.rows])
+
+    def show_live_rows(self, rows: list[ProgressRow]) -> None:
         if not self.tty:
             return
         self.clear_live()
         rendered = "\n".join(
-            self._styled(truncate(line, self.width), tone="active") for line in lines
+            self._styled(truncate(row.text, self.width), tone=row.tone) for row in rows
         )
         self.stream.write(rendered)
         self.stream.flush()
-        self._live_lines = list(lines)
+        self._live_lines = [row.text for row in rows]
 
     def clear_live(self) -> None:
         if not self._live_lines:
@@ -88,3 +98,24 @@ class ProgressConsole:
             return value
         style = _ANSI_STYLE[tone]
         return f"{style}{value}{_ANSI_RESET}" if style else value
+
+    def _write_progress_row(self, row: ProgressRow) -> None:
+        if not self.tty or len(row.text) <= self.width:
+            self.write(row.text, tone=row.tone)
+            return
+        if row.text.startswith("· "):
+            self.wrapped(
+                row.text[2:],
+                prefix="· ",
+                continuation="  ",
+                tone=row.tone,
+            )
+            return
+        indent = len(row.text) - len(row.text.lstrip())
+        prefix = " " * indent
+        self.wrapped(
+            row.text[indent:],
+            prefix=prefix,
+            continuation=prefix,
+            tone=row.tone,
+        )
