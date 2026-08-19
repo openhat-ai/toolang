@@ -301,8 +301,7 @@ class Pointer:
     def step(cls, step: StepPath, *path: str | int) -> Pointer:
         """Point to one step output or a value within it."""
 
-        anchor = ".".join((step.run, *(str(index) for index in step.indices)))
-        return cls(_pointer_value(anchor, path))
+        return cls(_pointer_value(str(step), path))
 
     @classmethod
     def control(
@@ -749,10 +748,10 @@ class StepPath:
             return value
         if not isinstance(value, str):
             raise TypeError("step path must be a string")
-        run, separator, suffix = value.partition("/")
+        run, separator, suffix = value.partition(".")
         if not separator or not run or not suffix:
             raise ValueError(f"invalid step path: {value!r}")
-        raw_indices = suffix.split("/")
+        raw_indices = suffix.split(".")
         if any(
             not item.isascii() or not item.isdigit() or str(int(item)) != item
             for item in raw_indices
@@ -764,13 +763,13 @@ class StepPath:
     def from_local(cls, run: RunId, path: str) -> StepPath:
         """Build one step path from separately stored run and local path."""
 
-        return cls.parse(f"{run}/{path}")
+        return cls.parse(f"{run}.{path}")
 
     @property
     def local(self) -> str:
         """Return the run-local index path."""
 
-        return "/".join(str(index) for index in self.indices)
+        return ".".join(str(index) for index in self.indices)
 
     @property
     def parent(self) -> StepPath | None:
@@ -792,7 +791,7 @@ class StepPath:
         return StepPath(self.run, (*self.indices, index))
 
     def __str__(self) -> str:
-        return f"{self.run}/{self.local}"
+        return f"{self.run}.{self.local}"
 
     @classmethod
     def __get_pydantic_core_schema__(

@@ -627,7 +627,7 @@ def test_child_runs_are_persisted_without_starting_event(tmp_path: Path) -> None
 
     runs = store.list_runs(limit=None)
     child_run = next(run for run in runs if run.id != root.id)
-    assert child_run.parent == StepPath.parse(f"{root.id}/0")
+    assert child_run.parent == StepPath.parse(f"{root.id}.0")
     assert child_run.status == "succeeded"
     assert [event.type for event in tracer.events] == [
         "run_begin",
@@ -778,7 +778,7 @@ def test_parallel_children_preserve_input_and_output_types(
         execution.parallel_children(
             binding,
             {"_": Local(["one", "two"], "list", type_name="Text")},
-            StepPath.parse("run_root/0"),
+            StepPath.parse("run_root.0"),
             child.name,
             ["one", "two"],
             limit=2,
@@ -841,7 +841,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
             execution.parallel_children(
                 binding,
                 {"_": Local(list(range(5)), "list", type_name="Number")},
-                StepPath.parse("run_root/0"),
+                StepPath.parse("run_root.0"),
                 child.name,
                 list(range(5)),
                 limit=4,
@@ -1332,7 +1332,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
         )
         sink.on_event(
             StepBegin(
-                step=StepPath.parse("run_root/0"),
+                step=StepPath.parse("run_root.0"),
                 kind="run",
                 given=RunStmt(span=Span(line=1), runnable="flow:test"),
                 input=(Pointer.control("run_root", 0, "_"),),
@@ -1343,7 +1343,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     accept_run_start(
         store,
         run_id="run_child",
-        parent=StepPath.parse("run_root/0"),
+        parent=StepPath.parse("run_root.0"),
         thread=source,
         input=Message.user("run_child"),
         context={"runnable": {"kind": "flow", "name": "test"}},
@@ -1366,7 +1366,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
     )
     sink.on_event(
         StepEnd(
-            step=StepPath.parse("run_root/0"),
+            step=StepPath.parse("run_root.0"),
             kind="run",
             status="succeeded",
             finished_at="2026-01-01T00:00:06Z",
@@ -1723,7 +1723,7 @@ def test_private_event_projector_persists_run_and_step_records(
     )
     sink.on_event(
         StepBegin(
-            step=StepPath.parse("run_test/0"),
+            step=StepPath.parse("run_test.0"),
             kind="value",
             given=LetStmt(span=Span(line=1), value="done"),
             input=(Pointer.control("run_test", 0, "_"),),
@@ -1732,7 +1732,7 @@ def test_private_event_projector_persists_run_and_step_records(
     )
     sink.on_event(
         StepEnd(
-            step=StepPath.parse("run_test/0"),
+            step=StepPath.parse("run_test.0"),
             kind="value",
             status="succeeded",
             output=RecordLocal.typed("Part[]", (TextPart(text="done"),), "_", 0),
@@ -1744,7 +1744,7 @@ def test_private_event_projector_persists_run_and_step_records(
             run="run_test",
             status="succeeded",
             output=RecordLocal.typed(
-                "Part[]", Pointer.step(StepPath.parse("run_test/0")), "_", 0
+                "Part[]", Pointer.step(StepPath.parse("run_test.0")), "_", 0
             ),
             finished_at="2026-01-01T00:00:04Z",
         )
@@ -1781,7 +1781,7 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
         )
         sink.on_event(
             StepBegin(
-                step=StepPath.parse(f"{run_id}/0"),
+                step=StepPath.parse(f"{run_id}.0"),
                 kind="value",
                 given=LetStmt(span=Span(line=1), value=text),
                 started_at="2026-01-01T00:00:02Z",
@@ -1789,7 +1789,7 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
         )
         sink.on_event(
             StepEnd(
-                step=StepPath.parse(f"{run_id}/0"),
+                step=StepPath.parse(f"{run_id}.0"),
                 kind="value",
                 status="succeeded",
                 output=RecordLocal.typed("Part[]", (TextPart(text=text),), "_", 0),
@@ -1805,13 +1805,13 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
         )
 
     assert [step.path for step in store.list_steps(run_id="run_literal")] == [
-        StepPath.parse("run_literal/0")
+        StepPath.parse("run_literal.0")
     ]
     grouped = store.list_steps_for_runs(run_ids=("run_literal", "run_ax"))
     assert [step.path for step in grouped["run_literal"]] == [
-        StepPath.parse("run_literal/0")
+        StepPath.parse("run_literal.0")
     ]
-    assert [step.path for step in grouped["run_ax"]] == [StepPath.parse("run_ax/0")]
+    assert [step.path for step in grouped["run_ax"]] == [StepPath.parse("run_ax.0")]
     with pytest.raises(ValueError, match="invalid run id"):
         accept_run_start(
             store,

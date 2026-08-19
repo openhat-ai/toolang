@@ -46,6 +46,51 @@ def _table_count(db_path: Path, table: str) -> int:
         connection.close()
 
 
+def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        root = project_run_start(
+            store,
+            run_id="run_dot_path",
+            thread_id="term_dot_path",
+            origin="chat",
+            input=Message.user("hello"),
+        )
+        step = project_step(
+            store,
+            parent=StepPath(root.id, (2,)),
+            index=3,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        project_run_start(
+            store,
+            run_id="run_dot_child",
+            thread_id=root.thread,
+            origin="chat",
+            input=Message.user("child"),
+            parent=step.path,
+        )
+
+        connection = sqlite3.connect(store.db_path)
+        try:
+            assert connection.execute(
+                "SELECT path FROM steps WHERE run = ?", (root.id,)
+            ).fetchone() == ("2.3",)
+            assert connection.execute(
+                "SELECT parent FROM runs WHERE id = 'run_dot_child'"
+            ).fetchone() == ("run_dot_path.2.3",)
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 28
+        finally:
+            connection.close()
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize(
     ("table", "column", "invalid", "message"),
     (

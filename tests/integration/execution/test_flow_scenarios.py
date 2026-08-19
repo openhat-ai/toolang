@@ -93,7 +93,7 @@ flow relay(_: Part[]) -> Part[]:
             assert len(children) == 1
             child = children[0]
             assert child.status == "succeeded"
-            assert child.parent == StepPath.parse(f"{root.id}/0")
+            assert child.parent == StepPath.parse(f"{root.id}.0")
             assert harness.store.root_run_id(run_id=child.id) == root.id
             child_start = harness.store.get_run_control(run_id=child.id, index=0)
             assert child_start is not None
@@ -629,8 +629,8 @@ flow fail(_: Part[]) -> Number:
             assert_run_event_integrity(tracer.events)
             assert event_labels(tracer.events) == [
                 f"run_begin:{record.id}",
-                f"step_begin:{record.id}/0:value",
-                f"step_end:{record.id}/0:value:succeeded",
+                f"step_begin:{record.id}.0:value",
+                f"step_end:{record.id}.0:value:succeeded",
                 f"run_end:{record.id}:failed",
             ]
 
@@ -731,7 +731,7 @@ flow mapped(_: Text) -> Text[]:
                     thread_id=thread,
                     limit=None,
                 )
-                if run.parent == StepPath.parse(f"{root.id}/1")
+                if run.parent == StepPath.parse(f"{root.id}.1")
             ]
             assert sorted(
                 run.occurrence.item.index
@@ -1584,8 +1584,8 @@ flow invalid(_: Text) -> Text:
             assert_run_event_integrity(tracer.events)
             assert event_labels(tracer.events) == [
                 f"run_begin:{root.id}",
-                f"step_begin:{root.id}/0:{step_kind}",
-                f"step_end:{root.id}/0:{step_kind}:failed",
+                f"step_begin:{root.id}.0:{step_kind}",
+                f"step_end:{root.id}.0:{step_kind}:failed",
                 f"run_end:{root.id}:failed",
             ]
 

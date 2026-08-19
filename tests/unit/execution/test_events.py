@@ -50,17 +50,17 @@ _EVENTS: tuple[RunEvent, ...] = (
         started_at="2026-01-01T00:00:00Z",
     ),
     StepBegin(
-        step=StepPath.parse("run_root/0"),
+        step=StepPath.parse("run_root.0"),
         kind="model",
         given=ModelStepGiven(model="test/model", call=ModelCall("", [])),
         input=(
             Pointer.control("run_root", 0, "_"),
-            Pointer.step(StepPath.parse("run_root/1")),
+            Pointer.step(StepPath.parse("run_root.1")),
         ),
         started_at="2026-01-01T00:00:01Z",
     ),
     StepBegin(
-        step=StepPath.parse("run_root/1"),
+        step=StepPath.parse("run_root.1"),
         kind="run",
         given=RunStmt(
             span=Span(line=4),
@@ -69,18 +69,18 @@ _EVENTS: tuple[RunEvent, ...] = (
         ),
     ),
     StepBegin(
-        step=StepPath.parse("run_root/2"),
+        step=StepPath.parse("run_root.2"),
         kind="tool",
         given=ToolStepGiven(
             plugin="shell",
             call=ToolCall("tool-1", "call-1", "shell__execute", {"command": "pwd"}),
         ),
     ),
-    PartBegin(step=StepPath.parse("run_root/0"), part=0, part_type="text"),
-    PartDelta(step=StepPath.parse("run_root/0"), part=0, delta=TextDelta("hello")),
-    PartEnd(step=StepPath.parse("run_root/0"), part=0, data=TextPart("hello")),
+    PartBegin(step=StepPath.parse("run_root.0"), part=0, part_type="text"),
+    PartDelta(step=StepPath.parse("run_root.0"), part=0, delta=TextDelta("hello")),
+    PartEnd(step=StepPath.parse("run_root.0"), part=0, data=TextPart("hello")),
     StepEnd(
-        step=StepPath.parse("run_root/0"),
+        step=StepPath.parse("run_root.0"),
         kind="model",
         status="succeeded",
         output=Local.typed("Part[]", (TextPart("hello"),), "_", 0),
@@ -92,7 +92,7 @@ _EVENTS: tuple[RunEvent, ...] = (
         status="succeeded",
         output=Local.typed(
             "Part[]",
-            Pointer.step(StepPath.parse("run_root/0")),
+            Pointer.step(StepPath.parse("run_root.0")),
             "_",
             0,
         ),
@@ -108,7 +108,7 @@ def test_run_event_codec_round_trips_every_event_variant() -> None:
 
 def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
     step = StepData(
-        path=StepPath.parse("run_root/1"),
+        path=StepPath.parse("run_root.1"),
         kind="run",
         input=[],
         given=ScatterStmt(span=Span(line=4), count=2, runnable="agic:child"),
@@ -117,6 +117,7 @@ def test_step_schema_preserves_the_flow_statement_discriminator() -> None:
 
     payload = TypeAdapter(StepData).dump_python(step, mode="json")
 
+    assert payload["path"] == "run_root.1"
     assert payload["given"]["kind"] == "scatter"
     assert TypeAdapter(StepData).validate_python(payload) == step
 
@@ -135,13 +136,13 @@ def test_run_event_codec_rejects_unknown_discriminator() -> None:
 def test_step_events_reject_mismatched_typed_facts() -> None:
     with pytest.raises(TypeError, match="value Step requires a compatible FlowStmt"):
         StepBegin(
-            step=StepPath.parse("run_root/0"),
+            step=StepPath.parse("run_root.0"),
             kind="value",
             given=ModelStepGiven(model="test/model", call=ModelCall("", [])),
         )
     with pytest.raises(TypeError, match="tool Step does not accept noted facts"):
         StepEnd(
-            step=StepPath.parse("run_root/0"),
+            step=StepPath.parse("run_root.0"),
             kind="tool",
             status="succeeded",
             noted=ModelStepNoted(),
@@ -152,7 +153,7 @@ def test_step_schema_and_record_reject_mismatched_typed_facts() -> None:
     statement = RunStmt(span=Span(line=4), runnable="agic:child")
     with pytest.raises(TypeError, match="tool Step requires ToolStepGiven"):
         StepData(
-            path=StepPath.parse("run_root/0"),
+            path=StepPath.parse("run_root.0"),
             kind="tool",
             input=[],
             given=statement,
@@ -160,7 +161,7 @@ def test_step_schema_and_record_reject_mismatched_typed_facts() -> None:
         )
     with pytest.raises(TypeError, match="tool Step requires ToolStepGiven"):
         StepRecord(
-            path=StepPath.parse("run_root/0"),
+            path=StepPath.parse("run_root.0"),
             kind="tool",
             input=(),
             given=statement,
@@ -168,7 +169,7 @@ def test_step_schema_and_record_reject_mismatched_typed_facts() -> None:
         )
 
     canonical = StepData(
-        path=StepPath.parse("run_root/1"),
+        path=StepPath.parse("run_root.1"),
         kind="run",
         input=[],
         given=statement,
@@ -194,7 +195,7 @@ def test_begin_events_reject_loose_occurrence_payloads() -> None:
 def test_flow_given_codec_rejects_noncanonical_fields() -> None:
     payload = run_event_to_data(
         StepBegin(
-            step=StepPath.parse("run_root/0"),
+            step=StepPath.parse("run_root.0"),
             kind="run",
             given=RunStmt(span=Span(line=4), runnable="agic:child"),
         )
@@ -239,7 +240,7 @@ def test_execution_status_vocabulary_has_canonical_order() -> None:
         "revoked",
     )
     reserved = StepEnd(
-        step=StepPath.parse("run_root/0"),
+        step=StepPath.parse("run_root.0"),
         kind="value",
         status="pending",
     )
@@ -250,7 +251,7 @@ def test_run_event_codec_serializes_step_error_references() -> None:
     event = RunEnd(
         run="run_root",
         status="failed",
-        error=Pointer.step(StepPath.parse("run_root/2")),
+        error=Pointer.step(StepPath.parse("run_root.2")),
     )
 
     data = run_event_to_data(event)
@@ -274,7 +275,7 @@ def test_run_event_codec_distinguishes_run_error_pointers_from_messages() -> Non
 
 def test_run_event_codec_round_trips_struct_output() -> None:
     event = StepEnd(
-        step=StepPath.parse("run_root/0"),
+        step=StepPath.parse("run_root.0"),
         kind="run",
         status="succeeded",
         output=Local.typed("Review", {"score": 1}, "_"),

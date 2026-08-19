@@ -77,8 +77,8 @@ All positions are zero-based:
 
 ```text
 run_abc@0       run control
-run_abc/2       step 2
-run_abc/2/0     nested step 0
+run_abc.2       step 2
+run_abc.2.0     nested step 0
 ```
 
 `@` distinguishes controls from step paths. Items, iterations, and lanes keep
@@ -143,7 +143,7 @@ Expand one topic into several research queries.          [1+]
   run_queries@0                                           [2]
 
 · ["agent framework architecture", "multi-agent SDK"]  [0+]
-  run_queries/0 · 2.0s · deepseek/deepseek-chat · 4.6k/44 tokens [2]
+  run_queries.0 · 2.0s · deepseek/deepseek-chat · 4.6k/44 tokens [2]
 
 --- run_queries succeeded ---                            [0+]
 1 item returned                                          [0+]
@@ -166,10 +166,10 @@ the successful output in the same position:
 
 ```text
 · web_search.search returned 5 results
-  run_abc/4 · 820ms · exit 0
+  run_abc.4 · 820ms · exit 0
 
 ! web_search.search: provider returned status 429
-  run_abc/4 · 820ms · exit 429
+  run_abc.4 · 820ms · exit 429
 ```
 
 
@@ -294,20 +294,20 @@ restarts the body's local statement ordinals:
   [0] let review = run review
     Run agic review
     · Review identified unclear ownership...
-      run_review0/0 · 2.1s · deepseek/deepseek-chat
+      run_review0.0 · 2.1s · deepseek/deepseek-chat
     ↳ run_review0 succeeded · 2.1s
 
   [1] run revise
     Run agic revise
     · Revised proposal...
-      run_revise0/0 · 4.3s · deepseek/deepseek-chat
+      run_revise0.0 · 4.3s · deepseek/deepseek-chat
     ↳ run_revise0 succeeded · 4.3s
 
   [?] until
     Run agic <agic:L42>
 
     · false
-      run_until0/0 · 620ms · deepseek/deepseek-chat
+      run_until0.0 · 620ms · deepseek/deepseek-chat
     ↳ run_until0 succeeded · 620ms
 
     ↳ continue
@@ -323,7 +323,7 @@ restarts the body's local statement ordinals:
     Run agic <agic:L42>
 
     · true
-      run_until1/0 · 580ms · deepseek/deepseek-chat
+      run_until1.0 · 580ms · deepseek/deepseek-chat
     ↳ run_until1 succeeded · 580ms
 
     ↳ stop repeating
@@ -397,7 +397,7 @@ zero-based item position.
 One diagnostic appears at the most useful visible boundary:
 
 ```text
-! run_research/2 failed: item 5: output is not valid Number
+! run_research.2 failed: item 5: output is not valid Number
   · 5 runs succeeded · 1 failed · 3.1s
 ```
 

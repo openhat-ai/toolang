@@ -76,8 +76,8 @@ agic wait(_: Part[]) -> Part[]:
             assert_run_event_integrity(tracer.events)
             assert event_labels(tracer.events) == [
                 f"run_begin:{record.id}",
-                f"step_begin:{record.id}/0:model",
-                f"step_end:{record.id}/0:model:canceled",
+                f"step_begin:{record.id}.0:model",
+                f"step_end:{record.id}.0:model:canceled",
                 f"run_end:{record.id}:canceled",
             ]
 
@@ -140,7 +140,7 @@ agic revise(_: Part[]) -> Part[]:
             assert stored_control.status == "applied"
             steps = harness.store.list_steps(run_id=record.id)
             assert steps[1].input == (
-                Pointer.step(StepPath.parse(f"{record.id}/0")),
+                Pointer.step(StepPath.parse(f"{record.id}.0")),
                 Pointer.control(record.id, control.index, "_"),
             )
             assert harness.store.run_output(run_id=record.id) == (TextPart("revised"),)
@@ -214,7 +214,7 @@ agic calculate(_: Part[]) -> Part[]:
             assert messages[3] == Message.user("skip tools")
             second = harness.store.list_steps(run_id=record.id)[1]
             assert second.input == (
-                Pointer.step(StepPath.parse(f"{record.id}/0"), 0),
+                Pointer.step(StepPath.parse(f"{record.id}.0"), 0),
                 Pointer.control(record.id, control.index, "_"),
             )
 
@@ -281,12 +281,12 @@ agic calculate(_: Part[]) -> Part[]:
             assert_run_event_integrity(tracer.events)
             assert event_labels(tracer.events) == [
                 f"run_begin:{record.id}",
-                f"step_begin:{record.id}/0:model",
-                f"part_begin:{record.id}/0:0:tool_call",
-                f"part_end:{record.id}/0:0:tool_call",
-                f"step_end:{record.id}/0:model:succeeded",
-                f"step_begin:{record.id}/1:tool",
-                f"step_end:{record.id}/1:tool:canceled",
+                f"step_begin:{record.id}.0:model",
+                f"part_begin:{record.id}.0:0:tool_call",
+                f"part_end:{record.id}.0:0:tool_call",
+                f"step_end:{record.id}.0:model:succeeded",
+                f"step_begin:{record.id}.1:tool",
+                f"step_end:{record.id}.1:tool:canceled",
                 f"run_end:{record.id}:canceled",
             ]
 
