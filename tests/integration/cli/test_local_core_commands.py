@@ -58,6 +58,15 @@ def test_retry_anchor_accepts_only_dot_separated_step_paths(value: str) -> None:
         thread_commands._retry_anchor("run_root", "run_root/2/3")
 
 
+@pytest.mark.parametrize(
+    "value",
+    ("run_root:2.3", "run_root/2/3", "run_root.01", "term_root.0"),
+)
+def test_inspect_rejects_noncanonical_step_paths(value: str) -> None:
+    with pytest.raises(click.ClickException, match="invalid inspect path"):
+        thread_commands.parse_inspect_target(value)
+
+
 def test_read_only_thread_commands_do_not_create_execution_store(
     tmp_path: Path,
 ) -> None:
@@ -238,11 +247,12 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
     finally:
         store.close()
 
-    result = _invoke(root, "alice", "inspect", "run_inspect:0", "--json")
+    result = _invoke(root, "alice", "inspect", "run_inspect.0", "--json")
 
     assert result.exit_code == 0
     document = json.loads(result.stdout)
     assert document["kind"] == "step"
+    assert document["target"] == "run_inspect.0"
     assert document["run"]["id"] == "run_inspect"
     assert document["step"]["path"] == "run_inspect.0"
     assert document["step"]["kind"] == "value"
@@ -252,6 +262,62 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
         "name": "_",
         "dim": 0,
     }
+
+
+def test_inspect_step_path_does_not_cross_run_boundaries(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        parent = project_run_start(
+            store,
+            run_id="run_parent",
+            thread_id="term_step_owner",
+            origin="chat",
+            input=Message.user("Inspect parent"),
+        )
+        parent_step = project_step(
+            store,
+            run_id=parent.id,
+            step_index=0,
+            kind="run",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-07-25T01:00:00Z",
+            finished_at="2026-07-25T01:00:01Z",
+        )
+        child = project_run_start(
+            store,
+            run_id="run_child",
+            thread_id=parent.thread,
+            origin="chat",
+            input=Message.user("Inspect child"),
+            parent=parent_step.path,
+        )
+        project_step(
+            store,
+            run_id=child.id,
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart(text="child"),),
+            started_at="2026-07-25T01:00:01Z",
+            finished_at="2026-07-25T01:00:02Z",
+        )
+        project_run_end(store, run_id=child.id)
+        project_run_end(store, run_id=parent.id)
+    finally:
+        store.close()
+
+    child_result = _invoke(root, "alice", "inspect", "run_child.0", "--json")
+    synthetic_result = _invoke(root, "alice", "inspect", "run_parent.0.0", "--json")
+
+    assert child_result.exit_code == 0
+    assert json.loads(child_result.stdout)["step"]["path"] == "run_child.0"
+    assert synthetic_result.exit_code == 1
+    assert "step not found: run_parent.0.0" in synthetic_result.stderr
 
 
 def test_roaming_source_reads_threads_runs_and_inspection(
@@ -289,7 +355,7 @@ def test_roaming_source_reads_threads_runs_and_inspection(
     threads_output = capsys.readouterr()
     runs = cli.main([str(source), "runs", "--thread", "script_roaming"])
     runs_output = capsys.readouterr()
-    inspect = cli.main([str(source), "inspect", "run_roaming:0", "--json"])
+    inspect = cli.main([str(source), "inspect", "run_roaming.0", "--json"])
     inspect_output = capsys.readouterr()
 
     assert threads == 0
@@ -350,7 +416,7 @@ def test_visiting_selector_reads_inspection_without_fetching(
     monkeypatch.setattr(agents, "visiting_layout", lambda _selector: layout)
     monkeypatch.setattr(agents, "resolve_visiting_layout", unexpected_fetch)
 
-    result = cli.main([selector, "inspect", "run_visiting:0", "--json"])
+    result = cli.main([selector, "inspect", "run_visiting.0", "--json"])
     output = capsys.readouterr()
 
     assert result == 0

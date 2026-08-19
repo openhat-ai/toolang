@@ -44,15 +44,10 @@ class InspectTarget:
     identifier: str
     path: tuple[int, ...] = ()
 
-    @property
-    def path_label(self) -> str | None:
-        return ".".join(str(item) for item in self.path) if self.path else None
-
 
 @dataclass(frozen=True, slots=True)
 class _StepNode:
     run_id: str
-    path: tuple[int, ...]
     step: StepData
     children: tuple[_StepNode, ...] = ()
 
@@ -369,17 +364,22 @@ def fork_command(
 def parse_inspect_target(target: str) -> InspectTarget:
     """Parse a CLI inspection target."""
 
-    identifier, separator, raw_path = target.partition(":")
-    identifier = identifier.strip()
-    if not identifier:
+    value = target.strip()
+    if not value:
         raise click.ClickException("inspect target is required")
-    if separator and not identifier.startswith("run_"):
-        raise click.ClickException("step paths are only supported for run targets")
-    path = _parse_step_path(raw_path) if separator else ()
+    if ":" in value or "/" in value:
+        raise click.ClickException(f"invalid inspect path: {value}")
+    if "." in value:
+        if not value.startswith("run_"):
+            raise click.ClickException(f"invalid inspect path: {value}")
+        try:
+            step = StepPath.parse(value)
+        except ValueError as exc:
+            raise click.ClickException(f"invalid inspect path: {value}") from exc
+        return InspectTarget(kind="run", identifier=step.run, path=step.indices)
     return InspectTarget(
-        kind="run" if identifier.startswith("run_") else "thread",
-        identifier=identifier,
-        path=path,
+        kind="run" if value.startswith("run_") else "thread",
+        identifier=value,
     )
 
 
@@ -409,12 +409,13 @@ def _inspect(
     display_run = run_by_id.get(run.id, run)
     nodes = _run_nodes(display_run, run_by_id=run_by_id)
     if target.path:
-        node = _find_node(nodes, target.path)
+        step_path = StepPath(target.identifier, target.path)
+        node = _find_step_node(nodes, step_path)
         if node is None:
-            raise click.ClickException(f"step path not found: {target.path_label}")
+            raise click.ClickException(f"step not found: {step_path}")
         return {
             "kind": "step",
-            "target": f"{target.identifier}:{target.path_label}",
+            "target": str(step_path),
             "run": _run_data(display_run, include_steps=False),
             "step": _node_data(node),
         }
@@ -431,7 +432,6 @@ def _run_nodes(
     *,
     run_by_id: Mapping[str, RunDetail],
     parent: StepPath | None = None,
-    path: tuple[int, ...] = (),
     visited_runs: frozenset[str] = frozenset(),
 ) -> tuple[_StepNode, ...]:
     if run.id in visited_runs:
@@ -442,13 +442,11 @@ def _run_nodes(
         if step.path.parent != parent:
             continue
         step_path = step.path
-        node_path = (*path, step.path.index)
         children = list(
             _run_nodes(
                 run,
                 run_by_id=run_by_id,
                 parent=step_path,
-                path=node_path,
                 visited_runs=visited_runs,
             )
         )
@@ -459,14 +457,12 @@ def _run_nodes(
                 _run_nodes(
                     child_run,
                     run_by_id=run_by_id,
-                    path=node_path,
                     visited_runs=visited,
                 )
             )
         nodes.append(
             _StepNode(
                 run_id=run.id,
-                path=node_path,
                 step=step,
                 children=tuple(children),
             )
@@ -474,14 +470,13 @@ def _run_nodes(
     return tuple(nodes)
 
 
-def _find_node(nodes: Sequence[_StepNode], path: tuple[int, ...]) -> _StepNode | None:
+def _find_step_node(nodes: Sequence[_StepNode], path: StepPath) -> _StepNode | None:
     for node in nodes:
-        if node.path == path:
+        if node.step.path == path:
             return node
-        if path[: len(node.path)] == node.path:
-            found = _find_node(node.children, path)
-            if found is not None:
-                return found
+        found = _find_step_node(node.children, path)
+        if found is not None:
+            return found
     return None
 
 
@@ -759,15 +754,6 @@ def _retry_anchor(run_id: str, value: str | None) -> StepPath | None:
     if text.startswith("run_"):
         return StepPath.parse(text)
     return StepPath.from_local(run_id, text)
-
-
-def _parse_step_path(value: str) -> tuple[int, ...]:
-    if not value:
-        raise click.ClickException("step path is required after ':'")
-    pieces = value.split(".")
-    if any(not piece.isdecimal() for piece in pieces):
-        raise click.ClickException(f"invalid step path: {value}")
-    return tuple(int(piece) for piece in pieces)
 
 
 def _run_status(value: str | None) -> RunStatus | None:

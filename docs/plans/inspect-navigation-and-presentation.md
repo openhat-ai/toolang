@@ -22,9 +22,8 @@ Implementation starts only after this definition is approved.
   keeping default terminal output bounded.
 - Invalid syntax, absent records, unavailable values, empty values, and
   truncated values have distinct behavior.
-- Existing command placement, offline history access, `--limit`, and `--json`
-  remain compatible; the current colon-and-dot step syntax is intentionally
-  replaced as defined below.
+- Existing command placement, canonical StepPath input, offline history
+  access, `--limit`, and `--json` remain compatible.
 
 
 ## Current Behavior
@@ -35,20 +34,14 @@ forms:
 ```text
 THREAD_ID
 RUN_ID
-RUN_ID:STEP_INDEX[.STEP_INDEX...]
+RUN_ID.STEP_INDEX[.STEP_INDEX...]
 ```
 
 Any identifier beginning with `run_` is treated as a run; every other
-identifier is treated as a thread. A run step target is resolved through a
-synthetic tree rooted at the selected run. Its dot-separated indexes can cross
-from a parent run into a child run.
-
-That synthetic navigation path differs from the durable `StepPath` already
-used by execution records and the shared presentation language. For example,
-the current command may accept `run_parent:2.0` while the selected child step
-is printed as `run_child.0`. The printed value therefore cannot be copied back
-into `inspect`. A focused step heading can also combine the run and stored path
-as `run_parent:run_child.0`.
+identifier is treated as a thread. A run step target resolves the exact durable
+`StepPath` within its owning run and cannot cross into a child run. Run views
+still recursively assemble same-run descendants and child-run activity into a
+presentation tree, but that synthetic tree is not an alternate target syntax.
 
 Current human output has separate thread, run, and step renderers:
 
@@ -143,8 +136,7 @@ history query.
 
 ## Path Compatibility
 
-This feature intentionally stops accepting the current colon-and-dot step
-form:
+The current command already rejects the removed colon-and-dot step form:
 
 ```text
 RUN_ID:INDEX[.INDEX...]
@@ -155,10 +147,8 @@ or `.output` field. Numeric index segments and named terminal fields keep the
 grammar unambiguous. Slash-separated paths and colon-and-dot targets fail as
 invalid inspect paths rather than being accepted as aliases.
 
-This is the only intentional command-input compatibility break in the feature.
-There is no warning-only transition because the new grammar must remain
-unambiguous and the old selector is not a durable identity. Public examples and
-all emitted paths use the canonical grammar.
+This feature preserves that canonical grammar. Public examples and all emitted
+paths continue to use it.
 
 
 ## Navigation Model
@@ -483,9 +473,9 @@ messages, references, and message parts.
 - Keep `toolang TARGET inspect PATH`, its command routing, default human mode,
   `--json`, and `--limit` public.
 - Add `--full` without changing the meaning of existing options.
-- Reject current `RUN_ID:DOT.PATH` selectors and slash-separated StepPaths;
-  `.` separates canonical step indexes and terminal fields, while `:` is not
-  part of the grammar.
+- Continue rejecting `RUN_ID:DOT.PATH` selectors and slash-separated StepPaths;
+  `.` separates canonical step indexes and terminal fields, while `:` remains
+  outside the grammar.
 - Preserve current existing-target JSON keys and nested fields; additions must
   not rename or remove them.
 - Human output is intentionally allowed to change. It has no stable
@@ -609,9 +599,9 @@ not change command registration or expand feature scope.
 
 ## Risks And Mitigations
 
-- **Removing synthetic paths breaks old step selectors.** Reject them
-  consistently, document the canonical replacement, and test the exact error
-  instead of retaining a second traversal model.
+- **Synthetic paths can reappear as aliases.** Keep resolving targets by their
+  durable owning-run StepPath, document the canonical form, and test the exact
+  legacy-selector error instead of retaining a second traversal model.
 - **Field access can be mistaken for traversal.** Dot segments accept canonical
   ASCII indexes until an optional terminal `input` or `output` field; any other
   named, numeric-after-field, or slash-separated segment is rejected.
