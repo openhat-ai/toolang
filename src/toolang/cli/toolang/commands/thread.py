@@ -758,7 +758,7 @@ def _retry_anchor(run_id: str, value: str | None) -> StepPath | None:
         raise click.ClickException("--anchor requires a step path")
     if text.startswith("run_"):
         return StepPath.parse(text)
-    return StepPath.from_local(run_id, text.replace(".", "/"))
+    return StepPath.from_local(run_id, text)
 
 
 def _parse_step_path(value: str) -> tuple[int, ...]:

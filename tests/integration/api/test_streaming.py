@@ -266,8 +266,13 @@ agic chat(_: Part[]) -> Part[]:
             "step_end",
             "run_end",
         }
+        assert all(
+            str(data["step"]).startswith(f"{run_id}.")
+            for event, data in events
+            if event.startswith("step_") or event.startswith("part_")
+        )
         assert run_detail.output == Local.typed(
-            "Part[]", Pointer.step(StepPath.parse(f"{run_id}/0")), "_", 0
+            "Part[]", Pointer.step(StepPath.parse(f"{run_id}.0")), "_", 0
         )
         assert thread_detail.runs[0].output == run_detail.output
         threads = core.store.list_threads()
@@ -432,7 +437,7 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
                 started_at="2026-01-01T00:00:00Z",
             ),
             StepBegin(
-                step=StepPath.parse("run_test/0"),
+                step=StepPath.parse("run_test.0"),
                 kind="run",
                 given=RunStmt(span=Span(line=1), runnable="agic:test"),
                 started_at="2026-01-01T00:00:01Z",
@@ -443,13 +448,13 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
                 started_at="2026-01-01T00:00:02Z",
             ),
             StepBegin(
-                step=StepPath.parse("run_child/0"),
+                step=StepPath.parse("run_child.0"),
                 kind="value",
                 given=LetStmt(span=Span(line=1), value="test"),
                 started_at="2026-01-01T00:00:03Z",
             ),
             StepEnd(
-                step=StepPath.parse("run_child/0"),
+                step=StepPath.parse("run_child.0"),
                 kind="value",
                 status="succeeded",
                 finished_at="2026-01-01T00:00:04Z",
@@ -460,7 +465,7 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
                 finished_at="2026-01-01T00:00:05Z",
             ),
             StepEnd(
-                step=StepPath.parse("run_test/0"),
+                step=StepPath.parse("run_test.0"),
                 kind="run",
                 status="succeeded",
                 finished_at="2026-01-01T00:00:06Z",
@@ -612,7 +617,7 @@ def test_child_run_stream_redirects_client_to_root_run(tmp_path: Path) -> None:
         origin="script",
         input=Message.user("child"),
         root_run_id="run_root",
-        parent=StepPath.parse("run_root/0"),
+        parent=StepPath.parse("run_root.0"),
     )
     app = create_app(
         core,

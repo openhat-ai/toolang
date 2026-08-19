@@ -365,12 +365,12 @@ agic calculate(_: Text) -> Text:
             assert {delta.tool_call_id for delta in deltas} == {call.tool_call_id}
             assert (
                 event_labels(tracer.events).count(
-                    f"part_begin:{record.id}/0:0:tool_call"
+                    f"part_begin:{record.id}.0:0:tool_call"
                 )
                 == 1
             )
             assert (
-                event_labels(tracer.events).count(f"part_end:{record.id}/0:0:tool_call")
+                event_labels(tracer.events).count(f"part_end:{record.id}.0:0:tool_call")
                 == 1
             )
             assert harness.store.run_output_text(run_id=record.id) == "six"
@@ -430,13 +430,13 @@ agic illustrate(_: Text) -> Part[]:
             )
             assert event_labels(tracer.events) == [
                 f"run_begin:{record.id}",
-                f"step_begin:{record.id}/0:model",
-                f"part_begin:{record.id}/0:0:text",
-                f"part_delta:{record.id}/0:0",
-                f"part_end:{record.id}/0:0:text",
-                f"part_begin:{record.id}/0:1:image",
-                f"part_end:{record.id}/0:1:image",
-                f"step_end:{record.id}/0:model:succeeded",
+                f"step_begin:{record.id}.0:model",
+                f"part_begin:{record.id}.0:0:text",
+                f"part_delta:{record.id}.0:0",
+                f"part_end:{record.id}.0:0:text",
+                f"part_begin:{record.id}.0:1:image",
+                f"part_end:{record.id}.0:1:image",
+                f"step_end:{record.id}.0:model:succeeded",
                 f"run_end:{record.id}:succeeded",
             ]
             assert_run_event_integrity(tracer.events)
@@ -490,10 +490,10 @@ agic stream(_: Text) -> Text:
             ] == [("model", "failed", "stream disconnected")]
             assert event_labels(tracer.events) == [
                 f"run_begin:{record.id}",
-                f"step_begin:{record.id}/0:model",
-                f"part_begin:{record.id}/0:0:text",
-                f"part_delta:{record.id}/0:0",
-                f"step_end:{record.id}/0:model:failed",
+                f"step_begin:{record.id}.0:model",
+                f"part_begin:{record.id}.0:0:text",
+                f"part_delta:{record.id}.0:0",
+                f"step_end:{record.id}.0:model:failed",
                 f"run_end:{record.id}:failed",
             ]
             assert_run_event_integrity(tracer.events)
@@ -551,10 +551,10 @@ agic stream(_: Text) -> Text:
             assert stored is not None and stored.status == "applied"
             assert event_labels(tracer.events) == [
                 f"run_begin:{record.id}",
-                f"step_begin:{record.id}/0:model",
-                f"part_begin:{record.id}/0:0:text",
-                f"part_delta:{record.id}/0:0",
-                f"step_end:{record.id}/0:model:canceled",
+                f"step_begin:{record.id}.0:model",
+                f"part_begin:{record.id}.0:0:text",
+                f"part_delta:{record.id}.0:0",
+                f"step_end:{record.id}.0:model:canceled",
                 f"run_end:{record.id}:canceled",
             ]
             assert_run_event_integrity(tracer.events)
@@ -1233,8 +1233,8 @@ agic fail(_: Part[]) -> Part[]:
             assert_run_event_integrity(tracer.events)
             assert event_labels(tracer.events) == [
                 f"run_begin:{record.id}",
-                f"step_begin:{record.id}/0:model",
-                f"step_end:{record.id}/0:model:failed",
+                f"step_begin:{record.id}.0:model",
+                f"step_end:{record.id}.0:model:failed",
                 f"run_end:{record.id}:failed",
             ]
 

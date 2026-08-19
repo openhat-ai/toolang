@@ -129,8 +129,8 @@ Run controls and step paths keep their existing distinct forms:
 ```text
 run_abc@0       accepted start control
 run_abc@1       later steer or stop control
-run_abc/2       top-level step
-run_abc/2/0     nested step
+run_abc.2       top-level step
+run_abc.2.0     nested step
 ```
 
 All displayed control, step, item, loop, and lane positions are zero-based.
@@ -173,7 +173,7 @@ Facts use centered dots and the same compact formatting as script:
 
 ```text
 8.2s · 18 runs · 64.2k/720 tokens · 12 tool calls
-run_abc/2 · 820ms · exit 0
+run_abc.2 · 820ms · exit 0
 ```
 
 The chat default normally omits successful step-path fact lines. It includes a
@@ -324,7 +324,7 @@ A failed tool uses the same shape with a diagnostic marker:
 
 ```text
 ! web_search.search: provider returned status 429
-  run_abc/1 · 820ms · exit 429
+  run_abc.1 · 820ms · exit 429
 ```
 
 The same error is not repeated in the root footer.
@@ -388,7 +388,7 @@ the renderer does not place a failed `↳` closure before a second `!` marker:
 
 ```text
 [1] scatter 6 expand_queries
-  ! run_parent/1 failed: provider rejected the request
+  ! run_parent.1 failed: provider rejected the request
     run_child failed · 1.0s
 ```
 
@@ -427,7 +427,7 @@ execution event:
 
 ```text
 [2] map search_web par 4
-  ! run_abc/2 canceled
+  ! run_abc.2 canceled
     5 runs succeeded · 27.0s · 13.6k/3.1k tokens
 ```
 
@@ -439,7 +439,7 @@ its model selector; the selector remains available in the facts line:
 
 ```text
 ! model call canceled
-  run_abc/0 · 820ms · deepseek/deepseek-chat
+  run_abc.0 · 820ms · deepseek/deepseek-chat
 ```
 
 

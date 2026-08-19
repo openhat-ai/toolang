@@ -388,6 +388,7 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
         retry_from=None,
     )
 
+    assert control_payload_to_data(inherited)["retry_from"] == "run_1.2"
     assert (
         control_payload_from_data("retry", control_payload_to_data(inherited))
         == inherited

@@ -68,14 +68,14 @@ run_abc123
 A step is one durable execution operation. Its full `StepPath` is:
 
 ```text
-run_id/step_index[/step_index...]
+run_id.step_index[.step_index...]
 ```
 
 Examples:
 
 ```text
-run_abc123/2
-run_abc123/2/0
+run_abc123.2
+run_abc123.2.0
 ```
 
 Whenever output shows a StepPath, it shows the complete path so it can be
@@ -89,14 +89,14 @@ index. Presentation uses `@` so it cannot be confused with a StepPath:
 ```text
 run_abc123@0    # start control
 run_abc123@1    # first later steer or stop control
-run_abc123/0    # first step, not a control
+run_abc123.0    # first step, not a control
 ```
 
 The compact forms are:
 
 ```text
 RUN_ID@CONTROL_INDEX
-RUN_ID/STEP_INDEX[/CHILD_STEP_INDEX...]
+RUN_ID.STEP_INDEX[.CHILD_STEP_INDEX...]
 ```
 
 ### Flow Statement
@@ -149,7 +149,7 @@ the same facts layout as successful output:
 
 ```text
 ! web_search.search: provider returned status 429
-  run_abc123/2 · 820ms · exit 429
+  run_abc123.2 · 820ms · exit 429
 ```
 
 Failed diagnostics and failed `↳` summaries are red. Canceled summaries are
@@ -229,7 +229,7 @@ Root output has no left margin:
 ```text
 · Alpha beta gamma delta epsilon zeta
   eta theta iota kappa.
-  run_abc123/0 · 1.8s · deepseek/deepseek-chat · 3.4k/86 tokens
+  run_abc123.0 · 1.8s · deepseek/deepseek-chat · 3.4k/86 tokens
 
 --- run_abc123 succeeded ---
 1 item returned
@@ -310,7 +310,7 @@ At `-vv`, the completed model step adds one metadata line:
 
 ```text
 · Sunlight is scattered by molecules in the atmosphere.
-  run_abc123/0 · 1.8s · deepseek/deepseek-chat · 3.4k/86 tokens
+  run_abc123.0 · 1.8s · deepseek/deepseek-chat · 3.4k/86 tokens
 ```
 
 The order is:
@@ -326,7 +326,7 @@ There is no separate `model succeeded` line.
 ```text
 · executing web_search.search…                               [live]
 · web_search.search: 5 results                               [0+]
-  run_abc123/1 · 820ms · exit 0                              [2]
+  run_abc123.1 · 820ms · exit 0                              [2]
 ```
 
 The same two-line structure presents failure. The error replaces successful
@@ -334,7 +334,7 @@ output in the primary content position, and facts remain below it:
 
 ```text
 ! web_search.search: provider returned status 429
-  run_abc123/1 · 820ms · exit 429
+  run_abc123.1 · 820ms · exit 429
 ```
 
 Tool failure is visible at every non-quiet level. There is no second tool
@@ -351,7 +351,7 @@ Expand one topic into several research queries.               [1+]
   run_queries123@0                                            [2]
 
 · ["agent framework architecture", "multi-agent SDK", ...]    [0+]
-  run_queries123/0 · 2.0s · deepseek/deepseek-chat · 4.6k/44 tokens
+  run_queries123.0 · 2.0s · deepseek/deepseek-chat · 4.6k/44 tokens
 
 --- run_queries123 succeeded ---
 1 item returned
@@ -490,7 +490,7 @@ runnable kind:
 
   Run flow review                                             [0+]
   · reviewing weak sections…                                [live]
-    run_review1/0 · 4.4s · deepseek/deepseek-chat            [2]
+    run_review1.0 · 4.4s · deepseek/deepseek-chat            [2]
   ↳ run_review1 succeeded · 4.4s                             [2]
 ```
 
@@ -508,7 +508,7 @@ would repeat the same value, so direct `run` does not add one.
 
   Run agic expand_queries                                    [0+]
   · ["agent architecture", "agent tools", ...]               [0+]
-    run_queries1/0 · 2.0s · deepseek/deepseek-chat · 4.6k/63 tokens
+    run_queries1.0 · 2.0s · deepseek/deepseek-chat · 4.6k/63 tokens
   ↳ run_queries1 succeeded · 2.0s                            [2]
   ↳ 6-item list saved to _ · scattered from 1 item             [0+]
 ```
@@ -520,7 +520,7 @@ The child may fail to return an array:
 ```text
 [0] scatter 6 expand_queries
   Run agic expand_queries
-  ! run_research1/0 failed: scatter requires a list result
+  ! run_research1.0 failed: scatter requires a list result
     · 1.7s
 ```
 
@@ -580,7 +580,7 @@ A failure retains one useful failing item:
 ```text
 [2] rank relevance top 8 par 4
   Run agic relevance in parallel (18 items, 4 lanes)
-  ! run_research1/2 failed: item 5: output is not valid Number
+  ! run_research1.2 failed: item 5: output is not valid Number
     · 5 runs succeeded · 1 failed · 3.1s
 ```
 
@@ -604,20 +604,20 @@ The retained `-vv` form is:
   [0] let review = run review
     Run agic review
     · Review identified unclear ownership...
-      run_review0/0 · 2.1s · deepseek/deepseek-chat
+      run_review0.0 · 2.1s · deepseek/deepseek-chat
     ↳ run_review0 succeeded · 2.1s
 
   [1] run revise
     Run agic revise
     · Revised proposal...
-      run_revise0/0 · 4.3s · deepseek/deepseek-chat
+      run_revise0.0 · 4.3s · deepseek/deepseek-chat
     ↳ run_revise0 succeeded · 4.3s
 
   [?] until
     Run agic <agic:L42>
 
     · false
-      run_until0/0 · 620ms · deepseek/deepseek-chat
+      run_until0.0 · 620ms · deepseek/deepseek-chat
     ↳ run_until0 succeeded · 620ms
 
     ↳ continue
@@ -646,7 +646,7 @@ summary, but no control decision:
   [?] until
     Run agic <agic:L42>
     ! model request failed: provider returned status 429
-      run_until1/0 · 820ms
+      run_until1.0 · 820ms
     ↳ run_until1 failed · 820ms
 ```
 
@@ -656,7 +656,7 @@ control diagnostic; failure is never interpreted as `false`:
 
 ```text
     · "yes"
-      run_until1/0 · 580ms · deepseek/deepseek-chat
+      run_until1.0 · 580ms · deepseek/deepseek-chat
     ↳ run_until1 succeeded · 580ms
 
     ! until requires Boolean; got Text
@@ -771,7 +771,7 @@ when available:
 
 ```text
 [2] rank relevance top 8 par 4
-  ! run_research1/2 failed: item 5: output is not valid Number
+  ! run_research1.2 failed: item 5: output is not valid Number
     · 5 runs succeeded · 1 failed · 3.1s · 18.2k/210 tokens
 
 --- run_research1 failed ---
@@ -912,7 +912,7 @@ executor/event contracts solely for presentation.
   retained repeat sections.
 - Runnable descriptions align with the runnable header, with a blank line
   before input.
-- `RUN_ID@INDEX` denotes a run control; `RUN_ID/INDEX` denotes a StepPath.
+- `RUN_ID@INDEX` denotes a run control; `RUN_ID.INDEX` denotes a StepPath.
 - Control, step, event, record, and displayed statement indexes are zero-based.
 - A top-level statement's bracketed ordinal equals the final segment of its
   current StepPath. Repeat-body ordinals restart at `[0]` per iteration and are

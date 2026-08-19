@@ -140,7 +140,7 @@ def test_chat_run_events_keep_run_stop_block_until_run_end() -> None:
     ]
     response = _render_text(app.finalized[0].render())
     assert "· final answer" in response
-    assert "  run_1/1 · 1.0s · test/model · 1/1 tokens" in response
+    assert "  run_1.1 · 1.0s · test/model · 1/1 tokens" in response
     assert "◆ run_1 succeeded" in _render_text(app.finalized[1].render())
     assert app.finished
 
@@ -295,7 +295,7 @@ def test_chat_canceled_model_step_is_not_rendered_as_completed() -> None:
     )
     block.update(
         StepEnd(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             kind="model",
             status="canceled",
             error="canceled",
@@ -306,7 +306,7 @@ def test_chat_canceled_model_step_is_not_rendered_as_completed() -> None:
     rendered = _render_text(block.render())
 
     assert "! model call canceled" in rendered
-    assert "  run_1/1 · 1.0s · deepseek/deepseek-chat" in rendered
+    assert "  run_1.1 · 1.0s · deepseek/deepseek-chat" in rendered
     assert "model completed" not in rendered
 
 
@@ -349,7 +349,7 @@ def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
 
     events.handle_run_event(
         PartDelta(
-            step=StepPath.parse("run_child/1"),
+            step=StepPath.parse("run_child.1"),
             part=0,
             delta=TextDelta(text="drafting report"),
         ),
@@ -388,7 +388,7 @@ def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
         "[2] run summarize",
         "  Run agic test",
         "  · model completed",
-        "    run_child/1 · 1.0s · test/model · 1/1 tokens",
+        "    run_child.1 · 1.0s · test/model · 1/1 tokens",
         "  ↳ run_child succeeded · 3.0s",
     ]
     events.handle_run_event(_run_end(status="succeeded", output_step_index=2), app)
@@ -409,7 +409,7 @@ def test_chat_failed_child_is_a_statement_diagnostic_fact() -> None:
     events.handle_run_event(_run_begin(executable_kind="flow"), app)
     events.handle_run_event(
         StepBegin(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             kind="run",
             given=ScatterStmt(
                 span=Span(line=1),
@@ -425,7 +425,7 @@ def test_chat_failed_child_is_a_statement_diagnostic_fact() -> None:
         RunBegin(
             run="run_child",
             control=ControlRef("run_child", 0),
-            parent=StepPath.parse("run_1/1"),
+            parent=StepPath.parse("run_1.1"),
             runnable="agic:expand_queries",
             started_at="2026-01-01T00:00:01Z",
         ),
@@ -434,7 +434,7 @@ def test_chat_failed_child_is_a_statement_diagnostic_fact() -> None:
     events.handle_run_event(_model_step_begin(run_id="run_child"), app)
     events.handle_run_event(
         StepEnd(
-            step=StepPath.parse("run_child/1"),
+            step=StepPath.parse("run_child.1"),
             kind="model",
             status="failed",
             error=message,
@@ -453,7 +453,7 @@ def test_chat_failed_child_is_a_statement_diagnostic_fact() -> None:
     )
     events.handle_run_event(
         StepEnd(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             kind="run",
             status="failed",
             error=message,
@@ -465,7 +465,7 @@ def test_chat_failed_child_is_a_statement_diagnostic_fact() -> None:
     assert [block.type for block in app.finalized] == ["FlowStepBlock"]
     rendered = _render_text(app.finalized[0].render())
     assert rendered.count("[1] scatter 6 expand_queries") == 1
-    diagnostic = f"! run_1/1 failed: {message}"
+    diagnostic = f"! run_1.1 failed: {message}"
     child_fact = "run_child failed · 1.0s"
     assert diagnostic in rendered
     assert child_fact in rendered
@@ -486,7 +486,7 @@ def test_chat_flow_statement_owns_child_model_tool_model_activity() -> None:
     )
     events.handle_run_event(
         StepBegin(
-            step=StepPath.parse("run_child/1"),
+            step=StepPath.parse("run_child.1"),
             kind="tool",
             given=_tool_given(),
         ),
@@ -527,7 +527,7 @@ def test_chat_nested_step_blocks_are_keyed_by_full_path() -> None:
     events.handle_run_event(_run_begin(executable_kind="flow"), app)
     events.handle_run_event(_flow_step_begin(step_index=0), app)
     events.handle_run_event(
-        _child_run_step_begin(step=StepPath.parse("run_1/0/0")), app
+        _child_run_step_begin(step=StepPath.parse("run_1.0.0")), app
     )
 
     assert [block.type for block in app.live_blocks] == [
@@ -536,7 +536,7 @@ def test_chat_nested_step_blocks_are_keyed_by_full_path() -> None:
         "RunStopBlock",
     ]
 
-    events.handle_run_event(_child_run_step_end(step=StepPath.parse("run_1/0/0")), app)
+    events.handle_run_event(_child_run_step_end(step=StepPath.parse("run_1.0.0")), app)
 
     assert [block.type for block in app.live_blocks] == [
         "FlowStepBlock",
@@ -557,7 +557,7 @@ def test_chat_confirms_only_the_root_output_model_response() -> None:
 
     events.handle_run_event(
         StepBegin(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             kind="tool",
             given=_tool_given("shell.execute"),
             started_at="2026-01-01T00:00:02Z",
@@ -572,7 +572,7 @@ def test_chat_confirms_only_the_root_output_model_response() -> None:
     internal = _render_text(app.finalized[0].render())
     assert "internal plan" not in internal
     assert "model completed" in internal
-    assert "run_1/0" in internal
+    assert "run_1.0" in internal
 
     events.handle_run_event(_tool_step_end(step_index=1), app)
     events.handle_run_event(_model_step_begin(step_index=2), app)
@@ -587,7 +587,7 @@ def test_chat_confirms_only_the_root_output_model_response() -> None:
         RunEnd(
             run="run_1",
             status="succeeded",
-            output=_output(StepPath.parse("run_1/2")),
+            output=_output(StepPath.parse("run_1.2")),
             finished_at="2026-01-01T00:00:04Z",
         ),
         app,
@@ -611,7 +611,7 @@ def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
     events.handle_run_event(_run_begin(), app)
     events.handle_run_event(
         StepBegin(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             kind="par",
             given=MapStmt(
                 span=Span(line=1),
@@ -627,7 +627,7 @@ def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
         events.handle_run_event(
             RunBegin(
                 run=f"run_child_{item}",
-                parent=StepPath.parse("run_1/1"),
+                parent=StepPath.parse("run_1.1"),
                 control=ControlRef(f"run_child_{item}", 0),
                 runnable="agic:summarize",
                 occurrence=Occurrence(
@@ -639,7 +639,7 @@ def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
         )
         events.handle_run_event(
             StepBegin(
-                step=StepPath.parse(f"run_child_{item}/0"),
+                step=StepPath.parse(f"run_child_{item}.0"),
                 kind="model",
                 given=_model_given(),
             ),
@@ -666,7 +666,7 @@ def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
     for item in range(2):
         events.handle_run_event(
             StepEnd(
-                step=StepPath.parse(f"run_child_{item}/0"),
+                step=StepPath.parse(f"run_child_{item}.0"),
                 kind="model",
                 status="succeeded",
                 output=_parts(TextPart(f"summary {item}")),
@@ -679,7 +679,7 @@ def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
         )
     events.handle_run_event(
         StepEnd(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             kind="par",
             status="succeeded",
             output=Local.typed("Json[]", ({}, {}), "_", 1),
@@ -709,7 +709,7 @@ def test_chat_flow_root_result_is_durable_and_hidden_until_requested() -> None:
     events.handle_run_event(_run_begin(executable_kind="flow"), app)
     events.handle_run_event(
         StepBegin(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             kind="run",
             given=GatherStmt(span=Span(line=1), runnable="synthesize"),
         ),
@@ -717,7 +717,7 @@ def test_chat_flow_root_result_is_durable_and_hidden_until_requested() -> None:
     )
     events.handle_run_event(
         StepEnd(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             kind="run",
             status="succeeded",
             output=_parts(TextPart("flow response")),
@@ -728,7 +728,7 @@ def test_chat_flow_root_result_is_durable_and_hidden_until_requested() -> None:
         RunEnd(
             run="run_1",
             status="succeeded",
-            output=_output(StepPath.parse("run_1/1")),
+            output=_output(StepPath.parse("run_1.1")),
         ),
         app,
     )
@@ -798,7 +798,7 @@ def test_chat_flow_failure_and_cancellation_use_the_same_terminal_summary() -> N
 def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() -> None:
     block = blocks.FlowStepBlock.create(
         StepBegin(
-            step=StepPath.parse("run_1/2"),
+            step=StepPath.parse("run_1.2"),
             kind="par",
             given=MapStmt(span=Span(line=1), runnable="search_web", lanes=4),
             started_at="2026-01-01T00:00:01Z",
@@ -815,7 +815,7 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
     )
     block.update(
         StepEnd(
-            step=StepPath.parse("run_1/2"),
+            step=StepPath.parse("run_1.2"),
             kind="par",
             status="canceled",
             error="canceled",
@@ -825,7 +825,7 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
 
     rendered = _render_text(block.render())
 
-    assert "  ! run_1/2 canceled" in rendered
+    assert "  ! run_1.2 canceled" in rendered
     assert "statement failed" not in rendered
     assert "    5 runs succeeded · 27.0s" in rendered
     assert "  · 5 runs succeeded" not in rendered
@@ -837,7 +837,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
     events.handle_run_event(_run_begin(), app)
     events.handle_run_event(
         StepBegin(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             kind="loop",
             given=RepeatStmt(span=Span(line=1), count=2),
             started_at="2026-01-01T00:00:01Z",
@@ -846,7 +846,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
     )
     events.handle_run_event(
         StepBegin(
-            step=StepPath.parse("run_1/1/0"),
+            step=StepPath.parse("run_1.1.0"),
             kind="run",
             given=RunStmt(span=Span(line=1), runnable="revise"),
             occurrence=Occurrence(iteration=IterationOccurrence(index=0, phase="body")),
@@ -856,7 +856,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
     events.handle_run_event(
         RunBegin(
             run="run_revise",
-            parent=StepPath.parse("run_1/1/0"),
+            parent=StepPath.parse("run_1.1.0"),
             control=ControlRef("run_revise", 0),
             runnable="agic:revise",
             occurrence=Occurrence(iteration=IterationOccurrence(index=0, phase="body")),
@@ -865,7 +865,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
     )
     events.handle_run_event(
         StepBegin(
-            step=StepPath.parse("run_revise/0"),
+            step=StepPath.parse("run_revise.0"),
             kind="model",
             given=_model_given(),
         ),
@@ -873,7 +873,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
     )
     events.handle_run_event(
         PartDelta(
-            step=StepPath.parse("run_revise/0"),
+            step=StepPath.parse("run_revise.0"),
             part=0,
             delta=TextDelta(text="revising"),
         ),
@@ -891,7 +891,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
 
     events.handle_run_event(
         StepEnd(
-            step=StepPath.parse("run_revise/0"),
+            step=StepPath.parse("run_revise.0"),
             kind="model",
             status="succeeded",
             output=_parts(TextPart("revised")),
@@ -901,7 +901,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
     events.handle_run_event(RunEnd(run="run_revise", status="succeeded"), app)
     events.handle_run_event(
         StepEnd(
-            step=StepPath.parse("run_1/1/0"),
+            step=StepPath.parse("run_1.1.0"),
             kind="run",
             status="succeeded",
             output=_parts(TextPart("revised")),
@@ -910,7 +910,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
     )
     events.handle_run_event(
         StepEnd(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             kind="loop",
             status="succeeded",
             output=_parts(TextPart("revised")),
@@ -933,7 +933,7 @@ def test_chat_reports_a_direct_failure_once() -> None:
     events.handle_run_event(_tool_step_begin(), app)
     events.handle_run_event(
         StepEnd(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             kind="tool",
             status="failed",
             error=message,
@@ -1014,7 +1014,7 @@ def test_chat_model_step_streaming_wraps_like_final_markdown(
     block = blocks.ModelStepBlock.create(_model_step_begin())
     block.update(
         PartDelta(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             part=0,
             delta=TextDelta(text=long_text),
         )
@@ -1054,7 +1054,7 @@ def test_chat_model_step_marker_style_does_not_leak_to_streaming_text() -> None:
     block = blocks.ModelStepBlock.create(_model_step_begin())
     block.update(
         PartDelta(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             part=0,
             delta=TextDelta(text="streaming hello"),
         )
@@ -1509,7 +1509,7 @@ def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
 
     app.handle_run_event(
         StepEnd(
-            step=StepPath.parse("run_1/1"),
+            step=StepPath.parse("run_1.1"),
             kind="model",
             status="failed",
             error="You have no credits remaining.",
@@ -1570,7 +1570,7 @@ def _run_begin(
         run=run_id,
         control=ControlRef(run_id, 0),
         parent=(
-            StepPath.parse(f"{parent_run_id}/2") if parent_run_id is not None else None
+            StepPath.parse(f"{parent_run_id}.2") if parent_run_id is not None else None
         ),
         started_at="2026-01-01T00:00:00Z",
         runnable=f"{executable_kind}:test",
@@ -1587,7 +1587,7 @@ def _run_end(
         run=run_id,
         status=status,
         output=(
-            _output(StepPath.parse(f"{run_id}/{output_step_index}"))
+            _output(StepPath.parse(f"{run_id}.{output_step_index}"))
             if run_id == "run_1" and status == "succeeded"
             else None
         ),
@@ -1602,7 +1602,7 @@ def _model_step_begin(
     model: str | None = None,
 ) -> StepBegin:
     return StepBegin(
-        step=StepPath.parse(f"{run_id}/{step_index}"),
+        step=StepPath.parse(f"{run_id}.{step_index}"),
         kind="model",
         input=(),
         given=_model_given(model or "test/model"),
@@ -1612,7 +1612,7 @@ def _model_step_begin(
 
 def _tool_step_begin(*, step_index: int = 1) -> StepBegin:
     return StepBegin(
-        step=StepPath.parse(f"run_1/{step_index}"),
+        step=StepPath.parse(f"run_1.{step_index}"),
         kind="tool",
         input=(),
         given=_tool_given(),
@@ -1628,7 +1628,7 @@ def _model_step_end(
     finished_at: str = "2026-01-01T00:00:02Z",
 ) -> StepEnd:
     return StepEnd(
-        step=StepPath.parse(f"{run_id}/{step_index}"),
+        step=StepPath.parse(f"{run_id}.{step_index}"),
         kind="model",
         status="succeeded",
         output=_parts(TextPart(text=output)),
@@ -1639,7 +1639,7 @@ def _model_step_end(
 
 def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
     return StepBegin(
-        step=StepPath.parse(f"run_1/{step_index}"),
+        step=StepPath.parse(f"run_1.{step_index}"),
         kind="par",
         input=(),
         started_at="2026-01-01T00:00:01Z",
@@ -1649,7 +1649,7 @@ def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
 
 def _flow_step_end(*, step_index: int = 1) -> StepEnd:
     return StepEnd(
-        step=StepPath.parse(f"run_1/{step_index}"),
+        step=StepPath.parse(f"run_1.{step_index}"),
         kind="par",
         status="succeeded",
         output=Local.typed("Json[]", (), "_", 1),
@@ -1661,7 +1661,7 @@ def _child_run_step_begin(
     *, step_index: int = 2, step: StepPath | str | None = None
 ) -> StepBegin:
     return StepBegin(
-        step=StepPath.parse(step or f"run_1/{step_index}"),
+        step=StepPath.parse(step or f"run_1.{step_index}"),
         kind="run",
         input=(),
         started_at="2026-01-01T00:00:01Z",
@@ -1673,7 +1673,7 @@ def _child_run_step_end(
     *, step_index: int = 2, step: StepPath | str | None = None
 ) -> StepEnd:
     return StepEnd(
-        step=StepPath.parse(step or f"run_1/{step_index}"),
+        step=StepPath.parse(step or f"run_1.{step_index}"),
         kind="run",
         status="succeeded",
         output=_parts(TextPart(text="done")),
@@ -1688,7 +1688,7 @@ def _tool_step_end(
     finished_at: str = "2026-01-01T00:00:02Z",
 ) -> StepEnd:
     return StepEnd(
-        step=StepPath.parse(f"{run_id}/{step_index}"),
+        step=StepPath.parse(f"{run_id}.{step_index}"),
         kind="tool",
         status="succeeded",
         output=_parts(

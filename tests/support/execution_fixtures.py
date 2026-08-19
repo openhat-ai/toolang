@@ -258,7 +258,9 @@ def project_step(
 
     resolved_index = index if index is not None else step_index
     if run_id is None and parent is None or resolved_index is None:
-        raise ValueError("project_step requires parent/index or run_id/step_index")
+        raise ValueError(
+            "project_step requires parent with index or run_id with step_index"
+        )
     path = (
         StepPath.parse(parent).child(resolved_index)
         if parent is not None

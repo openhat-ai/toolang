@@ -64,18 +64,18 @@ agic calculate(_: Text) -> Text:
             assert_run_event_integrity(tracer.events)
             assert event_labels(tracer.events) == [
                 f"run_begin:{run.id}",
-                f"step_begin:{run.id}/0:model",
-                f"part_begin:{run.id}/0:0:tool_call",
-                f"part_end:{run.id}/0:0:tool_call",
-                f"step_end:{run.id}/0:model:succeeded",
-                f"step_begin:{run.id}/1:tool",
-                f"part_begin:{run.id}/1:0:tool_result",
-                f"part_end:{run.id}/1:0:tool_result",
-                f"step_end:{run.id}/1:tool:succeeded",
-                f"step_begin:{run.id}/2:model",
-                f"part_begin:{run.id}/2:0:text",
-                f"part_end:{run.id}/2:0:text",
-                f"step_end:{run.id}/2:model:succeeded",
+                f"step_begin:{run.id}.0:model",
+                f"part_begin:{run.id}.0:0:tool_call",
+                f"part_end:{run.id}.0:0:tool_call",
+                f"step_end:{run.id}.0:model:succeeded",
+                f"step_begin:{run.id}.1:tool",
+                f"part_begin:{run.id}.1:0:tool_result",
+                f"part_end:{run.id}.1:0:tool_result",
+                f"step_end:{run.id}.1:tool:succeeded",
+                f"step_begin:{run.id}.2:model",
+                f"part_begin:{run.id}.2:0:text",
+                f"part_end:{run.id}.2:0:text",
+                f"step_end:{run.id}.2:model:succeeded",
                 f"run_end:{run.id}:succeeded",
             ]
 
@@ -124,14 +124,14 @@ flow relay(_: Text) -> Text:
             assert_run_event_integrity(tracer.events)
             assert event_labels(tracer.events) == [
                 f"run_begin:{root.id}",
-                f"step_begin:{root.id}/0:run",
+                f"step_begin:{root.id}.0:run",
                 f"run_begin:{child.id}",
-                f"step_begin:{child.id}/0:model",
-                f"part_begin:{child.id}/0:0:text",
-                f"part_end:{child.id}/0:0:text",
-                f"step_end:{child.id}/0:model:succeeded",
+                f"step_begin:{child.id}.0:model",
+                f"part_begin:{child.id}.0:0:text",
+                f"part_end:{child.id}.0:0:text",
+                f"step_end:{child.id}.0:model:succeeded",
                 f"run_end:{child.id}:succeeded",
-                f"step_end:{root.id}/0:run:succeeded",
+                f"step_end:{root.id}.0:run:succeeded",
                 f"run_end:{root.id}:succeeded",
             ]
 
@@ -182,7 +182,7 @@ flow parallel(_: Text) -> Text[]:
             ]
 
             assert_run_event_integrity(tracer.events)
-            root_step = StepPath.parse(f"{root.id}/0")
+            root_step = StepPath.parse(f"{root.id}.0")
             parent_begin = tracer.events.index(
                 next(
                     event

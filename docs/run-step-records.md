@@ -9,14 +9,14 @@ project run and step truth.
 `StepPath` globally identifies one step within its owning run:
 
 ```text
-run_id/step_index[/step_index...]
+run_id.step_index[.step_index...]
 ```
 
 Examples:
 
 ```text
-run_abc123/0
-run_abc123/0/1
+run_abc123.0
+run_abc123.0.1
 ```
 
 `RunInputRef(index, part?)` references a control input in the current run.

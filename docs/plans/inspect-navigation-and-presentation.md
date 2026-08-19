@@ -46,9 +46,9 @@ from a parent run into a child run.
 That synthetic navigation path differs from the durable `StepPath` already
 used by execution records and the shared presentation language. For example,
 the current command may accept `run_parent:2.0` while the selected child step
-is printed as `run_child/0`. The printed value therefore cannot be copied back
+is printed as `run_child.0`. The printed value therefore cannot be copied back
 into `inspect`. A focused step heading can also combine the run and stored path
-as `run_parent:run_child/0`.
+as `run_parent:run_child.0`.
 
 Current human output has separate thread, run, and step renderers:
 
@@ -106,7 +106,7 @@ Canonical paths use the durable identities already defined in
 ```text
 THREAD_PATH       = THREAD_ID
 RUN_PATH          = RUN_ID
-STEP_PATH         = RUN_ID "/" INDEX ("/" INDEX)*
+STEP_PATH         = RUN_ID "." INDEX ("." INDEX)*
 CONTROL_PATH      = (THREAD_ID | RUN_ID) "@" INDEX
 INPUT_PATH        = (RUN_PATH | STEP_PATH | RUN_CONTROL_PATH) ".input"
 OUTPUT_PATH       = (RUN_PATH | STEP_PATH) ".output"
@@ -115,7 +115,7 @@ RUN_CONTROL_PATH  = RUN_ID "@" INDEX
 
 `INDEX` is `0` or an ASCII decimal integer beginning with `1`. Leading zeroes,
 signs, whitespace, empty segments, trailing separators, and non-ASCII digits
-are invalid. Generated thread and run IDs contain none of `/`, `@`, or `:`;
+are invalid. Generated thread and run IDs contain none of `.`, `@`, or `:`;
 the parser treats those characters as reserved delimiters.
 
 The supported target kinds are:
@@ -124,10 +124,10 @@ The supported target kinds are:
 | --- | --- | --- |
 | thread | `term_ab12` | one effective thread and its selected run window |
 | run | `run_ab12` | one durable run |
-| step | `run_ab12/0`, `run_ab12/2/1` | one durable step in its owning run |
+| step | `run_ab12.0`, `run_ab12.2.1` | one durable step in its owning run |
 | control | `term_ab12@0`, `run_ab12@1` | one thread or run control |
-| input | `run_ab12.input`, `run_ab12/0.input`, `run_ab12@1.input` | one recorded run, step, or run-control input |
-| output | `run_ab12.output`, `run_ab12/0.output` | one resolved run output or recorded step output |
+| input | `run_ab12.input`, `run_ab12.0.input`, `run_ab12@1.input` | one recorded run, step, or run-control input |
+| output | `run_ab12.output`, `run_ab12.0.output` | one resolved run output or recorded step output |
 
 Threads and thread controls have no input or output target. Controls have no
 output target. A run control has an input target only when its schema can carry
@@ -150,11 +150,10 @@ form:
 RUN_ID:INDEX[.INDEX...]
 ```
 
-`.` is reserved exclusively for field access, beginning with `.input` and
-`.output`; `/` is reserved exclusively for durable StepPath segments. Keeping
-the old form would give `.` two meanings and preserve synthetic paths that
-cannot be copied from stored `StepPath` values. A colon-and-dot target therefore
-fails as an invalid inspect path rather than being accepted as an alias.
+`.` separates durable StepPath indexes and introduces the terminal `.input`
+or `.output` field. Numeric index segments and named terminal fields keep the
+grammar unambiguous. Slash-separated paths and colon-and-dot targets fail as
+invalid inspect paths rather than being accepted as aliases.
 
 This is the only intentional command-input compatibility break in the feature.
 There is no warning-only transition because the new grammar must remain
@@ -386,7 +385,7 @@ the reference and uses `value: null` plus `state: "unavailable"`.
 
 The parser reports grammar errors before owner lookup. Once syntax is valid,
 the most specific missing durable identity is reported. For example,
-`run_missing/0.output` reports the missing run before attempting the step or
+`run_missing.0.output` reports the missing run before attempting the step or
 output lookup.
 
 
@@ -440,9 +439,9 @@ New target kinds use these envelopes:
 ```json
 {
   "kind": "input",
-  "target": "run_ab12/0.input",
-  "path": "run_ab12/0.input",
-  "owner": {"kind": "step", "path": "run_ab12/0"},
+  "target": "run_ab12.0.input",
+  "path": "run_ab12.0.input",
+  "owner": {"kind": "step", "path": "run_ab12.0"},
   "state": "recorded",
   "source": null,
   "source_part": null,
@@ -457,7 +456,7 @@ New target kinds use these envelopes:
   "path": "run_ab12.output",
   "owner": {"kind": "run", "path": "run_ab12"},
   "state": "recorded",
-  "source": "run_ab12/0.output",
+  "source": "run_ab12.0.output",
   "source_part": null,
   "value": []
 }
@@ -484,8 +483,9 @@ messages, references, and message parts.
 - Keep `toolang TARGET inspect PATH`, its command routing, default human mode,
   `--json`, and `--limit` public.
 - Add `--full` without changing the meaning of existing options.
-- Reject current `RUN_ID:DOT.PATH` selectors; `.` now means field access only,
-  `/` means StepPath traversal only, and `:` is not part of the grammar.
+- Reject current `RUN_ID:DOT.PATH` selectors and slash-separated StepPaths;
+  `.` separates canonical step indexes and terminal fields, while `:` is not
+  part of the grammar.
 - Preserve current existing-target JSON keys and nested fields; additions must
   not rename or remove them.
 - Human output is intentionally allowed to change. It has no stable
@@ -555,8 +555,8 @@ not change command registration or expand feature scope.
 
 3. **Delimiter ownership and old-syntax rejection**
    - Assert `run_parent:2.0` is rejected as an invalid inspect path.
-   - Assert `/` accepts only canonical StepPath indexes and `.` accepts only
-     supported terminal field names.
+   - Assert `.` accepts canonical StepPath indexes followed by at most one
+     supported terminal field name, and `/` is rejected.
    - Assert every human `PATH` and JSON `path` uses the canonical delimiters.
 
 4. **Thread view**
@@ -612,9 +612,9 @@ not change command registration or expand feature scope.
 - **Removing synthetic paths breaks old step selectors.** Reject them
   consistently, document the canonical replacement, and test the exact error
   instead of retaining a second traversal model.
-- **Field access can be mistaken for traversal.** `/` accepts only canonical
-  ASCII StepPath indexes, while `.` accepts only supported terminal field names
-  such as `input` and `output`.
+- **Field access can be mistaken for traversal.** Dot segments accept canonical
+  ASCII indexes until an optional terminal `input` or `output` field; any other
+  named, numeric-after-field, or slash-separated segment is rejected.
 - **Run and thread controls share `@` syntax.** Resolve the owner kind first and
   use the matching caller-facing lookup; never probe both control tables and
   accept whichever returns data.

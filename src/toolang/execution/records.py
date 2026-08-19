@@ -1183,4 +1183,4 @@ def _validate_control_locals(locals: tuple[Local, ...]) -> None:
 
 
 def _step_pointer(path: StepPath) -> str:
-    return ".".join((path.run, *(str(index) for index in path.indices)))
+    return str(path)

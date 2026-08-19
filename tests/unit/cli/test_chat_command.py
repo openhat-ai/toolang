@@ -172,7 +172,7 @@ def test_scripted_renderer_uses_model_step_output_without_deltas(
 
     renderer.render(
         StepEnd(
-            step=StepPath.parse("run_success/1"),
+            step=StepPath.parse("run_success.1"),
             kind="model",
             status="succeeded",
             output=Local.typed("Part[]", (TextPart("complete answer"),), "_"),

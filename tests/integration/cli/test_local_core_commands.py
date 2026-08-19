@@ -31,7 +31,7 @@ from toolang.execution.records import (
     SteerControlPayload,
 )
 from toolang.execution.store import RunStore
-from toolang.execution.types import Local, ThreadPrefix
+from toolang.execution.types import Local, StepPath, ThreadPrefix
 from toolang.lang.input import resolve_input_parts
 from toolang.setup import AgentSetup
 from toolang.up import process as agents
@@ -48,6 +48,16 @@ from tests.support.execution_harness import ExecutionHarness
 runner = CliRunner()
 
 
+@pytest.mark.parametrize("value", ("2.3", "run_root.2.3"))
+def test_retry_anchor_accepts_only_dot_separated_step_paths(value: str) -> None:
+    assert thread_commands._retry_anchor("run_root", value) == StepPath(
+        "run_root", (2, 3)
+    )
+
+    with pytest.raises(ValueError, match="invalid step path"):
+        thread_commands._retry_anchor("run_root", "run_root/2/3")
+
+
 def test_read_only_thread_commands_do_not_create_execution_store(
     tmp_path: Path,
 ) -> None:
@@ -61,7 +71,7 @@ def test_read_only_thread_commands_do_not_create_execution_store(
     assert not layout.run_store.exists()
 
 
-@pytest.mark.parametrize("schema_version", [11, 18, 24])
+@pytest.mark.parametrize("schema_version", [11, 18, 24, 27])
 def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     tmp_path: Path,
     schema_version: int,
@@ -84,7 +94,7 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     assert "Traceback" not in error_output
     assert "execution history is incompatible with toolang" in error_output
     assert f"uses schema {schema_version}" in error_output
-    assert "requires schema 27" in error_output
+    assert "requires schema 28" in error_output
     assert "backup" in error_output
     assert "database was not changed" in error_output.lower()
     connection = sqlite3.connect(layout.run_store)
@@ -234,7 +244,7 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
     document = json.loads(result.stdout)
     assert document["kind"] == "step"
     assert document["run"]["id"] == "run_inspect"
-    assert document["step"]["path"] == "run_inspect/0"
+    assert document["step"]["path"] == "run_inspect.0"
     assert document["step"]["kind"] == "value"
     assert document["step"]["output"] == {
         "type": "Part[]",

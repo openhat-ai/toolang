@@ -84,7 +84,7 @@ from .types import (
 )
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 27
+_SCHEMA_VERSION = 28
 _MIGRATABLE_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -1480,7 +1480,7 @@ class RunStore:
                 (
                     "ejected_by_target IS NULL",
                     "(parent IS NULL OR parent NOT IN ("
-                    "SELECT run || '/' || path FROM steps "
+                    "SELECT run || '.' || path FROM steps "
                     "WHERE ejected_by_target IS NOT NULL))",
                 )
             )
@@ -1509,7 +1509,7 @@ class RunStore:
                 (
                     "ejected_by_target IS NULL",
                     "(parent IS NULL OR parent NOT IN ("
-                    "SELECT run || '/' || path FROM steps "
+                    "SELECT run || '.' || path FROM steps "
                     "WHERE ejected_by_target IS NOT NULL))",
                 )
             )
@@ -1586,7 +1586,10 @@ class RunStore:
         for row in run_rows:
             run = _run_from_row(row)
             runs_by_thread.setdefault(run.thread, []).append(run)
-        ejected_steps = {f"{row['run']}/{row['path']}" for row in ejected_step_rows}
+        ejected_steps = {
+            str(StepPath.from_local(str(row["run"]), str(row["path"])))
+            for row in ejected_step_rows
+        }
         cache: dict[tuple[str, bool], tuple[RunRecord, ...]] = {}
 
         def history(
