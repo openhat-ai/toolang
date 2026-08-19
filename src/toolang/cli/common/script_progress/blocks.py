@@ -6,14 +6,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from toolang.base.types.message import Part
-from toolang.execution.events import RunBegin, RunEnd, StepEnd
+from toolang.execution.events import RunBegin, RunEnd
 
 from ..execution_progress.formatting import (
     count,
     elapsed,
     part_lines,
     runnable_label,
-    shape_label,
     status_label,
     value_summary,
 )
@@ -81,7 +80,7 @@ class RunBlock:
         console: ProgressConsole,
         event: RunEnd,
         *,
-        output: StepEnd | None,
+        output_shape: str,
         error: str,
     ) -> None:
         console.clear_live()
@@ -89,9 +88,8 @@ class RunBlock:
         tone = _tone(event.status)
         title = f"--- {event.run} {status_label(event.status)} ---"
         console.write(title, tone=tone)
-        if event.status == "succeeded" and output is not None:
-            if shape := shape_label(output):
-                console.write(f"{shape} returned")
+        if event.status == "succeeded" and output_shape:
+            console.write(f"{output_shape} returned")
         elif error:
             console.wrapped(error, prefix="", tone=tone)
         duration = elapsed(self.started_at, event.finished_at)

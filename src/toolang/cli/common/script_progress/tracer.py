@@ -7,7 +7,7 @@ import sys
 from typing import TextIO
 
 from toolang.base.types.message import Part
-from toolang.execution.events import RunBegin, RunEnd, RunEvent, RunTracer, StepEnd
+from toolang.execution.events import RunBegin, RunEnd, RunEvent, RunTracer
 from toolang.execution.types import StepPath, TypedPointer
 
 from ..execution_progress import ExecutionProgressReducer
@@ -79,15 +79,15 @@ class ConsoleRunTracer(RunTracer):
         root.render_result(
             self.console,
             event,
-            output=self._output(event),
+            output_shape=self._output_shape(event),
             error="",
         )
 
-    def _output(self, event: RunEnd) -> StepEnd | None:
+    def _output_shape(self, event: RunEnd) -> str:
         if event.output is None or not isinstance(event.output.value, TypedPointer):
-            return None
+            return ""
         try:
             step = StepPath.parse(event.output.value.pointer.anchor)
         except ValueError:
-            return None
-        return self._reducer.outcome(step)
+            return ""
+        return self._reducer.outcome_shape(step)

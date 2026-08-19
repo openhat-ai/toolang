@@ -11,17 +11,19 @@ from toolang.base.types.message import (
     ImagePart,
     Part,
     TextPart,
+    ToolCallPart,
     ToolResultPart,
     message_text,
 )
 from toolang.execution.events import StepEnd
-from toolang.execution.records import execution_error_message
+from toolang.execution.records import execution_error_message, local_value_to_data
 from toolang.execution.types import (
     ModelStepGiven,
     ModelStepNoted,
     StepGiven,
     StepNoted,
     ToolStepGiven,
+    TypedPointer,
 )
 from toolang.lang.ast import (
     AskStmt,
@@ -153,11 +155,25 @@ def step_output_summary(event: StepEnd) -> str:
         return text
     if event.output is None:
         return ""
+    parts = output_parts(event)
+    tool_calls = tuple(part for part in parts if isinstance(part, ToolCallPart))
+    if len(tool_calls) == 1:
+        name = tool_calls[0].tool_name or tool_calls[0].tool_family or "tool"
+        return truncate(f"tool request for {name}", 180)
+    if tool_calls:
+        names = ", ".join(
+            part.tool_name or part.tool_family or "tool" for part in tool_calls
+        )
+        return truncate(f"{len(tool_calls)} tool requests: {names}", 180)
+    if lines := part_lines(parts):
+        return truncate(" · ".join(lines), 180)
     if event.output.dim == 1:
+        return shape_label(event)
+    if isinstance(event.output.value, TypedPointer):
         return shape_label(event)
     if isinstance(event.output.value, str):
         return truncate(json.dumps(event.output.value, ensure_ascii=False), 80)
-    return value_summary(event.output.value)
+    return value_summary(local_value_to_data(event.output.value))
 
 
 def model_label(given: StepGiven) -> str:

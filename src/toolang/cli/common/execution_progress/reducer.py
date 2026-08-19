@@ -85,7 +85,6 @@ class _Run:
     begin: RunBegin
     lane_owner: _LaneOwner | None
     metrics: Metrics = field(default_factory=lambda: Metrics(runs=1))
-    preview_status: str | None = None
     end: RunEnd | None = None
 
     @property
@@ -102,12 +101,15 @@ class _Step:
     sequence: int
     preview: str = ""
     boundaries: tuple[str, ...] = ()
-    children: list[str] = field(default_factory=list)
     lanes: dict[int, _Lane] = field(default_factory=dict)
     metrics: Metrics = field(default_factory=Metrics)
-    iterations: set[int] = field(default_factory=set)
+    child_count: int = 0
+    active_children: int = 0
+    succeeded_children: int = 0
+    failed_children: int = 0
+    canceled_children: int = 0
+    iterations: int = 0
     terminating: bool = False
-    end: StepEnd | None = None
 
     @property
     def statement(self) -> FlowStmt | None:
@@ -132,6 +134,9 @@ class ExecutionProgressReducer:
         self._broken = False
         self._runs: dict[str, _Run] = {}
         self._steps: dict[StepPath, _Step] = {}
+        self._seen_runs: set[str] = set()
+        self._seen_steps: set[StepPath] = set()
+        self._outcome_shapes: dict[StepPath, str] = {}
         self._parts: set[tuple[StepPath, int]] = set()
         self._errors: dict[Pointer, ExecutionError] = {}
         self._boundary_rows: dict[str, tuple[ProgressRow, ...]] = {}
@@ -154,11 +159,10 @@ class ExecutionProgressReducer:
         run = self._runs.get(self._root or "")
         return run.kind if run is not None else "run"
 
-    def outcome(self, step: StepPath) -> StepEnd | None:
-        """Return one observed terminal Step event for root-summary compatibility."""
+    def outcome_shape(self, step: StepPath) -> str:
+        """Return the bounded shape retained for one terminal root Step."""
 
-        state = self._steps.get(step)
-        return state.end if state is not None else None
+        return self._outcome_shapes.get(step, "")
 
     def handle(self, event: RunEvent) -> ProgressUpdate:
         """Validate and reduce one ordered event without querying durable state."""
@@ -210,8 +214,9 @@ class ExecutionProgressReducer:
         raise _PresentationError(f"unsupported progress event: {type(event).__name__}")
 
     def _begin_run(self, event: RunBegin) -> None:
-        if event.run in self._runs:
+        if event.run in self._seen_runs:
             raise _PresentationError(f"duplicate RunBegin for {event.run}")
+        self._seen_runs.add(event.run)
         lane_owner: _LaneOwner | None = None
         if event.parent is None:
             if self._root is not None:
@@ -219,13 +224,14 @@ class ExecutionProgressReducer:
             self._root = event.run
         else:
             owner = self._active_step(event.parent)
-            owner.children.append(event.run)
             if owner.begin.kind == "par" and owner.lane_owner is None:
                 lane_owner = self._direct_lane_owner(
                     event.parent,
                     event.occurrence,
                     event.run,
                 )
+                owner.child_count += 1
+                owner.active_children += 1
                 owner.lanes[lane_owner.lane] = _Lane(event.run, lane_owner.item)
             else:
                 lane_owner = owner.lane_owner
@@ -239,15 +245,10 @@ class ExecutionProgressReducer:
         run = self._runs.get(event.run)
         if run is None or run.end is not None:
             raise _PresentationError(f"RunEnd without active RunBegin for {event.run}")
-        if any(
-            step.begin.step.run == event.run and step.end is None
-            for step in self._steps.values()
-        ):
+        if any(step.begin.step.run == event.run for step in self._steps.values()):
             raise _PresentationError(f"RunEnd with active Step for {event.run}")
         if any(
-            child.begin.parent is not None
-            and child.begin.parent.run == event.run
-            and child.end is None
+            child.begin.parent is not None and child.begin.parent.run == event.run
             for child in self._runs.values()
         ):
             raise _PresentationError(f"RunEnd with active child Run for {event.run}")
@@ -260,18 +261,26 @@ class ExecutionProgressReducer:
         )
         if owner is not None:
             owner.metrics.add(run.metrics)
-            for ancestor in self._flow_ancestors(owner.begin.step):
+            for ancestor in self._flow_ancestors_in_run(owner.begin.step):
                 ancestor.metrics.add(run.metrics)
             parent_run = self._runs.get(owner.begin.step.run)
             if parent_run is not None:
                 parent_run.metrics.add(run.metrics)
             if owner.begin.kind == "par" and owner.lane_owner is None:
+                owner.active_children -= 1
+                if event.status == "succeeded":
+                    owner.succeeded_children += 1
+                elif event.status == "failed":
+                    owner.failed_children += 1
+                else:
+                    owner.canceled_children += 1
                 lane = self._lane_for_run(owner, event.run)
                 if lane is not None:
                     lane.active = False
                 if event.status == "failed":
                     self._start_canceling(owner)
 
+        block: ProgressBlock | None = None
         if run.lane_owner is not None:
             if isinstance(event.error, str):
                 self._set_lane_activity(
@@ -283,26 +292,32 @@ class ExecutionProgressReducer:
                     run.lane_owner,
                     "· canceled",
                 )
-            return None
-
-        if run.begin.parent is not None and isinstance(event.error, str):
-            return self._run_error_block(run, event.error)
-
-        if run.begin.parent is None:
+        elif run.begin.parent is not None and isinstance(event.error, str):
+            block = self._run_error_block(run, event.error)
+        elif run.begin.parent is None:
             self._root_ended = True
             if isinstance(event.error, str):
-                return self._diagnostic_block(self._error_text(event.error))
-            if isinstance(event.error, Pointer) and not self._pointer_resolves(
+                block = self._diagnostic_block(self._error_text(event.error))
+            elif isinstance(event.error, Pointer) and not self._pointer_resolves(
                 event.error
             ):
-                return self._diagnostic_block(
+                block = self._diagnostic_block(
                     f"could not resolve execution error {event.error}"
                 )
-        return None
+
+        if run.begin.parent is not None:
+            self._runs.pop(event.run, None)
+            self._outcome_shapes = {
+                step: shape
+                for step, shape in self._outcome_shapes.items()
+                if step.run != event.run
+            }
+        return block
 
     def _begin_step(self, event: StepBegin) -> None:
-        if event.step in self._steps:
+        if event.step in self._seen_steps:
             raise _PresentationError(f"duplicate StepBegin for {event.step}")
+        self._seen_steps.add(event.step)
         run = self._runs.get(event.step.run)
         if run is None or run.end is not None:
             raise _PresentationError(f"StepBegin without active Run {event.step.run}")
@@ -315,6 +330,11 @@ class ExecutionProgressReducer:
             and event.occurrence.iteration is not None
         ):
             iteration = event.occurrence.iteration.index
+            self._repeat_ordinals = {
+                key: value
+                for key, value in self._repeat_ordinals.items()
+                if key[0] != parent.begin.step or key[1] == iteration
+            }
             key = (parent.begin.step, iteration)
             ordinal = self._repeat_ordinals.get(key, 0)
             self._repeat_ordinals[key] = ordinal + 1
@@ -335,7 +355,7 @@ class ExecutionProgressReducer:
 
     def _end_step(self, event: StepEnd) -> ProgressBlock | None:
         state = self._steps.get(event.step)
-        if state is None or state.end is not None:
+        if state is None:
             raise _PresentationError(
                 f"StepEnd without active StepBegin for {event.step}"
             )
@@ -346,63 +366,57 @@ class ExecutionProgressReducer:
             )
         if any(step == event.step for step, _part in self._parts):
             raise _PresentationError(f"StepEnd with active Part for {event.step}")
-        if any(
-            child.begin.step.parent == event.step and child.end is None
-            for child in self._steps.values()
-        ):
+        if any(child.begin.step.parent == event.step for child in self._steps.values()):
             raise _PresentationError(f"StepEnd with active child Step for {event.step}")
-        if any(
-            child.begin.parent == event.step and child.end is None
-            for child in self._runs.values()
-        ):
+        if any(child.begin.parent == event.step for child in self._runs.values()):
             raise _PresentationError(f"StepEnd with active child Run for {event.step}")
-        state.end = event
+        self._outcome_shapes[event.step] = shape_label(event)
         if event.error is not None:
             self._errors[Pointer.step(event.step)] = event.error
         run = self._runs[event.step.run]
         run.metrics.record_step(event)
 
+        block: ProgressBlock | None = None
         if state.lane_owner is not None:
-            if event.status != "succeeded":
-                lane_run = self._runs.get(state.lane_owner.run_id)
-                if lane_run is not None:
-                    lane_run.preview_status = event.status
             self._set_lane_activity(
                 state.lane_owner,
                 self._terminal_lane_activity(state, event),
             )
-            if event.status == "failed":
-                outer = self._steps.get(state.lane_owner.step)
-                if outer is not None:
-                    self._start_canceling(
-                        outer,
-                        except_run=state.lane_owner.run_id,
-                    )
-            return None
-
-        if state.is_call:
+        elif state.is_call:
             if isinstance(event.error, Pointer):
                 self._release_boundaries(state.boundaries)
-                return None
-            rows = self._call_rows(state, event)
-            return self._finalize_block(state, rows)
+            else:
+                block = self._finalize_block(state, self._call_rows(state, event))
+        else:
+            statement = state.statement
+            if statement is not None and event.kind == "par":
+                block = self._finalize_block(
+                    state,
+                    self._par_terminal_rows(state, event),
+                )
+            elif isinstance(event.error, Pointer):
+                self._release_boundaries(state.boundaries)
+            elif (
+                statement is not None
+                and event.status == "succeeded"
+                and statement.kind == "run"
+            ):
+                self._release_boundaries(state.boundaries)
+            elif statement is not None:
+                if not state.boundaries:
+                    state.boundaries = self._claim_boundaries(
+                        self._block_key(state),
+                        state,
+                    )
+                block = self._finalize_block(state, self._flow_rows(state, event))
 
-        statement = state.statement
-        if statement is None:
-            return None
-        if event.kind == "par":
-            rows = self._par_terminal_rows(state, event)
-            return self._finalize_block(state, rows)
-        if isinstance(event.error, Pointer):
-            self._release_boundaries(state.boundaries)
-            return None
-        if event.status == "succeeded" and statement.kind == "run":
-            self._release_boundaries(state.boundaries)
-            return None
-        if not state.boundaries:
-            state.boundaries = self._claim_boundaries(self._block_key(state), state)
-        rows = self._flow_rows(state, event)
-        return self._finalize_block(state, rows)
+        self._steps.pop(event.step, None)
+        self._repeat_ordinals = {
+            key: value
+            for key, value in self._repeat_ordinals.items()
+            if key[0] != event.step
+        }
+        return block
 
     def _begin_part(self, event: PartBegin) -> None:
         self._active_step(event.step)
@@ -477,9 +491,10 @@ class ExecutionProgressReducer:
         tone = self._status_tone(event.status)
         rows: list[ProgressRow]
         if isinstance(statement, RepeatStmt):
-            iterations = max(state.iterations, default=-1) + 1
             if event.status == "succeeded":
-                rows = [ProgressRow(f"· completed · {count(iterations, 'iteration')}")]
+                rows = [
+                    ProgressRow(f"· completed · {count(state.iterations, 'iteration')}")
+                ]
             else:
                 rows = [ProgressRow(f"· {event.status}", tone)]
         elif event.status == "succeeded":
@@ -543,7 +558,7 @@ class ExecutionProgressReducer:
     def _live_blocks(self) -> tuple[ProgressBlock, ...]:
         blocks: list[tuple[int, ProgressBlock]] = []
         for state in self._steps.values():
-            if state.end is not None or state.lane_owner is not None:
+            if state.lane_owner is not None:
                 continue
             if state.is_call:
                 rows = (
@@ -594,26 +609,16 @@ class ExecutionProgressReducer:
         return tuple(rows)
 
     def _par_counts(self, state: _Step, *, live: bool) -> str:
-        statuses: list[str] = []
-        for run_id in state.children:
-            run = self._runs[run_id]
-            if (end := run.end) is not None:
-                statuses.append(end.status)
-            elif run.preview_status is not None:
-                statuses.append(run.preview_status)
-        succeeded = statuses.count("succeeded")
-        failed = statuses.count("failed")
-        canceled = statuses.count("canceled")
-        active = len(state.children) - len(statuses)
         facts = []
-        if succeeded or not state.children:
-            facts.append(f"{succeeded} succeeded")
-        if failed:
-            facts.append(f"{failed} failed")
-        if live and active:
-            facts.append(f"{active} {'canceling' if state.terminating else 'active'}")
-        if canceled:
-            facts.append(f"{canceled} canceled")
+        if state.succeeded_children or not state.child_count:
+            facts.append(f"{state.succeeded_children} succeeded")
+        if state.failed_children:
+            facts.append(f"{state.failed_children} failed")
+        if live and state.active_children:
+            status = "canceling" if state.terminating else "active"
+            facts.append(f"{state.active_children} {status}")
+        if state.canceled_children:
+            facts.append(f"{state.canceled_children} canceled")
         return " · ".join(facts) or "0 succeeded"
 
     def _call_facts(self, state: _Step, event: StepEnd) -> list[str]:
@@ -721,15 +726,15 @@ class ExecutionProgressReducer:
         chain.reverse()
         return chain
 
-    def _flow_ancestors(self, path: StepPath) -> list[_Step]:
+    def _flow_ancestors_in_run(self, path: StepPath) -> list[_Step]:
         ancestors: list[_Step] = []
-        parent = self._parent_flow_path(path)
+        parent = path.parent
         while parent is not None:
             state = self._steps.get(parent)
             if state is None:
                 break
             ancestors.append(state)
-            parent = self._parent_flow_path(parent)
+            parent = parent.parent
         return ancestors
 
     def _parent_flow_path(self, path: StepPath) -> StepPath | None:
@@ -762,10 +767,12 @@ class ExecutionProgressReducer:
         for key in keys:
             self._committed_boundaries.add(key)
             self._boundary_claims.pop(key, None)
+            self._boundary_rows.pop(key, None)
 
     def _release_boundaries(self, keys: tuple[str, ...]) -> None:
         for key in keys:
             self._boundary_claims.pop(key, None)
+            self._boundary_rows.pop(key, None)
 
     def _note_iteration(self, path: StepPath, occurrence: Occurrence | None) -> None:
         if occurrence is None or occurrence.iteration is None:
@@ -779,7 +786,10 @@ class ExecutionProgressReducer:
                 else None
             )
         if parent is not None and isinstance(parent.statement, RepeatStmt):
-            parent.iterations.add(occurrence.iteration.index)
+            parent.iterations = max(
+                parent.iterations,
+                occurrence.iteration.index + 1,
+            )
 
     def _active_lane_activity(self, state: _Step) -> str:
         if state.begin.kind == "model":
@@ -850,7 +860,7 @@ class ExecutionProgressReducer:
 
     def _active_step(self, path: StepPath) -> _Step:
         state = self._steps.get(path)
-        if state is None or state.end is not None:
+        if state is None:
             raise _PresentationError(f"event requires active Step {path}")
         return state
 

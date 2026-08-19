@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from toolang.base.types.message import TextDelta, TextPart, ToolResultPart
+from toolang.base.types.message import (
+    TextDelta,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+)
 from toolang.base.types.run import ModelCall, ToolCall
 from toolang.cli.common.execution_progress import (
     ExecutionProgressReducer,
@@ -283,6 +288,55 @@ def test_model_live_row_becomes_one_stable_output_with_annotations() -> None:
             "  run_root.0 · 1.8s · deepseek/deepseek-chat · 3.4k/86 tokens · $0.002",
         ]
     ]
+
+
+def test_model_tool_request_uses_a_typed_summary_instead_of_runtime_repr() -> None:
+    reducer = ExecutionProgressReducer(show_boundaries=False)
+    reducer.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:demo",
+        )
+    )
+    reducer.handle(
+        StepBegin(
+            step=StepPath.parse("run_root.0"),
+            kind="model",
+            given=_model(),
+        )
+    )
+
+    update = reducer.handle(
+        StepEnd(
+            step=StepPath.parse("run_root.0"),
+            kind="model",
+            status="succeeded",
+            output=Local.typed(
+                "Part[]",
+                (
+                    ToolCallPart(
+                        tool_call_id="call_1",
+                        tool_name="web_search.search",
+                        tool_family="web_search",
+                        input={"query": "agent runtimes"},
+                    ),
+                ),
+                "_",
+                0,
+            ),
+        )
+    )
+
+    assert _rows(update.stable) == [
+        [
+            "· executed tool request for web_search.search",
+            "  run_root.0 · deepseek/deepseek-chat",
+        ]
+    ]
+    assert "Array(" not in update.stable[0].rows[0].text
+    assert reducer._steps == {}
+    assert reducer.outcome_shape(StepPath.parse("run_root.0")) == "1 item"
 
 
 def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
@@ -603,18 +657,25 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     )
     assert _rows(failed.live) == [
         [
-            "· running · 1 failed · 1 canceling",
+            "· running · 2 active",
             "  0 | #4 | · failed fetch_page · provider returned status 429",
-            "  1 | #5 | · canceling…",
+            "  1 | #5 | · thinking…",
         ]
     ]
-    reducer.handle(
+    child_failed = reducer.handle(
         RunEnd(
             run="run_child_0",
             status="failed",
             error=Pointer.step(StepPath.parse("run_child_0.0")),
         )
     )
+    assert _rows(child_failed.live) == [
+        [
+            "· running · 1 failed · 1 canceling",
+            "  0 | #4 | · failed fetch_page · provider returned status 429",
+            "  1 | #5 | · canceling…",
+        ]
+    ]
     reducer.handle(
         StepEnd(
             step=StepPath.parse("run_child_1.0"),
@@ -939,6 +1000,23 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
         [
             "· running · 1 succeeded · 1 active",
             "  0 | #1 | · starting…",
+        ]
+    ]
+    reducer.handle(RunEnd(run="run_flow_1", status="succeeded"))
+    terminal = reducer.handle(
+        StepEnd(
+            step=par,
+            kind="par",
+            status="succeeded",
+            output=Local.typed("Part[]", (TextPart("done"),), "_", 1),
+        )
+    )
+
+    assert _rows(terminal.stable) == [
+        [
+            "· 2 succeeded",
+            "  1-item list",
+            "  run_root.0 · 3 runs · 1 tool call",
         ]
     ]
 
