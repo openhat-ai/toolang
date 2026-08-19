@@ -38,7 +38,6 @@ from toolang.lang.ast import (
     StructDecl,
 )
 from toolang.lang.input import RunnableInput
-from toolang.lang.format import format_statement_head
 from toolang.lang.types import Array
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
@@ -49,6 +48,7 @@ from ..runnables import resolve_runnable
 from ..types import (
     AgentResources,
     Local as RecordLocal,
+    Occurrence,
     StepKind,
     StepPath,
     Pointer,
@@ -56,6 +56,7 @@ from ..types import (
 )
 
 Shape = Literal["none", "item", "list"]
+FlowTransform = Literal["item", "list", "filter", "sort", "none"]
 EventEmitter = Callable[[RunEvent], Awaitable[None]]
 _TEMPLATE_LOCAL_RE = re.compile(
     r"{{\s*(?:[#^/]\s*)?([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][\w-]*)*\s*}}"
@@ -98,7 +99,7 @@ class BoundRun:
     flow_resources: AgentResources | None = None
     call: Literal["top", "run"] = "top"
     parent: StepPath | None = None
-    placement: Mapping[str, object] | None = None
+    occurrence: Occurrence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,10 +122,10 @@ async def execute_step(
     statement: FlowStmt,
     locals: Mapping[str, Local],
     controls: Sequence[RunControlRecord],
-    placement: Mapping[str, object] | None,
-    operation: Callable[[], Awaitable[Local]],
+    occurrence: Occurrence | None,
+    evaluate: Callable[[], Awaitable[Local]],
 ) -> Local:
-    """Execute one statement step inside its canonical event boundary."""
+    """Evaluate, transform, and commit one Flow statement Step."""
 
     started_at = utc_now()
     inputs = _unique_step_inputs(
@@ -138,20 +139,14 @@ async def execute_step(
             step=path,
             kind=kind,
             input=inputs,
-            placement=dict(placement) if placement is not None else None,
-            given={
-                **statement_context(statement),
-                "binding": statement.binding,
-                "source": {
-                    "line": statement.span.line,
-                    "head": format_statement_head(statement),
-                },
-            },
+            occurrence=occurrence,
+            given=statement,
             started_at=started_at,
         )
     )
     try:
-        result = await operation()
+        evaluated = await evaluate()
+        result = transform_flow_result(statement, locals, evaluated)
     except asyncio.CancelledError:
         await emit(
             StepEnd(
@@ -185,28 +180,143 @@ async def execute_step(
             )
         )
         raise _StepFailed(path, exc) from exc
+    output = record_local(result, name=statement.binding)
     await emit(
         StepEnd(
             step=path,
             kind=kind,
             status="succeeded",
-            output=record_local(result, name=statement.binding),
-            noted={
-                **(
-                    {"reshape": reshape}
-                    if (reshape := statement_reshape(statement)) is not None
-                    else {}
-                ),
-                **(
-                    {"items": len(result.value)}
-                    if result.shape == "list" and isinstance(result.value, Array | list)
-                    else {}
-                ),
-            },
+            output=output,
             finished_at=utc_now(),
         )
     )
-    return replace(result, ref=Pointer.step(path))
+    return replace(result, ref=Pointer.step(path)) if output is not None else result
+
+
+def transform_flow_result(
+    statement: FlowStmt,
+    locals: Mapping[str, Local],
+    evaluated: Local,
+) -> Local:
+    """Transform one evaluated value into the statement result."""
+
+    transform = flow_transform(statement)
+    if transform == "none":
+        return Local()
+    if transform == "item":
+        output_type = (
+            evaluated.record.type
+            if evaluated.record is not None
+            else (
+                f"{evaluated.type_name or 'Json'}[]"
+                if evaluated.shape == "list"
+                else evaluated.type_name
+            )
+        )
+        return replace(
+            evaluated,
+            shape="item",
+            type_name=output_type,
+            record=(
+                replace(evaluated.record, dim=0)
+                if evaluated.record is not None
+                else None
+            ),
+        )
+    if transform == "list":
+        values = (
+            evaluated.value
+            if evaluated.shape == "list"
+            else result_list(evaluated, operation=statement.kind)
+        )
+        output_type = (
+            evaluated.record.type
+            if evaluated.record is not None
+            else (
+                f"{evaluated.type_name or 'Json'}[]"
+                if evaluated.shape == "list"
+                else evaluated.type_name or "Json[]"
+            )
+        )
+        if not output_type.endswith("[]"):
+            raise ToolangError(
+                f"{statement.kind} requires an array result, got {output_type}"
+            )
+        return Local(
+            values,
+            "list",
+            type_name=output_type[:-2],
+            record=(
+                replace(evaluated.record, dim=1)
+                if evaluated.record is not None
+                else (
+                    RecordLocal.typed(
+                        type_name=output_type,
+                        value=evaluated.ref,
+                        dim=1,
+                    )
+                    if evaluated.ref is not None
+                    else None
+                )
+            ),
+        )
+    source = locals.get("_", Local())
+    items = require_list(locals, operation=statement.kind)
+    values = result_list(evaluated, operation=statement.kind)
+    if len(values) != len(items):
+        value_kind = "decisions" if transform == "filter" else "scores"
+        raise ToolangError(
+            f"{statement.kind} produced {len(values)} {value_kind} "
+            f"for {len(items)} items"
+        )
+    if transform == "filter":
+        matches = [boolean(value, operation=statement.kind) for value in values]
+        keep_matches = isinstance(statement, KeepStmt)
+        indexes = [
+            index for index, matched in enumerate(matches) if matched is keep_matches
+        ]
+    else:
+        scores = [number(value, operation="rank") for value in values]
+        entries = sorted(
+            zip(scores, range(len(items)), strict=True),
+            key=lambda entry: (-entry[0], entry[1]),
+        )
+        if not isinstance(statement, RankStmt):
+            raise TypeError("sort transform requires RankStmt")
+        if statement.selection == "top":
+            entries = entries[: statement.limit or 0]
+        elif statement.selection == "bottom":
+            limit = statement.limit or 0
+            entries = entries[-limit:] if limit else []
+        indexes = [index for _, index in entries]
+    return Local(
+        [items[index] for index in indexes],
+        "list",
+        type_name=source.type_name,
+        record=(
+            RecordLocal.typed(
+                type_name=f"{source.type_name or 'Json'}[]",
+                value=tuple(source.ref.select(index) for index in indexes),
+                dim=1,
+            )
+            if source.ref is not None
+            else None
+        ),
+    )
+
+
+def flow_transform(statement: FlowStmt) -> FlowTransform:
+    """Return the result transform implied by one lowered statement."""
+
+    if isinstance(statement, RepeatStmt):
+        return "none"
+    if isinstance(statement, ScatterStmt | StormStmt | MapStmt):
+        return "list"
+    if isinstance(statement, KeepStmt | DropStmt):
+        return "filter"
+    if isinstance(statement, RankStmt):
+        return "sort"
+    return "item"
 
 
 def statement_input_refs(
@@ -259,9 +369,9 @@ def _statement_child_runnable(statement: FlowStmt) -> str | None:
     ):
         return statement.runnable
     if isinstance(statement, RankStmt):
-        return statement.scorer
+        return statement.runnable
     if isinstance(statement, KeepStmt | DropStmt):
-        return statement.predicate
+        return statement.runnable
     return None
 
 
@@ -303,8 +413,12 @@ def initial_locals(
     return locals
 
 
-def update_locals(locals: dict[str, Local], binding: str | None, result: Local) -> None:
-    """Apply one statement result to its binding."""
+def bind_flow_result(
+    locals: dict[str, Local],
+    binding: str | None,
+    result: Local,
+) -> None:
+    """Bind one committed Step result between Flow Steps."""
 
     if binding is not None:
         locals[binding] = result
@@ -327,53 +441,12 @@ def statement_has_call(statement: FlowStmt) -> bool:
     ):
         return True
     if isinstance(statement, KeepStmt | DropStmt):
-        return statement.predicate is not None
+        return statement.runnable is not None
     if isinstance(statement, RepeatStmt):
-        return statement.until is not None or any(
+        return statement.runnable is not None or any(
             statement_has_call(child) for child in statement.stmts
         )
     return False
-
-
-def statement_reshape(statement: FlowStmt) -> str | None:
-    """Return the output reshape label for one statement."""
-
-    if isinstance(statement, ScatterStmt):
-        return "unfold"
-    if isinstance(statement, GatherStmt):
-        return "fold"
-    if isinstance(statement, KeepStmt):
-        return "keep"
-    if isinstance(statement, DropStmt):
-        return "drop"
-    if isinstance(statement, RankStmt):
-        return "rank"
-    if isinstance(statement, StormStmt | MapStmt):
-        return "list"
-    return None
-
-
-def statement_context(statement: FlowStmt) -> dict[str, object]:
-    """Return durable statement metadata for one step."""
-
-    context: dict[str, object] = {"statement": statement.kind}
-    if statement.doc:
-        context["doc"] = statement.doc
-    for name in (
-        "runnable",
-        "agent",
-        "count",
-        "par",
-        "position",
-        "predicate",
-        "scorer",
-        "limit",
-        "until",
-    ):
-        value = getattr(statement, name, None)
-        if value is not None:
-            context[name] = value
-    return context
 
 
 def require_item(locals: Mapping[str, Local], *, operation: str) -> Any:

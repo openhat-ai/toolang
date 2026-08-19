@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 from toolang.lang.ast import ScatterStmt
 
 from ...records import RunControlRecord, StepPath
-from ...types import Local as RecordLocal
+from ...types import Occurrence
 from ..common import BoundRun
-from ..common import Local, result_list
+from ..common import Local
 from ..steps import run as run_step
 
 if TYPE_CHECKING:
@@ -24,31 +24,8 @@ async def execute(
     path: StepPath,
     statement: ScatterStmt,
     controls: Sequence[RunControlRecord],
-    placement: Mapping[str, object] | None,
+    occurrence: Occurrence | None,
 ) -> Local:
-    def transform(result: Local) -> Local:
-        values = result_list(result, operation="scatter")
-        item_type = (
-            result.type_name[:-2]
-            if result.type_name is not None and result.type_name.endswith("[]")
-            else None
-        )
-        output_type = result.type_name or "Json[]"
-        return Local(
-            values,
-            "list",
-            type_name=item_type,
-            record=(
-                RecordLocal.typed(
-                    type_name=output_type,
-                    value=result.ref,
-                    dim=1,
-                )
-                if result.ref is not None
-                else None
-            ),
-        )
-
     return await run_step.execute(
         execution,
         binding=binding,
@@ -56,7 +33,6 @@ async def execute(
         statement=statement,
         locals=locals,
         controls=controls,
-        placement=placement,
+        occurrence=occurrence,
         runnable=statement.runnable,
-        transform=transform,
     )

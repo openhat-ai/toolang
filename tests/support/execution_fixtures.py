@@ -7,6 +7,7 @@ from typing import Any, Literal, cast
 
 from toolang.base.types.message import Message, Part
 from toolang.base.types.policy import RunBindings, RunLimits
+from toolang.base.types.run import ModelCall, ToolCall
 from toolang.execution.events import (
     RunBegin,
     RunEnd,
@@ -27,15 +28,37 @@ from toolang.execution.types import (
     ControlRef,
     ControlTiming,
     ControlKind,
+    IterationOccurrence,
     RunStatus,
+    ModelStepGiven,
+    ModelStepNoted,
+    ModelTokenCount,
+    ModelTokenPrice,
+    Occurrence,
+    OccurrencePosition,
+    StepGiven,
     StepKind,
+    StepNoted,
     StepStatus,
     StepPath,
     Local,
     Pointer,
+    ToolStepGiven,
+)
+from toolang.lang.ast import (
+    AskStmt,
+    LetStmt,
+    MapStmt,
+    RepeatStmt,
+    RunStmt,
+    SeekStmt,
+    Span,
 )
 from toolang.lang.input import RunnableInput
 from toolang.lang.types import Array
+
+
+_TEST_STATE = "0" * 64
 
 
 def persist_event(store: RunStore, event: RunEvent) -> None:
@@ -100,11 +123,8 @@ def accept_run_start(
         runnable=resolved_bindings.runnable or "agic:test",
         model=resolved_bindings.model or "test",
         locals=tuple(locals_value),
-        placement=(
-            dict(value)
-            if isinstance((value := context.get("placement")), Mapping)
-            else None
-        ),
+        occurrence=_occurrence_from_context(context),
+        state=_TEST_STATE,
         request_id=request_id,
         created_at=created_at,
         kind=kind,
@@ -157,11 +177,8 @@ def project_run_start(
         ),
         model="test",
         locals=(Local.typed("Part[]", tuple(input.parts), "_", 0),),
-        placement=(
-            dict(value)
-            if isinstance((value := run_context.get("placement")), Mapping)
-            else None
-        ),
+        occurrence=_occurrence_from_context(run_context),
+        state=_TEST_STATE,
         request_id=request_id,
         created_at=created,
     )
@@ -176,11 +193,7 @@ def project_run_start(
                 if executable_name is not None
                 else f"{executable_kind}:test"
             ),
-            placement=(
-                dict(value)
-                if isinstance((value := run_context.get("placement")), Mapping)
-                else None
-            ),
+            occurrence=_occurrence_from_context(run_context),
             started_at=started,
         ),
     )
@@ -257,8 +270,8 @@ def project_step(
             step=path,
             kind=kind,
             input=tuple(input),
-            placement=None,
-            given=dict(context or {}),
+            occurrence=_occurrence_from_context(context or {}),
+            given=_step_given(kind, context),
             started_at=started_at,
         ),
     )
@@ -274,7 +287,7 @@ def project_step(
                     if isinstance(output, Local) or output is None
                     else Local.typed("Part[]", tuple(output), "_", 0)
                 ),
-                noted=dict(detail or {}),
+                noted=_step_noted(kind, detail),
                 error=error,
                 finished_at=finished_at or started_at,
             ),
@@ -286,6 +299,141 @@ def project_step(
     if step is None:
         raise AssertionError(f"step was not projected: {path}")
     return step
+
+
+def _step_given(
+    kind: StepKind,
+    context: Mapping[str, Any] | None,
+) -> StepGiven:
+    """Build minimal typed begin facts for persistence-focused tests."""
+
+    facts = context or {}
+    if kind == "model":
+        model = facts.get("model")
+        identity = (
+            str(model.get("ref") or model.get("name") or "test")
+            if isinstance(model, Mapping)
+            else str(model or "test")
+        )
+        return ModelStepGiven(
+            model=identity,
+            call=ModelCall(instructions="", messages=[]),
+        )
+    if kind == "tool":
+        plugin = str(facts.get("plugin") or facts.get("tool") or "test")
+        return ToolStepGiven(
+            plugin=plugin,
+            call=ToolCall(
+                tool_call_id=str(facts.get("tool_call_id") or "test-call"),
+                call_id=str(facts.get("call_id") or "test-call"),
+                name=str(facts.get("name") or "test"),
+                input={},
+            ),
+        )
+
+    span = Span(line=1)
+    if kind == "value":
+        return LetStmt(span=span, value="test")
+    if kind == "run":
+        return RunStmt(span=span, runnable="agic:test")
+    if kind == "agent":
+        return SeekStmt(span=span, name="test", runnable="agic:test")
+    if kind == "human":
+        return AskStmt(span=span, request="test")
+    if kind == "par":
+        return MapStmt(span=span, runnable="agic:test")
+    if kind == "loop":
+        return RepeatStmt(span=span, count=1)
+    raise AssertionError(f"unsupported test Step kind: {kind}")
+
+
+def _step_noted(
+    kind: StepKind,
+    detail: Mapping[str, Any] | None,
+) -> StepNoted:
+    """Convert legacy accounting details at the test boundary."""
+
+    if kind != "model":
+        return None
+    facts = detail or {}
+    raw_tokens = facts.get("tokens")
+    tokens = (
+        ModelTokenCount(
+            input=int(raw_tokens.get("input", 0)),
+            output=int(raw_tokens.get("output", 0)),
+        )
+        if isinstance(raw_tokens, Mapping)
+        else None
+    )
+    raw_price = facts.get("price")
+    price = (
+        ModelTokenPrice(
+            input=_optional_text(raw_price.get("input")),
+            output=_optional_text(raw_price.get("output")),
+        )
+        if isinstance(raw_price, Mapping)
+        else None
+    )
+    raw_state = facts.get("state")
+    return ModelStepNoted(
+        tokens=tokens,
+        price=price,
+        cost=_optional_text(facts.get("cost")),
+        state=dict(raw_state) if isinstance(raw_state, Mapping) else None,
+    )
+
+
+def _optional_text(value: object) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _occurrence_from_context(context: Mapping[str, Any]) -> Occurrence | None:
+    raw = context.get("occurrence", context.get("placement"))
+    if isinstance(raw, Occurrence):
+        return raw
+    if not isinstance(raw, Mapping):
+        return None
+    item = _occurrence_position(raw, "item", "items")
+    lane = _occurrence_position(raw, "lane", "lanes")
+    raw_iteration = raw.get("iteration", raw.get("iter"))
+    iteration = None
+    if isinstance(raw_iteration, IterationOccurrence):
+        iteration = raw_iteration
+    elif isinstance(raw_iteration, int) and not isinstance(raw_iteration, bool):
+        raw_count = raw.get("iterations", raw.get("iters"))
+        count = (
+            raw_count
+            if isinstance(raw_count, int)
+            and not isinstance(raw_count, bool)
+            and raw_count > raw_iteration >= 0
+            else None
+        )
+        iteration = IterationOccurrence(
+            index=max(raw_iteration, 0),
+            count=count,
+            phase="until" if raw_iteration < 0 else "body",
+        )
+    if item is None and lane is None and iteration is None:
+        return None
+    return Occurrence(item=item, lane=lane, iteration=iteration)
+
+
+def _occurrence_position(
+    raw: Mapping[str, Any],
+    index_name: str,
+    count_name: str,
+) -> OccurrencePosition | None:
+    index = raw.get(index_name)
+    count = raw.get(count_name)
+    if (
+        isinstance(index, int)
+        and not isinstance(index, bool)
+        and isinstance(count, int)
+        and not isinstance(count, bool)
+        and 0 <= index < count
+    ):
+        return OccurrencePosition(index=index, count=count)
+    return None
 
 
 def project_run_end(

@@ -38,6 +38,7 @@ from toolang.execution.records import (
 )
 from toolang.execution.schemas import RunDetail, ThreadDetail
 from toolang.execution.types import ControlRef, Local, StepPath, Pointer
+from toolang.lang.ast import LetStmt, RunStmt, Span
 from toolang.up import AgentCore
 from tests.support.execution_fixtures import project_run_start, project_step
 from tests.support.execution_harness import ExecutionHarness
@@ -433,6 +434,7 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
             StepBegin(
                 step=StepPath.parse("run_test/0"),
                 kind="run",
+                given=RunStmt(span=Span(line=1), runnable="agic:test"),
                 started_at="2026-01-01T00:00:01Z",
             ),
             RunBegin(
@@ -443,6 +445,7 @@ def test_live_relay_preserves_complete_root_run_tree_order() -> None:
             StepBegin(
                 step=StepPath.parse("run_child/0"),
                 kind="value",
+                given=LetStmt(span=Span(line=1), value="test"),
                 started_at="2026-01-01T00:00:03Z",
             ),
             StepEnd(

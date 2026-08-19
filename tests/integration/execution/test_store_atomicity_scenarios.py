@@ -24,7 +24,8 @@ from toolang.execution.records import (
     StartControlPayload,
 )
 from toolang.execution.store import RunStore
-from toolang.execution.types import Local, RunStatus, StepPath, Pointer
+from toolang.execution.types import Local, ModelStepGiven, RunStatus, StepPath, Pointer
+from toolang.lang.ast import LetStmt, Span
 
 
 def _execute_sql(db_path: Path, sql: str) -> None:
@@ -49,12 +50,12 @@ def _table_count(db_path: Path, table: str) -> int:
     ("table", "column", "invalid", "message"),
     (
         ("runs", "output", "[]", "stored run output must be an object"),
-        ("runs", "placement", "[]", "stored run placement must be an object"),
+        ("runs", "occurrence", "[]", "stored run occurrence must be an object"),
         ("steps", "input", "{}", "stored step input must be an array"),
         ("steps", "output", "[]", "stored step output must be an object"),
-        ("steps", "placement", "[]", "stored step placement must be an object"),
+        ("steps", "occurrence", "[]", "stored step occurrence must be an object"),
         ("steps", "given", "[]", "stored step given must be an object"),
-        ("steps", "noted", "[]", "stored step noted must be an object"),
+        ("steps", "noted", "[]", "value Step noted must be null"),
     ),
 )
 def test_corrupted_run_and_step_fields_are_rejected(
@@ -257,6 +258,24 @@ def test_retry_reopens_root_from_a_failed_value_step(
         start = store.get_run_control(run_id=run.id, index=0)
         assert start is not None
         assert isinstance(start.payload, StartControlPayload)
+        with pytest.raises(
+            ValueError,
+            match="retry state no longer matches original run.*use rerun",
+        ):
+            store.accept_retry(
+                run_id=run.id,
+                anchor=None,
+                resources=start.payload.resources,
+                limits=start.payload.limits,
+                runnable=start.payload.runnable,
+                model=start.payload.model,
+                locals=start.payload.locals,
+                state="different-state",
+                request_id="retry-mismatch",
+                created_at="2026-01-01T00:00:03Z",
+            )
+        unchanged = store.get_run(run_id=run.id)
+        assert unchanged is not None and unchanged.status == "failed"
         reopened, control, ejected = store.accept_retry(
             run_id=run.id,
             anchor=None,
@@ -265,6 +284,7 @@ def test_retry_reopens_root_from_a_failed_value_step(
             runnable=start.payload.runnable,
             model=start.payload.model,
             locals=start.payload.locals,
+            state=start.payload.state,
             request_id="retry-1",
             created_at="2026-01-01T00:00:03Z",
         )
@@ -372,6 +392,7 @@ def test_retry_anchor_selection_distinguishes_run_outcomes_and_explicit_values(
             runnable=start.payload.runnable,
             model=start.payload.model,
             locals=start.payload.locals,
+            state=start.payload.state,
             request_id=None,
             created_at="2026-01-01T00:00:03Z",
         )
@@ -472,8 +493,8 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
                     path=StepPath("run_atomic_event", (0,)),
                     kind="value",
                     input=(Pointer.control("run_atomic_event", control.index, "_"),),
-                    placement=None,
-                    given={},
+                    occurrence=None,
+                    given=LetStmt(span=Span(line=1), value="test"),
                     started_at="2026-01-01T00:00:02Z",
                 )
                 store.finish_run_controls(
@@ -520,31 +541,15 @@ def test_model_blobs_roll_back_when_the_model_step_cannot_be_inserted(
                 ),
             ),
         )
-        target = {
-            "ref": "test/model",
-            "provider": "test",
-            "name": "model",
-            "model": "model",
-            "adapter": "test",
-            "base_url": None,
-            "scope": None,
-            "tags": [],
-            "options": {},
-            "tools": True,
-            "streaming": False,
-        }
-
         with pytest.raises(sqlite3.IntegrityError):
-            with store.write_transaction():
-                given = store.capture_model_call(target=target, call=call)
-                store.begin_step(
-                    path=StepPath("run_atomic_model", (0,)),
-                    kind="model",
-                    input=(),
-                    placement=None,
-                    given=given,
-                    started_at="2026-01-01T00:00:00Z",
-                )
+            store.begin_step(
+                path=StepPath("run_atomic_model", (0,)),
+                kind="model",
+                input=(),
+                occurrence=None,
+                given=ModelStepGiven(model="test/model", call=call),
+                started_at="2026-01-01T00:00:00Z",
+            )
 
         assert _table_count(store.db_path, "model_texts") == 0
         assert _table_count(store.db_path, "model_messages") == 0

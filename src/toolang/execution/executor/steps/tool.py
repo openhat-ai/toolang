@@ -17,7 +17,7 @@ from toolang.common.layout import AgentLayout
 from toolang.common.time import elapsed_ms, utc_now
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
-from ...types import Local, StepPath, Pointer
+from ...types import Local, Pointer, StepPath, ToolStepGiven
 from ..common import _StepFailed
 from ..diagnostics import log_tool_call_input, log_tool_call_output
 
@@ -65,12 +65,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             step=StepPath(run.run_id, (step_index,)),
             kind="tool",
             input=step_input,
-            given={
-                "tool": call.name,
-                "plugin": plugin_name,
-                "tool_call_id": call.tool_call_id,
-                "call_id": call.call_id,
-            },
+            given=ToolStepGiven(plugin=plugin_name, call=call),
             started_at=started_at,
         )
     )

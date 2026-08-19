@@ -9,6 +9,7 @@ from toolang.common.errors import ToolangError
 from toolang.lang.ast import SeekStmt
 
 from ...records import RunControlRecord, StepPath
+from ...types import Occurrence
 from ..common import BoundRun
 from ..common import Local
 from ..steps import agent as agent_step
@@ -24,9 +25,9 @@ async def execute(
     path: StepPath,
     statement: SeekStmt,
     controls: Sequence[RunControlRecord],
-    placement: Mapping[str, object] | None,
+    occurrence: Occurrence | None,
 ) -> Local:
-    async def operation() -> Local:
+    async def evaluate() -> Local:
         raise ToolangError("seek requires an agent execution bridge")
 
     return await agent_step.execute(
@@ -36,6 +37,6 @@ async def execute(
         statement=statement,
         locals=locals,
         controls=controls,
-        placement=placement,
-        operation=operation,
+        occurrence=occurrence,
+        evaluate=evaluate,
     )

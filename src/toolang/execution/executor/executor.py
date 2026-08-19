@@ -19,7 +19,6 @@ from toolang.base.types.message import Message, TextPart
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
 from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt, Parameter, RepeatStmt
-from toolang.lang.format import format_statement_head
 from toolang.lang.input import (
     RunnableInput,
     resolve_runnable_input,
@@ -47,6 +46,9 @@ from ..types import (
     ControlKind,
     StepPath,
     Pointer,
+    ModelStepNoted,
+    Occurrence,
+    OccurrencePosition,
     TypedPointer,
 )
 from ..runnables import parse_runnable_ref, resolve_runnable
@@ -215,10 +217,11 @@ class RunExecutor:
             thread=bound.thread,
             resources=resources,
             limits=bound.limits,
+            state=bound.state.fingerprint,
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             locals=bound.control_locals,
-            placement=bound.placement,
+            occurrence=bound.occurrence,
             request_id=request_id,
             created_at=bound.created_at,
         )
@@ -264,10 +267,11 @@ class RunExecutor:
             thread=bound.thread,
             resources=resources,
             limits=bound.limits,
+            state=bound.state.fingerprint,
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             locals=bound.control_locals,
-            placement=bound.placement,
+            occurrence=bound.occurrence,
             request_id=request_id,
             created_at=bound.created_at,
             kind="rerun",
@@ -292,6 +296,7 @@ class RunExecutor:
 
         self._require_available()
         loop = asyncio.get_running_loop()
+        self._require_retry_state(run_id, state)
         spec = self._source_spec(
             run_id,
             setup=setup,
@@ -314,6 +319,7 @@ class RunExecutor:
             anchor=StepPath.parse(anchor) if anchor is not None else None,
             resources=resources,
             limits=bound.limits,
+            state=bound.state.fingerprint,
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             locals=bound.control_locals,
@@ -384,6 +390,25 @@ class RunExecutor:
                 ),
             ),
         )
+
+    def _require_retry_state(self, run_id: str, state: AgentState) -> None:
+        """Reject retry before mutation when its program snapshot changed."""
+
+        run = self.store.get_run(run_id=run_id)
+        if run is None or run.parent is not None:
+            raise ValueError(f"root run not found: {run_id}")
+        control = self.store.get_run_control(
+            run_id=run.control.target,
+            index=run.control.index,
+        )
+        if control is None or not isinstance(
+            control.payload, PreparationControlPayload
+        ):
+            raise ValueError(f"run preparation not found: {run_id}")
+        if control.payload.state != state.fingerprint:
+            raise ValueError(
+                f"retry state no longer matches original run: {run_id}; use rerun"
+            )
 
     def _launch(
         self,
@@ -838,18 +863,10 @@ class _Execution:
             for step in steps
             if step.kind == "model" and step.status == "succeeded"
         ):
-            tokens = step.noted.get("tokens")
-            input_tokens = (
-                int(tokens["input"])
-                if isinstance(tokens, Mapping) and tokens.get("input") is not None
-                else None
-            )
-            output_tokens = (
-                int(tokens["output"])
-                if isinstance(tokens, Mapping) and tokens.get("output") is not None
-                else None
-            )
-            raw_cost = step.noted.get("cost")
+            noted = step.noted if isinstance(step.noted, ModelStepNoted) else None
+            input_tokens = noted.tokens.input if noted and noted.tokens else None
+            output_tokens = noted.tokens.output if noted and noted.tokens else None
+            raw_cost = noted.cost if noted is not None else None
             try:
                 cost = Decimal(str(raw_cost)) if raw_cost is not None else None
             except InvalidOperation:
@@ -943,9 +960,7 @@ class _Execution:
                 control=ControlRef(binding.run_id, binding.control_index),
                 runnable=_bound_runnable(binding),
                 parent=binding.parent,
-                placement=(
-                    dict(binding.placement) if binding.placement is not None else None
-                ),
+                occurrence=binding.occurrence,
                 started_at=utc_now(),
             )
         )
@@ -1060,13 +1075,9 @@ class _Execution:
             raise ValueError(f"retry prefix exceeds flow body: {binding.run_id}")
         for index, step in enumerate(committed):
             statement = flow.stmts[index]
-            source = step.given.get("source")
-            if not isinstance(source, Mapping) or (
-                source.get("line") != statement.span.line
-                or source.get("head") != format_statement_head(statement)
-            ):
+            if step.given != statement:
                 raise ValueError(
-                    f"retry prefix no longer matches flow source: {step.path}"
+                    f"retry prefix no longer matches flow statement: {step.path}"
                 )
             if step.status != "succeeded":
                 raise ValueError(f"retry prefix step is not committed: {step.path}")
@@ -1084,9 +1095,10 @@ class _Execution:
                         )
                     self._restore_step_local(binding.run_id, descendant, current)
                 continue
+            if statement.binding is None:
+                continue
             local = _step_local(step, self.store)
-            if statement.binding is not None:
-                current[statement.binding] = local
+            current[statement.binding] = local
             if statement.binding == "_":
                 self.record_output(binding.run_id, local.ref or Pointer.step(step.path))
         return current, len(committed)
@@ -1112,7 +1124,7 @@ class _Execution:
         locals: Mapping[str, Local],
         step: StepPath,
         name: str,
-        placement: Mapping[str, object] | None,
+        occurrence: Occurrence | None,
         *,
         output_name: str | None = "_",
     ) -> Local:
@@ -1125,7 +1137,7 @@ class _Execution:
             executable,
             locals,
             parent_step=step,
-            placement=placement,
+            occurrence=occurrence,
         )
         binding = _prepare_child_run(binding, executable)
         resources = binding.resources
@@ -1137,10 +1149,11 @@ class _Execution:
             thread=binding.thread,
             resources=resources,
             limits=binding.limits,
+            state=binding.state.fingerprint,
             runnable=_bound_runnable(binding),
             model=_bound_model(binding),
             locals=binding.control_locals,
-            placement=binding.placement,
+            occurrence=binding.occurrence,
             request_id=None,
             created_at=binding.created_at,
         )
@@ -1210,12 +1223,10 @@ class _Execution:
                     child_locals,
                     parent,
                     runnable,
-                    {
-                        "item": index,
-                        "items": len(inputs),
-                        "lane": lane,
-                        "lanes": lanes,
-                    },
+                    Occurrence(
+                        item=OccurrencePosition(index=index, count=len(inputs)),
+                        lane=OccurrencePosition(index=lane, count=lanes),
+                    ),
                 )
             finally:
                 available_lanes.put_nowait(lane)
@@ -1257,7 +1268,7 @@ class _Execution:
         *,
         parent: StepPath,
         start: int = 0,
-        placement: Mapping[str, object] | None = None,
+        occurrence: Occurrence | None = None,
     ) -> int:
         """Delegate nested statement execution to the flow run implementation."""
 
@@ -1270,7 +1281,7 @@ class _Execution:
             locals,
             parent=parent,
             start=start,
-            placement=placement,
+            occurrence=occurrence,
         )
 
     def pending_controls(
@@ -1366,7 +1377,7 @@ def _child_binding(
     locals: Mapping[str, Local],
     *,
     parent_step: StepPath,
-    placement: Mapping[str, object] | None,
+    occurrence: Occurrence | None,
 ) -> BoundRun:
     structs = {item.name: item for item in parent.state.program.structs}
     source_locals: dict[str, Local] = {}
@@ -1434,7 +1445,7 @@ def _child_binding(
         created_at=utc_now(),
         call="run",
         parent=parent_step,
-        placement=dict(placement or {}),
+        occurrence=occurrence,
     )
 
 

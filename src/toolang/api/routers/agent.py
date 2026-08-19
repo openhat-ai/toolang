@@ -1,6 +1,5 @@
 """Formal agent inspection routes."""
 
-from collections.abc import Mapping
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
@@ -9,6 +8,7 @@ from toolang.api.app import AgentCoreDep
 from toolang.common.errors import ToolangError
 from toolang.execution.runnables import effective_agics, runnable_binding_defaults
 from toolang.execution.schemas import ThreadInfo
+from toolang.execution.types import ModelStepNoted
 from toolang.execution.executor.resources import agent_model_targets
 from toolang.up import AgentCore, process as agents
 
@@ -92,10 +92,9 @@ def _profile_metrics(core: AgentCore) -> dict[str, object]:
             step_total += 1
             if step.kind == "model":
                 model_total += 1
-                tokens = step.noted.get("tokens")
-                if isinstance(tokens, Mapping):
-                    input_tokens += int(tokens.get("input", 0) or 0)
-                    output_tokens += int(tokens.get("output", 0) or 0)
+                if isinstance(step.noted, ModelStepNoted) and step.noted.tokens:
+                    input_tokens += step.noted.tokens.input
+                    output_tokens += step.noted.tokens.output
             elif step.kind == "tool":
                 tool_total += 1
             else:

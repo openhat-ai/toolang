@@ -27,7 +27,11 @@ from toolang.execution.events import (
 )
 from toolang.execution.executor import AgentCeiling, RunExecutor, RunSpec
 from toolang.execution.executor.resources import resolve_agent_resources
-from toolang.execution.executor.common import BoundRun, Local
+from toolang.execution.executor.common import (
+    BoundRun,
+    Local,
+    transform_flow_result,
+)
 from toolang.execution.executor.executor import _Execution
 from toolang.execution.executor.runs import agic as agic_run
 from toolang.execution.history import RunHistory
@@ -42,6 +46,7 @@ from toolang.execution.threads import ThreadManager
 from toolang.execution.types import (
     ControlRef,
     Local as RecordLocal,
+    Occurrence,
     StepPath,
     ThreadPrefix,
     Pointer,
@@ -137,6 +142,31 @@ def _model_setup() -> AgentSetup:
     )
 
 
+def test_flow_item_transform_normalizes_a_list_result_to_dim_zero() -> None:
+    pointer = Pointer.run("run_child")
+    evaluated = Local(
+        ["one", "two"],
+        "list",
+        ref=pointer,
+        type_name="Text",
+        record=RecordLocal.typed("Text[]", pointer, dim=1),
+    )
+
+    result = transform_flow_result(
+        RunStmt(span=Span(line=1), runnable="flow:child"),
+        {},
+        evaluated,
+    )
+
+    assert result == Local(
+        ["one", "two"],
+        "item",
+        ref=pointer,
+        type_name="Text[]",
+        record=RecordLocal.typed("Text[]", pointer, dim=0),
+    )
+
+
 def _spec(
     *,
     setup: AgentSetup,
@@ -171,19 +201,10 @@ def _spec(
 
 def _capture_model_text(store: RunStore, body: str) -> str:
     captured = store.capture_model_call(
-        target={
-            "ref": "test/model",
-            "provider": "test",
-            "name": "model",
-            "model": "model",
-            "adapter": "test",
-        },
+        model="test/model",
         call=ModelCall(instructions=body, messages=[]),
     )
-    call = captured.get("call")
-    if not isinstance(call, dict) or not isinstance(call.get("instructions"), str):
-        raise AssertionError("captured model instructions are missing")
-    return call["instructions"]
+    return captured.call.instructions
 
 
 async def _start(
@@ -797,18 +818,18 @@ def test_parallel_children_reuse_the_lane_that_finished(
     execution = _Execution(executor, root=binding, emit=emit)
     started: asyncio.Queue[int] = asyncio.Queue()
     gates = [asyncio.Event() for _index in range(5)]
-    placements: dict[int, dict[str, object]] = {}
+    occurrences: dict[int, Occurrence] = {}
 
     async def execute_child(
         _parent: BoundRun,
         child_locals: dict[str, Local],
         _step: str,
         _name: str,
-        placement: dict[str, object] | None,
+        occurrence: Occurrence | None,
     ) -> Local:
         item = cast(int, child_locals["_"].value)
-        assert placement is not None
-        placements[item] = placement
+        assert occurrence is not None
+        occurrences[item] = occurrence
         started.put_nowait(item)
         await gates[item].wait()
         return Local(item, "item", type_name="Number")
@@ -831,7 +852,7 @@ def test_parallel_children_reuse_the_lane_that_finished(
             assert first == {0, 1, 2, 3}
             gates[2].set()
             assert await asyncio.wait_for(started.get(), timeout=1) == 4
-            assert placements[4]["lane"] == placements[2]["lane"]
+            assert occurrences[4].lane == occurrences[2].lane
         finally:
             for gate in gates:
                 gate.set()
@@ -867,10 +888,7 @@ def test_flow_step_events_record_only_values_read_by_the_statement(
         if step.parent is None
     ]
     assert [step.input for step in steps] == [(), ()]
-    assert [step.given["source"] for step in steps] == [
-        {"line": 4, "head": "run child"},
-        {"line": 5, "head": "run child"},
-    ]
+    assert [step.given for step in steps] == list(parent.stmts)
     asyncio.run(executor.shutdown())
 
 
@@ -1316,6 +1334,7 @@ def test_implicit_thread_anchor_ignores_child_runs(tmp_path: Path) -> None:
             StepBegin(
                 step=StepPath.parse("run_root/0"),
                 kind="run",
+                given=RunStmt(span=Span(line=1), runnable="flow:test"),
                 input=(Pointer.control("run_root", 0, "_"),),
                 started_at="2026-01-01T00:00:02Z",
             )
@@ -1706,6 +1725,7 @@ def test_private_event_projector_persists_run_and_step_records(
         StepBegin(
             step=StepPath.parse("run_test/0"),
             kind="value",
+            given=LetStmt(span=Span(line=1), value="done"),
             input=(Pointer.control("run_test", 0, "_"),),
             started_at="2026-01-01T00:00:02Z",
         )
@@ -1763,6 +1783,7 @@ def test_step_queries_use_exact_canonical_run_ids(tmp_path: Path) -> None:
             StepBegin(
                 step=StepPath.parse(f"{run_id}/0"),
                 kind="value",
+                given=LetStmt(span=Span(line=1), value=text),
                 started_at="2026-01-01T00:00:02Z",
             )
         )

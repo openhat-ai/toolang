@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from toolang.lang.ast import MapStmt
 
 from ...records import RunControlRecord, StepPath
+from ...types import Occurrence
 from ..common import BoundRun
 from ..common import Local, require_list
 from ..steps import par as par_step
@@ -23,9 +24,9 @@ async def execute(
     path: StepPath,
     statement: MapStmt,
     controls: Sequence[RunControlRecord],
-    placement: Mapping[str, object] | None,
+    occurrence: Occurrence | None,
 ) -> Local:
-    async def operation() -> Local:
+    async def evaluate() -> Local:
         items = require_list(locals, operation="map")
         return await execution.parallel_children(
             binding,
@@ -33,7 +34,7 @@ async def execute(
             path,
             statement.runnable,
             items,
-            limit=statement.par,
+            limit=statement.lanes,
         )
 
     return await par_step.execute(
@@ -43,6 +44,6 @@ async def execute(
         statement=statement,
         locals=locals,
         controls=controls,
-        placement=placement,
-        operation=operation,
+        occurrence=occurrence,
+        evaluate=evaluate,
     )

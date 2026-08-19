@@ -14,7 +14,7 @@ from .console import ProgressConsole, Tone
 from ..execution_progress.formatting import (
     count,
     elapsed,
-    integer,
+    flow_statement,
     model_label,
     one_line,
     output_preview,
@@ -26,7 +26,6 @@ from ..execution_progress.formatting import (
     statement_result_level,
     statement_target,
     status_label,
-    text,
     tool_exit_code,
     tool_label,
     tool_result,
@@ -311,7 +310,9 @@ class StatementBlock(StatementState):
             index = statement_index(self.begin.step)
         heading = f"[{index}] {statement_head(self.begin.given)}"
         console.write(f"{' ' * self.base_indent}{heading}")
-        if verbosity >= 1 and (doc := text(self.begin.given.get("doc"))):
+        statement = flow_statement(self.begin.given)
+        if verbosity >= 1 and statement is not None and statement.doc:
+            doc = statement.doc
             console.wrapped(doc, prefix=" " * self.content_indent)
             console.blank()
 
@@ -482,7 +483,9 @@ class StatementBlock(StatementState):
             completed_iterations = (
                 self.current_iteration + 1 if self.current_iteration is not None else 0
             )
-            limit = integer(self.begin.given.get("count"))
+            statement = flow_statement(self.begin.given)
+            raw_limit = getattr(statement, "count", None)
+            limit = raw_limit if isinstance(raw_limit, int) else None
             stopped_early = self.until_decision is True and (
                 limit is None or completed_iterations < limit
             )

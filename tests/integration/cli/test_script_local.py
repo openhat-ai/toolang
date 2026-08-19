@@ -159,7 +159,7 @@ def test_local_script_renders_composite_flow_progress(
         assert "Run agic expand" in output.err
         assert '· ["one","two"]' in output.err
         assert "--- run_" in output.err
-        assert "2-item list returned" in output.err
+        assert "list returned" in output.err
         assert "~~~" not in output.err
     finally:
         asyncio.run(harness.executor.shutdown())

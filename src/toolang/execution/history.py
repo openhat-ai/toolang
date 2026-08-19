@@ -12,6 +12,7 @@ from .records import (
     RunControlRecord,
     RunRecord,
     StepRecord,
+    StoredModelStepGiven,
 )
 from .schemas import RunDetail, RunInfo, ThreadDetail, ThreadInfo
 from .store import RunStore
@@ -225,9 +226,7 @@ class RunHistory:
 
 
 def _model_steps(steps: Sequence[StepRecord]) -> tuple[StepRecord, ...]:
-    return tuple(
-        step for step in steps if step.kind == "model" and "call" in step.given
-    )
+    return tuple(step for step in steps if isinstance(step.given, StoredModelStepGiven))
 
 
 def _validate_limit(limit: int | None) -> None:

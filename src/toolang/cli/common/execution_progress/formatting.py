@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import json
 import re
-from typing import Any, cast
+from typing import cast
 
 from toolang.base.types.message import (
     AudioPart,
@@ -18,18 +17,24 @@ from toolang.base.types.message import (
 )
 from toolang.execution.events import StepBegin, StepEnd
 from toolang.execution.records import execution_error_message
-from toolang.execution.types import StepPath
+from toolang.execution.types import (
+    ModelStepGiven,
+    ModelStepNoted,
+    StepGiven,
+    StepNoted,
+    StepPath,
+    ToolStepGiven,
+)
+from toolang.lang.ast import (
+    FlowStmt,
+    KeepStmt,
+    RankStmt,
+    SeekStmt,
+)
+from toolang.lang.format import format_statement_head
 from toolang.lang.types import Array
 
 from ..output import parse_utc_timestamp
-
-
-def mapping(value: object) -> Mapping[str, Any]:
-    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
-
-
-def text(value: object) -> str:
-    return value.strip() if isinstance(value, str) else ""
 
 
 def integer(value: object) -> int | None:
@@ -87,13 +92,10 @@ def token_fact(input_tokens: int, output_tokens: int) -> str:
     return f"{compact_count(input_tokens)}/{compact_count(output_tokens)} tokens"
 
 
-def usage_facts(noted: Mapping[str, Any]) -> list[str]:
-    tokens = mapping(noted.get("tokens"))
-    input_tokens = integer(tokens.get("input"))
-    output_tokens = integer(tokens.get("output"))
-    if input_tokens is None and output_tokens is None:
+def usage_facts(noted: StepNoted) -> list[str]:
+    if not isinstance(noted, ModelStepNoted) or noted.tokens is None:
         return []
-    return [token_fact(input_tokens or 0, output_tokens or 0)]
+    return [token_fact(noted.tokens.input, noted.tokens.output)]
 
 
 def part_lines(parts: tuple[Part, ...]) -> list[str]:
@@ -132,13 +134,12 @@ def output_preview(event: StepEnd) -> str:
     return truncate(one_line(value), 180)
 
 
-def model_label(given: Mapping[str, Any]) -> str:
-    model = mapping(given.get("model"))
-    return text(model.get("ref")) or text(model.get("model")) or "model"
+def model_label(given: StepGiven) -> str:
+    return given.model if isinstance(given, ModelStepGiven) else "model"
 
 
-def tool_label(given: Mapping[str, Any]) -> str:
-    return text(given.get("tool")) or "tool"
+def tool_label(given: StepGiven) -> str:
+    return given.call.name if isinstance(given, ToolStepGiven) else "tool"
 
 
 def tool_result(event: StepEnd) -> str:
@@ -201,19 +202,29 @@ def completed_step_label(begin: StepBegin, event: StepEnd) -> str:
     return f"{begin.kind} completed"
 
 
-def statement_head(given: Mapping[str, Any]) -> str:
-    source = mapping(given.get("source"))
-    return text(source.get("head")) or "statement"
+def statement_head(given: StepGiven) -> str:
+    statement = flow_statement(given)
+    return format_statement_head(statement) if statement is not None else "statement"
 
 
-def statement_target(given: Mapping[str, Any]) -> str:
+def statement_target(given: StepGiven) -> str:
+    statement = flow_statement(given)
+    if statement is None:
+        return ""
     target = (
-        text(given.get("runnable"))
-        or text(given.get("predicate"))
-        or text(given.get("scorer"))
-        or text(given.get("agent"))
+        statement.name
+        if isinstance(statement, SeekStmt)
+        else getattr(statement, "runnable", None)
     )
+    if not isinstance(target, str):
+        return ""
     return runnable_label(target)
+
+
+def flow_statement(given: StepGiven) -> FlowStmt | None:
+    """Return the Flow statement carried directly by one Step given value."""
+
+    return None if isinstance(given, ModelStepGiven | ToolStepGiven) else given
 
 
 def runnable_label(value: str) -> str:
@@ -228,82 +239,94 @@ def statement_index(step: StepPath) -> int:
 
 
 def shape_label(event: StepEnd) -> str:
-    shape = text(event.noted.get("shape"))
-    items = integer(event.noted.get("items"))
-    if shape == "list" or items is not None:
+    if event.output is None:
+        return ""
+    items = output_item_count(event)
+    if event.output.dim == 1:
         return f"{items}-item list" if items is not None else "list"
-    if shape == "item" or event.output:
-        return "1 item"
-    return ""
+    return "1 item"
 
 
-def statement_result_level(given: Mapping[str, Any]) -> int | None:
+def statement_result_level(given: StepGiven) -> int | None:
     """Return the minimum verbosity for one successful statement result."""
 
-    statement = text(given.get("statement"))
-    if statement in {"run", "repeat"}:
+    statement = flow_statement(given)
+    if statement is None:
         return None
-    if statement in {"scatter", "keep", "drop"}:
+    kind = statement.kind
+    if kind in {"run", "repeat"}:
+        return None
+    if kind in {"scatter", "keep", "drop"}:
         return 0
-    if statement == "rank" and text(given.get("limit")):
+    if isinstance(statement, RankStmt) and statement.selection is not None:
         return 0
     return 2
 
 
 def statement_result(
-    given: Mapping[str, Any],
+    given: StepGiven,
     event: StepEnd,
     *,
     source_items: int | None,
 ) -> str:
     shape = shape_label(event)
-    statement = text(given.get("statement"))
-    items = integer(event.noted.get("items"))
-    source_count = integer(given.get("count"))
-    if statement in {"run", "repeat"}:
+    statement = flow_statement(given)
+    if statement is None:
         return ""
-    if statement == "scatter":
+    kind = statement.kind
+    items = output_item_count(event)
+    source_count = getattr(statement, "count", None)
+    if kind in {"run", "repeat"}:
+        return ""
+    if kind == "scatter":
         effect = "scattered from 1 item"
-    elif statement == "storm":
+    elif kind == "storm":
         effect = f"produced by {source_count or items or 0} runs"
-    elif statement == "gather":
+    elif kind == "gather":
         effect = _list_source("gathered from", source_items)
-    elif statement == "settle":
+    elif kind == "settle":
         effect = _list_source("reduced from", source_items)
-    elif statement == "map":
+    elif kind == "map":
         effect = _list_source("mapped from", source_items)
-    elif statement in {"keep", "drop"}:
+    elif kind in {"keep", "drop"}:
         effect = _selection_result(
-            given,
+            statement,
             selected=items,
             source_items=source_items,
         )
-    elif statement == "rank":
+    elif kind == "rank":
         effect = _rank_result(
-            given,
+            cast(RankStmt, statement),
             selected=items,
             source_items=source_items,
         )
-    elif statement == "let":
+    elif kind == "let":
         effect = "perceived from authored content"
     else:
         effect = "produced"
     if not shape:
         return effect
-    binding = given.get("binding", "_")
-    result = f"{shape} discarded" if binding is None else f"{shape} saved to {binding}"
-    return " · ".join(value for value in (result, effect) if value)
+    result = (
+        f"{shape} discarded"
+        if statement.binding is None
+        else f"{shape} saved to {statement.binding}"
+    )
+    return f"{result} · {effect}"
 
 
 def _selection_result(
-    given: Mapping[str, Any],
+    given: FlowStmt,
     *,
     selected: int | None,
     source_items: int | None,
 ) -> str:
-    statement = text(given.get("statement"))
-    position = text(given.get("position"))
-    count_value = integer(given.get("count"))
+    statement = given.kind
+    position = (
+        given.position
+        if isinstance(given, KeepStmt)
+        else getattr(given, "position", None)
+    )
+    count_value = getattr(given, "count", None)
     if position and count_value is not None:
         actual = selected or 0
         location = "start" if position == "first" else "end"
@@ -319,14 +342,13 @@ def _selection_result(
 
 
 def _rank_result(
-    given: Mapping[str, Any],
+    given: RankStmt,
     *,
     selected: int | None,
     source_items: int | None,
 ) -> str:
-    limit = text(given.get("limit"))
-    if limit:
-        return f"{limit} {_fraction(selected, source_items)} items selected"
+    if given.selection:
+        return f"{given.selection} {_fraction(selected, source_items)} items selected"
     return "ranked"
 
 
@@ -342,3 +364,14 @@ def _list_source(
 def _fraction(selected: int | None, source_items: int | None) -> str:
     actual = selected or 0
     return f"{actual}/{source_items}" if source_items is not None else str(actual)
+
+
+def output_item_count(event: StepEnd) -> int | None:
+    """Return a concrete output count without resolving pointer-backed values."""
+
+    if event.output is None:
+        return None
+    value = event.output.value
+    if event.output.dim == 1 and isinstance(value, Array | tuple | list):
+        return len(value)
+    return 1 if event.output.dim == 0 else None

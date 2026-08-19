@@ -193,7 +193,7 @@ flow pipeline:
     assert isinstance(repeat, RepeatStmt)
     assert repeat.count == 2
     assert [statement.kind for statement in repeat.stmts] == ["run"]
-    assert repeat.until is not None
+    assert repeat.runnable is not None
 
 
 def test_inline_settle_exposes_the_current_item() -> None:

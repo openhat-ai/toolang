@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from toolang.lang.ast import GatherStmt
 
 from ...records import RunControlRecord, StepPath
+from ...types import Occurrence
 from ..common import BoundRun
 from ..common import Local, require_list
 from ..steps import run as run_step
@@ -24,11 +24,8 @@ async def execute(
     path: StepPath,
     statement: GatherStmt,
     controls: Sequence[RunControlRecord],
-    placement: Mapping[str, object] | None,
+    occurrence: Occurrence | None,
 ) -> Local:
-    def transform(result: Local) -> Local:
-        return replace(result, shape="item")
-
     return await run_step.execute(
         execution,
         binding=binding,
@@ -36,8 +33,7 @@ async def execute(
         statement=statement,
         locals=locals,
         controls=controls,
-        placement=placement,
+        occurrence=occurrence,
         runnable=statement.runnable,
-        transform=transform,
         validate=lambda: require_list(locals, operation="gather"),
     )

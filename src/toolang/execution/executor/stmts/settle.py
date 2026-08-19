@@ -9,6 +9,7 @@ from toolang.lang.ast import SettleStmt
 from toolang.base.types.message import TextPart
 
 from ...records import RunControlRecord, StepPath
+from ...types import Occurrence, OccurrencePosition
 from ..common import BoundRun
 from ..common import Local, require_list
 from ..steps import loop as loop_step
@@ -24,9 +25,9 @@ async def execute(
     path: StepPath,
     statement: SettleStmt,
     controls: Sequence[RunControlRecord],
-    placement: Mapping[str, object] | None,
+    occurrence: Occurrence | None,
 ) -> Local:
-    async def operation() -> Local:
+    async def evaluate() -> Local:
         source = locals.get("_", Local())
         item_type = source.type_name
         items = require_list(locals, operation="settle")
@@ -45,7 +46,9 @@ async def execute(
                 child_locals,
                 path,
                 statement.runnable,
-                {"item": index, "items": len(items), "iter": index},
+                Occurrence(
+                    item=OccurrencePosition(index=index, count=len(items)),
+                ),
             )
         return accumulator
 
@@ -56,6 +59,6 @@ async def execute(
         statement=statement,
         locals=locals,
         controls=controls,
-        placement=placement,
-        operation=operation,
+        occurrence=occurrence,
+        evaluate=evaluate,
     )

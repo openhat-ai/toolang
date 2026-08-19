@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Annotated, Any, Literal, cast
+from dataclasses import dataclass
+from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BeforeValidator, TypeAdapter, ValidationInfo
 
@@ -19,7 +19,8 @@ from toolang.base.types.message import (
     part_from_data,
 )
 from toolang.base.types.policy import RunLimits
-from toolang.base.types.run import ModelCall
+from toolang.base.types.run import ModelCall, ToolCall
+from toolang.lang.ast import FlowStmt, flow_stmt_from_data, to_data as ast_to_data
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 from .types import (
     ControlRef,
@@ -29,20 +30,34 @@ from .types import (
     AgentResources,
     Local,
     ExecutionError,
+    ModelStepGiven,
+    ModelStepNoted,
+    ModelTokenCount,
+    ModelTokenPrice,
+    Occurrence,
+    OccurrencePosition,
+    IterationOccurrence,
     RunId,
     RunStatus,
     StepKind,
+    StepGiven,
+    StepNoted,
     StepPath,
     StepStatus,
     ThreadPeerType,
+    ToolStepGiven,
     Pointer,
     TypedPointer,
     local_from_protocol_data,
+    validate_occurrence,
     validate_runtime_value,
+    validate_step_given,
+    validate_step_noted,
 )
 
 
 _MODEL_CALL_ADAPTER = TypeAdapter(ModelCall)
+_TOOL_CALL_ADAPTER = TypeAdapter(ToolCall)
 _RUN_LIMITS_ADAPTER = TypeAdapter(RunLimits)
 # Caller-facing names remain useful even though both references share one table.
 RunControlRef = ControlRef
@@ -58,13 +73,16 @@ class RunRecord:
     thread: str
     control: ControlRef
     output: Local | None
-    placement: dict[str, object] | None = None
+    occurrence: Occurrence | None = None
     status: RunStatus = "pending"
     error: ExecutionError | None = None
     ejected_by: ControlRef | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
+
+    def __post_init__(self) -> None:
+        validate_occurrence(self.occurrence)
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,12 +125,15 @@ class StartControlPayload:
 
     resources: AgentResources
     limits: RunLimits
+    state: str
     runnable: str
     model: str
     locals: tuple[Local, ...]
 
     def __post_init__(self) -> None:
-        _validate_preparation_payload(self.runnable, self.model, self.locals)
+        _validate_preparation_payload(
+            self.state, self.runnable, self.model, self.locals
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,13 +142,16 @@ class RerunControlPayload:
 
     resources: AgentResources
     limits: RunLimits
+    state: str
     runnable: str
     model: str
     locals: tuple[Local, ...]
     rerun_from: RunId
 
     def __post_init__(self) -> None:
-        _validate_preparation_payload(self.runnable, self.model, self.locals)
+        _validate_preparation_payload(
+            self.state, self.runnable, self.model, self.locals
+        )
         if not self.rerun_from:
             raise ValueError("rerun payload requires rerun_from")
 
@@ -138,13 +162,16 @@ class RetryControlPayload:
 
     resources: AgentResources
     limits: RunLimits
+    state: str
     runnable: str
     model: str
     locals: tuple[Local, ...] | None
     retry_from: StepPath | None
 
     def __post_init__(self) -> None:
-        _validate_preparation_payload(self.runnable, self.model, self.locals)
+        _validate_preparation_payload(
+            self.state, self.runnable, self.model, self.locals
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,22 +275,72 @@ class ThreadRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelCallRefs:
+    """Content-addressed durable references for one normalized model call."""
+
+    instructions: str
+    messages: tuple[str, ...]
+    tools: str | None
+    state: dict[str, Any] | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.instructions, str) or not self.instructions:
+            raise ValueError("stored model instructions require a reference")
+        if not all(isinstance(item, str) and item for item in self.messages):
+            raise ValueError("stored model messages require references")
+        if self.tools is not None and (
+            not isinstance(self.tools, str) or not self.tools
+        ):
+            raise ValueError("stored model tools require a reference or None")
+        if self.state is not None and not isinstance(self.state, dict):
+            raise TypeError("stored model state requires an object or None")
+
+
+@dataclass(frozen=True, slots=True)
+class StoredModelStepGiven:
+    """Compact durable model Step-begin facts."""
+
+    model: str
+    call: ModelCallRefs
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.model, str) or not self.model:
+            raise ValueError("stored model given requires a model identity")
+        if not isinstance(self.call, ModelCallRefs):
+            raise TypeError("stored model given requires ModelCallRefs")
+
+
+StoredStepGiven: TypeAlias = FlowStmt | StoredModelStepGiven | ToolStepGiven
+
+
+@dataclass(frozen=True, slots=True)
 class StepRecord:
     """One durable execution step."""
 
     path: StepPath
     kind: StepKind
     input: tuple[Pointer, ...]
+    given: StoredStepGiven
     output: Local | None
-    placement: dict[str, object] | None = None
-    given: dict[str, Any] = field(default_factory=dict)
-    noted: dict[str, Any] = field(default_factory=dict)
+    occurrence: Occurrence | None = None
+    noted: StepNoted = None
     status: StepStatus = "running"
     error: ExecutionError | None = None
     ejected_by: ControlRef | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
+
+    def __post_init__(self) -> None:
+        validate_occurrence(self.occurrence)
+        if isinstance(self.given, StoredModelStepGiven):
+            if self.kind != "model":
+                raise TypeError(f"{self.kind} Step cannot store model given facts")
+        elif self.kind == "model":
+            raise TypeError("model Step record requires StoredModelStepGiven")
+        else:
+            validate_step_given(self.kind, self.given)
+        validate_step_noted(self.kind, self.noted)
 
     @property
     def run_id(self) -> str:
@@ -537,6 +614,7 @@ def _control_payload_from_data(
             raise ValueError(f"{kind} payload requires resources and limits")
         resources = AgentResources.from_data(cast(Mapping[str, object], resources_raw))
         limits = run_limits_from_data(limits_raw)
+        state = _required_payload_text(payload, "state")
         runnable = _required_payload_text(payload, "runnable")
         model = _required_payload_text(payload, "model")
         raw_locals = payload.get("locals")
@@ -558,6 +636,7 @@ def _control_payload_from_data(
             return StartControlPayload(
                 resources=resources,
                 limits=limits,
+                state=state,
                 runnable=runnable,
                 model=model,
                 locals=locals_value or (),
@@ -566,6 +645,7 @@ def _control_payload_from_data(
             return RerunControlPayload(
                 resources=resources,
                 limits=limits,
+                state=state,
                 runnable=runnable,
                 model=model,
                 locals=locals_value or (),
@@ -575,6 +655,7 @@ def _control_payload_from_data(
         return RetryControlPayload(
             resources=resources,
             limits=limits,
+            state=state,
             runnable=runnable,
             model=model,
             locals=locals_value,
@@ -664,6 +745,307 @@ def pointers_to_data(items: Sequence[Pointer]) -> list[str]:
     """Serialize a pointer-only record field."""
 
     return [str(item) for item in items]
+
+
+def occurrence_from_data(data: object) -> Occurrence | None:
+    """Parse one typed runtime occurrence."""
+
+    if data is None:
+        return None
+    payload = _canonical_object(
+        data,
+        fields={"item", "lane", "iteration"},
+        label="occurrence",
+    )
+    return Occurrence(
+        item=_occurrence_position_from_data(payload["item"], label="item"),
+        lane=_occurrence_position_from_data(payload["lane"], label="lane"),
+        iteration=_iteration_occurrence_from_data(payload["iteration"]),
+    )
+
+
+def occurrence_to_data(occurrence: Occurrence | None) -> dict[str, object] | None:
+    """Serialize one typed runtime occurrence."""
+
+    validate_occurrence(occurrence)
+    if occurrence is None:
+        return None
+    return {
+        "item": _occurrence_position_to_data(occurrence.item),
+        "lane": _occurrence_position_to_data(occurrence.lane),
+        "iteration": (
+            {
+                "index": occurrence.iteration.index,
+                "count": occurrence.iteration.count,
+                "phase": occurrence.iteration.phase,
+            }
+            if occurrence.iteration is not None
+            else None
+        ),
+    }
+
+
+def _occurrence_position_from_data(
+    data: object,
+    *,
+    label: str,
+) -> OccurrencePosition | None:
+    if data is None:
+        return None
+    payload = _canonical_object(
+        data,
+        fields={"index", "count"},
+        label=f"{label} occurrence",
+    )
+    return OccurrencePosition(
+        index=_required_int(payload["index"], label=f"{label} index"),
+        count=_required_int(payload["count"], label=f"{label} count"),
+    )
+
+
+def _occurrence_position_to_data(
+    occurrence: OccurrencePosition | None,
+) -> dict[str, int] | None:
+    return (
+        {"index": occurrence.index, "count": occurrence.count}
+        if occurrence is not None
+        else None
+    )
+
+
+def _iteration_occurrence_from_data(data: object) -> IterationOccurrence | None:
+    if data is None:
+        return None
+    payload = _canonical_object(
+        data,
+        fields={"index", "count", "phase"},
+        label="iteration occurrence",
+    )
+    phase = payload["phase"]
+    if phase not in {"body", "until"}:
+        raise ValueError("iteration phase must be body or until")
+    raw_count = payload["count"]
+    return IterationOccurrence(
+        index=_required_int(payload["index"], label="iteration index"),
+        count=(
+            _required_int(raw_count, label="iteration count")
+            if raw_count is not None
+            else None
+        ),
+        phase=cast(Literal["body", "until"], phase),
+    )
+
+
+def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
+    """Parse one typed Step-begin fact payload from durable data."""
+
+    if kind == "model":
+        payload = _canonical_object(data, fields={"model", "call"}, label="model given")
+        model = payload["model"]
+        if not isinstance(model, str):
+            raise ValueError("model given identity must be text")
+        return ModelStepGiven(model=model, call=model_call_from_data(payload["call"]))
+    if kind == "tool":
+        payload = _canonical_object(data, fields={"plugin", "call"}, label="tool given")
+        plugin = payload["plugin"]
+        if not isinstance(plugin, str):
+            raise ValueError("tool given plugin must be text")
+        return ToolStepGiven(
+            plugin=plugin,
+            call=_TOOL_CALL_ADAPTER.validate_python(payload["call"]),
+        )
+    statement = flow_stmt_from_data(data)
+    from .types import validate_step_given
+
+    return validate_step_given(kind, statement)
+
+
+def step_given_to_data(kind: StepKind, given: StepGiven) -> dict[str, object]:
+    """Serialize one typed Step-begin fact payload."""
+
+    from .types import validate_step_given
+
+    validate_step_given(kind, given)
+    if isinstance(given, ModelStepGiven):
+        return {"model": given.model, "call": model_call_to_data(given.call)}
+    if isinstance(given, ToolStepGiven):
+        return {
+            "plugin": given.plugin,
+            "call": cast(
+                dict[str, object],
+                _TOOL_CALL_ADAPTER.dump_python(given.call, mode="json"),
+            ),
+        }
+    return cast(dict[str, object], ast_to_data(given))
+
+
+def stored_step_given_from_data(kind: StepKind, data: object) -> StoredStepGiven:
+    """Parse the private compact Step-begin representation."""
+
+    if kind != "model":
+        return cast(StoredStepGiven, step_given_from_data(kind, data))
+    payload = _canonical_object(data, fields={"model", "call"}, label="model given")
+    model = payload["model"]
+    if not isinstance(model, str) or not model:
+        raise ValueError("stored model identity must be text")
+    call = _canonical_object(
+        payload["call"],
+        fields={"instructions", "messages", "tools", "state"},
+        label="stored model call",
+    )
+    instructions = call["instructions"]
+    raw_messages = call["messages"]
+    raw_tools = call["tools"]
+    raw_state = call["state"]
+    if not isinstance(instructions, str) or not instructions:
+        raise ValueError("stored model instructions require a reference")
+    if (
+        not isinstance(raw_messages, Sequence)
+        or isinstance(raw_messages, (str, bytes, bytearray))
+        or not all(isinstance(item, str) and item for item in raw_messages)
+    ):
+        raise ValueError("stored model messages require references")
+    if raw_tools is not None and not isinstance(raw_tools, str):
+        raise ValueError("stored model tools must be a reference or null")
+    if raw_state is not None and not isinstance(raw_state, Mapping):
+        raise ValueError("stored model state must be an object or null")
+    return StoredModelStepGiven(
+        model=model,
+        call=ModelCallRefs(
+            instructions=instructions,
+            messages=tuple(cast(Sequence[str], raw_messages)),
+            tools=raw_tools,
+            state=(
+                dict(cast(Mapping[str, Any], raw_state))
+                if isinstance(raw_state, Mapping)
+                else None
+            ),
+        ),
+    )
+
+
+def stored_step_given_to_data(
+    kind: StepKind,
+    given: StoredStepGiven,
+) -> dict[str, object]:
+    """Serialize the private compact Step-begin representation."""
+
+    if isinstance(given, StoredModelStepGiven):
+        if kind != "model":
+            raise TypeError(f"{kind} Step cannot store model given facts")
+        return {
+            "model": given.model,
+            "call": {
+                "instructions": given.call.instructions,
+                "messages": list(given.call.messages),
+                "tools": given.call.tools,
+                "state": (
+                    dict(given.call.state) if given.call.state is not None else None
+                ),
+            },
+        }
+    return step_given_to_data(kind, cast(StepGiven, given))
+
+
+def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
+    """Parse one typed Step-end fact payload from durable data."""
+
+    if data is None:
+        return None
+    if kind != "model":
+        raise ValueError(f"{kind} Step noted must be null")
+    payload = _canonical_object(
+        data,
+        fields={"tokens", "price", "cost", "state"},
+        label="model noted",
+    )
+    raw_tokens = payload["tokens"]
+    tokens = None
+    if raw_tokens is not None:
+        token_data = _canonical_object(
+            raw_tokens,
+            fields={"input", "output"},
+            label="model tokens",
+        )
+        tokens = ModelTokenCount(
+            input=_required_int(token_data["input"], label="input tokens"),
+            output=_required_int(token_data["output"], label="output tokens"),
+        )
+    raw_price = payload["price"]
+    price = None
+    if raw_price is not None:
+        price_data = _canonical_object(
+            raw_price,
+            fields={"input", "output"},
+            label="model price",
+        )
+        price = ModelTokenPrice(
+            input=_optional_text(price_data["input"], label="input price"),
+            output=_optional_text(price_data["output"], label="output price"),
+        )
+    raw_state = payload["state"]
+    if raw_state is not None and not isinstance(raw_state, Mapping):
+        raise ValueError("model noted state must be an object or null")
+    return ModelStepNoted(
+        tokens=tokens,
+        price=price,
+        cost=_optional_text(payload["cost"], label="model cost"),
+        state=(
+            dict(cast(Mapping[str, Any], raw_state))
+            if isinstance(raw_state, Mapping)
+            else None
+        ),
+    )
+
+
+def step_noted_to_data(kind: StepKind, noted: StepNoted) -> dict[str, object] | None:
+    """Serialize one typed Step-end fact payload."""
+
+    from .types import validate_step_noted
+
+    validate_step_noted(kind, noted)
+    if noted is None:
+        return None
+    return {
+        "tokens": (
+            {"input": noted.tokens.input, "output": noted.tokens.output}
+            if noted.tokens is not None
+            else None
+        ),
+        "price": (
+            {"input": noted.price.input, "output": noted.price.output}
+            if noted.price is not None
+            else None
+        ),
+        "cost": noted.cost,
+        "state": dict(noted.state) if noted.state is not None else None,
+    }
+
+
+def _canonical_object(
+    data: object,
+    *,
+    fields: set[str],
+    label: str,
+) -> Mapping[str, object]:
+    if not isinstance(data, Mapping) or set(data) != fields:
+        joined = ", ".join(sorted(fields))
+        raise ValueError(f"{label} requires exactly: {joined}")
+    return cast(Mapping[str, object], data)
+
+
+def _required_int(value: object, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer")
+    return value
+
+
+def _optional_text(value: object, *, label: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be text or null")
+    return value
 
 
 def model_call_from_data(data: object) -> ModelCall:
@@ -763,6 +1145,7 @@ def _preparation_payload_data(
     return {
         "resources": payload.resources.to_data(),
         "limits": run_limits_to_data(payload.limits),
+        "state": payload.state,
         "runnable": payload.runnable,
         "model": payload.model,
         "locals": (
@@ -774,10 +1157,13 @@ def _preparation_payload_data(
 
 
 def _validate_preparation_payload(
+    state: str,
     runnable: str,
     model: str,
     locals: tuple[Local, ...] | None,
 ) -> None:
+    if not isinstance(state, str) or not state:
+        raise ValueError("preparation payload requires a state fingerprint")
     if not runnable:
         raise ValueError("preparation payload requires runnable")
     if not model:

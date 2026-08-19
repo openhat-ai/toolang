@@ -9,9 +9,9 @@ from toolang.common.errors import ToolangError
 from toolang.lang.ast import DropStmt, KeepStmt
 
 from ...records import RunControlRecord, StepPath
-from ...types import Local as RecordLocal
+from ...types import Occurrence
 from ..common import BoundRun
-from ..common import Local, boolean, require_list, result_list
+from ..common import Local, require_list
 from ..steps import par as par_step
 from ..steps import value as value_step
 
@@ -26,11 +26,9 @@ async def execute(
     path: StepPath,
     statement: KeepStmt | DropStmt,
     controls: Sequence[RunControlRecord],
-    placement: Mapping[str, object] | None,
+    occurrence: Occurrence | None,
 ) -> Local:
-    async def operation() -> Local:
-        source = locals.get("_", Local())
-        input_type = source.type_name
+    async def evaluate() -> Local:
         items = require_list(locals, operation=statement.kind)
         if statement.position is not None:
             count = statement.count or 0
@@ -40,43 +38,20 @@ async def execute(
                 else range(max(len(items) - count, 0), len(items))
             )
             matches = [index in selected for index in range(len(items))]
+            return Local(matches, "list", type_name="Boolean")
         else:
-            if statement.predicate is None:
+            if statement.runnable is None:
                 raise ToolangError(f"{statement.kind} requires a predicate")
-            evaluated = await execution.parallel_children(
+            return await execution.parallel_children(
                 binding,
                 locals,
                 path,
-                statement.predicate,
+                statement.runnable,
                 items,
-                limit=statement.par,
+                limit=statement.lanes,
             )
-            matches = [
-                boolean(value, operation=statement.kind)
-                for value in result_list(evaluated, operation=statement.kind)
-            ]
-        kept_indexes = [
-            index
-            for index, matched in enumerate(matches)
-            if matched == isinstance(statement, KeepStmt)
-        ]
-        kept = [items[index] for index in kept_indexes]
-        return Local(
-            kept,
-            "list",
-            type_name=input_type,
-            record=(
-                RecordLocal.typed(
-                    type_name=f"{input_type or 'Json'}[]",
-                    value=tuple(source.ref.select(index) for index in kept_indexes),
-                    dim=1,
-                )
-                if source.ref is not None
-                else None
-            ),
-        )
 
-    step = par_step if statement.predicate is not None else value_step
+    step = par_step if statement.runnable is not None else value_step
     return await step.execute(
         execution.emit,
         binding=binding,
@@ -84,6 +59,6 @@ async def execute(
         statement=statement,
         locals=locals,
         controls=controls,
-        placement=placement,
-        operation=operation,
+        occurrence=occurrence,
+        evaluate=evaluate,
     )

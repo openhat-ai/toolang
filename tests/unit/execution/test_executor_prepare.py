@@ -30,9 +30,9 @@ from toolang.execution.executor._persist import _PersistSink
 from toolang.execution.executor.prepare import prepare_agic
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
+    StoredModelStepGiven,
     StartControlPayload,
     model_call_from_data,
-    model_call_to_data,
 )
 from toolang.execution.schemas import RunDetail
 from toolang.execution.store import RunStore
@@ -40,6 +40,8 @@ from toolang.execution.types import (
     AgentResources,
     AgentToolResource,
     Local as RecordLocal,
+    ModelStepGiven,
+    ModelStepNoted,
     Pointer,
 )
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
@@ -550,24 +552,13 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         assert image in adapter.requests[0].messages[-1].parts
         assert store.rebuild_model_call(steps[0]) == adapter.requests[0]
         begin = next(event for event in tracer.events if isinstance(event, StepBegin))
-        assert begin.given["call"] == model_call_to_data(adapter.requests[0])
-        assert steps[0].given["call"] != begin.given["call"]
-        assert steps[0].given["model"] == {
-            "ref": "test/model",
-            "provider": "test",
-            "name": "model",
-            "model": "model",
-            "adapter": "test",
-            "base_url": "https://models.example/v1",
-            "scope": "remote",
-            "tags": [],
-            "options": {},
-            "tools": True,
-            "streaming": True,
-        }
-        assert "headers" not in steps[0].given["model"]
-        assert "api_key" not in steps[0].given["model"]
-        assert "adapter_request" not in steps[0].noted
+        assert begin.given == ModelStepGiven(
+            model="test/model",
+            call=adapter.requests[0],
+        )
+        assert isinstance(steps[0].given, StoredModelStepGiven)
+        assert steps[0].given.model == "test/model"
+        assert steps[0].noted == ModelStepNoted()
         detail = RunHistory(store).get_run(record.id)
         assert detail is not None
         start_payload = detail.controls[0].payload
@@ -581,7 +572,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
             Pointer.step(steps[0].path),
             "_",
         )
-        assert detail.steps[0].given["call"] == model_call_to_data(adapter.requests[0])
+        assert detail.steps[0].given == begin.given
         payload = TypeAdapter(RunDetail).dump_python(detail, mode="json")
         serialized_call = cast(
             dict[str, Any],

@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from toolang.lang.ast import FlowStmt
 
 from ...records import RunControlRecord, StepPath
+from ...types import Occurrence
 from ..common import BoundRun, EventEmitter, Local, execute_step
 
 
@@ -18,10 +19,10 @@ async def execute(
     statement: FlowStmt,
     locals: Mapping[str, Local],
     controls: Sequence[RunControlRecord],
-    placement: Mapping[str, object] | None,
-    operation: Callable[[], Awaitable[Local]],
+    occurrence: Occurrence | None,
+    evaluate: Callable[[], Awaitable[Local]],
 ) -> Local:
-    """Execute one parallel operation and emit its step events."""
+    """Evaluate one parallel Step and emit its event boundary."""
 
     return await execute_step(
         emit,
@@ -31,6 +32,6 @@ async def execute(
         statement=statement,
         locals=locals,
         controls=controls,
-        placement=placement,
-        operation=operation,
+        occurrence=occurrence,
+        evaluate=evaluate,
     )

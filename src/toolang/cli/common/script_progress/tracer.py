@@ -17,12 +17,18 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.records import execution_error_message
-from toolang.execution.types import ExecutionError, StepPath, Pointer, TypedPointer
+from toolang.execution.types import (
+    ExecutionError,
+    ModelStepNoted,
+    Pointer,
+    StepPath,
+    TypedPointer,
+)
 
 from .blocks import CallBlock, RunBlock, StatementBlock
 from .console import ProgressConsole
 from ..execution_progress.formatting import (
-    integer,
+    flow_statement,
     output_preview,
     status_label,
 )
@@ -112,7 +118,11 @@ class ConsoleRunTracer(RunTracer):
         live_owner = self._live_owner(owner)
         if owner.hidden:
             live_owner.active_run = run.run_id
-            live_owner.active_item = integer(run.placement.get("iter"))
+            live_owner.active_item = (
+                run.occurrence.iteration.index
+                if run.occurrence and run.occurrence.iteration
+                else None
+            )
             live_owner.active_work = owner.work_line(run)
             live_owner.active_activity = "starting…"
         self._show_statement_live(live_owner, event.started_at)
@@ -166,8 +176,8 @@ class ConsoleRunTracer(RunTracer):
         self._show_statement_live(live_owner, event.finished_at)
 
     def _begin_step(self, event: StepBegin) -> None:
-        statement = event.given.get("statement")
-        if isinstance(statement, str) and statement:
+        statement = flow_statement(event.given)
+        if statement is not None:
             run = self._runs.get(event.step.run)
             nesting = max(len(event.step.indices) - 1, 0) * 2
             base_indent = (run.indent if run is not None else 0) + nesting
@@ -176,8 +186,8 @@ class ConsoleRunTracer(RunTracer):
             ordinal: int | None = None
             if direct_repeat is not None:
                 iteration = (
-                    integer(event.placement.get("iter"))
-                    if event.placement is not None
+                    event.occurrence.iteration.index
+                    if event.occurrence and event.occurrence.iteration
                     else None
                 )
                 ordinal = direct_repeat.enter_iteration(
@@ -359,16 +369,22 @@ class ConsoleRunTracer(RunTracer):
 
     @staticmethod
     def _is_until(event: RunBegin, owner: StatementBlock) -> bool:
-        placement = event.placement
+        occurrence = event.occurrence
         return (
             owner.statement == "repeat"
-            and isinstance(placement, Mapping)
-            and placement.get("iter") == -1
+            and occurrence is not None
+            and occurrence.iteration is not None
+            and occurrence.iteration.phase == "until"
         )
 
     @staticmethod
     def _is_until_run(run: RunBlock, owner: StatementBlock) -> bool:
-        return owner.statement == "repeat" and run.placement.get("iter") == -1
+        return (
+            owner.statement == "repeat"
+            and run.occurrence is not None
+            and run.occurrence.iteration is not None
+            and run.occurrence.iteration.phase == "until"
+        )
 
     @staticmethod
     def _record_metrics(run: RunBlock | None, event: StepEnd) -> None:
@@ -376,10 +392,9 @@ class ConsoleRunTracer(RunTracer):
             return
         if event.kind == "model":
             run.metrics.model_calls += 1
-            tokens = event.noted.get("tokens")
-            if isinstance(tokens, Mapping):
-                run.metrics.input_tokens += integer(tokens.get("input")) or 0
-                run.metrics.output_tokens += integer(tokens.get("output")) or 0
+            if isinstance(event.noted, ModelStepNoted) and event.noted.tokens:
+                run.metrics.input_tokens += event.noted.tokens.input
+                run.metrics.output_tokens += event.noted.tokens.output
         elif event.kind == "tool":
             run.metrics.tool_calls += 1
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
-from typing import Any, Literal
+from typing import Literal
 
 from toolang.base.types.message import Part, message_summary
 from toolang.base.types.run import ModelCall
@@ -14,9 +14,9 @@ from .records import (
     RunControlRecord,
     RunRecord,
     StepRecord,
+    StoredModelStepGiven,
     ThreadPeer,
     ThreadRecord,
-    model_call_to_data,
     step_message_role,
 )
 from .types import (
@@ -26,12 +26,19 @@ from .types import (
     ControlStatus,
     ExecutionError,
     Local,
+    ModelStepGiven,
+    Occurrence,
     RunStatus,
     StepKind,
+    StepGiven,
+    StepNoted,
     StepPath,
     StepStatus,
     ThreadPeerType,
     Pointer,
+    validate_occurrence,
+    validate_step_given,
+    validate_step_noted,
 )
 from .values import parts_from_local
 
@@ -179,7 +186,7 @@ class RunInfo:
     runnable_kind: str
     runnable_name: str | None
     call_kind: str
-    metadata: dict[str, object]
+    occurrence: Occurrence | None
     input_text: str
     summary: str
     status: RunStatus
@@ -234,7 +241,7 @@ class RunInfo:
             runnable_kind=kind if separator else "",
             runnable_name=name if separator else preparation.runnable,
             call_kind="top" if run.parent is None else "run",
-            metadata=dict(run.placement or {}),
+            occurrence=run.occurrence,
             input_text=input_text,
             summary=summary,
             status=run.status,
@@ -285,16 +292,21 @@ class StepData:
     path: StepPath
     kind: StepKind
     input: list[StepInputData]
+    given: StepGiven
     output: Local | None
-    placement: dict[str, object] | None = None
-    given: dict[str, Any] = field(default_factory=dict)
-    noted: dict[str, Any] = field(default_factory=dict)
+    occurrence: Occurrence | None = None
+    noted: StepNoted = None
     status: StepStatus = "running"
     error: ExecutionError | None = None
     ejected_by: RunControlRefData | None = None
     created_at: str = ""
     started_at: str = ""
     finished_at: str | None = None
+
+    def __post_init__(self) -> None:
+        validate_occurrence(self.occurrence)
+        validate_step_given(self.kind, self.given)
+        validate_step_noted(self.kind, self.noted)
 
     @classmethod
     def from_record(
@@ -303,17 +315,20 @@ class StepData:
         *,
         call: ModelCall | None = None,
     ) -> StepData:
-        given = dict(step.given)
-        if call is not None:
-            given["call"] = model_call_to_data(call)
+        if isinstance(step.given, StoredModelStepGiven):
+            if call is None:
+                raise ValueError(f"model call is missing for Step {step.path}")
+            given: StepGiven = ModelStepGiven(model=step.given.model, call=call)
+        else:
+            given = step.given
         return cls(
             path=step.path,
             kind=step.kind,
             input=list(step.input),
             output=step.output,
-            placement=step.placement,
+            occurrence=step.occurrence,
             given=given,
-            noted=dict(step.noted),
+            noted=step.noted,
             status=step.status,
             error=step.error,
             ejected_by=(
