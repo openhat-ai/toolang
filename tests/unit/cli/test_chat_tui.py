@@ -18,6 +18,7 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
 )
+from toolang.base.types.run import ModelCall, ToolCall
 from toolang.cli.toolang.commands.chat import (
     blocks,
     events,
@@ -39,7 +40,28 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.types import ControlRef, Local, RunOverride, StepPath, Pointer
+from toolang.execution.types import (
+    ControlRef,
+    IterationOccurrence,
+    Local,
+    ModelStepGiven,
+    ModelStepNoted,
+    ModelTokenCount,
+    Occurrence,
+    OccurrencePosition,
+    RunOverride,
+    StepPath,
+    Pointer,
+    ToolStepGiven,
+)
+from toolang.lang.ast import (
+    GatherStmt,
+    MapStmt,
+    RepeatStmt,
+    RunStmt,
+    ScatterStmt,
+    Span,
+)
 from tests.support import chat_tui_pty
 
 
@@ -49,6 +71,22 @@ def _parts(*parts: Part) -> Local:
 
 def _output(step: StepPath) -> Local:
     return Local.typed("Part[]", Pointer.step(step), "_", 0)
+
+
+def _model_given(model: str = "test/model") -> ModelStepGiven:
+    return ModelStepGiven(model=model, call=ModelCall(instructions="", messages=[]))
+
+
+def _tool_given(name: str = "shell__execute") -> ToolStepGiven:
+    return ToolStepGiven(
+        plugin="shell",
+        call=ToolCall(
+            tool_call_id="call_1",
+            call_id="call_1",
+            name=name,
+            input={"command": "echo ok"},
+        ),
+    )
 
 
 def test_chat_tui_pty_treats_linux_eio_as_eof(
@@ -102,7 +140,7 @@ def test_chat_run_events_keep_run_stop_block_until_run_end() -> None:
     ]
     response = _render_text(app.finalized[0].render())
     assert "· final answer" in response
-    assert "  run_1/1 · 1.0s · model · 1/1 tokens" in response
+    assert "  run_1/1 · 1.0s · test/model · 1/1 tokens" in response
     assert "◆ run_1 succeeded" in _render_text(app.finalized[1].render())
     assert app.finished
 
@@ -242,7 +280,7 @@ def test_chat_tool_step_uses_dim_dot_marker_and_summary() -> None:
         if segment.text.strip()
     ]
     assert running_segments
-    assert "· executing tool…" in _render_text(block.render())
+    assert "· executing shell__execute…" in _render_text(block.render())
 
     block.update(_tool_step_end())
     rendered = _render_text(block.render())
@@ -282,14 +320,14 @@ def test_chat_flow_step_blocks_render_flow_operation_summary() -> None:
         "FlowStepBlock",
         "RunStopBlock",
     ]
-    assert "[1] statement" in _render_text(app.live_blocks[0].render())
+    assert "[1] map summarize par 2" in _render_text(app.live_blocks[0].render())
     assert "· starting…" in _render_text(app.live_blocks[0].render())
 
     events.handle_run_event(_flow_step_end(), app)
 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
     assert [block.type for block in app.finalized] == ["FlowStepBlock"]
-    assert "[1] statement" in _render_text(app.finalized[0].render())
+    assert "[1] map summarize par 2" in _render_text(app.finalized[0].render())
     assert "0 runs · empty input list" in _render_text(app.finalized[0].render())
 
 
@@ -347,10 +385,10 @@ def test_chat_flow_child_run_events_do_not_finish_parent_run() -> None:
     events.handle_run_event(_child_run_step_end(), app)
     statement = _render_text(app.finalized[0].render()).rstrip()
     assert statement.splitlines() == [
-        "[2] statement",
+        "[2] run summarize",
         "  Run agic test",
         "  · model completed",
-        "    run_child/1 · 1.0s · model · 1/1 tokens",
+        "    run_child/1 · 1.0s · test/model · 1/1 tokens",
         "  ↳ run_child succeeded · 3.0s",
     ]
     events.handle_run_event(_run_end(status="succeeded", output_step_index=2), app)
@@ -373,13 +411,12 @@ def test_chat_failed_child_is_a_statement_diagnostic_fact() -> None:
         StepBegin(
             step=StepPath.parse("run_1/1"),
             kind="run",
-            given={
-                "statement": "scatter",
-                "count": 6,
-                "runnable": "expand_queries",
-                "doc": "Expand the research question into diverse search queries",
-                "source": {"head": "scatter 6 expand_queries"},
-            },
+            given=ScatterStmt(
+                span=Span(line=1),
+                count=6,
+                runnable="expand_queries",
+                doc="Expand the research question into diverse search queries",
+            ),
             started_at="2026-01-01T00:00:01Z",
         ),
         app,
@@ -451,7 +488,7 @@ def test_chat_flow_statement_owns_child_model_tool_model_activity() -> None:
         StepBegin(
             step=StepPath.parse("run_child/1"),
             kind="tool",
-            given={"tool": "shell__execute"},
+            given=_tool_given(),
         ),
         app,
     )
@@ -522,7 +559,7 @@ def test_chat_confirms_only_the_root_output_model_response() -> None:
         StepBegin(
             step=StepPath.parse("run_1/1"),
             kind="tool",
-            given={"tool": "shell.execute"},
+            given=_tool_given("shell.execute"),
             started_at="2026-01-01T00:00:02Z",
         ),
         app,
@@ -576,14 +613,12 @@ def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
         StepBegin(
             step=StepPath.parse("run_1/1"),
             kind="par",
-            given={
-                "statement": "map",
-                "runnable": "summarize",
-                "par": 2,
-                "binding": "_",
-                "doc": "Search the web for each query",
-                "source": {"head": "map summarize par 2"},
-            },
+            given=MapStmt(
+                span=Span(line=1),
+                runnable="summarize",
+                lanes=2,
+                doc="Search the web for each query",
+            ),
             started_at="2026-01-01T00:00:01Z",
         ),
         app,
@@ -595,12 +630,10 @@ def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
                 parent=StepPath.parse("run_1/1"),
                 control=ControlRef(f"run_child_{item}", 0),
                 runnable="agic:summarize",
-                placement={
-                    "item": item,
-                    "items": 8,
-                    "lane": item,
-                    "lanes": 2,
-                },
+                occurrence=Occurrence(
+                    item=OccurrencePosition(index=item, count=8),
+                    lane=OccurrencePosition(index=item, count=2),
+                ),
             ),
             app,
         )
@@ -608,7 +641,7 @@ def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
             StepBegin(
                 step=StepPath.parse(f"run_child_{item}/0"),
                 kind="model",
-                given={"model": {"ref": "test/model"}},
+                given=_model_given(),
             ),
             app,
         )
@@ -649,7 +682,7 @@ def test_chat_parallel_statement_uses_bounded_zero_based_lanes() -> None:
             step=StepPath.parse("run_1/1"),
             kind="par",
             status="succeeded",
-            noted={"shape": "list", "items": 2},
+            output=Local.typed("Json[]", ({}, {}), "_", 1),
             finished_at="2026-01-01T00:00:03Z",
         ),
         app,
@@ -678,11 +711,7 @@ def test_chat_flow_root_result_is_durable_and_hidden_until_requested() -> None:
         StepBegin(
             step=StepPath.parse("run_1/1"),
             kind="run",
-            given={
-                "statement": "gather",
-                "runnable": "synthesize",
-                "source": {"head": "gather synthesize"},
-            },
+            given=GatherStmt(span=Span(line=1), runnable="synthesize"),
         ),
         app,
     )
@@ -692,7 +721,6 @@ def test_chat_flow_root_result_is_durable_and_hidden_until_requested() -> None:
             kind="run",
             status="succeeded",
             output=_parts(TextPart("flow response")),
-            noted={"shape": "item"},
         ),
         app,
     )
@@ -772,11 +800,7 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
         StepBegin(
             step=StepPath.parse("run_1/2"),
             kind="par",
-            given={
-                "statement": "map",
-                "runnable": "search_web",
-                "source": {"head": "map search_web par 4"},
-            },
+            given=MapStmt(span=Span(line=1), runnable="search_web", lanes=4),
             started_at="2026-01-01T00:00:01Z",
         )
     )
@@ -815,11 +839,7 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
         StepBegin(
             step=StepPath.parse("run_1/1"),
             kind="loop",
-            given={
-                "statement": "repeat",
-                "count": 2,
-                "source": {"head": "repeat 2"},
-            },
+            given=RepeatStmt(span=Span(line=1), count=2),
             started_at="2026-01-01T00:00:01Z",
         ),
         app,
@@ -828,12 +848,8 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
         StepBegin(
             step=StepPath.parse("run_1/1/0"),
             kind="run",
-            given={
-                "statement": "run",
-                "runnable": "revise",
-                "source": {"head": "run revise"},
-            },
-            placement={"iter": 0},
+            given=RunStmt(span=Span(line=1), runnable="revise"),
+            occurrence=Occurrence(iteration=IterationOccurrence(index=0, phase="body")),
         ),
         app,
     )
@@ -843,12 +859,16 @@ def test_chat_repeat_keeps_nested_work_in_one_live_block() -> None:
             parent=StepPath.parse("run_1/1/0"),
             control=ControlRef("run_revise", 0),
             runnable="agic:revise",
-            placement={"iter": 0},
+            occurrence=Occurrence(iteration=IterationOccurrence(index=0, phase="body")),
         ),
         app,
     )
     events.handle_run_event(
-        StepBegin(step=StepPath.parse("run_revise/0"), kind="model"),
+        StepBegin(
+            step=StepPath.parse("run_revise/0"),
+            kind="model",
+            given=_model_given(),
+        ),
         app,
     )
     events.handle_run_event(
@@ -1585,7 +1605,7 @@ def _model_step_begin(
         step=StepPath.parse(f"{run_id}/{step_index}"),
         kind="model",
         input=(),
-        given={"model": {"ref": model}} if model is not None else {},
+        given=_model_given(model or "test/model"),
         started_at="2026-01-01T00:00:01Z",
     )
 
@@ -1595,6 +1615,7 @@ def _tool_step_begin(*, step_index: int = 1) -> StepBegin:
         step=StepPath.parse(f"run_1/{step_index}"),
         kind="tool",
         input=(),
+        given=_tool_given(),
         started_at="2026-01-01T00:00:01Z",
     )
 
@@ -1611,7 +1632,7 @@ def _model_step_end(
         kind="model",
         status="succeeded",
         output=_parts(TextPart(text=output)),
-        noted={"tokens": {"input": 1, "output": 1}},
+        noted=ModelStepNoted(tokens=ModelTokenCount(input=1, output=1)),
         finished_at=finished_at,
     )
 
@@ -1622,11 +1643,7 @@ def _flow_step_begin(*, step_index: int = 1) -> StepBegin:
         kind="par",
         input=(),
         started_at="2026-01-01T00:00:01Z",
-        given={
-            "statement": "map",
-            "runnable": "summarize",
-            "par": 2,
-        },
+        given=MapStmt(span=Span(line=1), runnable="summarize", lanes=2),
     )
 
 
@@ -1636,7 +1653,6 @@ def _flow_step_end(*, step_index: int = 1) -> StepEnd:
         kind="par",
         status="succeeded",
         output=Local.typed("Json[]", (), "_", 1),
-        noted={"shape": "list"},
         finished_at="2026-01-01T00:00:02Z",
     )
 
@@ -1649,10 +1665,7 @@ def _child_run_step_begin(
         kind="run",
         input=(),
         started_at="2026-01-01T00:00:01Z",
-        given={
-            "statement": "run",
-            "runnable": "summarize",
-        },
+        given=RunStmt(span=Span(line=1), runnable="summarize"),
     )
 
 
@@ -1664,7 +1677,6 @@ def _child_run_step_end(
         kind="run",
         status="succeeded",
         output=_parts(TextPart(text="done")),
-        noted={"shape": "item"},
         finished_at="2026-01-01T00:00:02Z",
     )
 

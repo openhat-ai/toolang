@@ -339,6 +339,7 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
     payload = StartControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(tokens=10),
+        state="0" * 64,
         runnable="agic:worker",
         model="test/model",
         locals=(Local.typed("Part[]", (TextPart("hello"),), "_", 0),),
@@ -353,6 +354,7 @@ def test_preparation_payload_rejects_instead_of_dropping_invalid_locals() -> Non
     payload = StartControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(),
+        state="0" * 64,
         runnable="agic:worker",
         model="test/model",
         locals=(Local.typed("Text", "hello", "_", 0),),
@@ -370,6 +372,7 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
     inherited = RetryControlPayload(
         resources=AgentResources(models=("test/model",)),
         limits=RunLimits(),
+        state="0" * 64,
         runnable="flow:worker",
         model="test/model",
         locals=None,
@@ -378,6 +381,7 @@ def test_retry_payload_distinguishes_inherited_and_empty_locals() -> None:
     empty = RetryControlPayload(
         resources=inherited.resources,
         limits=inherited.limits,
+        state=inherited.state,
         runnable=inherited.runnable,
         model=inherited.model,
         locals=(),

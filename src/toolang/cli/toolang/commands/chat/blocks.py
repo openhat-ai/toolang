@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,16 +30,23 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.types import ExecutionError, StepPath
+from toolang.execution.types import (
+    ExecutionError,
+    ModelStepGiven,
+    StepNoted,
+    StepPath,
+)
 
 from toolang.cli.common.execution_progress.formatting import (
     count,
     elapsed,
+    flow_statement,
     model_label,
     output_parts,
     statement_head,
     statement_index,
     statement_result,
+    statement_target,
     status_label,
     shape_label,
     tool_exit_code,
@@ -331,7 +338,7 @@ class DefaultStepBlock(MutableBlock):
         self.step = event.step
         self.status = "completed"
         self.error = friendly_error(event.error) if event.error else ""
-        self.final_label = self._final_label(event.noted)
+        self.final_label = self.label.removeprefix("running ")
 
     def render(self) -> RenderableType:
         kind = self.step_kind
@@ -351,13 +358,6 @@ class DefaultStepBlock(MutableBlock):
 
     def _marker(self) -> str:
         return "·"
-
-    def _final_label(self, payload: Mapping[str, Any]) -> str:
-        return (
-            as_text(payload.get("message"))
-            or as_text(payload.get("statement"))
-            or self.label.removeprefix("running ")
-        )
 
 
 @dataclass(slots=True)
@@ -407,7 +407,9 @@ class FlowStepBlock(MutableBlock):
             )
         ]
         has_doc = False
-        if doc := as_text(state.begin.given.get("doc")):
+        statement = flow_statement(state.begin.given)
+        if statement is not None and statement.doc:
+            doc = statement.doc
             has_doc = True
             lines.extend(
                 Text.from_markup(f"[dim]  {escape(line)}[/]")
@@ -608,11 +610,7 @@ class FlowStepBlock(MutableBlock):
         return lines
 
     def _has_runnable_target(self) -> bool:
-        given = self.state.begin.given
-        return any(
-            as_text(given.get(key))
-            for key in ("runnable", "predicate", "scorer", "agent")
-        )
+        return bool(statement_target(self.state.begin.given))
 
     def _aggregate_facts(self, end: StepEnd) -> str:
         state = self.state
@@ -644,18 +642,14 @@ class ModelStepBlock(MutableBlock):
     error: str = ""
     started_at: str = ""
     finished_at: str = ""
-    noted: Mapping[str, Any] = field(default_factory=dict)
+    noted: StepNoted = None
 
     @classmethod
     def create(cls, event: StepBegin) -> "ModelStepBlock":
         payload = event.given
-        model = payload.get("model")
-        model_data = model if isinstance(model, Mapping) else {}
         return cls(
             step=event.step,
-            model=as_text(model_data.get("ref"))
-            or as_text(model_data.get("model"))
-            or "",
+            model=payload.model if isinstance(payload, ModelStepGiven) else "",
             started_at=event.started_at,
         )
 

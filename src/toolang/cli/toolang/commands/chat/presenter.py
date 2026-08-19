@@ -16,7 +16,7 @@ from toolang.execution.events import (
 from toolang.execution.types import ExecutionError, StepPath, Pointer, TypedPointer
 
 from toolang.cli.common.execution_progress.formatting import (
-    integer,
+    flow_statement,
     one_line,
     output_preview,
     status_label,
@@ -123,15 +123,18 @@ class ChatRunPresenter:
         live_owner = self._live_owner(owner)
         if owner.live_owner is not None:
             live_owner.active_run = run.run_id
-            live_owner.active_item = integer(run.placement.get("iter"))
+            live_owner.active_item = (
+                run.occurrence.iteration.index
+                if run.occurrence and run.occurrence.iteration
+                else None
+            )
             live_owner.active_work = owner.work_line(run)
             live_owner.active_activity = "starting…"
 
     def _begin_step(self, event: StepBegin, app: AppContext) -> None:
         self._finalize_commands(app, blocks.RunSteerBlock, event)
         self._discard_pending_models(event.step, app)
-        statement = event.given.get("statement")
-        if isinstance(statement, str) and statement:
+        if flow_statement(event.given) is not None:
             self._begin_statement(event, app)
             return
         call = CallState(event)
@@ -155,8 +158,8 @@ class ChatRunPresenter:
         ordinal: int | None = None
         if direct_repeat is not None:
             iteration = (
-                integer(event.placement.get("iter"))
-                if event.placement is not None
+                event.occurrence.iteration.index
+                if event.occurrence and event.occurrence.iteration
                 else None
             )
             ordinal = direct_repeat.note_iteration(iteration or 0)
@@ -357,7 +360,12 @@ class ChatRunPresenter:
 
     @staticmethod
     def _is_until(run: RunState, owner: StatementState) -> bool:
-        return owner.statement == "repeat" and run.placement.get("iter") == -1
+        return (
+            owner.statement == "repeat"
+            and run.occurrence is not None
+            and run.occurrence.iteration is not None
+            and run.occurrence.iteration.phase == "until"
+        )
 
     def _output_step(self, event: RunEnd) -> StepPath | None:
         if event.output is None or not isinstance(event.output.value, TypedPointer):

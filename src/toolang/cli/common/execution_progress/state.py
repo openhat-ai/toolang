@@ -2,23 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Self
 
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
-from toolang.execution.types import StepPath
+from toolang.execution.types import ModelStepNoted, Occurrence, StepPath
 
 from .formatting import (
     active_step_label,
     completed_step_label,
     count,
-    integer,
-    mapping,
+    flow_statement,
     runnable_label,
     statement_head,
     statement_target,
-    text,
     token_fact,
 )
 
@@ -43,9 +40,9 @@ class Metrics:
     def record_step(self, event: StepEnd) -> None:
         if event.kind == "model":
             self.model_calls += 1
-            tokens = mapping(event.noted.get("tokens"))
-            self.input_tokens += integer(tokens.get("input")) or 0
-            self.output_tokens += integer(tokens.get("output")) or 0
+            if isinstance(event.noted, ModelStepNoted) and event.noted.tokens:
+                self.input_tokens += event.noted.tokens.input
+                self.output_tokens += event.noted.tokens.output
         elif event.kind == "tool":
             self.tool_calls += 1
 
@@ -75,7 +72,7 @@ class RunState:
     parent: StepPath | None
     kind: str
     name: str
-    placement: Mapping[str, object]
+    occurrence: Occurrence | None
     started_at: str
     metrics: Metrics = field(default_factory=lambda: Metrics(runs=1))
     status: str = "running"
@@ -89,7 +86,7 @@ class RunState:
             parent=event.parent,
             kind=kind if separator else "run",
             name=runnable_label(name if separator else event.runnable),
-            placement=mapping(event.placement),
+            occurrence=event.occurrence,
             started_at=event.started_at,
         )
 
@@ -162,7 +159,8 @@ class StatementState:
 
     @property
     def statement(self) -> str:
-        return text(self.begin.given.get("statement"))
+        statement = flow_statement(self.begin.given)
+        return statement.kind if statement is not None else ""
 
     @property
     def batched(self) -> bool:
@@ -171,13 +169,30 @@ class StatementState:
     def child_started(self, run: RunState) -> None:
         self.children.append(run.run_id)
         self.active_run = run.run_id
-        item = integer(run.placement.get("item"))
+        item = (
+            run.occurrence.item.index
+            if run.occurrence and run.occurrence.item
+            else None
+        )
         self.active_item = item
         self.active_activity = "starting…"
-        if (total := integer(run.placement.get("items"))) is not None:
+        total = (
+            run.occurrence.item.count
+            if run.occurrence and run.occurrence.item
+            else None
+        )
+        if total is not None:
             self.total = max(self.total or 0, total)
-        lane = integer(run.placement.get("lane"))
-        lanes = integer(run.placement.get("lanes"))
+        lane = (
+            run.occurrence.lane.index
+            if run.occurrence and run.occurrence.lane
+            else None
+        )
+        lanes = (
+            run.occurrence.lane.count
+            if run.occurrence and run.occurrence.lane
+            else None
+        )
         if lane is not None and item is not None:
             self.lanes[lane] = LaneState(run.run_id, item)
         if lanes is not None:
@@ -216,8 +231,16 @@ class StatementState:
             self.completed += 1
         elif run.status == "failed":
             self.failed += 1
-            self.failed_item = integer(run.placement.get("item"))
-        lane = integer(run.placement.get("lane"))
+            self.failed_item = (
+                run.occurrence.item.index
+                if run.occurrence and run.occurrence.item
+                else None
+            )
+        lane = (
+            run.occurrence.lane.index
+            if run.occurrence and run.occurrence.lane
+            else None
+        )
         if (
             lane is not None
             and (current := self.lanes.get(lane)) is not None
@@ -231,7 +254,11 @@ class StatementState:
     def work_line(self, run: RunState | None = None) -> str:
         label = run.label if run is not None else self._unresolved_run_label()
         total = self.total or len(self.children)
-        lanes = self.lane_count or integer(self.begin.given.get("par"))
+        statement = flow_statement(self.begin.given)
+        declared_lanes = getattr(statement, "lanes", None)
+        lanes = self.lane_count or (
+            declared_lanes if isinstance(declared_lanes, int) else None
+        )
         if self.begin.kind == "par":
             unit = "times" if self.statement == "storm" else "items"
             details = count(total, "item") if unit == "items" else f"{total} times"

@@ -157,7 +157,7 @@ class SeekStmt(Node):
     kind: ClassVar[str] = "seek"
 
     binding: str | None = "_"
-    agent: str
+    name: str
     runnable: str
 
 
@@ -166,7 +166,8 @@ class AskStmt(Node):
     kind: ClassVar[str] = "ask"
 
     binding: str | None = "_"
-    body: str
+    name: str | None = None
+    request: str
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -185,7 +186,7 @@ class StormStmt(Node):
     binding: str | None = "_"
     count: int
     runnable: str
-    par: int | None = None
+    lanes: int | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -210,7 +211,7 @@ class MapStmt(Node):
 
     binding: str | None = "_"
     runnable: str
-    par: int | None = None
+    lanes: int | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -220,8 +221,8 @@ class KeepStmt(Node):
     binding: str | None = "_"
     position: Position | None = None
     count: int | None = None
-    predicate: str | None = None
-    par: int | None = None
+    runnable: str | None = None
+    lanes: int | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -231,8 +232,8 @@ class DropStmt(Node):
     binding: str | None = "_"
     position: Position | None = None
     count: int | None = None
-    predicate: str | None = None
-    par: int | None = None
+    runnable: str | None = None
+    lanes: int | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -240,20 +241,20 @@ class RankStmt(Node):
     kind: ClassVar[str] = "rank"
 
     binding: str | None = "_"
-    scorer: str
-    limit: Limit | None = None
-    count: int | None = None
-    par: int | None = None
+    runnable: str
+    selection: Limit | None = None
+    limit: int | None = None
+    lanes: int | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RepeatStmt(Node):
     kind: ClassVar[str] = "repeat"
 
-    binding: str | None = "_"
+    binding: None = None
     count: int | None = None
     stmts: tuple[FlowStmt, ...] = ()
-    until: str | None = None
+    runnable: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -266,7 +267,9 @@ class LetStmt(Node):
 
 def _flow_statement_kind(value: Any) -> str | None:
     kind = (
-        value.get("kind") if isinstance(value, dict) else getattr(value, "kind", None)
+        value.get("kind")
+        if isinstance(value, Mapping)
+        else getattr(value, "kind", None)
     )
     return kind if isinstance(kind, str) else None
 
@@ -393,6 +396,20 @@ def program_from_data(value: object) -> Program:
     return _program_adapter().validate_python(value)
 
 
+def flow_stmt_from_data(value: object) -> FlowStmt:
+    """Load one previously validated lowered Flow statement."""
+
+    statement = _flow_stmt_adapter().validate_python(value)
+    if not isinstance(value, Mapping) or dict(value) != to_data(statement):
+        raise ValueError("flow statement requires canonical typed fields")
+    return statement
+
+
 @lru_cache(maxsize=1)
 def _program_adapter() -> TypeAdapter[Program]:
     return TypeAdapter(Program)
+
+
+@lru_cache(maxsize=1)
+def _flow_stmt_adapter() -> TypeAdapter[FlowStmt]:
+    return TypeAdapter(FlowStmt)

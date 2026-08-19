@@ -22,27 +22,20 @@ from toolang.base.types.message import (
 from toolang.base.types.run import ModelCall, ModelCallResult, ToolCall
 from toolang.base.types.tool import ToolDefinition
 from toolang.execution.history import RunHistory
-from toolang.execution.records import StepRecord, model_call_to_data
+from toolang.execution.records import StepRecord
 from toolang.execution.store import RunStore
-from toolang.execution.types import StepPath, ThreadPrefix
+from toolang.execution.types import (
+    ModelStepGiven,
+    ModelStepNoted,
+    StepPath,
+    ThreadPrefix,
+)
 from toolang.lang.input import resolve_input_parts
 
 
 def _capture_replayable_model_step(store: RunStore) -> StepRecord:
-    given = store.capture_model_call(
-        target={
-            "ref": "test/model",
-            "provider": "test",
-            "name": "model",
-            "model": "model",
-            "adapter": "test",
-            "base_url": None,
-            "scope": None,
-            "tags": [],
-            "options": {},
-            "tools": True,
-            "streaming": False,
-        },
+    given = ModelStepGiven(
+        model="test/model",
         call=ModelCall(
             instructions="stable instructions",
             messages=[Message.user("hello")],
@@ -109,7 +102,8 @@ agic chat(_: Part[]) -> Part[]:
         ]
         detail = RunHistory(reopened).get_run(run_id)
         assert detail is not None
-        assert detail.steps[0].given["call"] == model_call_to_data(expected_call)
+        assert isinstance(detail.steps[0].given, ModelStepGiven)
+        assert detail.steps[0].given.call == expected_call
     finally:
         reopened.close()
 
@@ -327,8 +321,10 @@ agic calculate(_: Text) -> Text:
             tuple(reopened.rebuild_model_call(step) for step in model_steps)
             == expected_calls
         )
-        assert model_steps[0].noted["state"] == {"cursor": "turn-1"}
-        assert model_steps[1].noted["state"] == {"cursor": "turn-2"}
+        assert isinstance(model_steps[0].noted, ModelStepNoted)
+        assert isinstance(model_steps[1].noted, ModelStepNoted)
+        assert model_steps[0].noted.state == {"cursor": "turn-1"}
+        assert model_steps[1].noted.state == {"cursor": "turn-2"}
 
         connection = sqlite3.connect(reopened.db_path)
         try:

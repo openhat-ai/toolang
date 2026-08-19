@@ -18,6 +18,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import StepPath, ThreadPrefix
+from toolang.lang.ast import StormStmt
 from toolang.lang.input import resolve_input_parts
 
 
@@ -198,7 +199,8 @@ flow parallel(_: Text) -> Text[]:
             )
             parent_event = tracer.events[parent_begin]
             assert isinstance(parent_event, StepBegin)
-            assert parent_event.given["doc"] == "Run workers in parallel."
+            assert isinstance(parent_event.given, StormStmt)
+            assert parent_event.given.doc == "Run workers in parallel."
             for child in children:
                 begin_event = next(
                     event

@@ -10,7 +10,7 @@ import math
 import re
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BeforeValidator, PlainSerializer
+from pydantic import BeforeValidator, PlainSerializer, WrapSerializer
 from pydantic_core import core_schema
 
 from toolang.base.types.message import (
@@ -21,6 +21,26 @@ from toolang.base.types.message import (
     ToolCallPart,
     ToolResultPart,
     part_from_data,
+)
+from toolang.base.types.run import ModelCall, ToolCall
+from toolang.lang.ast import (
+    AskStmt,
+    DropStmt,
+    FlowStmt,
+    GatherStmt,
+    KeepStmt,
+    LetStmt,
+    MapStmt,
+    Node,
+    RankStmt,
+    RepeatStmt,
+    RunStmt,
+    ScatterStmt,
+    SeekStmt,
+    SettleStmt,
+    StormStmt,
+    flow_stmt_from_data,
+    to_data as ast_to_data,
 )
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 
@@ -842,6 +862,234 @@ StepKind = Literal[
     "loop",
     "value",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelStepGiven:
+    """Resolved model identity and normalized call known at Step begin."""
+
+    model: str
+    call: ModelCall
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.model, str) or not self.model:
+            raise ValueError("model Step given requires a model identity")
+        if not isinstance(self.call, ModelCall):
+            raise TypeError("model Step given requires a ModelCall")
+
+
+@dataclass(frozen=True, slots=True)
+class ToolStepGiven:
+    """Resolved plugin identity and model-emitted call known at Step begin."""
+
+    plugin: str
+    call: ToolCall
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.plugin, str) or not self.plugin:
+            raise ValueError("tool Step given requires a plugin identity")
+        if not isinstance(self.call, ToolCall):
+            raise TypeError("tool Step given requires a ToolCall")
+
+
+def _serialize_step_given(value: StepGiven, handler: Any) -> object:
+    if isinstance(value, Node):
+        return ast_to_data(value)
+    return handler(value)
+
+
+def _parse_step_given(value: object) -> object:
+    payload = cast(Mapping[str, object], value) if isinstance(value, Mapping) else {}
+    if isinstance(payload.get("kind"), str):
+        return flow_stmt_from_data(value)
+    return value
+
+
+StepGiven: TypeAlias = Annotated[
+    FlowStmt | ModelStepGiven | ToolStepGiven,
+    BeforeValidator(_parse_step_given),
+    WrapSerializer(_serialize_step_given),
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelTokenCount:
+    """Input and output tokens consumed by one model Step."""
+
+    input: int
+    output: int
+
+    def __post_init__(self) -> None:
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in (self.input, self.output)
+        ):
+            raise ValueError("model token counts must be non-negative integers")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelTokenPrice:
+    """Decimal-text prices applied to one model Step."""
+
+    input: str | None
+    output: str | None
+
+    def __post_init__(self) -> None:
+        _validate_decimal_text(self.input, label="input token price")
+        _validate_decimal_text(self.output, label="output token price")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelStepNoted:
+    """Accounting and continuation state learned when a model Step ends."""
+
+    tokens: ModelTokenCount | None = None
+    price: ModelTokenPrice | None = None
+    cost: str | None = None
+    state: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.tokens is not None and not isinstance(self.tokens, ModelTokenCount):
+            raise TypeError("model Step tokens require ModelTokenCount")
+        if self.price is not None and not isinstance(self.price, ModelTokenPrice):
+            raise TypeError("model Step price requires ModelTokenPrice")
+        _validate_decimal_text(self.cost, label="model cost")
+        if self.state is not None and not isinstance(self.state, dict):
+            raise TypeError("model Step state must be an object")
+
+
+StepNoted: TypeAlias = ModelStepNoted | None
+
+
+@dataclass(frozen=True, slots=True)
+class OccurrencePosition:
+    """One zero-based position within a known total."""
+
+    index: int
+    count: int
+
+    def __post_init__(self) -> None:
+        if any(
+            isinstance(value, bool) or not isinstance(value, int)
+            for value in (self.index, self.count)
+        ):
+            raise TypeError("occurrence positions must be integers")
+        if self.index < 0 or self.count < 1 or self.index >= self.count:
+            raise ValueError("occurrence position must be within its count")
+
+
+@dataclass(frozen=True, slots=True)
+class IterationOccurrence:
+    """One repeat iteration and the phase executing within it."""
+
+    index: int
+    phase: Literal["body", "until"]
+    count: int | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.index, bool) or not isinstance(self.index, int):
+            raise TypeError("iteration index must be an integer")
+        if self.index < 0:
+            raise ValueError("iteration index must be non-negative")
+        if self.phase not in {"body", "until"}:
+            raise ValueError(f"unknown iteration phase: {self.phase}")
+        if self.count is not None and (
+            isinstance(self.count, bool)
+            or not isinstance(self.count, int)
+            or self.count < 1
+            or self.index >= self.count
+        ):
+            raise ValueError("iteration count must contain the iteration index")
+
+
+@dataclass(frozen=True, slots=True)
+class Occurrence:
+    """Runtime position of one Run or Step within structural execution."""
+
+    item: OccurrencePosition | None = None
+    lane: OccurrencePosition | None = None
+    iteration: IterationOccurrence | None = None
+
+    def __post_init__(self) -> None:
+        if self.item is not None and not isinstance(self.item, OccurrencePosition):
+            raise TypeError("item occurrence requires OccurrencePosition")
+        if self.lane is not None and not isinstance(self.lane, OccurrencePosition):
+            raise TypeError("lane occurrence requires OccurrencePosition")
+        if self.iteration is not None and not isinstance(
+            self.iteration, IterationOccurrence
+        ):
+            raise TypeError("iteration occurrence requires IterationOccurrence")
+        if self.item is None and self.lane is None and self.iteration is None:
+            raise ValueError("occurrence requires item, lane, or iteration")
+
+
+def validate_occurrence(occurrence: Occurrence | None) -> Occurrence | None:
+    """Reject loose runtime occurrence payloads at typed boundaries."""
+
+    if occurrence is not None and not isinstance(occurrence, Occurrence):
+        raise TypeError("occurrence requires an Occurrence or None")
+    return occurrence
+
+
+def validate_step_given(kind: StepKind, given: StepGiven) -> StepGiven:
+    """Validate one begin payload against its enclosing Step kind."""
+
+    if kind == "model":
+        if not isinstance(given, ModelStepGiven):
+            raise TypeError("model Step requires ModelStepGiven")
+        return given
+    if kind == "tool":
+        if not isinstance(given, ToolStepGiven):
+            raise TypeError("tool Step requires ToolStepGiven")
+        return given
+    if not _flow_statement_matches_kind(given, kind):
+        raise TypeError(f"{kind} Step requires a compatible FlowStmt")
+    return given
+
+
+def validate_step_noted(kind: StepKind, noted: StepNoted) -> StepNoted:
+    """Validate one end payload against its enclosing Step kind."""
+
+    if kind == "model":
+        if noted is not None and not isinstance(noted, ModelStepNoted):
+            raise TypeError("model Step noted requires ModelStepNoted or None")
+        return noted
+    if noted is not None:
+        raise TypeError(f"{kind} Step does not accept noted facts")
+    return None
+
+
+def _flow_statement_matches_kind(value: object, kind: StepKind) -> bool:
+    if kind == "value":
+        return isinstance(value, LetStmt) or (
+            isinstance(value, KeepStmt | DropStmt) and value.runnable is None
+        )
+    if kind == "run":
+        return isinstance(value, RunStmt | ScatterStmt | GatherStmt)
+    if kind == "agent":
+        return isinstance(value, SeekStmt)
+    if kind == "human":
+        return isinstance(value, AskStmt)
+    if kind == "par":
+        return isinstance(value, StormStmt | MapStmt | RankStmt) or (
+            isinstance(value, KeepStmt | DropStmt) and value.runnable is not None
+        )
+    if kind == "loop":
+        return isinstance(value, SettleStmt | RepeatStmt)
+    return False
+
+
+def _validate_decimal_text(value: str | None, *, label: str) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be non-empty decimal text")
+    try:
+        Decimal(value)
+    except Exception as exc:
+        raise ValueError(f"{label} must be decimal text") from exc
+
+
 ControlTiming = Literal["immediate", "next_step", "next_call"]
 ControlKind = Literal[
     "start",

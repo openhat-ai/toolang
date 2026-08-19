@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 import threading
 from typing import TypeGuard
 
@@ -27,6 +27,7 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
+from toolang.execution.types import ModelStepGiven
 from toolang.common.errors import ToolangError
 
 from toolang.cli.common.version import toolang_version
@@ -526,12 +527,9 @@ class ChatTuiApp:
 
     def handle_run_event(self, event: RunEvent) -> None:
         if isinstance(event, StepBegin) and event.kind == "model":
-            model = event.given.get("model")
-            if isinstance(model, Mapping):
-                value = model.get("ref") or model.get("model")
-                if isinstance(value, str) and value.strip():
-                    self.actual_model = value.strip()
-                    self.status_bar.set_status(self._status_label())
+            if isinstance(event.given, ModelStepGiven):
+                self.actual_model = event.given.model
+                self.status_bar.set_status(self._status_label())
         events.handle_run_event(event, self.app_context)
 
     def start_run(self, call: QueuedCall) -> None:

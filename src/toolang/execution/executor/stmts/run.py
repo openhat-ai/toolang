@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from toolang.lang.ast import RunStmt
 
 from ...records import RunControlRecord, StepPath
+from ...types import Occurrence
 from ..common import BoundRun
 from ..common import Local
 from ..steps import run as run_step
@@ -23,7 +24,7 @@ async def execute(
     path: StepPath,
     statement: RunStmt,
     controls: Sequence[RunControlRecord],
-    placement: Mapping[str, object] | None,
+    occurrence: Occurrence | None,
 ) -> Local:
     return await run_step.execute(
         execution,
@@ -32,6 +33,6 @@ async def execute(
         statement=statement,
         locals=locals,
         controls=controls,
-        placement=placement,
+        occurrence=occurrence,
         runnable=statement.runnable,
     )

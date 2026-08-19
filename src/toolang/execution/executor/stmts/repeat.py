@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from toolang.lang.ast import RepeatStmt
 
 from ...records import RunControlRecord, StepPath
+from ...types import IterationOccurrence, Occurrence
 from ..common import BoundRun
 from ..common import Local, boolean
 from ..steps import loop as loop_step
@@ -23,14 +24,11 @@ async def execute(
     path: StepPath,
     statement: RepeatStmt,
     controls: Sequence[RunControlRecord],
-    placement: Mapping[str, object] | None,
+    occurrence: Occurrence | None,
 ) -> Local:
-    async def operation() -> Local:
+    async def evaluate() -> Local:
         child_index = 0
         iteration = 0
-        body_placement = (
-            {"iters": statement.count} if statement.count is not None else {}
-        )
         while statement.count is None or iteration < statement.count:
             child_index = await execution.execute_statements(
                 binding,
@@ -38,16 +36,28 @@ async def execute(
                 locals,
                 parent=path,
                 start=child_index,
-                placement={**body_placement, "iter": iteration},
+                occurrence=Occurrence(
+                    iteration=IterationOccurrence(
+                        index=iteration,
+                        count=statement.count,
+                        phase="body",
+                    )
+                ),
             )
             iteration += 1
-            if statement.until is not None:
+            if statement.runnable is not None:
                 condition = await execution.execute_child(
                     binding,
                     locals,
                     path,
-                    statement.until,
-                    {**body_placement, "iter": -1},
+                    statement.runnable,
+                    Occurrence(
+                        iteration=IterationOccurrence(
+                            index=iteration - 1,
+                            count=statement.count,
+                            phase="until",
+                        )
+                    ),
                     output_name=None,
                 )
                 if boolean(condition.value, operation="until"):
@@ -61,6 +71,6 @@ async def execute(
         statement=statement,
         locals=locals,
         controls=controls,
-        placement=placement,
-        operation=operation,
+        occurrence=occurrence,
+        evaluate=evaluate,
     )

@@ -444,14 +444,16 @@ class _Lowerer:
             return ast.RunStmt(runnable=self._runnable(node), span=span, doc=doc)
         if node.type == "seek_statement":
             return ast.SeekStmt(
-                agent=self._required_text(node, "agent").strip(),
+                name=self._required_text(node, "agent").strip(),
                 runnable=self._runnable(node),
                 span=span,
                 doc=doc,
             )
         if node.type == "ask_statement":
             return ast.AskStmt(
-                body=self._block_text(self._required(node, "body")), span=span, doc=doc
+                request=self._block_text(self._required(node, "body")),
+                span=span,
+                doc=doc,
             )
         if node.type == "scatter_statement":
             return ast.ScatterStmt(
@@ -464,7 +466,7 @@ class _Lowerer:
             return ast.StormStmt(
                 count=self._required_int(node, "count"),
                 runnable=self._runnable(node),
-                par=self._par(node),
+                lanes=self._par(node),
                 span=span,
                 doc=doc,
             )
@@ -487,7 +489,10 @@ class _Lowerer:
             )
         if node.type == "map_statement":
             return ast.MapStmt(
-                runnable=self._runnable(node), par=self._par(node), span=span, doc=doc
+                runnable=self._runnable(node),
+                lanes=self._par(node),
+                span=span,
+                doc=doc,
             )
         if node.type in {"keep_statement", "drop_statement"}:
             position = self._child_of_type(node, "position_clause")
@@ -501,26 +506,26 @@ class _Lowerer:
                     else None
                 ),
                 count=self._required_int(position, "count") if position else None,
-                predicate=(
+                runnable=(
                     None
                     if position
                     else self._runnable(node, output="Boolean", evaluator=True)
                 ),
-                par=self._par(node),
+                lanes=self._par(node),
                 span=span,
                 doc=doc,
             )
         if node.type == "rank_statement":
             selection = self._child_of_type(node, "rank_selection_clause")
             return ast.RankStmt(
-                scorer=self._runnable(node, output="Number", evaluator=True),
-                limit=cast(
+                runnable=self._runnable(node, output="Number", evaluator=True),
+                selection=cast(
                     ast.Limit, self._required_text(selection, "selection").strip()
                 )
                 if selection
                 else None,
-                count=self._required_int(selection, "count") if selection else None,
-                par=self._par(node),
+                limit=self._required_int(selection, "count") if selection else None,
+                lanes=self._par(node),
                 span=span,
                 doc=doc,
             )
@@ -532,10 +537,10 @@ class _Lowerer:
                     f"Missing repeat statements at line {self._line(node)}."
                 )
             until_node = self._child_of_type(body, "until_statement")
-            until = None
+            runnable = None
             if until_node is not None:
                 agic = self._required(until_node, "agic")
-                until = self._generated_agic(
+                runnable = self._generated_agic(
                     agic,
                     body=self._block_text(self._required(agic, "body")),
                     output="Boolean",
@@ -544,7 +549,7 @@ class _Lowerer:
             return ast.RepeatStmt(
                 count=self._optional_int(node.child_by_field_name("count")),
                 stmts=tuple(self._lower_statements(statements)),
-                until=until,
+                runnable=runnable,
                 span=span,
                 doc=doc,
             )

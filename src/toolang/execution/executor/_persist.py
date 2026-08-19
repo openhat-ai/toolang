@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-
 from ..events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
-from ..records import model_call_from_data
 from ..store import RunStore
 
 
@@ -22,7 +19,7 @@ class _PersistSink:
             self._store.begin_run(
                 run_id=event.run,
                 control=event.control,
-                placement=event.placement,
+                occurrence=event.occurrence,
                 started_at=event.started_at,
             )
             return
@@ -36,22 +33,12 @@ class _PersistSink:
             self._finish_run(event)
 
     def _begin_step(self, event: StepBegin) -> None:
-        given = event.given
-        if event.kind == "model" and "call" in given:
-            raw_model = given.get("model")
-            raw_call = given.get("call")
-            if not isinstance(raw_model, Mapping) or not isinstance(raw_call, Mapping):
-                raise ValueError("model step requires model and call objects")
-            given = self._store.capture_model_call(
-                target=raw_model,
-                call=model_call_from_data(raw_call),
-            )
         self._store.begin_step(
             path=event.step,
             kind=event.kind,
             input=event.input,
-            placement=event.placement,
-            given=given,
+            occurrence=event.occurrence,
+            given=event.given,
             started_at=event.started_at,
         )
 

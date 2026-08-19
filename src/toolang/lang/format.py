@@ -93,7 +93,7 @@ def format_statement_head(statement: ast.FlowStmt) -> str:
     elif isinstance(statement, ast.SeekStmt):
         head = _statement_words(
             "seek",
-            statement.agent,
+            statement.name,
             _authored_runnable(statement.runnable),
         )
     elif isinstance(statement, ast.AskStmt):
@@ -109,7 +109,7 @@ def format_statement_head(statement: ast.FlowStmt) -> str:
             "storm",
             str(statement.count),
             _authored_runnable(statement.runnable),
-            _parallel_clause(statement.par),
+            _parallel_clause(statement.lanes),
         )
     elif isinstance(statement, ast.GatherStmt):
         head = _statement_words("gather", _authored_runnable(statement.runnable))
@@ -119,23 +119,23 @@ def format_statement_head(statement: ast.FlowStmt) -> str:
         head = _statement_words(
             "map",
             _authored_runnable(statement.runnable),
-            _parallel_clause(statement.par),
+            _parallel_clause(statement.lanes),
         )
     elif isinstance(statement, ast.KeepStmt | ast.DropStmt):
         head = _statement_words(
             statement.kind,
             statement.position,
             str(statement.count) if statement.count is not None else "",
-            _authored_runnable(statement.predicate or ""),
-            _parallel_clause(statement.par),
+            _authored_runnable(statement.runnable or ""),
+            _parallel_clause(statement.lanes),
         )
     elif isinstance(statement, ast.RankStmt):
         head = _statement_words(
             "rank",
-            _authored_runnable(statement.scorer),
-            statement.limit,
-            str(statement.count) if statement.count is not None else "",
-            _parallel_clause(statement.par),
+            _authored_runnable(statement.runnable),
+            statement.selection,
+            str(statement.limit) if statement.limit is not None else "",
+            _parallel_clause(statement.lanes),
         )
     elif isinstance(statement, ast.RepeatStmt):
         return _statement_words(

@@ -3,18 +3,50 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from io import StringIO
+from typing import Any, cast
 
 from toolang.base.types.message import Part, TextDelta, TextPart, ToolResultPart
+from toolang.base.types.run import ModelCall, ToolCall
 from toolang.cli.common.script_progress import ConsoleRunTracer
 from toolang.execution.events import (
     PartDelta,
-    RunBegin,
+    RunBegin as RunBeginEvent,
     RunEnd,
     RunEvent,
-    StepBegin,
-    StepEnd,
+    StepBegin as StepBeginEvent,
+    StepEnd as StepEndEvent,
 )
-from toolang.execution.types import ControlRef, Local, StepPath, Pointer
+from toolang.execution.types import (
+    ControlRef,
+    IterationOccurrence,
+    Local,
+    ModelStepGiven,
+    ModelStepNoted,
+    ModelTokenCount,
+    ModelTokenPrice,
+    Occurrence,
+    OccurrencePosition,
+    StepGiven,
+    StepKind,
+    StepNoted,
+    StepPath,
+    Pointer,
+    ToolStepGiven,
+)
+from toolang.lang.ast import (
+    AskStmt,
+    GatherStmt,
+    KeepStmt,
+    LetStmt,
+    Limit,
+    MapStmt,
+    RankStmt,
+    RepeatStmt,
+    RunStmt,
+    ScatterStmt,
+    SettleStmt,
+    Span,
+)
 
 
 def _parts(*parts: Part) -> Local:
@@ -23,6 +55,274 @@ def _parts(*parts: Part) -> Local:
 
 def _output(step: StepPath) -> Local:
     return Local.typed("Part[]", Pointer.step(step), "_", 0)
+
+
+def _run_begin(**kwargs: Any) -> RunBeginEvent:
+    """Build a typed run-begin event from compact test data."""
+
+    raw_occurrence = kwargs.pop("occurrence", kwargs.pop("placement", None))
+    return RunBeginEvent(
+        occurrence=_test_occurrence(raw_occurrence),
+        **kwargs,
+    )
+
+
+def _step_begin(**kwargs: Any) -> StepBeginEvent:
+    """Build a typed step-begin event from compact test data."""
+
+    kind = cast(StepKind, kwargs.pop("kind"))
+    raw_given = kwargs.pop("given", None)
+    raw_occurrence = kwargs.pop("occurrence", kwargs.pop("placement", None))
+    return StepBeginEvent(
+        kind=kind,
+        given=_test_given(kind, raw_given),
+        occurrence=_test_occurrence(raw_occurrence),
+        **kwargs,
+    )
+
+
+def _step_end(**kwargs: Any) -> StepEndEvent:
+    """Build a typed step-end event from compact test data."""
+
+    kind = cast(StepKind, kwargs.pop("kind"))
+    raw_noted = kwargs.pop("noted", None)
+    if kind != "model" and isinstance(raw_noted, Mapping):
+        _supply_test_output(kwargs, raw_noted)
+    return StepEndEvent(
+        kind=kind,
+        noted=_test_noted(kind, raw_noted),
+        **kwargs,
+    )
+
+
+def _test_given(kind: StepKind, raw: object) -> StepGiven:
+    if kind == "model":
+        facts = cast(Mapping[str, object], raw) if isinstance(raw, Mapping) else {}
+        model = facts.get("model")
+        model_facts = (
+            cast(Mapping[str, object], model) if isinstance(model, Mapping) else None
+        )
+        identity = (
+            str(model_facts.get("ref") or "model")
+            if model_facts is not None
+            else str(model or "model")
+        )
+        return ModelStepGiven(
+            model=identity,
+            call=ModelCall(instructions="", messages=[]),
+        )
+    if kind == "tool":
+        facts = cast(Mapping[str, object], raw) if isinstance(raw, Mapping) else {}
+        name = str(facts.get("tool") or facts.get("name") or "tool")
+        plugin = name.split("__", 1)[0].split(".", 1)[0]
+        return ToolStepGiven(
+            plugin=plugin,
+            call=ToolCall(
+                tool_call_id="call_1",
+                call_id="call_1",
+                name=name,
+                input={},
+            ),
+        )
+    if not isinstance(raw, Mapping):
+        raise TypeError(f"{kind} test Step requires statement facts")
+    facts = cast(Mapping[str, object], raw)
+    span = _test_span(facts)
+    binding = cast(str | None, facts.get("binding", "_"))
+    statement = facts.get("statement")
+    doc = cast(str | None, facts.get("doc"))
+    if statement == "let":
+        return LetStmt(span=span, doc=doc, binding=binding, value="test")
+    if statement == "run":
+        return RunStmt(
+            span=span,
+            doc=doc,
+            binding=binding,
+            runnable=str(facts.get("runnable") or "test"),
+        )
+    if statement == "scatter":
+        return ScatterStmt(
+            span=span,
+            doc=doc,
+            binding=binding,
+            count=_test_int(facts.get("count")) or 0,
+            runnable=str(facts.get("runnable") or "test"),
+        )
+    if statement == "gather":
+        return GatherStmt(
+            span=span,
+            doc=doc,
+            binding=binding,
+            runnable=str(facts.get("runnable") or "test"),
+        )
+    if statement == "map":
+        return MapStmt(
+            span=span,
+            doc=doc,
+            binding=binding,
+            runnable=str(facts.get("runnable") or "test"),
+            lanes=_test_int(facts.get("par")),
+        )
+    if statement == "keep":
+        return KeepStmt(
+            span=span,
+            doc=doc,
+            binding=binding,
+            runnable=str(facts.get("runnable") or facts.get("predicate") or "test"),
+            lanes=_test_int(facts.get("par")),
+        )
+    if statement == "rank":
+        selection = facts.get("selection", facts.get("limit"))
+        return RankStmt(
+            span=span,
+            doc=doc,
+            binding=binding,
+            runnable=str(facts.get("runnable") or facts.get("scorer") or "test"),
+            selection=cast(Limit | None, selection),
+            limit=_test_int(facts.get("count")),
+            lanes=_test_int(facts.get("par")),
+        )
+    if statement == "settle":
+        return SettleStmt(
+            span=span,
+            doc=doc,
+            binding=binding,
+            runnable=str(facts.get("runnable") or "test"),
+        )
+    if statement == "repeat":
+        return RepeatStmt(
+            span=span,
+            doc=doc,
+            count=_test_int(facts.get("count")),
+            runnable=cast(str | None, facts.get("runnable")),
+        )
+    if statement == "ask":
+        return AskStmt(
+            span=span,
+            doc=doc,
+            binding=binding,
+            request=str(facts.get("request") or "test"),
+        )
+    raise ValueError(f"unsupported test statement: {statement}")
+
+
+def _test_noted(kind: StepKind, raw: object) -> StepNoted:
+    if kind != "model":
+        return None
+    facts = cast(Mapping[str, object], raw) if isinstance(raw, Mapping) else {}
+    raw_tokens = facts.get("tokens")
+    token_facts = (
+        cast(Mapping[str, object], raw_tokens)
+        if isinstance(raw_tokens, Mapping)
+        else None
+    )
+    tokens = (
+        ModelTokenCount(
+            input=_test_int(token_facts.get("input")) or 0,
+            output=_test_int(token_facts.get("output")) or 0,
+        )
+        if token_facts is not None
+        else None
+    )
+    raw_price = facts.get("price")
+    price_facts = (
+        cast(Mapping[str, object], raw_price)
+        if isinstance(raw_price, Mapping)
+        else None
+    )
+    price = (
+        ModelTokenPrice(
+            input=_test_text(price_facts.get("input")),
+            output=_test_text(price_facts.get("output")),
+        )
+        if price_facts is not None
+        else None
+    )
+    raw_state = facts.get("state")
+    return ModelStepNoted(
+        tokens=tokens,
+        price=price,
+        cost=_test_text(facts.get("cost")),
+        state=(
+            {str(name): value for name, value in raw_state.items()}
+            if isinstance(raw_state, Mapping)
+            else None
+        ),
+    )
+
+
+def _test_occurrence(raw: object) -> Occurrence | None:
+    if isinstance(raw, Occurrence):
+        return raw
+    if not isinstance(raw, Mapping):
+        return None
+    facts = cast(Mapping[str, object], raw)
+    item = _test_position(facts, "item", "items")
+    lane = _test_position(facts, "lane", "lanes")
+    raw_iteration = facts.get("iteration", facts.get("iter"))
+    iteration = None
+    if isinstance(raw_iteration, int) and not isinstance(raw_iteration, bool):
+        raw_count = facts.get("iterations", facts.get("iters"))
+        count = (
+            raw_count
+            if isinstance(raw_count, int)
+            and not isinstance(raw_count, bool)
+            and raw_count > raw_iteration >= 0
+            else None
+        )
+        iteration = IterationOccurrence(
+            index=max(raw_iteration, 0),
+            count=count,
+            phase="until" if raw_iteration < 0 else "body",
+        )
+    if item is None and lane is None and iteration is None:
+        return None
+    return Occurrence(item=item, lane=lane, iteration=iteration)
+
+
+def _test_position(
+    raw: Mapping[str, object], index_name: str, count_name: str
+) -> OccurrencePosition | None:
+    index = raw.get(index_name)
+    count = raw.get(count_name)
+    if (
+        isinstance(index, int)
+        and not isinstance(index, bool)
+        and isinstance(count, int)
+        and not isinstance(count, bool)
+        and 0 <= index < count
+    ):
+        return OccurrencePosition(index=index, count=count)
+    return None
+
+
+def _test_span(raw: Mapping[str, object]) -> Span:
+    source = raw.get("source")
+    source_facts = (
+        cast(Mapping[str, object], source) if isinstance(source, Mapping) else {}
+    )
+    line = source_facts.get("line")
+    return Span(line=line if isinstance(line, int) else 1)
+
+
+def _test_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _test_text(value: object) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _supply_test_output(kwargs: dict[str, Any], facts: Mapping[str, object]) -> None:
+    if "output" in kwargs:
+        return
+    if facts.get("shape") == "list":
+        count = _test_int(facts.get("items")) or 0
+        kwargs["output"] = Local.typed(
+            "Json[]", tuple({} for _ in range(count)), "_", 1
+        )
+    elif facts.get("shape") == "item":
+        kwargs["output"] = Local.typed("Json", {}, "_", 0)
 
 
 class _TtyStream(StringIO):
@@ -85,7 +385,7 @@ def test_default_root_block_omits_optional_input() -> None:
 def test_verbose_root_block_aligns_description_and_input_paragraphs() -> None:
     output = _render(
         [
-            RunBegin(
+            _run_begin(
                 run="run_one",
                 control=ControlRef("run_one", 3),
                 runnable="agic:demo",
@@ -114,13 +414,13 @@ def test_verbose_root_block_aligns_description_and_input_paragraphs() -> None:
 def test_model_preview_and_facts_follow_verbosity() -> None:
     events: list[RunEvent] = [
         _agic_begin(started_at="2026-07-26T01:00:00Z"),
-        StepBegin(
+        _step_begin(
             step=StepPath.parse("run_one/0"),
             kind="model",
             given={"model": {"ref": "deepseek/deepseek-chat"}},
             started_at="2026-07-26T01:00:00Z",
         ),
-        StepEnd(
+        _step_end(
             step=StepPath.parse("run_one/0"),
             kind="model",
             status="succeeded",
@@ -162,12 +462,12 @@ def test_step_output_wraps_at_the_content_boundary() -> None:
     output = _render(
         [
             _agic_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="model",
                 given={"model": {"ref": "deepseek/deepseek-chat"}},
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="model",
                 status="succeeded",
@@ -197,12 +497,12 @@ def test_default_keeps_a_model_step_without_text_output() -> None:
     output = _render(
         [
             _agic_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="model",
                 given={"model": {"ref": "deepseek/deepseek-chat"}},
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="model",
                 status="succeeded",
@@ -218,13 +518,13 @@ def test_tool_failure_uses_output_then_facts_and_is_not_repeated() -> None:
     output = _render(
         [
             _agic_begin(started_at="2026-07-26T01:00:00Z"),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="tool",
                 given={"tool": "web_search.search"},
                 started_at="2026-07-26T01:00:00Z",
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="tool",
                 status="failed",
@@ -256,13 +556,13 @@ def test_tool_failure_uses_output_then_facts_and_is_not_repeated() -> None:
 def test_tool_success_uses_result_then_complete_facts() -> None:
     events: list[RunEvent] = [
         _agic_begin(),
-        StepBegin(
+        _step_begin(
             step=StepPath.parse("run_one/0"),
             kind="tool",
             given={"tool": "shell.execute"},
             started_at="2026-07-26T01:00:00Z",
         ),
-        StepEnd(
+        _step_end(
             step=StepPath.parse("run_one/0"),
             kind="tool",
             status="succeeded",
@@ -291,7 +591,7 @@ def test_tty_dims_progress_but_not_live_or_errors() -> None:
     active = _render(
         [
             _agic_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="model",
                 given={"model": {"ref": "deepseek/deepseek-chat"}},
@@ -302,12 +602,12 @@ def test_tty_dims_progress_but_not_live_or_errors() -> None:
     failed = _render(
         [
             _agic_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="tool",
                 given={"tool": "shell"},
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="tool",
                 status="failed",
@@ -329,7 +629,7 @@ def test_flow_statement_uses_zero_based_index_and_natural_work_sentence() -> Non
     output = _render(
         [
             _flow_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="run",
                 given={
@@ -340,14 +640,14 @@ def test_flow_statement_uses_zero_based_index_and_natural_work_sentence() -> Non
                     "source": {"line": 40, "head": "let report = run review"},
                 },
             ),
-            RunBegin(
+            _run_begin(
                 run="run_review",
                 parent=StepPath.parse("run_one/0"),
                 control=ControlRef("run_review", 0),
                 runnable="agic:review",
             ),
             RunEnd(run="run_review", status="succeeded"),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="run",
                 status="succeeded",
@@ -376,7 +676,7 @@ def test_scatter_keeps_work_and_semantic_result_separate() -> None:
     output = _render(
         [
             _flow_begin(started_at="2026-07-26T01:00:00Z"),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="run",
                 given={
@@ -388,14 +688,14 @@ def test_scatter_keeps_work_and_semantic_result_separate() -> None:
                 },
                 started_at="2026-07-26T01:00:00Z",
             ),
-            RunBegin(
+            _run_begin(
                 run="run_queries",
                 parent=StepPath.parse("run_one/0"),
                 control=ControlRef("run_queries", 0),
                 runnable="agic:expand_queries",
             ),
             RunEnd(run="run_queries", status="succeeded"),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="run",
                 status="succeeded",
@@ -423,7 +723,7 @@ def test_scatter_keeps_work_and_semantic_result_separate() -> None:
 def test_statement_spacing_is_compact_at_every_verbosity() -> None:
     events: list[RunEvent] = [
         _flow_begin(),
-        StepBegin(
+        _step_begin(
             step=StepPath.parse("run_one/0"),
             kind="value",
             given={
@@ -432,14 +732,14 @@ def test_statement_spacing_is_compact_at_every_verbosity() -> None:
                 "source": {"head": "let project"},
             },
         ),
-        StepEnd(
+        _step_end(
             step=StepPath.parse("run_one/0"),
             kind="value",
             status="succeeded",
             output=_parts(TextPart("project")),
             noted={"shape": "item"},
         ),
-        StepBegin(
+        _step_begin(
             step=StepPath.parse("run_one/1"),
             kind="run",
             given={
@@ -450,14 +750,14 @@ def test_statement_spacing_is_compact_at_every_verbosity() -> None:
                 "source": {"head": "scatter 2 decompose"},
             },
         ),
-        RunBegin(
+        _run_begin(
             run="run_decompose",
             parent=StepPath.parse("run_one/1"),
             control=ControlRef("run_decompose", 0),
             runnable="agic:decompose",
         ),
         RunEnd(run="run_decompose", status="succeeded"),
-        StepEnd(
+        _step_end(
             step=StepPath.parse("run_one/1"),
             kind="run",
             status="succeeded",
@@ -491,7 +791,7 @@ def test_run_failure_keeps_source_header_before_child_acceptance() -> None:
     output = _render(
         [
             _flow_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="run",
                 given={
@@ -501,7 +801,7 @@ def test_run_failure_keeps_source_header_before_child_acceptance() -> None:
                     "source": {"head": "run apply_review"},
                 },
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="run",
                 status="failed",
@@ -524,7 +824,7 @@ def test_scatter_transform_failure_has_one_actionable_boundary() -> None:
     output = _render(
         [
             _flow_begin(started_at="2026-07-26T01:00:00Z"),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="run",
                 given={
@@ -536,14 +836,14 @@ def test_scatter_transform_failure_has_one_actionable_boundary() -> None:
                 },
                 started_at="2026-07-26T01:00:00Z",
             ),
-            RunBegin(
+            _run_begin(
                 run="run_queries",
                 parent=StepPath.parse("run_one/0"),
                 control=ControlRef("run_queries", 0),
                 runnable="agic:expand_queries",
             ),
             RunEnd(run="run_queries", status="succeeded"),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="run",
                 status="failed",
@@ -568,7 +868,7 @@ def test_parallel_block_is_bounded_and_uses_zero_based_positions() -> None:
     output = _render(
         [
             _flow_begin(started_at="2026-07-26T01:00:00Z"),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/2"),
                 kind="par",
                 given={
@@ -583,7 +883,7 @@ def test_parallel_block_is_bounded_and_uses_zero_based_positions() -> None:
                 started_at="2026-07-26T01:00:00Z",
             ),
             _parallel_run_begin("run_a", item=0, lane=0),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_a/0"),
                 kind="model",
                 given={"model": {"ref": "deepseek/deepseek-chat"}},
@@ -596,7 +896,7 @@ def test_parallel_block_is_bounded_and_uses_zero_based_positions() -> None:
             ),
             RunEnd(run="run_a", status="succeeded"),
             RunEnd(run="run_b", status="succeeded"),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/2"),
                 kind="par",
                 status="succeeded",
@@ -621,7 +921,7 @@ def test_parallel_block_is_bounded_and_uses_zero_based_positions() -> None:
 def test_parallel_live_block_keeps_the_final_item_after_lane_reuse() -> None:
     events: list[RunEvent] = [
         _flow_begin(started_at="2026-07-26T01:00:00Z"),
-        StepBegin(
+        _step_begin(
             step=StepPath.parse("run_one/2"),
             kind="par",
             given={
@@ -668,7 +968,7 @@ def test_parallel_failure_reports_counts_without_a_statement_result() -> None:
     output = _render(
         [
             _flow_begin(started_at="2026-07-26T01:00:00Z"),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/2"),
                 kind="par",
                 given={
@@ -690,7 +990,7 @@ def test_parallel_failure_reports_counts_without_a_statement_result() -> None:
                 status="failed",
                 error="output is not valid Number",
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/2"),
                 kind="par",
                 status="failed",
@@ -717,7 +1017,7 @@ def test_parallel_child_failure_is_reported_once_at_the_statement_boundary() -> 
     output = _render(
         [
             _flow_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="par",
                 given={
@@ -737,12 +1037,12 @@ def test_parallel_child_failure_is_reported_once_at_the_statement_boundary() -> 
                 runnable="search",
                 parent=StepPath.parse("run_one/0"),
             ),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_search/0"),
                 kind="model",
                 given={"model": {"ref": "deepseek/deepseek-chat"}},
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_search/0"),
                 kind="model",
                 status="failed",
@@ -753,7 +1053,7 @@ def test_parallel_child_failure_is_reported_once_at_the_statement_boundary() -> 
                 status="failed",
                 error="provider returned status 429",
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="par",
                 status="failed",
@@ -776,7 +1076,7 @@ def test_verbose_parallel_block_leaves_a_stable_work_summary() -> None:
     output = _render(
         [
             _flow_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/1"),
                 kind="par",
                 given={
@@ -803,7 +1103,7 @@ def test_verbose_parallel_block_leaves_a_stable_work_summary() -> None:
                     RunEnd(run=f"run_search_{item}", status="succeeded"),
                 )
             ],
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/1"),
                 kind="par",
                 status="succeeded",
@@ -827,7 +1127,7 @@ def test_one_item_and_one_item_list_are_distinct() -> None:
     output = _render(
         [
             _flow_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="par",
                 given={
@@ -847,13 +1147,13 @@ def test_one_item_and_one_item_list_are_distinct() -> None:
                 parent=StepPath.parse("run_one/0"),
             ),
             RunEnd(run="run_normalize", status="succeeded"),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="par",
                 status="succeeded",
                 noted={"shape": "list", "items": 1},
             ),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/1"),
                 kind="run",
                 given={
@@ -863,14 +1163,14 @@ def test_one_item_and_one_item_list_are_distinct() -> None:
                     "source": {"head": "let report = gather synthesize"},
                 },
             ),
-            RunBegin(
+            _run_begin(
                 run="run_report",
                 parent=StepPath.parse("run_one/1"),
                 control=ControlRef("run_report", 0),
                 runnable="agic:synthesize",
             ),
             RunEnd(run="run_report", status="succeeded"),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/1"),
                 kind="run",
                 status="succeeded",
@@ -894,7 +1194,7 @@ def test_empty_parallel_statements_keep_work_and_actual_result_counts() -> None:
     output = _render(
         [
             _flow_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/2"),
                 kind="par",
                 given={
@@ -920,13 +1220,13 @@ def test_empty_parallel_statements_keep_work_and_actual_result_counts() -> None:
                     RunEnd(run=f"run_keep_{item}", status="succeeded"),
                 )
             ],
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/2"),
                 kind="par",
                 status="succeeded",
                 noted={"shape": "list", "items": 0},
             ),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/3"),
                 kind="par",
                 given={
@@ -938,13 +1238,13 @@ def test_empty_parallel_statements_keep_work_and_actual_result_counts() -> None:
                     "source": {"head": "rank top 8"},
                 },
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/3"),
                 kind="par",
                 status="succeeded",
                 noted={"shape": "list", "items": 0},
             ),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/4"),
                 kind="par",
                 given={
@@ -955,7 +1255,7 @@ def test_empty_parallel_statements_keep_work_and_actual_result_counts() -> None:
                     "source": {"head": "map extract_findings par 4"},
                 },
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/4"),
                 kind="par",
                 status="succeeded",
@@ -984,7 +1284,7 @@ def test_default_flow_keeps_headers_and_work_lines_compact() -> None:
     output = _render(
         [
             _flow_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="run",
                 given={
@@ -995,20 +1295,20 @@ def test_default_flow_keeps_headers_and_work_lines_compact() -> None:
                     "source": {"head": "scatter 6 expand_queries"},
                 },
             ),
-            RunBegin(
+            _run_begin(
                 run="run_expand",
                 parent=StepPath.parse("run_one/0"),
                 control=ControlRef("run_expand", 0),
                 runnable="agic:expand_queries",
             ),
             RunEnd(run="run_expand", status="succeeded"),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="run",
                 status="succeeded",
                 noted={"shape": "list", "items": 6},
             ),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/1"),
                 kind="par",
                 given={
@@ -1020,7 +1320,7 @@ def test_default_flow_keeps_headers_and_work_lines_compact() -> None:
                     "source": {"head": "rank top 8"},
                 },
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/1"),
                 kind="par",
                 status="succeeded",
@@ -1047,7 +1347,7 @@ def test_settle_block_shows_one_sequential_work_line_and_latest_item() -> None:
     output = _render(
         [
             _flow_begin(started_at="2026-07-26T01:00:00Z"),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/4"),
                 kind="loop",
                 given={
@@ -1061,7 +1361,7 @@ def test_settle_block_shows_one_sequential_work_line_and_latest_item() -> None:
             _sequential_run_begin("run_a", item=0),
             RunEnd(run="run_a", status="succeeded"),
             _sequential_run_begin("run_b", item=1),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_b/0"),
                 kind="model",
                 given={"model": {"ref": "deepseek/deepseek-chat"}},
@@ -1071,14 +1371,14 @@ def test_settle_block_shows_one_sequential_work_line_and_latest_item() -> None:
                 part=0,
                 delta=TextDelta("merged"),
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_b/0"),
                 kind="model",
                 status="succeeded",
                 output=_parts(TextPart("merged")),
             ),
             RunEnd(run="run_b", status="succeeded"),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/4"),
                 kind="loop",
                 status="succeeded",
@@ -1106,7 +1406,7 @@ def test_discard_binding_uses_source_syntax_and_result_wording() -> None:
     output = _render(
         [
             _flow_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="human",
                 given={
@@ -1115,12 +1415,11 @@ def test_discard_binding_uses_source_syntax_and_result_wording() -> None:
                     "source": {"head": "let ask"},
                 },
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="human",
                 status="succeeded",
                 output=_parts(TextPart("temporary")),
-                noted={"shape": "item"},
             ),
             RunEnd(run="run_one", status="succeeded"),
         ],
@@ -1135,7 +1434,7 @@ def test_repeat_block_keeps_nested_iterations_in_the_live_area() -> None:
     output = _render(
         [
             _flow_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/3"),
                 kind="loop",
                 given={
@@ -1145,7 +1444,7 @@ def test_repeat_block_keeps_nested_iterations_in_the_live_area() -> None:
                     "source": {"head": "repeat 2"},
                 },
             ),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/3/0"),
                 kind="run",
                 given={
@@ -1156,14 +1455,14 @@ def test_repeat_block_keeps_nested_iterations_in_the_live_area() -> None:
                 },
                 placement={"iter": 0},
             ),
-            RunBegin(
+            _run_begin(
                 run="run_revise",
                 parent=StepPath.parse("run_one/3/0"),
                 control=ControlRef("run_revise", 0),
                 runnable="agic:revise",
                 placement={"iter": 0},
             ),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_revise/0"),
                 kind="model",
                 given={"model": {"ref": "deepseek/deepseek-chat"}},
@@ -1173,21 +1472,21 @@ def test_repeat_block_keeps_nested_iterations_in_the_live_area() -> None:
                 part=0,
                 delta=TextDelta("revising"),
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_revise/0"),
                 kind="model",
                 status="succeeded",
                 output=_parts(TextPart("revised")),
             ),
             RunEnd(run="run_revise", status="succeeded"),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/3/0"),
                 kind="run",
                 status="succeeded",
                 output=_parts(TextPart("revised")),
                 noted={"shape": "item"},
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/3"),
                 kind="loop",
                 status="succeeded",
@@ -1214,7 +1513,7 @@ def test_hidden_repeat_step_does_not_consume_its_parent_diagnostic() -> None:
     output = _render(
         [
             _flow_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/3"),
                 kind="loop",
                 given={
@@ -1224,7 +1523,7 @@ def test_hidden_repeat_step_does_not_consume_its_parent_diagnostic() -> None:
                     "source": {"head": "repeat 2"},
                 },
             ),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/3/0"),
                 kind="run",
                 given={
@@ -1236,13 +1535,13 @@ def test_hidden_repeat_step_does_not_consume_its_parent_diagnostic() -> None:
                 },
                 placement={"iter": 0},
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/3/0"),
                 kind="run",
                 status="failed",
                 error="scatter requires a list result",
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/3"),
                 kind="loop",
                 status="failed",
@@ -1264,7 +1563,7 @@ def test_hidden_repeat_step_does_not_consume_its_parent_diagnostic() -> None:
 def test_complete_repeat_trace_resets_ordinals_and_renders_until_decisions() -> None:
     events: list[RunEvent] = [
         _flow_begin(started_at="2026-07-26T01:00:00Z"),
-        StepBegin(
+        _step_begin(
             step=StepPath.parse("run_one/2"),
             kind="loop",
             given={
@@ -1281,7 +1580,7 @@ def test_complete_repeat_trace_resets_ordinals_and_renders_until_decisions() -> 
         body_run = f"run_review{iteration}"
         events.extend(
             [
-                StepBegin(
+                _step_begin(
                     step=StepPath.parse(body_step),
                     kind="run",
                     given={
@@ -1292,19 +1591,19 @@ def test_complete_repeat_trace_resets_ordinals_and_renders_until_decisions() -> 
                     },
                     placement={"iter": iteration, "iters": 3},
                 ),
-                RunBegin(
+                _run_begin(
                     run=body_run,
                     parent=StepPath.parse(body_step),
                     control=ControlRef(body_run, 0),
                     runnable="agic:review",
                     placement={"iter": iteration},
                 ),
-                StepBegin(
+                _step_begin(
                     step=StepPath.parse(f"{body_run}/0"),
                     kind="model",
                     given={"model": {"ref": "deepseek/deepseek-chat"}},
                 ),
-                StepEnd(
+                _step_end(
                     step=StepPath.parse(f"{body_run}/0"),
                     kind="model",
                     status="succeeded",
@@ -1315,7 +1614,7 @@ def test_complete_repeat_trace_resets_ordinals_and_renders_until_decisions() -> 
                     status="succeeded",
                     output=_output(StepPath.parse(f"{body_run}/0")),
                 ),
-                StepEnd(
+                _step_end(
                     step=StepPath.parse(body_step),
                     kind="run",
                     status="succeeded",
@@ -1327,19 +1626,19 @@ def test_complete_repeat_trace_resets_ordinals_and_renders_until_decisions() -> 
         until_run = f"run_until{iteration}"
         events.extend(
             [
-                RunBegin(
+                _run_begin(
                     run=until_run,
                     parent=StepPath.parse("run_one/2"),
                     control=ControlRef(until_run, 0),
                     runnable="agic:<agic:42>",
                     placement={"iter": -1},
                 ),
-                StepBegin(
+                _step_begin(
                     step=StepPath.parse(f"{until_run}/0"),
                     kind="model",
                     given={"model": {"ref": "deepseek/deepseek-chat"}},
                 ),
-                StepEnd(
+                _step_end(
                     step=StepPath.parse(f"{until_run}/0"),
                     kind="model",
                     status="succeeded",
@@ -1354,7 +1653,7 @@ def test_complete_repeat_trace_resets_ordinals_and_renders_until_decisions() -> 
         )
     events.extend(
         [
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/2"),
                 kind="loop",
                 status="succeeded",
@@ -1384,7 +1683,7 @@ def test_until_boolean_failure_has_no_control_decision() -> None:
     output = _render(
         [
             _flow_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="loop",
                 given={
@@ -1394,19 +1693,19 @@ def test_until_boolean_failure_has_no_control_decision() -> None:
                     "source": {"head": "repeat 2"},
                 },
             ),
-            RunBegin(
+            _run_begin(
                 run="run_until",
                 parent=StepPath.parse("run_one/0"),
                 control=ControlRef("run_until", 0),
                 runnable="agic:<agic:42>",
                 placement={"iter": -1},
             ),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_until/0"),
                 kind="model",
                 given={"model": {"ref": "deepseek/deepseek-chat"}},
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_until/0"),
                 kind="model",
                 status="succeeded",
@@ -1417,7 +1716,7 @@ def test_until_boolean_failure_has_no_control_decision() -> None:
                 status="succeeded",
                 output=_output(StepPath.parse("run_until/0")),
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="loop",
                 status="failed",
@@ -1442,7 +1741,7 @@ def test_failed_until_run_uses_a_red_compact_summary_without_a_decision() -> Non
     output = _render(
         [
             _flow_begin(),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_one/0"),
                 kind="loop",
                 given={
@@ -1452,19 +1751,19 @@ def test_failed_until_run_uses_a_red_compact_summary_without_a_decision() -> Non
                     "source": {"head": "repeat 2"},
                 },
             ),
-            RunBegin(
+            _run_begin(
                 run="run_until",
                 parent=StepPath.parse("run_one/0"),
                 control=ControlRef("run_until", 0),
                 runnable="agic:<agic:42>",
                 placement={"iter": -1},
             ),
-            StepBegin(
+            _step_begin(
                 step=StepPath.parse("run_until/0"),
                 kind="model",
                 given={"model": {"ref": "deepseek/deepseek-chat"}},
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_until/0"),
                 kind="model",
                 status="failed",
@@ -1475,7 +1774,7 @@ def test_failed_until_run_uses_a_red_compact_summary_without_a_decision() -> Non
                 status="failed",
                 error="provider returned status 429",
             ),
-            StepEnd(
+            _step_end(
                 step=StepPath.parse("run_one/0"),
                 kind="loop",
                 status="failed",
@@ -1496,8 +1795,8 @@ def test_failed_until_run_uses_a_red_compact_summary_without_a_decision() -> Non
     assert "↳ stop repeating" not in output
 
 
-def _agic_begin(*, started_at: str = "") -> RunBegin:
-    return RunBegin(
+def _agic_begin(*, started_at: str = "") -> RunBeginEvent:
+    return _run_begin(
         run="run_one",
         control=ControlRef("run_one", 0),
         runnable="agic:demo",
@@ -1505,8 +1804,8 @@ def _agic_begin(*, started_at: str = "") -> RunBegin:
     )
 
 
-def _flow_begin(*, started_at: str = "") -> RunBegin:
-    return RunBegin(
+def _flow_begin(*, started_at: str = "") -> RunBeginEvent:
+    return _run_begin(
         run="run_one",
         control=ControlRef("run_one", 0),
         runnable="flow:research",
@@ -1523,8 +1822,8 @@ def _parallel_run_begin(
     lanes: int = 2,
     runnable: str = "relevance",
     parent: StepPath = StepPath.parse("run_one/2"),
-) -> RunBegin:
-    return RunBegin(
+) -> RunBeginEvent:
+    return _run_begin(
         run=run,
         parent=parent,
         control=ControlRef(run, 0),
@@ -1538,8 +1837,8 @@ def _parallel_run_begin(
     )
 
 
-def _sequential_run_begin(run: str, *, item: int) -> RunBegin:
-    return RunBegin(
+def _sequential_run_begin(run: str, *, item: int) -> RunBeginEvent:
+    return _run_begin(
         run=run,
         parent=StepPath.parse("run_one/4"),
         control=ControlRef(run, 0),

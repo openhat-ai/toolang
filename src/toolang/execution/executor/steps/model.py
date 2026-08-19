@@ -20,7 +20,6 @@ from toolang.base.types.message import (
     ToolCallPart,
     message_text,
 )
-from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import (
     ModelCall,
     ModelCallResult,
@@ -36,9 +35,16 @@ from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...records import (
     RunControlRecord,
     SteerControlPayload,
-    model_call_to_data,
 )
-from ...types import Local, StepPath, Pointer
+from ...types import (
+    Local,
+    ModelStepGiven,
+    ModelStepNoted,
+    ModelTokenCount,
+    ModelTokenPrice,
+    Pointer,
+    StepPath,
+)
 from ..common import _StepFailed
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
@@ -100,10 +106,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             kind="model",
             input=step_input,
             started_at=started_at,
-            given={
-                "model": _model_target_data(prepared.model),
-                "call": model_call_to_data(request),
-            },
+            given=ModelStepGiven(model=prepared.model.ref, call=request),
         )
     )
     state.claimed_inputs = ()
@@ -217,11 +220,7 @@ async def _apply_response(
             kind="model",
             status="succeeded",
             output=Local.typed("Part[]", output, "_", 0),
-            noted={
-                **_accounting_data(accounting),
-                "reasoning_content": _message_reasoning_content(current.message),
-                "state": dict(current.state) if current.state is not None else None,
-            },
+            noted=_model_step_noted(accounting, state=current.state),
             finished_at=utc_now(),
         )
     )
@@ -415,55 +414,31 @@ async def _emit_part_begin(
     )
 
 
-def _message_reasoning_content(message: Message | None) -> str | None:
-    if message is None:
-        return None
-    return next(
-        (
-            part.reasoning
-            for part in message.parts
-            if isinstance(part, ToolCallPart) and part.reasoning
-        ),
-        None,
-    )
-
-
-def _accounting_data(accounting: _ModelAccounting) -> dict[str, object]:
+def _model_step_noted(
+    accounting: _ModelAccounting,
+    *,
+    state: dict[str, object] | None,
+) -> ModelStepNoted:
     usage = accounting.usage
     price = accounting.price
-    return {
-        "tokens": (
-            {"input": usage.input_tokens, "output": usage.output_tokens}
+    return ModelStepNoted(
+        tokens=(
+            ModelTokenCount(input=usage.input_tokens, output=usage.output_tokens)
             if usage is not None
             else None
         ),
-        "price": (
-            {
-                "input": _decimal_text(price.input),
-                "output": _decimal_text(price.output),
-            }
+        price=(
+            ModelTokenPrice(
+                input=_decimal_text(price.input),
+                output=_decimal_text(price.output),
+            )
             if price is not None
             else None
         ),
-        "cost": _decimal_text(accounting.cost),
-    }
+        cost=_decimal_text(accounting.cost),
+        state=dict(state) if state is not None else None,
+    )
 
 
 def _decimal_text(value: Decimal | None) -> str | None:
     return format(value, "f") if value is not None else None
-
-
-def _model_target_data(target: ModelTarget) -> dict[str, object]:
-    return {
-        "ref": target.ref,
-        "provider": target.provider,
-        "name": target.name,
-        "model": target.model,
-        "adapter": target.adapter,
-        "base_url": target.base_url,
-        "scope": target.scope,
-        "tags": list(target.tags),
-        "options": dict(target.options),
-        "tools": target.tools,
-        "streaming": target.streaming,
-    }

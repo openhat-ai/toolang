@@ -41,6 +41,8 @@ from .records import (
     RunControlRecord,
     RunRecord,
     StepRecord,
+    StoredModelStepGiven,
+    StoredStepGiven,
     ThreadPeer,
     ThreadControlPayload,
     ThreadControlRecord,
@@ -50,8 +52,14 @@ from .records import (
     step_message_role,
     local_from_data,
     local_to_data,
+    occurrence_from_data,
+    occurrence_to_data,
     pointers_from_data,
     pointers_to_data,
+    step_noted_from_data,
+    step_noted_to_data,
+    stored_step_given_from_data,
+    stored_step_given_to_data,
 )
 from .types import (
     ControlKind,
@@ -62,9 +70,13 @@ from .types import (
     ControlTiming,
     RunStatus,
     StepKind,
+    StepGiven,
+    StepNoted,
     StepStatus,
     StepPath,
     Local,
+    ModelStepGiven,
+    Occurrence,
     Pointer,
     TypedPointer,
     validate_runtime_value,
@@ -72,7 +84,7 @@ from .types import (
 )
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 26
+_SCHEMA_VERSION = 27
 _MIGRATABLE_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -181,10 +193,11 @@ class RunStore:
         thread: str,
         resources: AgentResources,
         limits: RunLimits,
+        state: str,
         runnable: str,
         model: str,
         locals: tuple[Local, ...],
-        placement: Mapping[str, object] | None,
+        occurrence: Occurrence | None,
         request_id: str | None,
         created_at: str,
         kind: Literal["start", "rerun"] = "start",
@@ -279,7 +292,7 @@ class RunStore:
                     """
                     INSERT INTO runs(
                         id, parent, thread, control_target, control_index,
-                        output, placement, status, error,
+                        output, occurrence, status, error,
                         ejected_by_target, ejected_by_index,
                         created_at, started_at, finished_at
                     ) VALUES (
@@ -293,7 +306,9 @@ class RunStore:
                         str(parent) if parent is not None else None,
                         thread,
                         run_id,
-                        _dump_json(dict(placement)) if placement is not None else None,
+                        _dump_json(occurrence_to_data(occurrence))
+                        if occurrence is not None
+                        else None,
                         created_at,
                     ),
                 )
@@ -301,6 +316,7 @@ class RunStore:
                     StartControlPayload(
                         resources=resources,
                         limits=limits,
+                        state=state,
                         runnable=runnable,
                         model=model,
                         locals=locals,
@@ -309,6 +325,7 @@ class RunStore:
                     else RerunControlPayload(
                         resources=resources,
                         limits=limits,
+                        state=state,
                         runnable=runnable,
                         model=model,
                         locals=locals,
@@ -489,6 +506,7 @@ class RunStore:
         anchor: StepPath | None,
         resources: AgentResources,
         limits: RunLimits,
+        state: str,
         runnable: str,
         model: str,
         locals: tuple[Local, ...] | None,
@@ -523,6 +541,27 @@ class RunStore:
                     raise ValueError(f"run is not visible: {run_id}")
                 if run.status not in {"succeeded", "failed", "canceled"}:
                     raise ValueError(f"run is not terminal: {run_id}")
+                preparation_row = self._conn.execute(
+                    'SELECT * FROM controls WHERE target = ? AND "index" = ?',
+                    (run.control.target, run.control.index),
+                ).fetchone()
+                preparation = (
+                    _run_control_from_row(preparation_row)
+                    if preparation_row is not None
+                    else None
+                )
+                preparation_payload = (
+                    preparation.payload if preparation is not None else None
+                )
+                if not isinstance(
+                    preparation_payload,
+                    StartControlPayload | RerunControlPayload | RetryControlPayload,
+                ):
+                    raise ValueError(f"run preparation not found: {run_id}")
+                if preparation_payload.state != state:
+                    raise ValueError(
+                        f"retry state no longer matches original run: {run_id}; use rerun"
+                    )
                 tree_runs = self._root_tree_runs(run_id)
                 resolved_anchor = self._resolve_retry_anchor(
                     run_id=run_id,
@@ -553,6 +592,7 @@ class RunStore:
                     payload=RetryControlPayload(
                         resources=resources,
                         limits=limits,
+                        state=state,
                         runnable=runnable,
                         model=model,
                         locals=locals,
@@ -627,7 +667,7 @@ class RunStore:
         run_id: str,
         started_at: str,
         control: ControlRef,
-        placement: Mapping[str, object] | None = None,
+        occurrence: Occurrence | None = None,
     ) -> RunRecord:
         """Project run execution beginning."""
 
@@ -651,7 +691,7 @@ class RunStore:
         if (
             run.started_at != started_at
             or run.control != control
-            or run.placement != (dict(placement) if placement is not None else None)
+            or run.occurrence != occurrence
         ):
             raise ValueError(f"conflicting run_begin event: {run_id}")
         return run
@@ -1851,19 +1891,25 @@ class RunStore:
         path: StepPath,
         kind: StepKind,
         input: Sequence[Pointer],
-        placement: Mapping[str, object] | None = None,
-        given: Mapping[str, Any],
+        occurrence: Occurrence | None = None,
+        given: StepGiven,
         started_at: str,
     ) -> StepRecord:
         """Project one step_begin event."""
 
         with self.write_transaction():
+            stored_given: StoredStepGiven = (
+                self.capture_model_call(model=given.model, call=given.call)
+                if isinstance(given, ModelStepGiven)
+                else cast(StoredStepGiven, given)
+            )
+            given_data = stored_step_given_to_data(kind, stored_given)
             self._conn.execute(
                 """
                 INSERT INTO steps(
-                    run, path, kind, input, output, placement, given, noted,
+                    run, path, kind, input, output, occurrence, given, noted,
                     status, error, created_at, started_at, finished_at
-                ) VALUES (?, ?, ?, ?, NULL, ?, ?, '{}', 'running', NULL, ?, ?, NULL)
+                ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'null', 'running', NULL, ?, ?, NULL)
                 ON CONFLICT(run, path) DO NOTHING
                 """,
                 (
@@ -1871,8 +1917,10 @@ class RunStore:
                     path.local,
                     kind,
                     _dump_json(pointers_to_data(tuple(input))),
-                    _dump_json(dict(placement)) if placement is not None else None,
-                    _dump_json(dict(given)),
+                    _dump_json(occurrence_to_data(occurrence))
+                    if occurrence is not None
+                    else None,
+                    _dump_json(given_data),
                     started_at,
                     started_at,
                 ),
@@ -1887,8 +1935,8 @@ class RunStore:
         if (
             step.kind != kind
             or step.input != tuple(input)
-            or step.placement != (dict(placement) if placement is not None else None)
-            or step.given != dict(given)
+            or step.occurrence != occurrence
+            or step.given != stored_given
             or step.started_at != started_at
         ):
             raise ValueError(f"conflicting step_begin event: {path}")
@@ -1901,7 +1949,7 @@ class RunStore:
         kind: StepKind,
         status: StepStatus,
         output: Local | None,
-        noted: Mapping[str, Any],
+        noted: StepNoted,
         error: ExecutionError | None,
         finished_at: str,
     ) -> StepRecord:
@@ -1928,7 +1976,7 @@ class RunStore:
                         _dump_json(local_to_data(output))
                         if output is not None
                         else None,
-                        _dump_json(dict(noted)),
+                        _dump_json(step_noted_to_data(kind, noted)),
                         status,
                         _dump_execution_error(error),
                         finished_at,
@@ -1946,7 +1994,7 @@ class RunStore:
         if (
             step.status != status
             or step.output != output
-            or step.noted != dict(noted)
+            or step.noted != noted
             or step.error != error
             or step.finished_at != finished_at
         ):
@@ -2002,9 +2050,9 @@ class RunStore:
     def capture_model_call(
         self,
         *,
-        target: Mapping[str, Any],
+        model: str,
         call: ModelCall,
-    ) -> dict[str, Any]:
+    ) -> StoredModelStepGiven:
         """Persist deduplicated normalized model-call inputs."""
 
         with self.write_transaction():
@@ -2013,15 +2061,17 @@ class RunStore:
                 self._put_model_message(message) for message in call.messages
             ]
             toolset_ref = self._put_toolset(call.tools) if call.tools else None
-        return {
-            "model": _model_target_snapshot(target),
-            "call": {
-                "instructions": instruction_ref,
-                "messages": message_refs,
-                "tools": toolset_ref,
-                "state": dict(call.state) if call.state is not None else None,
-            },
-        }
+        from .records import ModelCallRefs
+
+        return StoredModelStepGiven(
+            model=model,
+            call=ModelCallRefs(
+                instructions=instruction_ref,
+                messages=tuple(message_refs),
+                tools=toolset_ref,
+                state=dict(call.state) if call.state is not None else None,
+            ),
+        )
 
     def rebuild_model_call(self, step: StepRecord) -> ModelCall:
         """Rebuild the normalized model call captured by one model step."""
@@ -2043,31 +2093,13 @@ class RunStore:
         for step in steps:
             if step.kind != "model":
                 raise ValueError(f"step is not a model call: {step.path}")
-            raw_call = step.given.get("call")
-            if not isinstance(raw_call, Mapping):
+            if not isinstance(step.given, StoredModelStepGiven):
                 raise ValueError(f"model call metadata is missing: {step.path}")
-            instruction_ref = _required_text(
-                raw_call.get("instructions"), "instructions"
-            )
-            raw_messages = raw_call.get("messages")
-            if not isinstance(raw_messages, Sequence) or isinstance(
-                raw_messages, (str, bytes, bytearray)
-            ):
-                raise ValueError(f"model message references are invalid: {step.path}")
-            message_refs = tuple(
-                _required_text(message_ref, f"messages[{index}]")
-                for index, message_ref in enumerate(raw_messages)
-            )
-            raw_toolset_ref = raw_call.get("tools")
-            toolset_ref = (
-                _required_text(raw_toolset_ref, "tools")
-                if raw_toolset_ref is not None
-                else None
-            )
-            raw_state = raw_call.get("state")
-            if raw_state is not None and not isinstance(raw_state, Mapping):
-                raise ValueError(f"model adapter state is invalid: {step.path}")
-            state = dict(raw_state) if isinstance(raw_state, Mapping) else None
+            call = step.given.call
+            instruction_ref = call.instructions
+            message_refs = call.messages
+            toolset_ref = call.tools
+            state = dict(call.state) if call.state is not None else None
             references[step.path] = (
                 instruction_ref,
                 message_refs,
@@ -2418,7 +2450,7 @@ class RunStore:
                     control_target TEXT NOT NULL,
                     control_index INTEGER NOT NULL,
                     output TEXT,
-                    placement TEXT,
+                    occurrence TEXT,
                     status TEXT NOT NULL,
                     error TEXT,
                     ejected_by_target TEXT,
@@ -2524,7 +2556,7 @@ def _create_steps_table(connection: sqlite3.Connection) -> None:
             kind TEXT NOT NULL,
             input TEXT NOT NULL,
             output TEXT,
-            placement TEXT,
+            occurrence TEXT,
             given TEXT NOT NULL,
             noted TEXT NOT NULL,
             status TEXT NOT NULL,
@@ -2655,44 +2687,6 @@ def _toolset_from_stored(toolset_hash: str, stored: str) -> tuple[ToolDefinition
     return tuple(tools)
 
 
-def _model_target_snapshot(target: Mapping[str, Any]) -> dict[str, Any]:
-    snapshot = {
-        name: _required_text(target.get(name), f"model {name}")
-        for name in ("ref", "provider", "name", "model", "adapter")
-    }
-    base_url = target.get("base_url")
-    if base_url is not None and not isinstance(base_url, str):
-        raise ValueError("model base_url must be text or null")
-    scope = target.get("scope")
-    if scope is not None and not isinstance(scope, str):
-        raise ValueError("model scope must be text or null")
-    tags = target.get("tags", ())
-    if (
-        not isinstance(tags, Sequence)
-        or isinstance(tags, (str, bytes, bytearray))
-        or not all(isinstance(tag, str) for tag in tags)
-    ):
-        raise ValueError("model tags must be a list of text")
-    options = target.get("options", {})
-    if not isinstance(options, Mapping):
-        raise ValueError("model options must be an object")
-    tools = target.get("tools", True)
-    if not isinstance(tools, bool):
-        raise ValueError("model tools must be boolean")
-    streaming = target.get("streaming", True)
-    if not isinstance(streaming, bool):
-        raise ValueError("model streaming must be boolean")
-    return {
-        **snapshot,
-        "base_url": base_url,
-        "scope": scope,
-        "tags": list(tags),
-        "options": dict(options),
-        "tools": tools,
-        "streaming": streaming,
-    }
-
-
 def _validate_request_id(request_id: str | None) -> None:
     if request_id is not None and (
         not request_id.strip() or request_id != request_id.strip()
@@ -2717,9 +2711,9 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
         row["output"],
         label="run output",
     )
-    placement_data = _load_optional_stored_object(
-        row["placement"],
-        label="run placement",
+    occurrence_data = _load_optional_stored_object(
+        row["occurrence"],
+        label="run occurrence",
     )
     return RunRecord(
         id=str(row["id"]),
@@ -2732,7 +2726,7 @@ def _run_from_row(row: sqlite3.Row) -> RunRecord:
             index=int(row["control_index"]),
         ),
         output=(local_from_data(output_data) if output_data is not None else None),
-        placement=placement_data,
+        occurrence=occurrence_from_data(occurrence_data),
         status=cast(RunStatus, row["status"]),
         error=_load_execution_error(row["error"]),
         ejected_by=(
@@ -2772,25 +2766,28 @@ def _thread_from_row(row: sqlite3.Row) -> ThreadRecord:
 
 def _step_from_row(row: sqlite3.Row) -> StepRecord:
     raw = dict(row)
+    kind = _step_kind_from_data(raw["kind"])
     input_data = _load_stored_array(raw["input"], label="step input")
     output_data = _load_optional_stored_object(
         raw["output"],
         label="step output",
     )
-    placement_data = _load_optional_stored_object(
-        raw["placement"],
-        label="step placement",
+    occurrence_data = _load_optional_stored_object(
+        raw["occurrence"],
+        label="step occurrence",
     )
     given_data = _load_stored_object(raw["given"], label="step given")
-    noted_data = _load_stored_object(raw["noted"], label="step noted")
+    if raw["noted"] is None:
+        raise ValueError("stored step noted must be JSON null or an object")
+    noted_data = _load_json(str(raw["noted"]))
     return StepRecord(
         path=StepPath.from_local(str(raw["run"]), str(raw["path"])),
-        kind=_step_kind_from_data(raw["kind"]),
+        kind=kind,
         input=pointers_from_data(input_data),
         output=(local_from_data(output_data) if output_data is not None else None),
-        placement=placement_data,
-        given=given_data,
-        noted=noted_data,
+        occurrence=occurrence_from_data(occurrence_data),
+        given=stored_step_given_from_data(kind, given_data),
+        noted=step_noted_from_data(kind, noted_data),
         status=cast(StepStatus, raw["status"]),
         error=_load_execution_error(raw["error"]),
         ejected_by=(

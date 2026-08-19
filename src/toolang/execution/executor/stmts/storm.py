@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from toolang.lang.ast import StormStmt
 
 from ...records import RunControlRecord, StepPath
+from ...types import Occurrence
 from ..common import BoundRun
 from ..common import Local, require_item
 from ..steps import par as par_step
@@ -23,9 +24,9 @@ async def execute(
     path: StepPath,
     statement: StormStmt,
     controls: Sequence[RunControlRecord],
-    placement: Mapping[str, object] | None,
+    occurrence: Occurrence | None,
 ) -> Local:
-    async def operation() -> Local:
+    async def evaluate() -> Local:
         basis = require_item(locals, operation="storm")
         return await execution.parallel_children(
             binding,
@@ -33,7 +34,7 @@ async def execute(
             path,
             statement.runnable,
             [basis] * statement.count,
-            limit=statement.par,
+            limit=statement.lanes,
             select_source=False,
         )
 
@@ -44,6 +45,6 @@ async def execute(
         statement=statement,
         locals=locals,
         controls=controls,
-        placement=placement,
-        operation=operation,
+        occurrence=occurrence,
+        evaluate=evaluate,
     )

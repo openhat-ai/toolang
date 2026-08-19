@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from toolang.common.errors import ToolangError
 from toolang.lang.ast import FlowDecl, FlowStmt, RepeatStmt
 from toolang.lang.input import coerce_output
 
-from ...types import StepPath
+from ...types import Occurrence, StepPath
 from ..common import BoundRun
 from ..common import (
     Local,
+    bind_flow_result,
     program_structs,
     statement_has_call,
-    update_locals,
 )
 from .. import stmts
 
@@ -82,9 +82,9 @@ async def execute_statements(
     *,
     parent: StepPath | None,
     start: int = 0,
-    placement: Mapping[str, object] | None = None,
+    occurrence: Occurrence | None = None,
 ) -> int:
-    """Execute statements sequentially and update their shared locals."""
+    """Execute Steps sequentially and bind each committed result between them."""
 
     index = start
     for statement in statements:
@@ -104,11 +104,10 @@ async def execute_statements(
             path=path,
             statement=statement,
             controls=(),
-            placement=placement,
+            occurrence=occurrence,
         )
-        if not isinstance(statement, RepeatStmt):
-            update_locals(locals, statement.binding, result)
-            if statement.binding == "_" and result.ref is not None:
-                execution.record_output(binding.run_id, result.ref)
+        bind_flow_result(locals, statement.binding, result)
+        if statement.binding == "_" and result.ref is not None:
+            execution.record_output(binding.run_id, result.ref)
         index += 1
     return index

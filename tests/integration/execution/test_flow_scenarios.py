@@ -32,6 +32,8 @@ from toolang.execution.records import (
 )
 from toolang.execution.types import (
     Local,
+    Occurrence,
+    OccurrencePosition,
     StepPath,
     ThreadPrefix,
     Pointer,
@@ -111,6 +113,43 @@ flow relay(_: Part[]) -> Part[]:
                 ("run_end", child.id),
                 ("run_end", root.id),
             ]
+
+    asyncio.run(scenario())
+
+
+def test_discarded_step_keeps_output_without_updating_locals(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic replace(_: Text) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow retained(_: Text) -> Text:
+  let run replace
+""",
+        responses=[ModelCallResult(message=Message.assistant("temporary"))],
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="retained",
+                    primary=resolve_input_parts("original"),
+                )
+            )
+
+            assert root.status == "succeeded"
+            assert harness.store.run_output_text(run_id=root.id) == "original"
+            step = harness.store.list_steps(run_id=root.id)[0]
+            assert step.output is not None
+            assert step.output.name is None
+            assert harness.store.resolve_value(step.output.value) == "temporary"
 
     asyncio.run(scenario())
 
@@ -695,7 +734,9 @@ flow mapped(_: Text) -> Text[]:
                 if run.parent == StepPath.parse(f"{root.id}/1")
             ]
             assert sorted(
-                run.placement["item"] for run in children if run.placement
+                run.occurrence.item.index
+                for run in children
+                if run.occurrence is not None and run.occurrence.item is not None
             ) == [
                 0,
                 1,
@@ -768,8 +809,8 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
                 for step in harness.store.list_steps(run_id=root.id)
                 if step.parent is None
             ]
-            assert root_steps[3].noted["items"] == 3
-            assert root_steps[4].noted["items"] == 3
+            assert root_steps[3].noted is None
+            assert root_steps[4].noted is None
             assert len(harness.adapter.invocations) == 20
             predicate_messages = [
                 message_text(invocation.call.messages[-1].parts)
@@ -1067,18 +1108,24 @@ flow folded(_: Text) -> Text:
                 "ab",
                 "abc",
             ]
-            placements = [
-                event.placement
+            occurrences = [
+                event.occurrence
                 for event in tracer.events
                 if isinstance(event, RunBegin)
                 and event.parent is not None
-                and event.placement is not None
-                and "iter" in event.placement
+                and event.occurrence is not None
+                and event.occurrence.item is not None
             ]
-            assert placements == [
-                {"item": 0, "items": 3, "iter": 0},
-                {"item": 1, "items": 3, "iter": 1},
-                {"item": 2, "items": 3, "iter": 2},
+            assert occurrences == [
+                Occurrence(
+                    item=OccurrencePosition(index=0, count=3),
+                ),
+                Occurrence(
+                    item=OccurrencePosition(index=1, count=3),
+                ),
+                Occurrence(
+                    item=OccurrencePosition(index=2, count=3),
+                ),
             ]
 
     asyncio.run(scenario())
@@ -1467,7 +1514,9 @@ flow repeated(_: Text) -> Text:
             until_runs = [
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
-                if run.placement is not None and run.placement.get("iter") == -1
+                if run.occurrence is not None
+                and run.occurrence.iteration is not None
+                and run.occurrence.iteration.phase == "until"
             ]
             assert len(until_runs) == 2
             assert all(
@@ -1584,7 +1633,7 @@ flow scattered(_: Text) -> Text[]:
             assert [(step.kind, step.status) for step in root_steps] == [
                 ("run", "succeeded")
             ]
-            assert root_steps[0].noted["items"] == 2
+            assert root_steps[0].noted is None
             child = next(
                 run
                 for run in harness.store.list_runs(

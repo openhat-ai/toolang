@@ -263,40 +263,44 @@ def _validate_stmts(
             continue
         if isinstance(stmt, ast.KeepStmt | ast.DropStmt):
             positional = stmt.position is not None or stmt.count is not None
-            filtered = stmt.predicate is not None
+            filtered = stmt.runnable is not None
             if positional == filtered:
                 raise ToolangValidationError(
                     f"{stmt.kind.capitalize()} at line {stmt.span.line} requires position or predicate."
                 )
             if positional:
-                if stmt.position is None or stmt.count is None or stmt.par is not None:
+                if (
+                    stmt.position is None
+                    or stmt.count is None
+                    or stmt.lanes is not None
+                ):
                     raise ToolangValidationError(
                         f"Invalid positional {stmt.kind} at line {stmt.span.line}."
                     )
                 _non_negative(stmt.count, field="count", line=stmt.span.line)
             else:
-                _require_runnable(stmt.predicate or "", runnables, stmt=stmt)
-                _positive_optional(stmt.par, field="par", line=stmt.span.line)
+                _require_runnable(stmt.runnable or "", runnables, stmt=stmt)
+                _positive_optional(stmt.lanes, field="par", line=stmt.span.line)
             continue
         if isinstance(stmt, ast.RankStmt):
-            _require_runnable(stmt.scorer, runnables, stmt=stmt)
-            if (stmt.limit is None) != (stmt.count is None):
+            _require_runnable(stmt.runnable, runnables, stmt=stmt)
+            if (stmt.selection is None) != (stmt.limit is None):
                 raise ToolangValidationError(
                     f"Rank at line {stmt.span.line} has an incomplete limit."
                 )
-            if stmt.count is not None:
-                _non_negative(stmt.count, field="count", line=stmt.span.line)
-            _positive_optional(stmt.par, field="par", line=stmt.span.line)
+            if stmt.limit is not None:
+                _non_negative(stmt.limit, field="count", line=stmt.span.line)
+            _positive_optional(stmt.lanes, field="par", line=stmt.span.line)
             continue
         if isinstance(stmt, ast.RepeatStmt):
-            if stmt.count is None and stmt.until is None:
+            if stmt.count is None and stmt.runnable is None:
                 raise ToolangValidationError(
                     f"Repeat at line {stmt.span.line} requires count or until."
                 )
             if stmt.count is not None:
                 _non_negative(stmt.count, field="count", line=stmt.span.line)
-            if stmt.until is not None:
-                _require_runnable(stmt.until, runnables, stmt=stmt)
+            if stmt.runnable is not None:
+                _require_runnable(stmt.runnable, runnables, stmt=stmt)
             _validate_stmts(stmt.stmts, runnables=runnables)
             continue
 
@@ -305,7 +309,7 @@ def _validate_stmts(
         if isinstance(stmt, ast.ScatterStmt | ast.StormStmt):
             _non_negative(stmt.count, field="count", line=stmt.span.line)
         if isinstance(stmt, ast.StormStmt | ast.MapStmt):
-            _positive_optional(stmt.par, field="par", line=stmt.span.line)
+            _positive_optional(stmt.lanes, field="par", line=stmt.span.line)
 
 
 def _validate_binding(stmt: ast.FlowStmt) -> None:

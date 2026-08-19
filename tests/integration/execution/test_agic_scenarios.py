@@ -42,7 +42,14 @@ from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
 from toolang.execution.records import RunControlRef, StartControlPayload
-from toolang.execution.types import StepPath, ThreadPrefix, Pointer
+from toolang.execution.types import (
+    ModelStepNoted,
+    ModelTokenCount,
+    ModelTokenPrice,
+    StepPath,
+    ThreadPrefix,
+    Pointer,
+)
 from toolang.lang.input import resolve_input_parts
 
 
@@ -965,10 +972,9 @@ agic reply(_: Text) -> Text:
                 for step in harness.store.list_steps(run_id=record.id)
             ] == [("model", "succeeded")]
             model_step = harness.store.list_steps(run_id=record.id)[0]
-            assert model_step.noted["tokens"] == {"input": 6, "output": 5}
-            assert model_step.noted["price"] is None
-            assert model_step.noted["cost"] is None
-            assert "usage" not in model_step.noted
+            assert model_step.noted == ModelStepNoted(
+                tokens=ModelTokenCount(input=6, output=5)
+            )
 
     asyncio.run(scenario())
 
@@ -1029,12 +1035,11 @@ agic reply(_: Text) -> Text:
             assert record.status == status
             assert record.error == error
             model_step = harness.store.list_steps(run_id=record.id)[0]
-            assert model_step.noted["tokens"] == {"input": 1, "output": 1}
-            assert model_step.noted["price"] == {
-                "input": "0.01",
-                "output": "0.02",
-            }
-            assert model_step.noted["cost"] == "0.03"
+            assert model_step.noted == ModelStepNoted(
+                tokens=ModelTokenCount(input=1, output=1),
+                price=ModelTokenPrice(input="0.01", output="0.02"),
+                cost="0.03",
+            )
 
     asyncio.run(scenario())
 
@@ -1108,9 +1113,7 @@ agic reply(_: Text) -> Text:
             )
             assert len(harness.adapter.invocations) == 1
             model_step = harness.store.list_steps(run_id=record.id)[0]
-            assert model_step.noted["tokens"] is None
-            assert model_step.noted["price"] is None
-            assert model_step.noted["cost"] is None
+            assert model_step.noted == ModelStepNoted()
 
     asyncio.run(scenario())
 
