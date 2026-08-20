@@ -968,8 +968,10 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
         ("class:status.text", "  "),
         ("class:status.activity", "model: "),
     ]
-    assert first_frame == ("class:status.activity", "██       ")
-    assert next_frame == ("class:status.activity", " ██      ")
+    assert first_frame == ("class:status.activity", "▌        ")
+    assert next_frame == ("class:status.activity", "▐        ")
+    status.advance_activity()
+    assert status._render()[0] == ("class:status.activity", " ▌       ")
     assert widgets._chat_ui_palette()["status.activity"] == (
         f"fg:{rendering.START_CONTROL_ACCENT}"
     )

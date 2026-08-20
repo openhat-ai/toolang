@@ -391,10 +391,12 @@ such as `>` and `+` while leaving message text aligned in column two.
 
 The bottom `StatusBar` reserves nine cells before the model name. When idle, it
 renders two spaces followed by a Start-accent `model: ` label. While a local Run
-is in flight, the same cells contain a two-cell, full-height Start-accent block
-moving horizontally across an eight-cell track plus one separating space.
-Frames advance every 160 milliseconds. The model name therefore never shifts.
-Animation refreshes only while running and is never committed to scrollback.
+is in flight, the same cells contain a half-cell, full-height Start-accent bar
+moving horizontally across an eight-cell track plus one separating space. `▌`
+and `▐` provide half-character steps; the bar reverses without repeating either
+endpoint. Frames advance every 80 milliseconds. The model name therefore never
+shifts. Animation refreshes only while running and is never committed to
+scrollback.
 
 ## Implementation Touchpoints
 
