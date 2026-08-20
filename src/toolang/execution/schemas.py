@@ -306,7 +306,7 @@ class StepData:
     def __post_init__(self) -> None:
         validate_occurrence(self.occurrence)
         validate_step_given(self.kind, self.given)
-        validate_step_noted(self.kind, self.noted)
+        validate_step_noted(self.kind, self.noted, self.status)
 
     @classmethod
     def from_record(

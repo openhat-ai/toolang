@@ -47,10 +47,13 @@ from ..records import RunControlRecord, SteerControlPayload, StopControlPayload
 from ..runnables import resolve_runnable
 from ..types import (
     AgentResources,
+    CollectionStepNoted,
     Local as RecordLocal,
     Occurrence,
     StepKind,
+    StepNoted,
     StepPath,
+    StepStatus,
     Pointer,
     TypedPointer,
 )
@@ -124,6 +127,7 @@ async def execute_step(
     controls: Sequence[RunControlRecord],
     occurrence: Occurrence | None,
     evaluate: Callable[[], Awaitable[Local]],
+    note: Callable[[StepStatus], StepNoted] | None = None,
 ) -> Local:
     """Evaluate, transform, and commit one Flow statement Step."""
 
@@ -153,6 +157,13 @@ async def execute_step(
                 step=path,
                 kind=kind,
                 status="canceled",
+                noted=_flow_step_noted(
+                    statement,
+                    locals,
+                    status="canceled",
+                    result=None,
+                    note=note,
+                ),
                 finished_at=utc_now(),
             )
         )
@@ -163,6 +174,13 @@ async def execute_step(
                 step=path,
                 kind=kind,
                 status="failed",
+                noted=_flow_step_noted(
+                    statement,
+                    locals,
+                    status="failed",
+                    result=None,
+                    note=note,
+                ),
                 error=exc.error,
                 finished_at=utc_now(),
             )
@@ -175,6 +193,13 @@ async def execute_step(
                 step=path,
                 kind=kind,
                 status="failed",
+                noted=_flow_step_noted(
+                    statement,
+                    locals,
+                    status="failed",
+                    result=None,
+                    note=note,
+                ),
                 error=message,
                 finished_at=utc_now(),
             )
@@ -187,10 +212,42 @@ async def execute_step(
             kind=kind,
             status="succeeded",
             output=output,
+            noted=_flow_step_noted(
+                statement,
+                locals,
+                status="succeeded",
+                result=result,
+                note=note,
+            ),
             finished_at=utc_now(),
         )
     )
     return replace(result, ref=Pointer.step(path)) if output is not None else result
+
+
+def _flow_step_noted(
+    statement: FlowStmt,
+    locals: Mapping[str, Local],
+    *,
+    status: StepStatus,
+    result: Local | None,
+    note: Callable[[StepStatus], StepNoted] | None,
+) -> StepNoted:
+    if note is not None:
+        return note(status)
+    if not isinstance(statement, StormStmt | MapStmt | KeepStmt | DropStmt | RankStmt):
+        return None
+    if isinstance(statement, StormStmt):
+        total_items = statement.count
+    else:
+        source = locals.get("_", Local())
+        if source.shape != "list" or not isinstance(source.value, Array | list):
+            return None
+        total_items = len(source.value)
+    output_items = None
+    if result is not None and isinstance(result.value, Array | list | tuple):
+        output_items = len(result.value)
+    return CollectionStepNoted(total_items, output_items)
 
 
 def transform_flow_result(

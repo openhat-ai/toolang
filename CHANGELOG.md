@@ -8,6 +8,11 @@ and this project uses semantic versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- Script runnable commands no longer copy their persisted Run result to stdout
+  by default. Use `--save -` for stdout or `--save PATH` for atomic file output.
+
 
 ## [0.3.0] - 2026-08-03
 

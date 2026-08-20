@@ -1,5 +1,5 @@
 """Script execution progress presentation."""
 
-from .tracer import ConsoleRunTracer
+from .presenter import ScriptRunPresenter
 
-__all__ = ["ConsoleRunTracer"]
+__all__ = ["ScriptRunPresenter"]

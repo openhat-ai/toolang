@@ -11,7 +11,7 @@ from toolang.base.errors import ToolangError
 from toolang.cli.toolang.commands import script
 from toolang.execution.calls import parse_call
 from toolang.execution.records import RunRecord
-from toolang.execution.types import ControlRef, RunOverride
+from toolang.execution.types import ControlRef, RunOverride, RunStatus
 from toolang.lang.input import RunnableInputRaw
 from tests.support.execution_harness import ExecutionHarness
 
@@ -63,6 +63,8 @@ def test_script_binds_options_arguments_and_primary_input(
             "cost=2.5",
             "--limit",
             "time=60",
+            "--save",
+            "-",
             "-vv",
             "count=2.5",
             "enabled=true",
@@ -84,6 +86,7 @@ def test_script_binds_options_arguments_and_primary_input(
         "caps=skill/reviewer,service/github",
     )
     assert captured["verbosity"] == 2
+    assert captured["save"] == "-"
     assert captured["limit_options"] == (
         "tokens=1000",
         "cost=2.5",
@@ -373,6 +376,9 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "enabled=Boolean" in stdout
     assert "[enabled=Boolean]" in stdout.partition("Arguments")[2]
     assert "Primary Part[] input." in stdout
+    assert "--save" in stdout
+    assert "Save the Run result to PATH, or use - for" in stdout
+    assert "stdout." in stdout
     positions = tuple(
         stdout.index(option) for option in ("--allow", "--limit", "--default")
     )
@@ -537,25 +543,31 @@ def test_script_rejects_stdin_marker_mixed_with_input(
     assert "stdin marker '-' must be the only primary input" in output.err
 
 
-def test_script_does_not_repeat_a_failure_reported_by_the_tracer(
+@pytest.mark.parametrize("status", ("failed", "canceled"))
+def test_script_does_not_save_an_unsuccessful_run(
     tmp_path: Path,
     capsys,
+    status: RunStatus,
 ) -> None:
+    destination = tmp_path / "result.txt"
+    destination.write_text("existing", encoding="utf-8")
     result = script._emit_result(
         RunRecord(
-            id="run_failed",
+            id=f"run_{status}",
             parent=None,
             thread="script_thread",
-            control=ControlRef("run_failed", 0),
+            control=ControlRef(f"run_{status}", 0),
             output=None,
-            status="failed",
+            status=status,
             error="output is not valid Number",
         ),
         store_path=tmp_path / "runs.db",
         log_path=None,
+        save=str(destination),
         error_reported=True,
     )
     output = capsys.readouterr()
 
     assert result == 1
-    assert output.err == "Run: run_failed\n"
+    assert output.err == ""
+    assert destination.read_text(encoding="utf-8") == "existing"

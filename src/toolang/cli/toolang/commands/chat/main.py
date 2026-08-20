@@ -24,6 +24,7 @@ from toolang.execution.types import StepPath
 from toolang.lang.types import Array
 from toolang.cli.common.context import context_layout, load_runtime_environ, user_call
 from toolang.cli.common.execution import open_execution
+from toolang.cli.common.execution_progress.config import resolve_progress_max_width
 from . import slashes as chat_slashes
 from .base import ChatClient, chat_status_label, friendly_error as chat_friendly_error
 from .history import ChatInputHistoryStore
@@ -159,6 +160,10 @@ def _chat_interactive_prompt_toolkit(
         home=_chat_home_label(ctx),
         input_history=_chat_input_history_store(ctx),
         client=client,
+        progress_max_width=user_call(
+            resolve_progress_max_width,
+            load_runtime_environ(context_layout(ctx), base_environ=os.environ),
+        ),
     )
 
 

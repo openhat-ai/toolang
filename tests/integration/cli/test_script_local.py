@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from toolang.base.types.message import Message
+from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands import script
 from toolang.execution.store import RunStore
@@ -42,10 +42,22 @@ flow research(_: Part[]) -> Text[]:
 """
 
 
-def test_local_script_runs_through_execution_and_persists_script_thread(
+@pytest.mark.parametrize(
+    ("save_mode", "expected_status", "expected_stdout"),
+    (
+        (None, 0, ""),
+        ("stdout", 0, "done"),
+        ("file", 0, ""),
+        ("missing-parent", 1, ""),
+    ),
+)
+def test_local_script_saves_only_to_an_explicit_destination(
     tmp_path: Path,
     monkeypatch,
     capsys,
+    save_mode: str | None,
+    expected_status: int,
+    expected_stdout: str,
 ) -> None:
     source = tmp_path / "echo.too"
     source.write_text(_SOURCE, encoding="utf-8")
@@ -76,21 +88,35 @@ def test_local_script_runs_through_execution_and_persists_script_thread(
     )
     monkeypatch.setattr(script, "configure_logging_plan", lambda _plan: None)
 
-    result = script.dispatch(
-        [],
-        [str(source), "echo", "hello"],
-        prog_name="toolang",
-    )
+    args = [str(source), "echo"]
+    destination = tmp_path / "result.txt"
+    if save_mode == "stdout":
+        args.extend(("--quiet", "--save", "-"))
+    elif save_mode == "file":
+        args.extend(("--quiet", "--save", str(destination)))
+    elif save_mode == "missing-parent":
+        destination = tmp_path / "missing" / "result.txt"
+        args.extend(("--save", str(destination)))
+    args.append("hello")
+    result = script.dispatch([], args, prog_name="toolang")
     output = capsys.readouterr()
 
-    assert result == 0
-    assert output.out == "done\n"
-    assert output.err == ""
+    assert result == expected_status
+    assert output.out == expected_stdout
+    if save_mode == "missing-parent":
+        assert "result destination parent does not exist" in output.err
+    else:
+        assert output.err == ""
+    if save_mode == "file":
+        assert destination.read_bytes() == b"done"
+    else:
+        assert not destination.exists()
     store = RunStore(layout.run_store)
     try:
         threads = store.list_threads()
         runs = store.list_runs(thread_id=threads[0].thread_id, limit=None)
         control = store.get_run_control(run_id=runs[0].id, index=0)
+        durable_output = store.run_output(run_id=runs[0].id)
     finally:
         store.close()
         asyncio.run(harness.executor.shutdown())
@@ -100,6 +126,7 @@ def test_local_script_runs_through_execution_and_persists_script_thread(
     assert threads[0].origin == "script"
     assert len(runs) == 1
     assert runs[0].status == "succeeded"
+    assert durable_output == (TextPart("done"),)
     assert control is not None
     assert isinstance(control.payload, StartControlPayload)
     assert control.payload.runnable == "agic:echo"
@@ -150,16 +177,15 @@ def test_local_script_renders_composite_flow_progress(
 
     try:
         assert result == 0
-        assert output.out == '["one","two"]\n'
-        assert "Run flow research" in output.err
+        assert output.out == ""
+        assert "Run flow research" not in output.err
         assert "> agent framework" not in output.err
-        assert "[0] scatter 2 expand" in output.err
-        assert "[0] scatter 2 expand ·" not in output.err
+        assert "[0] Expand the topic." in output.err
         assert "line 10" not in output.err
-        assert "Run agic expand" in output.err
-        assert '· ["one","two"]' in output.err
-        assert "--- run_" in output.err
-        assert "list returned" in output.err
+        assert "Run agic expand" not in output.err
+        assert '• ["one","two"]' in output.err
+        assert "• run_" in output.err
+        assert "list returned" not in output.err
         assert "~~~" not in output.err
     finally:
         asyncio.run(harness.executor.shutdown())

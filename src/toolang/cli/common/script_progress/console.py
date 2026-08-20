@@ -1,39 +1,69 @@
-"""Terminal output owned by the script progress renderer."""
+"""Rich terminal output owned by the Script progress renderer."""
 
 from __future__ import annotations
 
 import shutil
-import textwrap
 from typing import Literal, TextIO
 
-from ..execution_progress.formatting import one_line, truncate
+from rich.console import Console, Group, RenderableType
+from rich.live import Live
+from rich.text import Text
 
-Tone = Literal["progress", "active", "error", "warning"]
+from ..execution_progress import ProgressBlock, ProgressRow, ProgressUpdate
+from ..execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
+from ..execution_progress.formatting import one_line
+from ..execution_progress.rich_rendering import progress_block_renderable
 
-_ANSI_STYLE: dict[Tone, str] = {
-    "progress": "\x1b[2m",
-    "active": "",
-    "error": "\x1b[31m",
-    "warning": "\x1b[33m",
+Tone = Literal["progress", "normal", "active", "error", "warning"]
+
+_STYLES: dict[Tone, str] = {
+    "progress": "dim",
+    "normal": "none",
+    "active": "none",
+    "error": "red",
+    "warning": "yellow",
 }
-_ANSI_RESET = "\x1b[0m"
 
 
 class ProgressConsole:
-    """Write stable and replaceable progress blocks to one stream."""
+    """Append committed fragments and render one replaceable Rich Live area."""
 
-    def __init__(self, stream: TextIO, *, width: int | None = None) -> None:
+    def __init__(
+        self,
+        stream: TextIO,
+        *,
+        width: int | None = None,
+        max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+    ) -> None:
         self.stream = stream
         self.tty = bool(getattr(stream, "isatty", lambda: False)())
         detected = (
-            shutil.get_terminal_size(fallback=(100, 24)).columns if self.tty else 100
+            shutil.get_terminal_size(fallback=(max_width, 24)).columns
+            if self.tty
+            else max_width
         )
-        self.width = max(width or detected, 40)
-        self._live_lines: list[str] = []
+        requested = detected if width is None else width
+        if self.tty:
+            requested = min(requested, detected)
+        self.width = max(1, min(requested, max_width))
+        self.console = Console(
+            file=stream,
+            width=self.width,
+            color_system="standard" if self.tty else None,
+            force_terminal=self.tty,
+            highlight=False,
+            legacy_windows=False,
+            _environ={"COLUMNS": str(self.width), "LINES": "24"},
+        )
+        self._live: Live | None = None
+        self._live_rows: list[ProgressRow] = []
         self._last_was_blank = False
 
     def close(self) -> None:
         self.clear_live()
+        if self._live is not None:
+            self._live.stop()
+            self._live = None
 
     def blank(self) -> None:
         if not self._last_was_blank:
@@ -41,7 +71,7 @@ class ProgressConsole:
 
     def write(self, value: str, *, tone: Tone = "progress") -> None:
         self.clear_live()
-        print(self._styled(value, tone=tone), file=self.stream, flush=True)
+        self.console.print(Text(value, style=_STYLES[tone], no_wrap=True))
         self._last_was_blank = not value
 
     def wrapped(
@@ -52,39 +82,75 @@ class ProgressConsole:
         continuation: str | None = None,
         tone: Tone = "progress",
     ) -> None:
-        continuation = prefix if continuation is None else continuation
-        lines = textwrap.wrap(
-            one_line(value),
-            width=max(self.width - len(prefix), 10),
-            break_long_words=True,
-            break_on_hyphens=False,
-        ) or [""]
-        self.write(f"{prefix}{lines[0]}", tone=tone)
-        for line in lines[1:]:
-            self.write(f"{continuation}{line}", tone=tone)
-
-    def show_live(self, lines: list[str]) -> None:
-        if not self.tty:
-            return
+        del continuation
         self.clear_live()
-        rendered = "\n".join(
-            self._styled(truncate(line, self.width), tone="active") for line in lines
+        block = ProgressBlock(
+            "script:write",
+            (ProgressRow(f"{prefix}{one_line(value)}", tone),),
         )
-        self.stream.write(rendered)
-        self.stream.flush()
-        self._live_lines = list(lines)
+        self.console.print(
+            progress_block_renderable(block, live=False, max_width=self.width)
+        )
+        self._last_was_blank = False
+
+    def write_renderable(self, value: RenderableType) -> None:
+        """Append one complete shared Rich renderable."""
+
+        self.clear_live()
+        self.console.print(value)
+        self._last_was_blank = False
+
+    def apply(self, update: ProgressUpdate) -> None:
+        """Append committed fragments and atomically replace the live snapshot."""
+
+        committed = [
+            progress_block_renderable(block, live=False, max_width=self.width)
+            for block in update.committed
+        ]
+        live_blocks = [
+            progress_block_renderable(block, live=True, max_width=self.width)
+            for block in update.live
+        ]
+        self._live_rows = [row for block in update.live for row in block.rows]
+        self._set_live(live_blocks)
+        for renderable in committed:
+            self.console.print(renderable)
+        if update.committed:
+            rows = update.committed[-1].rows
+            self._last_was_blank = bool(
+                rows and rows[-1].format == "plain" and not rows[-1].text
+            )
+
+    def show_live_rows(self, rows: list[ProgressRow]) -> None:
+        block = ProgressBlock("script:live", tuple(rows))
+        self._set_live(
+            [progress_block_renderable(block, live=True, max_width=self.width)]
+            if rows
+            else []
+        )
+        self._live_rows = list(rows)
 
     def clear_live(self) -> None:
-        if not self._live_lines:
-            return
-        self.stream.write("\r\x1b[2K")
-        for _line in self._live_lines[1:]:
-            self.stream.write("\x1b[1A\r\x1b[2K")
-        self.stream.flush()
-        self._live_lines.clear()
+        self._live_rows.clear()
+        if self._live is not None:
+            self._live.update(Group(), refresh=True)
 
-    def _styled(self, value: str, *, tone: Tone) -> str:
-        if not self.tty or not value:
-            return value
-        style = _ANSI_STYLE[tone]
-        return f"{style}{value}{_ANSI_RESET}" if style else value
+    def _set_live(self, renderables: list[RenderableType]) -> None:
+        if not self.tty:
+            return
+        renderable = Group(*renderables)
+        if self._live is None:
+            if not renderables:
+                return
+            self._live = Live(
+                renderable,
+                console=self.console,
+                auto_refresh=False,
+                transient=True,
+                redirect_stdout=False,
+                redirect_stderr=False,
+                vertical_overflow="crop",
+            )
+            self._live.start(refresh=True)
+            return
+        self._live.update(renderable, refresh=True)

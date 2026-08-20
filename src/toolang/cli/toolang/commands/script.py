@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import replace
-import json
 import os
 from pathlib import Path
 import sys
@@ -15,11 +14,6 @@ import click
 import typer
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
-from toolang.base.types.message import (
-    TextPart,
-    message_text,
-    parts_to_data,
-)
 from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
@@ -32,11 +26,9 @@ from toolang.cli.common.policy import (
 from toolang.execution.calls import parse_call, resolve_spec
 from toolang.execution.executor import RunExecutor, RunHandle
 from toolang.execution.records import RunRecord
-from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import Local, RunOverride, ThreadPrefix
-from toolang.execution.values import parts_from_local
+from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
 from toolang.lang.input import NamedInputSources, RunnableInputRaw
@@ -48,8 +40,10 @@ from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
 from ...common.context import load_runtime_environ
 from ...common.progress import as_progress_sink, make_cli_progress
+from ...common.result_saving import save_result
 from ...common.output import echo_error
-from ...common.script_progress import ConsoleRunTracer
+from ...common.execution_progress.config import resolve_progress_max_width
+from ...common.script_progress import ScriptRunPresenter
 from ...common.version import toolang_version
 
 Runnable = AgicDecl | FlowDecl
@@ -179,6 +173,7 @@ def _runnable_command(
         allow: tuple[str, ...],
         default: tuple[str, ...],
         limit: tuple[str, ...],
+        save: str | None,
         quiet: bool,
         verbose: int,
     ) -> int:
@@ -196,6 +191,7 @@ def _runnable_command(
             allow_options=allow,
             default_options=default,
             limit_options=limit,
+            save=save,
             quiet=quiet,
             verbosity=verbose,
         )
@@ -222,6 +218,13 @@ def _runnable_command(
             multiple=True,
             default=(),
             help="Set FIELD=VALUE. Repeat for another field.",
+        ),
+        TyperOption(
+            param_decls=["--save"],
+            type=str,
+            default=None,
+            metavar="DEST",
+            help="Save the Run result to PATH, or use - for stdout.",
         ),
         TyperOption(
             param_decls=["--quiet", "-q"],
@@ -410,6 +413,7 @@ def _run(
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
     limit_options: tuple[str, ...],
+    save: str | None,
     quiet: bool,
     verbosity: int,
 ) -> int:
@@ -469,8 +473,6 @@ def _run(
             interruption_reported = record is not None and record.status == "canceled"
         if not interruption_reported:
             typer.echo("toolang interrupted", err=True)
-        if run_id is not None:
-            typer.echo(f"Run: {run_id}", err=True)
         if log_path is not None and log_path.exists():
             typer.echo(f"Log: {log_path}", err=True)
         return 130
@@ -478,8 +480,6 @@ def _run(
         if progress is not None:
             progress.finish(details=False)
         _error(str(exc))
-        if run_id is not None:
-            typer.echo(f"Run: {run_id}", err=True)
         if log_path is not None and log_path.exists():
             typer.echo(f"Log: {log_path}", err=True)
         return 1
@@ -492,6 +492,7 @@ def _run(
         result,
         store_path=layout.run_store,
         log_path=log_path,
+        save=save,
         error_reported=(not quiet and (sys.stderr.isatty() or verbosity > 0)),
     )
 
@@ -548,30 +549,10 @@ async def _execute(
     spec = replace(spec, thread=thread)
     if spec.bindings.runnable is None:
         raise RuntimeError("resolved script spec has no runnable binding")
-    selected_name, selected_kind = parse_runnable_ref(spec.bindings.runnable)
-    selected = resolve_runnable(
-        state.program,
-        selected_name,
-        kind=selected_kind,
-    )
     tracer = (
-        ConsoleRunTracer(
+        ScriptRunPresenter(
             run_id=run_id,
-            verbosity=verbosity,
-            runnable_kind=selected.kind,
-            runnable_name=selected.name,
-            runnable_doc=selected.doc,
-            input_value=(
-                parts_from_local(
-                    Local.typed(
-                        selected.input.type_name or "Part[]",
-                        spec.input.primary,
-                    )
-                )
-                if selected.input is not None and spec.input.primary is not None
-                else ()
-            ),
-            args=dict(spec.input.named),
+            max_width=resolve_progress_max_width(environ),
         )
         if not quiet and (sys.stderr.isatty() or verbosity > 0)
         else None
@@ -614,11 +595,12 @@ def _emit_result(
     *,
     store_path: Path,
     log_path: Path | None,
+    save: str | None = None,
     error_reported: bool = False,
 ) -> int:
-    store = RunStore(store_path)
-    try:
-        if result.status != "succeeded":
+    if result.status != "succeeded":
+        store = RunStore(store_path)
+        try:
             if not error_reported:
                 _error(
                     (
@@ -628,27 +610,24 @@ def _emit_result(
                     )
                     or f"run {result.status}"
                 )
-            typer.echo(f"Run: {result.id}", err=True)
-            if log_path is not None and log_path.exists():
-                typer.echo(f"Log: {log_path}", err=True)
-            return 1
+        finally:
+            store.close()
+        if log_path is not None and log_path.exists():
+            typer.echo(f"Log: {log_path}", err=True)
+        return 1
+    if save is None:
+        return 0
+
+    store = RunStore(store_path)
+    try:
         output = store.run_output(run_id=result.id)
     finally:
         store.close()
-    if not output:
-        return 0
-    if all(isinstance(part, TextPart) for part in output):
-        text = message_text(output)
-        if text:
-            typer.echo(text, nl=not text.endswith("\n"))
-        return 0
-    typer.echo(
-        json.dumps(
-            parts_to_data(output),
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-    )
+    try:
+        save_result(output, save, stdout=sys.stdout)
+    except (OSError, TypeError, UnicodeError, ValueError) as exc:
+        _error(str(exc))
+        return 1
     return 0
 
 

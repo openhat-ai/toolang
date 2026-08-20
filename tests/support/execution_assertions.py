@@ -100,8 +100,8 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
                     f"step finished before it started at {where}"
                 )
             open_parts = {key for key in active_parts if key[0] == event.step}
+            assert not open_parts, f"terminal step has incomplete parts at {where}"
             if event.status == "succeeded":
-                assert not open_parts, f"finished step has incomplete parts at {where}"
                 parts = tuple(
                     ended.data
                     for key, ended in sorted(
@@ -122,9 +122,6 @@ def assert_run_event_integrity(events: Sequence[RunEvent]) -> None:
                         if isinstance(output_value, Array | tuple | list)
                         else (output_value,)
                     ) == parts, f"step output differs from terminal parts at {where}"
-            else:
-                for key in open_parts:
-                    active_parts.pop(key)
             ended_steps[event.step] = event
             continue
 

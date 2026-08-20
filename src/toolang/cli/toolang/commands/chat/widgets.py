@@ -6,7 +6,6 @@ from collections.abc import Callable, Sequence
 import shutil
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, VSplit, Window
@@ -17,26 +16,49 @@ from prompt_toolkit.utils import get_cwidth
 
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
+from .rendering import (
+    CONTROL_STRIP_GLYPH,
+    INPUT_BACKGROUND,
+    START_CONTROL_ACCENT,
+    STATUS_BACKGROUND,
+)
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
+STATUS_ACTIVITY_GLYPH = "█"
+STATUS_ACTIVITY_MAX_FILL = 6
+_STATUS_ACTIVITY_SHADES = (
+    "bright",
+    "light",
+    "medium",
+    "muted",
+    "dark",
+    "faint",
+)
+_STATUS_ACTIVITY_MIXES = (0.0, 0.16, 0.32, 0.48, 0.64, 0.8)
 
-PROMPT_MARKER = FormattedText([("class:normal-input.dim", "> ")])
+
+def _mix_hex_colors(start: str, end: str, amount: float) -> str:
+    start_channels = tuple(int(start[index : index + 2], 16) for index in (1, 3, 5))
+    end_channels = tuple(int(end[index : index + 2], 16) for index in (1, 3, 5))
+    channels = (
+        round(start_channel + (end_channel - start_channel) * amount)
+        for start_channel, end_channel in zip(start_channels, end_channels, strict=True)
+    )
+    return "#" + "".join(f"{channel:02x}" for channel in channels)
 
 
 def _chat_ui_palette() -> dict[str, str]:
-    return {
+    palette = {
         "": "",
         "queue": "fg:#f2f2f2 bg:#3a3a3a",
         "queue.dim": "fg:#b8b8b8 bg:#3a3a3a",
-        "normal-input": "fg:#f5f5f5 bg:#444444",
-        "normal-input.dim": "fg:#b8b8b8 bg:#444444",
-        "input": "fg:#f5f5f5 bg:#444444",
-        "steer-input": "fg:#f5f5f5 bg:#2f555d",
-        "steer-input.dim": "fg:#b8b8b8 bg:#2f555d",
+        "control.start": f"fg:{START_CONTROL_ACCENT} bg:{INPUT_BACKGROUND}",
+        "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
-        "status": "fg:#f2f2f2 bg:#5a5a5a",
+        "status": f"fg:#f2f2f2 bg:{STATUS_BACKGROUND}",
+        "status.activity": f"fg:{START_CONTROL_ACCENT}",
         "status.model": "fg:#ffd866",
         "status.agic": "fg:#8fd7ff",
         "status.flow": "fg:#d7b3ff",
@@ -44,6 +66,17 @@ def _chat_ui_palette() -> dict[str, str]:
         "status.error": "fg:#ffffff bg:#7a2e2e bold",
         "dim": "fg:ansigray",
     }
+    palette.update(
+        {
+            f"status.activity.{shade}": (
+                f"bg:{_mix_hex_colors(START_CONTROL_ACCENT, STATUS_BACKGROUND, mix)}"
+            )
+            for shade, mix in zip(
+                _STATUS_ACTIVITY_SHADES, _STATUS_ACTIVITY_MIXES, strict=True
+            )
+        }
+    )
+    return palette
 
 
 class QueuePanel:
@@ -130,15 +163,20 @@ class PromptBox:
         self.history_draft = ""
         self.buffer.on_text_changed += self._handle_text_changed
 
-    def container(self) -> HSplit:
-        return HSplit(
+    def container(self) -> VSplit:
+        content = HSplit(
             [
                 Window(
                     height=1, style="class:input", always_hide_cursor=True, char=" "
                 ),
                 VSplit(
                     [
-                        self._marker_window(),
+                        Window(
+                            width=1,
+                            style="class:input",
+                            always_hide_cursor=True,
+                            char=" ",
+                        ),
                         Window(
                             BufferControl(buffer=self.buffer),
                             height=self._input_rows,
@@ -156,13 +194,18 @@ class PromptBox:
             ],
             height=self._height_dimension,
         )
-
-    def _marker_window(self) -> Window:
-        return Window(
-            FormattedTextControl(PROMPT_MARKER),
-            width=2,
+        return VSplit(
+            [
+                Window(
+                    width=1,
+                    style="class:control.start",
+                    always_hide_cursor=True,
+                    char=CONTROL_STRIP_GLYPH,
+                ),
+                content,
+            ],
+            height=self._height_dimension,
             style="class:input",
-            char=" ",
         )
 
     def bind(self, keys: KeyBindings) -> None:
@@ -312,6 +355,9 @@ class StatusBar:
     def __init__(self, status_label: str) -> None:
         self.status_label = status_label
         self.error_message = ""
+        self.running = False
+        self._activity_fill = 0
+        self._activity_full_width = False
         self.view = FormattedTextControl(self._render)
 
     def container(self) -> Window:
@@ -332,6 +378,42 @@ class StatusBar:
     def clear_error(self) -> None:
         self.error_message = ""
 
+    def set_running(self, running: bool) -> None:
+        self.running = running
+        self._activity_fill = 0
+        self._activity_full_width = running
+
+    @property
+    def activity_fill(self) -> int:
+        return self._activity_fill
+
+    def set_activity(self, fill: int, *, full_width: bool) -> bool:
+        fill = max(0, min(STATUS_ACTIVITY_MAX_FILL, fill))
+        if fill == self._activity_fill and full_width == self._activity_full_width:
+            return False
+        self._activity_fill = fill
+        self._activity_full_width = full_width
+        return True
+
+    def _activity_prefix(self) -> list[tuple[str, str]]:
+        fill = self._activity_fill
+        shades = len(_STATUS_ACTIVITY_SHADES)
+        glyph = (
+            STATUS_ACTIVITY_GLYPH if self._activity_full_width else CONTROL_STRIP_GLYPH
+        )
+        segments = [("class:status.activity", glyph)]
+        segments.extend(
+            [
+                (
+                    f"class:status.activity.{_STATUS_ACTIVITY_SHADES[min(index, shades - 1)]}",
+                    " ",
+                )
+                for index in range(fill)
+            ]
+        )
+        segments.append(("class:status.text", " " * (7 - fill)))
+        return segments
+
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
             text = f"! {self.error_message}"
@@ -340,7 +422,17 @@ class StatusBar:
         pieces = [piece for piece in self.status_label.split("  ") if piece]
         segments: list[tuple[str, str]] = []
         if pieces:
-            segments.append(("class:status.model", f"  {pieces[0]}"))
+            if self.running:
+                segments.extend(self._activity_prefix())
+            else:
+                segments.extend(
+                    [
+                        ("class:status.activity", CONTROL_STRIP_GLYPH),
+                        ("class:status.text", " "),
+                        ("class:status.activity", "model "),
+                    ]
+                )
+            segments.append(("class:status.model", pieces[0]))
         for piece in pieces[1:]:
             if piece.startswith("agic:"):
                 segments.extend(

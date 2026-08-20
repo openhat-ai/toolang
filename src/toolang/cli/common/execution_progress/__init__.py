@@ -1,5 +1,21 @@
-"""Shared semantic state for CLI execution presentation surfaces."""
+"""Shared execution progress semantics for CLI presentation surfaces."""
 
-from .state import CallState, LaneState, Metrics, RunState, StatementState
+from .projector import ProgressProjector
+from .state import Metrics
+from .types import (
+    ProgressBlock,
+    ProgressFormat,
+    ProgressRow,
+    ProgressTone,
+    ProgressUpdate,
+)
 
-__all__ = ["CallState", "LaneState", "Metrics", "RunState", "StatementState"]
+__all__ = [
+    "Metrics",
+    "ProgressBlock",
+    "ProgressFormat",
+    "ProgressRow",
+    "ProgressTone",
+    "ProgressUpdate",
+    "ProgressProjector",
+]
