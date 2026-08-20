@@ -963,9 +963,9 @@ def test_chat_status_bar_spinner_keeps_the_model_column_stable() -> None:
     status.advance_spinner()
     next_frame = status._render()[0]
 
-    assert idle_text.index("runtime model") == running_text.index("runtime model") == 2
-    assert first_frame == ("class:status.running", "⠋ ")
-    assert next_frame == ("class:status.running", "⠙ ")
+    assert idle_text.index("runtime model") == running_text.index("runtime model") == 3
+    assert first_frame == ("class:status.running", "▀  ")
+    assert next_frame == ("class:status.running", "▝▘ ")
     assert widgets._chat_ui_palette()["status.running"] == (
         f"fg:{rendering.START_CONTROL_ACCENT}"
     )
