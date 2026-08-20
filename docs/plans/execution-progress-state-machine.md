@@ -397,19 +397,19 @@ prompt glyphs such as `>` and `+` while leaving message text aligned in column
 two. Rendering the full cell as a background avoids glyph line gaps between
 adjacent rows.
 
-The bottom `StatusBar` has no persistent left accent. It reserves column zero
-with the normal status background, renders another default-background space in
-column one, and begins the model name in column two so it aligns with control
-and quick-command text after their markers. One trailing default-background
-space completes the wrapped model region. The status bar omits the redundant
-`model ` label. When idle, both surrounding spaces and the entire model name use
-the normal status background. During a local Run, a four-cell comet enters
-through the space in column one and sweeps left to right across the wrapped
-region while the text and its column remain stable. Its head uses the configured
-Start accent and its three-cell tail uses successively dimmer sRGB-channel
-linear blends toward the configured status background. The comet changes
-backgrounds only: it introduces no glyph whose line metrics could leave gaps. A
-six-cell blank interval separates sweeps.
+The bottom `StatusBar` does not paint a base background and therefore inherits
+the terminal background. It has no persistent left accent. It reserves column
+zero, renders another terminal-background space in column one, and begins the
+model name in column two so it aligns with control and quick-command text after
+their markers. One trailing terminal-background space completes the wrapped
+model region. The status bar omits the redundant `model ` label. When idle, both
+surrounding spaces and the entire model name use the terminal background.
+During a local Run, a four-cell comet enters through the space in column one and
+sweeps left to right across the wrapped region while the text and its column
+remain stable. Its head uses the configured Start accent and its three-cell tail
+uses successively dimmer sRGB-channel linear blends toward the configured fade
+color. The comet changes backgrounds only: it introduces no glyph whose line
+metrics could leave gaps. A six-cell blank interval separates sweeps.
 
 The comet advances one display cell every 80 milliseconds using monotonic
 elapsed time rather than accumulated frame steps. The UI checks the phase every

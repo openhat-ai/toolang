@@ -1163,6 +1163,7 @@ def test_chat_status_palette_linearly_blends_configured_colors(
     monkeypatch.setattr(widgets, "STATUS_BACKGROUND", "#000000")
     palette = widgets._chat_ui_palette()
 
+    assert palette["status"] == "fg:#f2f2f2"
     assert palette["status.model.activity.bright"] == "fg:#ffd866 bg:#ffffff"
     assert palette["status.model.activity.light"] == "fg:#ffd866 bg:#d6d6d6"
     assert palette["status.model.activity.faint"] == "fg:#ffd866 bg:#333333"

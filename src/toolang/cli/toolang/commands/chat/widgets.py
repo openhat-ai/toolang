@@ -50,7 +50,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
-        "status": f"fg:#f2f2f2 bg:{STATUS_BACKGROUND}",
+        "status": "fg:#f2f2f2",
         "status.model": f"fg:{_STATUS_MODEL_COLOR}",
         "status.agic": "fg:#8fd7ff",
         "status.flow": "fg:#d7b3ff",
