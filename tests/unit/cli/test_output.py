@@ -3,7 +3,12 @@ from io import StringIO
 from rich.console import Console
 
 from toolang.cli.common import output
-from toolang.cli.common.output import agent_avatar, echo_pairs_table, info_avatar_text
+from toolang.cli.common.output import (
+    agent_avatar,
+    echo_pairs_table,
+    info_avatar_text,
+    toolang_logo_text,
+)
 
 
 EXPECTED_INFO_AVATAR = """\
@@ -13,6 +18,7 @@ EXPECTED_INFO_AVATAR = """\
 
 
 def test_info_avatar_uses_compact_logo() -> None:
+    assert toolang_logo_text() == EXPECTED_INFO_AVATAR
     assert info_avatar_text() == EXPECTED_INFO_AVATAR
     avatar = agent_avatar()
 

@@ -24,17 +24,23 @@ TableJustify = Literal["default", "left", "center", "right", "full"]
 _TABLE_CONSOLE = Console(highlight=False, width=4096)
 _INFO_CONSOLE = Console(highlight=False)
 
-INFO_AVATAR_TEXT = """
+TOOLANG_LOGO_TEXT = """
 ████           ██
  ██   ⬤   ⬤    ██
  ██          ████
 """.strip("\n")
 
 
+def toolang_logo_text() -> str:
+    """Return the plain compact Toolang logo."""
+
+    return TOOLANG_LOGO_TEXT
+
+
 def info_avatar_text() -> str:
     """Return the plain CLI info avatar art."""
 
-    return INFO_AVATAR_TEXT
+    return toolang_logo_text()
 
 
 def agent_avatar() -> Text:

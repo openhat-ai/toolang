@@ -17,6 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 from toolang.base.types.message import Part, TextPart
+from toolang.cli.common.output import toolang_logo_text
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
 from toolang.execution.types import ExecutionError
 
@@ -50,6 +51,11 @@ from .rendering import (
     render_segments,
     terminal_width,
 )
+
+_HEADER_MIN_WIDE_WIDTH = 69
+_HEADER_HORIZONTAL_PADDING = 2
+_HEADER_COLUMN_GAP = 4
+_HEADER_FIELD_GAP = 2
 
 
 def _terminal_diagnostic(status: str, error: ExecutionError) -> str:
@@ -404,32 +410,67 @@ class _SlashResultBoundary:
 
 @dataclass(frozen=True, slots=True)
 class HeaderBlock:
-    model_label: str
     home: str
     version_label: str
 
     def render(self) -> RenderableType:
-        rows = [
-            Text.from_markup(
-                f"[dim]T··⅃ [/][bold]Toolang[/][dim] (v{escape(self.version_label)})[/]"
-            ),
-            Text(),
-            Text.from_markup(f"[none]model: {escape(self.model_label)}[/]"),
-            Text.from_markup(f"[none]home:  {escape(self.home)}[/]"),
-        ]
-        content = Table.grid(padding=0)
-        content.add_column(no_wrap=True)
-        for row in rows:
-            content.add_row(row)
-        return Group(
-            Panel(
-                content,
-                box=box.ROUNDED,
-                border_style="dim",
-                padding=(0, 1),
-                width=max(row.cell_len for row in rows) + 4,
-            ),
-            Text("\n"),
+        return Group(self, Text("\n"))
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        del console
+        identity = Text()
+        identity.append("Toolang", style="bold bright_cyan")
+        identity.append(f" {self.version_label}")
+
+        fields = Table.grid(padding=(0, _HEADER_FIELD_GAP))
+        fields.add_column(no_wrap=True)
+        fields.add_column(no_wrap=False, overflow="fold")
+        fields.add_row(Text("home", style="dim"), Text(self.home))
+        fields.add_row(Text("executor", style="dim"), Text("local"))
+
+        details = Table.grid(padding=0)
+        details.add_column(no_wrap=False)
+        details.add_row(identity)
+        details.add_row(fields)
+
+        logo_text = toolang_logo_text()
+        logo = Text(logo_text)
+        logo_width = max(display_width(line) for line in logo_text.splitlines())
+        details_width = max(
+            display_width("Toolang") + 1 + display_width(self.version_label),
+            display_width("executor")
+            + _HEADER_FIELD_GAP
+            + max(display_width(self.home), display_width("local")),
+        )
+        wide_width = (
+            2
+            + 2 * _HEADER_HORIZONTAL_PADDING
+            + logo_width
+            + _HEADER_COLUMN_GAP
+            + details_width
+        )
+        if options.max_width >= max(_HEADER_MIN_WIDE_WIDTH, wide_width):
+            content = Table.grid(padding=(0, _HEADER_COLUMN_GAP))
+            content.add_column(no_wrap=True, vertical="top")
+            content.add_column(no_wrap=False, vertical="top")
+            content.add_row(logo, details)
+        else:
+            content = Table.grid(padding=0)
+            content.add_column(no_wrap=False)
+            content.add_row(logo)
+            content.add_row(Text())
+            content.add_row(details)
+
+        yield Panel(
+            content,
+            box=box.ROUNDED,
+            border_style="dim",
+            padding=(1, _HEADER_HORIZONTAL_PADDING),
+            expand=False,
         )
 
 

@@ -308,9 +308,8 @@ class ChatTuiApp:
         self.loop = asyncio.get_running_loop()
         rendering.write_renderable(
             blocks.HeaderBlock(
-                self._header_model_label(),
-                self.home,
-                toolang_version(),
+                home=self.home,
+                version_label=toolang_version(),
             ).render(),
             hide_cursor=False,
         )
@@ -329,7 +328,7 @@ class ChatTuiApp:
             if self.dispatcher_task and not self.dispatcher_task.done():
                 await self.dispatcher_task
 
-    def _header_model_label(self) -> str:
+    def _model_label(self) -> str:
         selected_model = str(self.selects.get("model") or "").strip()
         default_selected = selected_model in {"", "default"}
         try:
@@ -344,7 +343,7 @@ class ChatTuiApp:
             )
 
     def _status_label(self) -> str:
-        model_label = self._header_model_label()
+        model_label = self._model_label()
         flow = str(self.selects.get("flow") or "")
         agic = str(self.selects.get("agic") or "")
         if agic == "default":
