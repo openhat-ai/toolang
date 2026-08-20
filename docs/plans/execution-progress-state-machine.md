@@ -204,6 +204,8 @@ rendered while the fragment is live and after it is committed, preserving both
 Markdown readability and a visually unchanged transition. Multiple separator
 lines collapse to one rendered blank line. Flow headers retain their existing
 trailing boundary gap; Step facts remain directly below Step output.
+Markdown horizontal rules use a dim Unicode `─` divider instead of Rich's
+full-width ASCII hyphens.
 
 Script renders the live Markdown tail through one event-driven
 `rich.live.Live` per root Run. Stable fragments are printed through the same

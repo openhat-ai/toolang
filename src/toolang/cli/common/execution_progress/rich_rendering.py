@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
-from rich.markdown import Heading, Markdown
+from rich.markdown import Heading, HorizontalRule, Markdown
+from rich.rule import Rule
 from rich.segment import Segment
 from rich.text import Text
 
@@ -34,8 +35,25 @@ class _ProgressHeading(Heading):
     }
 
 
+class _ProgressHorizontalRule(HorizontalRule):
+    """Render a quiet Unicode divider instead of Rich's ASCII hyphens."""
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        del console, options
+        yield Rule(style="dim", characters="─")
+        yield Text()
+
+
 class _ProgressMarkdown(Markdown):
-    elements = {**Markdown.elements, "heading_open": _ProgressHeading}
+    elements = {
+        **Markdown.elements,
+        "heading_open": _ProgressHeading,
+        "hr": _ProgressHorizontalRule,
+    }
 
 
 def progress_block_renderable(

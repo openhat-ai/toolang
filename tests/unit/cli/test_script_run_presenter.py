@@ -377,6 +377,39 @@ def test_non_tty_prints_only_incrementally_committed_markdown() -> None:
     assert stream.getvalue() == "• Heading\n\n  Paragraph\n"
 
 
+def test_progress_markdown_uses_a_quiet_unicode_horizontal_rule() -> None:
+    stream = StringIO()
+    console = ProgressConsole(stream, width=40)
+    console.apply(
+        ProgressUpdate(
+            committed=(
+                ProgressBlock(
+                    "step:run_one.0",
+                    (
+                        ProgressRow(
+                            "before\n\n---\n\nafter",
+                            "normal",
+                            format="markdown",
+                            prefix="• ",
+                        ),
+                    ),
+                ),
+            )
+        )
+    )
+
+    rendered = stream.getvalue()
+    assert "-" not in rendered
+    assert "  " + "─" * 38 in rendered
+    assert rendered.splitlines() == [
+        "• before",
+        "",
+        "  " + "─" * 38,
+        "",
+        "  after",
+    ]
+
+
 def test_tty_wraps_finalized_parallel_lane_at_its_embedded_marker() -> None:
     stream = _TtyStream()
     console = ProgressConsole(stream, width=40)
