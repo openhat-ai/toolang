@@ -37,6 +37,21 @@ def toolang_logo_text() -> str:
     return TOOLANG_LOGO_TEXT
 
 
+def toolang_logo(console: Console) -> Text:
+    """Return the compact Toolang logo for one terminal console."""
+
+    if console.color_system is None or console.no_color:
+        return Text(TOOLANG_LOGO_TEXT)
+
+    logo = Text()
+    for character in TOOLANG_LOGO_TEXT:
+        logo.append(
+            " " if character == "█" else character,
+            style="reverse" if character == "█" else None,
+        )
+    return logo
+
+
 def info_avatar_text() -> str:
     """Return the plain CLI info avatar art."""
 
@@ -46,7 +61,7 @@ def info_avatar_text() -> str:
 def agent_avatar() -> Text:
     """Return the avatar used by agent information views."""
 
-    return Text(info_avatar_text())
+    return toolang_logo(_INFO_CONSOLE)
 
 
 def echo_block(text: str) -> None:

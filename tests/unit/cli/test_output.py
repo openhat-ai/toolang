@@ -17,7 +17,9 @@ EXPECTED_INFO_AVATAR = """\
  ██          ████"""
 
 
-def test_info_avatar_uses_compact_logo() -> None:
+def test_info_avatar_uses_compact_logo(monkeypatch) -> None:
+    monkeypatch.setattr(output, "_INFO_CONSOLE", Console(color_system=None))
+
     assert toolang_logo_text() == EXPECTED_INFO_AVATAR
     assert info_avatar_text() == EXPECTED_INFO_AVATAR
     avatar = agent_avatar()
@@ -25,6 +27,28 @@ def test_info_avatar_uses_compact_logo() -> None:
     assert avatar.plain == EXPECTED_INFO_AVATAR
     assert avatar.style == ""
     assert avatar.spans == []
+
+
+def test_info_avatar_renders_solid_cells_with_terminal_background(
+    monkeypatch,
+) -> None:
+    console = Console(
+        force_terminal=True,
+        color_system="standard",
+        no_color=False,
+        _environ={},
+    )
+    monkeypatch.setattr(output, "_INFO_CONSOLE", console)
+
+    avatar = agent_avatar()
+
+    assert avatar.plain == EXPECTED_INFO_AVATAR.replace("█", " ")
+    for offset, character in enumerate(EXPECTED_INFO_AVATAR):
+        style = avatar.get_style_at_offset(console, offset)
+        assert bool(style.reverse) is (character == "█")
+        if character in {"█", "⬤"}:
+            assert style.color is None
+            assert style.bgcolor is None
 
 
 def test_info_layout_places_avatar_beside_details(monkeypatch) -> None:

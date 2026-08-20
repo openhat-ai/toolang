@@ -901,7 +901,8 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     )
     rendered = _render_text(block.render(), width=80)
 
-    assert "████           ██" in rendered
+    assert "█" not in rendered
+    assert "⬤   ⬤" in rendered
     assert "Toolang" in rendered
     assert "0.1.0" in rendered
     assert "v0.1.0" not in rendered
@@ -914,18 +915,20 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert next(index for index, line in enumerate(lines) if "home" in line) < next(
         index for index, line in enumerate(lines) if "executor" in line
     )
-    assert next(index for index, line in enumerate(lines) if "████" in line) == next(
-        index for index, line in enumerate(lines) if "Toolang" in line
+    assert next(index for index, line in enumerate(lines) if "Toolang" in line) < next(
+        index for index, line in enumerate(lines) if "⬤" in line
+    )
+    assert next(index for index, line in enumerate(lines) if "⬤" in line) == next(
+        index for index, line in enumerate(lines) if "home" in line
     )
     bordered_lines = [line for line in lines if line]
     assert len({len(line) for line in bordered_lines}) == 1
     assert not bordered_lines[1].strip("│ ")
-    assert "████" in bordered_lines[2]
+    assert "Toolang" in bordered_lines[2]
     assert "executor" in bordered_lines[-3]
     assert not bordered_lines[-2].strip("│ ")
     logo_line = next(line for line in lines if "Toolang" in line)
-    assert logo_line.startswith("│  ████")
-    assert logo_line.split("████           ██", 1)[1].startswith("    Toolang")
+    assert logo_line.startswith("│" + " " * 23 + "Toolang")
     assert "Toolang 0.1.0" in logo_line
     assert "Toolang  0.1.0" not in logo_line
 
@@ -940,9 +943,9 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     )
 
     lines = rendered.splitlines()
-    logo_index = next(index for index, line in enumerate(lines) if "████" in line)
+    logo_index = next(index for index, line in enumerate(lines) if "⬤" in line)
     toolang_index = next(index for index, line in enumerate(lines) if "Toolang" in line)
-    assert toolang_index > logo_index + 2
+    assert toolang_index > logo_index + 1
     assert all(len(line) <= 40 for line in lines)
     bordered_lines = [line for line in lines if line]
     assert len({len(line) for line in bordered_lines}) == 1
@@ -950,7 +953,7 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     assert "alice-with-a-long-home" in unwrapped
 
 
-def test_chat_header_keeps_logo_plain_and_styles_metadata() -> None:
+def test_chat_header_keeps_logo_color_neutral_and_styles_metadata() -> None:
     segments = rendering.render_segments(
         blocks.HeaderBlock(
             home="/tmp/toolang/agents/alice",
@@ -959,7 +962,12 @@ def test_chat_header_keeps_logo_plain_and_styles_metadata() -> None:
         width=80,
     )
 
-    logo = next(segment for segment in segments if "████" in segment.text)
+    logo_blocks = [
+        segment
+        for segment in segments
+        if segment.style is not None and segment.style.reverse
+    ]
+    logo_dots = [segment for segment in segments if "⬤" in segment.text]
     brand = next(segment for segment in segments if segment.text.strip() == "Toolang")
     version = next(segment for segment in segments if segment.text.strip() == "0.1.0")
     keys = [
@@ -971,11 +979,24 @@ def test_chat_header_keeps_logo_plain_and_styles_metadata() -> None:
         for value in ("/tmp/toolang/agents/alice", "local")
     ]
 
-    assert logo.style is None or (
-        logo.style.color is None
-        and logo.style.bgcolor is None
-        and not logo.style.bold
-        and not logo.style.dim
+    assert "█" not in "".join(segment.text for segment in segments)
+    assert sum(len(segment.text) for segment in logo_blocks) == 16
+    assert all(segment.text.isspace() for segment in logo_blocks)
+    assert all(
+        segment.style is not None
+        and segment.style.color is None
+        and segment.style.bgcolor is None
+        for segment in logo_blocks
+    )
+    assert logo_dots
+    assert all(
+        segment.style is None
+        or (
+            segment.style.color is None
+            and segment.style.bgcolor is None
+            and not segment.style.reverse
+        )
+        for segment in logo_dots
     )
     assert brand.style is not None and brand.style.bold
     assert brand.style.color is not None
