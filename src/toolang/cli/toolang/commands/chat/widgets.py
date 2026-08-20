@@ -6,7 +6,6 @@ from collections.abc import Callable, Sequence
 import shutil
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, VSplit, Window
@@ -17,11 +16,10 @@ from prompt_toolkit.utils import get_cwidth
 
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
+from .rendering import START_CONTROL_ACCENT
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-
-PROMPT_MARKER = FormattedText([("class:normal-input.dim", "> ")])
 
 
 def _chat_ui_palette() -> dict[str, str]:
@@ -29,11 +27,8 @@ def _chat_ui_palette() -> dict[str, str]:
         "": "",
         "queue": "fg:#f2f2f2 bg:#3a3a3a",
         "queue.dim": "fg:#b8b8b8 bg:#3a3a3a",
-        "normal-input": "fg:#f5f5f5 bg:#444444",
-        "normal-input.dim": "fg:#b8b8b8 bg:#444444",
+        "control.start": f"bg:{START_CONTROL_ACCENT}",
         "input": "fg:#f5f5f5 bg:#444444",
-        "steer-input": "fg:#f5f5f5 bg:#2f555d",
-        "steer-input.dim": "fg:#b8b8b8 bg:#2f555d",
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "fg:#f2f2f2 bg:#5a5a5a",
@@ -130,15 +125,20 @@ class PromptBox:
         self.history_draft = ""
         self.buffer.on_text_changed += self._handle_text_changed
 
-    def container(self) -> HSplit:
-        return HSplit(
+    def container(self) -> VSplit:
+        content = HSplit(
             [
                 Window(
                     height=1, style="class:input", always_hide_cursor=True, char=" "
                 ),
                 VSplit(
                     [
-                        self._marker_window(),
+                        Window(
+                            width=1,
+                            style="class:input",
+                            always_hide_cursor=True,
+                            char=" ",
+                        ),
                         Window(
                             BufferControl(buffer=self.buffer),
                             height=self._input_rows,
@@ -156,13 +156,18 @@ class PromptBox:
             ],
             height=self._height_dimension,
         )
-
-    def _marker_window(self) -> Window:
-        return Window(
-            FormattedTextControl(PROMPT_MARKER),
-            width=2,
+        return VSplit(
+            [
+                Window(
+                    width=1,
+                    style="class:control.start",
+                    always_hide_cursor=True,
+                    char=" ",
+                ),
+                content,
+            ],
+            height=self._height_dimension,
             style="class:input",
-            char=" ",
         )
 
     def bind(self, keys: KeyBindings) -> None:

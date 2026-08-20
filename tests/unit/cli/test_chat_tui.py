@@ -7,6 +7,7 @@ import threading
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 
+from prompt_toolkit.layout import HSplit, VSplit, Window
 from prompt_toolkit.output.color_depth import ColorDepth
 from rich.console import RenderableType
 from rich.text import Text
@@ -122,7 +123,7 @@ def test_chat_run_begin_finalizes_local_submission_block() -> None:
 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
     assert [block.type for block in app.finalized] == ["RunStartBlock"]
-    assert "run_1" in _render_text(app.finalized[0].render())
+    assert "run_1" not in _render_text(app.finalized[0].render())
 
 
 def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() -> None:
@@ -339,9 +340,10 @@ def test_chat_submission_has_no_status_before_run_begin() -> None:
 
     rendered = _render_text(block.render(), width=20)
 
-    assert "> hello" in rendered
+    assert "  hello" in rendered
+    assert ">" not in rendered
     assert "starting" not in rendered
-    assert rendered.splitlines() == [" " * 20, "> hello" + " " * 13, " " * 20, ""]
+    assert rendered.splitlines() == [" " * 20, "  hello" + " " * 13, " " * 20, ""]
 
 
 def test_chat_preaccept_error_does_not_render_a_failed_run() -> None:
@@ -700,41 +702,68 @@ def test_chat_run_footer_colors_only_the_caption(
 def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     start = blocks.RunStartBlock.create("hello")
     start.update(_run_begin())
-    assert "> hello" in _render_text(start.render())
-    assert "run_1" in _render_text(start.render())
+    start_text = _render_text(start.render())
+    assert "  hello" in start_text
+    assert ">" not in start_text
+    assert "run_1" not in start_text
 
     steer = blocks.RunSteerBlock.create(
         message="adjust",
         run_id="run_1",
     )
-    assert "+ adjust" in _render_text(steer.render())
-    assert "pending for next step" in _render_text(steer.render())
-    assert not _render_text(steer.render()).splitlines()[0].strip()
-    pending_steer_bg = next(
-        segment.style.bgcolor
-        for segment in rendering.render_segments(steer.render(), width=80)
-        if segment.text.startswith("+") and segment.style is not None
-    )
-    prompt_steer_bg = next(
+    steer_text = _render_text(steer.render())
+    assert "  adjust" in steer_text
+    assert "+" not in steer_text
+    assert "pending for next step" not in steer_text
+    assert "run_1" not in steer_text
+    assert not steer_text.splitlines()[0].strip()
+
+    start_fragments = rendering.renderable_to_prompt_toolkit(start.render())
+    steer_fragments = rendering.renderable_to_prompt_toolkit(steer.render())
+    start_accent = next(
         fragment[0]
-        for fragment in rendering.renderable_to_prompt_toolkit(steer.render())
-        if fragment[1].startswith("+")
+        for fragment in start_fragments
+        if fragment[1] == " " and f"bg:{rendering.START_CONTROL_ACCENT}" in fragment[0]
     )
-    start_bg = next(
-        segment.style.bgcolor
-        for segment in rendering.render_segments(start.render(), width=80)
-        if segment.text.startswith(">") and segment.style is not None
+    steer_accent = next(
+        fragment[0]
+        for fragment in steer_fragments
+        if fragment[1] == " " and f"bg:{rendering.STEER_CONTROL_ACCENT}" in fragment[0]
     )
-    assert pending_steer_bg != start_bg
-    assert f"bg:{blocks.STEER_BAR_BG}" in prompt_steer_bg
+    start_message = next(
+        fragment[0] for fragment in start_fragments if "hello" in fragment[1]
+    )
+    steer_message = next(
+        fragment[0] for fragment in steer_fragments if "adjust" in fragment[1]
+    )
+
+    assert start_accent != steer_accent
+    assert f"bg:{rendering.CONTROL_BAR_BACKGROUND}" in start_message
+    assert f"bg:{rendering.CONTROL_BAR_BACKGROUND}" in steer_message
+
     steer.update(_model_step_begin(step_index=2))
-    assert "pending for next step" not in _render_text(steer.render())
-    finalized_steer_bg = next(
-        segment.style.bgcolor
-        for segment in rendering.render_segments(steer.render(), width=80)
-        if segment.text.startswith("+") and segment.style is not None
+    assert _render_text(steer.render()) == steer_text
+
+
+def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> None:
+    prompt = widgets.PromptBox(lambda _event: None, lambda: None)
+
+    container = prompt.container()
+
+    assert isinstance(container, VSplit)
+    accent, content = container.children
+    assert isinstance(accent, Window)
+    assert accent.width == 1
+    assert accent.style == "class:control.start"
+    assert widgets._chat_ui_palette()["control.start"] == (
+        f"bg:{rendering.START_CONTROL_ACCENT}"
     )
-    assert finalized_steer_bg == pending_steer_bg
+    assert isinstance(content, HSplit)
+    input_row = content.children[1]
+    assert isinstance(input_row, VSplit)
+    padding = input_row.children[0]
+    assert isinstance(padding, Window)
+    assert padding.width == 1
 
 
 def test_chat_durable_response_wraps_markdown(
@@ -1052,7 +1081,8 @@ def test_chat_thread_creation_error_is_a_submission_error_in_scrollback(
     app.start_run(QueuedCall("hello", {}))
 
     output = "\n".join(rendered)
-    assert "> hello" in output
+    assert "  hello" in output
+    assert ">" not in output
     assert "• thread creation failed" in output
     assert "run failed" not in output
     assert app.status_bar.error_message == ""

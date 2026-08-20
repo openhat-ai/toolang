@@ -377,6 +377,18 @@ write a selected result destination.
 Chat uses the same projected content, aggregate facts, and root footer.
 Submission UI is not an execution Run header.
 
+## Chat Control Blocks
+
+`RunStartBlock` represents a submitted request and `RunSteerBlock` represents a
+steer control attached to an active Run. Their rendered bars contain only the
+authored message: Run ids, pending state, and other execution status belong to
+execution progress rather than the control.
+
+Both control bars use the same background and reserve column zero for a solid
+accent strip. Start and Steer use distinct accents; the bottom `PromptBox` uses
+the Start accent. The strip replaces prompt glyphs such as `>` and `+` while
+leaving message text aligned in column two.
+
 ## Implementation Touchpoints
 
 - `src/toolang/execution/types.py`, `events.py`, `records.py`, and `schemas.py`:
@@ -409,8 +421,10 @@ Deterministic tests cover:
 - progressive header and Markdown commits without terminal duplication;
 - streamed Part prefix and successful Step output consistency;
 - retained partial Model output followed by one failure or cancellation row;
-- Script Rich Live and non-TTY append-only behavior; and
-- equivalent Script and Chat Markdown rendering and semantic projection.
+- Script Rich Live and non-TTY append-only behavior;
+- equivalent Script and Chat Markdown rendering and semantic projection; and
+- message-only Chat control blocks with distinct left accents and no prompt
+  glyphs or execution metadata.
 
 The default offline verification suite must pass.
 

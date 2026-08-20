@@ -15,6 +15,10 @@ from rich.style import Style
 from rich.text import Text
 from wcwidth import wcswidth
 
+CONTROL_BAR_BACKGROUND = "#3a3a3a"
+START_CONTROL_ACCENT = "#8fd7ff"
+STEER_CONTROL_ACCENT = "#d7b3ff"
+
 
 def terminal_width(default: int = 100) -> int:
     return shutil.get_terminal_size((default, 24)).columns

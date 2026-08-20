@@ -28,7 +28,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
         session.wait_for("hello from user")
         session.send(b"\r")
         output = session.wait_for(
-            "> hello from user",
+            "hello from user",
             "hello from terminal e2e",
             "succeeded",
         )

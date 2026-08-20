@@ -36,14 +36,15 @@ from toolang.cli.common.execution_progress.state import Metrics
 
 from .base import friendly_error
 from .rendering import (
+    CONTROL_BAR_BACKGROUND,
+    START_CONTROL_ACCENT,
+    STEER_CONTROL_ACCENT,
     bar,
     display_len,
     markdown_width,
     render_segments,
     terminal_width,
 )
-
-STEER_BAR_BG = "#2f555d"
 
 
 def _terminal_diagnostic(status: str, error: ExecutionError) -> str:
@@ -75,6 +76,21 @@ def _wrap_plain_lines(text: str) -> list[str]:
         if line:
             lines.append(line)
     return lines
+
+
+def _control_bar_line(
+    content: str = "",
+    *,
+    accent: str,
+) -> Text:
+    background = CONTROL_BAR_BACKGROUND
+    return bar(
+        [
+            (" ", f"on {accent}"),
+            (f" {content}" if content else "", f"white on {background}"),
+        ],
+        style=f"white on {background}",
+    )
 
 
 class MutableBlock:
@@ -116,33 +132,21 @@ class RunStartBlock(MutableBlock):
     """Created by a local submission and finalized by run_begin/run_end."""
 
     message: str
-    run_id: str = ""
 
     @classmethod
     def create(cls, message: str) -> RunStartBlock:
         return cls(message=message)
 
     def update(self, event: RunEvent) -> None:
-        if isinstance(event, (RunBegin, RunEnd)):
-            self.run_id = event.run or self.run_id
+        del event
 
     def render(self) -> RenderableType:
-        lines: list[RenderableType] = [bar([], style="white on grey23")]
-        for index, line in enumerate(self.message.splitlines() or [""]):
-            lines.append(
-                bar([(">", "grey70 on grey23"), (f" {line}", "white on grey23")])
-                if index == 0
-                else bar([(f"  {line}", "white on grey23")], style="white on grey23")
-            )
-        if self.run_id:
-            lines.append(
-                bar(
-                    [(f"  {self.run_id}", "grey70 on grey23")],
-                    style="white on grey23",
-                )
-            )
-        else:
-            lines.append(bar([], style="white on grey23"))
+        lines: list[RenderableType] = [_control_bar_line(accent=START_CONTROL_ACCENT)]
+        lines.extend(
+            _control_bar_line(line, accent=START_CONTROL_ACCENT)
+            for line in self.message.splitlines() or [""]
+        )
+        lines.append(_control_bar_line(accent=START_CONTROL_ACCENT))
         lines.append(Text("\n"))
         return Group(*lines)
 
@@ -171,7 +175,6 @@ class RunSteerBlock(MutableBlock):
 
     message: str
     run_id: str = ""
-    pending: bool = True
 
     @classmethod
     def create(cls, *, message: str, run_id: str) -> RunSteerBlock:
@@ -179,24 +182,17 @@ class RunSteerBlock(MutableBlock):
 
     def update(self, event: StepBegin | RunEnd) -> None:
         del event
-        self.pending = False
 
     def render(self) -> RenderableType:
-        footer = "  pending for next step" if self.pending else ""
-        bg = STEER_BAR_BG
-        lines: list[RenderableType] = [Text(), bar([], style=f"white on {bg}")]
-        for index, line in enumerate(self.message.splitlines() or [""]):
-            lines.append(
-                bar(
-                    [("+", f"grey70 on {bg}"), (f" {line}", f"white on {bg}")],
-                    style=f"white on {bg}",
-                )
-                if index == 0
-                else bar([(f"  {line}", f"white on {bg}")], style=f"white on {bg}")
-            )
+        lines: list[RenderableType] = [
+            Text(),
+            _control_bar_line(accent=STEER_CONTROL_ACCENT),
+        ]
         lines.extend(
-            [bar([(footer, f"grey70 on {bg}")], style=f"white on {bg}"), Text("\n")]
+            _control_bar_line(line, accent=STEER_CONTROL_ACCENT)
+            for line in self.message.splitlines() or [""]
         )
+        lines.extend([_control_bar_line(accent=STEER_CONTROL_ACCENT), Text("\n")])
         return Group(*lines)
 
 
