@@ -391,16 +391,18 @@ such as `>` and `+` while leaving message text aligned in column two.
 
 The bottom `StatusBar` reserves eight cells before the model name. When idle, it
 renders a Start-accent `▌` in column zero, one space, and a Start-accent `model `
-label without punctuation. Column zero keeps the same `▌` while a local Run is
-in flight; columns one through six contain a background fill that grows from
-left to right and then retracts, and column seven remains a separating space.
-Filled cells start with the same color as the fixed strip and weaken toward
-their right edge. Frames advance every 180 milliseconds and retract completely
-so column one does not retain a background color. The model name therefore
-never shifts.
+label without punctuation. A local Run first changes column zero to a full-cell
+`█`; columns one through six then contain a contiguous background fill that
+grows from left to right and retracts, while column seven remains a separating
+space. Filled cells start with the same color as the full-cell strip and weaken
+toward their right edge. Frames advance every 180 milliseconds. Completion
+retracts the fill completely, holds the zero-fill full-cell frame, and restores
+the idle `▌`, so no gap appears between the strip and fill. The model name never
+shifts.
 Animation refreshes only while running and is never committed to scrollback.
 Run completion does not delay results or input, but the running appearance is
-held for at least 600 milliseconds so short Runs do not flash past abruptly.
+held for at least 600 milliseconds and finishes its retraction so short Runs do
+not flash past abruptly.
 
 ## Implementation Touchpoints
 

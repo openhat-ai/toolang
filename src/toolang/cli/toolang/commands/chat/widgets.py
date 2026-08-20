@@ -20,6 +20,7 @@ from .rendering import CONTROL_STRIP_GLYPH, INPUT_BACKGROUND, START_CONTROL_ACCE
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
+STATUS_ACTIVITY_GLYPH = "█"
 STATUS_ACTIVITY_FILLS = (
     0,
     1,
@@ -379,10 +380,18 @@ class StatusBar:
                 STATUS_ACTIVITY_FILLS
             )
 
+    def retract_activity(self) -> bool:
+        """Retract one cell, returning whether the zero-fill frame is complete."""
+        fill = STATUS_ACTIVITY_FILLS[self._activity_index]
+        if fill == 0:
+            return True
+        self._activity_index = fill - 1
+        return False
+
     def _activity_prefix(self) -> list[tuple[str, str]]:
         fill = STATUS_ACTIVITY_FILLS[self._activity_index]
         shades = len(_STATUS_ACTIVITY_SHADES)
-        segments = [("class:status.activity", CONTROL_STRIP_GLYPH)]
+        segments = [("class:status.activity", STATUS_ACTIVITY_GLYPH)]
         segments.extend(
             [
                 (

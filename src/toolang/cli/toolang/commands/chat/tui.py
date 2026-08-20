@@ -186,6 +186,7 @@ class ChatTuiApp:
         self.status_animation_task: asyncio.Task[None] | None = None
         self._status_animation_wake = asyncio.Event()
         self._status_activity_started_at: float | None = None
+        self._status_activity_retracting = False
         self._status_stop_handle: asyncio.TimerHandle | None = None
         self.actual_model: str | None = None
         self.presenter = ChatRunPresenter(max_width=progress_max_width)
@@ -325,7 +326,12 @@ class ChatTuiApp:
                 await asyncio.sleep(_STATUS_ACTIVITY_INTERVAL)
                 if not self.status_bar.running:
                     break
-                self.status_bar.advance_activity()
+                if self._status_activity_retracting:
+                    if self.status_bar.retract_activity():
+                        self._stop_status_activity()
+                        break
+                else:
+                    self.status_bar.advance_activity()
                 self._invalidate_ui()
 
     def _set_status_running(self, running: bool) -> None:
@@ -336,6 +342,7 @@ class ChatTuiApp:
             self._status_activity_started_at = (
                 self.loop.time() if self.loop is not None else None
             )
+            self._status_activity_retracting = False
             self.status_bar.set_running(True)
             self._status_animation_wake.set()
             self._invalidate_ui()
@@ -351,16 +358,27 @@ class ChatTuiApp:
             if remaining > 0:
                 if self._status_stop_handle is None:
                     self._status_stop_handle = self.loop.call_later(
-                        remaining, self._stop_status_activity
+                        remaining, self._begin_status_retraction
                     )
                 return
+            self._begin_status_retraction()
+            return
         self._stop_status_activity()
+
+    def _begin_status_retraction(self) -> None:
+        if self._status_stop_handle is not None:
+            self._status_stop_handle.cancel()
+            self._status_stop_handle = None
+        self._status_activity_retracting = True
+        self._status_animation_wake.set()
+        self._invalidate_ui()
 
     def _stop_status_activity(self) -> None:
         if self._status_stop_handle is not None:
             self._status_stop_handle.cancel()
-            self._status_stop_handle = None
+        self._status_stop_handle = None
         self._status_activity_started_at = None
+        self._status_activity_retracting = False
         self.status_bar.set_running(False)
         self._invalidate_ui()
 

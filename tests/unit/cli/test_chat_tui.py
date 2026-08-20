@@ -968,7 +968,7 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
         ("class:status.text", " "),
         ("class:status.activity", "model "),
     ]
-    assert running[0] == idle[0]
+    assert running[0] == ("class:status.activity", widgets.STATUS_ACTIVITY_GLYPH)
     assert running[1] == ("class:status.text", " " * 7)
     assert next_frame[1] == ("class:status.activity.bright", " ")
     assert next_frame[2] == ("class:status.text", " " * 6)
@@ -1036,15 +1036,29 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
             client=FakeClient(),
         )
         app.loop = asyncio.get_running_loop()
+        animation = asyncio.create_task(app._animate_status())
+        try:
+            app._set_status_running(True)
+            app._set_status_running(False)
 
-        app._set_status_running(True)
-        app._set_status_running(False)
-
-        assert app.status_bar.running
-        await asyncio.sleep(0.02)
-        assert not app.status_bar.running
+            assert app.status_bar.running
+            assert app.status_bar._render()[0] == (
+                "class:status.activity",
+                widgets.STATUS_ACTIVITY_GLYPH,
+            )
+            await asyncio.sleep(0.03)
+            assert not app.status_bar.running
+            assert app.status_bar._render()[0] == (
+                "class:status.activity",
+                rendering.CONTROL_STRIP_GLYPH,
+            )
+        finally:
+            animation.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await animation
 
     monkeypatch.setattr(tui, "_MIN_STATUS_ACTIVITY_DURATION", 0.01)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_INTERVAL", 0.001)
     asyncio.run(exercise())
 
 
