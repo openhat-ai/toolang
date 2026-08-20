@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from contextlib import suppress
+import math
 import threading
 from typing import TypeGuard
 
@@ -65,8 +66,45 @@ _RUN_EVENT_TYPES = (
     StepEnd,
     RunEnd,
 )
-_STATUS_ACTIVITY_INTERVAL = 0.18
+_STATUS_ACTIVITY_TICK = 0.08
+_STATUS_ACTIVITY_TROUGH_DURATION = 0.26
+_STATUS_ACTIVITY_EXPAND_DURATION = 0.72
+_STATUS_ACTIVITY_PEAK_DURATION = 0.18
+_STATUS_ACTIVITY_RETRACT_DURATION = 0.9
+_STATUS_ACTIVITY_END_HOLD_DURATION = 0.18
 _MIN_STATUS_ACTIVITY_DURATION = 0.6
+
+
+def _ease_in_out_sine(progress: float) -> float:
+    progress = max(0.0, min(1.0, progress))
+    return (1.0 - math.cos(math.pi * progress)) / 2.0
+
+
+def _status_breathing_fill(elapsed: float) -> int:
+    cycle_duration = (
+        _STATUS_ACTIVITY_TROUGH_DURATION
+        + _STATUS_ACTIVITY_EXPAND_DURATION
+        + _STATUS_ACTIVITY_PEAK_DURATION
+        + _STATUS_ACTIVITY_RETRACT_DURATION
+    )
+    phase = elapsed % cycle_duration
+    if phase < _STATUS_ACTIVITY_TROUGH_DURATION:
+        return 0
+    phase -= _STATUS_ACTIVITY_TROUGH_DURATION
+    if phase < _STATUS_ACTIVITY_EXPAND_DURATION:
+        progress = phase / _STATUS_ACTIVITY_EXPAND_DURATION
+        scale = _ease_in_out_sine(progress)
+    else:
+        phase -= _STATUS_ACTIVITY_EXPAND_DURATION
+        if phase < _STATUS_ACTIVITY_PEAK_DURATION:
+            return widgets.STATUS_ACTIVITY_MAX_FILL
+        phase -= _STATUS_ACTIVITY_PEAK_DURATION
+        progress = phase / _STATUS_ACTIVITY_RETRACT_DURATION
+        scale = 1.0 - _ease_in_out_sine(progress)
+    return min(
+        widgets.STATUS_ACTIVITY_MAX_FILL,
+        int(widgets.STATUS_ACTIVITY_MAX_FILL * scale + 0.5),
+    )
 
 
 class ChatTuiAppContext:
@@ -186,7 +224,8 @@ class ChatTuiApp:
         self.status_animation_task: asyncio.Task[None] | None = None
         self._status_animation_wake = asyncio.Event()
         self._status_activity_started_at: float | None = None
-        self._status_activity_retracting = False
+        self._status_retraction_started_at: float | None = None
+        self._status_retraction_start_fill = 0
         self._status_stop_handle: asyncio.TimerHandle | None = None
         self.actual_model: str | None = None
         self.presenter = ChatRunPresenter(max_width=progress_max_width)
@@ -323,16 +362,36 @@ class ChatTuiApp:
             await self._status_animation_wake.wait()
             self._status_animation_wake.clear()
             while self.status_bar.running:
-                await asyncio.sleep(_STATUS_ACTIVITY_INTERVAL)
+                await asyncio.sleep(_STATUS_ACTIVITY_TICK)
                 if not self.status_bar.running:
                     break
-                if self._status_activity_retracting:
-                    if self.status_bar.retract_activity():
-                        self._stop_status_activity()
-                        break
-                else:
-                    self.status_bar.advance_activity()
-                self._invalidate_ui()
+                loop = self.loop or asyncio.get_running_loop()
+                self._update_status_activity(loop.time())
+
+    def _update_status_activity(self, now: float) -> None:
+        if self._status_retraction_started_at is not None:
+            elapsed = now - self._status_retraction_started_at
+            retract_duration = _STATUS_ACTIVITY_RETRACT_DURATION * (
+                self._status_retraction_start_fill / widgets.STATUS_ACTIVITY_MAX_FILL
+            )
+            if elapsed >= retract_duration + _STATUS_ACTIVITY_END_HOLD_DURATION:
+                self._stop_status_activity()
+                return
+            if retract_duration == 0 or elapsed >= retract_duration:
+                fill = 0
+            else:
+                progress = elapsed / retract_duration
+                fill = int(
+                    self._status_retraction_start_fill
+                    * (1.0 - _ease_in_out_sine(progress))
+                    + 0.5
+                )
+        elif self._status_activity_started_at is not None:
+            fill = _status_breathing_fill(now - self._status_activity_started_at)
+        else:
+            return
+        if self.status_bar.set_activity_fill(fill):
+            self._invalidate_ui()
 
     def _set_status_running(self, running: bool) -> None:
         if running:
@@ -342,8 +401,10 @@ class ChatTuiApp:
             self._status_activity_started_at = (
                 self.loop.time() if self.loop is not None else None
             )
-            self._status_activity_retracting = False
+            self._status_retraction_started_at = None
+            self._status_retraction_start_fill = 0
             self.status_bar.set_running(True)
+            self.status_bar.set_activity_fill(0)
             self._status_animation_wake.set()
             self._invalidate_ui()
             return
@@ -369,16 +430,21 @@ class ChatTuiApp:
         if self._status_stop_handle is not None:
             self._status_stop_handle.cancel()
             self._status_stop_handle = None
-        self._status_activity_retracting = True
+        loop = self.loop
+        if loop is None or not loop.is_running():
+            self._stop_status_activity()
+            return
+        self._status_retraction_started_at = loop.time()
+        self._status_retraction_start_fill = self.status_bar.activity_fill
         self._status_animation_wake.set()
-        self._invalidate_ui()
 
     def _stop_status_activity(self) -> None:
         if self._status_stop_handle is not None:
             self._status_stop_handle.cancel()
         self._status_stop_handle = None
         self._status_activity_started_at = None
-        self._status_activity_retracting = False
+        self._status_retraction_started_at = None
+        self._status_retraction_start_fill = 0
         self.status_bar.set_running(False)
         self._invalidate_ui()
 

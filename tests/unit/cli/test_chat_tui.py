@@ -959,7 +959,7 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
     status.set_running(True)
     running = status._render()
     running_text = "".join(fragment for _style, fragment in running)
-    status.advance_activity()
+    status.set_activity_fill(1)
     next_frame = status._render()
 
     assert idle_text.index("runtime model") == running_text.index("runtime model") == 8
@@ -972,13 +972,13 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
     assert running[1] == ("class:status.text", " " * 7)
     assert next_frame[1] == ("class:status.activity.bright", " ")
     assert next_frame[2] == ("class:status.text", " " * 6)
-    status.advance_activity()
+    status.set_activity_fill(2)
     assert status._render()[1:4] == [
         ("class:status.activity.bright", " "),
         ("class:status.activity.light", " "),
         ("class:status.text", " " * 5),
     ]
-    status.advance_activity()
+    status.set_activity_fill(3)
     assert status._render()[1:4] == [
         ("class:status.activity.bright", " "),
         ("class:status.activity.light", " "),
@@ -995,6 +995,36 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
     assert status._render() == idle
 
 
+def test_chat_status_palette_linearly_blends_configured_colors(
+    monkeypatch: Any,
+) -> None:
+    assert widgets._mix_hex_colors("#8fd7ff", "#5a5a5a", 0.16) == "#87c3e5"
+
+    monkeypatch.setattr(widgets, "START_CONTROL_ACCENT", "#ffffff")
+    monkeypatch.setattr(widgets, "STATUS_BACKGROUND", "#000000")
+    palette = widgets._chat_ui_palette()
+
+    assert palette["status.activity.bright"] == "bg:#ffffff"
+    assert palette["status.activity.light"] == "bg:#d6d6d6"
+    assert palette["status.activity.faint"] == "bg:#333333"
+
+
+def test_chat_status_breathing_uses_eased_asymmetric_phases() -> None:
+    expand_start = tui._STATUS_ACTIVITY_TROUGH_DURATION
+    expand = tui._STATUS_ACTIVITY_EXPAND_DURATION
+    retract_start = expand_start + expand + tui._STATUS_ACTIVITY_PEAK_DURATION
+    retract = tui._STATUS_ACTIVITY_RETRACT_DURATION
+
+    assert tui._status_breathing_fill(0) == 0
+    assert tui._status_breathing_fill(expand_start + expand * 0.25) == 1
+    assert tui._status_breathing_fill(expand_start + expand * 0.5) == 3
+    assert tui._status_breathing_fill(expand_start + expand * 0.75) == 5
+    assert tui._status_breathing_fill(expand_start + expand) == 6
+    assert tui._status_breathing_fill(retract_start + retract * 0.25) == 5
+    assert tui._status_breathing_fill(retract_start + retract * 0.5) == 3
+    assert tui._status_breathing_fill(retract_start + retract * 0.75) == 1
+
+
 def test_chat_tui_animates_status_only_while_a_run_is_active(
     monkeypatch: Any,
 ) -> None:
@@ -1006,23 +1036,31 @@ def test_chat_tui_animates_status_only_while_a_run_is_active(
             input_history=None,
             client=FakeClient(),
         )
+        app.loop = asyncio.get_running_loop()
         animation = asyncio.create_task(app._animate_status())
         try:
             app._set_status_running(True)
-            await asyncio.sleep(0.003)
-            active_frame = app.status_bar._activity_index
+            await asyncio.sleep(0.008)
+            active_fill = app.status_bar.activity_fill
 
             app._set_status_running(False)
-            await asyncio.sleep(0.005)
+            await asyncio.sleep(0.02)
 
-            assert active_frame > 0
-            assert app.status_bar._activity_index == 0
+            assert active_fill > 0
+            assert app.status_bar.activity_fill == 0
+            assert not app.status_bar.running
         finally:
             animation.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await animation
 
-    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_INTERVAL", 0.001)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_TICK", 0.001)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_TROUGH_DURATION", 0.001)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_EXPAND_DURATION", 0.004)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_PEAK_DURATION", 0.001)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_RETRACT_DURATION", 0.004)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_END_HOLD_DURATION", 0.001)
+    monkeypatch.setattr(tui, "_MIN_STATUS_ACTIVITY_DURATION", 0.0)
     asyncio.run(exercise())
 
 
@@ -1058,7 +1096,12 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
                 await animation
 
     monkeypatch.setattr(tui, "_MIN_STATUS_ACTIVITY_DURATION", 0.01)
-    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_INTERVAL", 0.001)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_TICK", 0.001)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_TROUGH_DURATION", 0.001)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_EXPAND_DURATION", 0.008)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_PEAK_DURATION", 0.002)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_RETRACT_DURATION", 0.006)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_END_HOLD_DURATION", 0.003)
     asyncio.run(exercise())
 
 

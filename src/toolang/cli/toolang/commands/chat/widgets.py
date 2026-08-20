@@ -16,25 +16,17 @@ from prompt_toolkit.utils import get_cwidth
 
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
-from .rendering import CONTROL_STRIP_GLYPH, INPUT_BACKGROUND, START_CONTROL_ACCENT
+from .rendering import (
+    CONTROL_STRIP_GLYPH,
+    INPUT_BACKGROUND,
+    START_CONTROL_ACCENT,
+    STATUS_BACKGROUND,
+)
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
 STATUS_ACTIVITY_GLYPH = "█"
-STATUS_ACTIVITY_FILLS = (
-    0,
-    1,
-    2,
-    3,
-    4,
-    5,
-    6,
-    5,
-    4,
-    3,
-    2,
-    1,
-)
+STATUS_ACTIVITY_MAX_FILL = 6
 _STATUS_ACTIVITY_SHADES = (
     "bright",
     "light",
@@ -43,10 +35,21 @@ _STATUS_ACTIVITY_SHADES = (
     "dark",
     "faint",
 )
+_STATUS_ACTIVITY_MIXES = (0.0, 0.16, 0.32, 0.48, 0.64, 0.8)
+
+
+def _mix_hex_colors(start: str, end: str, amount: float) -> str:
+    start_channels = tuple(int(start[index : index + 2], 16) for index in (1, 3, 5))
+    end_channels = tuple(int(end[index : index + 2], 16) for index in (1, 3, 5))
+    channels = (
+        round(start_channel + (end_channel - start_channel) * amount)
+        for start_channel, end_channel in zip(start_channels, end_channels, strict=True)
+    )
+    return "#" + "".join(f"{channel:02x}" for channel in channels)
 
 
 def _chat_ui_palette() -> dict[str, str]:
-    return {
+    palette = {
         "": "",
         "queue": "fg:#f2f2f2 bg:#3a3a3a",
         "queue.dim": "fg:#b8b8b8 bg:#3a3a3a",
@@ -54,14 +57,8 @@ def _chat_ui_palette() -> dict[str, str]:
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
-        "status": "fg:#f2f2f2 bg:#5a5a5a",
+        "status": f"fg:#f2f2f2 bg:{STATUS_BACKGROUND}",
         "status.activity": f"fg:{START_CONTROL_ACCENT}",
-        "status.activity.bright": f"bg:{START_CONTROL_ACCENT}",
-        "status.activity.light": "bg:#4ac0ca",
-        "status.activity.medium": "bg:#4ea6ae",
-        "status.activity.muted": "bg:#528f95",
-        "status.activity.dark": "bg:#557c80",
-        "status.activity.faint": "bg:#576c6e",
         "status.model": "fg:#ffd866",
         "status.agic": "fg:#8fd7ff",
         "status.flow": "fg:#d7b3ff",
@@ -69,6 +66,17 @@ def _chat_ui_palette() -> dict[str, str]:
         "status.error": "fg:#ffffff bg:#7a2e2e bold",
         "dim": "fg:ansigray",
     }
+    palette.update(
+        {
+            f"status.activity.{shade}": (
+                f"bg:{_mix_hex_colors(START_CONTROL_ACCENT, STATUS_BACKGROUND, mix)}"
+            )
+            for shade, mix in zip(
+                _STATUS_ACTIVITY_SHADES, _STATUS_ACTIVITY_MIXES, strict=True
+            )
+        }
+    )
+    return palette
 
 
 class QueuePanel:
@@ -348,7 +356,7 @@ class StatusBar:
         self.status_label = status_label
         self.error_message = ""
         self.running = False
-        self._activity_index = 0
+        self._activity_fill = 0
         self.view = FormattedTextControl(self._render)
 
     def container(self) -> Window:
@@ -372,24 +380,21 @@ class StatusBar:
     def set_running(self, running: bool) -> None:
         self.running = running
         if not running:
-            self._activity_index = 0
+            self._activity_fill = 0
 
-    def advance_activity(self) -> None:
-        if self.running:
-            self._activity_index = (self._activity_index + 1) % len(
-                STATUS_ACTIVITY_FILLS
-            )
+    @property
+    def activity_fill(self) -> int:
+        return self._activity_fill
 
-    def retract_activity(self) -> bool:
-        """Retract one cell, returning whether the zero-fill frame is complete."""
-        fill = STATUS_ACTIVITY_FILLS[self._activity_index]
-        if fill == 0:
-            return True
-        self._activity_index = fill - 1
-        return False
+    def set_activity_fill(self, fill: int) -> bool:
+        fill = max(0, min(STATUS_ACTIVITY_MAX_FILL, fill))
+        if fill == self._activity_fill:
+            return False
+        self._activity_fill = fill
+        return True
 
     def _activity_prefix(self) -> list[tuple[str, str]]:
-        fill = STATUS_ACTIVITY_FILLS[self._activity_index]
+        fill = self._activity_fill
         shades = len(_STATUS_ACTIVITY_SHADES)
         segments = [("class:status.activity", STATUS_ACTIVITY_GLYPH)]
         segments.extend(

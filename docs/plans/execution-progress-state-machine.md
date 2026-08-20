@@ -395,11 +395,21 @@ label without punctuation. A local Run first changes column zero to a full-cell
 `█`; columns one through six then contain a contiguous background fill that
 grows from left to right and retracts, while column seven remains a separating
 space. Filled cells start with the same color as the full-cell strip and weaken
-toward their right edge. Frames advance every 180 milliseconds. Completion
-retracts the fill completely, holds the zero-fill full-cell frame, and restores
-the idle `▌`, so no gap appears between the strip and fill. The model name never
-shifts.
-Animation refreshes only while running and is never committed to scrollback.
+toward their right edge. Their colors are six sRGB-channel linear blends from
+the configured Start accent toward the configured status background, at blend
+amounts `0`, `.16`, `.32`, `.48`, `.64`, and `.80`; changing either endpoint
+therefore updates the entire gradient.
+
+The breathing cycle uses monotonic elapsed time rather than uniform frame
+steps: a 260-millisecond trough, a 720-millisecond sine-eased expansion, a
+180-millisecond peak, and a 900-millisecond sine-eased retraction. The UI checks
+the phase every 80 milliseconds but redraws only when the visible fill changes.
+Completion retracts from the current fill with the same easing and a duration
+proportional to its width, holds the zero-fill full-cell frame for 180
+milliseconds, and restores the idle `▌`. No gap appears between the strip and
+fill, the model name never shifts, and animation is never committed to
+scrollback.
+
 Run completion does not delay results or input, but the running appearance is
 held for at least 600 milliseconds and finishes its retraction so short Runs do
 not flash past abruptly.
