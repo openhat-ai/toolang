@@ -13,8 +13,23 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.types import ExecutionError, Occurrence, Pointer, StepPath
-from toolang.lang.ast import RepeatStmt, SettleStmt
+from toolang.execution.types import (
+    CollectionStepNoted,
+    ExecutionError,
+    Occurrence,
+    Pointer,
+    RunStatus,
+    StepPath,
+)
+from toolang.lang.ast import (
+    DropStmt,
+    KeepStmt,
+    MapStmt,
+    RankStmt,
+    RepeatStmt,
+    SettleStmt,
+    StormStmt,
+)
 
 from .formatting import elapsed, one_line
 from .headers import statement_header, until_header
@@ -27,11 +42,14 @@ from .state import (
     step_detail,
 )
 from .step_projection import (
+    collection_terminal_rows,
     flow_lane_terminal_lines,
+    flow_error_rows,
     flow_terminal_rows,
     lane_live_text,
+    lane_run_error_lines,
     lane_terminal_lines,
-    live_row,
+    trace_live_rows,
     loop_terminal_rows,
     trace_terminal_rows,
 )
@@ -68,13 +86,6 @@ class ProgressProjector:
 
         run = self._runs.get(self._root or "")
         return run.metrics if run is not None else Metrics()
-
-    @property
-    def root_kind(self) -> str:
-        """Return the root runnable kind when known."""
-
-        run = self._runs.get(self._root or "")
-        return run.kind if run is not None else "run"
 
     def handle(self, event: RunEvent) -> ProgressUpdate:
         """Validate and reduce one ordered event without querying durable state."""
@@ -145,8 +156,21 @@ class ProgressProjector:
                     event.occurrence,
                     event.run,
                 )
+                active_lane = owner.par.lanes.get(lane_owner.lane)
+                if active_lane is not None and active_lane.active:
+                    raise _PresentationError(
+                        f"parallel lane {lane_owner.lane} already owns active Run "
+                        f"{active_lane.run_id}"
+                    )
                 owner.par.child_count += 1
                 owner.par.active_children += 1
+                if event.occurrence is not None and event.occurrence.item is not None:
+                    total_items = event.occurrence.item.count
+                    if owner.par.total_items not in {None, total_items}:
+                        raise _PresentationError(
+                            f"parallel item total changed for {event.parent}"
+                        )
+                    owner.par.total_items = total_items
                 owner.par.lanes[lane_owner.lane] = LaneState(
                     event.run,
                     lane_owner.item,
@@ -157,7 +181,7 @@ class ProgressProjector:
         if event.parent is not None:
             self._note_iteration(event.parent, event.occurrence)
             if lane_owner is not None:
-                self._set_lane_activity(lane_owner, "· starting…")
+                self._set_lane_activity(lane_owner, "• starting…")
 
     def _end_run(self, event: RunEnd) -> ProgressBlock | None:
         run = self._runs.get(event.run)
@@ -204,19 +228,33 @@ class ProgressProjector:
             if isinstance(event.error, str):
                 self._set_lane_terminal(
                     run.lane_owner,
-                    (f"· failed {self._error_text(event.error)}",),
+                    lane_run_error_lines(self._error_text(event.error)),
+                    status=event.status,
                 )
             elif event.status == "canceled":
                 self._set_lane_terminal(
                     run.lane_owner,
-                    ("· canceled",),
+                    ("• canceled",),
+                    status=event.status,
                 )
         elif run.begin.parent is not None and isinstance(event.error, str):
-            block = self._run_error_block(run, event.error)
+            if not (
+                event.status == "canceled"
+                and run.cancellation_reported
+                and self._is_generic_cancellation(event.error)
+            ):
+                block = self._run_error_block(run, event.error)
+                if event.status == "canceled":
+                    self._mark_cancellation_reported(run.begin.parent)
         elif run.begin.parent is None:
             self._root_ended = True
             if isinstance(event.error, str):
-                block = self._diagnostic_block(self._error_text(event.error))
+                if not (
+                    event.status == "canceled"
+                    and run.cancellation_reported
+                    and self._is_generic_cancellation(event.error)
+                ):
+                    block = self._diagnostic_block(self._error_text(event.error))
             elif isinstance(event.error, Pointer) and not self._pointer_resolves(
                 event.error
             ):
@@ -297,27 +335,46 @@ class ProgressProjector:
             self._errors[Pointer.step(event.step)] = event.error
         run = self._runs[event.step.run]
         run.metrics.record_step(event)
+        if isinstance(event.noted, CollectionStepNoted) and event.kind == "par":
+            if state.par.total_items not in {None, event.noted.total_items}:
+                raise _PresentationError(
+                    f"parallel item total changed for {event.step}"
+                )
+            state.par.total_items = event.noted.total_items
 
         block: ProgressBlock | None = None
         if state.lane_owner is not None:
             if not isinstance(event.error, Pointer):
-                terminal = (
-                    flow_lane_terminal_lines(
+                statement = state.statement
+                if state.is_flow:
+                    assert statement is not None
+                    terminal = flow_lane_terminal_lines(
                         event,
+                        statement=statement,
                         error=self._error_text(event.error),
                         observed_iterations=(
                             state.loop.iterations if event.kind == "loop" else 0
                         ),
                     )
-                    if state.is_flow
-                    else lane_terminal_lines(
+                else:
+                    terminal = lane_terminal_lines(
                         state.begin,
                         event,
                         error=self._error_text(event.error),
                     )
-                )
                 if terminal:
-                    self._set_lane_terminal(state.lane_owner, terminal)
+                    lane = self._lane_state(state.lane_owner)
+                    if not (
+                        event.kind == "par"
+                        and event.status == "failed"
+                        and lane is not None
+                        and lane.terminal_status == "failed"
+                    ):
+                        self._set_lane_terminal(
+                            state.lane_owner,
+                            terminal,
+                            status=event.status,
+                        )
         elif not state.is_flow:
             if isinstance(event.error, Pointer):
                 self._release_boundaries(state.boundaries)
@@ -348,6 +405,13 @@ class ProgressProjector:
                     block = self._finalize_block(state, rows)
                 else:
                     self._release_boundaries(state.boundaries)
+
+        if (
+            event.status == "canceled"
+            and block is not None
+            and not state.cancellation_reported
+        ):
+            self._mark_cancellation_reported(event.step)
 
         self._steps.pop(event.step, None)
         self._repeat_ordinals = {
@@ -394,11 +458,27 @@ class ProgressProjector:
         state: StepState,
         event: StepEnd,
     ) -> tuple[ProgressRow, ...]:
+        statement = state.statement
+        assert statement is not None
         if event.kind == "loop":
             rows = list(
                 loop_terminal_rows(
                     event,
+                    statement=statement,
                     observed_iterations=state.loop.iterations,
+                    error=self._error_text(event.error),
+                )
+            )
+        elif event.status == "canceled" and state.cancellation_reported:
+            rows = []
+        elif isinstance(
+            statement,
+            MapStmt | StormStmt | KeepStmt | DropStmt | RankStmt,
+        ):
+            rows = list(
+                collection_terminal_rows(
+                    statement,
+                    event,
                     error=self._error_text(event.error),
                 )
             )
@@ -418,6 +498,8 @@ class ProgressProjector:
         state: StepState,
         event: StepEnd,
     ) -> tuple[ProgressRow, ...]:
+        statement = state.statement
+        assert statement is not None
         tone = (
             "error"
             if event.status == "failed"
@@ -425,11 +507,25 @@ class ProgressProjector:
             if event.status == "canceled"
             else "progress"
         )
-        rows = [ProgressRow(f"· {self._par_counts(state, live=False)}", tone)]
+        if event.status == "succeeded":
+            rows = list(
+                collection_terminal_rows(
+                    statement,
+                    event,
+                    fallback_total=(
+                        state.par.total_items
+                        if state.par.total_items is not None
+                        else state.par.child_count
+                    ),
+                )
+            )
+        else:
+            rows = [ProgressRow(f"• {self._par_terminal_text(state, event)}", tone)]
         if event.status == "failed":
             rows.extend(self._failed_lane_rows(state))
             if error := self._error_text(event.error):
-                rows.extend((ProgressRow(""), ProgressRow(f"· {error}", "error")))
+                rows.append(ProgressRow(""))
+                rows.extend(flow_error_rows(error))
         facts = self._flow_facts(state, event)
         if facts:
             rows.append(ProgressRow(f"  {' · '.join(facts)}"))
@@ -446,7 +542,7 @@ class ProgressProjector:
             if lane.status != "failed":
                 continue
             prefix = f"  {lane_index:>{lane_width}} | #{lane.item:>{item_width}} | "
-            terminal = lane.terminal or ("· failed",)
+            terminal = lane.terminal or ("• failed",)
             rows.append(ProgressRow(f"{prefix}{terminal[0]}", "error"))
             continuation = " " * (len(prefix) + 2)
             rows.extend(
@@ -461,7 +557,7 @@ class ProgressProjector:
             boundaries = self._claim_boundaries(f"run:{run.begin.run}", owner)
         rows = (
             *self._rows_for_boundaries(boundaries),
-            ProgressRow(f"· {self._error_text(error)}", "error"),
+            *flow_error_rows(self._error_text(error)),
         )
         self._commit_boundaries(boundaries)
         return ProgressBlock(f"run:{run.begin.run}", rows)
@@ -486,7 +582,7 @@ class ProgressProjector:
             if not state.is_flow:
                 rows = (
                     *self._rows_for_boundaries(state.boundaries),
-                    live_row(
+                    *trace_live_rows(
                         state.begin,
                         state.model.preview if state.begin.kind == "model" else "",
                     ),
@@ -508,7 +604,7 @@ class ProgressProjector:
 
     def _par_live_rows(self, state: StepState) -> tuple[ProgressRow, ...]:
         rows = [
-            ProgressRow(f"· running · {self._par_counts(state, live=True)}", "active")
+            ProgressRow(f"• running · {self._par_counts(state, live=True)}", "active")
         ]
         if not state.par.lanes:
             return tuple(rows)
@@ -527,8 +623,11 @@ class ProgressProjector:
     def _par_counts(self, state: StepState, *, live: bool) -> str:
         facts = []
         par = state.par
-        if par.succeeded_children or not par.child_count:
-            facts.append(f"{par.succeeded_children} succeeded")
+        if par.total_items is not None or par.succeeded_children or not par.child_count:
+            succeeded = str(par.succeeded_children)
+            if par.total_items is not None:
+                succeeded = f"{succeeded}/{par.total_items}"
+            facts.append(f"{succeeded} succeeded")
         if par.failed_children:
             facts.append(f"{par.failed_children} failed")
         if live and par.active_children:
@@ -537,6 +636,25 @@ class ProgressProjector:
         if par.canceled_children:
             facts.append(f"{par.canceled_children} canceled")
         return " · ".join(facts) or "0 succeeded"
+
+    def _par_terminal_text(self, state: StepState, event: StepEnd) -> str:
+        par = state.par
+        succeeded = str(par.succeeded_children)
+        if par.total_items is not None:
+            succeeded = f"{succeeded}/{par.total_items}"
+        clauses = [f"{succeeded} succeeded"]
+        if par.failed_children:
+            clauses.append(f"{par.failed_children} failed")
+        if par.canceled_children:
+            verb = "was" if par.canceled_children == 1 else "were"
+            clauses.append(f"{par.canceled_children} {verb} canceled")
+        detail = _sentence_list(clauses)
+        action = (
+            "Parallel execution was canceled"
+            if event.status == "canceled"
+            else "Parallel execution stopped"
+        )
+        return f"{action}: {detail}"
 
     def _flow_facts(self, state: StepState, event: StepEnd) -> list[str]:
         if not state.metrics.has_activity:
@@ -693,37 +811,52 @@ class ProgressProjector:
         owner: LaneOwner,
         activity: str,
     ) -> None:
-        par = self._steps.get(owner.step)
-        if par is None:
-            return
-        lane = par.par.lanes.get(owner.lane)
-        if lane is not None and lane.run_id == owner.run_id:
+        lane = self._lane_state(owner)
+        if lane is not None:
             lane.activity = one_line(activity)
 
     def _set_lane_terminal(
         self,
         owner: LaneOwner,
         terminal: tuple[str, ...],
+        *,
+        status: RunStatus,
     ) -> None:
-        par = self._steps.get(owner.step)
-        if par is None:
-            return
-        lane = par.par.lanes.get(owner.lane)
-        if lane is not None and lane.run_id == owner.run_id:
+        lane = self._lane_state(owner)
+        if lane is not None:
             lane.terminal = terminal
+            lane.terminal_status = status
             if terminal:
                 lane.activity = one_line(" · ".join(terminal))
+
+    def _lane_state(self, owner: LaneOwner) -> LaneState | None:
+        par = self._steps.get(owner.step)
+        if par is None:
+            return None
+        lane = par.par.lanes.get(owner.lane)
+        return lane if lane is not None and lane.run_id == owner.run_id else None
 
     def _start_canceling(
         self,
         state: StepState,
-        *,
-        except_run: str | None = None,
     ) -> None:
         state.par.terminating = True
         for lane in state.par.lanes.values():
-            if lane.active and lane.run_id != except_run:
-                lane.activity = "· canceling…"
+            if lane.active:
+                lane.activity = "• canceling…"
+
+    def _mark_cancellation_reported(self, path: StepPath) -> None:
+        current: StepPath | None = path
+        seen: set[StepPath] = set()
+        while current is not None and current not in seen:
+            seen.add(current)
+            state = self._steps.get(current)
+            if state is not None:
+                state.cancellation_reported = True
+            run = self._runs.get(current.run)
+            if run is not None:
+                run.cancellation_reported = True
+            current = self._parent_flow_path(current)
 
     @staticmethod
     def _lane_for_run(state: StepState, run_id: str) -> LaneState | None:
@@ -770,16 +903,37 @@ class ProgressProjector:
 
     @staticmethod
     def _error_text(error: ExecutionError | None) -> str:
-        return one_line(error).strip() if isinstance(error, str) else ""
+        return error.strip() if isinstance(error, str) else ""
+
+    @staticmethod
+    def _is_generic_cancellation(error: str) -> bool:
+        return error.casefold().strip(" .:!") in {
+            "canceled",
+            "cancelled",
+            "run canceled",
+            "run cancelled",
+            "operation canceled",
+            "operation cancelled",
+        }
 
     @staticmethod
     def _block_key(state: StepState) -> str:
         prefix = "par" if state.begin.kind == "par" else "step"
         return f"{prefix}:{state.begin.step}"
 
-    @staticmethod
-    def _diagnostic_block(message: str) -> ProgressBlock:
-        return ProgressBlock(
-            "run:diagnostic",
-            (ProgressRow(f"· {one_line(message)}", "error"),),
+    def _diagnostic_block(self, message: str) -> ProgressBlock:
+        boundaries = tuple(self._boundary_rows)
+        rows = (
+            *self._rows_for_boundaries(boundaries),
+            *flow_error_rows(message),
         )
+        self._commit_boundaries(boundaries)
+        return ProgressBlock("run:diagnostic", rows)
+
+
+def _sentence_list(values: list[str]) -> str:
+    if len(values) < 2:
+        return "".join(values)
+    if len(values) == 2:
+        return " and ".join(values)
+    return f"{', '.join(values[:-1])}, and {values[-1]}"

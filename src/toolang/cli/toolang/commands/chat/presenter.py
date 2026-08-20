@@ -8,6 +8,7 @@ from toolang.cli.common.execution_progress import (
     ProgressProjector,
     ProgressUpdate,
 )
+from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 
 from . import blocks
 from .base import AppContext, friendly_error
@@ -16,10 +17,11 @@ from .base import AppContext, friendly_error
 class ChatRunPresenter:
     """Own chat block lifetime while sharing execution presentation semantics."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_width: int = DEFAULT_MAX_PROGRESS_WIDTH) -> None:
         self._root_run_id: str | None = None
         self._projector = ProgressProjector()
         self._progress: dict[str, blocks.ExecutionProgressBlock] = {}
+        self._max_width = max_width
 
     def handle(self, event: RunEvent, app: AppContext) -> None:
         if isinstance(event, RunBegin) and event.parent is None:
@@ -64,10 +66,7 @@ class ChatRunPresenter:
         else:
             stop.status = "failed"
             stop.error = ""
-        stop.set_metrics(
-            self._projector.root_metrics,
-            include_child_runs=self._projector.root_kind == "flow",
-        )
+        stop.set_metrics(self._projector.root_metrics)
         app.finalize_block(stop)
         app.finish_run()
         self.reset()
@@ -96,21 +95,27 @@ class ChatRunPresenter:
         else:
             stop.update(event)
         stop.error = ""
-        stop.set_metrics(
-            self._projector.root_metrics,
-            include_child_runs=self._projector.root_kind == "flow",
-        )
+        stop.set_metrics(self._projector.root_metrics)
         app.finalize_block(stop)
         app.finish_run()
         self.reset()
 
-    def _apply(self, update: ProgressUpdate, app: AppContext) -> None:
-        for progress in update.finalized:
+    def _apply(
+        self,
+        update: ProgressUpdate,
+        app: AppContext,
+    ) -> None:
+        for projected in update.finalized:
+            progress = projected
             block = self._progress.pop(progress.key, None)
             if block is None:
-                block = blocks.ExecutionProgressBlock(progress)
+                block = blocks.ExecutionProgressBlock(
+                    progress,
+                    max_width=self._max_width,
+                )
             else:
                 block.update(progress)
+            block.live = False
             app.finalize_block(block)
 
         desired: dict[str, blocks.ExecutionProgressBlock] = {}
@@ -118,9 +123,14 @@ class ChatRunPresenter:
         for progress in update.live:
             block = self._progress.get(progress.key)
             if block is None:
-                block = blocks.ExecutionProgressBlock(progress)
+                block = blocks.ExecutionProgressBlock(
+                    progress,
+                    live=True,
+                    max_width=self._max_width,
+                )
             else:
                 block.update(progress)
+                block.live = True
             desired[progress.key] = block
             ordered.append(block)
 

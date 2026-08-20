@@ -33,6 +33,7 @@ async def execute(
         source = locals.get("_", Local())
         item_type = source.type_name
         items = require_list(locals, operation="settle")
+        progress.total = len(items)
         accumulator = Local((TextPart(""),), "item", type_name="Part[]")
         for index, item in enumerate(items):
             child_locals = dict(locals)

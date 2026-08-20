@@ -59,7 +59,7 @@ def test_chat_tui_preserves_long_final_output_in_a_small_terminal(
         session.wait_for("Toolang", "^d exit")
         session.send(b"show long output\r")
         final_output = session.wait_for(
-            "· terminal e2e line 000",
+            "• terminal e2e line 000",
             "terminal e2e line 099",
             "succeeded",
             timeout=10,
@@ -91,7 +91,7 @@ def test_chat_tui_reopens_a_durable_flow_result(
             "succeeded",
         )
         assert "Window too small" not in output
-        assert "◆ run_" in output
+        assert "✔ run_" in output
 
         session.send(b":show\r")
         result = session.wait_for("Result run_", "hello from terminal e2e")

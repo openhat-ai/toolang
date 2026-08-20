@@ -35,6 +35,9 @@ RunEvent -> ProgressProjector -> ProgressUpdate -> surface presenter
 - `ScriptRunPresenter` and `ChatRunPresenter` adapt these updates to their
   surfaces. Wrapping, lane truncation, color, and live-area replacement remain
   surface concerns.
+- Progress output is at most 120 cells wide by default and never wider than the
+  TTY. `TOOLANG_PROGRESS_MAX_WIDTH` overrides the positive maximum for both
+  surfaces; non-TTY Script output uses the configured maximum.
 
 The projector never queries durable storage and retains only active state,
 bounded Model preview text, one state record per active lane, aggregate metrics,
@@ -45,7 +48,9 @@ boundary claims, and concrete errors required to resolve pointers.
 `StepEnd.noted` supports these typed payloads:
 
 - `ModelStepNoted` for model usage, price, cost, and provider state;
-- `LoopStepNoted` for `iterations` and `termination`.
+- `CollectionStepNoted` for total and output item counts; and
+- `LoopStepNoted` for completed `iterations`, optional `total`, and
+  `termination`.
 
 `LoopStepNoted.termination` is one of:
 
@@ -69,6 +74,10 @@ A Step follows one lifecycle:
 optional header -> replaceable live content -> terminal output -> optional facts
 ```
 
+Every started Part must emit `PartEnd` before its owning `StepEnd`, including
+failed and canceled Model streams. Every child Step and Run must likewise be
+terminal before its parent Step ends.
+
 A Flow Step is any Step whose typed `given` value is a `FlowStmt`. Flow Steps
 define statement headers and a facts slot. Model and Tool Steps have neither.
 `executing` and `executed` are formatting words, not lifecycle statuses.
@@ -84,17 +93,20 @@ Trace-or-Lane ownership rule to its child statement.
 
 ## Marker Grammar
 
-`·` is the only execution marker and starts in column zero outside a lane.
+`•` is the execution row marker and starts in column zero outside a lane.
 There is no `↳`, `→`, or `!` marker.
 
-- Model activity and output use `·`.
-- Tool activity and the Tool terminal row use `·`; Tool output continues below
-  without a marker.
-- Flow terminal output and parallel aggregate output use `·`.
-- Errors use `·` with error styling.
-- Parallel lanes embed `·` after their lane columns.
+- Model activity and output use `•` and normal text.
+- Tool activity uses `•` and normal text. Its terminal row and following output
+  are dim.
+- Flow live and successful terminal output, including collection and loop
+  aggregates, use `•` and normal text.
+- Errors use `•` with error styling.
+- Parallel lanes embed `•` after their lane columns.
+- Facts retain `·` as their inline separator; it is not a row marker.
 - Flow facts and continuation lines are unmarked and align with the text after
   the marker.
+- Headers and facts are dim. Errors and cancellation retain their status styles.
 
 Result pointers, child closure, binding effects, and control decisions are not
 displayed. If such information is added later, it belongs below output as an
@@ -105,6 +117,11 @@ unmarked continuation.
 Statement headers are optional Step boundaries. They are emitted only when the
 Step has visible trace, output, or aggregate content and are followed by one
 blank line.
+
+Once displayed, a statement header is committed with that Step's finalized
+output. If malformed events force a terminal presentation diagnostic, the
+claimed header is finalized before the diagnostic instead of being cleared with
+live content.
 
 Header generation is deterministic:
 
@@ -139,41 +156,55 @@ Repeat iteration and condition boundaries are:
 
 <?> completion_check
 
-· thinking…
-· true
+• thinking…
+• true
 ```
 
 The condition is a Run, not a synthetic `executed completion_check` Step.
 
 ## Trace Output
 
-Model output replaces Model activity and is preserved completely:
+In Trace mode, Model delta accumulates in a replaceable multi-line live block.
+Logical newlines are preserved and long lines wrap to the surface width. Model
+output then replaces that live block and is preserved completely:
 
 ```text
-· thinking…
-· Source summary prepared
+• thinking…
+• # Deep Research Brief
+  ## Executive summary
+  The evidence supports explicit ownership...
 ```
+
+Inside a parallel lane, the same Model delta is flattened and truncated to the
+lane's single physical row.
 
 A Tool keeps its terminal action and complete output on following lines:
 
 ```text
-· executing web_search.search…
-· executed web_search.search
-  5 results
+• executing web_search.search…
+• executed web_search.search
+  {"results":[{"url":"https://example.com"}]}
 ```
+
+Structured Tool result output uses compact single-line JSON. Textual `stdout`
+and `stderr` retain their original lines. Wrapping is a surface concern and does
+not alter the result content.
 
 A model Tool request is visible without creating a synthetic Tool result:
 
 ```text
-· requested web_search.search
+• requested web_search.search
 ```
 
 Model and Tool Steps do not display StepPath, duration, model name, exit code,
 tokens, cost, or other Step facts.
 
-A direct Flow-owned value is displayed directly. A Flow `run` with one child
-Run emits no synthetic success row; the absence of an error means success.
-Flow output shape such as `1 item` or `6-item list` is never displayed.
+A direct Flow-owned value is displayed directly. Positional collection
+transforms instead describe their semantic result, such as `Kept the first 2
+items out of 6` or `Dropped the last item out of 6, leaving 5`. A Flow `run`
+with one child Run emits no synthetic success row; the absence of an error
+means success. Flow output shape such as `1 item` or `6-item list` is never
+displayed.
 
 ## Flow Facts
 
@@ -182,7 +213,7 @@ A Flow Step may append one unmarked facts row when it owns child execution:
 ```text
 [2] Search the web for each query
 
-· 6 succeeded
+• Mapped all 6 items in parallel
   31.0s · 6 runs · 12 model calls · 8 tool calls · ↑18.4k ↓5.2k $0.00
 ```
 
@@ -199,29 +230,33 @@ lane. Surfaces truncate the lane row to available width; the projector retains
 semantic content.
 
 ```text
-· running · 4 succeeded · 3 active
-  0 | #4 | · thinking…
-  1 | #5 | · executing web_search.search…
-  2 | #6 | · Source summary prepared
+• running · 4/18 succeeded · 3 active
+  0 | #4 | • thinking…
+  1 | #5 | • executing web_search.search…
+  2 | #6 | • Source summary prepared
 ```
 
-On success, live lanes are cleared and only the finalized aggregate remains:
+On success, live lanes are cleared and one natural-language result sentence
+remains. It names both parallel execution and the statement transform:
 
-```text
-· 7 succeeded
-  31.0s · 7 runs · 12 model calls · 8 tool calls · ↑18.4k ↓5.2k $0.00
-```
+- `Mapped all 7 items in parallel`
+- `Brainstormed 7 items in parallel`
+- `Evaluated 7 items in parallel, kept 5`
+- `Evaluated 7 items in parallel, dropped 2, leaving 5`
+- `Scored 10 items in parallel, kept the top 8`
+
+The normal unmarked Flow facts row follows that sentence.
 
 On failure, clear successful, active, and canceled lanes. Preserve each failed
 lane and its complete causal output, then display an independent parallel-Step
 boundary error and the Flow facts:
 
 ```text
-· 4 succeeded · 1 failed · 2 canceled
-  1 | #5 | · failed fetch_page
+• Parallel execution stopped: 4/18 succeeded, 1 failed, and 2 were canceled
+  1 | #5 | • failed fetch_page
              provider returned status 429
 
-· parallel step stopped because lane 1 (#5) failed
+• parallel step stopped because lane 1 (#5) failed
   31.0s · 7 runs · 12 model calls · 8 tool calls · ↑18.4k ↓5.2k $0.00
 ```
 
@@ -234,16 +269,23 @@ Repeat and Settle share iteration boundaries and terminal output. A successful
 loop emits one of:
 
 ```text
-· completed 3 iterations
-· condition met after 2 iterations
+• Completed all 3 iterations
+• Condition met after 2 of 3 iterations
+• Completed all 3 iterations without meeting the condition
+• Settled all 6 items in 6 iterations
 ```
 
 Failure and cancellation emit:
 
 ```text
-· interrupted after 2 iterations
-· canceled after 2 iterations
+• Interrupted after completing 2 of 3 iterations
+• Canceled after completing 2 of 3 iterations
+• Settling was interrupted after 2 of 6 iterations
+• Settling was canceled after 2 of 6 iterations
 ```
+
+Zero completed iterations use `before completing an iteration`; an empty
+Settle uses `Settled no items`. Stable result sentences have no trailing period.
 
 The causal child error is displayed at the child Step or lane. The loop row
 describes termination and does not repeat that error.
@@ -257,10 +299,10 @@ Errors are visible once, as close as possible to where they occur:
 - a parallel Step adds only its distinct local-failure boundary error;
 - parent Steps and Runs whose errors are pointers emit nothing;
 - a concrete Run error with no Step owner is emitted as a final error-like Step
-  row: `· MESSAGE`.
+  row: `• MESSAGE`.
 
 There is no special diagnostic marker. A malformed presentation stream also
-clears live state and emits one root-owned `· MESSAGE` row.
+clears live state and emits one root-owned `• MESSAGE` row.
 
 ## Root Run Footer
 
@@ -274,17 +316,26 @@ renders only the root footer:
 ```
 
 The footer owns total duration and Run facts. Cost uses full precision while
-aggregating and is rounded to cents only for display.
+aggregating and is rounded to cents only for display. Script does not append a
+separate `Run: RUN_ID` line. Errors raised before `RunBegin` are reported outside
+execution progress; terminal Run errors are owned by progress and its footer.
 
-Chat uses the same projected content and aggregate facts in its existing Run
-status/footer surface; submission UI is not an execution Run header.
+Script does not copy the durable root result to stdout by default. `--save -`
+writes that result to stdout and `--save PATH` atomically writes it to a file;
+both are independent of progress verbosity. Failed and canceled Runs do not
+write a selected result destination.
+
+Chat uses the same projected content and aggregate facts. Its Run footer uses
+`✔`, `✘`, or `⁃` for succeeded, failed, or canceled respectively. Status color
+applies only to this marker; the Run id, status text, and facts remain neutral.
+Submission UI is not an execution Run header.
 
 ## Implementation Touchpoints
 
 - `src/toolang/execution/types.py`, `events.py`, `records.py`, and `schemas.py`:
-  typed loop facts and validation.
+  typed collection and loop facts plus validation.
 - `src/toolang/execution/executor/steps/loop.py` and statement executors:
-  iteration occurrences and terminal cause.
+  collection cardinality, iteration occurrences, totals, and terminal cause.
 - `src/toolang/cli/common/execution_progress/`: projector, typed active state,
   Step projection, headers, formatting, and semantic update types.
 - `src/toolang/cli/common/script_progress/`: `ScriptRunPresenter`, console sink,
@@ -299,6 +350,7 @@ Deterministic tests cover:
 - single-Run Flow trace and Flow facts;
 - no-doc AST headers with unchanged runnable names;
 - one-line parallel live lanes and successful finalized aggregation;
+- semantic Map, Storm, Keep, Drop, and Rank result sentences;
 - retained failed lanes, aligned error details, boundary error, and pointer
   suppression;
 - Repeat and Settle boundaries plus all four typed termination causes;

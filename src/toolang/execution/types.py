@@ -961,17 +961,47 @@ LoopTermination = Literal["exhausted", "satisfied", "failed", "canceled"]
 
 
 @dataclass(frozen=True, slots=True)
+class CollectionStepNoted:
+    """Collection cardinality learned while executing one Flow Step."""
+
+    total_items: int
+    output_items: int | None = None
+
+    def __post_init__(self) -> None:
+        for label, value in (
+            ("total", self.total_items),
+            ("output", self.output_items),
+        ):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int)
+            ):
+                raise TypeError(f"collection Step {label} items must be an integer")
+            if value is not None and value < 0:
+                raise ValueError(f"collection Step {label} items must be non-negative")
+        if self.output_items is not None and self.output_items > self.total_items:
+            raise ValueError("collection Step output items cannot exceed total items")
+
+
+@dataclass(frozen=True, slots=True)
 class LoopStepNoted:
     """Iteration count and terminal cause learned when a loop Step ends."""
 
     iterations: int
     termination: LoopTermination
+    total: int | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.iterations, bool) or not isinstance(self.iterations, int):
             raise TypeError("loop Step iterations must be an integer")
         if self.iterations < 0:
             raise ValueError("loop Step iterations must be non-negative")
+        if self.total is not None:
+            if isinstance(self.total, bool) or not isinstance(self.total, int):
+                raise TypeError("loop Step total must be an integer or None")
+            if self.total < 0:
+                raise ValueError("loop Step total must be non-negative")
+            if self.iterations > self.total:
+                raise ValueError("loop Step iterations cannot exceed total")
         if self.termination not in {
             "exhausted",
             "satisfied",
@@ -981,7 +1011,7 @@ class LoopStepNoted:
             raise ValueError(f"unknown loop Step termination: {self.termination}")
 
 
-StepNoted: TypeAlias = ModelStepNoted | LoopStepNoted | None
+StepNoted: TypeAlias = ModelStepNoted | CollectionStepNoted | LoopStepNoted | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1003,7 +1033,7 @@ class OccurrencePosition:
 
 @dataclass(frozen=True, slots=True)
 class IterationOccurrence:
-    """One repeat iteration and the phase executing within it."""
+    """One loop iteration and the phase executing within it."""
 
     index: int
     phase: Literal["body", "until"]
@@ -1100,6 +1130,22 @@ def validate_step_noted(
             if noted.termination != status:
                 raise ValueError(
                     f"{status} loop Step requires {status} termination facts"
+                )
+        return noted
+    if kind in {"value", "par"}:
+        if noted is not None and not isinstance(noted, CollectionStepNoted):
+            raise TypeError(f"{kind} Step noted requires CollectionStepNoted or None")
+        if status in {"pending", "running"} and noted is not None:
+            raise ValueError(f"{status} {kind} Step cannot have terminal noted facts")
+        if status == "succeeded" and noted is not None:
+            if noted.output_items is None:
+                raise ValueError(
+                    f"succeeded {kind} Step requires collection output items"
+                )
+        if status in {"failed", "canceled"} and noted is not None:
+            if noted.output_items is not None:
+                raise ValueError(
+                    f"{status} {kind} Step cannot have collection output items"
                 )
         return noted
     if noted is not None:

@@ -100,7 +100,12 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
         ("steps", "output", "[]", "stored step output must be an object"),
         ("steps", "occurrence", "[]", "stored step occurrence must be an object"),
         ("steps", "given", "[]", "stored step given must be an object"),
-        ("steps", "noted", "[]", "value Step noted must be null"),
+        (
+            "steps",
+            "noted",
+            "[]",
+            "collection noted requires exactly: output_items, total_items",
+        ),
     ),
 )
 def test_corrupted_run_and_step_fields_are_rejected(

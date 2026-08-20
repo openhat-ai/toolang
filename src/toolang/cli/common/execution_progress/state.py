@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
 
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
-from toolang.execution.types import ModelStepNoted, StepKind, StepPath
+from toolang.execution.types import ModelStepNoted, RunStatus, StepKind, StepPath
 from toolang.lang.ast import FlowStmt
 
 from .formatting import count, flow_statement, token_fact
@@ -28,9 +28,10 @@ class LaneState:
 
     run_id: str
     item: int
-    activity: str = "· starting…"
+    activity: str = "• starting…"
     terminal: tuple[str, ...] = ()
-    status: str = "running"
+    terminal_status: RunStatus | None = None
+    status: RunStatus = "running"
     active: bool = True
 
 
@@ -46,6 +47,7 @@ class ParDetail:
     """Aggregate and lane state needed only by parallel Flow Steps."""
 
     lanes: dict[int, LaneState] = field(default_factory=dict)
+    total_items: int | None = None
     child_count: int = 0
     active_children: int = 0
     succeeded_children: int = 0
@@ -89,11 +91,7 @@ class RunState:
     lane_owner: LaneOwner | None
     metrics: Metrics = field(default_factory=lambda: Metrics(runs=1))
     end: RunEnd | None = None
-
-    @property
-    def kind(self) -> str:
-        kind, separator, _name = self.begin.runnable.partition(":")
-        return kind if separator else "run"
+    cancellation_reported: bool = False
 
 
 @dataclass(slots=True)
@@ -107,6 +105,7 @@ class StepState:
     detail: StepDetail
     boundaries: tuple[str, ...] = ()
     metrics: Metrics = field(default_factory=lambda: Metrics())
+    cancellation_reported: bool = False
 
     @property
     def statement(self) -> FlowStmt | None:

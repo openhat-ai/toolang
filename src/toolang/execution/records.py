@@ -23,6 +23,7 @@ from toolang.base.types.run import ModelCall, ToolCall
 from toolang.lang.ast import FlowStmt, flow_stmt_from_data, to_data as ast_to_data
 from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 from .types import (
+    CollectionStepNoted,
     ControlRef,
     ControlKind,
     ControlStatus,
@@ -953,12 +954,31 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
 
     if data is None:
         return None
-    if kind == "loop":
+    if kind in {"value", "par"}:
         payload = _canonical_object(
             data,
-            fields={"iterations", "termination"},
-            label="loop noted",
+            fields={"total_items", "output_items"},
+            label="collection noted",
         )
+        return CollectionStepNoted(
+            total_items=_required_int(
+                payload["total_items"],
+                label="collection total items",
+            ),
+            output_items=_optional_int(
+                payload["output_items"],
+                label="collection output items",
+            ),
+        )
+    if kind == "loop":
+        if not isinstance(data, Mapping) or set(data) not in {
+            frozenset({"iterations", "termination"}),
+            frozenset({"iterations", "termination", "total"}),
+        }:
+            raise ValueError(
+                "loop noted requires exactly: iterations, termination, total"
+            )
+        payload = cast(Mapping[str, object], data)
         termination = payload["termination"]
         if termination not in {"exhausted", "satisfied", "failed", "canceled"}:
             raise ValueError("loop noted termination is invalid")
@@ -968,6 +988,7 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
                 Literal["exhausted", "satisfied", "failed", "canceled"],
                 termination,
             ),
+            total=_optional_int(payload.get("total"), label="loop total"),
         )
     if kind != "model":
         raise ValueError(f"{kind} Step noted must be null")
@@ -1023,10 +1044,16 @@ def step_noted_to_data(kind: StepKind, noted: StepNoted) -> dict[str, object] | 
     validate_step_noted(kind, noted)
     if noted is None:
         return None
+    if isinstance(noted, CollectionStepNoted):
+        return {
+            "total_items": noted.total_items,
+            "output_items": noted.output_items,
+        }
     if isinstance(noted, LoopStepNoted):
         return {
             "iterations": noted.iterations,
             "termination": noted.termination,
+            "total": noted.total,
         }
     return {
         "tokens": (
@@ -1060,6 +1087,12 @@ def _required_int(value: object, *, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{label} must be an integer")
     return value
+
+
+def _optional_int(value: object, *, label: str) -> int | None:
+    if value is None:
+        return None
+    return _required_int(value, label=label)
 
 
 def _optional_text(value: object, *, label: str) -> str | None:

@@ -493,6 +493,7 @@ agic stream(_: Text) -> Text:
                 f"step_begin:{record.id}.0:model",
                 f"part_begin:{record.id}.0:0:text",
                 f"part_delta:{record.id}.0:0",
+                f"part_end:{record.id}.0:0:text",
                 f"step_end:{record.id}.0:model:failed",
                 f"run_end:{record.id}:failed",
             ]
@@ -554,6 +555,7 @@ agic stream(_: Text) -> Text:
                 f"step_begin:{record.id}.0:model",
                 f"part_begin:{record.id}.0:0:text",
                 f"part_delta:{record.id}.0:0",
+                f"part_end:{record.id}.0:0:text",
                 f"step_end:{record.id}.0:model:canceled",
                 f"run_end:{record.id}:canceled",
             ]

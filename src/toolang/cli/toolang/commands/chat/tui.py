@@ -31,6 +31,7 @@ from toolang.execution.types import ModelStepGiven
 from toolang.common.errors import ToolangError
 
 from toolang.cli.common.version import toolang_version
+from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from . import blocks
 from . import events
 from . import rendering
@@ -141,6 +142,7 @@ class ChatTuiApp:
         home: str,
         input_history: ChatInputHistoryStore | None,
         client: ChatClient,
+        progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     ) -> None:
         asyncio.run(
             ChatTuiApp(
@@ -149,6 +151,7 @@ class ChatTuiApp:
                 home=home,
                 input_history=input_history,
                 client=client,
+                progress_max_width=progress_max_width,
             ).run_loop()
         )
 
@@ -160,6 +163,7 @@ class ChatTuiApp:
         home: str,
         input_history: ChatInputHistoryStore | None,
         client: ChatClient,
+        progress_max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     ) -> None:
         self.thread_id = thread_id
         self.selects = selects
@@ -177,7 +181,7 @@ class ChatTuiApp:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
         self.actual_model: str | None = None
-        self.presenter = ChatRunPresenter()
+        self.presenter = ChatRunPresenter(max_width=progress_max_width)
 
         self.queue_panel = widgets.QueuePanel(
             lambda: [item.source for item in self.queue]

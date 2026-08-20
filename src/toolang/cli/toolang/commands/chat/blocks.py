@@ -9,7 +9,7 @@ import re
 from typing import Any
 
 from rich import box
-from rich.console import Group, RenderableType
+from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.markdown import Markdown
 from rich.markup import escape
 from rich.panel import Panel
@@ -21,11 +21,13 @@ from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, Step
 from toolang.execution.types import ExecutionError
 
 from toolang.cli.common.execution_progress import ProgressBlock, ProgressRow
+from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from toolang.cli.common.execution_progress.formatting import (
     count,
     elapsed,
     output_parts,
     shape_label,
+    split_hanging_prefix,
     status_label,
 )
 from toolang.cli.common.execution_progress.state import Metrics
@@ -93,28 +95,83 @@ class ExecutionProgressBlock(MutableBlock):
     """One shared finalized or replaceable execution progress block."""
 
     progress: ProgressBlock
+    live: bool = False
+    max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
 
     def update(self, event: Any) -> None:
         if isinstance(event, ProgressBlock):
             self.progress = event
 
     def render(self) -> RenderableType:
-        return Group(*(self._render_row(row) for row in self.progress.rows))
+        return Group(
+            *(
+                _ExecutionProgressRow(
+                    row=row,
+                    live=self.live,
+                    max_width=self.max_width,
+                )
+                for row in self.progress.rows
+            )
+        )
 
-    @staticmethod
-    def _render_row(row: ProgressRow) -> Text:
+
+@dataclass(frozen=True, slots=True)
+class _ExecutionProgressRow:
+    """Render one semantic progress row with a stable hanging indent."""
+
+    row: ProgressRow
+    live: bool
+    max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
         style = {
             "progress": "dim",
+            "normal": "none",
             "active": "none",
             "error": "red",
             "warning": "yellow",
-        }[row.tone]
-        text = (
-            truncate_display(row.text, width=max(terminal_width(), 20))
-            if "| #" in row.text and "| ·" in row.text
-            else row.text
+        }[self.row.tone]
+        width = max(1, min(options.max_width, self.max_width))
+        if self.live and not self.row.wrap_live:
+            yield Text(
+                truncate_display(self.row.text, width=width),
+                style=style,
+                no_wrap=True,
+            )
+            return
+
+        prefix, content = split_hanging_prefix(self.row.text)
+        prefix_width = display_len(prefix)
+        if prefix_width >= width:
+            lines = Text(self.row.text, style=style).wrap(
+                console,
+                width,
+                overflow="fold",
+            )
+            for line in lines:
+                line.rstrip()
+                yield Text(line.plain, style=style, no_wrap=True)
+            return
+
+        lines = Text(content, style=style).wrap(
+            console,
+            width - prefix_width,
+            overflow="fold",
         )
-        return Text(text, style=style)
+        if not lines:
+            lines.append(Text("", style=style))
+        continuation = " " * prefix_width
+        for index, line in enumerate(lines):
+            line.rstrip()
+            yield Text(
+                f"{prefix if index == 0 else continuation}{line.plain}",
+                style=style,
+                no_wrap=True,
+            )
 
 
 @dataclass(slots=True)
@@ -164,7 +221,7 @@ class SubmissionErrorBlock(MutableBlock):
 
     def render(self) -> RenderableType:
         lines = [
-            Text.from_markup(f"[red]· {escape(line)}[/]")
+            Text.from_markup(f"[red]• {escape(line)}[/]")
             for line in _wrap_plain_lines(friendly_error(self.error))
         ]
         lines.append(Text("\n"))
@@ -216,7 +273,6 @@ class RunStopBlock(MutableBlock):
     started_at: str = ""
     finished_at: str = ""
     metrics: Metrics = field(default_factory=Metrics)
-    include_child_runs: bool = False
 
     @classmethod
     def create(cls, event: RunBegin | RunEnd) -> RunStopBlock:
@@ -243,14 +299,8 @@ class RunStopBlock(MutableBlock):
         self.error = friendly_error(event.error) if event.error else self.error
         self.finished_at = event.finished_at
 
-    def set_metrics(
-        self,
-        metrics: Metrics,
-        *,
-        include_child_runs: bool = False,
-    ) -> None:
+    def set_metrics(self, metrics: Metrics) -> None:
         self.metrics = metrics
-        self.include_child_runs = include_child_runs
 
     def mark_canceling(self) -> None:
         self.status = "canceling"
@@ -274,15 +324,20 @@ class RunStopBlock(MutableBlock):
         lines: list[RenderableType] = []
         if message := _terminal_diagnostic(self.status, self.error):
             lines.extend(
-                Text.from_markup(f"[{tone}]· {escape(line)}[/]")
+                Text.from_markup(f"[{tone}]• {escape(line)}[/]")
                 for line in _wrap_plain_lines(message)
             )
         facts = self._facts()
         suffix = f" · {' · '.join(facts)}" if facts else ""
         summary = Text()
-        summary.append("◆ ", style="dim")
+        marker = {
+            "succeeded": "✔",
+            "failed": "✘",
+            "canceled": "⁃",
+        }.get(self.status, "◆")
+        summary.append(f"{marker} ", style=tone)
         summary.append(f"{self.run_id} ", style="dim")
-        summary.append(status_label(self.status), style=tone)
+        summary.append(status_label(self.status), style="dim")
         summary.append(suffix, style="dim")
         lines.extend([Text(), summary, Text("\n")])
         return Group(*lines)
@@ -293,7 +348,7 @@ class RunStopBlock(MutableBlock):
             duration=duration,
             include_runs=False,
         )
-        if self.include_child_runs and self.metrics.runs > 1:
+        if self.metrics.runs > 1:
             facts.insert(
                 1 if duration else 0,
                 count(self.metrics.runs - 1, "run"),
@@ -330,7 +385,7 @@ class AssistantResponseBlock(MutableBlock):
         if self.text:
             return _render_markdown_output(self.text.splitlines())
         if self.shape:
-            return Text.from_markup(f"[dim]· {escape(f'{self.shape} returned')}[/]")
+            return Text.from_markup(f"[dim]• {escape(f'{self.shape} returned')}[/]")
         return None
 
 
@@ -480,11 +535,11 @@ def _render_markdown_output(lines: Sequence[str]) -> RenderableType:
     while rows and not any(text.strip() for text, _style in rows[-1]):
         rows.pop()
     if not rows:
-        return Text.from_markup("[none]·[/]")
+        return Text.from_markup("[none]•[/]")
 
     rendered_rows: list[Text] = []
     for index, row in enumerate(rows):
-        line = Text("· " if index == 0 else "  ")
+        line = Text("• " if index == 0 else "  ")
         for text, style in row:
             line.append(text, style=style)
         rendered_rows.append(line)

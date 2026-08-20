@@ -31,6 +31,7 @@ from toolang.execution.records import (
     StartControlPayload,
 )
 from toolang.execution.types import (
+    CollectionStepNoted,
     IterationOccurrence,
     Local,
     LoopStepNoted,
@@ -812,8 +813,8 @@ def test_deep_search_example_uses_explicit_flow_reshaping(
                 for step in harness.store.list_steps(run_id=root.id)
                 if step.parent is None
             ]
-            assert root_steps[3].noted is None
-            assert root_steps[4].noted is None
+            assert root_steps[3].noted == CollectionStepNoted(6, 3)
+            assert root_steps[4].noted == CollectionStepNoted(3, 3)
             assert len(harness.adapter.invocations) == 20
             predicate_messages = [
                 message_text(invocation.call.messages[-1].parts)
@@ -1141,6 +1142,7 @@ flow folded(_: Text) -> Text:
             assert loop.noted == LoopStepNoted(
                 iterations=3,
                 termination="exhausted",
+                total=3,
             )
 
     asyncio.run(scenario())
@@ -1192,6 +1194,12 @@ flow selected(_: Text) -> Text[]:
             assert root.status == "succeeded"
             assert _output_value(harness, root.id) == expected
             assert _root_step_kinds(harness, root.id) == ["run", "value"]
+            selected = [
+                step
+                for step in harness.store.list_steps(run_id=root.id)
+                if step.parent is None
+            ][-1]
+            assert selected.noted == CollectionStepNoted(4, len(expected))
 
     asyncio.run(scenario())
 
@@ -1249,6 +1257,12 @@ flow selected(_: Text) -> Text[]:
             assert root.status == "succeeded"
             assert _output_value(harness, root.id) == expected
             assert _root_step_kinds(harness, root.id) == ["run", "par"]
+            selected = [
+                step
+                for step in harness.store.list_steps(run_id=root.id)
+                if step.parent is None
+            ][-1]
+            assert selected.noted == CollectionStepNoted(3, len(expected))
 
     asyncio.run(scenario())
 
@@ -1307,6 +1321,12 @@ flow ranked(_: Text) -> Text[]:
             assert root.status == "succeeded"
             assert _output_value(harness, root.id) == expected
             assert _root_step_kinds(harness, root.id) == ["run", "par"]
+            ranked = [
+                step
+                for step in harness.store.list_steps(run_id=root.id)
+                if step.parent is None
+            ][-1]
+            assert ranked.noted == CollectionStepNoted(4, len(expected))
 
     asyncio.run(scenario())
 
@@ -1350,6 +1370,7 @@ flow repeated(_: Text) -> Text:
             assert loop.noted == LoopStepNoted(
                 iterations=3,
                 termination="exhausted",
+                total=3,
             )
             assert [
                 invocation.call.messages[-1]
@@ -1534,6 +1555,7 @@ flow repeated(_: Text) -> Text:
             assert loop.noted == LoopStepNoted(
                 iterations=2,
                 termination="satisfied",
+                total=5,
             )
             until_runs = [
                 run

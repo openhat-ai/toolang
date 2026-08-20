@@ -17,7 +17,8 @@ consume ordered native `RunEvent` values.
 
 The three surfaces share words and formatting, but not one renderer:
 
-- **script** renders live progress to stderr and the final value to stdout;
+- **script** renders live progress to stderr and writes the durable result only
+  to an explicit `--save` destination;
 - **inspection** renders durable state without reconstructing deltas;
 - **chat TUI** keeps mutable activity in a bounded live area and progressively
   moves stable content into scrollback.
@@ -43,13 +44,14 @@ Script channel behavior is:
 
 | Level | stderr | stdout |
 | --- | --- | --- |
-| `-q` | nothing | nothing |
-| default | headers, stable run-step output, meaningful results, failures, and root summary | final value |
-| `-v` | descriptions and stable batched-work summaries | final value |
-| `-vv` | input, IDs, step facts, predictable results, and repeat sections | final value |
+| `-q` | nothing | selected result only with `--save -` |
+| default | headers, stable run-step output, meaningful results, failures, and root summary | selected result only with `--save -` |
+| `-v` | descriptions and stable batched-work summaries | selected result only with `--save -` |
+| `-vv` | input, IDs, step facts, predictable results, and repeat sections | selected result only with `--save -` |
 
-At `-q`, only the process exit status communicates the outcome. Verbosity
-never exposes secrets or unbounded request data.
+Without an explicit save destination, `-q` leaves both output channels empty
+and only the process exit status communicates the outcome. Verbosity never
+exposes secrets or unbounded request data.
 
 
 ## Vocabulary
@@ -203,8 +205,8 @@ Durations use compact units:
 
 ### Progress Style
 
-Progress is dim by default so final stdout remains visually primary. This is a
-progress style, not a blanket stderr style:
+Progress uses styling to distinguish live work, stable output, and facts. This
+is a progress style, not a blanket stderr style:
 
 - active mutable work uses normal brightness;
 - failure uses normal-brightness red;
@@ -303,8 +305,9 @@ When deltas arrive, they replace the same live line:
 ```
 
 Successful final text remains in scrollback at every non-quiet level. The
-canonical, untruncated root value is still written to stdout, while progress
-uses a bounded preview.
+canonical, untruncated root value is written only when `--save -` or
+`--save PATH` explicitly selects a destination, while progress uses a bounded
+preview.
 
 At `-vv`, the completed model step adds one metadata line:
 
@@ -798,7 +801,7 @@ Failed value statements never apply their declared binding.
 
 ## Cancellation
 
-A canceled run has no stdout value:
+A canceled Run does not write a selected result destination:
 
 ```text
 --- run_abc123 canceled ---
@@ -904,9 +907,10 @@ executor/event contracts solely for presentation.
 
 ## Review Checklist
 
-- `-q` emits no stderr or stdout.
+- `-q` emits no progress; an explicit `--save` still writes a successful Run
+  result to its selected destination.
 - Default shows headers, meaningful statement or control results, failures,
-  root summary, and final stdout.
+  and the root summary. Stdout remains empty unless `--save -` is selected.
 - `-v` adds descriptions, useful previews, and stable work summaries.
 - `-vv` adds input, IDs, step facts, predictable statement results, and
   retained repeat sections.

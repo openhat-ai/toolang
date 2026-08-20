@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
+import json
 import logging
 import time
 from typing import TYPE_CHECKING, cast
@@ -62,6 +63,10 @@ class _ModelStream:
     text_part: int | None = None
     tool_parts: dict[str, int] = field(default_factory=dict)
     started_parts: set[int] = field(default_factory=set)
+    part_types: dict[int, PartType] = field(default_factory=dict)
+    text_chunks: list[str] = field(default_factory=list)
+    tool_chunks: dict[str, list[str]] = field(default_factory=dict)
+    completed_parts: dict[int, Part] = field(default_factory=dict)
 
 
 async def execute(state: _AgicState) -> ModelCallResult:
@@ -133,6 +138,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
         else:
             current = await prepared.adapter.invoke(prepared.model, request)
     except asyncio.CancelledError:
+        await _close_open_parts(state, stream)
         await state.emit(
             StepEnd(
                 step=StepPath(run.run_id, (step_index,)),
@@ -144,6 +150,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
         raise
     except Exception as exc:
         message = str(exc) or type(exc).__name__
+        await _close_open_parts(state, stream)
         await state.emit(
             StepEnd(
                 step=StepPath(run.run_id, (step_index,)),
@@ -256,6 +263,7 @@ async def _handle_event(
         return
     if isinstance(event, ModelPartDelta):
         if isinstance(event.delta, TextDelta):
+            stream.text_chunks.append(event.delta.text)
             part_index = _ensure_text_part_index(stream)
             await _emit_part_begin(
                 state,
@@ -273,6 +281,9 @@ async def _handle_event(
                 )
             return
         if isinstance(event.delta, ToolCallDelta):
+            stream.tool_chunks.setdefault(event.delta.tool_call_id, []).append(
+                event.delta.text
+            )
             part_index = _ensure_tool_part_index(stream, event.delta.tool_call_id)
             await _emit_part_begin(
                 state,
@@ -290,6 +301,19 @@ async def _handle_event(
                 )
             return
     if isinstance(event, ModelPartEnd):
+        if isinstance(event.data, TextPart):
+            part_index = _ensure_text_part_index(stream)
+        elif isinstance(event.data, ToolCallPart):
+            part_index = _ensure_tool_part_index(stream, event.data.tool_call_id)
+        else:
+            return
+        await _emit_part_begin(
+            state,
+            stream,
+            part_index=part_index,
+            kind=event.data.type,
+        )
+        stream.completed_parts[part_index] = event.data
         return
 
 
@@ -404,7 +428,6 @@ async def _emit_part_begin(
 ) -> None:
     if part_index in stream.started_parts:
         return
-    stream.started_parts.add(part_index)
     await state.emit(
         PartBegin(
             step=StepPath(state.prepared.run.run_id, (stream.step,)),
@@ -412,6 +435,46 @@ async def _emit_part_begin(
             part_type=kind,
         )
     )
+    stream.started_parts.add(part_index)
+    stream.part_types[part_index] = kind
+
+
+async def _close_open_parts(state: _AgicState, stream: _ModelStream) -> None:
+    """Close every streamed Part before emitting a terminal Model Step."""
+
+    for part_index in sorted(stream.started_parts):
+        await state.emit(
+            PartEnd(
+                step=StepPath(state.prepared.run.run_id, (stream.step,)),
+                part=part_index,
+                data=stream.completed_parts.get(part_index)
+                or _partial_part(stream, part_index),
+            )
+        )
+
+
+def _partial_part(stream: _ModelStream, part_index: int) -> Part:
+    part_type = stream.part_types[part_index]
+    if part_type == "text":
+        return TextPart(text="".join(stream.text_chunks))
+    if part_type == "tool_call":
+        tool_call_id = next(
+            call_id
+            for call_id, index in stream.tool_parts.items()
+            if index == part_index
+        )
+        raw_input = "".join(stream.tool_chunks.get(tool_call_id, ()))
+        try:
+            decoded = json.loads(raw_input) if raw_input else {}
+        except json.JSONDecodeError:
+            decoded = {}
+        return ToolCallPart(
+            tool_call_id=tool_call_id,
+            tool_name="",
+            tool_family="",
+            input=dict(decoded) if isinstance(decoded, Mapping) else {},
+        )
+    raise RuntimeError(f"unsupported partial model Part type: {part_type}")
 
 
 def _model_step_noted(

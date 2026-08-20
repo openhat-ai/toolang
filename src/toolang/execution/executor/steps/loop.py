@@ -18,6 +18,7 @@ class LoopProgress:
 
     iterations: int = 0
     termination: LoopTermination = "exhausted"
+    total: int | None = None
 
     def noted(self, status: StepStatus) -> LoopStepNoted:
         termination: LoopTermination
@@ -27,7 +28,7 @@ class LoopProgress:
             termination = "canceled"
         else:
             termination = self.termination
-        return LoopStepNoted(self.iterations, termination)
+        return LoopStepNoted(self.iterations, termination, self.total)
 
 
 async def execute(

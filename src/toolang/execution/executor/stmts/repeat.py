@@ -26,7 +26,7 @@ async def execute(
     controls: Sequence[RunControlRecord],
     occurrence: Occurrence | None,
 ) -> Local:
-    progress = loop_step.LoopProgress()
+    progress = loop_step.LoopProgress(total=statement.count)
 
     async def evaluate() -> Local:
         child_index = 0

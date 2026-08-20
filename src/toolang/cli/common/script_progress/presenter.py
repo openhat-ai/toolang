@@ -8,6 +8,7 @@ from typing import TextIO
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, RunTracer
 
 from ..execution_progress import ProgressProjector
+from ..execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from .blocks import RunBlock
 from .console import ProgressConsole
 
@@ -21,9 +22,14 @@ class ScriptRunPresenter(RunTracer):
         run_id: str,
         stream: TextIO | None = None,
         width: int | None = None,
+        max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     ) -> None:
         self.run_id = run_id
-        self.console = ProgressConsole(stream or sys.stderr, width=width)
+        self.console = ProgressConsole(
+            stream or sys.stderr,
+            width=width,
+            max_width=max_width,
+        )
         self._projector = ProgressProjector()
         self._root: RunBlock | None = None
 

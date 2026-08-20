@@ -24,6 +24,7 @@ from toolang.execution.events import (
 from toolang.execution.records import StepRecord
 from toolang.execution.schemas import StepData
 from toolang.execution.types import (
+    CollectionStepNoted,
     ControlRef,
     ControlStatus,
     Local,
@@ -39,7 +40,7 @@ from toolang.execution.types import (
     StepStatus,
     ToolStepGiven,
 )
-from toolang.lang.ast import RepeatStmt, RunStmt, ScatterStmt, Span
+from toolang.lang.ast import KeepStmt, RepeatStmt, RunStmt, ScatterStmt, Span
 
 
 _EVENTS: tuple[RunEvent, ...] = (
@@ -155,6 +156,20 @@ def test_step_events_reject_mismatched_typed_facts() -> None:
             status="succeeded",
             noted=LoopStepNoted(iterations=1, termination="failed"),
         )
+    with pytest.raises(ValueError, match="requires collection output items"):
+        StepEnd(
+            step=StepPath.parse("run_root.2"),
+            kind="value",
+            status="succeeded",
+            noted=CollectionStepNoted(total_items=2),
+        )
+    with pytest.raises(ValueError, match="cannot have collection output items"):
+        StepEnd(
+            step=StepPath.parse("run_root.3"),
+            kind="par",
+            status="failed",
+            noted=CollectionStepNoted(total_items=2, output_items=1),
+        )
 
 
 def test_loop_step_noted_round_trips_with_its_terminal_cause() -> None:
@@ -167,7 +182,46 @@ def test_loop_step_noted_round_trips_with_its_terminal_cause() -> None:
         step=begin.step,
         kind="loop",
         status="succeeded",
+        noted=LoopStepNoted(iterations=3, termination="exhausted", total=3),
+    )
+
+    assert run_event_from_data(run_event_to_data(begin)) == begin
+    assert run_event_from_data(run_event_to_data(end)) == end
+
+
+def test_loop_step_noted_round_trips_through_the_step_schema() -> None:
+    step = StepData(
+        path=StepPath.parse("run_root.1"),
+        kind="loop",
+        input=[],
+        given=RepeatStmt(span=Span(line=4), count=3),
+        output=None,
         noted=LoopStepNoted(iterations=3, termination="exhausted"),
+        status="succeeded",
+    )
+
+    adapter = TypeAdapter(StepData)
+    payload = adapter.dump_python(step, mode="json")
+
+    assert payload["noted"] == {
+        "iterations": 3,
+        "termination": "exhausted",
+        "total": None,
+    }
+    assert adapter.validate_python(payload) == step
+
+
+def test_collection_step_noted_round_trips_with_cardinality() -> None:
+    begin = StepBegin(
+        step=StepPath.parse("run_root.1"),
+        kind="value",
+        given=KeepStmt(span=Span(line=4), position="first", count=2),
+    )
+    end = StepEnd(
+        step=begin.step,
+        kind="value",
+        status="succeeded",
+        noted=CollectionStepNoted(total_items=6, output_items=2),
     )
 
     assert run_event_from_data(run_event_to_data(begin)) == begin

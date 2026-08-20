@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-ProgressTone = Literal["progress", "active", "error", "warning"]
+ProgressTone = Literal["progress", "normal", "active", "error", "warning"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +14,7 @@ class ProgressRow:
 
     text: str
     tone: ProgressTone = "progress"
+    wrap_live: bool = False
 
 
 @dataclass(frozen=True, slots=True)

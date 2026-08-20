@@ -10,24 +10,54 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.execution.events import StepBegin, StepEnd
-from toolang.execution.records import local_value_to_data
-from toolang.execution.types import LoopStepNoted
+from toolang.execution.types import CollectionStepNoted, LoopStepNoted
+from toolang.execution.values import parts_from_local
+from toolang.lang.ast import (
+    DropStmt,
+    FlowStmt,
+    KeepStmt,
+    MapStmt,
+    RankStmt,
+    RepeatStmt,
+    SettleStmt,
+    StormStmt,
+)
 
 from .formatting import one_line, output_parts, tool_label
 from .types import ProgressRow, ProgressTone
 
 
 def live_row(begin: StepBegin, preview: str) -> ProgressRow:
-    """Project one non-parallel Step's current replaceable activity."""
+    """Project one compact Step activity for a parallel lane."""
 
     if begin.kind == "model":
         detail = one_line(preview)
-        text = f"· thinking… {detail}" if detail else "· thinking…"
+        text = f"• {detail}" if detail else "• thinking…"
     elif begin.kind == "tool":
-        text = f"· executing {tool_label(begin.given)}…"
+        text = f"• executing {tool_label(begin.given)}…"
     else:
-        text = f"· running {begin.kind}…"
+        text = f"• running {begin.kind}…"
     return ProgressRow(text, "active")
+
+
+def trace_live_rows(begin: StepBegin, preview: str) -> tuple[ProgressRow, ...]:
+    """Project replaceable Trace activity, preserving Model delta lines."""
+
+    if begin.kind != "model" or not preview:
+        return (live_row(begin, preview),)
+    lines = preview.splitlines()
+    while lines and not lines[0]:
+        lines.pop(0)
+    if not lines:
+        return (live_row(begin, preview),)
+    return tuple(
+        ProgressRow(
+            f"• {line}" if index == 0 else f"  {line}",
+            "active",
+            wrap_live=True,
+        )
+        for index, line in enumerate(lines)
+    )
 
 
 def trace_terminal_rows(
@@ -41,22 +71,27 @@ def trace_terminal_rows(
     tone = _tone(event.status)
     if begin.kind == "model":
         if event.status == "succeeded":
-            return _marked_rows(_model_output_lines(event) or ["completed"], tone)
+            return _marked_rows(
+                _model_output_lines(event) or ["completed"],
+                "normal",
+            )
         if event.status == "failed":
-            return (ProgressRow(f"· failed {error}".rstrip(), tone),)
-        return (ProgressRow(f"· canceled {error}".rstrip(), tone),)
+            return _error_rows("failed", error, tone)
+        return _error_rows("canceled", error, tone)
 
     label = tool_label(begin.given)
     if event.status == "succeeded":
-        rows = [ProgressRow(f"· executed {label}", tone)]
+        rows = [ProgressRow(f"• executed {label}", tone)]
         rows.extend(
             ProgressRow(f"  {line}", tone) for line in _tool_output_lines(event)
         )
         return tuple(rows)
     status = "failed" if event.status == "failed" else "canceled"
-    rows = [ProgressRow(f"· {status} {label}", tone)]
+    rows = [ProgressRow(f"• {status} {label}", tone)]
     if error:
-        rows.extend(ProgressRow(f"  {line}", tone) for line in _split_lines(error))
+        rows.extend(
+            ProgressRow(f"  {line}", tone) for line in _split_lines(error.strip())
+        )
     return tuple(rows)
 
 
@@ -69,17 +104,18 @@ def flow_terminal_rows(
 
     tone = _tone(event.status)
     if event.status == "failed":
-        return (ProgressRow(f"· {error or 'failed'}", tone),) if error else ()
+        return flow_error_rows(error, tone=tone)
     if event.status == "canceled":
-        return (ProgressRow("· canceled", tone),)
+        return (ProgressRow("• canceled", tone),)
     if event.kind == "run":
         return ()
-    return _marked_rows(_flow_output_lines(event), tone)
+    return _marked_rows(_flow_output_lines(event), "normal")
 
 
 def loop_terminal_rows(
     event: StepEnd,
     *,
+    statement: FlowStmt,
     observed_iterations: int,
     error: str = "",
 ) -> tuple[ProgressRow, ...]:
@@ -87,6 +123,9 @@ def loop_terminal_rows(
 
     noted = event.noted if isinstance(event.noted, LoopStepNoted) else None
     iterations = noted.iterations if noted is not None else observed_iterations
+    total = noted.total if noted is not None else None
+    if total is None and isinstance(statement, RepeatStmt):
+        total = statement.count
     termination = (
         noted.termination
         if noted is not None
@@ -94,21 +133,44 @@ def loop_terminal_rows(
         if event.status == "succeeded"
         else event.status
     )
-    if termination == "exhausted":
-        text = f"completed {_count(iterations, 'iteration')}"
-    elif termination == "satisfied":
-        text = f"condition met after {_count(iterations, 'iteration')}"
-    elif termination == "failed":
-        text = f"interrupted after {_count(iterations, 'iteration')}"
+    if isinstance(statement, SettleStmt):
+        text = _settle_terminal_text(iterations, total, termination)
     else:
-        text = f"canceled after {_count(iterations, 'iteration')}"
-    tone = _tone(event.status)
-    if event.status == "failed" and error:
-        return (
-            ProgressRow(f"· {error}", tone),
-            ProgressRow(f"  {text}", tone),
+        text = _repeat_terminal_text(
+            iterations,
+            total,
+            termination,
+            has_condition=isinstance(statement, RepeatStmt)
+            and statement.runnable is not None,
         )
-    return (ProgressRow(f"· {text}", tone),)
+    tone: ProgressTone = (
+        "normal" if event.status == "succeeded" else _tone(event.status)
+    )
+    if event.status == "failed" and error:
+        return (*flow_error_rows(error, tone=tone), ProgressRow(f"  {text}", tone))
+    return (ProgressRow(f"• {text}", tone),)
+
+
+def collection_terminal_rows(
+    statement: FlowStmt,
+    event: StepEnd,
+    *,
+    fallback_total: int | None = None,
+    error: str = "",
+) -> tuple[ProgressRow, ...]:
+    """Project one collection Flow Step as a semantic result sentence."""
+
+    if event.status == "failed":
+        return flow_error_rows(error, tone=_tone(event.status))
+    if event.status == "canceled":
+        return (ProgressRow("• canceled", _tone(event.status)),)
+    noted = event.noted if isinstance(event.noted, CollectionStepNoted) else None
+    total = noted.total_items if noted is not None else fallback_total
+    output = noted.output_items if noted is not None else None
+    if total is None:
+        return ()
+    text = _collection_success_text(statement, total, output)
+    return (ProgressRow(f"• {text}", "normal"),) if text else ()
 
 
 def lane_live_text(begin: StepBegin, preview: str) -> str:
@@ -137,25 +199,49 @@ def lane_terminal_lines(
 def flow_lane_terminal_lines(
     event: StepEnd,
     *,
+    statement: FlowStmt,
     error: str,
     observed_iterations: int = 0,
 ) -> tuple[str, ...]:
     """Project Flow-owned terminal content without synthesizing leaf activity."""
 
-    if event.kind == "par":
-        return ()
-    if event.kind == "loop":
+    if event.kind == "par" and event.status == "succeeded":
+        rows: tuple[ProgressRow, ...] = ()
+    elif event.kind == "loop":
         rows = loop_terminal_rows(
             event,
+            statement=statement,
             observed_iterations=observed_iterations,
             error=error,
         )
+    elif isinstance(statement, MapStmt | StormStmt | KeepStmt | DropStmt | RankStmt):
+        rows = collection_terminal_rows(statement, event, error=error)
     else:
         rows = flow_terminal_rows(event, error=error)
     return tuple(
         row.text[2:] if index and row.text.startswith("  ") else row.text
         for index, row in enumerate(rows)
         if row.text
+    )
+
+
+def flow_error_rows(
+    error: str,
+    *,
+    tone: ProgressTone = "error",
+) -> tuple[ProgressRow, ...]:
+    """Project one complete Flow- or Run-owned error into semantic rows."""
+
+    return _error_rows("", error, tone) if error else ()
+
+
+def lane_run_error_lines(error: str) -> tuple[str, ...]:
+    """Project a complete Run-owned failure inside one parallel lane."""
+
+    rows = _error_rows("failed", error, "error")
+    return tuple(
+        row.text[2:] if index and row.text.startswith("  ") else row.text
+        for index, row in enumerate(rows)
     )
 
 
@@ -192,35 +278,47 @@ def _tool_output_lines(event: StepEnd) -> list[str]:
             for value in textual:
                 lines.extend(_split_lines(value))
         elif output:
-            lines.extend(_json_lines(output))
+            lines.append(_compact_json(output))
     return lines
 
 
 def _flow_output_lines(event: StepEnd) -> list[str]:
     if event.output is None:
         return []
-    parts = output_parts(event)
-    if parts:
-        lines: list[str] = []
-        for part in parts:
-            if isinstance(part, TextPart):
-                lines.extend(_split_lines(part.text))
-            else:
-                lines.extend(_json_lines(part.to_data()))
-        return lines
-    value = local_value_to_data(event.output.value)
-    if isinstance(value, str):
-        return _split_lines(value)
-    return _json_lines(value)
+    try:
+        parts = parts_from_local(event.output)
+    except (TypeError, ValueError):
+        return []
+    lines: list[str] = []
+    for part in parts:
+        if isinstance(part, TextPart):
+            lines.extend(_split_lines(part.text))
+        else:
+            lines.extend(_json_lines(part.to_data()))
+    return lines
 
 
 def _marked_rows(lines: list[str], tone: ProgressTone) -> tuple[ProgressRow, ...]:
     if not lines:
         return ()
     return tuple(
-        ProgressRow(f"· {line}" if index == 0 else f"  {line}", tone)
+        ProgressRow(f"• {line}" if index == 0 else f"  {line}", tone)
         for index, line in enumerate(lines)
     )
+
+
+def _error_rows(
+    label: str,
+    error: str,
+    tone: ProgressTone,
+) -> tuple[ProgressRow, ...]:
+    lines = _split_lines(error.strip()) if error.strip() else []
+    head = f"• {label}" if label else "•"
+    if lines:
+        head = f"{head} {lines[0]}"
+    rows = [ProgressRow(head, tone)]
+    rows.extend(ProgressRow(f"  {line}", tone) for line in lines[1:])
+    return tuple(rows)
 
 
 def _split_lines(value: str) -> list[str]:
@@ -234,8 +332,157 @@ def _json_lines(value: object) -> list[str]:
         return _split_lines(str(value))
 
 
+def _compact_json(value: object) -> str:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    except TypeError:
+        return one_line(str(value))
+
+
 def _count(value: int, noun: str) -> str:
     return f"{value} {noun}{'' if value == 1 else 's'}"
+
+
+def _collection_success_text(
+    statement: FlowStmt,
+    total: int,
+    output: int | None,
+) -> str:
+    if isinstance(statement, MapStmt):
+        return f"Mapped {_all_items(total)} in parallel"
+    if isinstance(statement, StormStmt):
+        return f"Brainstormed {_count(output if output is not None else total, 'item')} in parallel"
+    if isinstance(statement, KeepStmt):
+        kept = output if output is not None else total
+        if statement.position is not None:
+            return _positional_keep_text(statement.position, total, kept)
+        return (
+            f"Evaluated {_count(total, 'item')} in parallel, "
+            f"kept {_selected_items(kept, total)}"
+        )
+    if isinstance(statement, DropStmt):
+        remaining = output if output is not None else total
+        dropped = total - remaining
+        if statement.position is not None:
+            return _positional_drop_text(
+                statement.position,
+                total,
+                dropped,
+                remaining,
+            )
+        return (
+            f"Evaluated {_count(total, 'item')} in parallel, "
+            f"dropped {_selected_items(dropped, total)}, "
+            f"leaving {_remaining_items(remaining, total)}"
+        )
+    if isinstance(statement, RankStmt):
+        selected = output if output is not None else total
+        lead = f"Scored {_count(total, 'item')} in parallel"
+        if selected < total and statement.selection is not None:
+            return f"{lead}, kept the {statement.selection} {selected}"
+        return f"{lead}, ranked {_selected_items(selected, total)}"
+    return ""
+
+
+def _positional_keep_text(position: str, total: int, kept: int) -> str:
+    if kept == 0:
+        return "Kept no items"
+    if kept == total:
+        return f"Kept {_all_items(total)}"
+    quantity = "item" if kept == 1 else f"{kept} items"
+    return f"Kept the {position} {quantity} out of {total}"
+
+
+def _positional_drop_text(
+    position: str,
+    total: int,
+    dropped: int,
+    remaining: int,
+) -> str:
+    if dropped == 0:
+        return "Dropped no items"
+    if dropped == total:
+        return f"Dropped {_all_items(total)}, leaving none"
+    quantity = "item" if dropped == 1 else f"{dropped} items"
+    return f"Dropped the {position} {quantity} out of {total}, leaving {remaining}"
+
+
+def _repeat_terminal_text(
+    iterations: int,
+    total: int | None,
+    termination: str,
+    *,
+    has_condition: bool,
+) -> str:
+    if termination == "exhausted":
+        completed = _completed_iterations(iterations)
+        return (
+            f"{completed} without meeting the condition" if has_condition else completed
+        )
+    if termination == "satisfied":
+        return f"Condition met after {_iteration_progress(iterations, total)}"
+    if iterations == 0:
+        action = "Interrupted" if termination == "failed" else "Canceled"
+        return f"{action} before completing an iteration"
+    action = "Interrupted" if termination == "failed" else "Canceled"
+    return f"{action} after completing {_iteration_progress(iterations, total)}"
+
+
+def _settle_terminal_text(
+    iterations: int,
+    total: int | None,
+    termination: str,
+) -> str:
+    if termination == "exhausted":
+        if iterations == 0:
+            return "Settled no items"
+        return f"Settled {_all_items(iterations)} in {_count(iterations, 'iteration')}"
+    action = "interrupted" if termination == "failed" else "canceled"
+    if iterations == 0:
+        return f"Settling was {action} before completing an iteration"
+    return f"Settling was {action} after {_iteration_progress(iterations, total)}"
+
+
+def _iteration_progress(iterations: int, total: int | None) -> str:
+    if total is not None:
+        return f"{iterations} of {_count(total, 'iteration')}"
+    return _count(iterations, "iteration")
+
+
+def _completed_iterations(iterations: int) -> str:
+    if iterations == 0:
+        return "Completed no iterations"
+    if iterations == 1:
+        return "Completed 1 iteration"
+    return f"Completed all {iterations} iterations"
+
+
+def _all_items(value: int) -> str:
+    if value == 0:
+        return "no items"
+    if value == 1:
+        return "the item"
+    return f"all {value} items"
+
+
+def _selected_items(value: int, total: int) -> str:
+    if value == 0:
+        return "none"
+    if value == total:
+        return f"all {total}"
+    return str(value)
+
+
+def _remaining_items(value: int, total: int) -> str:
+    if value == 0:
+        return "none"
+    if value == total:
+        return f"all {total}"
+    return str(value)
 
 
 def _tone(status: str) -> ProgressTone:

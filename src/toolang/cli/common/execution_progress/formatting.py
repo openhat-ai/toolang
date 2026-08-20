@@ -14,6 +14,7 @@ from toolang.execution.types import (
 )
 from toolang.lang.ast import FlowStmt
 from toolang.lang.types import Array
+from wcwidth import wcwidth, wcswidth
 
 from ..output import parse_utc_timestamp
 
@@ -27,7 +28,69 @@ def one_line(value: str) -> str:
 
 
 def truncate(value: str, width: int) -> str:
-    return value if len(value) <= width else f"{value[: max(width - 1, 0)]}…"
+    if display_width(value) <= width:
+        return value
+    if width <= 0:
+        return ""
+    prefix = _cell_prefix(value, width - 1)
+    return f"{prefix.rstrip()}…"
+
+
+def wrap_display(value: str, width: int) -> list[str]:
+    """Wrap one normalized line without exceeding terminal cell width."""
+
+    if not value or width <= 0:
+        return [value]
+    lines: list[str] = []
+    remaining = value
+    while display_width(remaining) > width:
+        candidate = _cell_prefix(remaining, width)
+        if not candidate:
+            candidate = remaining[0]
+        split_at = candidate.rfind(" ")
+        if split_at > 0:
+            lines.append(candidate[:split_at].rstrip())
+            remaining = remaining[split_at + 1 :].lstrip()
+        else:
+            lines.append(candidate)
+            remaining = remaining[len(candidate) :].lstrip()
+    lines.append(remaining)
+    return lines
+
+
+def display_width(value: str) -> int:
+    """Return the terminal cell width of text, tolerating control characters."""
+
+    measured = wcswidth(value)
+    if measured >= 0:
+        return measured
+    return sum(max(wcwidth(char), 0) for char in value)
+
+
+def split_hanging_prefix(value: str) -> tuple[str, str]:
+    """Split one progress row into its fixed prefix and wrappable content."""
+
+    if value.startswith("• "):
+        return "• ", value[2:]
+    lane_marker = value.find("| • ")
+    if lane_marker >= 0:
+        content_start = lane_marker + len("| • ")
+        return value[:content_start], value[content_start:]
+    indent = len(value) - len(value.lstrip())
+    return value[:indent], value[indent:]
+
+
+def _cell_prefix(value: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    used = 0
+    end = 0
+    for end, char in enumerate(value, start=1):
+        char_width = max(wcwidth(char), 0)
+        if used + char_width > width:
+            return value[: end - 1]
+        used += char_width
+    return value[:end]
 
 
 def count(value: int, noun: str) -> str:
@@ -52,8 +115,7 @@ def elapsed(started_at: str, finished_at: str) -> str:
         return f"{round(duration * 1000)}ms"
     if duration < 60:
         return f"{duration:.1f}s"
-    minutes = int(duration // 60)
-    seconds = round(duration % 60)
+    minutes, seconds = divmod(round(duration), 60)
     return f"{minutes}m {seconds:02d}s"
 
 
