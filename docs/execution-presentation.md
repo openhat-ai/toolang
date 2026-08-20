@@ -233,35 +233,37 @@ root-owned error row. There is no separate diagnostic marker.
 Script and Chat end a root Run with the same footer:
 
 ```text
-• run_nrqpt0mf succeeded ──────────────────────────────
+▴ run_nrqpt0mf succeeded ─────────────────
   1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
-The marker and every wrapped facts line occupy two cells before their text.
-The rule width follows the longest rendered facts line after width limiting and
-wrapping. The caption alone is green, red, or yellow for success, failure, or
-cancellation. The marker uses normal intensity; the rule and facts remain dim.
+The divider is 42 cells wide: the solid `▴` marker and its following space
+occupy two cells, and the caption plus trailing rule fill the remaining 40.
+Narrow terminals shorten the divider without wrapping it. The marker uses the
+same normal-intensity visual weight as a Step bullet; the caption and rule are
+green, red, or yellow for success, failure, or cancellation. Facts remain dim
+and use the available terminal width independently, so they may extend beyond
+the divider.
 
 The footer owns total duration and whole-tree Run facts. Script does not append
 a separate `Run: RUN_ID` line. Errors before `RunBegin` are reported outside
 execution progress; later terminal errors belong to progress and its footer.
 
-## Reopened Chat Result Boundary
+## Reopened Chat Result Divider
 
-The Chat TUI `:show` command introduces a durable result with a quiet boundary:
+The Chat TUI `:show` command introduces a durable result with a quiet divider:
 
 ```text
-▿ run_ma8hccd9 result ────────────────
+▾ run_ma8hccd9 result ────────────────────
 
 • Result body rendered as Markdown.
 ```
 
-The complete boundary uses dim styling, while the result body retains normal
-intensity. The hollow downward marker identifies a static section whose body
-follows below; it is not an interactive disclosure control. The rule uses the
-same minimum length as the root Run footer and shortens only when the available
-width requires caption truncation. Exactly one blank line separates the
-boundary from the result body.
+The solid `▾` marker uses the same normal-intensity visual weight as a Step
+bullet; the caption and rule remain dim, and the result body retains normal
+intensity. The divider follows the same fixed 42-cell width as the root Run
+footer and shortens only when the available width requires caption truncation.
+Exactly one blank line separates the divider from the result body.
 
 ## Surface Behavior
 

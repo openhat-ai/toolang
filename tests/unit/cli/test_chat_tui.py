@@ -39,9 +39,6 @@ from toolang.cli.common.execution_progress import (
     ProgressRow,
     ProgressUpdate,
 )
-from toolang.cli.common.execution_progress.rich_rendering import (
-    RUN_FOOTER_MIN_RULE_WIDTH,
-)
 from toolang.cli.common.script_progress.console import ProgressConsole
 from toolang.cli.common.execution_progress.state import Metrics
 from toolang.execution.events import (
@@ -404,9 +401,8 @@ def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
     rendered = _render_text(app.finalized[0].render())
     lines = rendered.splitlines()
     assert lines[0] == ""
-    assert lines[1].startswith("• run_1 canceled ")
+    assert lines[1].startswith("▴ run_1 canceled ")
     assert lines[2].startswith("  3.0s")
-    assert len(lines[1]) == len(lines[2])
     assert lines[3] == ""
 
 
@@ -430,8 +426,8 @@ def test_chat_root_footer_counts_child_runs_for_any_runnable_kind() -> None:
     assert "6 runs" in rendered
     assert "8 model calls" in rendered
     assert "2 tool calls" in rendered
-    assert len({len(line) for line in lines}) == 1
-    assert len(lines[0]) <= 72
+    assert len(lines[0]) == 42
+    assert len(lines[1]) > len(lines[0])
     assert lines[0].index("run_1") == 2
     assert lines[1].index("3.0s") == 2
 
@@ -446,14 +442,14 @@ def test_chat_root_footer_omits_zero_child_runs() -> None:
     assert "0 runs" not in rendered
 
 
-def test_chat_root_footer_keeps_minimum_rule_length_for_short_facts() -> None:
-    block = blocks.RunStopBlock.create(_run_begin())
-    block.update(_run_end(status="succeeded"))
+def test_chat_root_footer_uses_a_fixed_divider_width_for_short_facts() -> None:
+    block = blocks.RunStopBlock.create(_run_begin(run_id="run_pmqv7gfc"))
+    block.update(_run_end(run_id="run_pmqv7gfc", status="succeeded"))
 
-    segments = rendering.render_segments(block.render(), width=80)
-    rule = next(segment.text for segment in segments if "─" in segment.text)
+    lines = [line for line in _render_text(block.render()).splitlines() if line]
+    prefix = "▴ run_pmqv7gfc succeeded "
 
-    assert len(rule) >= 16
+    assert lines[0] == prefix + "─" * (42 - len(prefix))
 
 
 def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> None:
@@ -473,9 +469,8 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
         line for line in _render_text(block.render(), width=160).splitlines() if line
     ]
 
-    assert len({len(line) for line in lines}) == 1
-    assert len(lines[0]) <= 32
-    assert lines[0].startswith("• run_1 failed ")
+    assert len(lines[0]) == 32
+    assert lines[0].startswith("▴ run_1 failed ")
     assert all(line.startswith("  ") for line in lines[1:])
     assert all(not line.startswith(("│", "└")) for line in lines[1:])
 
@@ -697,7 +692,7 @@ def test_chat_run_footer_styles_marker_caption_rule_and_facts(
         if segment.text.strip()
     ]
 
-    marker = next(segment for segment in segments if segment.text == "•")
+    marker = next(segment for segment in segments if segment.text == "▴")
     assert marker.style is None or (marker.style.color is None and not marker.style.dim)
     rule = [segment for segment in segments if "─" in segment.text]
     assert rule
@@ -1647,11 +1642,11 @@ def test_chat_tui_show_command_renders_durable_markdown(
     assert len(written) == 1
     rendered = _render_text(written[0])
     result_lines = [line.rstrip() for line in rendered.splitlines()]
-    boundary_index = result_lines.index(
-        f"▿ run_saved result {'─' * RUN_FOOTER_MIN_RULE_WIDTH}"
-    )
-    assert result_lines[boundary_index : boundary_index + 3] == [
-        f"▿ run_saved result {'─' * RUN_FOOTER_MIN_RULE_WIDTH}",
+    divider = "▾ run_saved result "
+    divider += "─" * (42 - len(divider))
+    divider_index = result_lines.index(divider)
+    assert result_lines[divider_index : divider_index + 3] == [
+        divider,
         "",
         "• durable result",
     ]
@@ -1662,15 +1657,21 @@ def test_chat_tui_show_command_renders_durable_markdown(
         for segment in rendering.render_segments(written[0], width=80)
         if segment.text.strip()
     ]
-    boundary = next(
-        segment for segment in segments if "▿ run_saved result" in segment.text
+    marker = next(segment for segment in segments if segment.text == "▾")
+    caption = next(
+        segment for segment in segments if "run_saved result" in segment.text
     )
+    rule = [segment for segment in segments if "─" in segment.text]
     response = next(segment for segment in segments if "durable result" in segment.text)
-    assert boundary.style is not None and boundary.style.dim
+    assert marker.style is None or not marker.style.dim
+    assert caption.style is not None and caption.style.dim
+    assert rule and all(
+        segment.style is not None and segment.style.dim for segment in rule
+    )
     assert response.style is None or not response.style.dim
 
 
-def test_chat_show_result_boundary_truncates_without_wrapping(
+def test_chat_show_result_divider_truncates_without_wrapping(
     monkeypatch: Any,
 ) -> None:
     monkeypatch.setattr(rendering, "terminal_width", lambda: 24)
@@ -1684,11 +1685,11 @@ def test_chat_show_result_boundary_truncates_without_wrapping(
     lines = [
         line.rstrip() for line in _render_text(block.render(), width=24).splitlines()
     ]
-    boundaries = [line for line in lines if line.startswith("▿")]
+    dividers = [line for line in lines if line.startswith("▾")]
 
-    assert len(boundaries) == 1
-    assert len(boundaries[0]) == 24
-    assert boundaries[0].endswith("─")
+    assert len(dividers) == 1
+    assert len(dividers[0]) == 24
+    assert dividers[0].endswith("─")
 
 
 def _render_text(renderable: RenderableType | None, *, width: int = 80) -> str:

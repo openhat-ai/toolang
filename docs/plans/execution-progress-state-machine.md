@@ -353,17 +353,17 @@ Script and Chat display no Run header or output shape. After projected Steps
 they render the same root footer:
 
 ```text
-• run_nrqpt0mf succeeded ───────────────────────────────────────────────
+▴ run_nrqpt0mf succeeded ─────────────────
   1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
-The rule starts with the same bullet marker `•` as a model Step; the Run id and
-every wrapped facts line begin in column two. The footer uses the longest
-rendered facts line or enough width for a 16-character rule, after facts wrap to
-the same terminal and configured maximum as Step progress. Shorter facts lines
-receive trailing padding so their right edge remains aligned. Success, failure,
+The divider uses a solid `▴` marker with the same normal-intensity visual
+weight as a model Step bullet. Its line is 42 cells wide: the marker and space
+occupy two cells, and the caption plus trailing rule fill the remaining 40.
+Narrow terminals shorten the divider without wrapping it. Success, failure,
 and cancellation use green, red, and yellow captions and rules, respectively.
-Facts text remains dim and carries no status color.
+Facts text remains dim, uses the available terminal width independently, and
+may extend beyond the divider.
 
 The footer owns total duration and Run facts. Cost uses full precision while
 aggregating and is rounded to cents only for display. Script does not append a
