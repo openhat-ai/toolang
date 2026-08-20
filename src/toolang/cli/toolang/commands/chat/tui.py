@@ -404,7 +404,6 @@ class ChatTuiApp:
             self._status_retraction_started_at = None
             self._status_retraction_start_fill = 0
             self.status_bar.set_running(True)
-            self.status_bar.set_activity(0, full_width=True)
             self._status_animation_wake.set()
             self._invalidate_ui()
             return

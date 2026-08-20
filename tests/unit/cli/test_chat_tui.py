@@ -401,7 +401,7 @@ def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
     rendered = _render_text(app.finalized[0].render())
     lines = rendered.splitlines()
     assert lines[0] == ""
-    assert lines[1].startswith("╶ run_1 canceled ")
+    assert lines[1].startswith("• run_1 canceled ")
     assert lines[2].startswith("  3.0s")
     assert len(lines[1]) == len(lines[2])
     assert lines[3] == ""
@@ -462,7 +462,7 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
 
     assert len({len(line) for line in lines}) == 1
     assert len(lines[0]) <= 32
-    assert lines[0].startswith("╶ run_1 failed ")
+    assert lines[0].startswith("• run_1 failed ")
     assert all(line.startswith("  ") for line in lines[1:])
     assert all(not line.startswith(("│", "└")) for line in lines[1:])
 
@@ -684,7 +684,7 @@ def test_chat_run_footer_colors_only_the_caption(
         if segment.text.strip()
     ]
 
-    border_chars = {"╶", "─"}
+    border_chars = {"•", "─"}
     border = [
         segment
         for segment in segments
@@ -1049,16 +1049,26 @@ def test_chat_tui_animates_status_only_while_a_run_is_active(
             client=FakeClient(),
         )
         app.loop = asyncio.get_running_loop()
+        activity_updated = asyncio.Event()
+        activity_stopped = asyncio.Event()
+        update_status_activity = app._update_status_activity
+
+        def record_status_activity(now: float) -> None:
+            update_status_activity(now)
+            if app.status_bar.activity_fill > 0:
+                activity_updated.set()
+            if not app.status_bar.running:
+                activity_stopped.set()
+
+        monkeypatch.setattr(app, "_update_status_activity", record_status_activity)
         animation = asyncio.create_task(app._animate_status())
         try:
             app._set_status_running(True)
-            await asyncio.sleep(0.008)
-            active_fill = app.status_bar.activity_fill
+            await asyncio.wait_for(activity_updated.wait(), timeout=0.5)
 
             app._set_status_running(False)
-            await asyncio.sleep(0.02)
+            await asyncio.wait_for(activity_stopped.wait(), timeout=0.5)
 
-            assert active_fill > 0
             assert app.status_bar.activity_fill == 0
             assert not app.status_bar.running
         finally:
@@ -1067,11 +1077,9 @@ def test_chat_tui_animates_status_only_while_a_run_is_active(
                 await animation
 
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_TICK", 0.001)
-    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_TROUGH_DURATION", 0.001)
-    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_EXPAND_DURATION", 0.004)
-    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_PEAK_DURATION", 0.001)
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_RETRACT_DURATION", 0.004)
     monkeypatch.setattr(tui, "_MIN_STATUS_ACTIVITY_DURATION", 0.0)
+    monkeypatch.setattr(tui, "_status_breathing_state", lambda elapsed: (1, True))
     asyncio.run(exercise())
 
 
@@ -1085,6 +1093,14 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
             client=FakeClient(),
         )
         app.loop = asyncio.get_running_loop()
+        activity_stopped = asyncio.Event()
+        stop_status_activity = app._stop_status_activity
+
+        def record_activity_stop() -> None:
+            stop_status_activity()
+            activity_stopped.set()
+
+        monkeypatch.setattr(app, "_stop_status_activity", record_activity_stop)
         animation = asyncio.create_task(app._animate_status())
         try:
             app._set_status_running(True)
@@ -1095,7 +1111,7 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
                 "class:status.activity",
                 widgets.STATUS_ACTIVITY_GLYPH,
             )
-            await asyncio.sleep(0.03)
+            await asyncio.wait_for(activity_stopped.wait(), timeout=0.5)
             assert not app.status_bar.running
             assert app.status_bar._render()[0] == (
                 "class:status.activity",
@@ -1128,10 +1144,14 @@ def test_chat_tui_new_run_cancels_pending_activity_stop(monkeypatch: Any) -> Non
 
         app._set_status_running(True)
         app._set_status_running(False)
-        await asyncio.sleep(0.005)
-        app._set_status_running(True)
-        await asyncio.sleep(0.01)
+        pending_stop = app._status_stop_handle
 
+        assert pending_stop is not None
+
+        app._set_status_running(True)
+
+        assert pending_stop.cancelled()
+        assert app._status_stop_handle is None
         assert app.status_bar.running
         app._stop_status_activity()
 
