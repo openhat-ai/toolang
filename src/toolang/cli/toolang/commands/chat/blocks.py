@@ -32,7 +32,7 @@ from toolang.cli.common.execution_progress.formatting import (
     truncate,
 )
 from toolang.cli.common.execution_progress.rich_rendering import (
-    RUN_FOOTER_MIN_RULE_WIDTH,
+    RUN_DIVIDER_WIDTH,
     progress_block_renderable,
     run_footer_renderable,
 )
@@ -355,7 +355,7 @@ class AssistantResponseBlock(MutableBlock):
 
 @dataclass(frozen=True, slots=True)
 class SlashResultBlock:
-    """Render a structured slash-command result with a terminal boundary."""
+    """Render a structured slash-command result with a terminal divider."""
 
     message: str
     run_id: str
@@ -366,7 +366,7 @@ class SlashResultBlock:
         response = AssistantResponseBlock.from_parts(self.parts).render()
         lines = [
             *_slash_control_lines(self.message),
-            _SlashResultBoundary(self.run_id, max_width=self.max_width),
+            _SlashResultDivider(self.run_id, max_width=self.max_width),
         ]
         if response is not None:
             lines.extend([Text(), response])
@@ -375,7 +375,7 @@ class SlashResultBlock:
 
 
 @dataclass(frozen=True, slots=True)
-class _SlashResultBoundary:
+class _SlashResultDivider:
     run_id: str
     max_width: int
 
@@ -386,26 +386,34 @@ class _SlashResultBoundary:
     ) -> RenderResult:
         del console
         width = max(1, min(options.max_width, self.max_width))
+        divider_width = min(width, RUN_DIVIDER_WIDTH)
         caption = f"{self.run_id} result"
-        if width < 5:
-            yield Text(truncate(f"▿ {caption}", width), style="dim", no_wrap=True)
+        if divider_width < 5:
+            divider = Text("▾")
+            if divider_width > 1:
+                divider.append(" ", style="dim")
+            if divider_width > 2:
+                divider.append(
+                    truncate(caption, divider_width - 2),
+                    style="dim",
+                )
+            divider.no_wrap = True
+            yield divider
             return
 
-        boundary_width = min(
-            width,
-            display_width(caption) + 3 + RUN_FOOTER_MIN_RULE_WIDTH,
-        )
-        caption = truncate(caption, max(boundary_width - 4, 1))
+        caption = truncate(caption, max(divider_width - 4, 1))
         caption_width = display_width(caption)
-        boundary = Text(style="dim")
-        boundary.append("▿ ")
-        boundary.append(caption)
-        boundary.append(" ")
-        boundary.append(
-            "─" * max(boundary_width - caption_width - 3, 0),
+        divider = Text()
+        divider.append("▾")
+        divider.append(" ", style="dim")
+        divider.append(caption, style="dim")
+        divider.append(" ", style="dim")
+        divider.append(
+            "─" * max(divider_width - caption_width - 3, 0),
+            style="dim",
         )
-        boundary.no_wrap = True
-        yield boundary
+        divider.no_wrap = True
+        yield divider
 
 
 @dataclass(frozen=True, slots=True)

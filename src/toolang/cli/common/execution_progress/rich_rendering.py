@@ -21,7 +21,7 @@ _STYLES: dict[ProgressTone, str] = {
     "error": "red",
     "warning": "yellow",
 }
-RUN_FOOTER_MIN_RULE_WIDTH = 16
+RUN_DIVIDER_WIDTH = 42
 
 
 class _ProgressHeading(Heading):
@@ -106,17 +106,27 @@ class _RunFooter:
         options: ConsoleOptions,
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
+        divider_width = min(width, RUN_DIVIDER_WIDTH)
         title = f"{self.run_id} {self.status}"
-        if width < 5:
-            yield Text(truncate(title, width), style="dim", no_wrap=True)
-            return
-
         caption_style = {
             "succeeded": "green",
             "failed": "red",
             "canceled": "yellow",
         }.get(self.status, "dim")
         rule_style = caption_style
+        if divider_width < 5:
+            divider = Text("▴")
+            if divider_width > 1:
+                divider.append(" ", style=rule_style)
+            if divider_width > 2:
+                divider.append(
+                    truncate(title, divider_width - 2),
+                    style=caption_style,
+                )
+            divider.no_wrap = True
+            yield divider
+            return
+
         facts_indent = 2
         content_width = max(width - facts_indent, 1)
         fact_lines = Text(self.facts, style="dim").wrap(
@@ -126,32 +136,19 @@ class _RunFooter:
         ) or [Text("", style="dim")]
         for line in fact_lines:
             line.rstrip()
-        facts_width = max(display_width(line.plain) for line in fact_lines)
-        footer_width = min(
-            width,
-            max(
-                facts_width + facts_indent,
-                display_width(title) + 3 + RUN_FOOTER_MIN_RULE_WIDTH,
-            ),
-        )
-        title = truncate(title, max(footer_width - 4, 1))
+        title = truncate(title, max(divider_width - 4, 1))
         title_cells = display_width(title)
         top = Text()
-        top.append("•")
+        top.append("▴")
         top.append(" ", style=rule_style)
         top.append(title, style=caption_style)
         top.append(" ", style=rule_style)
-        top.append("─" * max(footer_width - title_cells - 3, 0), style=rule_style)
+        top.append("─" * max(divider_width - title_cells - 3, 0), style=rule_style)
         top.no_wrap = True
         yield top
 
         for line in fact_lines:
-            plain = line.plain
-            facts = Text(" " * facts_indent + plain, style="dim")
-            facts.append(
-                " " * (footer_width - facts_indent - display_width(plain)),
-                style="dim",
-            )
+            facts = Text(" " * facts_indent + line.plain, style="dim")
             facts.no_wrap = True
             yield facts
 
