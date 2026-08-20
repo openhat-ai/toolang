@@ -35,11 +35,12 @@ STATUS_ACTIVITY_FILLS = (
     1,
 )
 _STATUS_ACTIVITY_SHADES = (
-    "dark",
-    "muted",
-    "medium",
-    "light",
     "bright",
+    "light",
+    "medium",
+    "muted",
+    "dark",
+    "faint",
 )
 
 
@@ -54,11 +55,12 @@ def _chat_ui_palette() -> dict[str, str]:
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "fg:#f2f2f2 bg:#5a5a5a",
         "status.activity": f"fg:{START_CONTROL_ACCENT}",
-        "status.activity.dark": "bg:#4f6b73",
-        "status.activity.muted": "bg:#577f8d",
-        "status.activity.medium": "bg:#6497aa",
-        "status.activity.light": "bg:#76b6cf",
         "status.activity.bright": f"bg:{START_CONTROL_ACCENT}",
+        "status.activity.light": "bg:#4ac0ca",
+        "status.activity.medium": "bg:#4ea6ae",
+        "status.activity.muted": "bg:#528f95",
+        "status.activity.dark": "bg:#557c80",
+        "status.activity.faint": "bg:#576c6e",
         "status.model": "fg:#ffd866",
         "status.agic": "fg:#8fd7ff",
         "status.flow": "fg:#d7b3ff",
@@ -384,7 +386,7 @@ class StatusBar:
         segments.extend(
             [
                 (
-                    f"class:status.activity.{_STATUS_ACTIVITY_SHADES[max(0, shades - fill + index)]}",
+                    f"class:status.activity.{_STATUS_ACTIVITY_SHADES[min(index, shades - 1)]}",
                     " ",
                 )
                 for index in range(fill)

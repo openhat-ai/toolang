@@ -394,10 +394,13 @@ renders a Start-accent `▌` in column zero, one space, and a Start-accent `mode
 label without punctuation. Column zero keeps the same `▌` while a local Run is
 in flight; columns one through six contain a background fill that grows from
 left to right and then retracts, and column seven remains a separating space.
-Filled cells grade from dark cyan to a bright Start-accent leading edge. Frames
-advance every 180 milliseconds and retract completely so column one does not
-retain a background color. The model name therefore never shifts. Animation
-refreshes only while running and is never committed to scrollback.
+Filled cells start with the same color as the fixed strip and weaken toward
+their right edge. Frames advance every 180 milliseconds and retract completely
+so column one does not retain a background color. The model name therefore
+never shifts.
+Animation refreshes only while running and is never committed to scrollback.
+Run completion does not delay results or input, but the running appearance is
+held for at least 600 milliseconds so short Runs do not flash past abruptly.
 
 ## Implementation Touchpoints
 

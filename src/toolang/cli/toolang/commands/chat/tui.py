@@ -66,6 +66,7 @@ _RUN_EVENT_TYPES = (
     RunEnd,
 )
 _STATUS_ACTIVITY_INTERVAL = 0.18
+_MIN_STATUS_ACTIVITY_DURATION = 0.6
 
 
 class ChatTuiAppContext:
@@ -184,6 +185,8 @@ class ChatTuiApp:
         self.dispatcher_task: asyncio.Task[None] | None = None
         self.status_animation_task: asyncio.Task[None] | None = None
         self._status_animation_wake = asyncio.Event()
+        self._status_activity_started_at: float | None = None
+        self._status_stop_handle: asyncio.TimerHandle | None = None
         self.actual_model: str | None = None
         self.presenter = ChatRunPresenter(max_width=progress_max_width)
 
@@ -276,7 +279,7 @@ class ChatTuiApp:
             with patch_stdout(raw=True):
                 await self.app.run_async()
         finally:
-            self.status_bar.set_running(False)
+            self._stop_status_activity()
             if self.status_animation_task is not None:
                 self.status_animation_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -326,9 +329,39 @@ class ChatTuiApp:
                 self._invalidate_ui()
 
     def _set_status_running(self, running: bool) -> None:
-        self.status_bar.set_running(running)
         if running:
+            if self._status_stop_handle is not None:
+                self._status_stop_handle.cancel()
+                self._status_stop_handle = None
+            self._status_activity_started_at = (
+                self.loop.time() if self.loop is not None else None
+            )
+            self.status_bar.set_running(True)
             self._status_animation_wake.set()
+            self._invalidate_ui()
+            return
+        if (
+            self.loop is not None
+            and self.loop.is_running()
+            and self._status_activity_started_at is not None
+        ):
+            remaining = _MIN_STATUS_ACTIVITY_DURATION - (
+                self.loop.time() - self._status_activity_started_at
+            )
+            if remaining > 0:
+                if self._status_stop_handle is None:
+                    self._status_stop_handle = self.loop.call_later(
+                        remaining, self._stop_status_activity
+                    )
+                return
+        self._stop_status_activity()
+
+    def _stop_status_activity(self) -> None:
+        if self._status_stop_handle is not None:
+            self._status_stop_handle.cancel()
+            self._status_stop_handle = None
+        self._status_activity_started_at = None
+        self.status_bar.set_running(False)
         self._invalidate_ui()
 
     async def _dispatch_ui_events(self) -> None:

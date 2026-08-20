@@ -974,15 +974,15 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
     assert next_frame[2] == ("class:status.text", " " * 6)
     status.advance_activity()
     assert status._render()[1:4] == [
-        ("class:status.activity.light", " "),
         ("class:status.activity.bright", " "),
+        ("class:status.activity.light", " "),
         ("class:status.text", " " * 5),
     ]
     status.advance_activity()
     assert status._render()[1:4] == [
-        ("class:status.activity.medium", " "),
-        ("class:status.activity.light", " "),
         ("class:status.activity.bright", " "),
+        ("class:status.activity.light", " "),
+        ("class:status.activity.medium", " "),
     ]
     assert widgets._chat_ui_palette()["status.activity"] == (
         f"fg:{rendering.START_CONTROL_ACCENT}"
@@ -1023,6 +1023,52 @@ def test_chat_tui_animates_status_only_while_a_run_is_active(
                 await animation
 
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_INTERVAL", 0.001)
+    asyncio.run(exercise())
+
+
+def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
+    async def exercise() -> None:
+        app = tui.ChatTuiApp(
+            thread_id=None,
+            selects={},
+            home="/tmp/agent",
+            input_history=None,
+            client=FakeClient(),
+        )
+        app.loop = asyncio.get_running_loop()
+
+        app._set_status_running(True)
+        app._set_status_running(False)
+
+        assert app.status_bar.running
+        await asyncio.sleep(0.02)
+        assert not app.status_bar.running
+
+    monkeypatch.setattr(tui, "_MIN_STATUS_ACTIVITY_DURATION", 0.01)
+    asyncio.run(exercise())
+
+
+def test_chat_tui_new_run_cancels_pending_activity_stop(monkeypatch: Any) -> None:
+    async def exercise() -> None:
+        app = tui.ChatTuiApp(
+            thread_id=None,
+            selects={},
+            home="/tmp/agent",
+            input_history=None,
+            client=FakeClient(),
+        )
+        app.loop = asyncio.get_running_loop()
+
+        app._set_status_running(True)
+        app._set_status_running(False)
+        await asyncio.sleep(0.005)
+        app._set_status_running(True)
+        await asyncio.sleep(0.01)
+
+        assert app.status_bar.running
+        app._stop_status_activity()
+
+    monkeypatch.setattr(tui, "_MIN_STATUS_ACTIVITY_DURATION", 0.01)
     asyncio.run(exercise())
 
 
