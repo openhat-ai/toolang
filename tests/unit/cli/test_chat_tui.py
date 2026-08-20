@@ -1099,18 +1099,20 @@ def test_chat_status_bar_activity_animates_the_model_name() -> None:
     status.set_activity(3, 68)
     next_frame = status._render()
 
-    assert idle_text.index("runtime model") == running_text.index("runtime model") == 1
+    assert idle_text.index("runtime model") == running_text.index("runtime model") == 2
     assert "model runtime model" not in idle_text
     assert "▌" not in idle_text
     assert "█" not in running_text
-    assert idle[:3] == [
+    assert idle[:4] == [
+        ("class:status.text", " "),
         ("class:status.text", " "),
         ("class:status.model", "runtime model"),
         ("class:status.text", " "),
     ]
-    assert running[:3] == idle[:3]
-    assert running[3] == ("class:status.elapsed", "0s ")
-    assert next_frame[:5] == [
+    assert running[:4] == idle[:4]
+    assert running[4] == ("class:status.elapsed", "0s ")
+    assert next_frame[:6] == [
+        ("class:status.text", " "),
         ("class:status.model.activity.faint", " "),
         ("class:status.model.activity.muted", "r"),
         ("class:status.model.activity.light", "u"),
@@ -1121,7 +1123,7 @@ def test_chat_status_bar_activity_animates_the_model_name() -> None:
     assert status.activity_width == 15
     assert status.comet_head == 3
     assert status.elapsed_seconds == 68
-    active_model = status._render()[:6]
+    active_model = status._render()[1:7]
     assert "".join(text for _style, text in active_model) == " runtime model "
     assert (
         sum(
@@ -1141,10 +1143,11 @@ def test_chat_status_bar_activity_animates_the_model_name() -> None:
     status.set_activity(status.activity_width + widgets._STATUS_COMET_TAIL_WIDTH, 68)
     trough = status._render()
     assert trough[0] == ("class:status.text", " ")
-    assert trough[1] == ("class:status.model", "runtime model")
-    assert trough[2] == ("class:status.text", " ")
+    assert trough[1] == ("class:status.text", " ")
+    assert trough[2] == ("class:status.model", "runtime model")
+    assert trough[3] == ("class:status.text", " ")
     trough_text = "".join(fragment for _style, fragment in trough)
-    assert trough_text.index("runtime model") == 1
+    assert trough_text.index("runtime model") == 2
     assert "1m 08s" in trough_text
 
     status.set_running(False)

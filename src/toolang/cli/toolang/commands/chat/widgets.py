@@ -449,6 +449,7 @@ class StatusBar:
         pieces = [piece for piece in self.status_label.split("  ") if piece]
         segments: list[tuple[str, str]] = []
         if pieces:
+            segments.append(("class:status.text", " "))
             segments.extend(self._model_activity_segments(pieces[0]))
             if self.running:
                 segments.append(
