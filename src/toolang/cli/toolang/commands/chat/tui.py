@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from contextlib import suppress
 import threading
 from typing import TypeGuard
 
@@ -64,6 +65,7 @@ _RUN_EVENT_TYPES = (
     StepEnd,
     RunEnd,
 )
+_STATUS_SPINNER_INTERVAL = 0.1
 
 
 class ChatTuiAppContext:
@@ -180,6 +182,8 @@ class ChatTuiApp:
         self.run_in_flight = threading.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.dispatcher_task: asyncio.Task[None] | None = None
+        self.status_animation_task: asyncio.Task[None] | None = None
+        self._status_animation_wake = asyncio.Event()
         self.actual_model: str | None = None
         self.presenter = ChatRunPresenter(max_width=progress_max_width)
 
@@ -267,10 +271,16 @@ class ChatTuiApp:
             hide_cursor=False,
         )
         self.dispatcher_task = asyncio.create_task(self._dispatch_ui_events())
+        self.status_animation_task = asyncio.create_task(self._animate_status())
         try:
             with patch_stdout(raw=True):
                 await self.app.run_async()
         finally:
+            self.status_bar.set_running(False)
+            if self.status_animation_task is not None:
+                self.status_animation_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self.status_animation_task
             self.ui_events.put_nowait(ChatUIEvent("quit"))
             if self.dispatcher_task and not self.dispatcher_task.done():
                 await self.dispatcher_task
@@ -303,6 +313,23 @@ class ChatTuiApp:
         if self.status_bar.error_message:
             self.status_bar.clear_error()
             self._invalidate_ui()
+
+    async def _animate_status(self) -> None:
+        while True:
+            await self._status_animation_wake.wait()
+            self._status_animation_wake.clear()
+            while self.status_bar.running:
+                await asyncio.sleep(_STATUS_SPINNER_INTERVAL)
+                if not self.status_bar.running:
+                    break
+                self.status_bar.advance_spinner()
+                self._invalidate_ui()
+
+    def _set_status_running(self, running: bool) -> None:
+        self.status_bar.set_running(running)
+        if running:
+            self._status_animation_wake.set()
+        self._invalidate_ui()
 
     async def _dispatch_ui_events(self) -> None:
         while True:
@@ -408,6 +435,7 @@ class ChatTuiApp:
         self.cancel_sent_run_id = None
         self.unfinalized_blocks.clear()
         self.run_in_flight.clear()
+        self._set_status_running(False)
         self.status_bar.clear_error()
         if self.queue:
             self.start_run(self.queue.pop(0))
@@ -562,6 +590,7 @@ class ChatTuiApp:
             )
 
         self.run_in_flight.set()
+        self._set_status_running(True)
         threading.Thread(target=consume, daemon=True).start()
 
 

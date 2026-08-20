@@ -20,6 +20,7 @@ from .rendering import CONTROL_STRIP_GLYPH, INPUT_BACKGROUND, START_CONTROL_ACCE
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
+STATUS_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
 
 def _chat_ui_palette() -> dict[str, str]:
@@ -32,6 +33,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "fg:#f2f2f2 bg:#5a5a5a",
+        "status.running": f"fg:{START_CONTROL_ACCENT}",
         "status.model": "fg:#ffd866",
         "status.agic": "fg:#8fd7ff",
         "status.flow": "fg:#d7b3ff",
@@ -317,6 +319,8 @@ class StatusBar:
     def __init__(self, status_label: str) -> None:
         self.status_label = status_label
         self.error_message = ""
+        self.running = False
+        self._spinner_index = 0
         self.view = FormattedTextControl(self._render)
 
     def container(self) -> Window:
@@ -337,6 +341,15 @@ class StatusBar:
     def clear_error(self) -> None:
         self.error_message = ""
 
+    def set_running(self, running: bool) -> None:
+        self.running = running
+        if not running:
+            self._spinner_index = 0
+
+    def advance_spinner(self) -> None:
+        if self.running:
+            self._spinner_index = (self._spinner_index + 1) % len(STATUS_SPINNER_FRAMES)
+
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
             text = f"! {self.error_message}"
@@ -345,7 +358,16 @@ class StatusBar:
         pieces = [piece for piece in self.status_label.split("  ") if piece]
         segments: list[tuple[str, str]] = []
         if pieces:
-            segments.append(("class:status.model", f"  {pieces[0]}"))
+            if self.running:
+                segments.append(
+                    (
+                        "class:status.running",
+                        f"{STATUS_SPINNER_FRAMES[self._spinner_index]} ",
+                    )
+                )
+            else:
+                segments.append(("class:status.text", "  "))
+            segments.append(("class:status.model", pieces[0]))
         for piece in pieces[1:]:
             if piece.startswith("agic:"):
                 segments.extend(

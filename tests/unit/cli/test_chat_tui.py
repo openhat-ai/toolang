@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from io import StringIO
@@ -950,6 +951,80 @@ def test_chat_status_bar_uses_right_aligned_shortcut_hints(
     assert len(text) == 80
 
 
+def test_chat_status_bar_spinner_keeps_the_model_column_stable() -> None:
+    status = widgets.StatusBar("runtime model")
+    idle = status._render()
+    idle_text = "".join(fragment for _style, fragment in idle)
+
+    status.set_running(True)
+    running = status._render()
+    running_text = "".join(fragment for _style, fragment in running)
+    first_frame = running[0]
+    status.advance_spinner()
+    next_frame = status._render()[0]
+
+    assert idle_text.index("runtime model") == running_text.index("runtime model") == 2
+    assert first_frame == ("class:status.running", "⠋ ")
+    assert next_frame == ("class:status.running", "⠙ ")
+    assert widgets._chat_ui_palette()["status.running"] == (
+        f"fg:{rendering.START_CONTROL_ACCENT}"
+    )
+
+    status.set_running(False)
+    assert status._render() == idle
+
+
+def test_chat_tui_animates_status_only_while_a_run_is_active(
+    monkeypatch: Any,
+) -> None:
+    async def exercise() -> None:
+        app = tui.ChatTuiApp(
+            thread_id=None,
+            selects={},
+            home="/tmp/agent",
+            input_history=None,
+            client=FakeClient(),
+        )
+        animation = asyncio.create_task(app._animate_status())
+        try:
+            app._set_status_running(True)
+            await asyncio.sleep(0.005)
+            active_frame = app.status_bar._spinner_index
+
+            app._set_status_running(False)
+            await asyncio.sleep(0.005)
+
+            assert active_frame > 0
+            assert app.status_bar._spinner_index == 0
+        finally:
+            animation.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await animation
+
+    monkeypatch.setattr(tui, "_STATUS_SPINNER_INTERVAL", 0.001)
+    asyncio.run(exercise())
+
+
+def test_chat_tui_run_lifecycle_starts_and_stops_the_status_spinner() -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+
+    app.start_run(QueuedCall("hello", {}))
+
+    assert app.run_in_flight.is_set()
+    assert app.status_bar.running
+
+    app._finish_active_run()
+
+    assert not app.run_in_flight.is_set()
+    assert not app.status_bar.running
+
+
 def test_chat_status_bar_error_uses_full_width_error_line(monkeypatch: Any) -> None:
     monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 40))
     status = widgets.StatusBar("runtime model")
@@ -1096,6 +1171,7 @@ def test_chat_thread_creation_error_is_a_submission_error_in_scrollback(
     assert "• thread creation failed" in output
     assert "run failed" not in output
     assert app.status_bar.error_message == ""
+    assert not app.status_bar.running
     assert not app.run_in_flight.is_set()
 
 

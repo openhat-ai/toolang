@@ -389,6 +389,11 @@ left-aligned half-cell `▌` accent strip. Start and Steer use distinct accents;
 the bottom `PromptBox` uses the Start accent. The strip replaces prompt glyphs
 such as `>` and `+` while leaving message text aligned in column two.
 
+The bottom `StatusBar` reserves two cells before the model name. While a local
+Run is in flight, those cells contain a Start-accent Braille spinner and a
+space; when idle, they contain two spaces, so the model name never shifts.
+Animation refreshes only while running and is never committed to scrollback.
+
 ## Implementation Touchpoints
 
 - `src/toolang/execution/types.py`, `events.py`, `records.py`, and `schemas.py`:
@@ -424,7 +429,8 @@ Deterministic tests cover:
 - Script Rich Live and non-TTY append-only behavior;
 - equivalent Script and Chat Markdown rendering and semantic projection; and
 - message-only Chat control blocks with distinct left accents and no prompt
-  glyphs or execution metadata.
+  glyphs or execution metadata, plus a run-scoped status spinner that preserves
+  model-label alignment.
 
 The default offline verification suite must pass.
 
