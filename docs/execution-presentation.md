@@ -246,6 +246,23 @@ The footer owns total duration and whole-tree Run facts. Script does not append
 a separate `Run: RUN_ID` line. Errors before `RunBegin` are reported outside
 execution progress; later terminal errors belong to progress and its footer.
 
+## Reopened Chat Result Boundary
+
+The Chat TUI `:show` command introduces a durable result with a quiet boundary:
+
+```text
+▿ run_ma8hccd9 result ────────────────
+
+• Result body rendered as Markdown.
+```
+
+The complete boundary uses dim styling, while the result body retains normal
+intensity. The hollow downward marker identifies a static section whose body
+follows below; it is not an interactive disclosure control. The rule uses the
+same minimum length as the root Run footer and shortens only when the available
+width requires caption truncation. Exactly one blank line separates the
+boundary from the result body.
+
 ## Surface Behavior
 
 Script writes progress to stderr. It does not copy the durable root result to

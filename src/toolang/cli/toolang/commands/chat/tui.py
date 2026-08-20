@@ -571,11 +571,11 @@ class ChatTuiApp:
                 result = slash_result.result
                 rendering.write_renderables(
                     [
-                        blocks.SlashBlock(
-                            message,
-                            [f"Result {result.run_id}"],
+                        blocks.SlashResultBlock(
+                            message=message,
+                            run_id=result.run_id,
+                            parts=result.output,
                         ).render(),
-                        blocks.SlashResultBlock(result.output).render(),
                     ]
                 )
                 return

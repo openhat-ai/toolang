@@ -9,7 +9,7 @@ import re
 from typing import Any
 
 from rich import box
-from rich.console import Group, RenderableType
+from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.markdown import Markdown
 from rich.markup import escape
 from rich.panel import Panel
@@ -24,11 +24,14 @@ from toolang.cli.common.execution_progress import ProgressBlock
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from toolang.cli.common.execution_progress.formatting import (
     count,
+    display_width,
     elapsed,
     output_parts,
     shape_label,
+    truncate,
 )
 from toolang.cli.common.execution_progress.rich_rendering import (
+    RUN_FOOTER_MIN_RULE_WIDTH,
     progress_block_renderable,
     run_footer_renderable,
 )
@@ -93,6 +96,18 @@ def _control_bar_line(
         ],
         style=f"white on {background}",
     )
+
+
+def _slash_control_lines(message: str) -> list[RenderableType]:
+    return [
+        _control_bar_line(accent=QUICK_COMMAND_CONTROL_ACCENT),
+        *(
+            _control_bar_line(line, accent=QUICK_COMMAND_CONTROL_ACCENT)
+            for line in message.splitlines() or [""]
+        ),
+        _control_bar_line(accent=QUICK_COMMAND_CONTROL_ACCENT),
+        Text(),
+    ]
 
 
 class MutableBlock:
@@ -336,13 +351,55 @@ class AssistantResponseBlock(MutableBlock):
 class SlashResultBlock:
     """Render a structured slash-command result with a terminal boundary."""
 
+    message: str
+    run_id: str
     parts: Sequence[Part]
+    max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
 
     def render(self) -> RenderableType:
         response = AssistantResponseBlock.from_parts(self.parts).render()
-        if response is None:
-            return Text("\n")
-        return Group(response, Text("\n"))
+        lines = [
+            *_slash_control_lines(self.message),
+            _SlashResultBoundary(self.run_id, max_width=self.max_width),
+        ]
+        if response is not None:
+            lines.extend([Text(), response])
+        lines.append(Text("\n"))
+        return Group(*lines)
+
+
+@dataclass(frozen=True, slots=True)
+class _SlashResultBoundary:
+    run_id: str
+    max_width: int
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        del console
+        width = max(1, min(options.max_width, self.max_width))
+        caption = f"{self.run_id} result"
+        if width < 5:
+            yield Text(truncate(f"▿ {caption}", width), style="dim", no_wrap=True)
+            return
+
+        boundary_width = min(
+            width,
+            display_width(caption) + 3 + RUN_FOOTER_MIN_RULE_WIDTH,
+        )
+        caption = truncate(caption, max(boundary_width - 4, 1))
+        caption_width = display_width(caption)
+        boundary = Text(style="dim")
+        boundary.append("▿ ")
+        boundary.append(caption)
+        boundary.append(" ")
+        boundary.append(
+            "─" * max(boundary_width - caption_width - 3, 0),
+        )
+        boundary.no_wrap = True
+        yield boundary
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,17 +439,7 @@ class SlashBlock:
     body: Sequence[str]
 
     def render(self) -> RenderableType:
-        lines: list[RenderableType] = [
-            _control_bar_line(accent=QUICK_COMMAND_CONTROL_ACCENT)
-        ]
-        lines.extend(
-            _control_bar_line(
-                line,
-                accent=QUICK_COMMAND_CONTROL_ACCENT,
-            )
-            for line in self.message.splitlines() or [""]
-        )
-        lines.extend([_control_bar_line(accent=QUICK_COMMAND_CONTROL_ACCENT), Text()])
+        lines = _slash_control_lines(self.message)
         if self.body:
             first, *rest = self.body
             lines.append(Text.from_markup(f"[dim]:[/] [none]{escape(first)}[/]"))

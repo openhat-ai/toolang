@@ -21,7 +21,7 @@ _STYLES: dict[ProgressTone, str] = {
     "error": "red",
     "warning": "yellow",
 }
-_RUN_FOOTER_MIN_RULE_WIDTH = 16
+RUN_FOOTER_MIN_RULE_WIDTH = 16
 
 
 class _ProgressHeading(Heading):
@@ -131,7 +131,7 @@ class _RunFooter:
             width,
             max(
                 facts_width + facts_indent,
-                display_width(title) + 3 + _RUN_FOOTER_MIN_RULE_WIDTH,
+                display_width(title) + 3 + RUN_FOOTER_MIN_RULE_WIDTH,
             ),
         )
         title = truncate(title, max(footer_width - 4, 1))

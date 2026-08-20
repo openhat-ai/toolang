@@ -94,7 +94,7 @@ def test_chat_tui_reopens_a_durable_flow_result(
         assert "• run_" in output
 
         session.send(b":show\r")
-        result = session.wait_for("Result run_", "hello from terminal e2e")
+        result = session.wait_for("▿ run_", " result ", "hello from terminal e2e")
         assert "Traceback" not in result
 
         session.send(b"\x04")
