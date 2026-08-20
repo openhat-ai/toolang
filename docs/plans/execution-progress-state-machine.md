@@ -384,10 +384,10 @@ steer control attached to an active Run. Their rendered bars contain only the
 authored message: Run ids, pending state, and other execution status belong to
 execution progress rather than the control.
 
-Both control bars use the same background and reserve column zero for a narrow
-left-aligned `▎` accent strip. Start and Steer use distinct accents; the bottom
-`PromptBox` uses the Start accent. The strip replaces prompt glyphs such as `>`
-and `+` while leaving message text aligned in column two.
+Both control bars use the same background and reserve column zero for a
+left-aligned half-cell `▌` accent strip. Start and Steer use distinct accents;
+the bottom `PromptBox` uses the Start accent. The strip replaces prompt glyphs
+such as `>` and `+` while leaving message text aligned in column two.
 
 ## Implementation Touchpoints
 
