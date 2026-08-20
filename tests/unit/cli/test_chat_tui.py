@@ -927,6 +927,8 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     logo_line = next(line for line in lines if "Toolang" in line)
     assert logo_line.startswith("│  ████")
     assert logo_line.split("████           ██", 1)[1].startswith("    Toolang")
+    assert "Toolang 0.1.0" in logo_line
+    assert "Toolang  0.1.0" not in logo_line
 
 
 def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
@@ -979,7 +981,7 @@ def test_chat_header_keeps_logo_plain_and_styles_metadata() -> None:
     assert brand.style is not None and brand.style.bold
     assert brand.style.color is not None
     assert brand.style.color.name == "bright_cyan"
-    assert version.style is not None and version.style.dim
+    assert version.style is None or not version.style.dim
     assert all(segment.style is not None and segment.style.dim for segment in keys)
     assert all(
         segment.style is None or (not segment.style.bold and not segment.style.dim)

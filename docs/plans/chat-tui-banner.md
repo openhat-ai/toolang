@@ -11,7 +11,7 @@ model in the status bar, where it can change during a chat.
 The change succeeds when:
 
 - the banner shows the unstyled three-line logo beside `Toolang` and its exact
-  dim version value;
+  version value, separated by one ordinary space;
 - `home` appears above `executor`, and the current process-local chat path shows
   `executor  local`;
 - the displayed home uses platform-native user-home and temporary-directory
@@ -25,9 +25,10 @@ The change succeeds when:
 
 The rounded panel keeps a dim border, two columns of horizontal padding, and one
 empty row above and below its content. The logo has no explicit Rich style.
-`Toolang` is bold bright cyan, the exact `toolang_version()` value is dim, the
-`home` and `executor` keys are dim, and their values use the normal foreground.
-The metadata order is Toolang/version, home, then executor.
+`Toolang` is bold bright cyan. Its exact `toolang_version()` value follows after
+one space in the normal foreground rather than participating in key/value
+alignment. The `home` and `executor` keys are dim, and their values use the
+normal foreground. The metadata order is Toolang/version, home, then executor.
 
 At 69 columns or wider, the logo and metadata render side by side when the
 longest metadata value fits without wrapping:
@@ -35,7 +36,7 @@ longest metadata value fits without wrapping:
 ```text
 ╭────────────────────────────────────────────────────────╮
 │                                                        │
-│  ████           ██    Toolang   0.3.0+cd50c7f*         │
+│  ████           ██    Toolang 0.3.0+cd50c7f*           │
 │   ██   ⬤   ⬤    ██    home      ~/.toolang/agents/eve  │
 │   ██          ████    executor  local                  │
 │                                                        │
