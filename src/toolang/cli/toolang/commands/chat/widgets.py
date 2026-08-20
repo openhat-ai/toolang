@@ -20,7 +20,16 @@ from .rendering import CONTROL_STRIP_GLYPH, INPUT_BACKGROUND, START_CONTROL_ACCE
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-STATUS_SPINNER_FRAMES = ("▔ ", " ▔", " ▐", " ▁", "▁ ", "▌ ")
+STATUS_ACTIVITY_FRAMES = (
+    "━━    ",
+    " ━━   ",
+    "  ━━  ",
+    "   ━━ ",
+    "    ━━",
+    "   ━━ ",
+    "  ━━  ",
+    " ━━   ",
+)
 
 
 def _chat_ui_palette() -> dict[str, str]:
@@ -320,7 +329,7 @@ class StatusBar:
         self.status_label = status_label
         self.error_message = ""
         self.running = False
-        self._spinner_index = 0
+        self._activity_index = 0
         self.view = FormattedTextControl(self._render)
 
     def container(self) -> Window:
@@ -344,11 +353,13 @@ class StatusBar:
     def set_running(self, running: bool) -> None:
         self.running = running
         if not running:
-            self._spinner_index = 0
+            self._activity_index = 0
 
-    def advance_spinner(self) -> None:
+    def advance_activity(self) -> None:
         if self.running:
-            self._spinner_index = (self._spinner_index + 1) % len(STATUS_SPINNER_FRAMES)
+            self._activity_index = (self._activity_index + 1) % len(
+                STATUS_ACTIVITY_FRAMES
+            )
 
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
@@ -362,11 +373,11 @@ class StatusBar:
                 segments.append(
                     (
                         "class:status.activity",
-                        f"{STATUS_SPINNER_FRAMES[self._spinner_index]} ",
+                        f"{STATUS_ACTIVITY_FRAMES[self._activity_index]} ",
                     )
                 )
             else:
-                segments.append(("class:status.activity", f"{CONTROL_STRIP_GLYPH}  "))
+                segments.append(("class:status.text", "model: "))
             segments.append(("class:status.model", pieces[0]))
         for piece in pieces[1:]:
             if piece.startswith("agic:"):

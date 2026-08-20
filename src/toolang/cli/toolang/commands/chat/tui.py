@@ -65,7 +65,7 @@ _RUN_EVENT_TYPES = (
     StepEnd,
     RunEnd,
 )
-_STATUS_SPINNER_INTERVAL = 0.16
+_STATUS_ACTIVITY_INTERVAL = 0.16
 
 
 class ChatTuiAppContext:
@@ -319,10 +319,10 @@ class ChatTuiApp:
             await self._status_animation_wake.wait()
             self._status_animation_wake.clear()
             while self.status_bar.running:
-                await asyncio.sleep(_STATUS_SPINNER_INTERVAL)
+                await asyncio.sleep(_STATUS_ACTIVITY_INTERVAL)
                 if not self.status_bar.running:
                     break
-                self.status_bar.advance_spinner()
+                self.status_bar.advance_activity()
                 self._invalidate_ui()
 
     def _set_status_running(self, running: bool) -> None:

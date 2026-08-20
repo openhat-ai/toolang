@@ -389,14 +389,12 @@ left-aligned half-cell `▌` accent strip. Start and Steer use distinct accents;
 the bottom `PromptBox` uses the Start accent. The strip replaces prompt glyphs
 such as `>` and `+` while leaving message text aligned in column two.
 
-The bottom `StatusBar` reserves three cells before the model name. While a local
-Run is in flight, a Start-accent edge segment moves clockwise around a
-two-character perimeter, using thin `▔` and `▁` horizontal strokes and half-cell
-vertical strokes, followed by one separating space. Frames advance every 160
-milliseconds. When idle, the prefix keeps a static `▌` in column zero, aligned
-with the input control strip, followed by two spaces. The model name therefore
-never shifts. Animation refreshes only while running and is never committed to
-scrollback.
+The bottom `StatusBar` reserves the seven cells in `model: ` before the model
+name. When idle, it renders that label in dim text. While a local Run is in
+flight, the same cells contain a two-cell Start-accent bar moving horizontally
+across a six-cell track plus one separating space. Frames advance every 160
+milliseconds. The model name therefore never shifts. Animation refreshes only
+while running and is never committed to scrollback.
 
 ## Implementation Touchpoints
 
@@ -433,8 +431,8 @@ Deterministic tests cover:
 - Script Rich Live and non-TTY append-only behavior;
 - equivalent Script and Chat Markdown rendering and semantic projection; and
 - message-only Chat control blocks with distinct left accents and no prompt
-  glyphs or execution metadata, plus a run-scoped status spinner that preserves
-  model-label alignment.
+  glyphs or execution metadata, plus a run-scoped status animation that
+  preserves model-label alignment.
 
 The default offline verification suite must pass.
 

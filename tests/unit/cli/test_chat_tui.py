@@ -951,7 +951,7 @@ def test_chat_status_bar_uses_right_aligned_shortcut_hints(
     assert len(text) == 80
 
 
-def test_chat_status_bar_spinner_keeps_the_model_column_stable() -> None:
+def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
     status = widgets.StatusBar("runtime model")
     idle = status._render()
     idle_text = "".join(fragment for _style, fragment in idle)
@@ -960,13 +960,13 @@ def test_chat_status_bar_spinner_keeps_the_model_column_stable() -> None:
     running = status._render()
     running_text = "".join(fragment for _style, fragment in running)
     first_frame = running[0]
-    status.advance_spinner()
+    status.advance_activity()
     next_frame = status._render()[0]
 
-    assert idle_text.index("runtime model") == running_text.index("runtime model") == 3
-    assert idle[0] == ("class:status.activity", f"{rendering.CONTROL_STRIP_GLYPH}  ")
-    assert first_frame == ("class:status.activity", "▔  ")
-    assert next_frame == ("class:status.activity", " ▔ ")
+    assert idle_text.index("runtime model") == running_text.index("runtime model") == 7
+    assert idle[0] == ("class:status.text", "model: ")
+    assert first_frame == ("class:status.activity", "━━     ")
+    assert next_frame == ("class:status.activity", " ━━    ")
     assert widgets._chat_ui_palette()["status.activity"] == (
         f"fg:{rendering.START_CONTROL_ACCENT}"
     )
@@ -990,23 +990,23 @@ def test_chat_tui_animates_status_only_while_a_run_is_active(
         try:
             app._set_status_running(True)
             await asyncio.sleep(0.003)
-            active_frame = app.status_bar._spinner_index
+            active_frame = app.status_bar._activity_index
 
             app._set_status_running(False)
             await asyncio.sleep(0.005)
 
             assert active_frame > 0
-            assert app.status_bar._spinner_index == 0
+            assert app.status_bar._activity_index == 0
         finally:
             animation.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await animation
 
-    monkeypatch.setattr(tui, "_STATUS_SPINNER_INTERVAL", 0.001)
+    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_INTERVAL", 0.001)
     asyncio.run(exercise())
 
 
-def test_chat_tui_run_lifecycle_starts_and_stops_the_status_spinner() -> None:
+def test_chat_tui_run_lifecycle_starts_and_stops_status_activity() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         selects={},
