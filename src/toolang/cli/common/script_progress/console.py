@@ -93,6 +93,13 @@ class ProgressConsole:
         )
         self._last_was_blank = False
 
+    def write_renderable(self, value: RenderableType) -> None:
+        """Append one complete shared Rich renderable."""
+
+        self.clear_live()
+        self.console.print(value)
+        self._last_was_blank = False
+
     def apply(self, update: ProgressUpdate) -> None:
         """Append committed fragments and atomically replace the live snapshot."""
 

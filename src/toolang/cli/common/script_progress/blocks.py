@@ -9,10 +9,10 @@ from toolang.execution.events import RunBegin, RunEnd
 from ..execution_progress.formatting import (
     count,
     elapsed,
-    status_label,
 )
+from ..execution_progress.rich_rendering import run_footer_renderable
 from ..execution_progress.state import Metrics
-from .console import ProgressConsole, Tone
+from .console import ProgressConsole
 
 
 @dataclass(slots=True)
@@ -37,9 +37,6 @@ class RunBlock:
     ) -> None:
         console.clear_live()
         console.blank()
-        tone = _tone(event.status)
-        title = f"--- {event.run} {status_label(event.status)} ---"
-        console.write(title, tone=tone)
         duration = elapsed(self.started_at, event.finished_at)
         facts = self.metrics.facts(
             duration=duration,
@@ -47,14 +44,11 @@ class RunBlock:
         )
         if self.metrics.runs > 1:
             facts.insert(1 if duration else 0, count(self.metrics.runs - 1, "run"))
-        if facts:
-            console.wrapped(" · ".join(facts), prefix="")
-        console.write("-" * len(title), tone=tone)
-
-
-def _tone(status: str) -> Tone:
-    if status == "failed":
-        return "error"
-    if status == "canceled":
-        return "warning"
-    return "progress"
+        console.write_renderable(
+            run_footer_renderable(
+                run_id=event.run,
+                status=event.status,
+                facts=facts,
+                max_width=console.width,
+            )
+        )

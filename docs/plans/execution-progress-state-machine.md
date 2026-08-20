@@ -349,14 +349,20 @@ clears live state and emits one root-owned `• MESSAGE` row.
 
 ## Root Run Footer
 
-Script mode displays no Run header and no output shape. After projected Steps it
-renders only the root footer:
+Script and Chat display no Run header or output shape. After projected Steps
+they render the same root footer:
 
 ```text
---- run_nrqpt0mf succeeded ---
-1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
-------------------------------
+┌ run_nrqpt0mf succeeded ─────────────────────────────────────────────────────┐
+│ 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01      │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
+
+The border begins in column zero. The Run id, status, and every wrapped facts
+line begin in column two, aligned with Step text after its `• ` marker. Success,
+failure, and cancellation use green, red, and yellow borders respectively;
+title and facts text are always dim and carry no status color. The footer width
+obeys the same terminal and configured maximum as Step progress.
 
 The footer owns total duration and Run facts. Cost uses full precision while
 aggregating and is rounded to cents only for display. Script does not append a
@@ -368,9 +374,7 @@ writes that result to stdout and `--save PATH` atomically writes it to a file;
 both are independent of progress verbosity. Failed and canceled Runs do not
 write a selected result destination.
 
-Chat uses the same projected content and aggregate facts. Its Run footer uses
-`✔`, `✘`, or `⁃` for succeeded, failed, or canceled respectively. Status color
-applies only to this marker; the Run id, status text, and facts remain neutral.
+Chat uses the same projected content, aggregate facts, and root footer.
 Submission UI is not an execution Run header.
 
 ## Implementation Touchpoints

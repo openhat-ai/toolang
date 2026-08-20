@@ -91,7 +91,7 @@ def test_chat_tui_reopens_a_durable_flow_result(
             "succeeded",
         )
         assert "Window too small" not in output
-        assert "✔ run_" in output
+        assert "┌ run_" in output
 
         session.send(b":show\r")
         result = session.wait_for("Result run_", "hello from terminal e2e")

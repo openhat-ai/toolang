@@ -389,16 +389,17 @@ def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
     assert app.live_blocks == []
     assert [block.type for block in app.finalized] == ["RunStopBlock"]
     rendered = _render_text(app.finalized[0].render())
-    assert rendered.splitlines() == [
-        "",
-        "⁃ run_1 canceled · 3.0s",
-        "",
-    ]
-    assert "---" not in rendered
+    lines = rendered.splitlines()
+    assert lines[0] == ""
+    assert lines[1].startswith("┌ run_1 canceled ")
+    assert lines[2].startswith("│ 3.0s")
+    assert lines[2].endswith("│")
+    assert lines[3] == "└" + "─" * 78 + "┘"
+    assert lines[4] == ""
 
 
 def test_chat_root_footer_counts_child_runs_for_any_runnable_kind() -> None:
-    block = blocks.RunStopBlock.create(_run_begin())
+    block = blocks.RunStopBlock.create(_run_begin(), max_width=72)
     block.update(_run_end(status="succeeded"))
     block.set_metrics(
         Metrics(
@@ -411,11 +412,15 @@ def test_chat_root_footer_counts_child_runs_for_any_runnable_kind() -> None:
     )
 
     rendered = _render_text(block.render(), width=160)
+    lines = [line for line in rendered.splitlines() if line]
 
     assert "run_1 succeeded" in rendered
     assert "6 runs" in rendered
     assert "8 model calls" in rendered
     assert "2 tool calls" in rendered
+    assert all(len(line) == 72 for line in lines)
+    assert lines[0].index("run_1") == 2
+    assert lines[1].index("3.0s") == 2
 
 
 def test_chat_root_footer_omits_zero_child_runs() -> None:
@@ -426,6 +431,28 @@ def test_chat_root_footer_omits_zero_child_runs() -> None:
     rendered = _render_text(block.render())
 
     assert "0 runs" not in rendered
+
+
+def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> None:
+    block = blocks.RunStopBlock.create(_run_begin(), max_width=32)
+    block.update(_run_end(status="failed"))
+    block.set_metrics(
+        Metrics(
+            runs=7,
+            model_calls=8,
+            tool_calls=2,
+            input_tokens=1200,
+            output_tokens=300,
+        )
+    )
+
+    lines = [
+        line for line in _render_text(block.render(), width=160).splitlines() if line
+    ]
+
+    assert all(len(line) == 32 for line in lines)
+    assert all(line.startswith("│ ") for line in lines[1:-1])
+    assert all(line.endswith(" │") for line in lines[1:-1])
 
 
 def test_chat_tool_step_uses_bullet_marker_and_summary() -> None:
@@ -626,16 +653,15 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
 
 
 @pytest.mark.parametrize(
-    ("status", "marker", "color"),
+    ("status", "color"),
     [
-        ("succeeded", "✔", "green"),
-        ("failed", "✘", "red"),
-        ("canceled", "⁃", "yellow"),
+        ("succeeded", "green"),
+        ("failed", "red"),
+        ("canceled", "yellow"),
     ],
 )
-def test_chat_run_footer_colors_only_status_marker(
+def test_chat_run_footer_colors_only_the_border(
     status: Literal["succeeded", "failed", "canceled"],
-    marker: str,
     color: str,
 ) -> None:
     root_summary = blocks.RunStopBlock.create(_run_begin())
@@ -646,13 +672,24 @@ def test_chat_run_footer_colors_only_status_marker(
         if segment.text.strip()
     ]
 
-    assert segments[0].text == f"{marker} "
-    assert segments[0].style is not None
-    assert segments[0].style.color is not None
-    assert segments[0].style.color.name == color
+    border_chars = set("┌┐└┘─│")
+    border = [
+        segment
+        for segment in segments
+        if any(character in border_chars for character in segment.text)
+    ]
+    content = [segment for segment in segments if segment not in border]
+    assert border
+    assert all(
+        segment.style is not None
+        and segment.style.color is not None
+        and segment.style.color.name == color
+        for segment in border
+    )
+    assert content
     assert all(
         segment.style is not None and segment.style.color is None and segment.style.dim
-        for segment in segments[1:]
+        for segment in content
     )
 
 

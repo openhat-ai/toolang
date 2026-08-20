@@ -61,6 +61,7 @@ class ChatRunPresenter:
             stop = blocks.RunStopBlock(
                 run_id=active_run_id or self._root_run_id or "run",
                 status="failed",
+                max_width=self._max_width,
             )
             self._append_tail(stop, app)
         else:
@@ -83,14 +84,17 @@ class ChatRunPresenter:
         self._root_run_id = event.run
         app.set_active_run(event.run)
         self._finalize_commands(app, blocks.RunStartBlock, event)
-        self._append_tail(blocks.RunStopBlock.create(event), app)
+        self._append_tail(
+            blocks.RunStopBlock.create(event, max_width=self._max_width),
+            app,
+        )
         return True
 
     def _end_root(self, event: RunEnd, app: AppContext) -> None:
         self._finalize_commands(app, blocks.RunSteerBlock, event)
         stop = self._run_stop(app, event.run)
         if stop is None:
-            stop = blocks.RunStopBlock.create(event)
+            stop = blocks.RunStopBlock.create(event, max_width=self._max_width)
             self._append_tail(stop, app)
         else:
             stop.update(event)

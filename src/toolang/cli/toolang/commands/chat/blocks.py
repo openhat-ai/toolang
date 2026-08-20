@@ -27,10 +27,10 @@ from toolang.cli.common.execution_progress.formatting import (
     elapsed,
     output_parts,
     shape_label,
-    status_label,
 )
 from toolang.cli.common.execution_progress.rich_rendering import (
     progress_block_renderable,
+    run_footer_renderable,
 )
 from toolang.cli.common.execution_progress.state import Metrics
 
@@ -210,20 +210,28 @@ class RunStopBlock(MutableBlock):
     started_at: str = ""
     finished_at: str = ""
     metrics: Metrics = field(default_factory=Metrics)
+    max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
 
     @classmethod
-    def create(cls, event: RunBegin | RunEnd) -> RunStopBlock:
+    def create(
+        cls,
+        event: RunBegin | RunEnd,
+        *,
+        max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+    ) -> RunStopBlock:
         if isinstance(event, RunBegin):
             return cls(
                 run_id=event.run or "run",
                 status="running",
                 started_at=event.started_at,
+                max_width=max_width,
             )
         return cls(
             run_id=event.run or "run",
             status=event.status,
             error=friendly_error(event.error) if event.error else "",
             finished_at=event.finished_at,
+            max_width=max_width,
         )
 
     def update(self, event: RunBegin | RunEnd) -> None:
@@ -265,18 +273,18 @@ class RunStopBlock(MutableBlock):
                 for line in _wrap_plain_lines(message)
             )
         facts = self._facts()
-        suffix = f" · {' · '.join(facts)}" if facts else ""
-        summary = Text()
-        marker = {
-            "succeeded": "✔",
-            "failed": "✘",
-            "canceled": "⁃",
-        }.get(self.status, "◆")
-        summary.append(f"{marker} ", style=tone)
-        summary.append(f"{self.run_id} ", style="dim")
-        summary.append(status_label(self.status), style="dim")
-        summary.append(suffix, style="dim")
-        lines.extend([Text(), summary, Text("\n")])
+        lines.extend(
+            [
+                Text(),
+                run_footer_renderable(
+                    run_id=self.run_id,
+                    status=self.status,
+                    facts=facts,
+                    max_width=self.max_width,
+                ),
+                Text("\n"),
+            ]
+        )
         return Group(*lines)
 
     def _facts(self) -> list[str]:

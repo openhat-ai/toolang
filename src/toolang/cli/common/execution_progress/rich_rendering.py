@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
@@ -72,6 +73,80 @@ def progress_block_renderable(
             for row in block.rows
         )
     )
+
+
+def run_footer_renderable(
+    *,
+    run_id: str,
+    status: str,
+    facts: Sequence[str],
+    max_width: int,
+) -> RenderableType:
+    """Render one shared root Run footer."""
+
+    return _RunFooter(
+        run_id=run_id,
+        status=status,
+        facts=" · ".join(facts),
+        max_width=max_width,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _RunFooter:
+    run_id: str
+    status: str
+    facts: str
+    max_width: int
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        width = max(1, min(options.max_width, self.max_width))
+        title = f"{self.run_id} {self.status}"
+        if width < 5:
+            yield Text(truncate(title, width), style="dim", no_wrap=True)
+            return
+
+        border_style = {
+            "succeeded": "green",
+            "failed": "red",
+            "canceled": "yellow",
+        }.get(self.status, "dim")
+        inner_width = width - 2
+        title = truncate(title, inner_width - 2)
+        title_cells = display_width(title)
+        top = Text()
+        top.append("┌ ", style=border_style)
+        top.append(title, style="dim")
+        top.append(" ", style=border_style)
+        top.append("─" * max(inner_width - title_cells - 2, 0), style=border_style)
+        top.append("┐", style=border_style)
+        top.no_wrap = True
+        yield top
+
+        content_width = max(width - 4, 1)
+        fact_lines = Text(self.facts, style="dim").wrap(
+            console,
+            content_width,
+            overflow="fold",
+        ) or [Text("", style="dim")]
+        for line in fact_lines:
+            line.rstrip()
+            plain = line.plain
+            middle = Text()
+            middle.append("│", style=border_style)
+            middle.append(f" {plain}", style="dim")
+            middle.append(" " * (content_width - display_width(plain) + 1), style="dim")
+            middle.append("│", style=border_style)
+            middle.no_wrap = True
+            yield middle
+
+        bottom = Text("└" + "─" * inner_width + "┘", style=border_style)
+        bottom.no_wrap = True
+        yield bottom
 
 
 @dataclass(frozen=True, slots=True)
