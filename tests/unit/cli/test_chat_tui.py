@@ -1059,7 +1059,6 @@ def test_chat_tui_animates_status_only_while_a_run_is_active(
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_EXPAND_DURATION", 0.004)
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_PEAK_DURATION", 0.001)
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_RETRACT_DURATION", 0.004)
-    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_END_HOLD_DURATION", 0.001)
     monkeypatch.setattr(tui, "_MIN_STATUS_ACTIVITY_DURATION", 0.0)
     asyncio.run(exercise())
 
@@ -1101,7 +1100,6 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_EXPAND_DURATION", 0.008)
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_PEAK_DURATION", 0.002)
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_RETRACT_DURATION", 0.006)
-    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_END_HOLD_DURATION", 0.003)
     asyncio.run(exercise())
 
 

@@ -71,7 +71,6 @@ _STATUS_ACTIVITY_TROUGH_DURATION = 0.26
 _STATUS_ACTIVITY_EXPAND_DURATION = 0.72
 _STATUS_ACTIVITY_PEAK_DURATION = 0.18
 _STATUS_ACTIVITY_RETRACT_DURATION = 0.9
-_STATUS_ACTIVITY_END_HOLD_DURATION = 0.18
 _MIN_STATUS_ACTIVITY_DURATION = 0.6
 
 
@@ -374,18 +373,14 @@ class ChatTuiApp:
             retract_duration = _STATUS_ACTIVITY_RETRACT_DURATION * (
                 self._status_retraction_start_fill / widgets.STATUS_ACTIVITY_MAX_FILL
             )
-            if elapsed >= retract_duration + _STATUS_ACTIVITY_END_HOLD_DURATION:
+            if elapsed >= retract_duration:
                 self._stop_status_activity()
                 return
-            if retract_duration == 0 or elapsed >= retract_duration:
-                fill = 0
-            else:
-                progress = elapsed / retract_duration
-                fill = int(
-                    self._status_retraction_start_fill
-                    * (1.0 - _ease_in_out_sine(progress))
-                    + 0.5
-                )
+            progress = elapsed / retract_duration
+            fill = int(
+                self._status_retraction_start_fill * (1.0 - _ease_in_out_sine(progress))
+                + 0.5
+            )
         elif self._status_activity_started_at is not None:
             fill = _status_breathing_fill(now - self._status_activity_started_at)
         else:

@@ -405,10 +405,9 @@ steps: a 260-millisecond trough, a 720-millisecond sine-eased expansion, a
 180-millisecond peak, and a 900-millisecond sine-eased retraction. The UI checks
 the phase every 80 milliseconds but redraws only when the visible fill changes.
 Completion retracts from the current fill with the same easing and a duration
-proportional to its width, holds the zero-fill full-cell frame for 180
-milliseconds, and restores the idle `▌`. No gap appears between the strip and
-fill, the model name never shifts, and animation is never committed to
-scrollback.
+proportional to its width, then narrows the full-cell `█` directly back to the
+idle half-cell `▌`. No gap appears between the strip and fill, the model name
+never shifts, and animation is never committed to scrollback.
 
 Run completion does not delay results or input, but the running appearance is
 held for at least 600 milliseconds and finishes its retraction so short Runs do
