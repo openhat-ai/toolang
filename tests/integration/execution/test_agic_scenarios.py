@@ -296,6 +296,130 @@ agic stream(_: Part[]) -> Part[]:
     asyncio.run(scenario())
 
 
+def test_streaming_agic_rejects_a_final_result_that_rewrites_deltas(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic stream(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("different")),
+                updates=(
+                    ModelPartStart(kind="text"),
+                    ModelPartDelta(delta=TextDelta("prefix")),
+                ),
+            )
+        ],
+        streaming=True,
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.WEB)
+            record = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="stream",
+                    primary=resolve_input_parts("start"),
+                ),
+                tracer=tracer,
+            )
+
+            assert record.status == "failed"
+            assert record.error == Pointer.step(StepPath(record.id, (0,)))
+            assert [
+                (step.status, step.error)
+                for step in harness.store.list_steps(run_id=record.id)
+            ] == [
+                (
+                    "failed",
+                    "ModelCallResult text does not extend streamed TextDelta content",
+                )
+            ]
+            assert event_labels(tracer.events) == [
+                f"run_begin:{record.id}",
+                f"step_begin:{record.id}.0:model",
+                f"part_begin:{record.id}.0:0:text",
+                f"part_delta:{record.id}.0:0",
+                f"part_end:{record.id}.0:0:text",
+                f"step_end:{record.id}.0:model:failed",
+                f"run_end:{record.id}:failed",
+            ]
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+
+
+def test_streaming_agic_rejects_a_result_that_rewrites_the_part_end(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic stream(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant("prefix result")),
+                updates=(
+                    ModelPartStart(kind="text"),
+                    ModelPartDelta(delta=TextDelta("prefix")),
+                    ModelPartEnd(data=TextPart("prefix closure")),
+                ),
+            )
+        ],
+        streaming=True,
+    )
+    tracer = RecordingRunTracer()
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.WEB)
+            record = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="stream",
+                    primary=resolve_input_parts("start"),
+                ),
+                tracer=tracer,
+            )
+
+            assert record.status == "failed"
+            assert [
+                (step.status, step.error)
+                for step in harness.store.list_steps(run_id=record.id)
+            ] == [
+                (
+                    "failed",
+                    "ModelCallResult text does not match authoritative ModelPartEnd",
+                )
+            ]
+            assert event_labels(tracer.events) == [
+                f"run_begin:{record.id}",
+                f"step_begin:{record.id}.0:model",
+                f"part_begin:{record.id}.0:0:text",
+                f"part_delta:{record.id}.0:0",
+                f"part_end:{record.id}.0:0:text",
+                f"step_end:{record.id}.0:model:failed",
+                f"run_end:{record.id}:failed",
+            ]
+            assert_run_event_integrity(tracer.events)
+
+    asyncio.run(scenario())
+
+
 def test_streaming_tool_call_deltas_share_one_terminal_part(
     tmp_path: Path,
 ) -> None:

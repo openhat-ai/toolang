@@ -134,7 +134,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
         "ExecutionProgressBlock",
         "RunStopBlock",
     ]
-    assert "• thinking…" in _render_text(app.live_blocks[0].render())
+    assert "• thinking" in _render_text(app.live_blocks[0].render())
 
     events.handle_run_event(
         PartBegin(
@@ -154,7 +154,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
     )
     streamed = _render_text(app.live_blocks[0].render())
     assert "• drafting" in streamed
-    assert "thinking…" not in streamed
+    assert "thinking" not in streamed
     events.handle_run_event(
         PartEnd(
             step=StepPath.parse("run_1.1"),
@@ -163,12 +163,12 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
         ),
         app,
     )
-    events.handle_run_event(_model_step_end(output="final answer"), app)
+    events.handle_run_event(_model_step_end(output="drafting"), app)
 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
     assert [block.type for block in app.finalized] == ["ExecutionProgressBlock"]
     rendered = _render_text(app.finalized[0].render())
-    assert "• final answer" in rendered
+    assert "• drafting" in rendered
     assert "run_1.1" not in rendered
     assert "test/model" not in rendered
     output_segment = next(
@@ -177,7 +177,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
             app.finalized[0].render(),
             width=80,
         )
-        if "• final answer" in segment.text
+        if "drafting" in segment.text
     )
     assert output_segment.style is None or not output_segment.style.dim
 
@@ -186,6 +186,50 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
         "ExecutionProgressBlock",
         "RunStopBlock",
     ]
+
+
+def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() -> None:
+    app = FakeApp()
+    path = StepPath.parse("run_1.1")
+
+    events.handle_run_event(_run_begin(), app)
+    events.handle_run_event(_model_step_begin(), app)
+    events.handle_run_event(
+        PartBegin(step=path, part=0, part_type="text"),
+        app,
+    )
+    events.handle_run_event(
+        PartDelta(step=path, part=0, delta=TextDelta("# Heading\n\n")),
+        app,
+    )
+    assert app.finalized == []
+    assert _render_text(app.live_blocks[0].render()).startswith("• Heading")
+
+    events.handle_run_event(
+        PartDelta(step=path, part=0, delta=TextDelta("Paragraph")),
+        app,
+    )
+    assert len(app.finalized) == 1
+    assert _render_text(app.finalized[0].render()).startswith("• Heading")
+    assert _render_text(app.live_blocks[0].render()).startswith("  Paragraph")
+
+    events.handle_run_event(
+        PartEnd(
+            step=path,
+            part=0,
+            data=TextPart("# Heading\n\nParagraph"),
+        ),
+        app,
+    )
+    assert len(app.finalized) == 2
+    assert _render_text(app.finalized[1].render()).startswith("  Paragraph")
+    assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
+
+    events.handle_run_event(
+        _model_step_end(output="# Heading\n\nParagraph"),
+        app,
+    )
+    assert len(app.finalized) == 2
 
 
 def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
@@ -221,8 +265,8 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
         )
 
     live = _render_text(app.live_blocks[0].render())
-    assert "0 | #0 | • thinking…" in live
-    assert "1 | #1 | • thinking…" in live
+    assert "0 | #0 | • thinking" in live
+    assert "1 | #1 | • thinking" in live
 
     events.handle_run_event(
         StepEnd(
@@ -278,7 +322,7 @@ def test_script_and_chat_sinks_preserve_the_same_semantic_rows() -> None:
         ),
     )
     stream = StringIO()
-    ProgressConsole(stream).apply(ProgressUpdate(finalized=(progress,)))
+    ProgressConsole(stream).apply(ProgressUpdate(committed=(progress,)))
     chat = blocks.ExecutionProgressBlock(progress)
 
     assert stream.getvalue().splitlines() == _render_text(chat.render()).splitlines()
@@ -321,7 +365,7 @@ def test_chat_local_stop_updates_existing_run_stop_block() -> None:
     stop.mark_canceling()
 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
-    assert "canceling..." in _render_text(app.live_blocks[0].render())
+    assert "canceling" in _render_text(app.live_blocks[0].render())
 
 
 def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
@@ -332,7 +376,7 @@ def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
     stop.mark_canceling()
 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
-    assert "canceling..." in _render_text(app.live_blocks[0].render())
+    assert "canceling" in _render_text(app.live_blocks[0].render())
 
     events.handle_run_event(_run_end(status="canceled"), app)
 
@@ -382,7 +426,7 @@ def test_chat_tool_step_uses_bullet_marker_and_summary() -> None:
     block = blocks.ExecutionProgressBlock(
         ProgressBlock(
             "step:run_1.1",
-            (ProgressRow("• executing shell__execute…", "active"),),
+            (ProgressRow("• executing shell__execute", "active"),),
         )
     )
 
@@ -392,7 +436,7 @@ def test_chat_tool_step_uses_bullet_marker_and_summary() -> None:
         if segment.text.strip()
     ]
     assert running_segments
-    assert "• executing shell__execute…" in _render_text(block.render())
+    assert "• executing shell__execute" in _render_text(block.render())
     assert all(
         segment.style is None or not segment.style.dim for segment in running_segments
     )
@@ -442,7 +486,7 @@ def test_chat_truncates_live_lane_but_preserves_its_finalized_output() -> None:
     )
 
     assert "complete long diagnostic" not in live
-    assert "..." in live
+    assert "…" in live
     assert "complete long diagnostic" in " ".join(finalized.split())
 
 
@@ -682,7 +726,7 @@ def test_chat_progress_marker_style_does_not_leak_to_active_text() -> None:
     block = blocks.ExecutionProgressBlock(
         ProgressBlock(
             "step:run_1.1",
-            (ProgressRow("• thinking… streaming hello", "active"),),
+            (ProgressRow("• thinking streaming hello", "active"),),
         )
     )
 
@@ -1130,7 +1174,7 @@ def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
     app._commit_ui_update()
 
     app.handle_run_event(_model_step_begin(model="openai/gpt-5"))
-    assert "thinking…" in "".join(
+    assert "thinking" in "".join(
         _render_text(block.render()) for block in app.unfinalized_blocks
     )
     app._commit_ui_update()
@@ -1148,7 +1192,7 @@ def test_chat_tui_replaces_failed_model_live_state_in_scrollback_transaction(
 
     assert erases == [False]
     assert len(writes) == 1
-    assert "thinking…" not in writes[0]
+    assert "thinking" not in writes[0]
     assert "You have no credits remaining." in writes[0]
     assert all(
         not isinstance(block, blocks.ExecutionProgressBlock)

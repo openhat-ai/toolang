@@ -2,11 +2,18 @@
 
 from .projector import ProgressProjector
 from .state import Metrics
-from .types import ProgressBlock, ProgressRow, ProgressTone, ProgressUpdate
+from .types import (
+    ProgressBlock,
+    ProgressFormat,
+    ProgressRow,
+    ProgressTone,
+    ProgressUpdate,
+)
 
 __all__ = [
     "Metrics",
     "ProgressBlock",
+    "ProgressFormat",
     "ProgressRow",
     "ProgressTone",
     "ProgressUpdate",

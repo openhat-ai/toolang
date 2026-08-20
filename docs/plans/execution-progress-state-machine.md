@@ -14,7 +14,7 @@ The feature is complete when:
 
 - the same event stream produces the same Step ownership, terminal output,
   aggregates, facts, and errors on both surfaces;
-- ordinary leaf Steps remain as complete finalized trace;
+- ordinary leaf Steps progressively commit complete trace to scrollback;
 - parallel work remains bounded to one live row per lane;
 - each causal error is displayed once at its actual owner;
 - Repeat and Settle share one typed loop presentation model; and
@@ -30,7 +30,8 @@ RunEvent -> ProgressProjector -> ProgressUpdate -> surface presenter
   visible owner, boundary claims, metric aggregation, and pointer suppression.
 - Step projection functions own Model, Tool, Flow, parallel-lane, and loop
   content. Their input is typed state and their output is semantic rows.
-- `ProgressUpdate.finalized` is an append-only delta in completion order.
+- `ProgressUpdate.committed` contains newly stable, append-only fragments in
+  event order. One active Step may emit any number of committed fragments.
 - `ProgressUpdate.live` is the complete replaceable live snapshot.
 - `ScriptRunPresenter` and `ChatRunPresenter` adapt these updates to their
   surfaces. Wrapping, lane truncation, color, and live-area replacement remain
@@ -39,9 +40,10 @@ RunEvent -> ProgressProjector -> ProgressUpdate -> surface presenter
   TTY. `TOOLANG_PROGRESS_MAX_WIDTH` overrides the positive maximum for both
   surfaces; non-TTY Script output uses the configured maximum.
 
-The projector never queries durable storage and retains only active state,
-bounded Model preview text, one state record per active lane, aggregate metrics,
-boundary claims, and concrete errors required to resolve pointers.
+The projector never queries durable storage. It retains active state, streamed
+Model source through authoritative Part closure, the uncommitted Markdown
+suffix, one state record per active lane, aggregate metrics, and concrete
+errors required to resolve pointers.
 
 ## Runtime Facts
 
@@ -68,15 +70,29 @@ typed `iteration` occurrence for loop presentation.
 A Run has no execution header. It contains projected Steps and, for the root
 Run only, a footer.
 
-A Step follows one lifecycle:
+A Step and its presentation fragments have independent lifecycles:
 
 ```text
-optional header -> replaceable live content -> terminal output -> optional facts
+Step:      active ------------------------------------------> terminal
+Display:  committed header -> committed fragments + live tail -> committed tail
 ```
+
+`committed` means safe to append to terminal scrollback; it does not mean the
+owning Step is terminal. A Step may own committed fragments and one replaceable
+live tail at the same time. `StepEnd` closes the tail and appends only terminal
+content that was not already committed.
 
 Every started Part must emit `PartEnd` before its owning `StepEnd`, including
 failed and canceled Model streams. Every child Step and Run must likewise be
 terminal before its parent Step ends.
+
+For a streamed Model Text Part, concatenated `TextDelta` content must be an
+exact prefix of `PartEnd.data.text`. `PartEnd` is the authoritative Part
+closure, and a successful `StepEnd.output` must contain the same completed
+Parts. A mismatch is a provider/executor contract violation.
+When a streaming adapter emits `ModelPartEnd`, its Text Part is likewise
+authoritative and must match the final `ModelCallResult` before the executor
+emits the public `PartEnd`.
 
 A Flow Step is any Step whose typed `given` value is a `FlowStmt`. Flow Steps
 define statement headers and a facts slot. Model and Tool Steps have neither.
@@ -114,14 +130,11 @@ unmarked continuation.
 
 ## Flow Headers
 
-Statement headers are optional Step boundaries. They are emitted only when the
-Step has visible trace, output, or aggregate content and are followed by one
-blank line.
-
-Once displayed, a statement header is committed with that Step's finalized
-output. If malformed events force a terminal presentation diagnostic, the
-claimed header is finalized before the diagnostic instead of being cleared with
-live content.
+Statement headers are Step boundaries followed by one blank line. Once a typed
+Flow statement determines a header, the projector commits it immediately at
+Step begin. Iteration and until headers are committed as soon as their typed
+Occurrence is observed. Headers never enter live state and are not delayed
+until child output or `StepEnd`.
 
 Header generation is deterministic:
 
@@ -156,7 +169,7 @@ Repeat iteration and condition boundaries are:
 
 <?> completion_check
 
-• thinking…
+• thinking
 • true
 ```
 
@@ -164,16 +177,37 @@ The condition is a Run, not a synthetic `executed completion_check` Step.
 
 ## Trace Output
 
-In Trace mode, Model delta accumulates in a replaceable multi-line live block.
-Logical newlines are preserved and long lines wrap to the surface width. Model
-output then replaces that live block and is preserved completely:
+In Trace mode, Model Text delta is append-only Markdown source. The projector
+commits Markdown blocks once later input makes them stable and retains only the
+current incomplete block as the replaceable live tail. Logical newlines and
+Markdown structure are preserved; surface width controls rendering only. At
+Part closure the remaining tail is committed, and `StepEnd` does not repeat the
+same output:
 
 ```text
-• thinking…
+• thinking
 • # Deep Research Brief
   ## Executive summary
-  The evidence supports explicit ownership...
+  The evidence supports explicit ownership
 ```
+
+The first rendered Model fragment owns `•`; every later fragment uses the same
+two-space continuation alignment, so moving unchanged content from live state
+to scrollback produces no visible text change. Active labels and streamed
+content do not append an ellipsis. Committed and live fragments are independent
+Markdown render units; syntax cannot reopen a committed fragment, and a later
+reference definition affects only its own fragment.
+
+Script renders the live Markdown tail through one event-driven
+`rich.live.Live` per root Run. Stable fragments are printed through the same
+Rich Console while Live redraws the remaining tail. Auto-refresh and stdio
+redirection are disabled. Non-TTY Script output prints committed fragments only
+and never emits cursor control.
+
+Chat does not instantiate Rich Live because prompt_toolkit owns its terminal.
+It reuses the same Rich Markdown renderable and committed/live fragments:
+committed fragments enter Chat scrollback, while only the current tail remains
+in the prompt_toolkit live container.
 
 Inside a parallel lane, the same Model delta is flattened and truncated to the
 lane's single physical row.
@@ -181,7 +215,7 @@ lane's single physical row.
 A Tool keeps its terminal action and complete output on following lines:
 
 ```text
-• executing web_search.search…
+• executing web_search.search
 • executed web_search.search
   {"results":[{"url":"https://example.com"}]}
 ```
@@ -231,8 +265,8 @@ semantic content.
 
 ```text
 • running · 4/18 succeeded · 3 active
-  0 | #4 | • thinking…
-  1 | #5 | • executing web_search.search…
+  0 | #4 | • thinking
+  1 | #5 | • executing web_search.search
   2 | #6 | • Source summary prepared
 ```
 
@@ -336,8 +370,11 @@ Submission UI is not an execution Run header.
   typed collection and loop facts plus validation.
 - `src/toolang/execution/executor/steps/loop.py` and statement executors:
   collection cardinality, iteration occurrences, totals, and terminal cause.
+- `src/toolang/execution/executor/steps/model.py`: streamed Text Part and final
+  Model result consistency enforcement.
 - `src/toolang/cli/common/execution_progress/`: projector, typed active state,
-  Step projection, headers, formatting, and semantic update types.
+  Step projection, Markdown partitioning/rendering, headers, formatting, and
+  semantic update types.
 - `src/toolang/cli/common/script_progress/`: `ScriptRunPresenter`, console sink,
   and root footer.
 - `src/toolang/cli/toolang/commands/chat/`: `ChatRunPresenter` integration.
@@ -349,14 +386,18 @@ Deterministic tests cover:
 - complete multiline Model and Tool output without per-leaf facts;
 - single-Run Flow trace and Flow facts;
 - no-doc AST headers with unchanged runnable names;
-- one-line parallel live lanes and successful finalized aggregation;
+- one-line parallel live lanes and successful committed aggregation;
 - semantic Map, Storm, Keep, Drop, and Rank result sentences;
 - retained failed lanes, aligned error details, boundary error, and pointer
   suppression;
 - Repeat and Settle boundaries plus all four typed termination causes;
 - ownerless Run errors;
-- no Run header, no output shape, and root footer facts/cost; and
-- equivalent Script and Chat semantic projection.
+- no Run header, no output shape, and root footer facts/cost;
+- progressive header and Markdown commits without terminal duplication;
+- streamed Part prefix and successful Step output consistency;
+- retained partial Model output followed by one failure or cancellation row;
+- Script Rich Live and non-TTY append-only behavior; and
+- equivalent Script and Chat Markdown rendering and semantic projection.
 
 The default offline verification suite must pass.
 
@@ -364,8 +405,10 @@ The default offline verification suite must pass.
 
 - Event ordering assumptions are guarded by presentation-safety validation.
 - Nested Run metric double-counting is guarded by aggregate regression tests.
-- Output volume grows because finalized Trace output is intentionally complete;
-  only live previews and parallel lane rows are bounded.
+- Output volume grows because committed Trace output is intentionally complete.
+  Parallel lane rows remain bounded. A single unfinished Markdown block can
+  still exceed the preferred live height; correctness takes precedence over
+  forcibly committing Markdown that later input could reinterpret.
 - Future Step kinds must explicitly choose Trace, Lane, Flow, and facts behavior.
 
 ## Open Questions

@@ -291,8 +291,8 @@ def test_positional_collection_steps_describe_the_transform(
         )
     )
 
-    assert _rows(terminal.finalized) == [[expected, ""]]
-    assert terminal.finalized[0].rows[0].tone == "normal"
+    assert _rows(terminal.committed) == [[expected, ""]]
+    assert terminal.committed[0].rows[0].tone == "normal"
 
 
 @pytest.mark.parametrize(
@@ -362,11 +362,11 @@ def test_parallel_collection_steps_describe_execution_and_transform(
         )
     )
 
-    assert _rows(terminal.finalized) == [[expected, ""]]
-    assert terminal.finalized[0].rows[0].tone == "normal"
+    assert _rows(terminal.committed) == [[expected, ""]]
+    assert terminal.committed[0].rows[0].tone == "normal"
 
 
-def test_model_live_row_becomes_one_complete_finalized_output() -> None:
+def test_model_markdown_closes_without_repeating_at_step_end() -> None:
     reducer = ProgressProjector()
     reducer.handle(
         RunBegin(
@@ -384,7 +384,7 @@ def test_model_live_row_becomes_one_complete_finalized_output() -> None:
             started_at="2026-01-01T00:00:00Z",
         )
     )
-    assert _rows(live.live) == [["• thinking…"]]
+    assert _rows(live.live) == [["• thinking"]]
 
     reducer.handle(
         PartBegin(
@@ -400,22 +400,26 @@ def test_model_live_row_becomes_one_complete_finalized_output() -> None:
             delta=TextDelta(text="Comparing\napproaches"),
         )
     )
-    assert _rows(streamed.live) == [["• Comparing", "  approaches"]]
-    assert all(row.wrap_live for row in streamed.live[0].rows)
-    reducer.handle(
+    assert _rows(streamed.live) == [["Comparing\napproaches"]]
+    assert streamed.live[0].rows[0].format == "markdown"
+    assert streamed.live[0].rows[0].prefix == "• "
+    closed = reducer.handle(
         PartEnd(
             step=StepPath.parse("run_root.0"),
             part=0,
             data=TextPart("Comparing\napproaches"),
         )
     )
+    assert _rows(closed.committed) == [["Comparing\napproaches"]]
+    assert closed.committed[0].rows[0].format == "markdown"
+    assert closed.live == ()
 
     final = reducer.handle(
         StepEnd(
             step=StepPath.parse("run_root.0"),
             kind="model",
             status="succeeded",
-            output=_parts("Use a shared reducer."),
+            output=_parts("Comparing\napproaches"),
             noted=ModelStepNoted(
                 tokens=ModelTokenCount(input=3400, output=86),
                 cost="0.002",
@@ -424,7 +428,151 @@ def test_model_live_row_becomes_one_complete_finalized_output() -> None:
         )
     )
     assert _rows(final.live) == []
-    assert _rows(final.finalized) == [["• Use a shared reducer."]]
+    assert final.committed == ()
+
+
+def test_model_markdown_commits_stable_blocks_and_keeps_one_live_tail() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    path = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:demo",
+        )
+    )
+    projector.handle(StepBegin(step=path, kind="model", given=_model()))
+    projector.handle(PartBegin(step=path, part=0, part_type="text"))
+
+    heading = projector.handle(
+        PartDelta(step=path, part=0, delta=TextDelta("# Heading\n\n"))
+    )
+    assert heading.committed == ()
+    assert _rows(heading.live) == [["# Heading\n\n"]]
+    assert heading.live[0].rows[0].prefix == "• "
+
+    paragraph = projector.handle(
+        PartDelta(step=path, part=0, delta=TextDelta("Paragraph"))
+    )
+    assert _rows(paragraph.committed) == [["# Heading\n\n"]]
+    assert paragraph.committed[0].rows[0].prefix == "• "
+    assert _rows(paragraph.live) == [["Paragraph"]]
+    assert paragraph.live[0].rows[0].prefix == "  "
+
+    closed = projector.handle(
+        PartEnd(
+            step=path,
+            part=0,
+            data=TextPart("# Heading\n\nParagraph"),
+        )
+    )
+    assert _rows(closed.committed) == [["Paragraph"]]
+    assert closed.committed[0].rows[0].prefix == "  "
+    assert closed.live == ()
+
+    ended = projector.handle(
+        StepEnd(
+            step=path,
+            kind="model",
+            status="succeeded",
+            output=_parts("# Heading\n\nParagraph"),
+        )
+    )
+    assert ended.committed == ()
+    assert ended.live == ()
+
+
+def test_model_part_end_must_extend_streamed_text() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    path = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:demo",
+        )
+    )
+    projector.handle(StepBegin(step=path, kind="model", given=_model()))
+    projector.handle(PartBegin(step=path, part=0, part_type="text"))
+    projector.handle(PartDelta(step=path, part=0, delta=TextDelta("prefix")))
+
+    mismatch = projector.handle(PartEnd(step=path, part=0, data=TextPart("different")))
+
+    assert mismatch.live == ()
+    assert _rows(mismatch.committed) == [
+        ["• PartEnd text does not extend TextDelta for run_root.0 part 0"]
+    ]
+    assert mismatch.committed[0].rows[0].tone == "error"
+
+
+def test_model_step_end_must_repeat_the_completed_parts() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    path = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:demo",
+        )
+    )
+    projector.handle(StepBegin(step=path, kind="model", given=_model()))
+    projector.handle(PartBegin(step=path, part=0, part_type="text"))
+    projector.handle(PartEnd(step=path, part=0, data=TextPart("authoritative")))
+
+    mismatch = projector.handle(
+        StepEnd(
+            step=path,
+            kind="model",
+            status="succeeded",
+            output=_parts("different"),
+        )
+    )
+
+    assert mismatch.live == ()
+    assert _rows(mismatch.committed) == [
+        ["• StepEnd output does not match completed Parts for run_root.0"]
+    ]
+    assert mismatch.committed[0].rows[0].tone == "error"
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "expected"),
+    [
+        ("failed", "stream disconnected", "• failed stream disconnected"),
+        ("canceled", None, "• canceled"),
+    ],
+)
+def test_partial_model_output_is_committed_before_terminal_failure(
+    status: StepStatus,
+    error: str | None,
+    expected: str,
+) -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    path = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:demo",
+        )
+    )
+    projector.handle(StepBegin(step=path, kind="model", given=_model()))
+    projector.handle(PartBegin(step=path, part=0, part_type="text"))
+    projector.handle(PartDelta(step=path, part=0, delta=TextDelta("partial")))
+    closed = projector.handle(PartEnd(step=path, part=0, data=TextPart("partial")))
+    assert _rows(closed.committed) == [["partial"]]
+
+    ended = projector.handle(
+        StepEnd(
+            step=path,
+            kind="model",
+            status=status,
+            error=error,
+        )
+    )
+
+    assert _rows(ended.committed) == [[expected]]
+    assert ended.committed[0].rows[0].tone == ("error" if error else "warning")
 
 
 def test_model_tool_request_uses_a_typed_summary_instead_of_runtime_repr() -> None:
@@ -465,8 +613,8 @@ def test_model_tool_request_uses_a_typed_summary_instead_of_runtime_repr() -> No
         )
     )
 
-    assert _rows(update.finalized) == [["• requested web_search.search"]]
-    assert "Array(" not in update.finalized[0].rows[0].text
+    assert _rows(update.committed) == [["• requested web_search.search"]]
+    assert "Array(" not in update.committed[0].rows[0].text
     assert reducer._steps == {}
 
 
@@ -479,7 +627,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
             runnable="flow:research",
         )
     )
-    reducer.handle(
+    header = reducer.handle(
         StepBegin(
             step=StepPath.parse("run_root.0"),
             kind="run",
@@ -487,6 +635,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
             started_at="2026-01-01T00:00:00Z",
         )
     )
+    assert _rows(header.committed) == [["[0] Run summarize", ""]]
     reducer.handle(
         RunBegin(
             run="run_child",
@@ -502,7 +651,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
             given=_model(),
         )
     )
-    assert _rows(live.live) == [["[0] Run summarize", "", "• thinking…"]]
+    assert _rows(live.live) == [["• thinking"]]
     finalized = reducer.handle(
         StepEnd(
             step=StepPath.parse("run_child.0"),
@@ -515,13 +664,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
             ),
         )
     )
-    assert _rows(finalized.finalized) == [
-        [
-            "[0] Run summarize",
-            "",
-            "• Done.",
-        ]
-    ]
+    assert _rows(finalized.committed) == [["• Done."]]
     reducer.handle(RunEnd(run="run_child", status="succeeded"))
     wrapper = reducer.handle(
         StepEnd(
@@ -532,7 +675,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
             finished_at="2026-01-01T00:00:02Z",
         )
     )
-    assert _rows(wrapper.finalized) == [
+    assert _rows(wrapper.committed) == [
         [
             "  2.0s · 1 run · 1 model call · ↑639 ↓215 $0.00",
             "",
@@ -593,10 +736,10 @@ def test_tool_output_uses_compact_json_and_preserves_text_lines(
             ),
         )
     )
-    assert _rows(update.finalized) == [
+    assert _rows(update.committed) == [
         ["• executed web_search.search", *expected_output]
     ]
-    assert all(row.tone == "progress" for row in update.finalized[0].rows)
+    assert all(row.tone == "progress" for row in update.committed[0].rows)
 
 
 def test_tool_error_preserves_complete_multiline_output() -> None:
@@ -620,7 +763,7 @@ def test_tool_error_preserves_complete_multiline_output() -> None:
         )
     )
 
-    assert _rows(terminal.finalized) == [
+    assert _rows(terminal.committed) == [
         [
             "• failed web_search.search",
             "  provider rejected the request",
@@ -654,8 +797,8 @@ def test_flow_scalar_output_is_displayed_in_its_normal_output_slot() -> None:
         )
     )
 
-    assert _rows(update.finalized) == [["• agent runtimes", ""]]
-    assert update.finalized[0].rows[0].tone == "normal"
+    assert _rows(update.committed) == [["• agent runtimes", ""]]
+    assert update.committed[0].rows[0].tone == "normal"
 
 
 def test_flow_list_output_uses_presentation_data_without_storage_tags() -> None:
@@ -690,7 +833,7 @@ def test_flow_list_output_uses_presentation_data_without_storage_tags() -> None:
         )
     )
 
-    assert _rows(terminal.finalized) == [['• ["query one","query two"]', ""]]
+    assert _rows(terminal.committed) == [['• ["query one","query two"]', ""]]
 
 
 def test_flow_pointer_backed_output_is_not_displayed() -> None:
@@ -728,7 +871,7 @@ def test_flow_pointer_backed_output_is_not_displayed() -> None:
         )
     )
 
-    assert terminal.finalized == ()
+    assert terminal.committed == ()
 
 
 def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
@@ -740,14 +883,15 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
             runnable="flow:work",
         )
     )
-    reducer.handle(
+    repeat_header = reducer.handle(
         StepBegin(
             step=StepPath.parse("run_root.2"),
             kind="loop",
             given=RepeatStmt(span=SPAN, count=3, runnable="completion_check"),
         )
     )
-    reducer.handle(
+    assert _rows(repeat_header.committed) == [["[2] Repeat up to 3 times", ""]]
+    iteration_header = reducer.handle(
         StepBegin(
             step=StepPath.parse("run_root.2.0"),
             kind="run",
@@ -757,6 +901,9 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
             ),
         )
     )
+    assert _rows(iteration_header.committed) == [
+        ["--- iteration 1 of 3 ---", "", "[0] Run review", ""]
+    ]
     reducer.handle(
         RunBegin(
             run="run_review",
@@ -775,17 +922,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
             given=_model(),
         )
     )
-    assert _rows(live.live) == [
-        [
-            "[2] Repeat up to 3 times",
-            "",
-            "--- iteration 1 of 3 ---",
-            "",
-            "[0] Run review",
-            "",
-            "• thinking…",
-        ]
-    ]
+    assert _rows(live.live) == [["• thinking"]]
     reducer.handle(
         StepEnd(
             step=StepPath.parse("run_review.0"),
@@ -813,7 +950,7 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
         )
     )
 
-    assert _rows(completed.finalized) == [
+    assert _rows(completed.committed) == [
         [
             "• Completed 1 iteration without meeting the condition",
             "  1 run · 1 model call",
@@ -831,13 +968,14 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
             runnable="flow:work",
         )
     )
-    reducer.handle(
+    repeat_header = reducer.handle(
         StepBegin(
             step=StepPath.parse("run_root.0"),
             kind="loop",
             given=RepeatStmt(span=SPAN, count=3, runnable="completion_check"),
         )
     )
+    assert _rows(repeat_header.committed) == [["[0] Repeat up to 3 times", ""]]
     reducer.handle(
         RunBegin(
             run="run_until",
@@ -856,15 +994,8 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
             given=_model(),
         )
     )
-    assert _rows(live.live) == [
-        [
-            "[0] Repeat up to 3 times",
-            "",
-            "<?> completion_check",
-            "",
-            "• thinking…",
-        ]
-    ]
+    assert _rows(live.committed) == [["<?> completion_check", ""]]
+    assert _rows(live.live) == [["• thinking"]]
     final = reducer.handle(
         StepEnd(
             step=StepPath.parse("run_until.0"),
@@ -873,7 +1004,7 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
             output=_parts("true"),
         )
     )
-    text = "\n".join(_rows(final.finalized)[0])
+    text = "\n".join(_rows(final.committed)[0])
     assert "• true" in text
     assert "executed completion_check" not in text
 
@@ -927,7 +1058,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
     assert _rows(streamed.live) == [
         [
             "• running · 0/8 succeeded · 2 active",
-            "  0 | #4 | • executing fetch_page…",
+            "  0 | #4 | • executing fetch_page",
             "  1 | #5 | • first lane line second lane line",
         ]
     ]
@@ -958,7 +1089,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
         [
             "• running · 0/8 succeeded · 1 failed · 1 canceling",
             "  0 | #4 | • failed fetch_page · provider returned status 429",
-            "  1 | #5 | • canceling…",
+            "  1 | #5 | • canceling",
         ]
     ]
     reducer.handle(
@@ -985,7 +1116,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
         )
     )
     assert terminal.live == ()
-    assert _rows(terminal.finalized) == [
+    assert _rows(terminal.committed) == [
         [
             "• Parallel execution stopped: 0/8 succeeded, 1 failed, and 1 was canceled",
             "  0 | #4 | • failed fetch_page",
@@ -1024,7 +1155,7 @@ def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible()
             error="connection closed",
         )
     )
-    assert "connection closed" in "\n".join(_rows(leaf.finalized)[0])
+    assert "connection closed" in "\n".join(_rows(leaf.committed)[0])
     root = reducer.handle(
         RunEnd(
             run="run_root",
@@ -1032,7 +1163,7 @@ def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible()
             error=Pointer.step(StepPath.parse("run_root.0")),
         )
     )
-    assert root.finalized == ()
+    assert root.committed == ()
 
     ownerless = ProgressProjector()
     ownerless.handle(
@@ -1049,7 +1180,7 @@ def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible()
             error="progress stream ended before run completion",
         )
     )
-    assert _rows(update.finalized) == [
+    assert _rows(update.committed) == [
         ["• progress stream ended before run completion"]
     ]
 
@@ -1078,7 +1209,7 @@ def test_malformed_part_sequence_becomes_one_root_diagnostic() -> None:
         )
     )
     assert update.live == ()
-    assert "PartDelta without active Part" in _rows(update.finalized)[0][0]
+    assert "PartDelta without active Part" in _rows(update.committed)[0][0]
 
 
 def test_terminal_diagnostic_preserves_the_active_statement_header() -> None:
@@ -1116,13 +1247,7 @@ def test_terminal_diagnostic_preserves_the_active_statement_header() -> None:
 
     update = projector.handle(StepEnd(step=model, kind="model", status="canceled"))
 
-    assert _rows(update.finalized) == [
-        [
-            "[0] Synthesize the final research brief",
-            "",
-            "• StepEnd with active Part for run_child.0",
-        ]
-    ]
+    assert _rows(update.committed) == [["• StepEnd with active Part for run_child.0"]]
     assert update.live == ()
 
 
@@ -1168,7 +1293,7 @@ def test_parallel_lane_cannot_be_reused_while_its_run_is_active() -> None:
     )
 
     assert duplicate.live == ()
-    assert _rows(duplicate.finalized) == [
+    assert _rows(duplicate.committed) == [
         ["• parallel lane 0 already owns active Run run_first"]
     ]
 
@@ -1193,7 +1318,7 @@ def test_run_end_with_active_step_clears_live_with_one_diagnostic() -> None:
     update = reducer.handle(RunEnd(run="run_root", status="canceled"))
 
     assert update.live == ()
-    assert _rows(update.finalized) == [["• RunEnd with active Step for run_root"]]
+    assert _rows(update.committed) == [["• RunEnd with active Step for run_root"]]
 
 
 def test_nested_cancellation_is_rendered_once_at_the_leaf() -> None:
@@ -1237,7 +1362,7 @@ def test_nested_cancellation_is_rendered_once_at_the_leaf() -> None:
         RunEnd(run="run_root", status="canceled", error="script interrupted"),
     )
     for event in events:
-        finalized.extend(projector.handle(event).finalized)
+        finalized.extend(projector.handle(event).committed)
 
     lines = [row.text for block in finalized for row in block.rows]
 
@@ -1293,7 +1418,7 @@ def test_cyclic_error_pointer_becomes_one_terminal_diagnostic() -> None:
         )
     )
 
-    assert _rows(update.finalized) == [
+    assert _rows(update.committed) == [
         ["• could not resolve execution error run_root.0"]
     ]
 
@@ -1340,7 +1465,7 @@ def test_compact_mode_removes_repeat_boundaries_but_keeps_agic_activity() -> Non
         )
     )
 
-    assert _rows(live.live) == [["• thinking…"]]
+    assert _rows(live.live) == [["• thinking"]]
 
 
 def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
@@ -1397,7 +1522,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
     assert _rows(live.live) == [
         [
             "• running · 0/2 succeeded · 1 active",
-            "  0 | #0 | • executing fetch_page…",
+            "  0 | #0 | • executing fetch_page",
         ]
     ]
     reducer.handle(
@@ -1449,7 +1574,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
     assert _rows(reused.live) == [
         [
             "• running · 1/2 succeeded · 1 active",
-            "  0 | #1 | • starting…",
+            "  0 | #1 | • starting",
         ]
     ]
     reducer.handle(RunEnd(run="run_flow_1", status="succeeded"))
@@ -1462,7 +1587,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
         )
     )
 
-    assert _rows(terminal.finalized) == [
+    assert _rows(terminal.committed) == [
         [
             "• Mapped all 2 items in parallel",
             "  3 runs · 1 tool call",
@@ -1506,8 +1631,8 @@ def test_finalized_blocks_are_returned_in_step_completion_order() -> None:
         )
     )
 
-    assert second.finalized[0].key == "step:run_root.1"
-    assert first.finalized[0].key == "step:run_root.0"
+    assert second.committed[0].key == "step:run_root.1"
+    assert first.committed[0].key == "step:run_root.0"
 
 
 def test_model_terminal_preserves_complete_multiline_output() -> None:
@@ -1537,7 +1662,7 @@ def test_model_terminal_preserves_complete_multiline_output() -> None:
         )
     )
 
-    assert _rows(terminal.finalized) == [["• first line", f"  {long_line}"]]
+    assert _rows(terminal.committed) == [["• first line", f"  {long_line}"]]
 
 
 @pytest.mark.parametrize(
@@ -1592,13 +1717,13 @@ def test_loop_terminal_uses_typed_termination(
         )
     )
 
-    assert _rows(terminal.finalized) == [[expected, ""]]
+    assert _rows(terminal.committed) == [[expected, ""]]
     expected_tone = {
         "succeeded": "normal",
         "failed": "error",
         "canceled": "warning",
     }[status]
-    assert terminal.finalized[0].rows[0].tone == expected_tone
+    assert terminal.committed[0].rows[0].tone == expected_tone
 
 
 def test_loop_direct_failure_keeps_error_and_termination_summary() -> None:
@@ -1629,7 +1754,7 @@ def test_loop_direct_failure_keeps_error_and_termination_summary() -> None:
         )
     )
 
-    assert _rows(terminal.finalized) == [
+    assert _rows(terminal.committed) == [
         [
             "• condition returned an invalid value",
             "  Interrupted after completing 1 of 3 iterations",
@@ -1648,13 +1773,14 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
             runnable="flow:demo",
         )
     )
-    projector.handle(
+    header = projector.handle(
         StepBegin(
             step=loop,
             kind="loop",
             given=SettleStmt(span=SPAN, runnable="merge_pair"),
         )
     )
+    assert _rows(header.committed) == [["[0] Reduce the items with merge_pair", ""]]
     projector.handle(
         RunBegin(
             run="run_merge",
@@ -1676,15 +1802,8 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
         )
     )
 
-    assert _rows(live.live) == [
-        [
-            "[0] Reduce the items with merge_pair",
-            "",
-            "--- iteration 1 of 2 ---",
-            "",
-            "• thinking…",
-        ]
-    ]
+    assert _rows(live.committed) == [["--- iteration 1 of 2 ---", ""]]
+    assert _rows(live.live) == [["• thinking"]]
 
 
 def test_parallel_terminal_retains_each_independent_failed_lane() -> None:
@@ -1744,7 +1863,7 @@ def test_parallel_terminal_retains_each_independent_failed_lane() -> None:
             error="parallel step stopped because lane 0 (#0) failed",
         )
     )
-    text = "\n".join(_rows(terminal.finalized)[0])
+    text = "\n".join(_rows(terminal.committed)[0])
 
     assert "0 | #0 | • failed failure 0" in text
     assert "1 | #1 | • failed failure 1" in text
@@ -1813,7 +1932,7 @@ def test_nested_parallel_direct_error_is_preserved_by_the_outer_lane() -> None:
         )
     )
 
-    assert _rows(terminal.finalized) == [
+    assert _rows(terminal.committed) == [
         [
             "• Parallel execution stopped: 0/1 succeeded and 1 failed",
             "  0 | #0 | • input must be a list",
@@ -1915,7 +2034,7 @@ def test_nested_parallel_boundary_error_does_not_replace_the_leaf_error() -> Non
             error="parallel step stopped because lane 0 (#0) failed",
         )
     )
-    text = "\n".join(_rows(terminal.finalized)[0])
+    text = "\n".join(_rows(terminal.committed)[0])
 
     assert "0 | #0 | • failed provider returned status 429" in text
     assert text.count("parallel step stopped") == 1

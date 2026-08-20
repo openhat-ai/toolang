@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 ProgressTone = Literal["progress", "normal", "active", "error", "warning"]
+ProgressFormat = Literal["plain", "markdown"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,11 +16,13 @@ class ProgressRow:
     text: str
     tone: ProgressTone = "progress"
     wrap_live: bool = False
+    format: ProgressFormat = "plain"
+    prefix: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class ProgressBlock:
-    """One finalized or atomically replaceable group of progress rows."""
+    """One committed fragment or atomically replaceable group of progress rows."""
 
     key: str
     rows: tuple[ProgressRow, ...]
@@ -27,7 +30,7 @@ class ProgressBlock:
 
 @dataclass(frozen=True, slots=True)
 class ProgressUpdate:
-    """Newly finalized blocks plus the complete current live snapshot."""
+    """Newly committed fragments plus the complete current live snapshot."""
 
-    finalized: tuple[ProgressBlock, ...] = ()
+    committed: tuple[ProgressBlock, ...] = ()
     live: tuple[ProgressBlock, ...] = ()

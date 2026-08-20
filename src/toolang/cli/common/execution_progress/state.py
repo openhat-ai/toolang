@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
 
+from toolang.base.types.message import Part
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import ModelStepNoted, RunStatus, StepKind, StepPath
 from toolang.lang.ast import FlowStmt
@@ -28,7 +29,7 @@ class LaneState:
 
     run_id: str
     item: int
-    activity: str = "• starting…"
+    activity: str = "• starting"
     terminal: tuple[str, ...] = ()
     terminal_status: RunStatus | None = None
     status: RunStatus = "running"
@@ -37,9 +38,19 @@ class LaneState:
 
 @dataclass(slots=True)
 class ModelDetail:
-    """Bounded streaming state needed only by Model Steps."""
+    """Append-only streamed content and the current mutable Markdown tail."""
 
-    preview: str = ""
+    streamed: str = ""
+    pending: str = ""
+    text_part: int | None = None
+    marker_committed: bool = False
+    completed_parts: dict[int, Part] = field(default_factory=dict)
+
+    @property
+    def lane_preview(self) -> str:
+        """Return a bounded suffix for one physical parallel-lane row."""
+
+        return self.streamed[-800:]
 
 
 @dataclass(slots=True)

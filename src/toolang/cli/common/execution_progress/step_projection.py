@@ -32,31 +32,34 @@ def live_row(begin: StepBegin, preview: str) -> ProgressRow:
 
     if begin.kind == "model":
         detail = one_line(preview)
-        text = f"• {detail}" if detail else "• thinking…"
+        text = f"• {detail}" if detail else "• thinking"
     elif begin.kind == "tool":
-        text = f"• executing {tool_label(begin.given)}…"
+        text = f"• executing {tool_label(begin.given)}"
     else:
-        text = f"• running {begin.kind}…"
+        text = f"• running {begin.kind}"
     return ProgressRow(text, "active")
 
 
-def trace_live_rows(begin: StepBegin, preview: str) -> tuple[ProgressRow, ...]:
-    """Project replaceable Trace activity, preserving Model delta lines."""
+def trace_live_rows(
+    begin: StepBegin,
+    preview: str,
+    *,
+    marker_committed: bool = False,
+) -> tuple[ProgressRow, ...]:
+    """Project replaceable Trace activity or one Markdown source tail."""
 
     if begin.kind != "model" or not preview:
+        if begin.kind == "model" and marker_committed:
+            return ()
         return (live_row(begin, preview),)
-    lines = preview.splitlines()
-    while lines and not lines[0]:
-        lines.pop(0)
-    if not lines:
-        return (live_row(begin, preview),)
-    return tuple(
+    return (
         ProgressRow(
-            f"• {line}" if index == 0 else f"  {line}",
-            "active",
+            preview,
+            "normal",
             wrap_live=True,
-        )
-        for index, line in enumerate(lines)
+            format="markdown",
+            prefix="  " if marker_committed else "• ",
+        ),
     )
 
 
@@ -65,14 +68,16 @@ def trace_terminal_rows(
     event: StepEnd,
     *,
     error: str,
+    include_model_text: bool = True,
 ) -> tuple[ProgressRow, ...]:
-    """Project one Model or Tool Step's complete finalized trace."""
+    """Project one Model or Tool Step's complete terminal trace."""
 
     tone = _tone(event.status)
     if begin.kind == "model":
         if event.status == "succeeded":
             return _marked_rows(
-                _model_output_lines(event) or ["completed"],
+                _model_output_lines(event, include_text=include_model_text)
+                or ([] if not include_model_text else ["completed"]),
                 "normal",
             )
         if event.status == "failed":
@@ -245,11 +250,12 @@ def lane_run_error_lines(error: str) -> tuple[str, ...]:
     )
 
 
-def _model_output_lines(event: StepEnd) -> list[str]:
+def _model_output_lines(event: StepEnd, *, include_text: bool = True) -> list[str]:
     lines: list[str] = []
     for part in output_parts(event):
         if isinstance(part, TextPart):
-            lines.extend(_split_lines(part.text))
+            if include_text:
+                lines.extend(_split_lines(part.text))
         elif isinstance(part, ToolCallPart):
             name = part.tool_name or part.tool_family or "tool"
             lines.append(f"requested {name}")
@@ -257,7 +263,7 @@ def _model_output_lines(event: StepEnd) -> list[str]:
             lines.extend(_json_lines(part.to_data()))
     if lines:
         return lines
-    return _flow_output_lines(event)
+    return _flow_output_lines(event) if include_text else []
 
 
 def _tool_output_lines(event: StepEnd) -> list[str]:

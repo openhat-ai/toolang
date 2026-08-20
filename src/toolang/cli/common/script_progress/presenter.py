@@ -43,7 +43,7 @@ class ScriptRunPresenter(RunTracer):
             self._end_root(event)
 
     def close(self) -> None:
-        """Remove the bounded live area without changing finalized scrollback."""
+        """Remove the bounded live area without changing committed scrollback."""
 
         self.console.close()
 

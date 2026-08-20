@@ -105,7 +105,7 @@ class ChatRunPresenter:
         update: ProgressUpdate,
         app: AppContext,
     ) -> None:
-        for projected in update.finalized:
+        for projected in update.committed:
             progress = projected
             block = self._progress.pop(progress.key, None)
             if block is None:

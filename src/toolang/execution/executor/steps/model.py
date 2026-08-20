@@ -137,6 +137,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             )
         else:
             current = await prepared.adapter.invoke(prepared.model, request)
+        _validate_stream_result(stream, current)
     except asyncio.CancelledError:
         await _close_open_parts(state, stream)
         await state.emit(
@@ -302,6 +303,11 @@ async def _handle_event(
             return
     if isinstance(event, ModelPartEnd):
         if isinstance(event.data, TextPart):
+            _validate_text_prefix(
+                stream,
+                event.data.text,
+                source="ModelPartEnd",
+            )
             part_index = _ensure_text_part_index(stream)
         elif isinstance(event.data, ToolCallPart):
             part_index = _ensure_tool_part_index(stream, event.data.tool_call_id)
@@ -315,6 +321,37 @@ async def _handle_event(
         )
         stream.completed_parts[part_index] = event.data
         return
+
+
+def _validate_stream_result(
+    stream: _ModelStream,
+    current: ModelCallResult,
+) -> None:
+    message = current.message
+    final_text = (
+        message_text(message.parts)
+        if message is not None and message.role == "assistant"
+        else ""
+    )
+    _validate_text_prefix(stream, final_text, source="ModelCallResult")
+    if stream.text_part is None:
+        return
+    completed = stream.completed_parts.get(stream.text_part)
+    if isinstance(completed, TextPart) and completed.text != final_text:
+        raise ValueError(
+            "ModelCallResult text does not match authoritative ModelPartEnd"
+        )
+
+
+def _validate_text_prefix(
+    stream: _ModelStream,
+    final_text: str,
+    *,
+    source: str,
+) -> None:
+    streamed = "".join(stream.text_chunks)
+    if not final_text.startswith(streamed):
+        raise ValueError(f"{source} text does not extend streamed TextDelta content")
 
 
 def _output_parts(

@@ -9,7 +9,7 @@ import re
 from typing import Any
 
 from rich import box
-from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
+from rich.console import Group, RenderableType
 from rich.markdown import Markdown
 from rich.markup import escape
 from rich.panel import Panel
@@ -20,15 +20,17 @@ from toolang.base.types.message import Part, TextPart
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
 from toolang.execution.types import ExecutionError
 
-from toolang.cli.common.execution_progress import ProgressBlock, ProgressRow
+from toolang.cli.common.execution_progress import ProgressBlock
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from toolang.cli.common.execution_progress.formatting import (
     count,
     elapsed,
     output_parts,
     shape_label,
-    split_hanging_prefix,
     status_label,
+)
+from toolang.cli.common.execution_progress.rich_rendering import (
+    progress_block_renderable,
 )
 from toolang.cli.common.execution_progress.state import Metrics
 
@@ -39,7 +41,6 @@ from .rendering import (
     markdown_width,
     render_segments,
     terminal_width,
-    truncate_display,
 )
 
 STEER_BAR_BG = "#2f555d"
@@ -92,7 +93,7 @@ class MutableBlock:
 
 @dataclass(slots=True)
 class ExecutionProgressBlock(MutableBlock):
-    """One shared finalized or replaceable execution progress block."""
+    """One shared committed or replaceable execution progress block."""
 
     progress: ProgressBlock
     live: bool = False
@@ -103,75 +104,11 @@ class ExecutionProgressBlock(MutableBlock):
             self.progress = event
 
     def render(self) -> RenderableType:
-        return Group(
-            *(
-                _ExecutionProgressRow(
-                    row=row,
-                    live=self.live,
-                    max_width=self.max_width,
-                )
-                for row in self.progress.rows
-            )
+        return progress_block_renderable(
+            self.progress,
+            live=self.live,
+            max_width=self.max_width,
         )
-
-
-@dataclass(frozen=True, slots=True)
-class _ExecutionProgressRow:
-    """Render one semantic progress row with a stable hanging indent."""
-
-    row: ProgressRow
-    live: bool
-    max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
-
-    def __rich_console__(
-        self,
-        console: Console,
-        options: ConsoleOptions,
-    ) -> RenderResult:
-        style = {
-            "progress": "dim",
-            "normal": "none",
-            "active": "none",
-            "error": "red",
-            "warning": "yellow",
-        }[self.row.tone]
-        width = max(1, min(options.max_width, self.max_width))
-        if self.live and not self.row.wrap_live:
-            yield Text(
-                truncate_display(self.row.text, width=width),
-                style=style,
-                no_wrap=True,
-            )
-            return
-
-        prefix, content = split_hanging_prefix(self.row.text)
-        prefix_width = display_len(prefix)
-        if prefix_width >= width:
-            lines = Text(self.row.text, style=style).wrap(
-                console,
-                width,
-                overflow="fold",
-            )
-            for line in lines:
-                line.rstrip()
-                yield Text(line.plain, style=style, no_wrap=True)
-            return
-
-        lines = Text(content, style=style).wrap(
-            console,
-            width - prefix_width,
-            overflow="fold",
-        )
-        if not lines:
-            lines.append(Text("", style=style))
-        continuation = " " * prefix_width
-        for index, line in enumerate(lines):
-            line.rstrip()
-            yield Text(
-                f"{prefix if index == 0 else continuation}{line.plain}",
-                style=style,
-                no_wrap=True,
-            )
 
 
 @dataclass(slots=True)
@@ -310,7 +247,7 @@ class RunStopBlock(MutableBlock):
         if self.status == "running":
             return Text("\n")
         if self.status == "canceling":
-            return Text.from_markup("[dim]canceling...[/]")
+            return Text.from_markup("[dim]canceling[/]")
 
         tone = (
             "green"

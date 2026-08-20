@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from toolang.base.types.message import TextDelta
+from toolang.base.types.message import TextDelta, TextPart
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -31,7 +31,7 @@ from toolang.lang.ast import (
     StormStmt,
 )
 
-from .formatting import elapsed, one_line
+from .formatting import elapsed, one_line, output_parts
 from .headers import statement_header, until_header
 from .state import (
     LaneOwner,
@@ -53,6 +53,7 @@ from .step_projection import (
     loop_terminal_rows,
     trace_terminal_rows,
 )
+from .streaming_markdown import split_stable_markdown
 from .types import ProgressBlock, ProgressRow, ProgressUpdate
 
 
@@ -61,7 +62,7 @@ class _PresentationError(RuntimeError):
 
 
 class ProgressProjector:
-    """Project one ordered root Run tree into finalized and live progress blocks."""
+    """Project one ordered root Run tree into committed and live progress blocks."""
 
     def __init__(self, *, show_boundaries: bool = True) -> None:
         self.show_boundaries = show_boundaries
@@ -72,7 +73,7 @@ class ProgressProjector:
         self._steps: dict[StepPath, StepState] = {}
         self._seen_runs: set[str] = set()
         self._seen_steps: set[StepPath] = set()
-        self._parts: set[tuple[StepPath, int]] = set()
+        self._parts: dict[tuple[StepPath, int], str] = {}
         self._errors: dict[Pointer, ExecutionError] = {}
         self._boundary_rows: dict[str, tuple[ProgressRow, ...]] = {}
         self._boundary_claims: dict[str, str] = {}
@@ -95,16 +96,16 @@ class ProgressProjector:
         try:
             if self._root_ended:
                 raise _PresentationError("progress event arrived after run completion")
-            finalized = self._reduce(event)
+            committed = self._reduce(event)
             return ProgressUpdate(
-                finalized=tuple(finalized),
+                committed=tuple(committed),
                 live=self._live_blocks(),
             )
         except _PresentationError as exc:
             self._broken = True
             self._parts.clear()
             return ProgressUpdate(
-                finalized=(self._diagnostic_block(str(exc)),),
+                committed=(self._diagnostic_block(str(exc)),),
                 live=(),
             )
 
@@ -113,24 +114,24 @@ class ProgressProjector:
 
         self._broken = True
         self._parts.clear()
-        return ProgressUpdate(finalized=(self._diagnostic_block(message),), live=())
+        return ProgressUpdate(committed=(self._diagnostic_block(message),), live=())
 
     def _reduce(self, event: RunEvent) -> list[ProgressBlock]:
         if isinstance(event, RunBegin):
             self._begin_run(event)
             return []
         if isinstance(event, StepBegin):
-            self._begin_step(event)
-            return []
+            block = self._begin_step(event)
+            return [block] if block is not None else []
         if isinstance(event, PartBegin):
             self._begin_part(event)
             return []
         if isinstance(event, PartDelta):
-            self._part_delta(event)
-            return []
+            block = self._part_delta(event)
+            return [block] if block is not None else []
         if isinstance(event, PartEnd):
-            self._end_part(event)
-            return []
+            block = self._end_part(event)
+            return [block] if block is not None else []
         if isinstance(event, StepEnd):
             block = self._end_step(event)
             return [block] if block is not None else []
@@ -181,7 +182,7 @@ class ProgressProjector:
         if event.parent is not None:
             self._note_iteration(event.parent, event.occurrence)
             if lane_owner is not None:
-                self._set_lane_activity(lane_owner, "• starting…")
+                self._set_lane_activity(lane_owner, "• starting")
 
     def _end_run(self, event: RunEnd) -> ProgressBlock | None:
         run = self._runs.get(event.run)
@@ -266,7 +267,7 @@ class ProgressProjector:
             self._runs.pop(event.run, None)
         return block
 
-    def _begin_step(self, event: StepBegin) -> None:
+    def _begin_step(self, event: StepBegin) -> ProgressBlock | None:
         if event.step in self._seen_steps:
             raise _PresentationError(f"duplicate StepBegin for {event.step}")
         self._seen_steps.add(event.step)
@@ -306,13 +307,18 @@ class ProgressProjector:
                 state.lane_owner,
                 lane_live_text(
                     state.begin,
-                    state.model.preview if event.kind == "model" else "",
+                    state.model.lane_preview if event.kind == "model" else "",
                 ),
             )
-            return
-        if not state.is_flow or event.kind == "par":
-            block_key = self._block_key(state)
-            state.boundaries = self._claim_boundaries(block_key, state)
+            return None
+        block_key = self._block_key(state)
+        state.boundaries = self._claim_boundaries(block_key, state)
+        rows = self._rows_for_boundaries(state.boundaries)
+        if not rows:
+            return None
+        self._commit_boundaries(state.boundaries)
+        state.boundaries = ()
+        return ProgressBlock(block_key, rows)
 
     def _end_step(self, event: StepEnd) -> ProgressBlock | None:
         state = self._steps.get(event.step)
@@ -333,6 +339,18 @@ class ProgressProjector:
             raise _PresentationError(f"StepEnd with active child Run for {event.step}")
         if event.error is not None:
             self._errors[Pointer.step(event.step)] = event.error
+        if (
+            event.kind == "model"
+            and event.status == "succeeded"
+            and state.model.completed_parts
+        ):
+            completed = tuple(
+                part for _index, part in sorted(state.model.completed_parts.items())
+            )
+            if completed != output_parts(event):
+                raise _PresentationError(
+                    f"StepEnd output does not match completed Parts for {event.step}"
+                )
         run = self._runs[event.step.run]
         run.metrics.record_step(event)
         if isinstance(event.noted, CollectionStepNoted) and event.kind == "par":
@@ -379,18 +397,19 @@ class ProgressProjector:
             if isinstance(event.error, Pointer):
                 self._release_boundaries(state.boundaries)
             else:
-                block = self._finalize_block(
-                    state,
-                    trace_terminal_rows(
-                        state.begin,
-                        event,
-                        error=self._error_text(event.error),
+                rows = trace_terminal_rows(
+                    state.begin,
+                    event,
+                    error=self._error_text(event.error),
+                    include_model_text=not (
+                        event.kind == "model" and state.model.completed_parts
                     ),
                 )
+                block = self._commit_block(state, rows) if rows else None
         else:
             statement = state.statement
             if statement is not None and event.kind == "par":
-                block = self._finalize_block(
+                block = self._commit_block(
                     state,
                     self._par_terminal_rows(state, event),
                 )
@@ -402,7 +421,7 @@ class ProgressProjector:
                         state,
                     )
                 if rows:
-                    block = self._finalize_block(state, rows)
+                    block = self._commit_block(state, rows)
                 else:
                     self._release_boundaries(state.boundaries)
 
@@ -428,9 +447,9 @@ class ProgressProjector:
             raise _PresentationError(
                 f"duplicate PartBegin for {event.step} part {event.part}"
             )
-        self._parts.add(key)
+        self._parts[key] = event.part_type
 
-    def _part_delta(self, event: PartDelta) -> None:
+    def _part_delta(self, event: PartDelta) -> ProgressBlock | None:
         key = (event.step, event.part)
         if key not in self._parts:
             raise _PresentationError(
@@ -438,20 +457,82 @@ class ProgressProjector:
             )
         state = self._active_step(event.step)
         if isinstance(event.delta, TextDelta) and state.begin.kind == "model":
-            state.model.preview = (state.model.preview + event.delta.text)[-800:]
+            if self._parts[key] != "text":
+                raise _PresentationError(
+                    f"TextDelta changed Part type for {event.step} part {event.part}"
+                )
+            if state.model.text_part not in {None, event.part}:
+                raise _PresentationError(
+                    f"Model Step has multiple streamed Text Parts for {event.step}"
+                )
+            state.model.text_part = event.part
+            state.model.streamed += event.delta.text
+            state.model.pending += event.delta.text
             if state.lane_owner is not None:
                 self._set_lane_activity(
                     state.lane_owner,
-                    lane_live_text(state.begin, state.model.preview),
+                    lane_live_text(state.begin, state.model.lane_preview),
                 )
+                return None
+            committed, state.model.pending = split_stable_markdown(state.model.pending)
+            return self._commit_model_markdown(state, committed)
+        return None
 
-    def _end_part(self, event: PartEnd) -> None:
+    def _end_part(self, event: PartEnd) -> ProgressBlock | None:
         key = (event.step, event.part)
         if key not in self._parts:
             raise _PresentationError(
                 f"PartEnd without active Part for {event.step} part {event.part}"
             )
-        self._parts.remove(key)
+        part_type = self._parts.pop(key)
+        state = self._active_step(event.step)
+        if state.begin.kind != "model":
+            return None
+        state.model.completed_parts[event.part] = event.data
+        if not isinstance(event.data, TextPart):
+            return None
+        if part_type != "text":
+            raise _PresentationError(
+                f"PartEnd changed Part type for {event.step} part {event.part}"
+            )
+        if state.model.text_part not in {None, event.part}:
+            raise _PresentationError(
+                f"Model Step has multiple streamed Text Parts for {event.step}"
+            )
+        state.model.text_part = event.part
+        if not event.data.text.startswith(state.model.streamed):
+            raise _PresentationError(
+                f"PartEnd text does not extend TextDelta for {event.step} part "
+                f"{event.part}"
+            )
+        state.model.pending += event.data.text[len(state.model.streamed) :]
+        state.model.streamed = event.data.text
+        if state.lane_owner is not None:
+            return None
+        pending = state.model.pending
+        state.model.pending = ""
+        return self._commit_model_markdown(state, pending)
+
+    def _commit_model_markdown(
+        self,
+        state: StepState,
+        source: str,
+    ) -> ProgressBlock | None:
+        if not source:
+            return None
+        prefix = "  " if state.model.marker_committed else "• "
+        state.model.marker_committed = True
+        return ProgressBlock(
+            self._block_key(state),
+            (
+                ProgressRow(
+                    source,
+                    "normal",
+                    format="markdown",
+                    prefix=prefix,
+                ),
+            ),
+        )
 
     def _flow_terminal_rows(
         self,
@@ -562,7 +643,7 @@ class ProgressProjector:
         self._commit_boundaries(boundaries)
         return ProgressBlock(f"run:{run.begin.run}", rows)
 
-    def _finalize_block(
+    def _commit_block(
         self,
         state: StepState,
         rows: tuple[ProgressRow, ...],
@@ -584,12 +665,18 @@ class ProgressProjector:
                     *self._rows_for_boundaries(state.boundaries),
                     *trace_live_rows(
                         state.begin,
-                        state.model.preview if state.begin.kind == "model" else "",
+                        state.model.pending if state.begin.kind == "model" else "",
+                        marker_committed=(
+                            state.model.marker_committed
+                            if state.begin.kind == "model"
+                            else False
+                        ),
                     ),
                 )
-                blocks.append(
-                    (state.sequence, ProgressBlock(self._block_key(state), rows))
-                )
+                if rows:
+                    blocks.append(
+                        (state.sequence, ProgressBlock(self._block_key(state), rows))
+                    )
             elif state.begin.kind == "par":
                 rows = (
                     *self._rows_for_boundaries(state.boundaries),
@@ -843,7 +930,7 @@ class ProgressProjector:
         state.par.terminating = True
         for lane in state.par.lanes.values():
             if lane.active:
-                lane.activity = "• canceling…"
+                lane.activity = "• canceling"
 
     def _mark_cancellation_reported(self, path: StepPath) -> None:
         current: StepPath | None = path

@@ -6,6 +6,7 @@ import re
 from os import terminal_size
 
 import pytest
+from rich.live import Live
 
 from toolang.base.types.message import TextDelta, TextPart, ToolResultPart
 from toolang.base.types.run import ModelCall, ToolCall
@@ -152,7 +153,8 @@ def test_tty_model_output_uses_normal_style() -> None:
         tty=True,
     )
 
-    assert output.endswith("• Use a shared reducer.\n")
+    rendered = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", output)
+    assert "• Use a shared reducer.\n" in rendered
     assert "\x1b[2m• Use a shared reducer." not in output
 
 
@@ -204,7 +206,7 @@ def test_tty_replaces_live_rows_and_clears_them_on_shutdown() -> None:
         tty=True,
     )
 
-    assert "• thinking…" in output
+    assert "• thinking" in output
     assert "\r\x1b[2K" in output
 
 
@@ -252,7 +254,7 @@ def test_tty_wraps_finalized_model_output_without_adding_a_marker() -> None:
     console = ProgressConsole(stream, width=40)
     console.apply(
         ProgressUpdate(
-            finalized=(
+            committed=(
                 ProgressBlock(
                     "step:run_one.0",
                     (
@@ -293,7 +295,7 @@ def test_progress_width_is_bounded_by_maximum_and_tty(
     tiny = ProgressConsole(tiny_stream, width=8)
     tiny.apply(
         ProgressUpdate(
-            finalized=(
+            committed=(
                 ProgressBlock(
                     "par:run_one.0",
                     (ProgressRow("  1 | #5 | • failed provider unavailable"),),
@@ -325,7 +327,7 @@ def test_non_tty_finalized_progress_wraps_without_truncation() -> None:
 
     console.apply(
         ProgressUpdate(
-            finalized=(
+            committed=(
                 ProgressBlock(
                     "step:run_one.0",
                     (ProgressRow(f"• {content}"),),
@@ -339,12 +341,47 @@ def test_non_tty_finalized_progress_wraps_without_truncation() -> None:
     assert " ".join(line.strip().removeprefix("• ") for line in lines) == content
 
 
+def test_non_tty_prints_only_incrementally_committed_markdown() -> None:
+    stream = StringIO()
+    console = ProgressConsole(stream, width=40)
+    heading = ProgressRow(
+        "# Heading\n\n",
+        "normal",
+        format="markdown",
+        prefix="• ",
+    )
+    paragraph = ProgressRow(
+        "Paragraph",
+        "normal",
+        format="markdown",
+        prefix="  ",
+    )
+
+    console.apply(ProgressUpdate(live=(ProgressBlock("step:run_one.0", (heading,)),)))
+    assert stream.getvalue() == ""
+
+    console.apply(
+        ProgressUpdate(
+            committed=(ProgressBlock("step:run_one.0", (heading,)),),
+            live=(ProgressBlock("step:run_one.0", (paragraph,)),),
+        )
+    )
+    assert stream.getvalue() == "• Heading\n"
+
+    console.apply(
+        ProgressUpdate(
+            committed=(ProgressBlock("step:run_one.0", (paragraph,)),),
+        )
+    )
+    assert stream.getvalue() == "• Heading\n  Paragraph\n"
+
+
 def test_tty_wraps_finalized_parallel_lane_at_its_embedded_marker() -> None:
     stream = _TtyStream()
     console = ProgressConsole(stream, width=40)
     console.apply(
         ProgressUpdate(
-            finalized=(
+            committed=(
                 ProgressBlock(
                     "par:run_one.0",
                     (
@@ -396,7 +433,7 @@ def test_tty_hides_cursor_for_the_lifetime_of_parallel_live_output() -> None:
     console = ProgressConsole(stream, width=40)
     rows = [
         ProgressRow("• running · 1 active", "active"),
-        ProgressRow("  0 | #0 | • thinking…", "active"),
+        ProgressRow("  0 | #0 | • thinking", "active"),
     ]
 
     console.show_live_rows(rows)
@@ -407,13 +444,17 @@ def test_tty_hides_cursor_for_the_lifetime_of_parallel_live_output() -> None:
     assert first.startswith("\x1b[?25l")
     assert "\x1b[?25h" not in first
     assert "\x1b[?25h" not in second
+    assert isinstance(console._live, Live)
+    assert console._live.auto_refresh is False
+    assert console._live.vertical_overflow == "crop"
 
     console.close()
 
-    assert stream.getvalue().endswith("\x1b[?25h")
+    assert "\x1b[?25h" in stream.getvalue()
+    assert stream.getvalue().rfind("\x1b[?25h") > stream.getvalue().rfind("\x1b[?25l")
 
 
-def test_single_run_gather_accumulates_multiline_model_preview() -> None:
+def test_single_run_gather_progressively_commits_markdown() -> None:
     stream = _TtyStream()
     presenter = ScriptRunPresenter(run_id="run_root", stream=stream, width=40)
     gather = StepPath.parse("run_root.0")
@@ -448,27 +489,27 @@ def test_single_run_gather_accumulates_multiline_model_preview() -> None:
             PartDelta(
                 step=model,
                 part=0,
-                delta=TextDelta("first streamed line\n"),
+                delta=TextDelta("# First section\n\n"),
             )
         )
         await presenter.on_event(
             PartDelta(
                 step=model,
                 part=0,
-                delta=TextDelta("second streamed line"),
+                delta=TextDelta("Second paragraph"),
             )
         )
 
-        assert presenter.console._live_lines[-2:] == [
-            "• first streamed line",
-            "  second streamed line",
-        ]
+        assert len(presenter.console._live_rows) == 1
+        assert presenter.console._live_rows[0].text == "Second paragraph"
+        assert presenter.console._live_rows[0].format == "markdown"
+        assert presenter.console._live_rows[0].prefix == "  "
 
         await presenter.on_event(
             PartEnd(
                 step=model,
                 part=0,
-                data=TextPart("first streamed line\nsecond streamed line"),
+                data=TextPart("# First section\n\nSecond paragraph"),
             )
         )
         await presenter.on_event(
@@ -476,11 +517,11 @@ def test_single_run_gather_accumulates_multiline_model_preview() -> None:
                 step=model,
                 kind="model",
                 status="succeeded",
-                output=_parts("first streamed line\nsecond streamed line"),
+                output=_parts("# First section\n\nSecond paragraph"),
             )
         )
 
-        assert presenter.console._live_lines == []
+        assert presenter.console._live_rows == []
 
         await presenter.on_event(RunEnd(run="run_merge", status="succeeded"))
         await presenter.on_event(StepEnd(step=gather, kind="run", status="succeeded"))
@@ -489,11 +530,10 @@ def test_single_run_gather_accumulates_multiline_model_preview() -> None:
 
     asyncio.run(scenario())
     output = stream.getvalue()
-    after_last_erase = output.rsplit("\x1b[2K", 1)[-1]
-    rendered = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", after_last_erase)
+    rendered = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", output)
 
-    assert "thinking" not in rendered
-    assert "• first streamed line\n  second streamed line" in rendered
+    assert "• First section" in rendered
+    assert "  Second paragraph" in rendered
 
 
 def test_tty_wraps_complete_cjk_output_by_terminal_cell_width() -> None:
@@ -501,7 +541,7 @@ def test_tty_wraps_complete_cjk_output_by_terminal_cell_width() -> None:
     console = ProgressConsole(stream, width=40)
     console.apply(
         ProgressUpdate(
-            finalized=(
+            committed=(
                 ProgressBlock(
                     "step:run_one.0",
                     (

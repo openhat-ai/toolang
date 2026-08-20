@@ -1,36 +1,32 @@
-"""Terminal output owned by the script progress renderer."""
+"""Rich terminal output owned by the Script progress renderer."""
 
 from __future__ import annotations
 
 import shutil
 from typing import Literal, TextIO
 
-from ..execution_progress import ProgressRow, ProgressUpdate
+from rich.console import Console, Group, RenderableType
+from rich.live import Live
+from rich.text import Text
+
+from ..execution_progress import ProgressBlock, ProgressRow, ProgressUpdate
 from ..execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
-from ..execution_progress.formatting import (
-    display_width,
-    one_line,
-    split_hanging_prefix,
-    truncate,
-    wrap_display,
-)
+from ..execution_progress.formatting import one_line
+from ..execution_progress.rich_rendering import progress_block_renderable
 
 Tone = Literal["progress", "normal", "active", "error", "warning"]
 
-_ANSI_STYLE: dict[Tone, str] = {
-    "progress": "\x1b[2m",
-    "normal": "",
-    "active": "",
-    "error": "\x1b[31m",
-    "warning": "\x1b[33m",
+_STYLES: dict[Tone, str] = {
+    "progress": "dim",
+    "normal": "none",
+    "active": "none",
+    "error": "red",
+    "warning": "yellow",
 }
-_ANSI_RESET = "\x1b[0m"
-_CURSOR_HIDE = "\x1b[?25l"
-_CURSOR_SHOW = "\x1b[?25h"
 
 
 class ProgressConsole:
-    """Write finalized and replaceable progress blocks to one stream."""
+    """Append committed fragments and render one replaceable Rich Live area."""
 
     def __init__(
         self,
@@ -50,13 +46,24 @@ class ProgressConsole:
         if self.tty:
             requested = min(requested, detected)
         self.width = max(1, min(requested, max_width))
-        self._live_lines: list[str] = []
+        self.console = Console(
+            file=stream,
+            width=self.width,
+            color_system="standard" if self.tty else None,
+            force_terminal=self.tty,
+            highlight=False,
+            legacy_windows=False,
+            _environ={"COLUMNS": str(self.width), "LINES": "24"},
+        )
+        self._live: Live | None = None
+        self._live_rows: list[ProgressRow] = []
         self._last_was_blank = False
-        self._cursor_hidden = False
 
     def close(self) -> None:
         self.clear_live()
-        self._show_cursor()
+        if self._live is not None:
+            self._live.stop()
+            self._live = None
 
     def blank(self) -> None:
         if not self._last_was_blank:
@@ -64,8 +71,7 @@ class ProgressConsole:
 
     def write(self, value: str, *, tone: Tone = "progress") -> None:
         self.clear_live()
-        self._show_cursor()
-        print(self._styled(value, tone=tone), file=self.stream, flush=True)
+        self.console.print(Text(value, style=_STYLES[tone], no_wrap=True))
         self._last_was_blank = not value
 
     def wrapped(
@@ -76,98 +82,68 @@ class ProgressConsole:
         continuation: str | None = None,
         tone: Tone = "progress",
     ) -> None:
-        continuation = prefix if continuation is None else continuation
-        lines = wrap_display(
-            one_line(value),
-            width=max(self.width - display_width(prefix), 1),
-        ) or [""]
-        self.write(f"{prefix}{lines[0]}", tone=tone)
-        for line in lines[1:]:
-            self.write(f"{continuation}{line}", tone=tone)
+        del continuation
+        self.clear_live()
+        block = ProgressBlock(
+            "script:write",
+            (ProgressRow(f"{prefix}{one_line(value)}", tone),),
+        )
+        self.console.print(
+            progress_block_renderable(block, live=False, max_width=self.width)
+        )
+        self._last_was_blank = False
 
     def apply(self, update: ProgressUpdate) -> None:
-        """Append finalized rows and atomically replace the live snapshot."""
+        """Append committed fragments and atomically replace the live snapshot."""
 
-        self.clear_live()
-        for block in update.finalized:
-            for row in block.rows:
-                self._write_progress_row(row)
-        self.show_live_rows([row for block in update.live for row in block.rows])
+        committed = [
+            progress_block_renderable(block, live=False, max_width=self.width)
+            for block in update.committed
+        ]
+        live_blocks = [
+            progress_block_renderable(block, live=True, max_width=self.width)
+            for block in update.live
+        ]
+        self._live_rows = [row for block in update.live for row in block.rows]
+        self._set_live(live_blocks)
+        for renderable in committed:
+            self.console.print(renderable)
+        if update.committed:
+            rows = update.committed[-1].rows
+            self._last_was_blank = bool(
+                rows and rows[-1].format == "plain" and not rows[-1].text
+            )
 
     def show_live_rows(self, rows: list[ProgressRow]) -> None:
-        if not self.tty:
-            return
-        self.clear_live()
-        if not rows:
-            self._show_cursor()
-            return
-        self._hide_cursor()
-        live_lines: list[tuple[str, Tone]] = []
-        for row in rows:
-            lines = (
-                self._wrapped_row_lines(row.text)
-                if row.wrap_live
-                else [truncate(row.text, self.width)]
-            )
-            live_lines.extend((line, row.tone) for line in lines)
-        rendered = "\n".join(self._styled(line, tone=tone) for line, tone in live_lines)
-        self.stream.write(rendered)
-        self.stream.flush()
-        self._live_lines = [line for line, _tone in live_lines]
+        block = ProgressBlock("script:live", tuple(rows))
+        self._set_live(
+            [progress_block_renderable(block, live=True, max_width=self.width)]
+            if rows
+            else []
+        )
+        self._live_rows = list(rows)
 
     def clear_live(self) -> None:
-        if not self._live_lines:
+        self._live_rows.clear()
+        if self._live is not None:
+            self._live.update(Group(), refresh=True)
+
+    def _set_live(self, renderables: list[RenderableType]) -> None:
+        if not self.tty:
             return
-        self.stream.write("\r\x1b[2K")
-        for _line in self._live_lines[1:]:
-            self.stream.write("\x1b[1A\r\x1b[2K")
-        self.stream.flush()
-        self._live_lines.clear()
-
-    def _hide_cursor(self) -> None:
-        if self.tty and not self._cursor_hidden:
-            self.stream.write(_CURSOR_HIDE)
-            self.stream.flush()
-            self._cursor_hidden = True
-
-    def _show_cursor(self) -> None:
-        if self.tty and self._cursor_hidden:
-            self.stream.write(_CURSOR_SHOW)
-            self.stream.flush()
-            self._cursor_hidden = False
-
-    def _styled(self, value: str, *, tone: Tone) -> str:
-        if not self.tty or not value:
-            return value
-        style = _ANSI_STYLE[tone]
-        return f"{style}{value}{_ANSI_RESET}" if style else value
-
-    def _write_progress_row(self, row: ProgressRow) -> None:
-        if display_width(row.text) <= self.width:
-            self.write(row.text, tone=row.tone)
+        renderable = Group(*renderables)
+        if self._live is None:
+            if not renderables:
+                return
+            self._live = Live(
+                renderable,
+                console=self.console,
+                auto_refresh=False,
+                transient=True,
+                redirect_stdout=False,
+                redirect_stderr=False,
+                vertical_overflow="crop",
+            )
+            self._live.start(refresh=True)
             return
-        prefix, content = split_hanging_prefix(row.text)
-        if display_width(prefix) >= self.width:
-            self.wrapped(row.text, prefix="", continuation="", tone=row.tone)
-            return
-        self.wrapped(
-            content,
-            prefix=prefix,
-            continuation=" " * len(prefix),
-            tone=row.tone,
-        )
-
-    def _wrapped_row_lines(self, value: str) -> list[str]:
-        prefix, content = split_hanging_prefix(value)
-        prefix_width = display_width(prefix)
-        if prefix_width >= self.width:
-            return wrap_display(value, self.width)
-        lines = wrap_display(
-            content,
-            width=max(self.width - prefix_width, 1),
-        )
-        continuation = " " * len(prefix)
-        return [
-            f"{prefix if index == 0 else continuation}{line}"
-            for index, line in enumerate(lines)
-        ]
+        self._live.update(renderable, refresh=True)

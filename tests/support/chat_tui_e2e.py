@@ -38,8 +38,8 @@ def main() -> None:
                 updates=(
                     ModelPartStart(kind="text"),
                     *(
-                        ModelPartDelta(delta=TextDelta(f"{line}\n"))
-                        for line in response.splitlines()
+                        ModelPartDelta(delta=TextDelta(line))
+                        for line in response.splitlines(keepends=True)
                     ),
                     ModelPartEnd(data=TextPart(response)),
                 ),
