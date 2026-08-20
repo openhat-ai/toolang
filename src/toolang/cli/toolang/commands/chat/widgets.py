@@ -21,14 +21,18 @@ from .rendering import CONTROL_STRIP_GLYPH, INPUT_BACKGROUND, START_CONTROL_ACCE
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
 STATUS_ACTIVITY_FRAMES = (
-    "━━    ",
-    " ━━   ",
-    "  ━━  ",
-    "   ━━ ",
-    "    ━━",
-    "   ━━ ",
-    "  ━━  ",
-    " ━━   ",
+    "██      ",
+    " ██     ",
+    "  ██    ",
+    "   ██   ",
+    "    ██  ",
+    "     ██ ",
+    "      ██",
+    "     ██ ",
+    "    ██  ",
+    "   ██   ",
+    "  ██    ",
+    " ██     ",
 )
 
 
@@ -377,7 +381,12 @@ class StatusBar:
                     )
                 )
             else:
-                segments.append(("class:status.text", "model: "))
+                segments.extend(
+                    [
+                        ("class:status.text", "  "),
+                        ("class:status.activity", "model: "),
+                    ]
+                )
             segments.append(("class:status.model", pieces[0]))
         for piece in pieces[1:]:
             if piece.startswith("agic:"):

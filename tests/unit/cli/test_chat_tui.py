@@ -963,10 +963,13 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
     status.advance_activity()
     next_frame = status._render()[0]
 
-    assert idle_text.index("runtime model") == running_text.index("runtime model") == 7
-    assert idle[0] == ("class:status.text", "model: ")
-    assert first_frame == ("class:status.activity", "━━     ")
-    assert next_frame == ("class:status.activity", " ━━    ")
+    assert idle_text.index("runtime model") == running_text.index("runtime model") == 9
+    assert idle[:2] == [
+        ("class:status.text", "  "),
+        ("class:status.activity", "model: "),
+    ]
+    assert first_frame == ("class:status.activity", "██       ")
+    assert next_frame == ("class:status.activity", " ██      ")
     assert widgets._chat_ui_palette()["status.activity"] == (
         f"fg:{rendering.START_CONTROL_ACCENT}"
     )
