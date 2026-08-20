@@ -39,6 +39,9 @@ from toolang.cli.common.execution_progress import (
     ProgressRow,
     ProgressUpdate,
 )
+from toolang.cli.common.execution_progress.rich_rendering import (
+    RUN_FOOTER_MIN_RULE_WIDTH,
+)
 from toolang.cli.common.script_progress.console import ProgressConsole
 from toolang.cli.common.execution_progress.state import Metrics
 from toolang.execution.events import (
@@ -1563,10 +1566,51 @@ def test_chat_tui_show_command_renders_durable_markdown(
 
     app.handle_submit(":show run_saved")
 
-    rendered = "\n".join(_render_text(item) for item in written)
-    assert "Result run_saved" in rendered
-    assert "durable result" in rendered
-    assert _render_text(written[-1]).endswith("\n\n")
+    assert len(written) == 1
+    rendered = _render_text(written[0])
+    result_lines = [line.rstrip() for line in rendered.splitlines()]
+    boundary_index = result_lines.index(
+        f"▿ run_saved result {'─' * RUN_FOOTER_MIN_RULE_WIDTH}"
+    )
+    assert result_lines[boundary_index : boundary_index + 3] == [
+        f"▿ run_saved result {'─' * RUN_FOOTER_MIN_RULE_WIDTH}",
+        "",
+        "• durable result",
+    ]
+    assert rendered.endswith("\n\n")
+
+    segments = [
+        segment
+        for segment in rendering.render_segments(written[0], width=80)
+        if segment.text.strip()
+    ]
+    boundary = next(
+        segment for segment in segments if "▿ run_saved result" in segment.text
+    )
+    response = next(segment for segment in segments if "durable result" in segment.text)
+    assert boundary.style is not None and boundary.style.dim
+    assert response.style is None or not response.style.dim
+
+
+def test_chat_show_result_boundary_truncates_without_wrapping(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(rendering, "terminal_width", lambda: 24)
+    block = blocks.SlashResultBlock(
+        message=":show run_saved_with_a_long_identifier",
+        run_id="run_saved_with_a_long_identifier",
+        parts=(TextPart("durable result"),),
+        max_width=24,
+    )
+
+    lines = [
+        line.rstrip() for line in _render_text(block.render(), width=24).splitlines()
+    ]
+    boundaries = [line for line in lines if line.startswith("▿")]
+
+    assert len(boundaries) == 1
+    assert len(boundaries[0]) == 24
+    assert boundaries[0].endswith("─")
 
 
 def _render_text(renderable: RenderableType | None, *, width: int = 80) -> str:
