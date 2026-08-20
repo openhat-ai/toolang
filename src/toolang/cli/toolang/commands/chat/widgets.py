@@ -20,7 +20,7 @@ from .rendering import CONTROL_STRIP_GLYPH, INPUT_BACKGROUND, START_CONTROL_ACCE
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-STATUS_SPINNER_FRAMES = ("▀ ", "▝▘", " ▀", " ▐", " ▄", "▗▖", "▄ ", "▌ ")
+STATUS_SPINNER_FRAMES = ("▔ ", " ▔", " ▐", " ▁", "▁ ", "▌ ")
 
 
 def _chat_ui_palette() -> dict[str, str]:

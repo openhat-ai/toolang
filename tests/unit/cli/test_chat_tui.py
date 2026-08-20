@@ -965,8 +965,8 @@ def test_chat_status_bar_spinner_keeps_the_model_column_stable() -> None:
 
     assert idle_text.index("runtime model") == running_text.index("runtime model") == 3
     assert idle[0] == ("class:status.activity", f"{rendering.CONTROL_STRIP_GLYPH}  ")
-    assert first_frame == ("class:status.activity", "▀  ")
-    assert next_frame == ("class:status.activity", "▝▘ ")
+    assert first_frame == ("class:status.activity", "▔  ")
+    assert next_frame == ("class:status.activity", " ▔ ")
     assert widgets._chat_ui_palette()["status.activity"] == (
         f"fg:{rendering.START_CONTROL_ACCENT}"
     )
@@ -989,7 +989,7 @@ def test_chat_tui_animates_status_only_while_a_run_is_active(
         animation = asyncio.create_task(app._animate_status())
         try:
             app._set_status_running(True)
-            await asyncio.sleep(0.005)
+            await asyncio.sleep(0.003)
             active_frame = app.status_bar._spinner_index
 
             app._set_status_running(False)

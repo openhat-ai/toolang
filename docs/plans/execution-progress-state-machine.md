@@ -390,11 +390,13 @@ the bottom `PromptBox` uses the Start accent. The strip replaces prompt glyphs
 such as `>` and `+` while leaving message text aligned in column two.
 
 The bottom `StatusBar` reserves three cells before the model name. While a local
-Run is in flight, two connected quarter blocks move clockwise around a
-two-character perimeter, followed by one separating space. When idle, the
-prefix keeps a static Start-accent `▌` in column zero, aligned with the input
-control strip, followed by two spaces. The model name therefore never shifts.
-Animation refreshes only while running and is never committed to scrollback.
+Run is in flight, a Start-accent edge segment moves clockwise around a
+two-character perimeter, using thin `▔` and `▁` horizontal strokes and half-cell
+vertical strokes, followed by one separating space. Frames advance every 160
+milliseconds. When idle, the prefix keeps a static `▌` in column zero, aligned
+with the input control strip, followed by two spaces. The model name therefore
+never shifts. Animation refreshes only while running and is never committed to
+scrollback.
 
 ## Implementation Touchpoints
 
