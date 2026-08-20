@@ -115,39 +115,32 @@ class _RunFooter:
             "failed": "red",
             "canceled": "yellow",
         }.get(self.status, "dim")
-        border_style = "dim"
-        inner_width = width - 2
-        title = truncate(title, inner_width - 2)
-        title_cells = display_width(title)
-        top = Text()
-        top.append("┌ ", style=border_style)
-        top.append(title, style=caption_style)
-        top.append(" ", style=border_style)
-        top.append("─" * max(inner_width - title_cells - 2, 0), style=border_style)
-        top.append("┐", style=border_style)
-        top.no_wrap = True
-        yield top
-
-        content_width = max(width - 4, 1)
+        rule_style = "dim"
         fact_lines = Text(self.facts, style="dim").wrap(
             console,
-            content_width,
+            width,
             overflow="fold",
         ) or [Text("", style="dim")]
         for line in fact_lines:
             line.rstrip()
-            plain = line.plain
-            middle = Text()
-            middle.append("│", style=border_style)
-            middle.append(f" {plain}", style="dim")
-            middle.append(" " * (content_width - display_width(plain) + 1), style="dim")
-            middle.append("│", style=border_style)
-            middle.no_wrap = True
-            yield middle
+        facts_width = max(display_width(line.plain) for line in fact_lines)
+        footer_width = min(width, max(facts_width, display_width(title) + 4))
+        title = truncate(title, max(footer_width - 4, 1))
+        title_cells = display_width(title)
+        top = Text()
+        top.append("─ ", style=rule_style)
+        top.append(title, style=caption_style)
+        top.append(" ", style=rule_style)
+        top.append("─" * max(footer_width - title_cells - 3, 0), style=rule_style)
+        top.no_wrap = True
+        yield top
 
-        bottom = Text("└" + "─" * inner_width + "┘", style=border_style)
-        bottom.no_wrap = True
-        yield bottom
+        for line in fact_lines:
+            plain = line.plain
+            facts = Text(plain, style="dim")
+            facts.append(" " * (footer_width - display_width(plain)), style="dim")
+            facts.no_wrap = True
+            yield facts
 
 
 @dataclass(frozen=True, slots=True)

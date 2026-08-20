@@ -353,16 +353,16 @@ Script and Chat display no Run header or output shape. After projected Steps
 they render the same root footer:
 
 ```text
-┌ run_nrqpt0mf succeeded ─────────────────────────────────────────────────────┐
-│ 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01      │
-└──────────────────────────────────────────────────────────────────────────────┘
+─ run_nrqpt0mf succeeded ────────────────────────────────────────────────
+1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
-The border begins in column zero. The Run id, status, and every wrapped facts
-line begin in column two, aligned with Step text after its `• ` marker. Success,
-failure, and cancellation use green, red, and yellow captions respectively.
-The complete border and facts text remain dim and carry no status color. The
-footer width obeys the same terminal and configured maximum as Step progress.
+The rule and every wrapped facts line begin in column zero; the Run id begins in
+column two. The rule uses the longest rendered facts line as its width, after
+facts wrap to the same terminal and configured maximum as Step progress. Shorter
+facts lines receive trailing padding so their right edge remains aligned.
+Success, failure, and cancellation use green, red, and yellow captions
+respectively. The rule and facts text remain dim and carry no status color.
 
 The footer owns total duration and Run facts. Cost uses full precision while
 aggregating and is rounded to cents only for display. Script does not append a
