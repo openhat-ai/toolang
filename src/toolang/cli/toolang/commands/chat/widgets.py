@@ -33,7 +33,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "fg:#f2f2f2 bg:#5a5a5a",
-        "status.running": f"fg:{START_CONTROL_ACCENT}",
+        "status.activity": f"fg:{START_CONTROL_ACCENT}",
         "status.model": "fg:#ffd866",
         "status.agic": "fg:#8fd7ff",
         "status.flow": "fg:#d7b3ff",
@@ -361,12 +361,12 @@ class StatusBar:
             if self.running:
                 segments.append(
                     (
-                        "class:status.running",
+                        "class:status.activity",
                         f"{STATUS_SPINNER_FRAMES[self._spinner_index]} ",
                     )
                 )
             else:
-                segments.append(("class:status.text", "   "))
+                segments.append(("class:status.activity", f"{CONTROL_STRIP_GLYPH}  "))
             segments.append(("class:status.model", pieces[0]))
         for piece in pieces[1:]:
             if piece.startswith("agic:"):

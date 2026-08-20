@@ -392,8 +392,9 @@ such as `>` and `+` while leaving message text aligned in column two.
 The bottom `StatusBar` reserves three cells before the model name. While a local
 Run is in flight, two connected quarter blocks move clockwise around a
 two-character perimeter, followed by one separating space. When idle, the
-prefix is three spaces, so the model name never shifts. Animation refreshes
-only while running and is never committed to scrollback.
+prefix keeps a static Start-accent `▌` in column zero, aligned with the input
+control strip, followed by two spaces. The model name therefore never shifts.
+Animation refreshes only while running and is never committed to scrollback.
 
 ## Implementation Touchpoints
 
