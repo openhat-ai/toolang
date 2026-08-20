@@ -389,7 +389,7 @@ class StatusBar:
     @property
     def activity_width(self) -> int:
         pieces = [piece for piece in self.status_label.split("  ") if piece]
-        return get_cwidth(pieces[0]) if pieces else 0
+        return get_cwidth(pieces[0]) + 2 if pieces else 0
 
     def set_activity(self, fill: int) -> bool:
         fill = max(0, min(self.activity_width, fill))
@@ -398,27 +398,32 @@ class StatusBar:
         self._activity_fill = fill
         return True
 
-    def _model_segments(self, model: str) -> list[tuple[str, str]]:
+    def _model_activity_segments(self, model: str) -> list[tuple[str, str]]:
+        activity_text = f" {model} "
         fill = self._activity_fill if self.running else 0
-        model_width = max(1, get_cwidth(model))
+        activity_width = max(1, get_cwidth(activity_text))
         shades = len(_STATUS_ACTIVITY_SHADES)
         segments: list[tuple[str, str]] = []
         cell_offset = 0
-        for character in model:
+        for index, character in enumerate(activity_text):
             width = get_cwidth(character)
             if width == 0 and segments:
                 style = segments[-1][0]
             elif cell_offset + width <= fill:
                 shade_index = min(
                     shades - 1,
-                    cell_offset * shades // model_width,
+                    cell_offset * shades // activity_width,
                 )
                 style = (
                     "class:status.model.activity."
                     f"{_STATUS_ACTIVITY_SHADES[shade_index]}"
                 )
             else:
-                style = "class:status.model"
+                style = (
+                    "class:status.text"
+                    if index in {0, len(activity_text) - 1}
+                    else "class:status.model"
+                )
             if segments and segments[-1][0] == style:
                 previous_style, previous_text = segments[-1]
                 segments[-1] = (previous_style, previous_text + character)
@@ -438,21 +443,20 @@ class StatusBar:
             segments.extend(
                 [
                     ("class:status.activity", ACCENT_CELL),
-                    ("class:status.text", " "),
-                    *self._model_segments(pieces[0]),
+                    *self._model_activity_segments(pieces[0]),
                 ]
             )
         for piece in pieces[1:]:
             if piece.startswith("agic:"):
                 segments.extend(
-                    [("class:status.text", "  "), ("class:status.agic", piece)]
+                    [("class:status.text", " "), ("class:status.agic", piece)]
                 )
             elif piece.startswith("flow:"):
                 segments.extend(
-                    [("class:status.text", "  "), ("class:status.flow", piece)]
+                    [("class:status.text", " "), ("class:status.flow", piece)]
                 )
             else:
-                segments.append(("class:status.text", f"  {piece}"))
+                segments.append(("class:status.text", f" {piece}"))
         shortcuts = "  ^d exit  ^j newline  ↑↓ history  "
         used = sum(get_cwidth(text) for _style, text in segments)
         padding = max(2, self._terminal_width() - used - get_cwidth(shortcuts))

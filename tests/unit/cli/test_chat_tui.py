@@ -1103,26 +1103,29 @@ def test_chat_status_bar_activity_animates_the_model_name() -> None:
     assert "model runtime model" not in idle_text
     assert "▌" not in idle_text
     assert "█" not in running_text
-    assert idle[:3] == [
+    assert idle[:4] == [
         ("class:status.activity", rendering.ACCENT_CELL),
         ("class:status.text", " "),
         ("class:status.model", "runtime model"),
+        ("class:status.text", " "),
     ]
-    assert running[:3] == idle[:3]
+    assert running[:4] == idle[:4]
     assert next_frame[:4] == [
         ("class:status.activity", rendering.ACCENT_CELL),
+        ("class:status.model.activity.bright", " "),
+        ("class:status.model", "runtime model"),
         ("class:status.text", " "),
-        ("class:status.model.activity.bright", "r"),
-        ("class:status.model", "untime model"),
     ]
+    assert status.activity_width == 15
     status.set_activity(3)
-    assert status._render()[2:4] == [
-        ("class:status.model.activity.bright", "run"),
-        ("class:status.model", "time model"),
+    assert status._render()[1:4] == [
+        ("class:status.model.activity.bright", " ru"),
+        ("class:status.model", "ntime model"),
+        ("class:status.text", " "),
     ]
     status.set_activity(status.activity_width)
-    active_model = status._render()[2:8]
-    assert "".join(text for _style, text in active_model) == "runtime model"
+    active_model = status._render()[1:7]
+    assert "".join(text for _style, text in active_model) == " runtime model "
     assert all(
         style.startswith("class:status.model.activity.")
         for style, _text in active_model
@@ -1144,6 +1147,7 @@ def test_chat_status_bar_activity_animates_the_model_name() -> None:
     )
     assert trough[1] == ("class:status.text", " ")
     assert trough[2] == ("class:status.model", "runtime model")
+    assert trough[3] == ("class:status.text", " ")
     trough_text = "".join(fragment for _style, fragment in trough)
     assert trough_text.index("runtime model") == 2
 
