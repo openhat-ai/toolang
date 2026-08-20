@@ -16,7 +16,7 @@ from prompt_toolkit.utils import get_cwidth
 
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
-from .rendering import START_CONTROL_ACCENT
+from .rendering import CONTROL_STRIP_GLYPH, INPUT_BACKGROUND, START_CONTROL_ACCENT
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
@@ -27,8 +27,8 @@ def _chat_ui_palette() -> dict[str, str]:
         "": "",
         "queue": "fg:#f2f2f2 bg:#3a3a3a",
         "queue.dim": "fg:#b8b8b8 bg:#3a3a3a",
-        "control.start": f"bg:{START_CONTROL_ACCENT}",
-        "input": "fg:#f5f5f5 bg:#444444",
+        "control.start": f"fg:{START_CONTROL_ACCENT} bg:{INPUT_BACKGROUND}",
+        "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "fg:#f2f2f2 bg:#5a5a5a",
@@ -162,7 +162,7 @@ class PromptBox:
                     width=1,
                     style="class:control.start",
                     always_hide_cursor=True,
-                    char=" ",
+                    char=CONTROL_STRIP_GLYPH,
                 ),
                 content,
             ],

@@ -340,10 +340,17 @@ def test_chat_submission_has_no_status_before_run_begin() -> None:
 
     rendered = _render_text(block.render(), width=20)
 
-    assert "  hello" in rendered
+    assert f"{rendering.CONTROL_STRIP_GLYPH} hello" in rendered
     assert ">" not in rendered
     assert "starting" not in rendered
-    assert rendered.splitlines() == [" " * 20, "  hello" + " " * 13, " " * 20, ""]
+    control_line = f"{rendering.CONTROL_STRIP_GLYPH} hello" + " " * 13
+    blank_control_line = rendering.CONTROL_STRIP_GLYPH + " " * 19
+    assert rendered.splitlines() == [
+        blank_control_line,
+        control_line,
+        blank_control_line,
+        "",
+    ]
 
 
 def test_chat_preaccept_error_does_not_render_a_failed_run() -> None:
@@ -703,7 +710,7 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     start = blocks.RunStartBlock.create("hello")
     start.update(_run_begin())
     start_text = _render_text(start.render())
-    assert "  hello" in start_text
+    assert f"{rendering.CONTROL_STRIP_GLYPH} hello" in start_text
     assert ">" not in start_text
     assert "run_1" not in start_text
 
@@ -712,7 +719,7 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
         run_id="run_1",
     )
     steer_text = _render_text(steer.render())
-    assert "  adjust" in steer_text
+    assert f"{rendering.CONTROL_STRIP_GLYPH} adjust" in steer_text
     assert "+" not in steer_text
     assert "pending for next step" not in steer_text
     assert "run_1" not in steer_text
@@ -723,12 +730,14 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     start_accent = next(
         fragment[0]
         for fragment in start_fragments
-        if fragment[1] == " " and f"bg:{rendering.START_CONTROL_ACCENT}" in fragment[0]
+        if fragment[1] == rendering.CONTROL_STRIP_GLYPH
+        and rendering.START_CONTROL_ACCENT in fragment[0]
     )
     steer_accent = next(
         fragment[0]
         for fragment in steer_fragments
-        if fragment[1] == " " and f"bg:{rendering.STEER_CONTROL_ACCENT}" in fragment[0]
+        if fragment[1] == rendering.CONTROL_STRIP_GLYPH
+        and rendering.STEER_CONTROL_ACCENT in fragment[0]
     )
     start_message = next(
         fragment[0] for fragment in start_fragments if "hello" in fragment[1]
@@ -755,8 +764,9 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     assert isinstance(accent, Window)
     assert accent.width == 1
     assert accent.style == "class:control.start"
+    assert accent.char == rendering.CONTROL_STRIP_GLYPH
     assert widgets._chat_ui_palette()["control.start"] == (
-        f"bg:{rendering.START_CONTROL_ACCENT}"
+        f"fg:{rendering.START_CONTROL_ACCENT} bg:{rendering.INPUT_BACKGROUND}"
     )
     assert isinstance(content, HSplit)
     input_row = content.children[1]
@@ -1081,7 +1091,7 @@ def test_chat_thread_creation_error_is_a_submission_error_in_scrollback(
     app.start_run(QueuedCall("hello", {}))
 
     output = "\n".join(rendered)
-    assert "  hello" in output
+    assert f"{rendering.CONTROL_STRIP_GLYPH} hello" in output
     assert ">" not in output
     assert "• thread creation failed" in output
     assert "run failed" not in output
