@@ -20,12 +20,27 @@ from .rendering import CONTROL_STRIP_GLYPH, INPUT_BACKGROUND, START_CONTROL_ACCE
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-_STATUS_ACTIVITY_FORWARD = tuple(
-    f"{' ' * column}{half}{' ' * (7 - column)}"
-    for column in range(8)
-    for half in ("▌", "▐")
+STATUS_ACTIVITY_FILLS = (
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    6,
+    5,
+    4,
+    3,
+    2,
 )
-STATUS_ACTIVITY_FRAMES = _STATUS_ACTIVITY_FORWARD + _STATUS_ACTIVITY_FORWARD[-2:0:-1]
+_STATUS_ACTIVITY_SHADES = (
+    "dark",
+    "muted",
+    "medium",
+    "light",
+    "bright",
+)
 
 
 def _chat_ui_palette() -> dict[str, str]:
@@ -39,6 +54,11 @@ def _chat_ui_palette() -> dict[str, str]:
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "fg:#f2f2f2 bg:#5a5a5a",
         "status.activity": f"fg:{START_CONTROL_ACCENT}",
+        "status.activity.dark": "bg:#4f6b73",
+        "status.activity.muted": "bg:#577f8d",
+        "status.activity.medium": "bg:#6497aa",
+        "status.activity.light": "bg:#76b6cf",
+        "status.activity.bright": f"bg:{START_CONTROL_ACCENT}",
         "status.model": "fg:#ffd866",
         "status.agic": "fg:#8fd7ff",
         "status.flow": "fg:#d7b3ff",
@@ -354,8 +374,21 @@ class StatusBar:
     def advance_activity(self) -> None:
         if self.running:
             self._activity_index = (self._activity_index + 1) % len(
-                STATUS_ACTIVITY_FRAMES
+                STATUS_ACTIVITY_FILLS
             )
+
+    def _activity_prefix(self) -> list[tuple[str, str]]:
+        fill = STATUS_ACTIVITY_FILLS[self._activity_index]
+        shades = len(_STATUS_ACTIVITY_SHADES)
+        segments = [
+            (
+                f"class:status.activity.{_STATUS_ACTIVITY_SHADES[max(0, shades - fill + index)]}",
+                " ",
+            )
+            for index in range(fill)
+        ]
+        segments.append(("class:status.text", " " * (8 - fill)))
+        return segments
 
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
@@ -366,17 +399,13 @@ class StatusBar:
         segments: list[tuple[str, str]] = []
         if pieces:
             if self.running:
-                segments.append(
-                    (
-                        "class:status.activity",
-                        f"{STATUS_ACTIVITY_FRAMES[self._activity_index]} ",
-                    )
-                )
+                segments.extend(self._activity_prefix())
             else:
                 segments.extend(
                     [
-                        ("class:status.text", "  "),
-                        ("class:status.activity", "model: "),
+                        ("class:status.activity", CONTROL_STRIP_GLYPH),
+                        ("class:status.text", " "),
+                        ("class:status.activity", "model "),
                     ]
                 )
             segments.append(("class:status.model", pieces[0]))

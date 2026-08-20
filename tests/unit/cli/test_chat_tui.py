@@ -963,17 +963,31 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
     status.advance_activity()
     next_frame = status._render()[0]
 
-    assert idle_text.index("runtime model") == running_text.index("runtime model") == 9
-    assert idle[:2] == [
-        ("class:status.text", "  "),
-        ("class:status.activity", "model: "),
+    assert idle_text.index("runtime model") == running_text.index("runtime model") == 8
+    assert idle[:3] == [
+        ("class:status.activity", rendering.CONTROL_STRIP_GLYPH),
+        ("class:status.text", " "),
+        ("class:status.activity", "model "),
     ]
-    assert first_frame == ("class:status.activity", "▌        ")
-    assert next_frame == ("class:status.activity", "▐        ")
+    assert first_frame == ("class:status.activity.bright", " ")
+    assert running[1] == ("class:status.text", " " * 7)
+    assert next_frame == ("class:status.activity.light", " ")
+    assert status._render()[:3] == [
+        ("class:status.activity.light", " "),
+        ("class:status.activity.bright", " "),
+        ("class:status.text", " " * 6),
+    ]
     status.advance_activity()
-    assert status._render()[0] == ("class:status.activity", " ▌       ")
+    assert status._render()[:3] == [
+        ("class:status.activity.medium", " "),
+        ("class:status.activity.light", " "),
+        ("class:status.activity.bright", " "),
+    ]
     assert widgets._chat_ui_palette()["status.activity"] == (
         f"fg:{rendering.START_CONTROL_ACCENT}"
+    )
+    assert widgets._chat_ui_palette()["status.activity.bright"] == (
+        f"bg:{rendering.START_CONTROL_ACCENT}"
     )
 
     status.set_running(False)

@@ -65,7 +65,7 @@ _RUN_EVENT_TYPES = (
     StepEnd,
     RunEnd,
 )
-_STATUS_ACTIVITY_INTERVAL = 0.08
+_STATUS_ACTIVITY_INTERVAL = 0.12
 
 
 class ChatTuiAppContext:

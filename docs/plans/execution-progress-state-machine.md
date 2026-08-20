@@ -389,14 +389,14 @@ left-aligned half-cell `▌` accent strip. Start and Steer use distinct accents;
 the bottom `PromptBox` uses the Start accent. The strip replaces prompt glyphs
 such as `>` and `+` while leaving message text aligned in column two.
 
-The bottom `StatusBar` reserves nine cells before the model name. When idle, it
-renders two spaces followed by a Start-accent `model: ` label. While a local Run
-is in flight, the same cells contain a half-cell, full-height Start-accent bar
-moving horizontally across an eight-cell track plus one separating space. `▌`
-and `▐` provide half-character steps; the bar reverses without repeating either
-endpoint. Frames advance every 80 milliseconds. The model name therefore never
-shifts. Animation refreshes only while running and is never committed to
-scrollback.
+The bottom `StatusBar` reserves eight cells before the model name. When idle, it
+renders a Start-accent `▌` in column zero, one space, and a Start-accent `model `
+label without punctuation. While a local Run is in flight, the same cells
+contain a seven-cell background fill that grows from left to right and then
+retracts, followed by one separating space. Filled cells grade from dark cyan
+to a bright Start-accent leading edge. Frames advance every 120 milliseconds.
+The model name therefore never shifts. Animation refreshes only while running
+and is never committed to scrollback.
 
 ## Implementation Touchpoints
 
