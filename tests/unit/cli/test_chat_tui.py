@@ -854,7 +854,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
             ":model, :models                  List or switch models.",
         ],
     )
-    rendered = _render_text(block.render(), width=80)
+    rendered = _render_text(block.render(), width=69)
     rendered_lines = rendered.splitlines()
     segments = [
         segment
@@ -895,20 +895,89 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     assert all(segment.style is None or not segment.style.bold for segment in segments)
 
 
-def test_chat_header_shows_resolved_model_label() -> None:
+def test_chat_header_uses_wide_local_executor_layout() -> None:
+    block = blocks.HeaderBlock(
+        home="/tmp/toolang/agents/alice",
+        version_label="0.1.0",
+    )
+    rendered = _render_text(block.render(), width=80)
+
+    assert "████           ██" in rendered
+    assert "Toolang" in rendered
+    assert "0.1.0" in rendered
+    assert "v0.1.0" not in rendered
+    assert "model" not in rendered
+    assert "home" in rendered
+    assert "/tmp/toolang/agents/alice" in rendered
+    assert "executor" in rendered
+    assert "local" in rendered
+    lines = rendered.splitlines()
+    assert next(index for index, line in enumerate(lines) if "home" in line) < next(
+        index for index, line in enumerate(lines) if "executor" in line
+    )
+    assert next(index for index, line in enumerate(lines) if "████" in line) == next(
+        index for index, line in enumerate(lines) if "Toolang" in line
+    )
+    bordered_lines = [line for line in lines if line]
+    assert len({len(line) for line in bordered_lines}) == 1
+
+
+def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
-            model_label="openai/gpt-5",
+            home="/tmp/toolang/agents/alice-with-a-long-home",
+            version_label="0.1.0",
+        ).render(),
+        width=40,
+    )
+
+    lines = rendered.splitlines()
+    logo_index = next(index for index, line in enumerate(lines) if "████" in line)
+    toolang_index = next(index for index, line in enumerate(lines) if "Toolang" in line)
+    assert toolang_index > logo_index + 2
+    assert all(len(line) <= 40 for line in lines)
+    bordered_lines = [line for line in lines if line]
+    assert len({len(line) for line in bordered_lines}) == 1
+    unwrapped = rendered.replace("\n", "").replace("│", "").replace(" ", "")
+    assert "alice-with-a-long-home" in unwrapped
+
+
+def test_chat_header_keeps_logo_plain_and_styles_metadata() -> None:
+    segments = rendering.render_segments(
+        blocks.HeaderBlock(
             home="/tmp/toolang/agents/alice",
             version_label="0.1.0",
         ).render(),
         width=80,
     )
 
-    assert "model: openai/gpt-5" in rendered
-    assert "select:" not in rendered
-    bordered_lines = [line for line in rendered.splitlines() if line]
-    assert len({len(line) for line in bordered_lines}) == 1
+    logo = next(segment for segment in segments if "████" in segment.text)
+    brand = next(segment for segment in segments if segment.text.strip() == "Toolang")
+    version = next(segment for segment in segments if segment.text.strip() == "0.1.0")
+    keys = [
+        next(segment for segment in segments if segment.text.strip() == key)
+        for key in ("home", "executor")
+    ]
+    values = [
+        next(segment for segment in segments if segment.text.strip() == value)
+        for value in ("/tmp/toolang/agents/alice", "local")
+    ]
+
+    assert logo.style is None or (
+        logo.style.color is None
+        and logo.style.bgcolor is None
+        and not logo.style.bold
+        and not logo.style.dim
+    )
+    assert brand.style is not None and brand.style.bold
+    assert brand.style.color is not None
+    assert brand.style.color.name == "bright_cyan"
+    assert version.style is not None and version.style.dim
+    assert all(segment.style is not None and segment.style.dim for segment in keys)
+    assert all(
+        segment.style is None or (not segment.style.bold and not segment.style.dim)
+        for segment in values
+    )
 
 
 def test_chat_model_label_uses_default_or_selected_model() -> None:

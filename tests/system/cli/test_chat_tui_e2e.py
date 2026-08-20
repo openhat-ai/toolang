@@ -21,7 +21,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
 ) -> None:
     session = ChatTuiPtySession.start("tests.support.chat_tui_e2e", tmp_path)
     try:
-        session.wait_for("Toolang", "^d exit")
+        session.wait_for("Toolang", "executor", "local", "^d exit")
         session.send(b":flow research\r")
         session.wait_for("Runnable not found: research")
         session.send(b"hello from user")
