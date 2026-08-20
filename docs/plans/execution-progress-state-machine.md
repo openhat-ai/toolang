@@ -401,28 +401,26 @@ The bottom `StatusBar` renders a Start-accent background cell in column zero, a
 default-background space in column one, and the model name beginning in column
 two, followed by one default-background space. It omits the redundant `model `
 label. When idle, both surrounding spaces and the entire model name use the
-normal status background. During a local Run, background color grows from the
-space in column one, across the model name, through the trailing space, and then
-retracts while the text and its column remain stable. Active cell backgrounds
-use six sRGB-channel linear blends from the configured Start accent toward the
-configured status background, at blend amounts `0`, `.16`, `.32`, `.48`, `.64`,
-and `.80`, mapped across the wrapped region's display width. Changing either
-endpoint therefore updates the entire gradient.
+normal status background. During a local Run, a four-cell comet sweeps from
+left to right across the wrapped region while the text and its column remain
+stable. Its head uses the configured Start accent and its three-cell tail uses
+successively dimmer sRGB-channel linear blends toward the configured status
+background. The comet changes backgrounds only: it introduces no glyph whose
+line metrics could leave gaps. A six-cell blank interval separates sweeps.
 
-The breathing cycle uses monotonic elapsed time rather than uniform frame
-steps: a 720-millisecond sine-eased expansion, a 180-millisecond peak, a
-900-millisecond sine-eased retraction, and a 260-millisecond trough. Every
-retraction returns the fill to zero for the trough while the leading background
-cell remains stable. The UI checks the phase every 80 milliseconds but redraws
-only when the visible state changes. Completion retracts from the current fill
-with the same easing and a duration proportional to the filled fraction of the
-wrapped model-name region. No glyph-based strip remains, no gap appears between
-filled cells, the model name never shifts, and animation is never committed to
-scrollback.
+The comet advances one display cell every 80 milliseconds using monotonic
+elapsed time rather than accumulated frame steps. The UI checks the phase every
+80 milliseconds but redraws only when the visible state changes. A dim elapsed
+time immediately follows the wrapped model region while a Run is active. It is
+floored to whole seconds and rendered as `24s`, `1m 08s`, or
+`1h 01m 01s`; fractional seconds are never shown. Completion freezes the
+elapsed value and lets a currently visible comet leave the region before the
+activity disappears. The model name never shifts, and the animation and timer
+are never committed to scrollback.
 
 Run completion does not delay results or input, but the running appearance is
-held for at least 600 milliseconds and finishes its retraction so short Runs do
-not flash past abruptly.
+held for at least 600 milliseconds and finishes the visible comet sweep so short
+Runs do not flash past abruptly.
 
 ## Implementation Touchpoints
 

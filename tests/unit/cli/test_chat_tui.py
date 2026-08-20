@@ -1096,7 +1096,7 @@ def test_chat_status_bar_activity_animates_the_model_name() -> None:
     status.set_running(True)
     running = status._render()
     running_text = "".join(fragment for _style, fragment in running)
-    status.set_activity(1)
+    status.set_activity(3, 68)
     next_frame = status._render()
 
     assert idle_text.index("runtime model") == running_text.index("runtime model") == 2
@@ -1110,25 +1110,28 @@ def test_chat_status_bar_activity_animates_the_model_name() -> None:
         ("class:status.text", " "),
     ]
     assert running[:4] == idle[:4]
-    assert next_frame[:4] == [
+    assert running[4] == ("class:status.elapsed", "0s ")
+    assert next_frame[:6] == [
         ("class:status.activity", rendering.ACCENT_CELL),
-        ("class:status.model.activity.bright", " "),
-        ("class:status.model", "runtime model"),
-        ("class:status.text", " "),
+        ("class:status.model.activity.faint", " "),
+        ("class:status.model.activity.muted", "r"),
+        ("class:status.model.activity.light", "u"),
+        ("class:status.model.activity.bright", "n"),
+        ("class:status.model", "time model"),
     ]
+    assert ("class:status.elapsed", "1m 08s ") in next_frame
     assert status.activity_width == 15
-    status.set_activity(3)
-    assert status._render()[1:4] == [
-        ("class:status.model.activity.bright", " ru"),
-        ("class:status.model", "ntime model"),
-        ("class:status.text", " "),
-    ]
-    status.set_activity(status.activity_width)
+    assert status.comet_head == 3
+    assert status.elapsed_seconds == 68
     active_model = status._render()[1:7]
     assert "".join(text for _style, text in active_model) == " runtime model "
-    assert all(
-        style.startswith("class:status.model.activity.")
-        for style, _text in active_model
+    assert (
+        sum(
+            len(text)
+            for style, text in active_model
+            if style.startswith("class:status.model.activity.")
+        )
+        == widgets._STATUS_COMET_TAIL_WIDTH
     )
     assert widgets._chat_ui_palette()["status.activity"] == (
         f"bg:{rendering.START_CONTROL_ACCENT}"
@@ -1139,7 +1142,7 @@ def test_chat_status_bar_activity_animates_the_model_name() -> None:
         f"fg:#ffd866 bg:{rendering.START_CONTROL_ACCENT}"
     )
 
-    status.set_activity(0)
+    status.set_activity(status.activity_width + widgets._STATUS_COMET_TAIL_WIDTH, 68)
     trough = status._render()
     assert trough[0] == (
         "class:status.activity",
@@ -1150,6 +1153,7 @@ def test_chat_status_bar_activity_animates_the_model_name() -> None:
     assert trough[3] == ("class:status.text", " ")
     trough_text = "".join(fragment for _style, fragment in trough)
     assert trough_text.index("runtime model") == 2
+    assert "1m 08s" in trough_text
 
     status.set_running(False)
     assert status._render() == idle
@@ -1169,21 +1173,53 @@ def test_chat_status_palette_linearly_blends_configured_colors(
     assert palette["status.model.activity.faint"] == "fg:#ffd866 bg:#333333"
 
 
-def test_chat_status_breathing_uses_eased_asymmetric_phases() -> None:
-    expand = tui._STATUS_ACTIVITY_EXPAND_DURATION
-    retract_start = expand + tui._STATUS_ACTIVITY_PEAK_DURATION
-    retract = tui._STATUS_ACTIVITY_RETRACT_DURATION
+def test_chat_status_comet_sweeps_with_a_blank_pause() -> None:
+    step = tui._STATUS_COMET_CELL_DURATION
+    tail = widgets._STATUS_COMET_TAIL_WIDTH
 
-    assert tui._status_breathing_fill(0, 6) == 0
-    assert tui._status_breathing_fill(expand * 0.25, 6) == 1
-    assert tui._status_breathing_fill(expand * 0.5, 6) == 3
-    assert tui._status_breathing_fill(expand * 0.75, 6) == 5
-    assert tui._status_breathing_fill(expand, 6) == 6
-    assert tui._status_breathing_fill(expand, 13) == 13
-    assert tui._status_breathing_fill(retract_start + retract * 0.25, 6) == 5
-    assert tui._status_breathing_fill(retract_start + retract * 0.5, 6) == 3
-    assert tui._status_breathing_fill(retract_start + retract * 0.75, 6) == 1
-    assert tui._status_breathing_fill(retract_start + retract, 6) == 0
+    assert tui._status_comet_head(0, 6) == -tail
+    assert tui._status_comet_head(step * tail, 6) == 0
+    assert tui._status_comet_head(step * (tail + 5), 6) == 5
+    assert tui._status_comet_head(step * (tail + 6), 6) == 6
+    assert tui._status_comet_head(step * (tail + 6 + tail), 6) == 10
+    assert (
+        tui._status_comet_head(
+            step * (tail + 6 + tail + tui._STATUS_COMET_GAP_WIDTH), 6
+        )
+        == -tail
+    )
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [(0, "0s"), (59, "59s"), (60, "1m 00s"), (68, "1m 08s"), (3661, "1h 01m 01s")],
+)
+def test_chat_status_elapsed_time_uses_whole_seconds(
+    seconds: int, expected: str
+) -> None:
+    assert widgets._format_elapsed_seconds(seconds) == expected
+
+
+def test_chat_tui_floors_and_freezes_status_elapsed_time() -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    app.status_bar.set_running(True)
+    app._status_activity_started_at = 100.0
+
+    app._update_status_activity(168.9)
+
+    assert app.status_bar.elapsed_seconds == 68
+    assert "1m 08s" in "".join(text for _style, text in app.status_bar._render())
+
+    app._status_completed_elapsed_seconds = 68
+    app._update_status_activity(171.2)
+
+    assert app.status_bar.elapsed_seconds == 68
 
 
 def test_chat_tui_animates_status_only_while_a_run_is_active(
@@ -1204,7 +1240,7 @@ def test_chat_tui_animates_status_only_while_a_run_is_active(
 
         def record_status_activity(now: float) -> None:
             update_status_activity(now)
-            if app.status_bar.activity_fill > 0:
+            if app.status_bar.comet_head >= 0:
                 activity_updated.set()
             if not app.status_bar.running:
                 activity_stopped.set()
@@ -1218,7 +1254,8 @@ def test_chat_tui_animates_status_only_while_a_run_is_active(
             app._set_status_running(False)
             await asyncio.wait_for(activity_stopped.wait(), timeout=0.5)
 
-            assert app.status_bar.activity_fill == 0
+            assert app.status_bar.comet_head == -widgets._STATUS_COMET_TAIL_WIDTH
+            assert app.status_bar.elapsed_seconds == 0
             assert not app.status_bar.running
         finally:
             animation.cancel()
@@ -1226,9 +1263,9 @@ def test_chat_tui_animates_status_only_while_a_run_is_active(
                 await animation
 
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_TICK", 0.001)
-    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_RETRACT_DURATION", 0.004)
+    monkeypatch.setattr(tui, "_STATUS_COMET_CELL_DURATION", 0.001)
     monkeypatch.setattr(tui, "_MIN_STATUS_ACTIVITY_DURATION", 0.0)
-    monkeypatch.setattr(tui, "_status_breathing_fill", lambda elapsed, max_fill: 1)
+    monkeypatch.setattr(tui, "_status_comet_head", lambda elapsed, width: 0)
     asyncio.run(exercise())
 
 
@@ -1273,10 +1310,7 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
 
     monkeypatch.setattr(tui, "_MIN_STATUS_ACTIVITY_DURATION", 0.01)
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_TICK", 0.001)
-    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_TROUGH_DURATION", 0.001)
-    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_EXPAND_DURATION", 0.008)
-    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_PEAK_DURATION", 0.002)
-    monkeypatch.setattr(tui, "_STATUS_ACTIVITY_RETRACT_DURATION", 0.006)
+    monkeypatch.setattr(tui, "_STATUS_COMET_CELL_DURATION", 0.001)
     asyncio.run(exercise())
 
 

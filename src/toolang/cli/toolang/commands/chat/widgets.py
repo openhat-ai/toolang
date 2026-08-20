@@ -25,15 +25,9 @@ from .rendering import (
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-_STATUS_ACTIVITY_SHADES = (
-    "bright",
-    "light",
-    "medium",
-    "muted",
-    "dark",
-    "faint",
-)
-_STATUS_ACTIVITY_MIXES = (0.0, 0.16, 0.32, 0.48, 0.64, 0.8)
+_STATUS_COMET_SHADES = ("bright", "light", "muted", "faint")
+_STATUS_COMET_MIXES = (0.0, 0.16, 0.48, 0.8)
+_STATUS_COMET_TAIL_WIDTH = len(_STATUS_COMET_SHADES)
 _STATUS_MODEL_COLOR = "#ffd866"
 
 
@@ -62,6 +56,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "status.agic": "fg:#8fd7ff",
         "status.flow": "fg:#d7b3ff",
         "status.text": "fg:ansigray",
+        "status.elapsed": "fg:ansigray",
         "status.error": "fg:#ffffff bg:#7a2e2e bold",
         "dim": "fg:ansigray",
     }
@@ -72,11 +67,22 @@ def _chat_ui_palette() -> dict[str, str]:
                 f"bg:{_mix_hex_colors(START_CONTROL_ACCENT, STATUS_BACKGROUND, mix)}"
             )
             for shade, mix in zip(
-                _STATUS_ACTIVITY_SHADES, _STATUS_ACTIVITY_MIXES, strict=True
+                _STATUS_COMET_SHADES, _STATUS_COMET_MIXES, strict=True
             )
         }
     )
     return palette
+
+
+def _format_elapsed_seconds(seconds: int) -> str:
+    seconds = max(0, seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    if minutes:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"
 
 
 class QueuePanel:
@@ -356,7 +362,8 @@ class StatusBar:
         self.status_label = status_label
         self.error_message = ""
         self.running = False
-        self._activity_fill = 0
+        self._comet_head = -_STATUS_COMET_TAIL_WIDTH
+        self._elapsed_seconds = 0
         self.view = FormattedTextControl(self._render)
 
     def container(self) -> Window:
@@ -370,7 +377,6 @@ class StatusBar:
 
     def set_status(self, status_label: str) -> None:
         self.status_label = status_label
-        self._activity_fill = min(self._activity_fill, self.activity_width)
 
     def set_error(self, message: str) -> None:
         self.error_message = message
@@ -380,43 +386,47 @@ class StatusBar:
 
     def set_running(self, running: bool) -> None:
         self.running = running
-        self._activity_fill = 0
+        self._comet_head = -_STATUS_COMET_TAIL_WIDTH
+        self._elapsed_seconds = 0
 
     @property
-    def activity_fill(self) -> int:
-        return self._activity_fill
+    def comet_head(self) -> int:
+        return self._comet_head
+
+    @property
+    def elapsed_seconds(self) -> int:
+        return self._elapsed_seconds
 
     @property
     def activity_width(self) -> int:
         pieces = [piece for piece in self.status_label.split("  ") if piece]
         return get_cwidth(pieces[0]) + 2 if pieces else 0
 
-    def set_activity(self, fill: int) -> bool:
-        fill = max(0, min(self.activity_width, fill))
-        if fill == self._activity_fill:
+    def set_activity(self, comet_head: int, elapsed_seconds: int) -> bool:
+        elapsed_seconds = max(0, elapsed_seconds)
+        if comet_head == self._comet_head and elapsed_seconds == self._elapsed_seconds:
             return False
-        self._activity_fill = fill
+        self._comet_head = comet_head
+        self._elapsed_seconds = elapsed_seconds
         return True
 
     def _model_activity_segments(self, model: str) -> list[tuple[str, str]]:
         activity_text = f" {model} "
-        fill = self._activity_fill if self.running else 0
-        activity_width = max(1, get_cwidth(activity_text))
-        shades = len(_STATUS_ACTIVITY_SHADES)
+        comet_head = self._comet_head if self.running else -_STATUS_COMET_TAIL_WIDTH
         segments: list[tuple[str, str]] = []
         cell_offset = 0
         for index, character in enumerate(activity_text):
             width = get_cwidth(character)
             if width == 0 and segments:
                 style = segments[-1][0]
-            elif cell_offset + width <= fill:
-                shade_index = min(
-                    shades - 1,
-                    cell_offset * shades // activity_width,
-                )
+            elif distances := [
+                comet_head - cell
+                for cell in range(cell_offset, cell_offset + width)
+                if 0 <= comet_head - cell < _STATUS_COMET_TAIL_WIDTH
+            ]:
+                shade_index = min(distances)
                 style = (
-                    "class:status.model.activity."
-                    f"{_STATUS_ACTIVITY_SHADES[shade_index]}"
+                    f"class:status.model.activity.{_STATUS_COMET_SHADES[shade_index]}"
                 )
             else:
                 style = (
@@ -446,6 +456,13 @@ class StatusBar:
                     *self._model_activity_segments(pieces[0]),
                 ]
             )
+            if self.running:
+                segments.append(
+                    (
+                        "class:status.elapsed",
+                        f"{_format_elapsed_seconds(self._elapsed_seconds)} ",
+                    )
+                )
         for piece in pieces[1:]:
             if piece.startswith("agic:"):
                 segments.extend(
