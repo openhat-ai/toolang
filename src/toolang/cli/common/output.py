@@ -23,82 +23,24 @@ TableJustify = Literal["default", "left", "center", "right", "full"]
 
 _TABLE_CONSOLE = Console(highlight=False, width=4096)
 _INFO_CONSOLE = Console(highlight=False)
-_AGENT_AVATAR_CACHE: Text | None = None
 
 INFO_AVATAR_TEXT = """
-██████████                    ████
-▀▀▀████▀▀▀                    ████
-   ████     ▄▄▄▄     ▄▄▄▄     ████
-   ████     ████     ████     ████
-   ████     ▀▀▀▀     ▀▀▀▀     ████
-   ████                   ▄▄▄▄████
-   ████                   ████████
+████           ██
+ ██   ⬤   ⬤    ██
+ ██          ████
 """.strip("\n")
-
-INFO_AVATAR_MARGIN = " "
-
-INFO_PALETTE_COLORS = (
-    (
-        "63c74d",
-        "9edb49",
-        "f4d35e",
-        "f39c12",
-        "f45b69",
-        "ff66c4",
-        "c77dff",
-        "8e7dff",
-        "5b8cff",
-        "4cc9f0",
-        "43d9bd",
-    ),
-    (
-        "4fb03d",
-        "89c93b",
-        "e6c24f",
-        "de8a0d",
-        "de4a58",
-        "f055b5",
-        "b56aed",
-        "7b6cf0",
-        "4b79ee",
-        "3cb7de",
-        "36c4aa",
-    ),
-)
-
-
-def info_avatar() -> Text:
-    """Return the styled CLI info avatar art."""
-
-    return _rainbow_text(info_avatar_text())
 
 
 def info_avatar_text() -> str:
     """Return the plain CLI info avatar art."""
 
-    return _with_line_margin(INFO_AVATAR_TEXT, margin=INFO_AVATAR_MARGIN)
-
-
-def info_palette() -> Text:
-    """Return the styled two-row CLI info palette."""
-
-    top, bottom = INFO_PALETTE_COLORS
-    palette = Text()
-    for style in _color_row_styles(top):
-        palette.append("██", style=style)
-    palette.append("\n")
-    for style in _color_row_styles(bottom):
-        palette.append("██", style=style)
-    return palette
+    return INFO_AVATAR_TEXT
 
 
 def agent_avatar() -> Text:
-    """Return the cached avatar used by agent information views."""
+    """Return the avatar used by agent information views."""
 
-    global _AGENT_AVATAR_CACHE
-    if _AGENT_AVATAR_CACHE is None:
-        _AGENT_AVATAR_CACHE = info_avatar()
-    return _AGENT_AVATAR_CACHE
+    return Text(info_avatar_text())
 
 
 def echo_block(text: str) -> None:
@@ -173,35 +115,26 @@ def echo_pairs_table(
     table.add_column("VALUE", no_wrap=False, style="white", overflow="fold")
     for key, value in rows:
         table.add_row(Text(key), Text(value))
-    typer.echo()
     if avatar is None:
+        typer.echo()
         if title is not None:
             _INFO_CONSOLE.print(_info_title_block(title))
         _INFO_CONSOLE.print(table)
+        typer.echo()
     else:
         avatar_text = avatar if isinstance(avatar, Text) else Text(avatar)
-        if _INFO_CONSOLE.width < 100:
-            _INFO_CONSOLE.print(avatar_text)
-            _INFO_CONSOLE.print(Text(""))
-            if title is not None:
-                _INFO_CONSOLE.print(_info_title_block(title))
-            _INFO_CONSOLE.print(table)
-            _INFO_CONSOLE.print(Text(""))
-            _INFO_CONSOLE.print(info_palette())
-        else:
-            layout = Table.grid(padding=(0, 4))
-            layout.add_column(no_wrap=True, ratio=0)
-            layout.add_column(no_wrap=False, ratio=1)
-            right = Table.grid(padding=(0, 0))
-            right.add_column(no_wrap=False)
-            if title is not None:
-                layout.add_row(Text(""), _info_title_block(title))
-            right.add_row(table)
-            right.add_row(Text(""))
-            right.add_row(info_palette())
-            layout.add_row(avatar_text, right)
-            _INFO_CONSOLE.print(layout)
-    typer.echo()
+        details = Table.grid(padding=(0, 0))
+        details.add_column(no_wrap=False)
+        details.add_row(Text(""))
+        if title is not None:
+            details.add_row(_info_title_block(title))
+        details.add_row(table)
+        details.add_row(Text(""))
+        layout = Table.grid(padding=(0, 4))
+        layout.add_column(no_wrap=True, ratio=0, vertical="middle")
+        layout.add_column(no_wrap=False, ratio=1, vertical="top")
+        layout.add_row(avatar_text, details)
+        _INFO_CONSOLE.print(Padding(layout, (0, 0, 0, 2), expand=False))
 
 
 def created_time(path: Path) -> str:
@@ -295,27 +228,3 @@ def _info_title_block(title: str) -> Table:
     block.add_row(Text(title, style="bold bright_cyan"))
     block.add_row(Text("-" * len(title), style="bright_black"))
     return block
-
-
-def _rainbow_text(text: str) -> Text:
-    rainbow_styles = _color_row_styles(INFO_PALETTE_COLORS[0])
-    styled = Text()
-    for row, line in enumerate(text.splitlines()):
-        for column, char in enumerate(line):
-            if char == " ":
-                styled.append(char)
-                continue
-            style_index = (column + (row * 2)) % len(rainbow_styles)
-            styled.append(char, style=rainbow_styles[style_index])
-        styled.append("\n")
-    if styled.plain.endswith("\n"):
-        styled = styled[:-1]
-    return styled
-
-
-def _with_line_margin(text: str, *, margin: str) -> str:
-    return "\n".join(f"{margin}{line}{margin}" for line in text.splitlines())
-
-
-def _color_row_styles(colors: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(f"bold #{color}" for color in colors)
