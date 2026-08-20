@@ -341,11 +341,12 @@ def test_chat_submission_has_no_status_before_run_begin() -> None:
 
     rendered = _render_text(block.render(), width=20)
 
-    assert f"{rendering.CONTROL_STRIP_GLYPH} hello" in rendered
+    assert "▌" not in rendered
+    assert "  hello" in rendered
     assert ">" not in rendered
     assert "starting" not in rendered
-    control_line = f"{rendering.CONTROL_STRIP_GLYPH} hello" + " " * 13
-    blank_control_line = rendering.CONTROL_STRIP_GLYPH + " " * 19
+    control_line = "  hello" + " " * 13
+    blank_control_line = " " * 20
     assert rendered.splitlines() == [
         blank_control_line,
         control_line,
@@ -726,7 +727,7 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     start = blocks.RunStartBlock.create("hello")
     start.update(_run_begin())
     start_text = _render_text(start.render())
-    assert f"{rendering.CONTROL_STRIP_GLYPH} hello" in start_text
+    assert f"{rendering.ACCENT_CELL} hello" in start_text
     assert ">" not in start_text
     assert "run_1" not in start_text
 
@@ -735,7 +736,7 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
         run_id="run_1",
     )
     steer_text = _render_text(steer.render())
-    assert f"{rendering.CONTROL_STRIP_GLYPH} adjust" in steer_text
+    assert f"{rendering.ACCENT_CELL} adjust" in steer_text
     assert "+" not in steer_text
     assert "pending for next step" not in steer_text
     assert "run_1" not in steer_text
@@ -746,14 +747,14 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     start_accent = next(
         fragment[0]
         for fragment in start_fragments
-        if fragment[1] == rendering.CONTROL_STRIP_GLYPH
-        and rendering.START_CONTROL_ACCENT in fragment[0]
+        if fragment[1] == rendering.ACCENT_CELL
+        and f"bg:{rendering.START_CONTROL_ACCENT}" in fragment[0]
     )
     steer_accent = next(
         fragment[0]
         for fragment in steer_fragments
-        if fragment[1] == rendering.CONTROL_STRIP_GLYPH
-        and rendering.STEER_CONTROL_ACCENT in fragment[0]
+        if fragment[1] == rendering.ACCENT_CELL
+        and f"bg:{rendering.STEER_CONTROL_ACCENT}" in fragment[0]
     )
     start_message = next(
         fragment[0] for fragment in start_fragments if "hello" in fragment[1]
@@ -762,7 +763,8 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
         fragment[0] for fragment in steer_fragments if "adjust" in fragment[1]
     )
 
-    assert start_accent != steer_accent
+    assert start_accent == f"bg:{rendering.START_CONTROL_ACCENT}"
+    assert steer_accent == f"bg:{rendering.STEER_CONTROL_ACCENT}"
     assert f"bg:{rendering.CONTROL_BAR_BACKGROUND}" in start_message
     assert f"bg:{rendering.CONTROL_BAR_BACKGROUND}" in steer_message
 
@@ -780,9 +782,9 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     assert isinstance(accent, Window)
     assert accent.width == 1
     assert accent.style == "class:control.start"
-    assert accent.char == rendering.CONTROL_STRIP_GLYPH
+    assert accent.char == rendering.ACCENT_CELL
     assert widgets._chat_ui_palette()["control.start"] == (
-        f"fg:{rendering.START_CONTROL_ACCENT} bg:{rendering.INPUT_BACKGROUND}"
+        f"bg:{rendering.START_CONTROL_ACCENT}"
     )
     assert isinstance(content, HSplit)
     input_row = content.children[1]
@@ -855,16 +857,14 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     )
     rendered = _render_text(block.render(), width=69)
     rendered_lines = rendered.splitlines()
-    segments = [
-        segment
-        for segment in rendering.render_segments(block.render(), width=80)
-        if segment.text.strip()
-    ]
+    all_segments = rendering.render_segments(block.render(), width=80)
+    segments = [segment for segment in all_segments if segment.text.strip()]
 
-    assert rendered_lines[0].startswith(rendering.CONTROL_STRIP_GLYPH)
-    assert rendered_lines[1].startswith(f"{rendering.CONTROL_STRIP_GLYPH} :?")
+    assert "▌" not in rendered
+    assert not rendered_lines[0].strip()
+    assert rendered_lines[1].startswith(f"{rendering.ACCENT_CELL} :?")
     assert ">" not in rendered_lines[1]
-    assert rendered_lines[2].startswith(rendering.CONTROL_STRIP_GLYPH)
+    assert not rendered_lines[2].strip()
     assert ": Chat Commands" in rendered
     assert ":model, :models" in rendered
     assert "List or switch models." in rendered
@@ -872,14 +872,21 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
     command = next(segment for segment in segments if segment.text == ":model")
     argument = next(segment for segment in segments if segment.text == ":models")
     quick_accents = [
-        segment for segment in segments if segment.text == rendering.CONTROL_STRIP_GLYPH
+        segment
+        for segment in all_segments
+        if segment.text == rendering.ACCENT_CELL
+        and segment.style is not None
+        and segment.style.bgcolor is not None
+        and segment.style.bgcolor.get_truecolor().hex
+        == rendering.QUICK_COMMAND_CONTROL_ACCENT
     ]
 
     assert len(quick_accents) == 3
     assert all(
         segment.style is not None
-        and segment.style.color is not None
-        and segment.style.color.get_truecolor().hex
+        and segment.style.color is None
+        and segment.style.bgcolor is not None
+        and segment.style.bgcolor.get_truecolor().hex
         == rendering.QUICK_COMMAND_CONTROL_ACCENT
         for segment in quick_accents
     )
@@ -901,7 +908,8 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     )
     rendered = _render_text(block.render(), width=80)
 
-    assert "████           ██" in rendered
+    assert "█" not in rendered
+    assert "⬤   ⬤" in rendered
     assert "Toolang" in rendered
     assert "0.1.0" in rendered
     assert "v0.1.0" not in rendered
@@ -914,18 +922,20 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert next(index for index, line in enumerate(lines) if "home" in line) < next(
         index for index, line in enumerate(lines) if "executor" in line
     )
-    assert next(index for index, line in enumerate(lines) if "████" in line) == next(
-        index for index, line in enumerate(lines) if "Toolang" in line
+    assert next(index for index, line in enumerate(lines) if "Toolang" in line) < next(
+        index for index, line in enumerate(lines) if "⬤" in line
+    )
+    assert next(index for index, line in enumerate(lines) if "⬤" in line) == next(
+        index for index, line in enumerate(lines) if "home" in line
     )
     bordered_lines = [line for line in lines if line]
     assert len({len(line) for line in bordered_lines}) == 1
     assert not bordered_lines[1].strip("│ ")
-    assert "████" in bordered_lines[2]
+    assert "Toolang" in bordered_lines[2]
     assert "executor" in bordered_lines[-3]
     assert not bordered_lines[-2].strip("│ ")
     logo_line = next(line for line in lines if "Toolang" in line)
-    assert logo_line.startswith("│  ████")
-    assert logo_line.split("████           ██", 1)[1].startswith("    Toolang")
+    assert logo_line.startswith("│" + " " * 23 + "Toolang")
     assert "Toolang 0.1.0" in logo_line
     assert "Toolang  0.1.0" not in logo_line
 
@@ -940,9 +950,9 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     )
 
     lines = rendered.splitlines()
-    logo_index = next(index for index, line in enumerate(lines) if "████" in line)
+    logo_index = next(index for index, line in enumerate(lines) if "⬤" in line)
     toolang_index = next(index for index, line in enumerate(lines) if "Toolang" in line)
-    assert toolang_index > logo_index + 2
+    assert toolang_index > logo_index + 1
     assert all(len(line) <= 40 for line in lines)
     bordered_lines = [line for line in lines if line]
     assert len({len(line) for line in bordered_lines}) == 1
@@ -950,7 +960,7 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     assert "alice-with-a-long-home" in unwrapped
 
 
-def test_chat_header_keeps_logo_plain_and_styles_metadata() -> None:
+def test_chat_header_keeps_logo_color_neutral_and_styles_metadata() -> None:
     segments = rendering.render_segments(
         blocks.HeaderBlock(
             home="/tmp/toolang/agents/alice",
@@ -959,7 +969,12 @@ def test_chat_header_keeps_logo_plain_and_styles_metadata() -> None:
         width=80,
     )
 
-    logo = next(segment for segment in segments if "████" in segment.text)
+    logo_blocks = [
+        segment
+        for segment in segments
+        if segment.style is not None and segment.style.reverse
+    ]
+    logo_dots = [segment for segment in segments if "⬤" in segment.text]
     brand = next(segment for segment in segments if segment.text.strip() == "Toolang")
     version = next(segment for segment in segments if segment.text.strip() == "0.1.0")
     keys = [
@@ -971,11 +986,24 @@ def test_chat_header_keeps_logo_plain_and_styles_metadata() -> None:
         for value in ("/tmp/toolang/agents/alice", "local")
     ]
 
-    assert logo.style is None or (
-        logo.style.color is None
-        and logo.style.bgcolor is None
-        and not logo.style.bold
-        and not logo.style.dim
+    assert "█" not in "".join(segment.text for segment in segments)
+    assert sum(len(segment.text) for segment in logo_blocks) == 16
+    assert all(segment.text.isspace() for segment in logo_blocks)
+    assert all(
+        segment.style is not None
+        and segment.style.color is None
+        and segment.style.bgcolor is None
+        for segment in logo_blocks
+    )
+    assert logo_dots
+    assert all(
+        segment.style is None
+        or (
+            segment.style.color is None
+            and segment.style.bgcolor is None
+            and not segment.style.reverse
+        )
+        for segment in logo_dots
     )
     assert brand.style is not None and brand.style.bold
     assert brand.style.color is not None
@@ -1060,7 +1088,7 @@ def test_chat_status_bar_uses_right_aligned_shortcut_hints(
     assert len(text) == 80
 
 
-def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
+def test_chat_status_bar_activity_animates_the_model_name() -> None:
     status = widgets.StatusBar("runtime model")
     idle = status._render()
     idle_text = "".join(fragment for _style, fragment in idle)
@@ -1068,47 +1096,60 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
     status.set_running(True)
     running = status._render()
     running_text = "".join(fragment for _style, fragment in running)
-    status.set_activity(1, full_width=True)
+    status.set_activity(1)
     next_frame = status._render()
 
-    assert idle_text.index("runtime model") == running_text.index("runtime model") == 8
-    assert idle[:3] == [
-        ("class:status.activity", rendering.CONTROL_STRIP_GLYPH),
+    assert idle_text.index("runtime model") == running_text.index("runtime model") == 2
+    assert "model runtime model" not in idle_text
+    assert "▌" not in idle_text
+    assert "█" not in running_text
+    assert idle[:4] == [
+        ("class:status.activity", rendering.ACCENT_CELL),
         ("class:status.text", " "),
-        ("class:status.activity", "model "),
+        ("class:status.model", "runtime model"),
+        ("class:status.text", " "),
     ]
-    assert running[0] == ("class:status.activity", widgets.STATUS_ACTIVITY_GLYPH)
-    assert running[1] == ("class:status.text", " " * 7)
-    assert next_frame[1] == ("class:status.activity.bright", " ")
-    assert next_frame[2] == ("class:status.text", " " * 6)
-    status.set_activity(2, full_width=True)
+    assert running[:4] == idle[:4]
+    assert next_frame[:4] == [
+        ("class:status.activity", rendering.ACCENT_CELL),
+        ("class:status.model.activity.bright", " "),
+        ("class:status.model", "runtime model"),
+        ("class:status.text", " "),
+    ]
+    assert status.activity_width == 15
+    status.set_activity(3)
     assert status._render()[1:4] == [
-        ("class:status.activity.bright", " "),
-        ("class:status.activity.light", " "),
-        ("class:status.text", " " * 5),
+        ("class:status.model.activity.bright", " ru"),
+        ("class:status.model", "ntime model"),
+        ("class:status.text", " "),
     ]
-    status.set_activity(3, full_width=True)
-    assert status._render()[1:4] == [
-        ("class:status.activity.bright", " "),
-        ("class:status.activity.light", " "),
-        ("class:status.activity.medium", " "),
-    ]
-    assert widgets._chat_ui_palette()["status.activity"] == (
-        f"fg:{rendering.START_CONTROL_ACCENT}"
+    status.set_activity(status.activity_width)
+    active_model = status._render()[1:7]
+    assert "".join(text for _style, text in active_model) == " runtime model "
+    assert all(
+        style.startswith("class:status.model.activity.")
+        for style, _text in active_model
     )
-    assert widgets._chat_ui_palette()["status.activity.bright"] == (
+    assert widgets._chat_ui_palette()["status.activity"] == (
         f"bg:{rendering.START_CONTROL_ACCENT}"
     )
+    assert widgets._chat_ui_palette()["status.text"] == "fg:ansigray"
+    assert widgets._chat_ui_palette()["status.model"] == "fg:#ffd866"
+    assert widgets._chat_ui_palette()["status.model.activity.bright"] == (
+        f"fg:#ffd866 bg:{rendering.START_CONTROL_ACCENT}"
+    )
 
-    status.set_activity(0, full_width=False)
+    status.set_activity(0)
     trough = status._render()
     assert trough[0] == (
         "class:status.activity",
-        rendering.CONTROL_STRIP_GLYPH,
+        rendering.ACCENT_CELL,
     )
-    assert trough[1] == ("class:status.text", " " * 7)
+    assert trough[1] == ("class:status.text", " ")
+    assert trough[2] == ("class:status.model", "runtime model")
+    assert trough[3] == ("class:status.text", " ")
     trough_text = "".join(fragment for _style, fragment in trough)
-    assert trough_text.index("runtime model") == 8
+    assert trough_text.index("runtime model") == 2
 
     status.set_running(False)
     assert status._render() == idle
@@ -1123,9 +1164,9 @@ def test_chat_status_palette_linearly_blends_configured_colors(
     monkeypatch.setattr(widgets, "STATUS_BACKGROUND", "#000000")
     palette = widgets._chat_ui_palette()
 
-    assert palette["status.activity.bright"] == "bg:#ffffff"
-    assert palette["status.activity.light"] == "bg:#d6d6d6"
-    assert palette["status.activity.faint"] == "bg:#333333"
+    assert palette["status.model.activity.bright"] == "fg:#ffd866 bg:#ffffff"
+    assert palette["status.model.activity.light"] == "fg:#ffd866 bg:#d6d6d6"
+    assert palette["status.model.activity.faint"] == "fg:#ffd866 bg:#333333"
 
 
 def test_chat_status_breathing_uses_eased_asymmetric_phases() -> None:
@@ -1133,15 +1174,16 @@ def test_chat_status_breathing_uses_eased_asymmetric_phases() -> None:
     retract_start = expand + tui._STATUS_ACTIVITY_PEAK_DURATION
     retract = tui._STATUS_ACTIVITY_RETRACT_DURATION
 
-    assert tui._status_breathing_state(0) == (0, True)
-    assert tui._status_breathing_state(expand * 0.25) == (1, True)
-    assert tui._status_breathing_state(expand * 0.5) == (3, True)
-    assert tui._status_breathing_state(expand * 0.75) == (5, True)
-    assert tui._status_breathing_state(expand) == (6, True)
-    assert tui._status_breathing_state(retract_start + retract * 0.25) == (5, True)
-    assert tui._status_breathing_state(retract_start + retract * 0.5) == (3, True)
-    assert tui._status_breathing_state(retract_start + retract * 0.75) == (1, True)
-    assert tui._status_breathing_state(retract_start + retract) == (0, False)
+    assert tui._status_breathing_fill(0, 6) == 0
+    assert tui._status_breathing_fill(expand * 0.25, 6) == 1
+    assert tui._status_breathing_fill(expand * 0.5, 6) == 3
+    assert tui._status_breathing_fill(expand * 0.75, 6) == 5
+    assert tui._status_breathing_fill(expand, 6) == 6
+    assert tui._status_breathing_fill(expand, 13) == 13
+    assert tui._status_breathing_fill(retract_start + retract * 0.25, 6) == 5
+    assert tui._status_breathing_fill(retract_start + retract * 0.5, 6) == 3
+    assert tui._status_breathing_fill(retract_start + retract * 0.75, 6) == 1
+    assert tui._status_breathing_fill(retract_start + retract, 6) == 0
 
 
 def test_chat_tui_animates_status_only_while_a_run_is_active(
@@ -1186,7 +1228,7 @@ def test_chat_tui_animates_status_only_while_a_run_is_active(
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_TICK", 0.001)
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_RETRACT_DURATION", 0.004)
     monkeypatch.setattr(tui, "_MIN_STATUS_ACTIVITY_DURATION", 0.0)
-    monkeypatch.setattr(tui, "_status_breathing_state", lambda elapsed: (1, True))
+    monkeypatch.setattr(tui, "_status_breathing_fill", lambda elapsed, max_fill: 1)
     asyncio.run(exercise())
 
 
@@ -1216,13 +1258,13 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
             assert app.status_bar.running
             assert app.status_bar._render()[0] == (
                 "class:status.activity",
-                widgets.STATUS_ACTIVITY_GLYPH,
+                rendering.ACCENT_CELL,
             )
             await asyncio.wait_for(activity_stopped.wait(), timeout=0.5)
             assert not app.status_bar.running
             assert app.status_bar._render()[0] == (
                 "class:status.activity",
-                rendering.CONTROL_STRIP_GLYPH,
+                rendering.ACCENT_CELL,
             )
         finally:
             animation.cancel()
@@ -1427,7 +1469,7 @@ def test_chat_thread_creation_error_is_a_submission_error_in_scrollback(
     app.start_run(QueuedCall("hello", {}))
 
     output = "\n".join(rendered)
-    assert f"{rendering.CONTROL_STRIP_GLYPH} hello" in output
+    assert f"{rendering.ACCENT_CELL} hello" in output
     assert ">" not in output
     assert "• thread creation failed" in output
     assert "run failed" not in output

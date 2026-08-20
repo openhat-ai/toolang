@@ -282,8 +282,11 @@ the same Rich Markdown renderables while moving committed fragments into
 scrollback and retaining only replaceable fragments in its live container.
 
 Chat submission and steer controls contain only their authored message. Their
-left accent strips distinguish start from steer without displaying Run IDs or
-execution state. The prompt uses the start accent. The status bar keeps the
-model label aligned while a run-scoped breathing fill indicates activity;
-short Runs retain the activity long enough to avoid flashing. This transient UI
-state is never committed to execution scrollback.
+left background-filled accent cells distinguish start from steer without
+displaying Run IDs or execution state. Quick-command bars use the same
+background-cell treatment with their own accent, and the prompt uses the start
+accent. The status bar keeps the model name aligned while a run-scoped
+breathing fill moves across the model name and one surrounding cell on each
+side; there is no separate `model` label. Short Runs retain the activity long
+enough to avoid flashing. This transient UI state is never committed to
+execution scrollback.

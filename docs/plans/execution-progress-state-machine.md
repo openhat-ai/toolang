@@ -389,32 +389,36 @@ steer control attached to an active Run. Their rendered bars contain only the
 authored message: Run ids, pending state, and other execution status belong to
 execution progress rather than the control.
 
-Both control bars use the same background and reserve column zero for a
-left-aligned half-cell `▌` accent strip. Start and Steer use distinct accents;
-the bottom `PromptBox` uses the Start accent. The strip replaces prompt glyphs
-such as `>` and `+` while leaving message text aligned in column two.
+Both control bars use the same background and reserve column zero for a blank
+cell whose background is the accent color. Start and Steer use distinct
+accents; quick-command bars use the same background-cell treatment with their
+own accent, and the bottom `PromptBox` uses the Start accent. The cell replaces
+prompt glyphs such as `>` and `+` while leaving message text aligned in column
+two. Rendering the full cell as a background avoids glyph line gaps between
+adjacent rows.
 
-The bottom `StatusBar` reserves eight cells before the model name. When idle, it
-renders a Start-accent `▌` in column zero, one space, and a Start-accent `model `
-label without punctuation. A local Run first changes column zero to a full-cell
-`█`; columns one through six then contain a contiguous background fill that
-grows from left to right and retracts, while column seven remains a separating
-space. Filled cells start with the same color as the full-cell strip and weaken
-toward their right edge. Their colors are six sRGB-channel linear blends from
-the configured Start accent toward the configured status background, at blend
-amounts `0`, `.16`, `.32`, `.48`, `.64`, and `.80`; changing either endpoint
-therefore updates the entire gradient.
+The bottom `StatusBar` renders a Start-accent background cell in column zero, a
+default-background space in column one, and the model name beginning in column
+two, followed by one default-background space. It omits the redundant `model `
+label. When idle, both surrounding spaces and the entire model name use the
+normal status background. During a local Run, background color grows from the
+space in column one, across the model name, through the trailing space, and then
+retracts while the text and its column remain stable. Active cell backgrounds
+use six sRGB-channel linear blends from the configured Start accent toward the
+configured status background, at blend amounts `0`, `.16`, `.32`, `.48`, `.64`,
+and `.80`, mapped across the wrapped region's display width. Changing either
+endpoint therefore updates the entire gradient.
 
 The breathing cycle uses monotonic elapsed time rather than uniform frame
 steps: a 720-millisecond sine-eased expansion, a 180-millisecond peak, a
 900-millisecond sine-eased retraction, and a 260-millisecond trough. Every
-retraction narrows the full-cell `█` back to the half-cell `▌` for the trough;
-the strip returns to `█` before the next expansion. The UI checks the phase
-every 80 milliseconds but redraws only when the visible state changes.
-Completion retracts from the current fill with the same easing and a duration
-proportional to its width, then narrows the full-cell `█` directly back to the
-idle half-cell `▌`. No gap appears between the strip and fill, the model name
-never shifts, and animation is never committed to scrollback.
+retraction returns the fill to zero for the trough while the leading background
+cell remains stable. The UI checks the phase every 80 milliseconds but redraws
+only when the visible state changes. Completion retracts from the current fill
+with the same easing and a duration proportional to the filled fraction of the
+wrapped model-name region. No glyph-based strip remains, no gap appears between
+filled cells, the model name never shifts, and animation is never committed to
+scrollback.
 
 Run completion does not delay results or input, but the running appearance is
 held for at least 600 milliseconds and finishes its retraction so short Runs do

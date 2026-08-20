@@ -10,8 +10,8 @@ model in the status bar, where it can change during a chat.
 
 The change succeeds when:
 
-- the banner shows the unstyled three-line logo beside `Toolang` and its exact
-  version value, separated by one ordinary space;
+- the banner shows the color-neutral three-line logo beside `Toolang` and its
+  exact version value, separated by one ordinary space;
 - `home` appears above `executor`, and the current process-local chat path shows
   `executor  local`;
 - the displayed home uses platform-native user-home and temporary-directory
@@ -24,7 +24,9 @@ The change succeeds when:
 ## Scope and presentation
 
 The rounded panel keeps a dim border, two columns of horizontal padding, and one
-empty row above and below its content. The logo has no explicit Rich style.
+empty row above and below its content. The logo has no fixed color. Its solid
+cells use reverse-styled spaces so adjacent rows join without glyph line gaps;
+plain terminals fall back to block characters.
 `Toolang` is bold bright cyan. Its exact `toolang_version()` value follows after
 one space in the normal foreground rather than participating in key/value
 alignment. The `home` and `executor` keys are dim, and their values use the

@@ -17,7 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 from toolang.base.types.message import Part, TextPart
-from toolang.cli.common.output import toolang_logo_text
+from toolang.cli.common.output import toolang_logo, toolang_logo_text
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
 from toolang.execution.types import ExecutionError
 
@@ -42,7 +42,7 @@ from toolang.cli.common.execution_progress.state import Metrics
 from .base import friendly_error
 from .rendering import (
     CONTROL_BAR_BACKGROUND,
-    CONTROL_STRIP_GLYPH,
+    ACCENT_CELL,
     QUICK_COMMAND_CONTROL_ACCENT,
     START_CONTROL_ACCENT,
     STEER_CONTROL_ACCENT,
@@ -98,10 +98,10 @@ def _control_bar_line(
     background = CONTROL_BAR_BACKGROUND
     return bar(
         [
-            (CONTROL_STRIP_GLYPH, f"{accent} on {background}"),
+            (ACCENT_CELL, f"on {accent}"),
             (f" {content}" if content else "", f"white on {background}"),
         ],
-        style=f"white on {background}",
+        style=f"on {background}",
     )
 
 
@@ -422,7 +422,6 @@ class HeaderBlock:
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        del console
         identity = Text()
         identity.append("Toolang", style="bold bright_cyan")
         identity.append(f" {self.version_label}")
@@ -439,7 +438,7 @@ class HeaderBlock:
         details.add_row(fields)
 
         logo_text = toolang_logo_text()
-        logo = Text(logo_text)
+        logo = toolang_logo(console)
         logo_width = max(display_width(line) for line in logo_text.splitlines())
         details_width = max(
             display_width("Toolang") + 1 + display_width(self.version_label),

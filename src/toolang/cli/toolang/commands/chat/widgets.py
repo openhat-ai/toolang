@@ -17,7 +17,7 @@ from prompt_toolkit.utils import get_cwidth
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 from .rendering import (
-    CONTROL_STRIP_GLYPH,
+    ACCENT_CELL,
     INPUT_BACKGROUND,
     START_CONTROL_ACCENT,
     STATUS_BACKGROUND,
@@ -25,8 +25,6 @@ from .rendering import (
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-STATUS_ACTIVITY_GLYPH = "█"
-STATUS_ACTIVITY_MAX_FILL = 6
 _STATUS_ACTIVITY_SHADES = (
     "bright",
     "light",
@@ -36,6 +34,7 @@ _STATUS_ACTIVITY_SHADES = (
     "faint",
 )
 _STATUS_ACTIVITY_MIXES = (0.0, 0.16, 0.32, 0.48, 0.64, 0.8)
+_STATUS_MODEL_COLOR = "#ffd866"
 
 
 def _mix_hex_colors(start: str, end: str, amount: float) -> str:
@@ -53,13 +52,13 @@ def _chat_ui_palette() -> dict[str, str]:
         "": "",
         "queue": "fg:#f2f2f2 bg:#3a3a3a",
         "queue.dim": "fg:#b8b8b8 bg:#3a3a3a",
-        "control.start": f"fg:{START_CONTROL_ACCENT} bg:{INPUT_BACKGROUND}",
+        "control.start": f"bg:{START_CONTROL_ACCENT}",
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": f"fg:#f2f2f2 bg:{STATUS_BACKGROUND}",
-        "status.activity": f"fg:{START_CONTROL_ACCENT}",
-        "status.model": "fg:#ffd866",
+        "status.activity": f"bg:{START_CONTROL_ACCENT}",
+        "status.model": f"fg:{_STATUS_MODEL_COLOR}",
         "status.agic": "fg:#8fd7ff",
         "status.flow": "fg:#d7b3ff",
         "status.text": "fg:ansigray",
@@ -68,7 +67,8 @@ def _chat_ui_palette() -> dict[str, str]:
     }
     palette.update(
         {
-            f"status.activity.{shade}": (
+            f"status.model.activity.{shade}": (
+                f"fg:{_STATUS_MODEL_COLOR} "
                 f"bg:{_mix_hex_colors(START_CONTROL_ACCENT, STATUS_BACKGROUND, mix)}"
             )
             for shade, mix in zip(
@@ -200,7 +200,7 @@ class PromptBox:
                     width=1,
                     style="class:control.start",
                     always_hide_cursor=True,
-                    char=CONTROL_STRIP_GLYPH,
+                    char=ACCENT_CELL,
                 ),
                 content,
             ],
@@ -357,7 +357,6 @@ class StatusBar:
         self.error_message = ""
         self.running = False
         self._activity_fill = 0
-        self._activity_full_width = False
         self.view = FormattedTextControl(self._render)
 
     def container(self) -> Window:
@@ -371,6 +370,7 @@ class StatusBar:
 
     def set_status(self, status_label: str) -> None:
         self.status_label = status_label
+        self._activity_fill = min(self._activity_fill, self.activity_width)
 
     def set_error(self, message: str) -> None:
         self.error_message = message
@@ -381,37 +381,55 @@ class StatusBar:
     def set_running(self, running: bool) -> None:
         self.running = running
         self._activity_fill = 0
-        self._activity_full_width = running
 
     @property
     def activity_fill(self) -> int:
         return self._activity_fill
 
-    def set_activity(self, fill: int, *, full_width: bool) -> bool:
-        fill = max(0, min(STATUS_ACTIVITY_MAX_FILL, fill))
-        if fill == self._activity_fill and full_width == self._activity_full_width:
+    @property
+    def activity_width(self) -> int:
+        pieces = [piece for piece in self.status_label.split("  ") if piece]
+        return get_cwidth(pieces[0]) + 2 if pieces else 0
+
+    def set_activity(self, fill: int) -> bool:
+        fill = max(0, min(self.activity_width, fill))
+        if fill == self._activity_fill:
             return False
         self._activity_fill = fill
-        self._activity_full_width = full_width
         return True
 
-    def _activity_prefix(self) -> list[tuple[str, str]]:
-        fill = self._activity_fill
+    def _model_activity_segments(self, model: str) -> list[tuple[str, str]]:
+        activity_text = f" {model} "
+        fill = self._activity_fill if self.running else 0
+        activity_width = max(1, get_cwidth(activity_text))
         shades = len(_STATUS_ACTIVITY_SHADES)
-        glyph = (
-            STATUS_ACTIVITY_GLYPH if self._activity_full_width else CONTROL_STRIP_GLYPH
-        )
-        segments = [("class:status.activity", glyph)]
-        segments.extend(
-            [
-                (
-                    f"class:status.activity.{_STATUS_ACTIVITY_SHADES[min(index, shades - 1)]}",
-                    " ",
+        segments: list[tuple[str, str]] = []
+        cell_offset = 0
+        for index, character in enumerate(activity_text):
+            width = get_cwidth(character)
+            if width == 0 and segments:
+                style = segments[-1][0]
+            elif cell_offset + width <= fill:
+                shade_index = min(
+                    shades - 1,
+                    cell_offset * shades // activity_width,
                 )
-                for index in range(fill)
-            ]
-        )
-        segments.append(("class:status.text", " " * (7 - fill)))
+                style = (
+                    "class:status.model.activity."
+                    f"{_STATUS_ACTIVITY_SHADES[shade_index]}"
+                )
+            else:
+                style = (
+                    "class:status.text"
+                    if index in {0, len(activity_text) - 1}
+                    else "class:status.model"
+                )
+            if segments and segments[-1][0] == style:
+                previous_style, previous_text = segments[-1]
+                segments[-1] = (previous_style, previous_text + character)
+            else:
+                segments.append((style, character))
+            cell_offset += width
         return segments
 
     def _render(self) -> list[tuple[str, str]]:
@@ -422,28 +440,23 @@ class StatusBar:
         pieces = [piece for piece in self.status_label.split("  ") if piece]
         segments: list[tuple[str, str]] = []
         if pieces:
-            if self.running:
-                segments.extend(self._activity_prefix())
-            else:
-                segments.extend(
-                    [
-                        ("class:status.activity", CONTROL_STRIP_GLYPH),
-                        ("class:status.text", " "),
-                        ("class:status.activity", "model "),
-                    ]
-                )
-            segments.append(("class:status.model", pieces[0]))
+            segments.extend(
+                [
+                    ("class:status.activity", ACCENT_CELL),
+                    *self._model_activity_segments(pieces[0]),
+                ]
+            )
         for piece in pieces[1:]:
             if piece.startswith("agic:"):
                 segments.extend(
-                    [("class:status.text", "  "), ("class:status.agic", piece)]
+                    [("class:status.text", " "), ("class:status.agic", piece)]
                 )
             elif piece.startswith("flow:"):
                 segments.extend(
-                    [("class:status.text", "  "), ("class:status.flow", piece)]
+                    [("class:status.text", " "), ("class:status.flow", piece)]
                 )
             else:
-                segments.append(("class:status.text", f"  {piece}"))
+                segments.append(("class:status.text", f" {piece}"))
         shortcuts = "  ^d exit  ^j newline  ↑↓ history  "
         used = sum(get_cwidth(text) for _style, text in segments)
         padding = max(2, self._terminal_width() - used - get_cwidth(shortcuts))
