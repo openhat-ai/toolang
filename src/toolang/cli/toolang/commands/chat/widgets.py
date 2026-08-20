@@ -27,8 +27,6 @@ STATUS_ACTIVITY_FILLS = (
     4,
     5,
     6,
-    7,
-    6,
     5,
     4,
     3,
@@ -380,14 +378,17 @@ class StatusBar:
     def _activity_prefix(self) -> list[tuple[str, str]]:
         fill = STATUS_ACTIVITY_FILLS[self._activity_index]
         shades = len(_STATUS_ACTIVITY_SHADES)
-        segments = [
-            (
-                f"class:status.activity.{_STATUS_ACTIVITY_SHADES[max(0, shades - fill + index)]}",
-                " ",
-            )
-            for index in range(fill)
-        ]
-        segments.append(("class:status.text", " " * (8 - fill)))
+        segments = [("class:status.activity", CONTROL_STRIP_GLYPH)]
+        segments.extend(
+            [
+                (
+                    f"class:status.activity.{_STATUS_ACTIVITY_SHADES[max(0, shades - fill + index)]}",
+                    " ",
+                )
+                for index in range(fill)
+            ]
+        )
+        segments.append(("class:status.text", " " * (7 - fill)))
         return segments
 
     def _render(self) -> list[tuple[str, str]]:

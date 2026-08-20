@@ -391,12 +391,12 @@ such as `>` and `+` while leaving message text aligned in column two.
 
 The bottom `StatusBar` reserves eight cells before the model name. When idle, it
 renders a Start-accent `▌` in column zero, one space, and a Start-accent `model `
-label without punctuation. While a local Run is in flight, the same cells
-contain a seven-cell background fill that grows from left to right and then
-retracts, followed by one separating space. Filled cells grade from dark cyan
-to a bright Start-accent leading edge. Frames advance every 120 milliseconds.
-The model name therefore never shifts. Animation refreshes only while running
-and is never committed to scrollback.
+label without punctuation. Column zero keeps the same `▌` while a local Run is
+in flight; columns one through six contain a background fill that grows from
+left to right and then retracts, and column seven remains a separating space.
+Filled cells grade from dark cyan to a bright Start-accent leading edge. Frames
+advance every 180 milliseconds. The model name therefore never shifts.
+Animation refreshes only while running and is never committed to scrollback.
 
 ## Implementation Touchpoints
 
