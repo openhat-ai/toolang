@@ -52,9 +52,9 @@ from .rendering import (
     terminal_width,
 )
 
-_HEADER_MIN_WIDE_WIDTH = 69
-_HEADER_HORIZONTAL_PADDING = 2
-_HEADER_COLUMN_GAP = 4
+_HEADER_MIN_WIDE_WIDTH = 66
+_HEADER_HORIZONTAL_PADDING = 1
+_HEADER_COLUMN_GAP = 3
 _HEADER_FIELD_GAP = 2
 
 
@@ -465,7 +465,7 @@ class HeaderBlock:
             content,
             box=box.ROUNDED,
             border_style="dim",
-            padding=(1, _HEADER_HORIZONTAL_PADDING),
+            padding=(0, _HEADER_HORIZONTAL_PADDING),
             expand=False,
         )
 
