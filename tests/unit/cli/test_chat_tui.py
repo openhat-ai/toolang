@@ -959,9 +959,8 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
     status.set_running(True)
     running = status._render()
     running_text = "".join(fragment for _style, fragment in running)
-    first_frame = running[1]
     status.advance_activity()
-    next_frame = status._render()[1]
+    next_frame = status._render()
 
     assert idle_text.index("runtime model") == running_text.index("runtime model") == 8
     assert idle[:3] == [
@@ -970,9 +969,10 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
         ("class:status.activity", "model "),
     ]
     assert running[0] == idle[0]
-    assert first_frame == ("class:status.activity.bright", " ")
-    assert running[2] == ("class:status.text", " " * 6)
-    assert next_frame == ("class:status.activity.light", " ")
+    assert running[1] == ("class:status.text", " " * 7)
+    assert next_frame[1] == ("class:status.activity.bright", " ")
+    assert next_frame[2] == ("class:status.text", " " * 6)
+    status.advance_activity()
     assert status._render()[1:4] == [
         ("class:status.activity.light", " "),
         ("class:status.activity.bright", " "),

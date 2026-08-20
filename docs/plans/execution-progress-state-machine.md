@@ -395,8 +395,9 @@ label without punctuation. Column zero keeps the same `▌` while a local Run is
 in flight; columns one through six contain a background fill that grows from
 left to right and then retracts, and column seven remains a separating space.
 Filled cells grade from dark cyan to a bright Start-accent leading edge. Frames
-advance every 180 milliseconds. The model name therefore never shifts.
-Animation refreshes only while running and is never committed to scrollback.
+advance every 180 milliseconds and retract completely so column one does not
+retain a background color. The model name therefore never shifts. Animation
+refreshes only while running and is never committed to scrollback.
 
 ## Implementation Touchpoints
 

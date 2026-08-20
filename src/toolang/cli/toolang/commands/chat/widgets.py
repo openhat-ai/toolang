@@ -21,6 +21,7 @@ from .rendering import CONTROL_STRIP_GLYPH, INPUT_BACKGROUND, START_CONTROL_ACCE
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
 STATUS_ACTIVITY_FILLS = (
+    0,
     1,
     2,
     3,
@@ -31,6 +32,7 @@ STATUS_ACTIVITY_FILLS = (
     4,
     3,
     2,
+    1,
 )
 _STATUS_ACTIVITY_SHADES = (
     "dark",
