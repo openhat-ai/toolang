@@ -465,7 +465,7 @@ class HeaderBlock:
             content,
             box=box.ROUNDED,
             border_style="dim",
-            padding=(0, _HEADER_HORIZONTAL_PADDING),
+            padding=(1, _HEADER_HORIZONTAL_PADDING),
             expand=False,
         )
 
