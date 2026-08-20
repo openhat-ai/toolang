@@ -240,7 +240,7 @@ Script and Chat end a root Run with the same footer:
 The marker and every wrapped facts line occupy two cells before their text.
 The rule width follows the longest rendered facts line after width limiting and
 wrapping. The caption alone is green, red, or yellow for success, failure, or
-cancellation; the marker, rule, and facts remain dim.
+cancellation. The marker uses normal intensity; the rule and facts remain dim.
 
 The footer owns total duration and whole-tree Run facts. Script does not append
 a separate `Run: RUN_ID` line. Errors before `RunBegin` are reported outside

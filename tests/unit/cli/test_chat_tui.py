@@ -672,7 +672,7 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
         ("canceled", "yellow"),
     ],
 )
-def test_chat_run_footer_colors_only_the_caption(
+def test_chat_run_footer_styles_marker_caption_rule_and_facts(
     status: Literal["succeeded", "failed", "canceled"],
     color: str,
 ) -> None:
@@ -684,24 +684,23 @@ def test_chat_run_footer_colors_only_the_caption(
         if segment.text.strip()
     ]
 
-    border_chars = {"•", "─"}
-    border = [
-        segment
-        for segment in segments
-        if any(character in border_chars for character in segment.text)
-    ]
-    content = [segment for segment in segments if segment not in border]
-    assert border
+    marker = next(segment for segment in segments if segment.text == "•")
+    assert marker.style is None or (marker.style.color is None and not marker.style.dim)
+    rule = [segment for segment in segments if "─" in segment.text]
+    assert rule
     assert all(
         segment.style is not None and segment.style.color is None and segment.style.dim
-        for segment in border
+        for segment in rule
     )
-    assert content
-    caption = next(segment for segment in content if "run_1" in segment.text)
+    caption = next(segment for segment in segments if "run_1" in segment.text)
     assert caption.style is not None
     assert caption.style.color is not None
     assert caption.style.color.name == color
-    facts = [segment for segment in content if segment is not caption]
+    facts = [
+        segment
+        for segment in segments
+        if segment not in (marker, caption) and segment not in rule
+    ]
     assert facts
     assert all(
         segment.style is not None and segment.style.color is None and segment.style.dim
