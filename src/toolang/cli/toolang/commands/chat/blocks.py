@@ -38,6 +38,7 @@ from .base import friendly_error
 from .rendering import (
     CONTROL_BAR_BACKGROUND,
     CONTROL_STRIP_GLYPH,
+    QUICK_COMMAND_CONTROL_ACCENT,
     START_CONTROL_ACCENT,
     STEER_CONTROL_ACCENT,
     bar,
@@ -381,16 +382,17 @@ class SlashBlock:
     body: Sequence[str]
 
     def render(self) -> RenderableType:
-        lines: list[RenderableType] = [bar([], style="white on grey23")]
+        lines: list[RenderableType] = [
+            _control_bar_line(accent=QUICK_COMMAND_CONTROL_ACCENT)
+        ]
         lines.extend(
-            bar(
-                [(">", "grey70 on grey23"), (f" {line}", "white on grey23")]
-                if index == 0
-                else [(f"  {line}", "white on grey23")]
+            _control_bar_line(
+                line,
+                accent=QUICK_COMMAND_CONTROL_ACCENT,
             )
-            for index, line in enumerate(self.message.splitlines() or [""])
+            for line in self.message.splitlines() or [""]
         )
-        lines.extend([bar([], style="white on grey23"), Text()])
+        lines.extend([_control_bar_line(accent=QUICK_COMMAND_CONTROL_ACCENT), Text()])
         if self.body:
             first, *rest = self.body
             lines.append(Text.from_markup(f"[dim]:[/] [none]{escape(first)}[/]"))

@@ -847,16 +847,32 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
         if segment.text.strip()
     ]
 
-    assert not rendered_lines[0].strip()
-    assert rendered_lines[1].startswith("> :?")
-    assert not rendered_lines[2].strip()
+    assert rendered_lines[0].startswith(rendering.CONTROL_STRIP_GLYPH)
+    assert rendered_lines[1].startswith(f"{rendering.CONTROL_STRIP_GLYPH} :?")
+    assert ">" not in rendered_lines[1]
+    assert rendered_lines[2].startswith(rendering.CONTROL_STRIP_GLYPH)
     assert ": Chat Commands" in rendered
     assert ":model, :models" in rendered
     assert "List or switch models." in rendered
     assert rendered.endswith("\n")
     command = next(segment for segment in segments if segment.text == ":model")
     argument = next(segment for segment in segments if segment.text == ":models")
+    quick_accents = [
+        segment for segment in segments if segment.text == rendering.CONTROL_STRIP_GLYPH
+    ]
 
+    assert len(quick_accents) == 3
+    assert all(
+        segment.style is not None
+        and segment.style.color is not None
+        and segment.style.color.get_truecolor().hex
+        == rendering.QUICK_COMMAND_CONTROL_ACCENT
+        for segment in quick_accents
+    )
+    assert rendering.QUICK_COMMAND_CONTROL_ACCENT not in {
+        rendering.START_CONTROL_ACCENT,
+        rendering.STEER_CONTROL_ACCENT,
+    }
     assert command.style is not None
     assert command.style.color is not None
     assert argument.style is not None
