@@ -53,12 +53,17 @@ child closure, control decisions, or parallel work. The centered dot `·` is
 only an inline facts separator.
 
 - Model activity and output use `•` and normal text.
-- Tool activity uses `•` and normal text. Its terminal action and output are
-  dim.
+- Tool activity uses `•` and normal text. Its successful terminal marker,
+  action, and output are dim.
 - Flow activity and terminal output use `•` and normal text.
 - Errors use `•` with error styling; cancellation uses warning styling.
 - Parallel lanes place `•` after the lane columns.
-- Headers, facts, footer rules, and footer facts are dim.
+- Headers and facts are dim.
+
+Terminal markers use the same color and intensity as their following content.
+Successful Model and Flow outputs use normal white; successful Tool terminal
+output uses dim white. Failure uses red and cancellation uses yellow. Green is
+not a terminal status color.
 
 Step paths, child-Run closure, binding effects, result pointers, and control
 decisions are not displayed. Model and Tool Steps also omit duration, model
@@ -239,11 +244,10 @@ Script and Chat end a root Run with the same footer:
 
 The divider is 42 cells wide: the solid `▴` marker and its following space
 occupy two cells, and the caption plus trailing rule fill the remaining 40.
-Narrow terminals shorten the divider without wrapping it. The marker uses the
-same normal-intensity visual weight as a Step bullet; the caption and rule are
-green, red, or yellow for success, failure, or cancellation. Facts remain dim
-and use the available terminal width independently, so they may extend beyond
-the divider.
+Narrow terminals shorten the divider without wrapping it. The marker, caption,
+and rule share the terminal status style: dim for success, red for failure, and
+yellow for cancellation. Facts remain dim and use the available terminal width
+independently, so they may extend beyond the divider.
 
 The footer owns total duration and whole-tree Run facts. Script does not append
 a separate `Run: RUN_ID` line. Errors before `RunBegin` are reported outside
@@ -259,11 +263,10 @@ The Chat TUI `:show` command introduces a durable result with a quiet divider:
 • Result body rendered as Markdown.
 ```
 
-The solid `▾` marker uses the same normal-intensity visual weight as a Step
-bullet; the caption and rule remain dim, and the result body retains normal
-intensity. The divider follows the same fixed 42-cell width as the root Run
-footer and shortens only when the available width requires caption truncation.
-Exactly one blank line separates the divider from the result body.
+The solid `▾` marker, caption, and rule are dim, while the result body retains
+normal intensity. The divider follows the same fixed 42-cell width as the root
+Run footer and shortens only when the available width requires caption
+truncation. Exactly one blank line separates the divider from the result body.
 
 ## Surface Behavior
 

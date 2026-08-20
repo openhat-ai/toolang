@@ -35,6 +35,7 @@ from toolang.cli.common.execution_progress.rich_rendering import (
     RUN_DIVIDER_WIDTH,
     progress_block_renderable,
     run_footer_renderable,
+    terminal_status_style,
 )
 from toolang.cli.common.execution_progress.state import Metrics
 
@@ -276,15 +277,7 @@ class RunStopBlock(MutableBlock):
         if self.status == "canceling":
             return Text.from_markup("[dim]canceling[/]")
 
-        tone = (
-            "green"
-            if self.status == "succeeded"
-            else "red"
-            if self.status == "failed"
-            else "yellow"
-            if self.status == "canceled"
-            else "dim"
-        )
+        tone = terminal_status_style(self.status)
         lines: list[RenderableType] = []
         if message := _terminal_diagnostic(self.status, self.error):
             lines.extend(
@@ -389,7 +382,7 @@ class _SlashResultDivider:
         divider_width = min(width, RUN_DIVIDER_WIDTH)
         caption = f"{self.run_id} result"
         if divider_width < 5:
-            divider = Text("▾")
+            divider = Text("▾", style="dim")
             if divider_width > 1:
                 divider.append(" ", style="dim")
             if divider_width > 2:
@@ -404,7 +397,7 @@ class _SlashResultDivider:
         caption = truncate(caption, max(divider_width - 4, 1))
         caption_width = display_width(caption)
         divider = Text()
-        divider.append("▾")
+        divider.append("▾", style="dim")
         divider.append(" ", style="dim")
         divider.append(caption, style="dim")
         divider.append(" ", style="dim")

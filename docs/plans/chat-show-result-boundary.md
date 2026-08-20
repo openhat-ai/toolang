@@ -25,7 +25,7 @@ the source run and the result section without competing with the result body.
 ## Success Criteria
 
 - `:show` renders `▾ RUN_ID result ───` instead of `: Result RUN_ID`.
-- The marker uses normal intensity; the caption and rule use Rich `dim` styling.
+- The marker, caption, and rule use Rich `dim` styling.
 - The result body remains the visually primary normal-intensity Markdown block.
 - Existing one-blank-line spacing between the divider and result body is
   preserved.
@@ -67,8 +67,8 @@ unchanged.
 Use `▾`.
 
 - `▾` points from the divider toward the result body below.
-- Its solid shape and normal-intensity style match the visual weight of the
-  Step marker `•`.
+- Its solid shape remains distinct from the Step marker `•`, while its dim style
+  matches the caption and rule.
 - Do not use `•`, because it denotes execution rows and would blur the divider
   with the result body.
 - Do not use `◆`, because its larger shape carries more visual weight than a
@@ -90,10 +90,9 @@ presence of output.
 
 ### Styling
 
-Render the marker at normal intensity to match a Step bullet. Apply `dim` to the
-caption, separating space, and rule. Do not apply green, red, or yellow status
-color: the divider identifies historical context, while the result body should
-remain visually primary.
+Apply `dim` to the marker, caption, separating space, and rule. Do not apply
+green, red, or yellow status color: the divider identifies historical context,
+while the result body should remain visually primary.
 
 ### Width and Spacing
 
@@ -130,8 +129,8 @@ remain visually primary.
    rule cells.
 3. The complete divider contains exactly `RUN_DIVIDER_WIDTH` cells when the
    configured width permits.
-4. The marker uses normal intensity, the caption and rule use `dim`, and the
-   Markdown result body does not inherit `dim`.
+4. The marker, caption, and rule use `dim`, and the Markdown result body does
+   not inherit `dim`.
 5. Exactly one empty row separates the divider from the first result row, and
    exactly one empty row closes the result block.
 6. Narrow-terminal rendering does not wrap or exceed the configured width.
