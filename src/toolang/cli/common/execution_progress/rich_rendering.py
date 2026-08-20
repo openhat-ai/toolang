@@ -116,19 +116,24 @@ class _RunFooter:
             "canceled": "yellow",
         }.get(self.status, "dim")
         rule_style = "dim"
+        facts_indent = 2
+        content_width = max(width - facts_indent, 1)
         fact_lines = Text(self.facts, style="dim").wrap(
             console,
-            width,
+            content_width,
             overflow="fold",
         ) or [Text("", style="dim")]
         for line in fact_lines:
             line.rstrip()
         facts_width = max(display_width(line.plain) for line in fact_lines)
-        footer_width = min(width, max(facts_width, display_width(title) + 4))
+        footer_width = min(
+            width,
+            max(facts_width + facts_indent, display_width(title) + 4),
+        )
         title = truncate(title, max(footer_width - 4, 1))
         title_cells = display_width(title)
         top = Text()
-        top.append("─ ", style=rule_style)
+        top.append("╶ ", style=rule_style)
         top.append(title, style=caption_style)
         top.append(" ", style=rule_style)
         top.append("─" * max(footer_width - title_cells - 3, 0), style=rule_style)
@@ -137,8 +142,11 @@ class _RunFooter:
 
         for line in fact_lines:
             plain = line.plain
-            facts = Text(plain, style="dim")
-            facts.append(" " * (footer_width - display_width(plain)), style="dim")
+            facts = Text(" " * facts_indent + plain, style="dim")
+            facts.append(
+                " " * (footer_width - facts_indent - display_width(plain)),
+                style="dim",
+            )
             facts.no_wrap = True
             yield facts
 

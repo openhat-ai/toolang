@@ -401,8 +401,8 @@ def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
     rendered = _render_text(app.finalized[0].render())
     lines = rendered.splitlines()
     assert lines[0] == ""
-    assert lines[1].startswith("─ run_1 canceled ")
-    assert lines[2].startswith("3.0s")
+    assert lines[1].startswith("╶ run_1 canceled ")
+    assert lines[2].startswith("  3.0s")
     assert len(lines[1]) == len(lines[2])
     assert lines[3] == ""
 
@@ -430,7 +430,7 @@ def test_chat_root_footer_counts_child_runs_for_any_runnable_kind() -> None:
     assert len({len(line) for line in lines}) == 1
     assert len(lines[0]) <= 72
     assert lines[0].index("run_1") == 2
-    assert lines[1].index("3.0s") == 0
+    assert lines[1].index("3.0s") == 2
 
 
 def test_chat_root_footer_omits_zero_child_runs() -> None:
@@ -462,7 +462,8 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
 
     assert len({len(line) for line in lines}) == 1
     assert len(lines[0]) <= 32
-    assert lines[0].startswith("─ run_1 failed ")
+    assert lines[0].startswith("╶ run_1 failed ")
+    assert all(line.startswith("  ") for line in lines[1:])
     assert all(not line.startswith(("│", "└")) for line in lines[1:])
 
 
@@ -683,7 +684,7 @@ def test_chat_run_footer_colors_only_the_caption(
         if segment.text.strip()
     ]
 
-    border_chars = {"─"}
+    border_chars = {"╶", "─"}
     border = [
         segment
         for segment in segments
