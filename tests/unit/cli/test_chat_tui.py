@@ -1088,7 +1088,7 @@ def test_chat_status_bar_uses_right_aligned_shortcut_hints(
     assert len(text) == 80
 
 
-def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
+def test_chat_status_bar_activity_animates_the_model_name() -> None:
     status = widgets.StatusBar("runtime model")
     idle = status._render()
     idle_text = "".join(fragment for _style, fragment in idle)
@@ -1099,35 +1099,41 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
     status.set_activity(1)
     next_frame = status._render()
 
-    assert idle_text.index("runtime model") == running_text.index("runtime model") == 8
+    assert idle_text.index("runtime model") == running_text.index("runtime model") == 2
+    assert "model runtime model" not in idle_text
     assert "▌" not in idle_text
     assert "█" not in running_text
     assert idle[:3] == [
         ("class:status.activity", rendering.ACCENT_CELL),
         ("class:status.text", " "),
-        ("class:status.activity", "model "),
+        ("class:status.model", "runtime model"),
     ]
-    assert running[0] == ("class:status.activity", rendering.ACCENT_CELL)
-    assert running[1] == ("class:status.text", " " * 7)
-    assert next_frame[1] == ("class:status.activity.bright", " ")
-    assert next_frame[2] == ("class:status.text", " " * 6)
-    status.set_activity(2)
-    assert status._render()[1:4] == [
-        ("class:status.activity.bright", " "),
-        ("class:status.activity.light", " "),
-        ("class:status.text", " " * 5),
+    assert running[:3] == idle[:3]
+    assert next_frame[:4] == [
+        ("class:status.activity", rendering.ACCENT_CELL),
+        ("class:status.text", " "),
+        ("class:status.model.activity.bright", "r"),
+        ("class:status.model", "untime model"),
     ]
     status.set_activity(3)
-    assert status._render()[1:4] == [
-        ("class:status.activity.bright", " "),
-        ("class:status.activity.light", " "),
-        ("class:status.activity.medium", " "),
+    assert status._render()[2:4] == [
+        ("class:status.model.activity.bright", "run"),
+        ("class:status.model", "time model"),
     ]
+    status.set_activity(status.activity_width)
+    active_model = status._render()[2:8]
+    assert "".join(text for _style, text in active_model) == "runtime model"
+    assert all(
+        style.startswith("class:status.model.activity.")
+        for style, _text in active_model
+    )
     assert widgets._chat_ui_palette()["status.activity"] == (
         f"bg:{rendering.START_CONTROL_ACCENT}"
     )
-    assert widgets._chat_ui_palette()["status.activity.bright"] == (
-        f"bg:{rendering.START_CONTROL_ACCENT}"
+    assert widgets._chat_ui_palette()["status.text"] == "fg:ansigray"
+    assert widgets._chat_ui_palette()["status.model"] == "fg:#ffd866"
+    assert widgets._chat_ui_palette()["status.model.activity.bright"] == (
+        f"fg:#ffd866 bg:{rendering.START_CONTROL_ACCENT}"
     )
 
     status.set_activity(0)
@@ -1136,9 +1142,10 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
         "class:status.activity",
         rendering.ACCENT_CELL,
     )
-    assert trough[1] == ("class:status.text", " " * 7)
+    assert trough[1] == ("class:status.text", " ")
+    assert trough[2] == ("class:status.model", "runtime model")
     trough_text = "".join(fragment for _style, fragment in trough)
-    assert trough_text.index("runtime model") == 8
+    assert trough_text.index("runtime model") == 2
 
     status.set_running(False)
     assert status._render() == idle
@@ -1153,9 +1160,9 @@ def test_chat_status_palette_linearly_blends_configured_colors(
     monkeypatch.setattr(widgets, "STATUS_BACKGROUND", "#000000")
     palette = widgets._chat_ui_palette()
 
-    assert palette["status.activity.bright"] == "bg:#ffffff"
-    assert palette["status.activity.light"] == "bg:#d6d6d6"
-    assert palette["status.activity.faint"] == "bg:#333333"
+    assert palette["status.model.activity.bright"] == "fg:#ffd866 bg:#ffffff"
+    assert palette["status.model.activity.light"] == "fg:#ffd866 bg:#d6d6d6"
+    assert palette["status.model.activity.faint"] == "fg:#ffd866 bg:#333333"
 
 
 def test_chat_status_breathing_uses_eased_asymmetric_phases() -> None:
@@ -1163,15 +1170,16 @@ def test_chat_status_breathing_uses_eased_asymmetric_phases() -> None:
     retract_start = expand + tui._STATUS_ACTIVITY_PEAK_DURATION
     retract = tui._STATUS_ACTIVITY_RETRACT_DURATION
 
-    assert tui._status_breathing_fill(0) == 0
-    assert tui._status_breathing_fill(expand * 0.25) == 1
-    assert tui._status_breathing_fill(expand * 0.5) == 3
-    assert tui._status_breathing_fill(expand * 0.75) == 5
-    assert tui._status_breathing_fill(expand) == 6
-    assert tui._status_breathing_fill(retract_start + retract * 0.25) == 5
-    assert tui._status_breathing_fill(retract_start + retract * 0.5) == 3
-    assert tui._status_breathing_fill(retract_start + retract * 0.75) == 1
-    assert tui._status_breathing_fill(retract_start + retract) == 0
+    assert tui._status_breathing_fill(0, 6) == 0
+    assert tui._status_breathing_fill(expand * 0.25, 6) == 1
+    assert tui._status_breathing_fill(expand * 0.5, 6) == 3
+    assert tui._status_breathing_fill(expand * 0.75, 6) == 5
+    assert tui._status_breathing_fill(expand, 6) == 6
+    assert tui._status_breathing_fill(expand, 13) == 13
+    assert tui._status_breathing_fill(retract_start + retract * 0.25, 6) == 5
+    assert tui._status_breathing_fill(retract_start + retract * 0.5, 6) == 3
+    assert tui._status_breathing_fill(retract_start + retract * 0.75, 6) == 1
+    assert tui._status_breathing_fill(retract_start + retract, 6) == 0
 
 
 def test_chat_tui_animates_status_only_while_a_run_is_active(
@@ -1216,7 +1224,7 @@ def test_chat_tui_animates_status_only_while_a_run_is_active(
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_TICK", 0.001)
     monkeypatch.setattr(tui, "_STATUS_ACTIVITY_RETRACT_DURATION", 0.004)
     monkeypatch.setattr(tui, "_MIN_STATUS_ACTIVITY_DURATION", 0.0)
-    monkeypatch.setattr(tui, "_status_breathing_fill", lambda elapsed: 1)
+    monkeypatch.setattr(tui, "_status_breathing_fill", lambda elapsed, max_fill: 1)
     asyncio.run(exercise())
 
 

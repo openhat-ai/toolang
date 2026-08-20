@@ -79,7 +79,10 @@ def _ease_in_out_sine(progress: float) -> float:
     return (1.0 - math.cos(math.pi * progress)) / 2.0
 
 
-def _status_breathing_fill(elapsed: float) -> int:
+def _status_breathing_fill(elapsed: float, max_fill: int) -> int:
+    max_fill = max(0, max_fill)
+    if max_fill == 0:
+        return 0
     cycle_duration = (
         _STATUS_ACTIVITY_EXPAND_DURATION
         + _STATUS_ACTIVITY_PEAK_DURATION
@@ -93,15 +96,15 @@ def _status_breathing_fill(elapsed: float) -> int:
     else:
         phase -= _STATUS_ACTIVITY_EXPAND_DURATION
         if phase < _STATUS_ACTIVITY_PEAK_DURATION:
-            return widgets.STATUS_ACTIVITY_MAX_FILL
+            return max_fill
         phase -= _STATUS_ACTIVITY_PEAK_DURATION
         if phase >= _STATUS_ACTIVITY_RETRACT_DURATION:
             return 0
         progress = phase / _STATUS_ACTIVITY_RETRACT_DURATION
         scale = 1.0 - _ease_in_out_sine(progress)
     return min(
-        widgets.STATUS_ACTIVITY_MAX_FILL,
-        int(widgets.STATUS_ACTIVITY_MAX_FILL * scale + 0.5),
+        max_fill,
+        int(max_fill * scale + 0.5),
     )
 
 
@@ -367,20 +370,25 @@ class ChatTuiApp:
 
     def _update_status_activity(self, now: float) -> None:
         if self._status_retraction_started_at is not None:
+            max_fill = self.status_bar.activity_width
+            if self._status_retraction_start_fill <= 0 or max_fill <= 0:
+                self._stop_status_activity()
+                return
+            start_fill = min(self._status_retraction_start_fill, max_fill)
             elapsed = now - self._status_retraction_started_at
             retract_duration = _STATUS_ACTIVITY_RETRACT_DURATION * (
-                self._status_retraction_start_fill / widgets.STATUS_ACTIVITY_MAX_FILL
+                start_fill / max_fill
             )
             if elapsed >= retract_duration:
                 self._stop_status_activity()
                 return
             progress = elapsed / retract_duration
-            fill = int(
-                self._status_retraction_start_fill * (1.0 - _ease_in_out_sine(progress))
-                + 0.5
-            )
+            fill = int(start_fill * (1.0 - _ease_in_out_sine(progress)) + 0.5)
         elif self._status_activity_started_at is not None:
-            fill = _status_breathing_fill(now - self._status_activity_started_at)
+            fill = _status_breathing_fill(
+                now - self._status_activity_started_at,
+                self.status_bar.activity_width,
+            )
         else:
             return
         if self.status_bar.set_activity(fill):

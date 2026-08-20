@@ -25,7 +25,6 @@ from .rendering import (
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-STATUS_ACTIVITY_MAX_FILL = 6
 _STATUS_ACTIVITY_SHADES = (
     "bright",
     "light",
@@ -35,6 +34,7 @@ _STATUS_ACTIVITY_SHADES = (
     "faint",
 )
 _STATUS_ACTIVITY_MIXES = (0.0, 0.16, 0.32, 0.48, 0.64, 0.8)
+_STATUS_MODEL_COLOR = "#ffd866"
 
 
 def _mix_hex_colors(start: str, end: str, amount: float) -> str:
@@ -58,7 +58,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": f"fg:#f2f2f2 bg:{STATUS_BACKGROUND}",
         "status.activity": f"bg:{START_CONTROL_ACCENT}",
-        "status.model": "fg:#ffd866",
+        "status.model": f"fg:{_STATUS_MODEL_COLOR}",
         "status.agic": "fg:#8fd7ff",
         "status.flow": "fg:#d7b3ff",
         "status.text": "fg:ansigray",
@@ -67,7 +67,8 @@ def _chat_ui_palette() -> dict[str, str]:
     }
     palette.update(
         {
-            f"status.activity.{shade}": (
+            f"status.model.activity.{shade}": (
+                f"fg:{_STATUS_MODEL_COLOR} "
                 f"bg:{_mix_hex_colors(START_CONTROL_ACCENT, STATUS_BACKGROUND, mix)}"
             )
             for shade, mix in zip(
@@ -369,6 +370,7 @@ class StatusBar:
 
     def set_status(self, status_label: str) -> None:
         self.status_label = status_label
+        self._activity_fill = min(self._activity_fill, self.activity_width)
 
     def set_error(self, message: str) -> None:
         self.error_message = message
@@ -384,27 +386,45 @@ class StatusBar:
     def activity_fill(self) -> int:
         return self._activity_fill
 
+    @property
+    def activity_width(self) -> int:
+        pieces = [piece for piece in self.status_label.split("  ") if piece]
+        return get_cwidth(pieces[0]) if pieces else 0
+
     def set_activity(self, fill: int) -> bool:
-        fill = max(0, min(STATUS_ACTIVITY_MAX_FILL, fill))
+        fill = max(0, min(self.activity_width, fill))
         if fill == self._activity_fill:
             return False
         self._activity_fill = fill
         return True
 
-    def _activity_prefix(self) -> list[tuple[str, str]]:
-        fill = self._activity_fill
+    def _model_segments(self, model: str) -> list[tuple[str, str]]:
+        fill = self._activity_fill if self.running else 0
+        model_width = max(1, get_cwidth(model))
         shades = len(_STATUS_ACTIVITY_SHADES)
-        segments = [("class:status.activity", ACCENT_CELL)]
-        segments.extend(
-            [
-                (
-                    f"class:status.activity.{_STATUS_ACTIVITY_SHADES[min(index, shades - 1)]}",
-                    " ",
+        segments: list[tuple[str, str]] = []
+        cell_offset = 0
+        for character in model:
+            width = get_cwidth(character)
+            if width == 0 and segments:
+                style = segments[-1][0]
+            elif cell_offset + width <= fill:
+                shade_index = min(
+                    shades - 1,
+                    cell_offset * shades // model_width,
                 )
-                for index in range(fill)
-            ]
-        )
-        segments.append(("class:status.text", " " * (7 - fill)))
+                style = (
+                    "class:status.model.activity."
+                    f"{_STATUS_ACTIVITY_SHADES[shade_index]}"
+                )
+            else:
+                style = "class:status.model"
+            if segments and segments[-1][0] == style:
+                previous_style, previous_text = segments[-1]
+                segments[-1] = (previous_style, previous_text + character)
+            else:
+                segments.append((style, character))
+            cell_offset += width
         return segments
 
     def _render(self) -> list[tuple[str, str]]:
@@ -415,17 +435,13 @@ class StatusBar:
         pieces = [piece for piece in self.status_label.split("  ") if piece]
         segments: list[tuple[str, str]] = []
         if pieces:
-            if self.running:
-                segments.extend(self._activity_prefix())
-            else:
-                segments.extend(
-                    [
-                        ("class:status.activity", ACCENT_CELL),
-                        ("class:status.text", " "),
-                        ("class:status.activity", "model "),
-                    ]
-                )
-            segments.append(("class:status.model", pieces[0]))
+            segments.extend(
+                [
+                    ("class:status.activity", ACCENT_CELL),
+                    ("class:status.text", " "),
+                    *self._model_segments(pieces[0]),
+                ]
+            )
         for piece in pieces[1:]:
             if piece.startswith("agic:"):
                 segments.extend(
