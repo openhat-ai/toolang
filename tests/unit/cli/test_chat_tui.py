@@ -443,6 +443,16 @@ def test_chat_root_footer_omits_zero_child_runs() -> None:
     assert "0 runs" not in rendered
 
 
+def test_chat_root_footer_keeps_minimum_rule_length_for_short_facts() -> None:
+    block = blocks.RunStopBlock.create(_run_begin())
+    block.update(_run_end(status="succeeded"))
+
+    segments = rendering.render_segments(block.render(), width=80)
+    rule = next(segment.text for segment in segments if "─" in segment.text)
+
+    assert len(rule) >= 16
+
+
 def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> None:
     block = blocks.RunStopBlock.create(_run_begin(), max_width=32)
     block.update(_run_end(status="failed"))
@@ -689,7 +699,9 @@ def test_chat_run_footer_styles_marker_caption_rule_and_facts(
     rule = [segment for segment in segments if "─" in segment.text]
     assert rule
     assert all(
-        segment.style is not None and segment.style.color is None and segment.style.dim
+        segment.style is not None
+        and segment.style.color is not None
+        and segment.style.color.name == color
         for segment in rule
     )
     caption = next(segment for segment in segments if "run_1" in segment.text)

@@ -358,12 +358,12 @@ they render the same root footer:
 ```
 
 The rule starts with the same bullet marker `•` as a model Step; the Run id and
-every wrapped facts line begin in column two. The rule uses the longest rendered
-facts line as its width, after facts wrap to the same terminal and configured
-maximum as Step progress. Shorter facts lines receive trailing padding so their
-right edge remains aligned.
-Success, failure, and cancellation use green, red, and yellow captions
-respectively. The rule and facts text remain dim and carry no status color.
+every wrapped facts line begin in column two. The footer uses the longest
+rendered facts line or enough width for a 16-character rule, after facts wrap to
+the same terminal and configured maximum as Step progress. Shorter facts lines
+receive trailing padding so their right edge remains aligned. Success, failure,
+and cancellation use green, red, and yellow captions and rules, respectively.
+Facts text remains dim and carries no status color.
 
 The footer owns total duration and Run facts. Cost uses full precision while
 aggregating and is rounded to cents only for display. Script does not append a
