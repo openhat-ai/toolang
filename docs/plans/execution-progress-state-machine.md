@@ -360,9 +360,9 @@ they render the same root footer:
 
 The border begins in column zero. The Run id, status, and every wrapped facts
 line begin in column two, aligned with Step text after its `• ` marker. Success,
-failure, and cancellation use green, red, and yellow borders respectively;
-title and facts text are always dim and carry no status color. The footer width
-obeys the same terminal and configured maximum as Step progress.
+failure, and cancellation use green, red, and yellow captions respectively.
+The complete border and facts text remain dim and carry no status color. The
+footer width obeys the same terminal and configured maximum as Step progress.
 
 The footer owns total duration and Run facts. Cost uses full precision while
 aggregating and is rounded to cents only for display. Script does not append a

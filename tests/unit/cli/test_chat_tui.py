@@ -660,7 +660,7 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
         ("canceled", "yellow"),
     ],
 )
-def test_chat_run_footer_colors_only_the_border(
+def test_chat_run_footer_colors_only_the_caption(
     status: Literal["succeeded", "failed", "canceled"],
     color: str,
 ) -> None:
@@ -681,15 +681,19 @@ def test_chat_run_footer_colors_only_the_border(
     content = [segment for segment in segments if segment not in border]
     assert border
     assert all(
-        segment.style is not None
-        and segment.style.color is not None
-        and segment.style.color.name == color
+        segment.style is not None and segment.style.color is None and segment.style.dim
         for segment in border
     )
     assert content
+    caption = next(segment for segment in content if "run_1" in segment.text)
+    assert caption.style is not None
+    assert caption.style.color is not None
+    assert caption.style.color.name == color
+    facts = [segment for segment in content if segment is not caption]
+    assert facts
     assert all(
         segment.style is not None and segment.style.color is None and segment.style.dim
-        for segment in content
+        for segment in facts
     )
 
 

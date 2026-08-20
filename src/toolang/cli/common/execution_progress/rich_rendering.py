@@ -110,17 +110,18 @@ class _RunFooter:
             yield Text(truncate(title, width), style="dim", no_wrap=True)
             return
 
-        border_style = {
+        caption_style = {
             "succeeded": "green",
             "failed": "red",
             "canceled": "yellow",
         }.get(self.status, "dim")
+        border_style = "dim"
         inner_width = width - 2
         title = truncate(title, inner_width - 2)
         title_cells = display_width(title)
         top = Text()
         top.append("┌ ", style=border_style)
-        top.append(title, style="dim")
+        top.append(title, style=caption_style)
         top.append(" ", style=border_style)
         top.append("─" * max(inner_width - title_cells - 2, 0), style=border_style)
         top.append("┐", style=border_style)
