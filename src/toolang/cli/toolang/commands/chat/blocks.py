@@ -42,7 +42,7 @@ from toolang.cli.common.execution_progress.state import Metrics
 from .base import friendly_error
 from .rendering import (
     CONTROL_BAR_BACKGROUND,
-    CONTROL_STRIP_GLYPH,
+    ACCENT_CELL,
     QUICK_COMMAND_CONTROL_ACCENT,
     START_CONTROL_ACCENT,
     STEER_CONTROL_ACCENT,
@@ -98,10 +98,10 @@ def _control_bar_line(
     background = CONTROL_BAR_BACKGROUND
     return bar(
         [
-            (CONTROL_STRIP_GLYPH, f"{accent} on {background}"),
+            (ACCENT_CELL, f"on {accent}"),
             (f" {content}" if content else "", f"white on {background}"),
         ],
-        style=f"white on {background}",
+        style=f"on {background}",
     )
 
 

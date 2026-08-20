@@ -16,7 +16,7 @@ from rich.text import Text
 from wcwidth import wcswidth
 
 CONTROL_BAR_BACKGROUND = "#3a3a3a"
-CONTROL_STRIP_GLYPH = "▌"
+ACCENT_CELL = " "
 INPUT_BACKGROUND = "#444444"
 QUICK_COMMAND_CONTROL_ACCENT = "#ffd866"
 START_CONTROL_ACCENT = "#8fd7ff"

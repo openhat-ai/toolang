@@ -17,7 +17,7 @@ from prompt_toolkit.utils import get_cwidth
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 from .rendering import (
-    CONTROL_STRIP_GLYPH,
+    ACCENT_CELL,
     INPUT_BACKGROUND,
     START_CONTROL_ACCENT,
     STATUS_BACKGROUND,
@@ -25,7 +25,6 @@ from .rendering import (
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-STATUS_ACTIVITY_GLYPH = "█"
 STATUS_ACTIVITY_MAX_FILL = 6
 _STATUS_ACTIVITY_SHADES = (
     "bright",
@@ -53,12 +52,12 @@ def _chat_ui_palette() -> dict[str, str]:
         "": "",
         "queue": "fg:#f2f2f2 bg:#3a3a3a",
         "queue.dim": "fg:#b8b8b8 bg:#3a3a3a",
-        "control.start": f"fg:{START_CONTROL_ACCENT} bg:{INPUT_BACKGROUND}",
+        "control.start": f"bg:{START_CONTROL_ACCENT}",
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": f"fg:#f2f2f2 bg:{STATUS_BACKGROUND}",
-        "status.activity": f"fg:{START_CONTROL_ACCENT}",
+        "status.activity": f"bg:{START_CONTROL_ACCENT}",
         "status.model": "fg:#ffd866",
         "status.agic": "fg:#8fd7ff",
         "status.flow": "fg:#d7b3ff",
@@ -200,7 +199,7 @@ class PromptBox:
                     width=1,
                     style="class:control.start",
                     always_hide_cursor=True,
-                    char=CONTROL_STRIP_GLYPH,
+                    char=ACCENT_CELL,
                 ),
                 content,
             ],
@@ -357,7 +356,6 @@ class StatusBar:
         self.error_message = ""
         self.running = False
         self._activity_fill = 0
-        self._activity_full_width = False
         self.view = FormattedTextControl(self._render)
 
     def container(self) -> Window:
@@ -381,27 +379,22 @@ class StatusBar:
     def set_running(self, running: bool) -> None:
         self.running = running
         self._activity_fill = 0
-        self._activity_full_width = running
 
     @property
     def activity_fill(self) -> int:
         return self._activity_fill
 
-    def set_activity(self, fill: int, *, full_width: bool) -> bool:
+    def set_activity(self, fill: int) -> bool:
         fill = max(0, min(STATUS_ACTIVITY_MAX_FILL, fill))
-        if fill == self._activity_fill and full_width == self._activity_full_width:
+        if fill == self._activity_fill:
             return False
         self._activity_fill = fill
-        self._activity_full_width = full_width
         return True
 
     def _activity_prefix(self) -> list[tuple[str, str]]:
         fill = self._activity_fill
         shades = len(_STATUS_ACTIVITY_SHADES)
-        glyph = (
-            STATUS_ACTIVITY_GLYPH if self._activity_full_width else CONTROL_STRIP_GLYPH
-        )
-        segments = [("class:status.activity", glyph)]
+        segments = [("class:status.activity", ACCENT_CELL)]
         segments.extend(
             [
                 (
@@ -427,7 +420,7 @@ class StatusBar:
             else:
                 segments.extend(
                     [
-                        ("class:status.activity", CONTROL_STRIP_GLYPH),
+                        ("class:status.activity", ACCENT_CELL),
                         ("class:status.text", " "),
                         ("class:status.activity", "model "),
                     ]
