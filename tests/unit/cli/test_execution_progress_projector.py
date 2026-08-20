@@ -458,6 +458,7 @@ def test_model_markdown_commits_stable_blocks_and_keeps_one_live_tail() -> None:
     assert paragraph.committed[0].rows[0].prefix == "• "
     assert _rows(paragraph.live) == [["Paragraph"]]
     assert paragraph.live[0].rows[0].prefix == "  "
+    assert paragraph.live[0].rows[0].gap_before is True
 
     closed = projector.handle(
         PartEnd(
@@ -468,6 +469,7 @@ def test_model_markdown_commits_stable_blocks_and_keeps_one_live_tail() -> None:
     )
     assert _rows(closed.committed) == [["Paragraph"]]
     assert closed.committed[0].rows[0].prefix == "  "
+    assert closed.committed[0].rows[0].gap_before is True
     assert closed.live == ()
 
     ended = projector.handle(

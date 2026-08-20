@@ -18,6 +18,7 @@ class ProgressRow:
     wrap_live: bool = False
     format: ProgressFormat = "plain"
     prefix: str = ""
+    gap_before: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -355,6 +355,7 @@ def test_non_tty_prints_only_incrementally_committed_markdown() -> None:
         "normal",
         format="markdown",
         prefix="  ",
+        gap_before=True,
     )
 
     console.apply(ProgressUpdate(live=(ProgressBlock("step:run_one.0", (heading,)),)))
@@ -373,7 +374,7 @@ def test_non_tty_prints_only_incrementally_committed_markdown() -> None:
             committed=(ProgressBlock("step:run_one.0", (paragraph,)),),
         )
     )
-    assert stream.getvalue() == "• Heading\n  Paragraph\n"
+    assert stream.getvalue() == "• Heading\n\n  Paragraph\n"
 
 
 def test_tty_wraps_finalized_parallel_lane_at_its_embedded_marker() -> None:

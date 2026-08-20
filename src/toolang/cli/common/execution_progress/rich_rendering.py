@@ -135,6 +135,8 @@ class _MarkdownRow:
             return
 
         continuation = " " * prefix_width
+        if self.row.gap_before:
+            yield Text("", no_wrap=True)
         for index, line in enumerate(lines):
             rendered = Text(prefix if index == 0 else continuation)
             for segment in line:

@@ -474,8 +474,19 @@ class ProgressProjector:
                     lane_live_text(state.begin, state.model.lane_preview),
                 )
                 return None
-            committed, state.model.pending = split_stable_markdown(state.model.pending)
-            return self._commit_model_markdown(state, committed)
+            committed, pending, pending_gap_before = split_stable_markdown(
+                state.model.pending
+            )
+            state.model.pending = pending
+            if not committed:
+                return None
+            committed_gap_before = state.model.pending_gap_before
+            state.model.pending_gap_before = pending_gap_before
+            return self._commit_model_markdown(
+                state,
+                committed,
+                gap_before=committed_gap_before,
+            )
         return None
 
     def _end_part(self, event: PartEnd) -> ProgressBlock | None:
@@ -510,13 +521,21 @@ class ProgressProjector:
         if state.lane_owner is not None:
             return None
         pending = state.model.pending
+        gap_before = state.model.pending_gap_before
         state.model.pending = ""
-        return self._commit_model_markdown(state, pending)
+        state.model.pending_gap_before = False
+        return self._commit_model_markdown(
+            state,
+            pending,
+            gap_before=gap_before,
+        )
 
     def _commit_model_markdown(
         self,
         state: StepState,
         source: str,
+        *,
+        gap_before: bool = False,
     ) -> ProgressBlock | None:
         if not source:
             return None
@@ -530,6 +549,7 @@ class ProgressProjector:
                     "normal",
                     format="markdown",
                     prefix=prefix,
+                    gap_before=gap_before,
                 ),
             ),
         )
@@ -668,6 +688,11 @@ class ProgressProjector:
                         state.model.pending if state.begin.kind == "model" else "",
                         marker_committed=(
                             state.model.marker_committed
+                            if state.begin.kind == "model"
+                            else False
+                        ),
+                        gap_before=(
+                            state.model.pending_gap_before
                             if state.begin.kind == "model"
                             else False
                         ),

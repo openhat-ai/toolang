@@ -198,6 +198,13 @@ content do not append an ellipsis. Committed and live fragments are independent
 Markdown render units; syntax cannot reopen a committed fragment, and a later
 reference definition affects only its own fragment.
 
+When authored Markdown separates top-level blocks with a blank line, that gap
+belongs to the following fragment as `gap_before`. The same leading gap is
+rendered while the fragment is live and after it is committed, preserving both
+Markdown readability and a visually unchanged transition. Multiple separator
+lines collapse to one rendered blank line. Flow headers retain their existing
+trailing boundary gap; Step facts remain directly below Step output.
+
 Script renders the live Markdown tail through one event-driven
 `rich.live.Live` per root Run. Stable fragments are printed through the same
 Rich Console while Live redraws the remaining tail. Auto-refresh and stdio

@@ -45,6 +45,7 @@ def trace_live_rows(
     preview: str,
     *,
     marker_committed: bool = False,
+    gap_before: bool = False,
 ) -> tuple[ProgressRow, ...]:
     """Project replaceable Trace activity or one Markdown source tail."""
 
@@ -59,6 +60,7 @@ def trace_live_rows(
             wrap_live=True,
             format="markdown",
             prefix="  " if marker_committed else "• ",
+            gap_before=gap_before,
         ),
     )
 

@@ -42,6 +42,7 @@ class ModelDetail:
 
     streamed: str = ""
     pending: str = ""
+    pending_gap_before: bool = False
     text_part: int | None = None
     marker_committed: bool = False
     completed_parts: dict[int, Part] = field(default_factory=dict)

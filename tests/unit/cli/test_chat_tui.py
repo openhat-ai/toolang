@@ -211,7 +211,10 @@ def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() ->
     )
     assert len(app.finalized) == 1
     assert _render_text(app.finalized[0].render()).startswith("• Heading")
-    assert _render_text(app.live_blocks[0].render()).startswith("  Paragraph")
+    assert _render_text(app.live_blocks[0].render()).splitlines() == [
+        "",
+        "  Paragraph",
+    ]
 
     events.handle_run_event(
         PartEnd(
@@ -222,7 +225,10 @@ def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() ->
         app,
     )
     assert len(app.finalized) == 2
-    assert _render_text(app.finalized[1].render()).startswith("  Paragraph")
+    assert _render_text(app.finalized[1].render()).splitlines() == [
+        "",
+        "  Paragraph",
+    ]
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
 
     events.handle_run_event(
