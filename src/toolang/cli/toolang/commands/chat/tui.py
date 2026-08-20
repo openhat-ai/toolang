@@ -79,31 +79,33 @@ def _ease_in_out_sine(progress: float) -> float:
     return (1.0 - math.cos(math.pi * progress)) / 2.0
 
 
-def _status_breathing_fill(elapsed: float) -> int:
+def _status_breathing_state(elapsed: float) -> tuple[int, bool]:
     cycle_duration = (
-        _STATUS_ACTIVITY_TROUGH_DURATION
-        + _STATUS_ACTIVITY_EXPAND_DURATION
+        _STATUS_ACTIVITY_EXPAND_DURATION
         + _STATUS_ACTIVITY_PEAK_DURATION
         + _STATUS_ACTIVITY_RETRACT_DURATION
+        + _STATUS_ACTIVITY_TROUGH_DURATION
     )
     phase = elapsed % cycle_duration
-    if phase < _STATUS_ACTIVITY_TROUGH_DURATION:
-        return 0
-    phase -= _STATUS_ACTIVITY_TROUGH_DURATION
     if phase < _STATUS_ACTIVITY_EXPAND_DURATION:
         progress = phase / _STATUS_ACTIVITY_EXPAND_DURATION
         scale = _ease_in_out_sine(progress)
+        full_width = True
     else:
         phase -= _STATUS_ACTIVITY_EXPAND_DURATION
         if phase < _STATUS_ACTIVITY_PEAK_DURATION:
-            return widgets.STATUS_ACTIVITY_MAX_FILL
+            return widgets.STATUS_ACTIVITY_MAX_FILL, True
         phase -= _STATUS_ACTIVITY_PEAK_DURATION
+        if phase >= _STATUS_ACTIVITY_RETRACT_DURATION:
+            return 0, False
         progress = phase / _STATUS_ACTIVITY_RETRACT_DURATION
         scale = 1.0 - _ease_in_out_sine(progress)
-    return min(
+        full_width = scale * widgets.STATUS_ACTIVITY_MAX_FILL >= 0.5
+    fill = min(
         widgets.STATUS_ACTIVITY_MAX_FILL,
         int(widgets.STATUS_ACTIVITY_MAX_FILL * scale + 0.5),
     )
+    return fill, full_width
 
 
 class ChatTuiAppContext:
@@ -381,11 +383,14 @@ class ChatTuiApp:
                 self._status_retraction_start_fill * (1.0 - _ease_in_out_sine(progress))
                 + 0.5
             )
+            full_width = fill > 0
         elif self._status_activity_started_at is not None:
-            fill = _status_breathing_fill(now - self._status_activity_started_at)
+            fill, full_width = _status_breathing_state(
+                now - self._status_activity_started_at
+            )
         else:
             return
-        if self.status_bar.set_activity_fill(fill):
+        if self.status_bar.set_activity(fill, full_width=full_width):
             self._invalidate_ui()
 
     def _set_status_running(self, running: bool) -> None:
@@ -399,7 +404,7 @@ class ChatTuiApp:
             self._status_retraction_started_at = None
             self._status_retraction_start_fill = 0
             self.status_bar.set_running(True)
-            self.status_bar.set_activity_fill(0)
+            self.status_bar.set_activity(0, full_width=True)
             self._status_animation_wake.set()
             self._invalidate_ui()
             return

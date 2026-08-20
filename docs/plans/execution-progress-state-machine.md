@@ -401,9 +401,11 @@ amounts `0`, `.16`, `.32`, `.48`, `.64`, and `.80`; changing either endpoint
 therefore updates the entire gradient.
 
 The breathing cycle uses monotonic elapsed time rather than uniform frame
-steps: a 260-millisecond trough, a 720-millisecond sine-eased expansion, a
-180-millisecond peak, and a 900-millisecond sine-eased retraction. The UI checks
-the phase every 80 milliseconds but redraws only when the visible fill changes.
+steps: a 720-millisecond sine-eased expansion, a 180-millisecond peak, a
+900-millisecond sine-eased retraction, and a 260-millisecond trough. Every
+retraction narrows the full-cell `█` back to the half-cell `▌` for the trough;
+the strip returns to `█` before the next expansion. The UI checks the phase
+every 80 milliseconds but redraws only when the visible state changes.
 Completion retracts from the current fill with the same easing and a duration
 proportional to its width, then narrows the full-cell `█` directly back to the
 idle half-cell `▌`. No gap appears between the strip and fill, the model name

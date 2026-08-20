@@ -357,6 +357,7 @@ class StatusBar:
         self.error_message = ""
         self.running = False
         self._activity_fill = 0
+        self._activity_full_width = False
         self.view = FormattedTextControl(self._render)
 
     def container(self) -> Window:
@@ -379,24 +380,28 @@ class StatusBar:
 
     def set_running(self, running: bool) -> None:
         self.running = running
-        if not running:
-            self._activity_fill = 0
+        self._activity_fill = 0
+        self._activity_full_width = running
 
     @property
     def activity_fill(self) -> int:
         return self._activity_fill
 
-    def set_activity_fill(self, fill: int) -> bool:
+    def set_activity(self, fill: int, *, full_width: bool) -> bool:
         fill = max(0, min(STATUS_ACTIVITY_MAX_FILL, fill))
-        if fill == self._activity_fill:
+        if fill == self._activity_fill and full_width == self._activity_full_width:
             return False
         self._activity_fill = fill
+        self._activity_full_width = full_width
         return True
 
     def _activity_prefix(self) -> list[tuple[str, str]]:
         fill = self._activity_fill
         shades = len(_STATUS_ACTIVITY_SHADES)
-        segments = [("class:status.activity", STATUS_ACTIVITY_GLYPH)]
+        glyph = (
+            STATUS_ACTIVITY_GLYPH if self._activity_full_width else CONTROL_STRIP_GLYPH
+        )
+        segments = [("class:status.activity", glyph)]
         segments.extend(
             [
                 (

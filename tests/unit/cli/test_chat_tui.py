@@ -959,7 +959,7 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
     status.set_running(True)
     running = status._render()
     running_text = "".join(fragment for _style, fragment in running)
-    status.set_activity_fill(1)
+    status.set_activity(1, full_width=True)
     next_frame = status._render()
 
     assert idle_text.index("runtime model") == running_text.index("runtime model") == 8
@@ -972,13 +972,13 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
     assert running[1] == ("class:status.text", " " * 7)
     assert next_frame[1] == ("class:status.activity.bright", " ")
     assert next_frame[2] == ("class:status.text", " " * 6)
-    status.set_activity_fill(2)
+    status.set_activity(2, full_width=True)
     assert status._render()[1:4] == [
         ("class:status.activity.bright", " "),
         ("class:status.activity.light", " "),
         ("class:status.text", " " * 5),
     ]
-    status.set_activity_fill(3)
+    status.set_activity(3, full_width=True)
     assert status._render()[1:4] == [
         ("class:status.activity.bright", " "),
         ("class:status.activity.light", " "),
@@ -990,6 +990,16 @@ def test_chat_status_bar_activity_keeps_the_model_column_stable() -> None:
     assert widgets._chat_ui_palette()["status.activity.bright"] == (
         f"bg:{rendering.START_CONTROL_ACCENT}"
     )
+
+    status.set_activity(0, full_width=False)
+    trough = status._render()
+    assert trough[0] == (
+        "class:status.activity",
+        rendering.CONTROL_STRIP_GLYPH,
+    )
+    assert trough[1] == ("class:status.text", " " * 7)
+    trough_text = "".join(fragment for _style, fragment in trough)
+    assert trough_text.index("runtime model") == 8
 
     status.set_running(False)
     assert status._render() == idle
@@ -1010,19 +1020,19 @@ def test_chat_status_palette_linearly_blends_configured_colors(
 
 
 def test_chat_status_breathing_uses_eased_asymmetric_phases() -> None:
-    expand_start = tui._STATUS_ACTIVITY_TROUGH_DURATION
     expand = tui._STATUS_ACTIVITY_EXPAND_DURATION
-    retract_start = expand_start + expand + tui._STATUS_ACTIVITY_PEAK_DURATION
+    retract_start = expand + tui._STATUS_ACTIVITY_PEAK_DURATION
     retract = tui._STATUS_ACTIVITY_RETRACT_DURATION
 
-    assert tui._status_breathing_fill(0) == 0
-    assert tui._status_breathing_fill(expand_start + expand * 0.25) == 1
-    assert tui._status_breathing_fill(expand_start + expand * 0.5) == 3
-    assert tui._status_breathing_fill(expand_start + expand * 0.75) == 5
-    assert tui._status_breathing_fill(expand_start + expand) == 6
-    assert tui._status_breathing_fill(retract_start + retract * 0.25) == 5
-    assert tui._status_breathing_fill(retract_start + retract * 0.5) == 3
-    assert tui._status_breathing_fill(retract_start + retract * 0.75) == 1
+    assert tui._status_breathing_state(0) == (0, True)
+    assert tui._status_breathing_state(expand * 0.25) == (1, True)
+    assert tui._status_breathing_state(expand * 0.5) == (3, True)
+    assert tui._status_breathing_state(expand * 0.75) == (5, True)
+    assert tui._status_breathing_state(expand) == (6, True)
+    assert tui._status_breathing_state(retract_start + retract * 0.25) == (5, True)
+    assert tui._status_breathing_state(retract_start + retract * 0.5) == (3, True)
+    assert tui._status_breathing_state(retract_start + retract * 0.75) == (1, True)
+    assert tui._status_breathing_state(retract_start + retract) == (0, False)
 
 
 def test_chat_tui_animates_status_only_while_a_run_is_active(
