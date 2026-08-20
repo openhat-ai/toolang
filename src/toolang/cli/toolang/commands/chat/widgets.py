@@ -51,7 +51,6 @@ def _chat_ui_palette() -> dict[str, str]:
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": f"fg:#f2f2f2 bg:{STATUS_BACKGROUND}",
-        "status.activity": f"bg:{START_CONTROL_ACCENT}",
         "status.model": f"fg:{_STATUS_MODEL_COLOR}",
         "status.agic": "fg:#8fd7ff",
         "status.flow": "fg:#d7b3ff",
@@ -450,12 +449,7 @@ class StatusBar:
         pieces = [piece for piece in self.status_label.split("  ") if piece]
         segments: list[tuple[str, str]] = []
         if pieces:
-            segments.extend(
-                [
-                    ("class:status.activity", ACCENT_CELL),
-                    *self._model_activity_segments(pieces[0]),
-                ]
-            )
+            segments.extend(self._model_activity_segments(pieces[0]))
             if self.running:
                 segments.append(
                     (

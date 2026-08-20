@@ -397,16 +397,17 @@ prompt glyphs such as `>` and `+` while leaving message text aligned in column
 two. Rendering the full cell as a background avoids glyph line gaps between
 adjacent rows.
 
-The bottom `StatusBar` renders a Start-accent background cell in column zero, a
-default-background space in column one, and the model name beginning in column
-two, followed by one default-background space. It omits the redundant `model `
+The bottom `StatusBar` has no persistent left accent. It renders a
+default-background space in column zero, the model name beginning in column
+one, and one trailing default-background space. It omits the redundant `model `
 label. When idle, both surrounding spaces and the entire model name use the
-normal status background. During a local Run, a four-cell comet sweeps from
-left to right across the wrapped region while the text and its column remain
-stable. Its head uses the configured Start accent and its three-cell tail uses
-successively dimmer sRGB-channel linear blends toward the configured status
-background. The comet changes backgrounds only: it introduces no glyph whose
-line metrics could leave gaps. A six-cell blank interval separates sweeps.
+normal status background. During a local Run, a four-cell comet enters through
+the leading space and sweeps left to right across the wrapped region while the
+text and its column remain stable. Its head uses the configured Start accent
+and its three-cell tail uses successively dimmer sRGB-channel linear blends
+toward the configured status background. The comet changes backgrounds only:
+it introduces no glyph whose line metrics could leave gaps. A six-cell blank
+interval separates sweeps.
 
 The comet advances one display cell every 80 milliseconds using monotonic
 elapsed time rather than accumulated frame steps. The UI checks the phase every
