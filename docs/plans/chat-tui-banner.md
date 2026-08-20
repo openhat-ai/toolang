@@ -23,26 +23,26 @@ The change succeeds when:
 
 ## Scope and presentation
 
-The rounded panel keeps a dim border, one column of horizontal padding, and one
+The rounded panel keeps a dim border, two columns of horizontal padding, and one
 empty row above and below its content. The logo has no explicit Rich style.
 `Toolang` is bold bright cyan, the exact `toolang_version()` value is dim, the
 `home` and `executor` keys are dim, and their values use the normal foreground.
 The metadata order is Toolang/version, home, then executor.
 
-At 66 columns or wider, the logo and metadata render side by side when the
+At 69 columns or wider, the logo and metadata render side by side when the
 longest metadata value fits without wrapping:
 
 ```text
-╭─────────────────────────────────────────────────────╮
-│                                                     │
-│ ████           ██   Toolang   0.3.0+cd50c7f*        │
-│  ██   ⬤   ⬤    ██   home      ~/.toolang/agents/eve │
-│  ██          ████   executor  local                 │
-│                                                     │
-╰─────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────────╮
+│                                                        │
+│  ████           ██    Toolang   0.3.0+cd50c7f*         │
+│   ██   ⬤   ⬤    ██    home      ~/.toolang/agents/eve  │
+│   ██          ████    executor  local                  │
+│                                                        │
+╰────────────────────────────────────────────────────────╯
 ```
 
-Below 66 columns, or whenever the wide layout would wrap, metadata stacks below
+Below 69 columns, or whenever the wide layout would wrap, metadata stacks below
 the logo. Before rendering, paths under the user home use `~`; platform
 temporary-directory roots use `/tmp`, a matching environment variable such as
 `$TMPDIR` or `%TEMP%`, or the native temporary root while retaining the relative

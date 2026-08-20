@@ -925,8 +925,8 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert "executor" in bordered_lines[-3]
     assert not bordered_lines[-2].strip("│ ")
     logo_line = next(line for line in lines if "Toolang" in line)
-    assert logo_line.startswith("│ ████")
-    assert logo_line.split("████           ██", 1)[1].startswith("   Toolang")
+    assert logo_line.startswith("│  ████")
+    assert logo_line.split("████           ██", 1)[1].startswith("    Toolang")
 
 
 def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
