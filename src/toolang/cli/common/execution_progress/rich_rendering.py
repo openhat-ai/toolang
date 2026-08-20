@@ -93,6 +93,16 @@ def run_footer_renderable(
     )
 
 
+def terminal_status_style(status: str) -> str:
+    """Return the shared terminal style for one completed execution status."""
+
+    return {
+        "succeeded": "dim",
+        "failed": "red",
+        "canceled": "yellow",
+    }.get(status, "dim")
+
+
 @dataclass(frozen=True, slots=True)
 class _RunFooter:
     run_id: str
@@ -108,20 +118,15 @@ class _RunFooter:
         width = max(1, min(options.max_width, self.max_width))
         divider_width = min(width, RUN_DIVIDER_WIDTH)
         title = f"{self.run_id} {self.status}"
-        caption_style = {
-            "succeeded": "green",
-            "failed": "red",
-            "canceled": "yellow",
-        }.get(self.status, "dim")
-        rule_style = caption_style
+        status_style = terminal_status_style(self.status)
         if divider_width < 5:
-            divider = Text("▴")
+            divider = Text("▴", style=status_style)
             if divider_width > 1:
-                divider.append(" ", style=rule_style)
+                divider.append(" ", style=status_style)
             if divider_width > 2:
                 divider.append(
                     truncate(title, divider_width - 2),
-                    style=caption_style,
+                    style=status_style,
                 )
             divider.no_wrap = True
             yield divider
@@ -139,11 +144,14 @@ class _RunFooter:
         title = truncate(title, max(divider_width - 4, 1))
         title_cells = display_width(title)
         top = Text()
-        top.append("▴")
-        top.append(" ", style=rule_style)
-        top.append(title, style=caption_style)
-        top.append(" ", style=rule_style)
-        top.append("─" * max(divider_width - title_cells - 3, 0), style=rule_style)
+        top.append("▴", style=status_style)
+        top.append(" ", style=status_style)
+        top.append(title, style=status_style)
+        top.append(" ", style=status_style)
+        top.append(
+            "─" * max(divider_width - title_cells - 3, 0),
+            style=status_style,
+        )
         top.no_wrap = True
         yield top
 

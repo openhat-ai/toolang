@@ -113,8 +113,8 @@ Trace-or-Lane ownership rule to its child statement.
 There is no `↳`, `→`, or `!` marker.
 
 - Model activity and output use `•` and normal text.
-- Tool activity uses `•` and normal text. Its terminal row and following output
-  are dim.
+- Tool activity uses `•` and normal text. Its successful terminal marker, row,
+  and following output are dim.
 - Flow live and successful terminal output, including collection and loop
   aggregates, use `•` and normal text.
 - Errors use `•` with error styling.
@@ -123,6 +123,11 @@ There is no `↳`, `→`, or `!` marker.
 - Flow facts and continuation lines are unmarked and align with the text after
   the marker.
 - Headers and facts are dim. Errors and cancellation retain their status styles.
+
+Terminal markers use the same color and intensity as their following content.
+Successful Model and Flow outputs use normal white; successful Tool terminal
+output uses dim white. Failure uses red and cancellation uses yellow. Green is
+not a terminal status color.
 
 Result pointers, child closure, binding effects, and control decisions are not
 displayed. If such information is added later, it belongs below output as an
@@ -357,13 +362,12 @@ they render the same root footer:
   1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
-The divider uses a solid `▴` marker with the same normal-intensity visual
-weight as a model Step bullet. Its line is 42 cells wide: the marker and space
-occupy two cells, and the caption plus trailing rule fill the remaining 40.
-Narrow terminals shorten the divider without wrapping it. Success, failure,
-and cancellation use green, red, and yellow captions and rules, respectively.
-Facts text remains dim, uses the available terminal width independently, and
-may extend beyond the divider.
+The divider uses a solid `▴` marker. Its line is 42 cells wide: the marker and
+space occupy two cells, and the caption plus trailing rule fill the remaining
+40. Narrow terminals shorten the divider without wrapping it. The marker,
+caption, and rule use dim, red, and yellow for success, failure, and
+cancellation, respectively. Facts text remains dim, uses the available terminal
+width independently, and may extend beyond the divider.
 
 The footer owns total duration and Run facts. Cost uses full precision while
 aggregating and is rounded to cents only for display. Script does not append a

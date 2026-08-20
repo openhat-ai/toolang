@@ -673,16 +673,17 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
 
 
 @pytest.mark.parametrize(
-    ("status", "color"),
+    ("status", "color", "dim"),
     [
-        ("succeeded", "green"),
-        ("failed", "red"),
-        ("canceled", "yellow"),
+        ("succeeded", None, True),
+        ("failed", "red", False),
+        ("canceled", "yellow", False),
     ],
 )
 def test_chat_run_footer_styles_marker_caption_rule_and_facts(
     status: Literal["succeeded", "failed", "canceled"],
-    color: str,
+    color: str | None,
+    dim: bool,
 ) -> None:
     root_summary = blocks.RunStopBlock.create(_run_begin())
     root_summary.update(_run_end(status=status))
@@ -692,20 +693,23 @@ def test_chat_run_footer_styles_marker_caption_rule_and_facts(
         if segment.text.strip()
     ]
 
+    def assert_status_style(segment: Any) -> None:
+        assert segment.style is not None
+        assert bool(segment.style.dim) is dim
+        if color is None:
+            assert segment.style.color is None
+        else:
+            assert segment.style.color is not None
+            assert segment.style.color.name == color
+
     marker = next(segment for segment in segments if segment.text == "▴")
-    assert marker.style is None or (marker.style.color is None and not marker.style.dim)
+    assert_status_style(marker)
     rule = [segment for segment in segments if "─" in segment.text]
     assert rule
-    assert all(
-        segment.style is not None
-        and segment.style.color is not None
-        and segment.style.color.name == color
-        for segment in rule
-    )
+    for segment in rule:
+        assert_status_style(segment)
     caption = next(segment for segment in segments if "run_1" in segment.text)
-    assert caption.style is not None
-    assert caption.style.color is not None
-    assert caption.style.color.name == color
+    assert_status_style(caption)
     facts = [
         segment
         for segment in segments
@@ -1663,7 +1667,7 @@ def test_chat_tui_show_command_renders_durable_markdown(
     )
     rule = [segment for segment in segments if "─" in segment.text]
     response = next(segment for segment in segments if "durable result" in segment.text)
-    assert marker.style is None or not marker.style.dim
+    assert marker.style is not None and marker.style.dim
     assert caption.style is not None and caption.style.dim
     assert rule and all(
         segment.style is not None and segment.style.dim for segment in rule
