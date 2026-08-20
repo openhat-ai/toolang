@@ -21,6 +21,7 @@ _STYLES: dict[ProgressTone, str] = {
     "error": "red",
     "warning": "yellow",
 }
+_RUN_FOOTER_MIN_RULE_WIDTH = 16
 
 
 class _ProgressHeading(Heading):
@@ -115,7 +116,7 @@ class _RunFooter:
             "failed": "red",
             "canceled": "yellow",
         }.get(self.status, "dim")
-        rule_style = "dim"
+        rule_style = caption_style
         facts_indent = 2
         content_width = max(width - facts_indent, 1)
         fact_lines = Text(self.facts, style="dim").wrap(
@@ -128,7 +129,10 @@ class _RunFooter:
         facts_width = max(display_width(line.plain) for line in fact_lines)
         footer_width = min(
             width,
-            max(facts_width + facts_indent, display_width(title) + 4),
+            max(
+                facts_width + facts_indent,
+                display_width(title) + 3 + _RUN_FOOTER_MIN_RULE_WIDTH,
+            ),
         )
         title = truncate(title, max(footer_width - 4, 1))
         title_cells = display_width(title)
