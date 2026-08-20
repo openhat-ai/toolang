@@ -116,7 +116,7 @@ class StepEnd:
     type: Literal["step_end"] = field(default="step_end", init=False)
 
     def __post_init__(self) -> None:
-        validate_step_noted(self.kind, self.noted)
+        validate_step_noted(self.kind, self.noted, self.status)
 
 
 @dataclass(frozen=True, slots=True)

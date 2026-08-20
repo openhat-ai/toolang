@@ -30,6 +30,7 @@ from .types import (
     AgentResources,
     Local,
     ExecutionError,
+    LoopStepNoted,
     ModelStepGiven,
     ModelStepNoted,
     ModelTokenCount,
@@ -340,7 +341,7 @@ class StepRecord:
             raise TypeError("model Step record requires StoredModelStepGiven")
         else:
             validate_step_given(self.kind, self.given)
-        validate_step_noted(self.kind, self.noted)
+        validate_step_noted(self.kind, self.noted, self.status)
 
     @property
     def run_id(self) -> str:
@@ -952,6 +953,22 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
 
     if data is None:
         return None
+    if kind == "loop":
+        payload = _canonical_object(
+            data,
+            fields={"iterations", "termination"},
+            label="loop noted",
+        )
+        termination = payload["termination"]
+        if termination not in {"exhausted", "satisfied", "failed", "canceled"}:
+            raise ValueError("loop noted termination is invalid")
+        return LoopStepNoted(
+            iterations=_required_int(payload["iterations"], label="loop iterations"),
+            termination=cast(
+                Literal["exhausted", "satisfied", "failed", "canceled"],
+                termination,
+            ),
+        )
     if kind != "model":
         raise ValueError(f"{kind} Step noted must be null")
     payload = _canonical_object(
@@ -1006,6 +1023,11 @@ def step_noted_to_data(kind: StepKind, noted: StepNoted) -> dict[str, object] | 
     validate_step_noted(kind, noted)
     if noted is None:
         return None
+    if isinstance(noted, LoopStepNoted):
+        return {
+            "iterations": noted.iterations,
+            "termination": noted.termination,
+        }
     return {
         "tokens": (
             {"input": noted.tokens.input, "output": noted.tokens.output}

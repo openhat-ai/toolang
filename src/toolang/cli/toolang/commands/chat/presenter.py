@@ -5,7 +5,7 @@ from __future__ import annotations
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin
 
 from toolang.cli.common.execution_progress import (
-    ExecutionProgressReducer,
+    ProgressProjector,
     ProgressUpdate,
 )
 
@@ -18,7 +18,7 @@ class ChatRunPresenter:
 
     def __init__(self) -> None:
         self._root_run_id: str | None = None
-        self._reducer = ExecutionProgressReducer()
+        self._projector = ProgressProjector()
         self._progress: dict[str, blocks.ExecutionProgressBlock] = {}
 
     def handle(self, event: RunEvent, app: AppContext) -> None:
@@ -28,7 +28,7 @@ class ChatRunPresenter:
         elif isinstance(event, StepBegin):
             self._finalize_commands(app, blocks.RunSteerBlock, event)
 
-        self._apply(self._reducer.handle(event), app)
+        self._apply(self._projector.handle(event), app)
 
         if isinstance(event, RunEnd) and event.run == self._root_run_id:
             self._end_root(event, app)
@@ -53,7 +53,7 @@ class ChatRunPresenter:
         for block in list(app.get_live_blocks()):
             if isinstance(block, (blocks.RunStartBlock, blocks.RunSteerBlock)):
                 app.finalize_block(block)
-        self._apply(self._reducer.diagnostic(friendly_error(message)), app)
+        self._apply(self._projector.diagnostic(friendly_error(message)), app)
         stop = self._run_stop(app, active_run_id or self._root_run_id or "run")
         if stop is None:
             stop = blocks.RunStopBlock(
@@ -65,8 +65,8 @@ class ChatRunPresenter:
             stop.status = "failed"
             stop.error = ""
         stop.set_metrics(
-            self._reducer.root_metrics,
-            include_child_runs=self._reducer.root_kind == "flow",
+            self._projector.root_metrics,
+            include_child_runs=self._projector.root_kind == "flow",
         )
         app.finalize_block(stop)
         app.finish_run()
@@ -75,7 +75,7 @@ class ChatRunPresenter:
 
     def reset(self) -> None:
         self._root_run_id = None
-        self._reducer = ExecutionProgressReducer()
+        self._projector = ProgressProjector()
         self._progress.clear()
 
     def _begin_root(self, event: RunBegin, app: AppContext) -> bool:
@@ -97,17 +97,15 @@ class ChatRunPresenter:
             stop.update(event)
         stop.error = ""
         stop.set_metrics(
-            self._reducer.root_metrics,
-            include_child_runs=self._reducer.root_kind == "flow",
+            self._projector.root_metrics,
+            include_child_runs=self._projector.root_kind == "flow",
         )
-        if self._reducer.root_kind == "flow" and event.status == "succeeded":
-            app.finalize_block(blocks.ResultAvailableBlock(event.run))
         app.finalize_block(stop)
         app.finish_run()
         self.reset()
 
     def _apply(self, update: ProgressUpdate, app: AppContext) -> None:
-        for progress in update.stable:
+        for progress in update.finalized:
             block = self._progress.pop(progress.key, None)
             if block is None:
                 block = blocks.ExecutionProgressBlock(progress)

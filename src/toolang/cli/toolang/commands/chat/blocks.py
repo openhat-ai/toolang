@@ -90,7 +90,7 @@ class MutableBlock:
 
 @dataclass(slots=True)
 class ExecutionProgressBlock(MutableBlock):
-    """One shared stable or atomically replaceable execution progress block."""
+    """One shared finalized or replaceable execution progress block."""
 
     progress: ProgressBlock
 
@@ -292,12 +292,11 @@ class RunStopBlock(MutableBlock):
         facts = self.metrics.facts(
             duration=duration,
             include_runs=False,
-            include_cost=False,
         )
-        if self.include_child_runs:
+        if self.include_child_runs and self.metrics.runs > 1:
             facts.insert(
                 1 if duration else 0,
-                count(max(self.metrics.runs - 1, 0), "run"),
+                count(self.metrics.runs - 1, "run"),
             )
         return facts
 
@@ -346,21 +345,6 @@ class SlashResultBlock:
         if response is None:
             return Text("\n")
         return Group(response, Text("\n"))
-
-
-@dataclass(frozen=True, slots=True)
-class ResultAvailableBlock(MutableBlock):
-    """Tell the user how to reopen one durable Flow result."""
-
-    run_id: str
-
-    def update(self, event: Any) -> None:
-        del event
-
-    def render(self) -> RenderableType:
-        line = Text("◇ result saved · ")
-        line.append(f":show {self.run_id}", style="cyan")
-        return line
 
 
 @dataclass(frozen=True, slots=True)

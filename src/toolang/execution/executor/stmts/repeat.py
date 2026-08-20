@@ -26,6 +26,8 @@ async def execute(
     controls: Sequence[RunControlRecord],
     occurrence: Occurrence | None,
 ) -> Local:
+    progress = loop_step.LoopProgress()
+
     async def evaluate() -> Local:
         child_index = 0
         iteration = 0
@@ -45,6 +47,7 @@ async def execute(
                 ),
             )
             iteration += 1
+            progress.iterations = iteration
             if statement.runnable is not None:
                 condition = await execution.execute_child(
                     binding,
@@ -61,6 +64,7 @@ async def execute(
                     output_name=None,
                 )
                 if boolean(condition.value, operation="until"):
+                    progress.termination = "satisfied"
                     break
         return Local()
 
@@ -73,4 +77,5 @@ async def execute(
         controls=controls,
         occurrence=occurrence,
         evaluate=evaluate,
+        progress=progress,
     )

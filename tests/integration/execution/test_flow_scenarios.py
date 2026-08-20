@@ -31,7 +31,9 @@ from toolang.execution.records import (
     StartControlPayload,
 )
 from toolang.execution.types import (
+    IterationOccurrence,
     Local,
+    LoopStepNoted,
     Occurrence,
     OccurrencePosition,
     StepPath,
@@ -1120,14 +1122,26 @@ flow folded(_: Text) -> Text:
             assert occurrences == [
                 Occurrence(
                     item=OccurrencePosition(index=0, count=3),
+                    iteration=IterationOccurrence(index=0, count=3, phase="body"),
                 ),
                 Occurrence(
                     item=OccurrencePosition(index=1, count=3),
+                    iteration=IterationOccurrence(index=1, count=3, phase="body"),
                 ),
                 Occurrence(
                     item=OccurrencePosition(index=2, count=3),
+                    iteration=IterationOccurrence(index=2, count=3, phase="body"),
                 ),
             ]
+            loop = next(
+                step
+                for step in harness.store.list_steps(run_id=root.id)
+                if step.kind == "loop"
+            )
+            assert loop.noted == LoopStepNoted(
+                iterations=3,
+                termination="exhausted",
+            )
 
     asyncio.run(scenario())
 
@@ -1332,6 +1346,11 @@ flow repeated(_: Text) -> Text:
             assert root.status == "succeeded"
             assert harness.store.run_output_text(run_id=root.id) == "three"
             assert _root_step_kinds(harness, root.id) == ["loop"]
+            loop = harness.store.list_steps(run_id=root.id)[0]
+            assert loop.noted == LoopStepNoted(
+                iterations=3,
+                termination="exhausted",
+            )
             assert [
                 invocation.call.messages[-1]
                 for invocation in harness.adapter.invocations
@@ -1512,6 +1531,10 @@ flow repeated(_: Text) -> Text:
                 if step.parent is None
             )
             assert loop.output is None
+            assert loop.noted == LoopStepNoted(
+                iterations=2,
+                termination="satisfied",
+            )
             until_runs = [
                 run
                 for run in harness.store.list_runs(thread_id=thread, limit=None)

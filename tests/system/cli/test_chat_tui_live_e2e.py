@@ -45,7 +45,7 @@ def deepseek_model(request: pytest.FixtureRequest) -> str:
     ("kind", "marker", "progress"),
     [
         pytest.param("agic", "TOOLANG_CHAT_AGIC_E2E", None, id="agic"),
-        pytest.param("flow", "TOOLANG_CHAT_FLOW_E2E", "[0] run smoke", id="flow"),
+        pytest.param("flow", "TOOLANG_CHAT_FLOW_E2E", "[0] Run smoke", id="flow"),
     ],
 )
 def test_chat_tui_runs_with_real_deepseek_provider(
@@ -67,11 +67,7 @@ def test_chat_tui_runs_with_real_deepseek_provider(
         session.wait_for(marker)
         session.send(b"\r")
         response = f"{LIVE_RESPONSE_PREFIX} {marker}"
-        expected = [f"> {marker}", "succeeded"]
-        if kind == "agic":
-            expected.append(response)
-        else:
-            expected.extend(("result saved", ":show run_"))
+        expected = [f"> {marker}", response, "succeeded"]
         if progress is not None:
             expected.append(progress)
         output = session.wait_for(*expected, timeout=180)

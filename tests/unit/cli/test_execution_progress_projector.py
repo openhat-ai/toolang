@@ -10,10 +10,10 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.run import ModelCall, ToolCall
 from toolang.cli.common.execution_progress import (
-    ExecutionProgressReducer,
+    ProgressProjector,
     ProgressBlock,
 )
-from toolang.cli.common.execution_progress.formatting import progress_statement_header
+from toolang.cli.common.execution_progress.headers import statement_header
 from toolang.execution.events import (
     PartBegin,
     PartDelta,
@@ -27,6 +27,8 @@ from toolang.execution.types import (
     ControlRef,
     IterationOccurrence,
     Local,
+    LoopStepNoted,
+    LoopTermination,
     ModelStepGiven,
     ModelStepNoted,
     ModelTokenCount,
@@ -34,6 +36,7 @@ from toolang.execution.types import (
     OccurrencePosition,
     Pointer,
     StepPath,
+    StepStatus,
     ToolStepGiven,
 )
 from toolang.lang.ast import (
@@ -83,7 +86,7 @@ def _rows(blocks: tuple[ProgressBlock, ...]) -> list[list[str]]:
 
 def test_progress_statement_header_prefers_doc_and_preserves_runnable_name() -> None:
     assert (
-        progress_statement_header(
+        statement_header(
             MapStmt(
                 span=SPAN,
                 runnable="search_web",
@@ -94,11 +97,11 @@ def test_progress_statement_header_prefers_doc_and_preserves_runnable_name() -> 
         == "Search the web for each query"
     )
     assert (
-        progress_statement_header(MapStmt(span=SPAN, runnable="search_web", lanes=4))
+        statement_header(MapStmt(span=SPAN, runnable="search_web", lanes=4))
         == "Run search_web for each item, up to 4 at once"
     )
     assert (
-        progress_statement_header(
+        statement_header(
             RankStmt(
                 span=SPAN,
                 runnable="relevance_score",
@@ -115,27 +118,22 @@ def test_progress_statement_header_prefers_doc_and_preserves_runnable_name() -> 
 
 def test_progress_statement_header_covers_inline_binding_and_repeat_forms() -> None:
     assert (
-        progress_statement_header(LetStmt(span=SPAN, binding="topic", value="x"))
-        == "Set topic"
+        statement_header(LetStmt(span=SPAN, binding="topic", value="x")) == "Set topic"
     )
     assert (
-        progress_statement_header(
-            RunStmt(span=SPAN, runnable="<agic:12>", binding=None)
-        )
+        statement_header(RunStmt(span=SPAN, runnable="<agic:12>", binding=None))
         == "Run the inline task without saving the result"
     )
     assert (
-        progress_statement_header(KeepStmt(span=SPAN, position="first", count=1))
+        statement_header(KeepStmt(span=SPAN, position="first", count=1))
         == "Keep the first item"
     )
     assert (
-        progress_statement_header(
-            StormStmt(span=SPAN, count=3, runnable="review_item", lanes=2)
-        )
+        statement_header(StormStmt(span=SPAN, count=3, runnable="review_item", lanes=2))
         == "Run review_item 3 times, up to 2 at once"
     )
     assert (
-        progress_statement_header(RepeatStmt(span=SPAN, count=3, runnable="<agic:20>"))
+        statement_header(RepeatStmt(span=SPAN, count=3, runnable="<agic:20>"))
         == "Repeat up to 3 times"
     )
 
@@ -222,11 +220,11 @@ def test_progress_statement_header_covers_every_ast_fallback(
     statement: FlowStmt,
     expected: str,
 ) -> None:
-    assert progress_statement_header(statement) == expected
+    assert statement_header(statement) == expected
 
 
-def test_model_live_row_becomes_one_stable_output_with_annotations() -> None:
-    reducer = ExecutionProgressReducer()
+def test_model_live_row_becomes_one_complete_finalized_output() -> None:
+    reducer = ProgressProjector()
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -282,16 +280,11 @@ def test_model_live_row_becomes_one_stable_output_with_annotations() -> None:
         )
     )
     assert _rows(final.live) == []
-    assert _rows(final.stable) == [
-        [
-            "· executed Use a shared reducer.",
-            "  run_root.0 · 1.8s · deepseek/deepseek-chat · 3.4k/86 tokens · $0.002",
-        ]
-    ]
+    assert _rows(final.finalized) == [["· Use a shared reducer."]]
 
 
 def test_model_tool_request_uses_a_typed_summary_instead_of_runtime_repr() -> None:
-    reducer = ExecutionProgressReducer(show_boundaries=False)
+    reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -328,19 +321,13 @@ def test_model_tool_request_uses_a_typed_summary_instead_of_runtime_repr() -> No
         )
     )
 
-    assert _rows(update.stable) == [
-        [
-            "· executed tool request for web_search.search",
-            "  run_root.0 · deepseek/deepseek-chat",
-        ]
-    ]
-    assert "Array(" not in update.stable[0].rows[0].text
+    assert _rows(update.finalized) == [["· requested web_search.search"]]
+    assert "Array(" not in update.finalized[0].rows[0].text
     assert reducer._steps == {}
-    assert reducer.outcome_shape(StepPath.parse("run_root.0")) == "1 item"
 
 
 def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
-    reducer = ExecutionProgressReducer()
+    reducer = ProgressProjector()
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -353,6 +340,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
             step=StepPath.parse("run_root.0"),
             kind="run",
             given=RunStmt(span=SPAN, runnable="summarize"),
+            started_at="2026-01-01T00:00:00Z",
         )
     )
     reducer.handle(
@@ -371,20 +359,23 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
         )
     )
     assert _rows(live.live) == [["[0] Run summarize", "", "· thinking…"]]
-    stable = reducer.handle(
+    finalized = reducer.handle(
         StepEnd(
             step=StepPath.parse("run_child.0"),
             kind="model",
             status="succeeded",
             output=_parts("Done."),
+            noted=ModelStepNoted(
+                tokens=ModelTokenCount(input=639, output=215),
+                cost="0.00149",
+            ),
         )
     )
-    assert _rows(stable.stable) == [
+    assert _rows(finalized.finalized) == [
         [
             "[0] Run summarize",
             "",
-            "· executed Done.",
-            "  run_child.0 · deepseek/deepseek-chat",
+            "· Done.",
         ]
     ]
     reducer.handle(RunEnd(run="run_child", status="succeeded"))
@@ -394,13 +385,19 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
             kind="run",
             status="succeeded",
             output=_parts("Done."),
+            finished_at="2026-01-01T00:00:02Z",
         )
     )
-    assert wrapper.stable == ()
+    assert _rows(wrapper.finalized) == [
+        [
+            "  2.0s · 1 run · 1 model call · ↑639 ↓215 $0.00",
+            "",
+        ]
+    ]
 
 
-def test_tool_output_uses_one_unmarked_output_row() -> None:
-    reducer = ExecutionProgressReducer(show_boundaries=False)
+def test_tool_output_preserves_complete_unmarked_output_rows() -> None:
+    reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -435,13 +432,24 @@ def test_tool_output_uses_one_unmarked_output_row() -> None:
             ),
         )
     )
-    assert _rows(update.stable) == [
-        ["· executed web_search.search", "  5 results", "  run_root.0"]
+    assert _rows(update.finalized) == [
+        [
+            "· executed web_search.search",
+            "  {",
+            '    "results": [',
+            "      {},",
+            "      {},",
+            "      {},",
+            "      {},",
+            "      {}",
+            "    ]",
+            "  }",
+        ]
     ]
 
 
 def test_flow_scalar_output_is_quoted_in_its_normal_output_slot() -> None:
-    reducer = ExecutionProgressReducer(show_boundaries=False)
+    reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -465,11 +473,11 @@ def test_flow_scalar_output_is_quoted_in_its_normal_output_slot() -> None:
         )
     )
 
-    assert _rows(update.stable) == [['· executed "agent runtimes"', "  run_root.0"]]
+    assert _rows(update.finalized) == [["· agent runtimes", ""]]
 
 
 def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
-    reducer = ExecutionProgressReducer()
+    reducer = ProgressProjector()
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -546,16 +554,17 @@ def test_repeat_uses_flat_iteration_and_statement_boundaries() -> None:
             kind="loop",
             status="succeeded",
             output=_parts("revised"),
+            noted=LoopStepNoted(iterations=1, termination="exhausted"),
         )
     )
 
-    assert _rows(completed.stable) == [
-        ["· completed · 1 iteration", "  1 run succeeded · 1 model call"]
+    assert _rows(completed.finalized) == [
+        ["· completed 1 iteration", "  1 run · 1 model call", ""]
     ]
 
 
 def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
-    reducer = ExecutionProgressReducer()
+    reducer = ProgressProjector()
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -605,13 +614,13 @@ def test_until_run_shows_control_boundary_and_only_real_agic_steps() -> None:
             output=_parts("true"),
         )
     )
-    text = "\n".join(_rows(final.stable)[0])
-    assert "· executed true" in text
+    text = "\n".join(_rows(final.finalized)[0])
+    assert "· true" in text
     assert "executed completion_check" not in text
 
 
 def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> None:
-    reducer = ExecutionProgressReducer(show_boundaries=False)
+    reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -693,11 +702,15 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
         )
     )
     assert terminal.live == ()
-    assert _rows(terminal.stable) == [
+    assert _rows(terminal.finalized) == [
         [
             "· 1 failed · 1 canceled",
-            "  parallel step stopped because lane 0 (#4) failed",
-            "  run_root.0 · 2 runs · 1 model call · 1 tool call",
+            "  0 | #4 | · failed fetch_page",
+            "             provider returned status 429",
+            "",
+            "· parallel step stopped because lane 0 (#4) failed",
+            "  2 runs · 1 model call · 1 tool call",
+            "",
         ]
     ]
 
@@ -705,7 +718,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
 def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible() -> (
     None
 ):
-    reducer = ExecutionProgressReducer(show_boundaries=False)
+    reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -728,7 +741,7 @@ def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible()
             error="connection closed",
         )
     )
-    assert "connection closed" in "\n".join(_rows(leaf.stable)[0])
+    assert "connection closed" in "\n".join(_rows(leaf.finalized)[0])
     root = reducer.handle(
         RunEnd(
             run="run_root",
@@ -736,9 +749,9 @@ def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible()
             error=Pointer.step(StepPath.parse("run_root.0")),
         )
     )
-    assert root.stable == ()
+    assert root.finalized == ()
 
-    ownerless = ExecutionProgressReducer()
+    ownerless = ProgressProjector()
     ownerless.handle(
         RunBegin(
             run="run_other",
@@ -753,11 +766,13 @@ def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible()
             error="progress stream ended before run completion",
         )
     )
-    assert _rows(update.stable) == [["· progress stream ended before run completion"]]
+    assert _rows(update.finalized) == [
+        ["· progress stream ended before run completion"]
+    ]
 
 
 def test_malformed_part_sequence_becomes_one_root_diagnostic() -> None:
-    reducer = ExecutionProgressReducer()
+    reducer = ProgressProjector()
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -780,11 +795,11 @@ def test_malformed_part_sequence_becomes_one_root_diagnostic() -> None:
         )
     )
     assert update.live == ()
-    assert "PartDelta without active Part" in _rows(update.stable)[0][0]
+    assert "PartDelta without active Part" in _rows(update.finalized)[0][0]
 
 
 def test_run_end_with_active_step_clears_live_with_one_diagnostic() -> None:
-    reducer = ExecutionProgressReducer()
+    reducer = ProgressProjector()
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -803,11 +818,11 @@ def test_run_end_with_active_step_clears_live_with_one_diagnostic() -> None:
     update = reducer.handle(RunEnd(run="run_root", status="canceled"))
 
     assert update.live == ()
-    assert _rows(update.stable) == [["· RunEnd with active Step for run_root"]]
+    assert _rows(update.finalized) == [["· RunEnd with active Step for run_root"]]
 
 
 def test_cyclic_error_pointer_becomes_one_terminal_diagnostic() -> None:
-    reducer = ExecutionProgressReducer(show_boundaries=False)
+    reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -848,11 +863,13 @@ def test_cyclic_error_pointer_becomes_one_terminal_diagnostic() -> None:
         )
     )
 
-    assert _rows(update.stable) == [["· could not resolve execution error run_root.0"]]
+    assert _rows(update.finalized) == [
+        ["· could not resolve execution error run_root.0"]
+    ]
 
 
 def test_compact_mode_removes_repeat_boundaries_but_keeps_agic_activity() -> None:
-    reducer = ExecutionProgressReducer(show_boundaries=False)
+    reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -897,7 +914,7 @@ def test_compact_mode_removes_repeat_boundaries_but_keeps_agic_activity() -> Non
 
 
 def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
-    reducer = ExecutionProgressReducer(show_boundaries=False)
+    reducer = ProgressProjector(show_boundaries=False)
     par = StepPath.parse("run_root.0")
     reducer.handle(
         RunBegin(
@@ -974,7 +991,7 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
         )
     )
     reducer.handle(RunEnd(run="run_fetch", status="succeeded"))
-    reducer.handle(
+    flow_finished = reducer.handle(
         StepEnd(
             step=StepPath.parse("run_flow_0.0"),
             kind="run",
@@ -982,6 +999,9 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
             output=_parts("done"),
         )
     )
+    flow_live = "\n".join(_rows(flow_finished.live)[0])
+    assert "executed fetch_page" in flow_live
+    assert "executed tool" not in flow_live
     reducer.handle(RunEnd(run="run_flow_0", status="succeeded"))
     reused = reducer.handle(
         RunBegin(
@@ -1012,17 +1032,17 @@ def test_nested_flow_inside_parallel_stays_in_one_reusable_lane() -> None:
         )
     )
 
-    assert _rows(terminal.stable) == [
+    assert _rows(terminal.finalized) == [
         [
             "· 2 succeeded",
-            "  1-item list",
-            "  run_root.0 · 3 runs · 1 tool call",
+            "  3 runs · 1 tool call",
+            "",
         ]
     ]
 
 
-def test_stable_blocks_are_returned_in_step_completion_order() -> None:
-    reducer = ExecutionProgressReducer(show_boundaries=False)
+def test_finalized_blocks_are_returned_in_step_completion_order() -> None:
+    reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
         RunBegin(
             run="run_root",
@@ -1056,5 +1076,239 @@ def test_stable_blocks_are_returned_in_step_completion_order() -> None:
         )
     )
 
-    assert second.stable[0].key == "step:run_root.1"
-    assert first.stable[0].key == "step:run_root.0"
+    assert second.finalized[0].key == "step:run_root.1"
+    assert first.finalized[0].key == "step:run_root.0"
+
+
+def test_model_terminal_preserves_complete_multiline_output() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:demo",
+        )
+    )
+    projector.handle(
+        StepBegin(
+            step=StepPath.parse("run_root.0"),
+            kind="model",
+            given=_model(),
+        )
+    )
+    long_line = "x" * 240
+
+    terminal = projector.handle(
+        StepEnd(
+            step=StepPath.parse("run_root.0"),
+            kind="model",
+            status="succeeded",
+            output=_parts(f"first line\n{long_line}"),
+        )
+    )
+
+    assert _rows(terminal.finalized) == [["· first line", f"  {long_line}"]]
+
+
+@pytest.mark.parametrize(
+    ("status", "termination", "expected"),
+    [
+        ("succeeded", "exhausted", "· completed 3 iterations"),
+        ("succeeded", "satisfied", "· condition met after 2 iterations"),
+        ("failed", "failed", "· interrupted after 1 iteration"),
+        ("canceled", "canceled", "· canceled after 0 iterations"),
+    ],
+)
+def test_loop_terminal_uses_typed_termination(
+    status: StepStatus,
+    termination: LoopTermination,
+    expected: str,
+) -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    path = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="flow:demo",
+        )
+    )
+    projector.handle(
+        StepBegin(
+            step=path,
+            kind="loop",
+            given=RepeatStmt(span=SPAN, count=3),
+        )
+    )
+    iterations = {"exhausted": 3, "satisfied": 2, "failed": 1, "canceled": 0}[
+        termination
+    ]
+
+    terminal = projector.handle(
+        StepEnd(
+            step=path,
+            kind="loop",
+            status=status,
+            noted=LoopStepNoted(
+                iterations=iterations,
+                termination=termination,
+            ),
+            error=(
+                Pointer.step(StepPath.parse("run_child.0"))
+                if status == "failed"
+                else None
+            ),
+        )
+    )
+
+    assert _rows(terminal.finalized) == [[expected, ""]]
+
+
+def test_loop_direct_failure_keeps_error_and_termination_summary() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    path = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="flow:demo",
+        )
+    )
+    projector.handle(
+        StepBegin(
+            step=path,
+            kind="loop",
+            given=RepeatStmt(span=SPAN, count=3),
+        )
+    )
+
+    terminal = projector.handle(
+        StepEnd(
+            step=path,
+            kind="loop",
+            status="failed",
+            noted=LoopStepNoted(iterations=1, termination="failed"),
+            error="condition returned an invalid value",
+        )
+    )
+
+    assert _rows(terminal.finalized) == [
+        [
+            "· condition returned an invalid value",
+            "  interrupted after 1 iteration",
+            "",
+        ]
+    ]
+
+
+def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
+    projector = ProgressProjector()
+    loop = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="flow:demo",
+        )
+    )
+    projector.handle(
+        StepBegin(
+            step=loop,
+            kind="loop",
+            given=SettleStmt(span=SPAN, runnable="merge_pair"),
+        )
+    )
+    projector.handle(
+        RunBegin(
+            run="run_merge",
+            parent=loop,
+            control=ControlRef("run_merge", 0),
+            runnable="agic:merge_pair",
+            occurrence=Occurrence(
+                item=OccurrencePosition(index=0, count=2),
+                iteration=IterationOccurrence(index=0, count=2, phase="body"),
+            ),
+        )
+    )
+
+    live = projector.handle(
+        StepBegin(
+            step=StepPath.parse("run_merge.0"),
+            kind="model",
+            given=_model(),
+        )
+    )
+
+    assert _rows(live.live) == [
+        [
+            "[0] Reduce the items with merge_pair",
+            "",
+            "--- iteration 1 of 2 ---",
+            "",
+            "· thinking…",
+        ]
+    ]
+
+
+def test_parallel_terminal_retains_each_independent_failed_lane() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    par = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="flow:demo",
+        )
+    )
+    projector.handle(
+        StepBegin(
+            step=par,
+            kind="par",
+            given=MapStmt(span=SPAN, runnable="fetch", lanes=2),
+        )
+    )
+    for lane in range(2):
+        run_id = f"run_lane_{lane}"
+        step = StepPath.parse(f"{run_id}.0")
+        projector.handle(
+            RunBegin(
+                run=run_id,
+                parent=par,
+                control=ControlRef(run_id, 0),
+                runnable="agic:fetch",
+                occurrence=Occurrence(
+                    item=OccurrencePosition(index=lane, count=2),
+                    lane=OccurrencePosition(index=lane, count=2),
+                ),
+            )
+        )
+        projector.handle(StepBegin(step=step, kind="model", given=_model()))
+        projector.handle(
+            StepEnd(
+                step=step,
+                kind="model",
+                status="failed",
+                error=f"failure {lane}",
+            )
+        )
+        projector.handle(
+            RunEnd(
+                run=run_id,
+                status="failed",
+                error=Pointer.step(step),
+            )
+        )
+
+    terminal = projector.handle(
+        StepEnd(
+            step=par,
+            kind="par",
+            status="failed",
+            error="parallel step stopped because lane 0 (#0) failed",
+        )
+    )
+    text = "\n".join(_rows(terminal.finalized)[0])
+
+    assert "0 | #0 | · failed failure 0" in text
+    assert "1 | #1 | · failed failure 1" in text
+    assert text.count("parallel step stopped") == 1

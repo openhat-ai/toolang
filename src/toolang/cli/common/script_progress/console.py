@@ -21,7 +21,7 @@ _ANSI_RESET = "\x1b[0m"
 
 
 class ProgressConsole:
-    """Write stable and replaceable progress blocks to one stream."""
+    """Write finalized and replaceable progress blocks to one stream."""
 
     def __init__(self, stream: TextIO, *, width: int | None = None) -> None:
         self.stream = stream
@@ -65,10 +65,10 @@ class ProgressConsole:
             self.write(f"{continuation}{line}", tone=tone)
 
     def apply(self, update: ProgressUpdate) -> None:
-        """Append stable rows and atomically replace the current live snapshot."""
+        """Append finalized rows and atomically replace the live snapshot."""
 
         self.clear_live()
-        for block in update.stable:
+        for block in update.finalized:
             for row in block.rows:
                 self._write_progress_row(row)
         self.show_live_rows([row for block in update.live for row in block.rows])

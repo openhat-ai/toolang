@@ -50,7 +50,9 @@ from ..types import (
     Local as RecordLocal,
     Occurrence,
     StepKind,
+    StepNoted,
     StepPath,
+    StepStatus,
     Pointer,
     TypedPointer,
 )
@@ -124,6 +126,7 @@ async def execute_step(
     controls: Sequence[RunControlRecord],
     occurrence: Occurrence | None,
     evaluate: Callable[[], Awaitable[Local]],
+    note: Callable[[StepStatus], StepNoted] | None = None,
 ) -> Local:
     """Evaluate, transform, and commit one Flow statement Step."""
 
@@ -153,6 +156,7 @@ async def execute_step(
                 step=path,
                 kind=kind,
                 status="canceled",
+                noted=note("canceled") if note is not None else None,
                 finished_at=utc_now(),
             )
         )
@@ -163,6 +167,7 @@ async def execute_step(
                 step=path,
                 kind=kind,
                 status="failed",
+                noted=note("failed") if note is not None else None,
                 error=exc.error,
                 finished_at=utc_now(),
             )
@@ -175,6 +180,7 @@ async def execute_step(
                 step=path,
                 kind=kind,
                 status="failed",
+                noted=note("failed") if note is not None else None,
                 error=message,
                 finished_at=utc_now(),
             )
@@ -187,6 +193,7 @@ async def execute_step(
             kind=kind,
             status="succeeded",
             output=output,
+            noted=note("succeeded") if note is not None else None,
             finished_at=utc_now(),
         )
     )

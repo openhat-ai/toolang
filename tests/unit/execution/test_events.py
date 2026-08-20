@@ -27,6 +27,7 @@ from toolang.execution.types import (
     ControlRef,
     ControlStatus,
     Local,
+    LoopStepNoted,
     ModelStepGiven,
     ModelStepNoted,
     ModelTokenCount,
@@ -38,7 +39,7 @@ from toolang.execution.types import (
     StepStatus,
     ToolStepGiven,
 )
-from toolang.lang.ast import RunStmt, ScatterStmt, Span
+from toolang.lang.ast import RepeatStmt, RunStmt, ScatterStmt, Span
 
 
 _EVENTS: tuple[RunEvent, ...] = (
@@ -147,6 +148,30 @@ def test_step_events_reject_mismatched_typed_facts() -> None:
             status="succeeded",
             noted=ModelStepNoted(),
         )
+    with pytest.raises(ValueError, match="successful termination"):
+        StepEnd(
+            step=StepPath.parse("run_root.1"),
+            kind="loop",
+            status="succeeded",
+            noted=LoopStepNoted(iterations=1, termination="failed"),
+        )
+
+
+def test_loop_step_noted_round_trips_with_its_terminal_cause() -> None:
+    begin = StepBegin(
+        step=StepPath.parse("run_root.1"),
+        kind="loop",
+        given=RepeatStmt(span=Span(line=4), count=3),
+    )
+    end = StepEnd(
+        step=begin.step,
+        kind="loop",
+        status="succeeded",
+        noted=LoopStepNoted(iterations=3, termination="exhausted"),
+    )
+
+    assert run_event_from_data(run_event_to_data(begin)) == begin
+    assert run_event_from_data(run_event_to_data(end)) == end
 
 
 def test_step_schema_and_record_reject_mismatched_typed_facts() -> None:

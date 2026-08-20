@@ -125,7 +125,7 @@ def test_chat_run_begin_finalizes_local_submission_block() -> None:
     assert "run_1" in _render_text(app.finalized[0].render())
 
 
-def test_chat_uses_shared_progress_blocks_for_live_and_stable_model_output() -> None:
+def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() -> None:
     app = FakeApp()
 
     events.handle_run_event(_run_begin(), app)
@@ -166,8 +166,9 @@ def test_chat_uses_shared_progress_blocks_for_live_and_stable_model_output() -> 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
     assert [block.type for block in app.finalized] == ["ExecutionProgressBlock"]
     rendered = _render_text(app.finalized[0].render())
-    assert "· executed final answer" in rendered
-    assert "  run_1.1 · 1.0s · test/model · 1/1 tokens" in rendered
+    assert "· final answer" in rendered
+    assert "run_1.1" not in rendered
+    assert "test/model" not in rendered
 
     events.handle_run_event(_run_end(status="succeeded", output_step_index=1), app)
     assert [block.type for block in app.finalized] == [
@@ -249,10 +250,10 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
     )
 
     assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
-    stable = _render_text(app.finalized[-1].render())
-    assert "· 1 failed · 1 canceled" in stable
-    assert "parallel step stopped because lane 0 (#0) failed" in stable
-    assert "| #" not in stable
+    finalized = _render_text(app.finalized[-1].render())
+    assert "· 1 failed · 1 canceled" in finalized
+    assert "parallel step stopped because lane 0 (#0) failed" in finalized
+    assert "0 | #0 | · failed model unavailable" in finalized
 
 
 def test_script_and_chat_sinks_preserve_the_same_semantic_rows() -> None:
@@ -261,11 +262,10 @@ def test_script_and_chat_sinks_preserve_the_same_semantic_rows() -> None:
         (
             ProgressRow("· executed web_search.search"),
             ProgressRow("  5 results"),
-            ProgressRow("  run_1.0 · 820ms · exit 0"),
         ),
     )
     stream = StringIO()
-    ProgressConsole(stream).apply(ProgressUpdate(stable=(progress,)))
+    ProgressConsole(stream).apply(ProgressUpdate(finalized=(progress,)))
     chat = blocks.ExecutionProgressBlock(progress)
 
     assert stream.getvalue().splitlines() == _render_text(chat.render()).splitlines()
@@ -356,6 +356,16 @@ def test_chat_flow_root_footer_counts_child_runs() -> None:
     assert "2 tool calls" in rendered
 
 
+def test_chat_flow_root_footer_omits_zero_child_runs() -> None:
+    block = blocks.RunStopBlock.create(_run_begin(executable_kind="flow"))
+    block.update(_run_end(status="succeeded"))
+    block.set_metrics(Metrics(runs=1), include_child_runs=True)
+
+    rendered = _render_text(block.render())
+
+    assert "0 runs" not in rendered
+
+
 def test_chat_tool_step_uses_dim_dot_marker_and_summary() -> None:
     block = blocks.ExecutionProgressBlock(
         ProgressBlock(
@@ -391,19 +401,13 @@ def test_chat_canceled_model_step_is_not_rendered_as_completed() -> None:
     block = blocks.ExecutionProgressBlock(
         ProgressBlock(
             "step:run_1.1",
-            (
-                ProgressRow("· canceled", "warning"),
-                ProgressRow(
-                    "  run_1.1 · 1.0s · deepseek/deepseek-chat",
-                ),
-            ),
+            (ProgressRow("· canceled", "warning"),),
         )
     )
 
     rendered = _render_text(block.render())
 
     assert "· canceled" in rendered
-    assert "  run_1.1 · 1.0s · deepseek/deepseek-chat" in rendered
     assert "model completed" not in rendered
 
 
@@ -425,7 +429,7 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
             "par:run_1.2",
             (
                 ProgressRow("· 5 succeeded · 1 canceled", "warning"),
-                ProgressRow("  run_1.2 · 27.0s · 5 runs", "progress"),
+                ProgressRow("  27.0s · 5 runs", "progress"),
             ),
         )
     )
@@ -434,7 +438,7 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
 
     assert "· 5 succeeded · 1 canceled" in rendered
     assert "statement failed" not in rendered
-    assert "  run_1.2 · 27.0s · 5 runs" in rendered
+    assert "  27.0s · 5 runs" in rendered
 
 
 def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:

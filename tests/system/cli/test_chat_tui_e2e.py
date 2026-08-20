@@ -45,7 +45,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
         session.close()
 
 
-def test_chat_tui_bounds_long_live_output_in_a_small_terminal(
+def test_chat_tui_preserves_long_final_output_in_a_small_terminal(
     tmp_path: Path,
 ) -> None:
     session = ChatTuiPtySession.start(
@@ -58,16 +58,14 @@ def test_chat_tui_bounds_long_live_output_in_a_small_terminal(
     try:
         session.wait_for("Toolang", "^d exit")
         session.send(b"show long output\r")
-        live_output = session.wait_for("· thinking…", timeout=10)
-        assert "Window too small" not in live_output
-
         final_output = session.wait_for(
-            "· executed terminal e2e line 000",
+            "· terminal e2e line 000",
+            "terminal e2e line 099",
             "succeeded",
             timeout=10,
         )
         assert "terminal e2e line 000" in final_output
-        assert "terminal e2e line 099" not in final_output
+        assert "terminal e2e line 099" in final_output
         assert "Window too small" not in final_output
 
         session.send(b"\x04")
@@ -91,13 +89,9 @@ def test_chat_tui_reopens_a_durable_flow_result(
             "[0] Run chat",
             "1 run",
             "succeeded",
-            "result saved",
-            ":show run_",
         )
         assert "Window too small" not in output
-        show_index = output.rfind(":show run_")
-        run_id = output[show_index + len(":show ") :].split()[0]
-        assert output.rfind("◇ result saved") < output.rfind(f"◆ {run_id} succeeded")
+        assert "◆ run_" in output
 
         session.send(b":show\r")
         result = session.wait_for("Result run_", "hello from terminal e2e")

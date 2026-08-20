@@ -1,0 +1,53 @@
+"""Script sink for shared execution progress updates."""
+
+from __future__ import annotations
+
+import sys
+from typing import TextIO
+
+from toolang.execution.events import RunBegin, RunEnd, RunEvent, RunTracer
+
+from ..execution_progress import ProgressProjector
+from .blocks import RunBlock
+from .console import ProgressConsole
+
+
+class ScriptRunPresenter(RunTracer):
+    """Render one script Run with shared terminal-independent semantics."""
+
+    def __init__(
+        self,
+        *,
+        run_id: str,
+        stream: TextIO | None = None,
+        width: int | None = None,
+    ) -> None:
+        self.run_id = run_id
+        self.console = ProgressConsole(stream or sys.stderr, width=width)
+        self._projector = ProgressProjector()
+        self._root: RunBlock | None = None
+
+    async def on_event(self, event: RunEvent) -> None:
+        if isinstance(event, RunBegin) and event.parent is None:
+            self._begin_root(event)
+
+        self.console.apply(self._projector.handle(event))
+
+        if isinstance(event, RunEnd) and event.run == self.run_id:
+            self._end_root(event)
+
+    def close(self) -> None:
+        """Remove the bounded live area without changing finalized scrollback."""
+
+        self.console.close()
+
+    def _begin_root(self, event: RunBegin) -> None:
+        root = RunBlock.from_event(event)
+        self._root = root
+
+    def _end_root(self, event: RunEnd) -> None:
+        root = self._root
+        if root is None:
+            return
+        root.metrics = self._projector.root_metrics
+        root.render_result(self.console, event)

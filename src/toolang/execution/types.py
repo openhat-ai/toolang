@@ -957,7 +957,31 @@ class ModelStepNoted:
             raise TypeError("model Step state must be an object")
 
 
-StepNoted: TypeAlias = ModelStepNoted | None
+LoopTermination = Literal["exhausted", "satisfied", "failed", "canceled"]
+
+
+@dataclass(frozen=True, slots=True)
+class LoopStepNoted:
+    """Iteration count and terminal cause learned when a loop Step ends."""
+
+    iterations: int
+    termination: LoopTermination
+
+    def __post_init__(self) -> None:
+        if isinstance(self.iterations, bool) or not isinstance(self.iterations, int):
+            raise TypeError("loop Step iterations must be an integer")
+        if self.iterations < 0:
+            raise ValueError("loop Step iterations must be non-negative")
+        if self.termination not in {
+            "exhausted",
+            "satisfied",
+            "failed",
+            "canceled",
+        }:
+            raise ValueError(f"unknown loop Step termination: {self.termination}")
+
+
+StepNoted: TypeAlias = ModelStepNoted | LoopStepNoted | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1046,12 +1070,37 @@ def validate_step_given(kind: StepKind, given: StepGiven) -> StepGiven:
     return given
 
 
-def validate_step_noted(kind: StepKind, noted: StepNoted) -> StepNoted:
+def validate_step_noted(
+    kind: StepKind,
+    noted: StepNoted,
+    status: StepStatus | None = None,
+) -> StepNoted:
     """Validate one end payload against its enclosing Step kind."""
 
     if kind == "model":
         if noted is not None and not isinstance(noted, ModelStepNoted):
             raise TypeError("model Step noted requires ModelStepNoted or None")
+        return noted
+    if kind == "loop":
+        if noted is not None and not isinstance(noted, LoopStepNoted):
+            raise TypeError("loop Step noted requires LoopStepNoted or None")
+        if status in {"pending", "running"} and noted is not None:
+            raise ValueError(f"{status} loop Step cannot have terminal noted facts")
+        if (
+            status == "succeeded"
+            and noted is not None
+            and noted.termination
+            not in {
+                "exhausted",
+                "satisfied",
+            }
+        ):
+            raise ValueError("succeeded loop Step requires a successful termination")
+        if status in {"failed", "canceled"} and noted is not None:
+            if noted.termination != status:
+                raise ValueError(
+                    f"{status} loop Step requires {status} termination facts"
+                )
         return noted
     if noted is not None:
         raise TypeError(f"{kind} Step does not accept noted facts")

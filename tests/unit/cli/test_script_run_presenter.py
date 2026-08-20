@@ -11,7 +11,7 @@ from toolang.cli.common.execution_progress import (
     ProgressRow,
     ProgressUpdate,
 )
-from toolang.cli.common.script_progress import ConsoleRunTracer
+from toolang.cli.common.script_progress import ScriptRunPresenter
 from toolang.cli.common.script_progress.console import ProgressConsole
 from toolang.execution.events import (
     RunBegin,
@@ -62,12 +62,7 @@ def _tool() -> ToolStepGiven:
 
 def _render(events: list[RunEvent], *, tty: bool = False) -> str:
     stream = _TtyStream() if tty else StringIO()
-    tracer = ConsoleRunTracer(
-        run_id="run_one",
-        stream=stream,
-        runnable_kind="agic",
-        runnable_name="demo",
-    )
+    tracer = ScriptRunPresenter(run_id="run_one", stream=stream)
 
     async def scenario() -> None:
         for event in events:
@@ -87,7 +82,7 @@ def _root_begin() -> RunBegin:
     )
 
 
-def test_non_tty_appends_only_stable_model_progress() -> None:
+def test_non_tty_appends_only_finalized_model_progress() -> None:
     output = _render(
         [
             _root_begin(),
@@ -104,7 +99,7 @@ def test_non_tty_appends_only_stable_model_progress() -> None:
                 output=_parts("Use a shared reducer."),
                 noted=ModelStepNoted(
                     tokens=ModelTokenCount(input=3400, output=86),
-                    cost="0.002",
+                    cost="0.006",
                 ),
                 finished_at="2026-01-01T00:00:01.800Z",
             ),
@@ -123,11 +118,11 @@ def test_non_tty_appends_only_stable_model_progress() -> None:
     )
 
     assert "thinking" not in output
-    assert "· executed Use a shared reducer." in output
-    assert (
-        "  run_one.0 · 1.8s · deepseek/deepseek-chat · 3.4k/86 tokens · $0.002"
-    ) in output
+    assert output.startswith("· Use a shared reducer.\n")
+    assert "run_one.0" not in output
+    assert "deepseek/deepseek-chat" not in output
     assert "--- run_one succeeded ---" in output
+    assert "2.0s · 1 model call · ↑3.4k ↓86 $0.01" in output
 
 
 def test_tool_output_uses_one_unmarked_continuation() -> None:
@@ -161,7 +156,8 @@ def test_tool_output_uses_one_unmarked_continuation() -> None:
         ]
     )
 
-    assert "· executed web_search.search\n  3 results\n  run_one.0" in output
+    assert '· executed web_search.search\n  {\n    "results": [' in output
+    assert "run_one.0" not in output
 
 
 def test_tty_replaces_live_rows_and_clears_them_on_shutdown() -> None:
@@ -220,12 +216,12 @@ def test_step_error_and_ownerless_run_error_use_dot_rows() -> None:
     assert "· progress stream ended early" in ownerless
 
 
-def test_tty_wraps_stable_model_output_without_adding_a_marker() -> None:
+def test_tty_wraps_finalized_model_output_without_adding_a_marker() -> None:
     stream = _TtyStream()
     console = ProgressConsole(stream, width=40)
     console.apply(
         ProgressUpdate(
-            stable=(
+            finalized=(
                 ProgressBlock(
                     "step:run_one.0",
                     (

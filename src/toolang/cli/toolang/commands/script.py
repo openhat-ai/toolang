@@ -32,11 +32,9 @@ from toolang.cli.common.policy import (
 from toolang.execution.calls import parse_call, resolve_spec
 from toolang.execution.executor import RunExecutor, RunHandle
 from toolang.execution.records import RunRecord
-from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import Local, RunOverride, ThreadPrefix
-from toolang.execution.values import parts_from_local
+from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
 from toolang.lang.input import NamedInputSources, RunnableInputRaw
@@ -49,7 +47,7 @@ from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 from ...common.context import load_runtime_environ
 from ...common.progress import as_progress_sink, make_cli_progress
 from ...common.output import echo_error
-from ...common.script_progress import ConsoleRunTracer
+from ...common.script_progress import ScriptRunPresenter
 from ...common.version import toolang_version
 
 Runnable = AgicDecl | FlowDecl
@@ -548,31 +546,8 @@ async def _execute(
     spec = replace(spec, thread=thread)
     if spec.bindings.runnable is None:
         raise RuntimeError("resolved script spec has no runnable binding")
-    selected_name, selected_kind = parse_runnable_ref(spec.bindings.runnable)
-    selected = resolve_runnable(
-        state.program,
-        selected_name,
-        kind=selected_kind,
-    )
     tracer = (
-        ConsoleRunTracer(
-            run_id=run_id,
-            verbosity=verbosity,
-            runnable_kind=selected.kind,
-            runnable_name=selected.name,
-            runnable_doc=selected.doc,
-            input_value=(
-                parts_from_local(
-                    Local.typed(
-                        selected.input.type_name or "Part[]",
-                        spec.input.primary,
-                    )
-                )
-                if selected.input is not None and spec.input.primary is not None
-                else ()
-            ),
-            args=dict(spec.input.named),
-        )
+        ScriptRunPresenter(run_id=run_id)
         if not quiet and (sys.stderr.isatty() or verbosity > 0)
         else None
     )
