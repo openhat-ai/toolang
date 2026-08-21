@@ -108,3 +108,27 @@ def test_chat_tui_reopens_a_durable_flow_result(
         assert session.wait_for_exit() == 0, session.output
     finally:
         session.close()
+
+
+def test_chat_tui_updates_defaults_while_a_run_is_active(tmp_path: Path) -> None:
+    session = ChatTuiPtySession.start(
+        "tests.support.chat_tui_e2e",
+        tmp_path,
+        "status",
+    )
+    try:
+        session.wait_for("■ agic:chat", "test/scripted")
+        session.send(b"hold status\r")
+        session.wait_for("agic:chat · 0s")
+
+        session.send(b":flow relay\r")
+        running = session.wait_for("flow:relay · test/scripted")
+
+        assert "agic:chat" in running
+        assert "Traceback" not in running
+
+        session.wait_for("succeeded", "■ flow:relay", "test/scripted")
+        session.send(b"\x04")
+        assert session.wait_for_exit() == 0, session.output
+    finally:
+        session.close()

@@ -28,7 +28,6 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
-from toolang.execution.types import ModelStepGiven
 from toolang.execution.runnables import parse_runnable_ref
 from toolang.common.errors import ToolangError
 
@@ -44,7 +43,6 @@ from .base import (
     ChatClient,
     QueuedCall,
     as_text,
-    chat_status_label,
     friendly_error,
 )
 from .events import ChatUIEvent
@@ -217,7 +215,6 @@ class ChatTuiApp:
         self._status_activity_started_at: float | None = None
         self._status_completed_elapsed_seconds: int | None = None
         self._status_stop_handle: asyncio.TimerHandle | None = None
-        self.actual_model: str | None = None
         self.presenter = ChatRunPresenter(max_width=progress_max_width)
 
         self.queue_panel = widgets.QueuePanel(
@@ -318,23 +315,19 @@ class ChatTuiApp:
                 await self.dispatcher_task
 
     def _model_label(self) -> str:
-        selected_model = str(self.selects.get("model") or "").strip()
-        default_selected = selected_model in {"", "default"}
         try:
-            label = slashes.chat_model_label(self.client.list_models(), self.selects)
-            return (
-                self.actual_model if default_selected and self.actual_model else label
-            )
+            return slashes.chat_model_label(self.client.list_models(), self.selects)
         except (click.ClickException, ToolangError, ValueError):
-            label = chat_status_label(self.selects)
-            return (
-                self.actual_model if default_selected and self.actual_model else label
-            )
+            return as_text(self.selects.get("model")) or "default"
 
-    def _runnable_label(self) -> str:
-        flow = as_text(self.selects.get("flow"))
-        agic = as_text(self.selects.get("agic"))
-        runnable = as_text(self.selects.get("runnable"))
+    def _runnable_label(
+        self,
+        selects: Mapping[str, object] | None = None,
+    ) -> str:
+        current = self.selects if selects is None else selects
+        flow = as_text(current.get("flow"))
+        agic = as_text(current.get("agic"))
+        runnable = as_text(current.get("runnable"))
         reference = (
             f"flow:{flow}"
             if flow
@@ -576,11 +569,6 @@ class ChatTuiApp:
                 return
             self.selects.clear()
             self.selects.update(updated)
-            if any(
-                command.group == "default" and command.field == "model"
-                for command in chat_input
-            ):
-                self.actual_model = None
             self.status_bar.set_status(*self._status_labels())
             return
         if not is_runnable_input(chat_input):
@@ -655,13 +643,12 @@ class ChatTuiApp:
         threading.Thread(target=consume, daemon=True).start()
 
     def handle_run_event(self, event: RunEvent) -> None:
-        if isinstance(event, StepBegin) and event.kind == "model":
-            if isinstance(event.given, ModelStepGiven):
-                self.actual_model = event.given.model
-                self.status_bar.set_status(*self._status_labels())
+        if isinstance(event, RunBegin) and event.parent is None and event.runnable:
+            self.status_bar.set_active_runnable(event.runnable)
         events.handle_run_event(event, self.app_context)
 
     def start_run(self, call: QueuedCall) -> None:
+        self.status_bar.set_active_runnable(self._runnable_label(call.selects))
         self.unfinalized_blocks.append(blocks.RunStartBlock.create(call.source))
         self.app.invalidate()
         try:

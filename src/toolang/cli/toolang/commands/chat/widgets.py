@@ -15,6 +15,8 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
 from prompt_toolkit.utils import get_cwidth
 
+from toolang.cli.common.execution_progress.formatting import truncate
+
 from .events import ChatUIEvent
 from .history import ChatInputHistoryStore
 from .rendering import (
@@ -355,6 +357,7 @@ class StatusBar:
     def __init__(self, runnable_label: str, model_label: str) -> None:
         self.runnable_label = runnable_label
         self.model_label = model_label
+        self.active_runnable_label: str | None = None
         self.error_message = ""
         self.running = False
         self._spinner_index = 0
@@ -374,6 +377,9 @@ class StatusBar:
         self.runnable_label = runnable_label
         self.model_label = model_label
 
+    def set_active_runnable(self, runnable_label: str | None) -> None:
+        self.active_runnable_label = runnable_label
+
     def set_error(self, message: str) -> None:
         self.error_message = message
 
@@ -382,6 +388,8 @@ class StatusBar:
 
     def set_running(self, running: bool) -> None:
         self.running = running
+        if not running:
+            self.active_runnable_label = None
         self._spinner_index = 0
         self._elapsed_seconds = 0
 
@@ -415,29 +423,79 @@ class StatusBar:
             if self.running
             else _STATUS_IDLE_MARKER
         )
+        displayed_runnable = (
+            self.active_runnable_label or self.runnable_label
+            if self.running
+            else self.runnable_label
+        )
+        default_runnable = (
+            self.runnable_label
+            if self.running and displayed_runnable != self.runnable_label
+            else None
+        )
+        elapsed = (
+            f" · {_format_elapsed_seconds(self._elapsed_seconds)}"
+            if self.running
+            else ""
+        )
+        terminal_width = self._terminal_width()
+        runnable_width = get_cwidth(displayed_runnable)
+        default_width = get_cwidth(default_runnable or "")
+        model_width = get_cwidth(self.model_label)
+        fixed_width = 2 + get_cwidth(elapsed) + 1 + (3 if default_runnable else 0)
+        overflow = max(
+            0,
+            fixed_width + runnable_width + default_width + model_width - terminal_width,
+        )
+        fitted_default_width, overflow = _reduce_status_width(default_width, overflow)
+        fitted_runnable_width, overflow = _reduce_status_width(runnable_width, overflow)
+        fitted_model_width, _overflow = _reduce_status_width(model_width, overflow)
+        displayed_runnable = truncate(displayed_runnable, fitted_runnable_width)
+        default_runnable = (
+            truncate(default_runnable, fitted_default_width)
+            if default_runnable is not None
+            else None
+        )
+        model_label = truncate(self.model_label, fitted_model_width)
         segments = [
             ("class:status.marker", marker),
             ("class:status", " "),
-            ("class:status", self.runnable_label),
+            ("class:status", displayed_runnable),
         ]
-        if self.running:
+        if elapsed:
             segments.append(
                 (
                     "class:status.elapsed",
-                    f" {_format_elapsed_seconds(self._elapsed_seconds)}",
+                    elapsed,
                 )
             )
         used = sum(get_cwidth(text) for _style, text in segments)
+        right_width = get_cwidth(model_label) + (
+            get_cwidth(default_runnable) + 3 if default_runnable is not None else 0
+        )
         padding = max(
             1,
-            self._terminal_width() - used - get_cwidth(self.model_label),
+            terminal_width - used - right_width,
         )
-        return [
+        result = [
             *segments,
             ("class:status", " " * padding),
-            ("class:status", self.model_label),
         ]
+        if default_runnable is not None:
+            result.extend(
+                [
+                    ("class:status", default_runnable),
+                    ("class:status", " · "),
+                ]
+            )
+        result.append(("class:status", model_label))
+        return result
 
     @staticmethod
     def _terminal_width(default: int = 100) -> int:
         return shutil.get_terminal_size((default, 24)).columns
+
+
+def _reduce_status_width(width: int, overflow: int) -> tuple[int, int]:
+    reduction = min(max(width - 1, 0), overflow)
+    return width - reduction, overflow - reduction
