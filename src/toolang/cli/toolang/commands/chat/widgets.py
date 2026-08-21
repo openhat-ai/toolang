@@ -47,7 +47,8 @@ def _chat_ui_palette() -> dict[str, str]:
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "",
-        "status.marker": "",
+        "status.marker": "dim",
+        "status.elapsed": "dim",
         "status.error": "fg:#ffffff bg:#7a2e2e bold",
         "dim": "fg:ansigray",
     }
@@ -408,7 +409,7 @@ class StatusBar:
         if self.running:
             segments.append(
                 (
-                    "class:status",
+                    "class:status.elapsed",
                     f" {_format_elapsed_seconds(self._elapsed_seconds)}",
                 )
             )

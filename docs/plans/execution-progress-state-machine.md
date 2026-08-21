@@ -404,10 +404,10 @@ The runnable is rendered as `agic:name` or `flow:name`. Explicit session
 selection takes precedence; otherwise the client-provided runnable default and
 kind are used. The current resolved default model is right-aligned
 against the terminal edge. The status bar omits the redundant `model ` label and
-all hotkey hints. Its runnable, elapsed time, padding, and model inherit the
-terminal's default foreground and background without additional color or dim
-styling. The marker inherits those terminal defaults without an accent. The
-error state retains a dedicated status style.
+all hotkey hints. Its runnable, padding, and model inherit the terminal's default
+foreground and background without additional color or dim styling. The marker,
+spinner, and elapsed time use the terminal's dim attribute without an additional
+color. The error state retains a dedicated status style.
 
 The default `squares` style uses `▪︎` while idle. During a local Run, the
 single-width frames `◧`, `◩`, `◨`, and `◪` rotate every 220 milliseconds. The

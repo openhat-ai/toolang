@@ -1117,13 +1117,13 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
         ("class:status.marker", "◧"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
-        ("class:status", " 0s"),
+        ("class:status.elapsed", " 0s"),
     ]
     assert next_frame[:4] == [
         ("class:status.marker", "◨"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
-        ("class:status", " 1m 08s"),
+        ("class:status.elapsed", " 1m 08s"),
     ]
     assert next_frame[-1] == ("class:status", "runtime model")
     assert status.spinner_index == 2
@@ -1133,17 +1133,17 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
     assert status._render() == idle
 
 
-def test_chat_status_palette_uses_the_terminal_defaults() -> None:
+def test_chat_status_palette_dims_activity_without_adding_color() -> None:
     palette = widgets._chat_ui_palette()
 
     assert palette["status"] == ""
-    assert palette["status.marker"] == ""
+    assert palette["status.marker"] == "dim"
+    assert palette["status.elapsed"] == "dim"
     assert (
         not {
             "status.text",
             "status.agic",
             "status.flow",
-            "status.elapsed",
             "status.model",
         }
         & palette.keys()
