@@ -287,7 +287,7 @@ displaying Run IDs or execution state. Quick-command bars use the same
 background-cell treatment with their own accent, and the prompt uses the start
 accent. The status bar does not paint a base background and therefore inherits
 the terminal background. Its left side begins with a square marker, one space,
-and the current default runnable as `A:name` for an agic or `F:name` for a flow.
+and the current default runnable as `a:name` for an agic or `f:name` for a flow.
 The current default model is right-aligned against the terminal edge; hotkey
 hints are omitted. During a Run, the marker animates through the single-width
 square frames `◧`, `◩`, `◨`, and `◪`, with the idle `◧` serving as the spinner's

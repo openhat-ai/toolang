@@ -398,7 +398,7 @@ class StatusBar:
         )
         runnable_style = (
             "class:status.flow"
-            if self.runnable_label.startswith("F:")
+            if self.runnable_label.startswith("f:")
             else "class:status.agic"
         )
         segments = [

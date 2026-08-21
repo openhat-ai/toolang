@@ -400,7 +400,7 @@ adjacent rows.
 The bottom `StatusBar` does not paint a base background and therefore inherits
 the terminal background. Its left side begins in column zero with a square
 marker, followed by one space and the current default runnable in column two.
-The runnable is rendered as `A:name` for an agic or `F:name` for a flow. Explicit
+The runnable is rendered as `a:name` for an agic or `f:name` for a flow. Explicit
 session selection takes precedence; otherwise the client-provided runnable
 default and kind are used. The current resolved default model is right-aligned
 against the terminal edge. The status bar omits the redundant `model ` label and

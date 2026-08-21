@@ -95,7 +95,7 @@ def _compact_runnable_label(reference: str, payload: Mapping[str, object]) -> st
                     matches.add(as_text(values.get("kind")))
             if len(matches) == 1:
                 kind = matches.pop()
-    prefix = {"agic": "A", "flow": "F"}.get(kind or "")
+    prefix = {"agic": "a", "flow": "f"}.get(kind or "")
     return f"{prefix}:{name}" if prefix is not None else reference
 
 
