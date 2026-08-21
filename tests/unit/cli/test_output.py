@@ -76,12 +76,34 @@ def test_info_layout_aligns_avatar_with_first_detail_row(monkeypatch) -> None:
     assert lines == [
         "",
         "               EVE",
-        "               ---",
+        "               ───",
         "   logo-one    Home    /tmp/eve",
         "   logo-two    Created now",
         "   logo-3--",
         "",
     ]
+
+
+def test_info_values_inherit_the_terminal_foreground(monkeypatch) -> None:
+    captured = []
+
+    class _CapturedConsole:
+        def print(self, renderable) -> None:
+            captured.append(renderable)
+
+    monkeypatch.setattr(output, "_INFO_CONSOLE", _CapturedConsole())
+
+    echo_pairs_table(
+        [("Home", "/tmp/eve")],
+        avatar="logo",
+        title="EVE",
+    )
+
+    console = Console(force_terminal=True, color_system="truecolor")
+    segments = list(console.render(captured[0], console.options))
+    value = next(segment for segment in segments if "/tmp/eve" in segment.text)
+
+    assert value.style is None or (value.style.color is None and not value.style.dim)
 
 
 def test_home_path_shortening_uses_the_user_home() -> None:

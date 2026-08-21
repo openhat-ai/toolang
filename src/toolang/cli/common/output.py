@@ -164,7 +164,7 @@ def echo_pairs_table(
         collapse_padding=True,
     )
     table.add_column("FIELD", no_wrap=True, style="bold bright_cyan")
-    table.add_column("VALUE", no_wrap=False, style="white", overflow="fold")
+    table.add_column("VALUE", no_wrap=False, overflow="fold")
     for key, value in rows:
         table.add_row(Text(key), Text(value))
     if avatar is None:
@@ -275,5 +275,5 @@ def _info_title_block(title: str) -> Table:
     block = Table.grid(padding=(0, 0))
     block.add_column(no_wrap=False)
     block.add_row(Text(title, style="bold bright_cyan"))
-    block.add_row(Text("-" * len(title), style="bright_black"))
+    block.add_row(Text("─" * len(title), style="bright_black"))
     return block
