@@ -1153,7 +1153,8 @@ def test_chat_status_palette_uses_the_terminal_defaults() -> None:
 def test_chat_status_spinner_styles_use_single_width_frames() -> None:
     step = tui._STATUS_SPINNER_FRAME_DURATION
 
-    assert step == pytest.approx(0.14)
+    assert step == pytest.approx(0.22)
+    assert tui._STATUS_ACTIVITY_TICK == pytest.approx(0.22)
     assert widgets._STATUS_SPINNER_STYLE == "squares"
     assert widgets._STATUS_SPINNER_STYLES == {
         "quadrants": (" ", ("▖", "▘", "▝", "▗")),

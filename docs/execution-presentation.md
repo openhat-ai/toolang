@@ -292,7 +292,7 @@ default model is right-aligned against the terminal edge; hotkey hints are
 omitted. Normal runnable, elapsed-time, and model text inherits the terminal's
 default foreground without dim styling. The marker also inherits the terminal's
 default foreground and background without an accent. The default `squares`
-style uses `▪︎` while idle and rotates through `◧`, `◩`, `◨`, and `◪` every 140
+style uses `▪︎` while idle and rotates through `◧`, `◩`, `◨`, and `◪` every 220
 milliseconds during a Run. The retained `triangles`, `quadrants`, `hatch`, and
 `dots` styles remain available through an internal named style switch. A
 whole-second elapsed time follows the runnable.

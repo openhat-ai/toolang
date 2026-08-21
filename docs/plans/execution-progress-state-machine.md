@@ -410,7 +410,7 @@ styling. The marker inherits those terminal defaults without an accent. The
 error state retains a dedicated status style.
 
 The default `squares` style uses `▪︎` while idle. During a local Run, the
-single-width frames `◧`, `◩`, `◨`, and `◪` rotate every 140 milliseconds. The
+single-width frames `◧`, `◩`, `◨`, and `◪` rotate every 220 milliseconds. The
 retained `triangles`, `quadrants`, `hatch`, and `dots` styles remain available
 through an internal named style switch without exposing an unsettled public
 setting.
