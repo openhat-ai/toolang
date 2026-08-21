@@ -144,18 +144,15 @@ def echo_pairs_table(
         typer.echo()
     else:
         avatar_text = avatar if isinstance(avatar, Text) else Text(avatar)
-        details = Table.grid(padding=(0, 0))
-        details.add_column(no_wrap=False)
-        details.add_row(Text(""))
-        if title is not None:
-            details.add_row(_info_title_block(title))
-        details.add_row(table)
-        details.add_row(Text(""))
         layout = Table.grid(padding=(0, 4))
-        layout.add_column(no_wrap=True, ratio=0, vertical="middle")
+        layout.add_column(no_wrap=True, ratio=0, vertical="top")
         layout.add_column(no_wrap=False, ratio=1, vertical="top")
-        layout.add_row(avatar_text, details)
-        _INFO_CONSOLE.print(Padding(layout, (0, 0, 0, 2), expand=False))
+        layout.add_row(Text(""), Text(""))
+        if title is not None:
+            layout.add_row(Text(""), _info_title_block(title))
+        layout.add_row(avatar_text, table)
+        layout.add_row(Text(""), Text(""))
+        _INFO_CONSOLE.print(Padding(layout, (0, 0, 0, 3), expand=False))
 
 
 def created_time(path: Path) -> str:

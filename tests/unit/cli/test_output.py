@@ -51,7 +51,7 @@ def test_info_avatar_renders_solid_cells_with_terminal_background(
             assert style.bgcolor is None
 
 
-def test_info_layout_places_avatar_beside_details(monkeypatch) -> None:
+def test_info_layout_aligns_avatar_with_first_detail_row(monkeypatch) -> None:
     rendered = StringIO()
     monkeypatch.setattr(
         output,
@@ -69,9 +69,10 @@ def test_info_layout_places_avatar_beside_details(monkeypatch) -> None:
     lines = [line.rstrip() for line in rendered.getvalue().splitlines()]
     assert lines == [
         "",
-        "  logo-one    EVE",
-        "  logo-two    ---",
-        "  logo-3--    Home    /tmp/eve",
-        "              Created now",
+        "               EVE",
+        "               ---",
+        "   logo-one    Home    /tmp/eve",
+        "   logo-two    Created now",
+        "   logo-3--",
         "",
     ]
