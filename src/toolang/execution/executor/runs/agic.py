@@ -13,6 +13,7 @@ from toolang.base.types.run import ModelUsage, ToolCall
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import AgicDecl
+from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output
 
 from ...records import RunControlRecord
@@ -60,6 +61,7 @@ class _AgicState:
     tool_call_sources: dict[str, tuple[int, int]] = field(default_factory=dict)
     initial_inputs: tuple[Pointer, ...] = ()
     claimed_inputs: tuple[RunControlRecord, ...] = ()
+    repairing_output: bool = False
 
     def before_model_call(self) -> None:
         """Apply one model-call checkpoint and reserve its agic-local count."""
@@ -119,18 +121,52 @@ async def execute(
             if local.shape != "none" and local.ref is not None
         ),
     )
+    structs = program_structs(binding)
     message = await _execute(state)
     if state.output is None:
         raise RuntimeError("agic completed without a model output")
-    return Local(
-        coerce_output(
+    try:
+        output = coerce_output(
             message or Message(role="assistant"),
             agic.output,
-            structs=program_structs(binding),
-        ),
+            structs=structs,
+        )
+    except ToolangOutputError:
+        if not _can_repair_output(state, agic.output):
+            raise
+        state.messages.append(_output_repair_message(agic.output))
+        state.repairing_output = True
+        try:
+            message = await _execute(state)
+        finally:
+            state.repairing_output = False
+        output = coerce_output(
+            message or Message(role="assistant"),
+            agic.output,
+            structs=structs,
+        )
+    return Local(
+        output,
         "item",
         state.output,
         type_name=agic.output or "Part[]",
+    )
+
+
+def _can_repair_output(state: _AgicState, type_name: str | None) -> bool:
+    if type_name is None or type_name in {"Part", "Part[]", "Text"}:
+        return False
+    limit = state.limits.agic_model_calls
+    return limit is None or state.model_calls < limit
+
+
+def _output_repair_message(type_name: str | None) -> Message:
+    if type_name is None:  # pragma: no cover - guarded by _can_repair_output
+        raise ValueError("output repair requires a declared type")
+    return Message.user(
+        f"Your previous response did not satisfy the required {type_name} output "
+        f"contract. Return only a corrected {type_name} value. Do not explain the "
+        "value, add a preface, or wrap it in Markdown code fences."
     )
 
 

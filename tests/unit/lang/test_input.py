@@ -16,6 +16,7 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.lang.ast import AgicDecl, Field, Parameter, Span, StructDecl
+from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import (
     RunnableInput,
     RunnableInputRaw,
@@ -304,7 +305,7 @@ def test_output_coercion_accepts_one_explicit_json_fence() -> None:
 
 
 def test_output_coercion_does_not_guess_unfenced_or_ambiguous_json() -> None:
-    with pytest.raises(ToolangError, match="output is not valid Text\\[\\]"):
+    with pytest.raises(ToolangOutputError, match="output is not valid Text\\[\\]"):
         coerce_output(Message.assistant('Result: ["one", "two"]'), "Text[]")
 
     with pytest.raises(ToolangError, match="output is not valid Text\\[\\]"):

@@ -21,6 +21,7 @@ from toolang.base.types.message import (
 from toolang.common.template import render_text_template
 
 from .ast import AgicDecl, FlowDecl, Parameter, Program, StructDecl
+from .errors import ToolangOutputError
 from .types import Array, Struct, Value
 
 IncludeResolver = Callable[[str], Part]
@@ -197,12 +198,15 @@ def coerce_output(
         if isinstance(value, Message):
             return _canonical_value(_message_parts(value), "Part[]", structs or {})
         return _require_input_value(value)
-    return _coerce_value(
-        value,
-        type_name,
-        structs=structs or {},
-        boundary="output",
-    )
+    try:
+        return _coerce_value(
+            value,
+            type_name,
+            structs=structs or {},
+            boundary="output",
+        )
+    except ToolangError as exc:
+        raise ToolangOutputError(str(exc)) from exc
 
 
 def validate_value(

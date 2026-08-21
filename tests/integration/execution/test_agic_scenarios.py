@@ -107,6 +107,58 @@ agic reply(_: Part[], tone: Text) -> Part[]:
     asyncio.run(scenario())
 
 
+def test_agic_repairs_one_invalid_structured_output(tmp_path: Path) -> None:
+    tool = RecordingTool("lookup__value", output={"value": True})
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic decide(_: Text) -> Boolean:
+  recall = none
+  tools = lookup/*
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            ModelCallResult(usage=ModelUsage(input_tokens=8, output_tokens=1)),
+            ModelCallResult(
+                message=Message.assistant("true"),
+                usage=ModelUsage(input_tokens=12, output_tokens=1),
+            ),
+        ],
+        tools={tool.name: tool},
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            record = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="decide",
+                    primary=resolve_input_parts("Is the evidence relevant?"),
+                )
+            )
+
+            assert record.status == "succeeded"
+            assert harness.store.run_output_text(run_id=record.id) == "true"
+            steps = harness.store.list_steps(run_id=record.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded"),
+                ("model", "succeeded"),
+            ]
+            assert len(harness.adapter.invocations[0].call.tools) == 1
+            repair = harness.adapter.invocations[1].call
+            assert repair.tools == ()
+            assert repair.messages[-1].role == "user"
+            repair_part = repair.messages[-1].parts[0]
+            assert isinstance(repair_part, TextPart)
+            assert "Return only a corrected Boolean value" in repair_part.text
+            assert harness.adapter.pending_responses == 0
+
+    asyncio.run(scenario())
+
+
 def test_retry_restarts_an_agic_cycle_with_a_fresh_step_index(
     tmp_path: Path,
 ) -> None:
@@ -867,6 +919,7 @@ agic calculate(_: Text) -> Number:
         responses=[
             ModelCallResult(tool_calls=(call,)),
             ModelCallResult(message=Message.assistant("not a number")),
+            ModelCallResult(message=Message.assistant("still not a number")),
         ],
         tools={broken.name: broken},
     )
@@ -890,8 +943,11 @@ agic calculate(_: Text) -> Number:
                 ("model", "succeeded"),
                 ("tool", "failed"),
                 ("model", "succeeded"),
+                ("model", "succeeded"),
             ]
             assert steps[1].error == "calculator unavailable"
+            assert len(harness.adapter.invocations) == 3
+            assert harness.adapter.pending_responses == 0
 
     asyncio.run(scenario())
 
