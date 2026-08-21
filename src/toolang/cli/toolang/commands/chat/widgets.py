@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from functools import partial
 import shutil
+from weakref import ReferenceType, ref
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.history import InMemoryHistory
@@ -12,6 +14,7 @@ from prompt_toolkit.layout import HSplit, VSplit, Window
 from prompt_toolkit.layout.containers import ConditionalContainer
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.processors import AfterInput
 from prompt_toolkit.utils import get_cwidth
 
 from .events import ChatUIEvent
@@ -24,6 +27,7 @@ from .rendering import (
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
+_INPUT_PLACEHOLDER = "Ask anything"
 _STATUS_SPINNER_STYLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "quadrants": (" ", ("▖", "▘", "▝", "▗")),
     "hatch": ("▦", ("▤", "▥", "▧", "▨")),
@@ -37,6 +41,11 @@ _STATUS_IDLE_MARKER, _STATUS_SPINNER_FRAMES = _STATUS_SPINNER_STYLES[
 ]
 
 
+def _input_placeholder(buffer_ref: ReferenceType[Buffer]) -> str:
+    buffer = buffer_ref()
+    return _INPUT_PLACEHOLDER if buffer is not None and not buffer.text else ""
+
+
 def _chat_ui_palette() -> dict[str, str]:
     return {
         "": "",
@@ -44,6 +53,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "queue.dim": "fg:#b8b8b8 bg:#3a3a3a",
         "control.start": f"bg:{START_CONTROL_ACCENT}",
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
+        "input.placeholder": f"fg:#b8b8b8 bg:{INPUT_BACKGROUND}",
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "",
@@ -164,7 +174,15 @@ class PromptBox:
                             char=" ",
                         ),
                         Window(
-                            BufferControl(buffer=self.buffer),
+                            BufferControl(
+                                buffer=self.buffer,
+                                input_processors=[
+                                    AfterInput(
+                                        partial(_input_placeholder, ref(self.buffer)),
+                                        style="class:input.placeholder",
+                                    )
+                                ],
+                            ),
                             height=self._input_rows,
                             wrap_lines=True,
                             style="class:input",

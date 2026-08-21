@@ -395,7 +395,9 @@ accents; quick-command bars use the same background-cell treatment with their
 own accent, and the bottom `PromptBox` uses the Start accent. The cell replaces
 prompt glyphs such as `>` and `+` while leaving message text aligned in column
 two. Rendering the full cell as a background avoids glyph line gaps between
-adjacent rows.
+adjacent rows. An empty `PromptBox` shows the muted placeholder `Ask anything`.
+The placeholder disappears as soon as the buffer contains text and is never
+part of submission or input history.
 
 The bottom `StatusBar` does not paint a base background and therefore inherits
 the terminal background. Its left side begins in column zero with a

@@ -9,6 +9,8 @@ from types import SimpleNamespace
 from typing import Any, Literal, cast
 
 from prompt_toolkit.layout import HSplit, VSplit, Window
+from prompt_toolkit.layout.controls import BufferControl
+from prompt_toolkit.layout.processors import AfterInput
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.utils import get_cwidth
 from rich.console import RenderableType
@@ -793,6 +795,22 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     padding = input_row.children[0]
     assert isinstance(padding, Window)
     assert padding.width == 1
+    input_window = input_row.children[1]
+    assert isinstance(input_window, Window)
+    assert isinstance(input_window.content, BufferControl)
+    assert input_window.content.input_processors is not None
+    placeholder = input_window.content.input_processors[0]
+    assert isinstance(placeholder, AfterInput)
+    assert placeholder.style == "class:input.placeholder"
+    placeholder_text = cast(Callable[[], str], placeholder.text)
+    assert placeholder_text() == "Ask anything"
+    assert widgets._chat_ui_palette()["input.placeholder"] == (
+        f"fg:#b8b8b8 bg:{rendering.INPUT_BACKGROUND}"
+    )
+
+    prompt.buffer.text = "hello"
+
+    assert placeholder_text() == ""
 
 
 def test_chat_durable_response_wraps_markdown(
