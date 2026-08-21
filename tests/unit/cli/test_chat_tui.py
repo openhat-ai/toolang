@@ -13,6 +13,7 @@ from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.utils import get_cwidth
+from rich.color import Color, ColorType
 from rich.console import RenderableType
 from rich.segment import Segment
 from rich.text import Text
@@ -967,6 +968,98 @@ def test_chat_fenced_code_preserves_one_rectangular_background() -> None:
     ]
 
     assert background_widths == [40, 40, 40, 40, 40]
+    assert {
+        segment.style.bgcolor.number
+        for line in lines
+        for segment in line
+        if segment.style is not None and segment.style.bgcolor is not None
+    } == {8}
+    assert all(
+        segment.style is None
+        or segment.style.color is None
+        or segment.style.color.type == ColorType.STANDARD
+        for line in lines
+        for segment in line
+    )
+    base_text = next(
+        segment for line in lines for segment in line if "x" in segment.text
+    )
+    number = next(segment for line in lines for segment in line if "1" in segment.text)
+    assert base_text.style is not None
+    assert base_text.style.color is not None
+    assert base_text.style.color.number == 15
+    assert number.style is not None
+    assert number.style.color is not None
+    assert number.style.color.number == 12
+
+
+def test_chat_inline_code_uses_the_dark_ansi_surface() -> None:
+    block = blocks.AssistantResponseBlock.from_parts(
+        (TextPart("before `value` after"),),
+    )
+
+    code = next(
+        segment
+        for segment in rendering.render_segments(block.render())
+        if segment.text == "value"
+    )
+
+    assert code.style is not None
+    assert code.style.bold
+    assert code.style.color is not None
+    assert code.style.color.number == 15
+    assert code.style.bgcolor is not None
+    assert code.style.bgcolor.number == 8
+
+
+@pytest.mark.parametrize(
+    ("rich_color", "prompt_color"),
+    [
+        ("default", "ansidefault"),
+        ("black", "ansiblack"),
+        ("red", "ansired"),
+        ("green", "ansigreen"),
+        ("yellow", "ansiyellow"),
+        ("blue", "ansiblue"),
+        ("magenta", "ansimagenta"),
+        ("cyan", "ansicyan"),
+        ("white", "ansigray"),
+        ("bright_black", "ansibrightblack"),
+        ("bright_red", "ansibrightred"),
+        ("bright_green", "ansibrightgreen"),
+        ("bright_yellow", "ansibrightyellow"),
+        ("bright_blue", "ansibrightblue"),
+        ("bright_magenta", "ansibrightmagenta"),
+        ("bright_cyan", "ansibrightcyan"),
+        ("bright_white", "ansiwhite"),
+    ],
+)
+def test_chat_preserves_rich_ansi_color_identity(
+    rich_color: str,
+    prompt_color: str,
+) -> None:
+    assert rendering._prompt_toolkit_color(Color.parse(rich_color)) == prompt_color
+
+
+def test_chat_markdown_outputs_only_terminal_palette_colors() -> None:
+    block = blocks.AssistantResponseBlock.from_parts(
+        (
+            TextPart(
+                "# Heading\n\n*emphasis*\n\n- item\n\n> quote\n\n"
+                "[link](https://example.com) and `value`\n\n"
+                "```python\nx = 1\n```"
+            ),
+        ),
+    )
+
+    fragments = rendering.renderable_to_prompt_toolkit(block.render())
+    styles = [fragment[0] for fragment in fragments if fragment[1].strip()]
+    stable = rendering.renderables_output([block.render()])
+
+    assert all("#" not in style for style in styles)
+    assert any("bg:ansibrightblack" in style for style in styles)
+    assert "\x1b[38;2" not in stable
+    assert "\x1b[48;2" not in stable
 
 
 def test_chat_live_viewport_keeps_latest_rows_and_reports_hidden_rows() -> None:

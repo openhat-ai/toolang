@@ -61,9 +61,9 @@ only an inline facts separator.
 - Headers and facts are dim.
 
 Terminal markers use the same color and intensity as their following content.
-Successful Model and Flow outputs use normal white; successful Tool terminal
-output uses dim white. Failure uses red and cancellation uses yellow. Green is
-not a terminal status color.
+Successful Model and Flow outputs use the terminal's default foreground;
+successful Tool terminal output uses that foreground dimmed. Failure uses red
+and cancellation uses yellow. Green is not a terminal status color.
 
 Step paths, child-Run closure, binding effects, result pointers, and control
 decisions are not displayed. Model and Tool Steps also omit duration, model
@@ -281,6 +281,21 @@ TTY script output uses one event-driven Rich `Live` area per root Run. Chat
 does not create a Rich `Live` because prompt_toolkit owns its terminal; it uses
 the same Rich Markdown renderables while moving committed fragments into
 scrollback and retaining only replaceable fragments in its live container.
+
+Model and result Markdown leaves ordinary text on the terminal's default
+foreground and background. Semantic styles use named ANSI colors, so the
+terminal theme owns their actual RGB values. Inline code uses bold ANSI slot 15
+text on an ANSI slot 8 background. Fenced code uses the same base foreground
+and background with Rich's `ansi_dark` token palette. Its top and bottom
+padding, trailing background cells, and authored blank lines remain one
+rectangular surface. This is a conventional dark code surface rather than a
+guarantee of contrast for arbitrarily redefined ANSI slots.
+
+Chat preserves terminal-default and 16-color ANSI identities through both its
+live prompt_toolkit path and stable scrollback path. Script uses the same
+identities on a TTY and continues to emit no color for non-TTY output. Toolang
+does not probe terminal colors or infer whether the surrounding theme is light
+or dark.
 
 Chat submission and steer controls contain only their authored message. Their
 left background-filled accent cells distinguish start from steer without

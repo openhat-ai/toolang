@@ -12,7 +12,10 @@ from rich.text import Text
 from ..execution_progress import ProgressBlock, ProgressRow, ProgressUpdate
 from ..execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from ..execution_progress.formatting import one_line
-from ..execution_progress.rich_rendering import progress_block_renderable
+from ..execution_progress.rich_rendering import (
+    TERMINAL_MARKDOWN_THEME,
+    progress_block_renderable,
+)
 
 Tone = Literal["progress", "normal", "active", "error", "warning"]
 
@@ -53,6 +56,7 @@ class ProgressConsole:
             force_terminal=self.tty,
             highlight=False,
             legacy_windows=False,
+            theme=TERMINAL_MARKDOWN_THEME,
             _environ={"COLUMNS": str(self.width), "LINES": "24"},
         )
         self._live: Live | None = None
