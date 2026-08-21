@@ -23,6 +23,7 @@ import toolang.cli.toolang.commands.agent as agent_commands
 import toolang.cli.toolang.commands.plugin as plugin_commands
 import toolang.cli.toolang.commands.thread as thread_commands
 import toolang.cli.toolang.main as cli
+from toolang.cli.common.output import shorten_home_path
 from toolang.common.layout import AgentLayout
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
@@ -718,7 +719,19 @@ def test_roaming_agent_info_uses_the_source_layout(
         encoding="utf-8",
     )
     captured: dict[str, object] = {}
+    shortened: list[Path] = []
+
+    def _shorten_home(path: Path) -> str:
+        shortened.append(path)
+        return "compact home"
+
     monkeypatch.setattr(agent_commands, "SetupWatcher", _EmptySetupWatcher)
+    monkeypatch.setattr(
+        agent_commands,
+        "shorten_home_path",
+        _shorten_home,
+        raising=False,
+    )
     monkeypatch.setattr(
         agent_commands,
         "echo_pairs_table",
@@ -735,7 +748,8 @@ def test_roaming_agent_info_uses_the_source_layout(
     assert result == 0
     assert captured["title"] == "DEMO"
     rows = cast(dict[str, str], captured["rows"])
-    assert rows["Home"] == str(AgentLayout.roaming(source).home)
+    assert shortened == [AgentLayout.roaming(source).home]
+    assert rows["Home"] == "compact home"
 
 
 def test_visiting_agent_info_uses_the_materialized_layout(
@@ -781,7 +795,7 @@ def test_visiting_agent_info_uses_the_materialized_layout(
     assert result == 0
     assert captured["title"] == "RESEARCHER"
     rows = cast(dict[str, str], captured["rows"])
-    assert rows["Home"] == str(layout.home)
+    assert rows["Home"] == shorten_home_path(layout.home)
 
 
 def _invoke(root: Path, *args: str):

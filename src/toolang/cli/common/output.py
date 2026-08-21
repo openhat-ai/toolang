@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+import os
 from pathlib import Path
+import tempfile
 from typing import Literal, cast
 
 import click
@@ -62,6 +64,35 @@ def agent_avatar() -> Text:
     """Return the avatar used by agent information views."""
 
     return toolang_logo(_INFO_CONSOLE)
+
+
+def shorten_home_path(path: Path) -> str:
+    """Return a compact, platform-native label for one agent home path."""
+
+    resolved = path.expanduser().resolve(strict=False)
+    temporary_roots: list[tuple[Path, str]] = []
+    if os.name != "nt":
+        temporary_roots.append((Path("/tmp").resolve(strict=False), "/tmp"))
+    native_temp = Path(tempfile.gettempdir())
+    native_temp_resolved = native_temp.resolve(strict=False)
+    native_temp_label = str(native_temp)
+    environment_names = ("TEMP", "TMP") if os.name == "nt" else ("TMPDIR",)
+    for name in environment_names:
+        value = os.environ.get(name)
+        if value and Path(value).resolve(strict=False) == native_temp_resolved:
+            native_temp_label = f"%{name}%" if os.name == "nt" else f"${name}"
+            break
+    temporary_roots.append((native_temp_resolved, native_temp_label))
+    for root, label in temporary_roots:
+        if resolved.is_relative_to(root):
+            relative = resolved.relative_to(root)
+            return label if not relative.parts else str(Path(label) / relative)
+
+    user_home = Path.home().resolve(strict=False)
+    if resolved.is_relative_to(user_home):
+        relative = resolved.relative_to(user_home)
+        return "~" if not relative.parts else str(Path("~") / relative)
+    return str(resolved)
 
 
 def echo_block(text: str) -> None:

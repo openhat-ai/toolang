@@ -4,16 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-import os
 from pathlib import Path
-import sys
-import tempfile
 from typing import Any
 
 import click
 import pytest
 
 from toolang.base.types.message import TextPart
+from toolang.cli.common.output import shorten_home_path
 from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import ChatResult
 from toolang.common.layout import AgentLayout
@@ -300,43 +298,9 @@ def test_chat_ui_paths_follow_the_selected_layout(
 
     assert history is not None
     assert history.path == layout.runtime / "chat-input-history.jsonl"
-    assert chat._chat_home_label(object()) == chat._shorten_home_path(  # type: ignore[arg-type]
+    assert chat._chat_home_label(object()) == shorten_home_path(  # type: ignore[arg-type]
         layout.home
     )
-
-
-def test_chat_home_label_shortens_the_user_home() -> None:
-    path = Path.home() / ".toolang" / "agents" / "eve"
-
-    assert chat._shorten_home_path(path) == str(
-        Path("~") / ".toolang" / "agents" / "eve"
-    )
-
-
-def test_chat_home_label_keeps_an_unrelated_absolute_path() -> None:
-    path = Path.home().parent / "shared" / "toolang" / "agents" / "eve"
-
-    assert chat._shorten_home_path(path) == str(path.resolve(strict=False))
-
-
-def test_chat_home_label_shortens_the_platform_temp_directory(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    temp_root = Path(tempfile.gettempdir()) if os.name == "nt" else Path("/tmp")
-    if os.name == "nt":
-        monkeypatch.setenv("TEMP", str(temp_root))
-    relative = Path("toolang-dev-84c363b2") / "agents" / "dev"
-    path = temp_root / relative
-    expected_root = "%TEMP%" if os.name == "nt" else "/tmp"
-
-    assert chat._shorten_home_path(path) == str(Path(expected_root) / relative)
-
-
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS /tmp alias")
-def test_chat_home_label_normalizes_the_macos_private_tmp_alias() -> None:
-    path = Path("/private/tmp/toolang-dev-84c363b2/agents/dev")
-
-    assert chat._shorten_home_path(path) == "/tmp/toolang-dev-84c363b2/agents/dev"
 
 
 def test_chat_runtime_rejects_hosted_sandboxes() -> None:

@@ -35,6 +35,7 @@ from ...common.output import (
     echo_table,
     parse_utc_timestamp,
     runtime_value,
+    shorten_home_path,
 )
 from ...common.progress import as_progress_sink, make_cli_progress
 from ...common.version import toolang_version
@@ -164,7 +165,7 @@ def info_agent(
         if online is not None:
             status_value = f"{status.status} ({online})"
     rows = [
-        ("Home", str(layout.home)),
+        ("Home", shorten_home_path(layout.home)),
         ("Caps", _caps_summary(state)),
         ("Jobs", _jobs_summary(layout)),
         ("Tools", _tools_summary(setup)),
