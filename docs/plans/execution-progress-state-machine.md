@@ -409,14 +409,14 @@ terminal's default foreground and background without additional color or dim
 styling. The marker uses the configured Start accent; the error state retains a
 dedicated status style.
 
-The default `dots` style uses the compact filled Braille cell `⠿` while idle.
-During a local Run, it rotates through the single-width frames `⠾`, `⠷`, `⠟`,
-and `⠻` every 140 milliseconds. The retained `squares` style uses idle `■` and
-running `◧`, `◩`, `◨`, and `◪`.
-An internal named style switch selects between the two without exposing an
-unsettled public setting. Animation uses monotonic elapsed time rather than
-accumulated frame steps, and the idle marker does not participate in either
-spinner cycle. The UI redraws only when the visible state changes. An elapsed
+The default `hatch` style uses the gridded square `▦` while idle. During a local
+Run, it rotates through the single-width frames `▤`, `▥`, `▧`, and `▨` every
+140 milliseconds. The retained `dots` style uses idle `⠿` and running `⠾`,
+`⠷`, `⠟`, and `⠻`; the retained `squares` style uses idle `■` and running `◧`,
+`◩`, `◨`, and `◪`. An internal named style switch selects among them without
+exposing an unsettled public setting. Animation uses monotonic elapsed time
+rather than accumulated frame steps, and the idle marker does not participate
+in any spinner cycle. The UI redraws only when the visible state changes. An elapsed
 time follows the runnable while a Run is active. It is floored to whole seconds
 and rendered as `24s`, `1m 08s`, or `1h 01m 01s`; fractional seconds are never
 shown. Completion freezes the elapsed value until the minimum visibility period

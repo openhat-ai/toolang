@@ -25,10 +25,11 @@ from .rendering import (
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
 _STATUS_SPINNER_STYLES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "hatch": ("▦", ("▤", "▥", "▧", "▨")),
     "dots": ("⠿", ("⠾", "⠷", "⠟", "⠻")),
     "squares": ("■", ("◧", "◩", "◨", "◪")),
 }
-_STATUS_SPINNER_STYLE = "dots"
+_STATUS_SPINNER_STYLE = "hatch"
 _STATUS_IDLE_MARKER, _STATUS_SPINNER_FRAMES = _STATUS_SPINNER_STYLES[
     _STATUS_SPINNER_STYLE
 ]

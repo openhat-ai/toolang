@@ -291,10 +291,11 @@ and the current default runnable as `agic:name` or `flow:name`. The current
 default model is right-aligned against the terminal edge; hotkey hints are
 omitted. Normal runnable, elapsed-time, and model text inherits the terminal's
 default foreground without dim styling. The marker alone uses the configured
-Start accent. The default `dots` style uses the compact filled Braille cell `⠿`
-while idle and rotates through `⠾`, `⠷`, `⠟`, and `⠻` every 140 milliseconds
-during a Run. The retained `squares` style uses idle `■` and running `◧`, `◩`,
-`◨`, and `◪`; an internal named style switch selects between them. A
-whole-second elapsed time follows the runnable.
+Start accent. The default `hatch` style uses the gridded square `▦` while idle
+and rotates through `▤`, `▥`, `▧`, and `▨` every 140 milliseconds during a Run.
+The retained `dots` style uses idle `⠿` and running `⠾`, `⠷`, `⠟`, and `⠻`;
+the retained `squares` style uses idle `■` and running `◧`, `◩`, `◨`, and `◪`.
+An internal named style switch selects among them. A whole-second elapsed time
+follows the runnable.
 Short Runs retain the running state long enough to avoid flashing. This
 transient UI state is never committed to execution scrollback.
