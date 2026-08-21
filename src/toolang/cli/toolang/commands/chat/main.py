@@ -5,9 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 import os
-from pathlib import Path
 import sys
-import tempfile
 
 import click
 import typer
@@ -27,6 +25,7 @@ from toolang.lang.types import Array
 from toolang.cli.common.context import context_layout, load_runtime_environ, user_call
 from toolang.cli.common.execution import open_execution
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
+from toolang.cli.common.output import shorten_home_path
 from . import slashes as chat_slashes
 from .base import ChatClient, chat_status_label, friendly_error as chat_friendly_error
 from .history import ChatInputHistoryStore
@@ -144,38 +143,9 @@ def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | Non
 
 def _chat_home_label(ctx: typer.Context) -> str:
     try:
-        return _shorten_home_path(context_layout(ctx).home)
+        return shorten_home_path(context_layout(ctx).home)
     except Exception:
         return "agent home"
-
-
-def _shorten_home_path(path: Path) -> str:
-    """Return a compact, platform-native label for one agent home path."""
-
-    resolved = path.expanduser().resolve(strict=False)
-    temporary_roots: list[tuple[Path, str]] = []
-    if os.name != "nt":
-        temporary_roots.append((Path("/tmp").resolve(strict=False), "/tmp"))
-    native_temp = Path(tempfile.gettempdir())
-    native_temp_resolved = native_temp.resolve(strict=False)
-    native_temp_label = str(native_temp)
-    environment_names = ("TEMP", "TMP") if os.name == "nt" else ("TMPDIR",)
-    for name in environment_names:
-        value = os.environ.get(name)
-        if value and Path(value).resolve(strict=False) == native_temp_resolved:
-            native_temp_label = f"%{name}%" if os.name == "nt" else f"${name}"
-            break
-    temporary_roots.append((native_temp_resolved, native_temp_label))
-    for root, label in temporary_roots:
-        if resolved.is_relative_to(root):
-            relative = resolved.relative_to(root)
-            return label if not relative.parts else str(Path(label) / relative)
-
-    user_home = Path.home().resolve(strict=False)
-    if resolved.is_relative_to(user_home):
-        relative = resolved.relative_to(user_home)
-        return "~" if not relative.parts else str(Path("~") / relative)
-    return str(resolved)
 
 
 def _chat_interactive_prompt_toolkit(

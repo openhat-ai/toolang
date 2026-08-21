@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+import os
 from pathlib import Path
+import tempfile
 from typing import Literal, cast
 
 import click
@@ -62,6 +64,35 @@ def agent_avatar() -> Text:
     """Return the avatar used by agent information views."""
 
     return toolang_logo(_INFO_CONSOLE)
+
+
+def shorten_home_path(path: Path) -> str:
+    """Return a compact, platform-native label for one agent home path."""
+
+    resolved = path.expanduser().resolve(strict=False)
+    temporary_roots: list[tuple[Path, str]] = []
+    if os.name != "nt":
+        temporary_roots.append((Path("/tmp").resolve(strict=False), "/tmp"))
+    native_temp = Path(tempfile.gettempdir())
+    native_temp_resolved = native_temp.resolve(strict=False)
+    native_temp_label = str(native_temp)
+    environment_names = ("TEMP", "TMP") if os.name == "nt" else ("TMPDIR",)
+    for name in environment_names:
+        value = os.environ.get(name)
+        if value and Path(value).resolve(strict=False) == native_temp_resolved:
+            native_temp_label = f"%{name}%" if os.name == "nt" else f"${name}"
+            break
+    temporary_roots.append((native_temp_resolved, native_temp_label))
+    for root, label in temporary_roots:
+        if resolved.is_relative_to(root):
+            relative = resolved.relative_to(root)
+            return label if not relative.parts else str(Path(label) / relative)
+
+    user_home = Path.home().resolve(strict=False)
+    if resolved.is_relative_to(user_home):
+        relative = resolved.relative_to(user_home)
+        return "~" if not relative.parts else str(Path("~") / relative)
+    return str(resolved)
 
 
 def echo_block(text: str) -> None:
@@ -133,7 +164,7 @@ def echo_pairs_table(
         collapse_padding=True,
     )
     table.add_column("FIELD", no_wrap=True, style="bold bright_cyan")
-    table.add_column("VALUE", no_wrap=False, style="white", overflow="fold")
+    table.add_column("VALUE", no_wrap=False, overflow="fold")
     for key, value in rows:
         table.add_row(Text(key), Text(value))
     if avatar is None:
@@ -144,18 +175,15 @@ def echo_pairs_table(
         typer.echo()
     else:
         avatar_text = avatar if isinstance(avatar, Text) else Text(avatar)
-        details = Table.grid(padding=(0, 0))
-        details.add_column(no_wrap=False)
-        details.add_row(Text(""))
-        if title is not None:
-            details.add_row(_info_title_block(title))
-        details.add_row(table)
-        details.add_row(Text(""))
         layout = Table.grid(padding=(0, 4))
-        layout.add_column(no_wrap=True, ratio=0, vertical="middle")
+        layout.add_column(no_wrap=True, ratio=0, vertical="top")
         layout.add_column(no_wrap=False, ratio=1, vertical="top")
-        layout.add_row(avatar_text, details)
-        _INFO_CONSOLE.print(Padding(layout, (0, 0, 0, 2), expand=False))
+        layout.add_row(Text(""), Text(""))
+        if title is not None:
+            layout.add_row(Text(""), _info_title_block(title))
+        layout.add_row(avatar_text, table)
+        layout.add_row(Text(""), Text(""))
+        _INFO_CONSOLE.print(Padding(layout, (0, 0, 0, 3), expand=False))
 
 
 def created_time(path: Path) -> str:
@@ -247,5 +275,5 @@ def _info_title_block(title: str) -> Table:
     block = Table.grid(padding=(0, 0))
     block.add_column(no_wrap=False)
     block.add_row(Text(title, style="bold bright_cyan"))
-    block.add_row(Text("-" * len(title), style="bright_black"))
+    block.add_row(Text("─" * len(title), style="bright_black"))
     return block

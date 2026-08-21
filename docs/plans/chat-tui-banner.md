@@ -14,8 +14,8 @@ The change succeeds when:
   exact version value, separated by one ordinary space;
 - `home` appears above `executor`, and the current process-local chat path shows
   `executor  local`;
-- the displayed home uses platform-native user-home and temporary-directory
-  abbreviations without changing the resolved agent layout;
+- the banner and `info` command use the same platform-native user-home and
+  temporary-directory abbreviations without changing the resolved agent layout;
 - no model value appears in the banner;
 - wide terminals use a side-by-side layout and narrow terminals stack metadata
   below the logo without clipping;
@@ -58,14 +58,16 @@ endpoint without changing this banner layout.
 
 ## Design touchpoints and acceptance tests
 
-- `src/toolang/cli/common/output.py`: expose the compact art through a neutral
-  shared logo helper while preserving the info view.
+- `src/toolang/cli/common/output.py`: expose the compact art and home-path
+  abbreviation through neutral shared helpers.
+- `src/toolang/cli/toolang/commands/agent.py`: use the shared home-path label in
+  the `info` view.
 - `src/toolang/cli/toolang/commands/chat/blocks.py`: own responsive header
   composition and styling.
 - `src/toolang/cli/toolang/commands/chat/tui.py`: remove model resolution from
   header construction while retaining it for the status bar.
-- `src/toolang/cli/toolang/commands/chat/main.py`: shorten the selected home for
-  display without changing the resolved layout path.
+- `src/toolang/cli/toolang/commands/chat/main.py`: pass the selected home through
+  the shared display helper without changing the resolved layout path.
 - `tests/unit/cli/test_output.py`, `tests/unit/cli/test_chat_command.py`, and
   `tests/unit/cli/test_chat_tui.py`: cover path abbreviations, shared logo
   identity, both layouts, content order, wrapping, and styles.

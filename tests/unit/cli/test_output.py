@@ -1,5 +1,10 @@
 from io import StringIO
+import os
+from pathlib import Path
+import sys
+import tempfile
 
+import pytest
 from rich.console import Console
 
 from toolang.cli.common import output
@@ -7,6 +12,7 @@ from toolang.cli.common.output import (
     agent_avatar,
     echo_pairs_table,
     info_avatar_text,
+    shorten_home_path,
     toolang_logo_text,
 )
 
@@ -51,7 +57,7 @@ def test_info_avatar_renders_solid_cells_with_terminal_background(
             assert style.bgcolor is None
 
 
-def test_info_layout_places_avatar_beside_details(monkeypatch) -> None:
+def test_info_layout_aligns_avatar_with_first_detail_row(monkeypatch) -> None:
     rendered = StringIO()
     monkeypatch.setattr(
         output,
@@ -69,9 +75,64 @@ def test_info_layout_places_avatar_beside_details(monkeypatch) -> None:
     lines = [line.rstrip() for line in rendered.getvalue().splitlines()]
     assert lines == [
         "",
-        "  logo-one    EVE",
-        "  logo-two    ---",
-        "  logo-3--    Home    /tmp/eve",
-        "              Created now",
+        "               EVE",
+        "               ───",
+        "   logo-one    Home    /tmp/eve",
+        "   logo-two    Created now",
+        "   logo-3--",
         "",
     ]
+
+
+def test_info_values_inherit_the_terminal_foreground(monkeypatch) -> None:
+    captured = []
+
+    class _CapturedConsole:
+        def print(self, renderable) -> None:
+            captured.append(renderable)
+
+    monkeypatch.setattr(output, "_INFO_CONSOLE", _CapturedConsole())
+
+    echo_pairs_table(
+        [("Home", "/tmp/eve")],
+        avatar="logo",
+        title="EVE",
+    )
+
+    console = Console(force_terminal=True, color_system="truecolor")
+    segments = list(console.render(captured[0], console.options))
+    value = next(segment for segment in segments if "/tmp/eve" in segment.text)
+
+    assert value.style is None or (value.style.color is None and not value.style.dim)
+
+
+def test_home_path_shortening_uses_the_user_home() -> None:
+    path = Path.home() / ".toolang" / "agents" / "eve"
+
+    assert shorten_home_path(path) == str(Path("~") / ".toolang" / "agents" / "eve")
+
+
+def test_home_path_shortening_keeps_an_unrelated_absolute_path() -> None:
+    path = Path.home().parent / "shared" / "toolang" / "agents" / "eve"
+
+    assert shorten_home_path(path) == str(path.resolve(strict=False))
+
+
+def test_home_path_shortening_uses_the_platform_temp_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    temp_root = Path(tempfile.gettempdir()) if os.name == "nt" else Path("/tmp")
+    if os.name == "nt":
+        monkeypatch.setenv("TEMP", str(temp_root))
+    relative = Path("toolang-dev-84c363b2") / "agents" / "dev"
+    path = temp_root / relative
+    expected_root = "%TEMP%" if os.name == "nt" else "/tmp"
+
+    assert shorten_home_path(path) == str(Path(expected_root) / relative)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS /tmp alias")
+def test_home_path_shortening_normalizes_the_macos_private_tmp_alias() -> None:
+    path = Path("/private/tmp/toolang-dev-84c363b2/agents/dev")
+
+    assert shorten_home_path(path) == "/tmp/toolang-dev-84c363b2/agents/dev"
