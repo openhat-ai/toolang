@@ -406,18 +406,20 @@ kind are used. The current resolved default model is right-aligned
 against the terminal edge. The status bar omits the redundant `model ` label and
 all hotkey hints. Its runnable, elapsed time, padding, and model inherit the
 terminal's default foreground and background without additional color or dim
-styling. The marker uses the configured Start accent; the error state retains a
-dedicated status style.
+styling. The marker reverses the configured Start accent, filling the entire
+terminal cell and cutting out its glyph in the terminal's default background.
+The following space returns to the default style before the runnable. The error
+state retains a dedicated status style.
 
-The default `hatch` style uses the gridded square `▦` while idle. During a local
-Run, it rotates through the single-width frames `▤`, `▥`, `▧`, and `▨` every
-140 milliseconds. The retained `dots` style uses idle `⠿` and running `⠾`,
-`⠷`, `⠟`, and `⠻`; the retained `squares` style uses idle `■` and running `◧`,
-`◩`, `◨`, and `◪`. An internal named style switch selects among them without
-exposing an unsettled public setting. Animation uses monotonic elapsed time
-rather than accumulated frame steps, and the idle marker does not participate
-in any spinner cycle. The UI redraws only when the visible state changes. An elapsed
-time follows the runnable while a Run is active. It is floored to whole seconds
+The default `quadrants` style uses a blank glyph to present a solid accent cell
+while idle. During a local Run, the single-width frames `▖`, `▘`, `▝`, and `▗`
+rotate every 140 milliseconds, creating a large moving cutout in that cell. The
+retained `hatch`, `dots`, and `squares` styles remain available through an
+internal named style switch without exposing an unsettled public setting.
+Animation uses monotonic elapsed time rather than accumulated frame steps, and
+the idle marker does not participate in any spinner cycle. The UI redraws only
+when the visible state changes. An elapsed time follows the runnable while a Run
+is active. It is floored to whole seconds
 and rendered as `24s`, `1m 08s`, or `1h 01m 01s`; fractional seconds are never
 shown. Completion freezes the elapsed value until the minimum visibility period
 ends. The model and runnable never shift, and the spinner and timer are never

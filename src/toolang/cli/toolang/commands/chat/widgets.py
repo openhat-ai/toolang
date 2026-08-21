@@ -25,11 +25,12 @@ from .rendering import (
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
 _STATUS_SPINNER_STYLES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "quadrants": (" ", ("▖", "▘", "▝", "▗")),
     "hatch": ("▦", ("▤", "▥", "▧", "▨")),
     "dots": ("⠿", ("⠾", "⠷", "⠟", "⠻")),
     "squares": ("■", ("◧", "◩", "◨", "◪")),
 }
-_STATUS_SPINNER_STYLE = "hatch"
+_STATUS_SPINNER_STYLE = "quadrants"
 _STATUS_IDLE_MARKER, _STATUS_SPINNER_FRAMES = _STATUS_SPINNER_STYLES[
     _STATUS_SPINNER_STYLE
 ]
@@ -45,7 +46,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "",
-        "status.marker": f"fg:{START_CONTROL_ACCENT}",
+        "status.marker": f"fg:{START_CONTROL_ACCENT} reverse",
         "status.error": "fg:#ffffff bg:#7a2e2e bold",
         "dim": "fg:ansigray",
     }

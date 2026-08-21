@@ -1088,7 +1088,7 @@ def test_chat_status_bar_right_aligns_the_model_without_hotkeys(
 
     assert "^d exit" not in text
     assert "↑↓ history" not in text
-    assert text.startswith("▦ agic:chat")
+    assert text.startswith("  agic:chat")
     assert text.endswith("runtime model")
     assert len(text) == 80
 
@@ -1104,23 +1104,23 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
     status.set_activity(2, 68)
     next_frame = status._render()
 
-    assert idle_text.startswith("▦ agic:chat")
+    assert idle_text.startswith("  agic:chat")
     assert idle_text.endswith("runtime model")
-    assert running_text.startswith("▤ agic:chat 0s")
+    assert running_text.startswith("▖ agic:chat 0s")
     assert running_text.endswith("runtime model")
     assert idle[:3] == [
-        ("class:status.marker", "▦"),
+        ("class:status.marker", " "),
         ("class:status", " "),
         ("class:status", "agic:chat"),
     ]
     assert running[:4] == [
-        ("class:status.marker", "▤"),
+        ("class:status.marker", "▖"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
         ("class:status", " 0s"),
     ]
     assert next_frame[:4] == [
-        ("class:status.marker", "▧"),
+        ("class:status.marker", "▝"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
         ("class:status", " 1m 08s"),
@@ -1133,11 +1133,11 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
     assert status._render() == idle
 
 
-def test_chat_status_palette_has_no_base_background() -> None:
+def test_chat_status_palette_reverses_only_the_marker_accent() -> None:
     palette = widgets._chat_ui_palette()
 
     assert palette["status"] == ""
-    assert palette["status.marker"] == f"fg:{rendering.START_CONTROL_ACCENT}"
+    assert palette["status.marker"] == (f"fg:{rendering.START_CONTROL_ACCENT} reverse")
     assert (
         not {
             "status.text",
@@ -1154,14 +1154,15 @@ def test_chat_status_spinner_styles_use_single_width_frames() -> None:
     step = tui._STATUS_SPINNER_FRAME_DURATION
 
     assert step == pytest.approx(0.14)
-    assert widgets._STATUS_SPINNER_STYLE == "hatch"
+    assert widgets._STATUS_SPINNER_STYLE == "quadrants"
     assert widgets._STATUS_SPINNER_STYLES == {
+        "quadrants": (" ", ("▖", "▘", "▝", "▗")),
         "hatch": ("▦", ("▤", "▥", "▧", "▨")),
         "dots": ("⠿", ("⠾", "⠷", "⠟", "⠻")),
         "squares": ("■", ("◧", "◩", "◨", "◪")),
     }
-    assert widgets._STATUS_IDLE_MARKER == "▦"
-    assert widgets._STATUS_SPINNER_FRAMES == ("▤", "▥", "▧", "▨")
+    assert widgets._STATUS_IDLE_MARKER == " "
+    assert widgets._STATUS_SPINNER_FRAMES == ("▖", "▘", "▝", "▗")
     assert widgets._STATUS_IDLE_MARKER not in widgets._STATUS_SPINNER_FRAMES
     assert all(
         get_cwidth(character) == 1
@@ -1288,13 +1289,13 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
             assert app.status_bar.running
             assert app.status_bar._render()[0] == (
                 "class:status.marker",
-                "▤",
+                "▖",
             )
             await asyncio.wait_for(activity_stopped.wait(), timeout=0.5)
             assert not app.status_bar.running
             assert app.status_bar._render()[0] == (
                 "class:status.marker",
-                "▦",
+                " ",
             )
         finally:
             animation.cancel()
