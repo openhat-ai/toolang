@@ -290,14 +290,11 @@ the terminal background. Its left side begins with a marker, one space,
 and the current default runnable as `agic:name` or `flow:name`. The current
 default model is right-aligned against the terminal edge; hotkey hints are
 omitted. Normal runnable, elapsed-time, and model text inherits the terminal's
-default foreground without dim styling. The marker alone reverses the configured
-Start accent so that its entire terminal cell is filled while the glyph is cut
-out in the terminal's default background. The following space returns to the
-default style before the runnable. The default `quadrants` style uses a blank
-glyph to present a solid accent cell while idle. During a Run, `▖`, `▘`, `▝`,
-and `▗` rotate every 140 milliseconds, creating a large moving cutout in that
-cell. The retained `hatch`, `dots`, and `squares` styles remain available through
-an internal named style switch. A whole-second elapsed time follows the
-runnable.
+default foreground without dim styling. The marker alone uses the configured
+Start accent as its foreground on the terminal's default background. The
+default `squares` style uses `◫` while idle and rotates through `◧`, `◩`, `◨`,
+and `◪` every 140 milliseconds during a Run. The retained `quadrants`, `hatch`,
+and `dots` styles remain available through an internal named style switch. A
+whole-second elapsed time follows the runnable.
 Short Runs retain the running state long enough to avoid flashing. This
 transient UI state is never committed to execution scrollback.

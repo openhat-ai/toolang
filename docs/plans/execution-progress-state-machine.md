@@ -406,15 +406,12 @@ kind are used. The current resolved default model is right-aligned
 against the terminal edge. The status bar omits the redundant `model ` label and
 all hotkey hints. Its runnable, elapsed time, padding, and model inherit the
 terminal's default foreground and background without additional color or dim
-styling. The marker reverses the configured Start accent, filling the entire
-terminal cell and cutting out its glyph in the terminal's default background.
-The following space returns to the default style before the runnable. The error
-state retains a dedicated status style.
+styling. The marker uses the configured Start accent as its foreground on the
+terminal's default background. The error state retains a dedicated status style.
 
-The default `quadrants` style uses a blank glyph to present a solid accent cell
-while idle. During a local Run, the single-width frames `▖`, `▘`, `▝`, and `▗`
-rotate every 140 milliseconds, creating a large moving cutout in that cell. The
-retained `hatch`, `dots`, and `squares` styles remain available through an
+The default `squares` style uses `◫` while idle. During a local Run, the
+single-width frames `◧`, `◩`, `◨`, and `◪` rotate every 140 milliseconds. The
+retained `quadrants`, `hatch`, and `dots` styles remain available through an
 internal named style switch without exposing an unsettled public setting.
 Animation uses monotonic elapsed time rather than accumulated frame steps, and
 the idle marker does not participate in any spinner cycle. The UI redraws only
