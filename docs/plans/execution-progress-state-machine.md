@@ -406,8 +406,8 @@ kind are used. The current resolved default model is right-aligned
 against the terminal edge. The status bar omits the redundant `model ` label and
 all hotkey hints. Its runnable, elapsed time, padding, and model inherit the
 terminal's default foreground and background without additional color or dim
-styling. The marker uses the configured Start accent as its foreground on the
-terminal's default background. The error state retains a dedicated status style.
+styling. The marker inherits those terminal defaults without an accent. The
+error state retains a dedicated status style.
 
 The default `squares` style uses `□` while idle. During a local Run, the
 single-width frames `◧`, `◩`, `◨`, and `◪` rotate every 140 milliseconds. The

@@ -1133,11 +1133,11 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
     assert status._render() == idle
 
 
-def test_chat_status_palette_accents_only_the_marker_foreground() -> None:
+def test_chat_status_palette_uses_the_terminal_defaults() -> None:
     palette = widgets._chat_ui_palette()
 
     assert palette["status"] == ""
-    assert palette["status.marker"] == f"fg:{rendering.START_CONTROL_ACCENT}"
+    assert palette["status.marker"] == ""
     assert (
         not {
             "status.text",
