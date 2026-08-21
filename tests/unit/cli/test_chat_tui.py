@@ -1081,18 +1081,20 @@ def test_chat_status_bar_right_aligns_the_model_without_hotkeys(
     monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 80))
     text = "".join(
         fragment
-        for _style, fragment in widgets.StatusBar("a:chat", "runtime model")._render()
+        for _style, fragment in widgets.StatusBar(
+            "agic:chat", "runtime model"
+        )._render()
     )
 
     assert "^d exit" not in text
     assert "↑↓ history" not in text
-    assert text.startswith("▣ a:chat")
+    assert text.startswith("■ agic:chat")
     assert text.endswith("runtime model")
     assert len(text) == 80
 
 
 def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
-    status = widgets.StatusBar("a:chat", "runtime model")
+    status = widgets.StatusBar("agic:chat", "runtime model")
     idle = status._render()
     idle_text = "".join(fragment for _style, fragment in idle)
 
@@ -1102,28 +1104,28 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
     status.set_activity(2, 68)
     next_frame = status._render()
 
-    assert idle_text.startswith("▣ a:chat")
+    assert idle_text.startswith("■ agic:chat")
     assert idle_text.endswith("runtime model")
-    assert running_text.startswith("◧ a:chat 0s")
+    assert running_text.startswith("◧ agic:chat 0s")
     assert running_text.endswith("runtime model")
     assert idle[:3] == [
-        ("class:status.marker", "▣"),
-        ("class:status.text", " "),
-        ("class:status.agic", "a:chat"),
+        ("class:status", "■"),
+        ("class:status", " "),
+        ("class:status", "agic:chat"),
     ]
     assert running[:4] == [
-        ("class:status.marker", "◧"),
-        ("class:status.text", " "),
-        ("class:status.agic", "a:chat"),
-        ("class:status.elapsed", " 0s"),
+        ("class:status", "◧"),
+        ("class:status", " "),
+        ("class:status", "agic:chat"),
+        ("class:status", " 0s"),
     ]
     assert next_frame[:4] == [
-        ("class:status.marker", "◨"),
-        ("class:status.text", " "),
-        ("class:status.agic", "a:chat"),
-        ("class:status.elapsed", " 1m 08s"),
+        ("class:status", "◨"),
+        ("class:status", " "),
+        ("class:status", "agic:chat"),
+        ("class:status", " 1m 08s"),
     ]
-    assert next_frame[-1] == ("class:status.model", "runtime model")
+    assert next_frame[-1] == ("class:status", "runtime model")
     assert status.spinner_index == 2
     assert status.elapsed_seconds == 68
 
@@ -1134,17 +1136,25 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
 def test_chat_status_palette_has_no_base_background() -> None:
     palette = widgets._chat_ui_palette()
 
-    assert palette["status"] == "fg:#f2f2f2"
-    assert palette["status.marker"] == f"fg:{rendering.START_CONTROL_ACCENT}"
-    assert palette["status.text"] == "fg:ansigray"
-    assert palette["status.model"] == "fg:#ffd866"
+    assert palette["status"] == ""
+    assert (
+        not {
+            "status.marker",
+            "status.text",
+            "status.agic",
+            "status.flow",
+            "status.elapsed",
+            "status.model",
+        }
+        & palette.keys()
+    )
 
 
 def test_chat_status_spinner_uses_single_width_square_frames() -> None:
     step = tui._STATUS_SPINNER_FRAME_DURATION
 
     assert step == pytest.approx(0.14)
-    assert widgets._STATUS_IDLE_MARKER == "▣"
+    assert widgets._STATUS_IDLE_MARKER == "■"
     assert widgets._STATUS_SPINNER_FRAMES == ("◧", "◩", "◨", "◪")
     assert widgets._STATUS_IDLE_MARKER not in widgets._STATUS_SPINNER_FRAMES
     assert get_cwidth(widgets._STATUS_IDLE_MARKER) == 1
@@ -1155,7 +1165,7 @@ def test_chat_status_spinner_uses_single_width_square_frames() -> None:
     assert tui._status_spinner_index(step * 4 + 1e-9) == 0
 
 
-def test_chat_status_compacts_qualified_and_resolved_runnables() -> None:
+def test_chat_status_qualifies_resolved_runnables() -> None:
     payload = {
         "items": [
             {"kind": "agic", "name": "chat"},
@@ -1163,9 +1173,9 @@ def test_chat_status_compacts_qualified_and_resolved_runnables() -> None:
         ]
     }
 
-    assert tui._compact_runnable_label("agic:chat", payload) == "a:chat"
-    assert tui._compact_runnable_label("flow:research", payload) == "f:research"
-    assert tui._compact_runnable_label("research", payload) == "f:research"
+    assert tui._qualified_runnable_label("agic:chat", payload) == "agic:chat"
+    assert tui._qualified_runnable_label("flow:research", payload) == "flow:research"
+    assert tui._qualified_runnable_label("research", payload) == "flow:research"
 
 
 @pytest.mark.parametrize(
@@ -1268,14 +1278,14 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
 
             assert app.status_bar.running
             assert app.status_bar._render()[0] == (
-                "class:status.marker",
+                "class:status",
                 "◧",
             )
             await asyncio.wait_for(activity_stopped.wait(), timeout=0.5)
             assert not app.status_bar.running
             assert app.status_bar._render()[0] == (
-                "class:status.marker",
-                "▣",
+                "class:status",
+                "■",
             )
         finally:
             animation.cancel()
@@ -1338,7 +1348,7 @@ def test_chat_tui_run_lifecycle_starts_and_stops_status_activity() -> None:
 
 def test_chat_status_bar_error_uses_full_width_error_line(monkeypatch: Any) -> None:
     monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 40))
-    status = widgets.StatusBar("a:chat", "runtime model")
+    status = widgets.StatusBar("agic:chat", "runtime model")
     status.set_error("No active run to steer.")
 
     rendered = status._render()
@@ -1371,7 +1381,7 @@ def test_chat_tui_status_bar_uses_resolved_model_and_clears_error_on_input() -> 
     )
 
     assert app.status_bar.model_label == "openai/gpt-5"
-    assert app.status_bar.runnable_label == "a:chat"
+    assert app.status_bar.runnable_label == "agic:chat"
     app.handle_run_event(_model_step_begin(model="deepseek/deepseek-chat"))
     assert app.status_bar.model_label == "deepseek/deepseek-chat"
 
@@ -1392,13 +1402,13 @@ def test_chat_tui_status_bar_compacts_the_current_default_runnable() -> None:
         client=FakeClient(),
     )
 
-    assert app.status_bar.runnable_label == "a:chat"
+    assert app.status_bar.runnable_label == "agic:chat"
 
     app.selects = {"agic": "review"}
-    assert app._runnable_label() == "a:review"
+    assert app._runnable_label() == "agic:review"
 
     app.selects = {"flow": "research"}
-    assert app._runnable_label() == "f:research"
+    assert app._runnable_label() == "flow:research"
 
 
 def test_chat_default_settings_clear_explicit_model_and_runnable() -> None:

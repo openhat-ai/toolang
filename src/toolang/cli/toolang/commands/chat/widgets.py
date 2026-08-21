@@ -24,9 +24,8 @@ from .rendering import (
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-_STATUS_IDLE_MARKER = "▣"
+_STATUS_IDLE_MARKER = "■"
 _STATUS_SPINNER_FRAMES = ("◧", "◩", "◨", "◪")
-_STATUS_MODEL_COLOR = "#ffd866"
 
 
 def _chat_ui_palette() -> dict[str, str]:
@@ -38,13 +37,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
-        "status": "fg:#f2f2f2",
-        "status.marker": f"fg:{START_CONTROL_ACCENT}",
-        "status.model": f"fg:{_STATUS_MODEL_COLOR}",
-        "status.agic": "fg:#8fd7ff",
-        "status.flow": "fg:#d7b3ff",
-        "status.text": "fg:ansigray",
-        "status.elapsed": "fg:ansigray",
+        "status": "",
         "status.error": "fg:#ffffff bg:#7a2e2e bold",
         "dim": "fg:ansigray",
     }
@@ -397,20 +390,15 @@ class StatusBar:
             if self.running
             else _STATUS_IDLE_MARKER
         )
-        runnable_style = (
-            "class:status.flow"
-            if self.runnable_label.startswith("f:")
-            else "class:status.agic"
-        )
         segments = [
-            ("class:status.marker", marker),
-            ("class:status.text", " "),
-            (runnable_style, self.runnable_label),
+            ("class:status", marker),
+            ("class:status", " "),
+            ("class:status", self.runnable_label),
         ]
         if self.running:
             segments.append(
                 (
-                    "class:status.elapsed",
+                    "class:status",
                     f" {_format_elapsed_seconds(self._elapsed_seconds)}",
                 )
             )
@@ -421,8 +409,8 @@ class StatusBar:
         )
         return [
             *segments,
-            ("class:status.text", " " * padding),
-            ("class:status.model", self.model_label),
+            ("class:status", " " * padding),
+            ("class:status", self.model_label),
         ]
 
     @staticmethod

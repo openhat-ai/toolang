@@ -287,11 +287,13 @@ displaying Run IDs or execution state. Quick-command bars use the same
 background-cell treatment with their own accent, and the prompt uses the start
 accent. The status bar does not paint a base background and therefore inherits
 the terminal background. Its left side begins with a square marker, one space,
-and the current default runnable as `a:name` for an agic or `f:name` for a flow.
-The current default model is right-aligned against the terminal edge; hotkey
-hints are omitted. The idle marker is `▣`. During a Run, it is replaced by a
-spinner that advances every 140 milliseconds through the single-width square
-frames `◧`, `◩`, `◨`, and `◪`; `▣` is not part of the animation. A dim,
-whole-second elapsed time follows the runnable.
-Short Runs retain the running state long enough to avoid flashing. This
-transient UI state is never committed to execution scrollback.
+and the current default runnable as `agic:name` or `flow:name`. The current
+default model is right-aligned against the terminal edge; hotkey hints are
+omitted. Normal status text, including the marker, runnable, elapsed time, and
+model, inherits the terminal's default foreground without additional color or
+dim styling. The idle marker is the solid square `■`. During a Run, it is
+replaced by a spinner that advances every 140 milliseconds through the
+single-width square frames `◧`, `◩`, `◨`, and `◪`; `■` is not part of the
+animation. A whole-second elapsed time follows the runnable. Short Runs retain
+the running state long enough to avoid flashing. This transient UI state is
+never committed to execution scrollback.

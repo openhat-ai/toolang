@@ -21,7 +21,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
 ) -> None:
     session = ChatTuiPtySession.start("tests.support.chat_tui_e2e", tmp_path)
     try:
-        session.wait_for("Toolang", "executor", "local", "▣ a:chat", "test/scripted")
+        session.wait_for("Toolang", "executor", "local", "■ agic:chat", "test/scripted")
         session.send(b":flow research\r")
         session.wait_for("Runnable not found: research")
         session.send(b"hello from user")
@@ -56,7 +56,7 @@ def test_chat_tui_preserves_long_final_output_in_a_small_terminal(
         columns=80,
     )
     try:
-        session.wait_for("Toolang", "▣ a:chat", "test/scripted")
+        session.wait_for("Toolang", "■ agic:chat", "test/scripted")
         session.send(b"show long output\r")
         final_output = session.wait_for(
             "• terminal e2e line 000",
@@ -83,7 +83,7 @@ def test_chat_tui_reopens_a_durable_flow_result(
         "flow",
     )
     try:
-        session.wait_for("Toolang", "f:relay")
+        session.wait_for("Toolang", "flow:relay")
         session.send(b"hello flow\r")
         output = session.wait_for(
             "[0] Run chat",

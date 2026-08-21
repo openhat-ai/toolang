@@ -400,18 +400,21 @@ adjacent rows.
 The bottom `StatusBar` does not paint a base background and therefore inherits
 the terminal background. Its left side begins in column zero with a square
 marker, followed by one space and the current default runnable in column two.
-The runnable is rendered as `a:name` for an agic or `f:name` for a flow. Explicit
-session selection takes precedence; otherwise the client-provided runnable
-default and kind are used. The current resolved default model is right-aligned
+The runnable is rendered as `agic:name` or `flow:name`. Explicit session
+selection takes precedence; otherwise the client-provided runnable default and
+kind are used. The current resolved default model is right-aligned
 against the terminal edge. The status bar omits the redundant `model ` label and
-all hotkey hints.
+all hotkey hints. Its normal marker, runnable, elapsed time, padding, and model
+inherit the terminal's default foreground and background without additional
+color or dim styling; only the error state has a dedicated status style.
 
-While idle, the marker is `▣`. During a local Run, it is replaced by a spinner
-that advances every 140 milliseconds through the single-width square frames
+While idle, the marker is the solid square `■`. During a local Run, it is
+replaced by a spinner that advances every 140 milliseconds through the
+single-width square frames
 `◧`, `◩`, `◨`, and `◪`, using monotonic elapsed time rather than accumulated
 frame steps. The idle marker does not participate in the spinner cycle. The UI
-redraws only when the visible state changes. A dim elapsed time
-follows the runnable while a Run is active. It is floored to whole seconds and
+redraws only when the visible state changes. An elapsed time follows the
+runnable while a Run is active. It is floored to whole seconds and
 rendered as `24s`, `1m 08s`, or `1h 01m 01s`; fractional seconds are never
 shown. Completion freezes the elapsed value until the minimum visibility period
 ends. The model and runnable never shift, and the spinner and timer are never

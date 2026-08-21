@@ -78,7 +78,7 @@ def _status_spinner_index(elapsed: float) -> int:
     )
 
 
-def _compact_runnable_label(reference: str, payload: Mapping[str, object]) -> str:
+def _qualified_runnable_label(reference: str, payload: Mapping[str, object]) -> str:
     try:
         name, kind = parse_runnable_ref(reference)
     except ValueError:
@@ -95,8 +95,7 @@ def _compact_runnable_label(reference: str, payload: Mapping[str, object]) -> st
                     matches.add(as_text(values.get("kind")))
             if len(matches) == 1:
                 kind = matches.pop()
-    prefix = {"agic": "a", "flow": "f"}.get(kind or "")
-    return f"{prefix}:{name}" if prefix is not None else reference
+    return f"{kind}:{name}" if kind in {"agic", "flow"} else reference
 
 
 class ChatTuiAppContext:
@@ -351,7 +350,7 @@ class ChatTuiApp:
                 pass
         if reference is None:
             reference = as_text(payload.get("default")) or "agic:default"
-        return _compact_runnable_label(reference, payload)
+        return _qualified_runnable_label(reference, payload)
 
     def _status_labels(self) -> tuple[str, str]:
         return self._runnable_label(), self._model_label()
