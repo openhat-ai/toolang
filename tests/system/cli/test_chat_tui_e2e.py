@@ -26,7 +26,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
             "executor",
             "local",
             "Ask anything",
-            "▪︎ agic:chat",
+            "◧ agic:chat",
             "test/scripted",
         )
         session.send(b":flow research\r")
@@ -63,7 +63,7 @@ def test_chat_tui_preserves_long_final_output_in_a_small_terminal(
         columns=80,
     )
     try:
-        session.wait_for("Toolang", "▪︎ agic:chat", "test/scripted")
+        session.wait_for("Toolang", "◧ agic:chat", "test/scripted")
         session.send(b"show long output\r")
         final_output = session.wait_for(
             "• terminal e2e line 000",

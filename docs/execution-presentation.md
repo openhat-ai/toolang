@@ -295,8 +295,8 @@ and the current default runnable as `agic:name` or `flow:name`. The current
 default model is right-aligned against the terminal edge; hotkey hints are
 omitted. Runnable and model text inherit the terminal's default foreground
 without dim styling. The marker, spinner, and elapsed time use the terminal's
-dim attribute without an additional color. The default `squares` style uses `▪︎`
-while idle and rotates through `◧`, `◩`, `◨`, and `◪` every 220 milliseconds
+dim attribute without an additional color. The default `squares` style uses `◧`
+while idle and rotates through `◧`, `◩`, `◨`, and `◪` every 300 milliseconds
 during a Run. The retained `triangles`, `quadrants`, `hatch`, and `dots` styles
 remain available through an internal named style switch. A whole-second elapsed
 time follows the runnable.
