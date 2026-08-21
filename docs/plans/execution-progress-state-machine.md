@@ -414,7 +414,7 @@ and spinner use the input background color as their foreground without painting
 a status background. The elapsed time uses the terminal's dim attribute. The
 error state retains a dedicated status style.
 
-The default `squares` style uses `▪︎` while idle. During a local Run, the
+The default `squares` style uses `■` while idle. During a local Run, the
 single-width frames `◧`, `◩`, `◨`, and `◪` rotate every 300 milliseconds. The
 retained `triangles`, `quadrants`, `hatch`, and `dots` styles remain available
 through an internal named style switch without exposing an unsettled public

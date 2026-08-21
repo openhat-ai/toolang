@@ -297,7 +297,7 @@ default model is right-aligned against the terminal edge; hotkey hints are
 omitted. Runnable and model text inherit the terminal's default foreground
 without dim styling. The marker and spinner use the input background color as
 their foreground without painting a status background. The elapsed time uses
-the terminal's dim attribute. The default `squares` style uses `▪︎`
+the terminal's dim attribute. The default `squares` style uses `■`
 while idle and rotates through `◧`, `◩`, `◨`, and `◪` every 300 milliseconds
 during a Run. The retained `triangles`, `quadrants`, `hatch`, and `dots` styles
 remain available through an internal named style switch. A whole-second elapsed
