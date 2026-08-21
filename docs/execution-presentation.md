@@ -286,11 +286,11 @@ left background-filled accent cells distinguish start from steer without
 displaying Run IDs or execution state. Quick-command bars use the same
 background-cell treatment with their own accent, and the prompt uses the start
 accent. The status bar does not paint a base background and therefore inherits
-the terminal background. It has no persistent left accent but reserves its
-first column, keeping the model name aligned with control and quick-command
-text. A four-cell, background-only comet enters through the next leading space
-and sweeps across the model name and trailing space; there is no separate
-`model` label. A dim elapsed time follows the model while the Run is active and
-uses whole-second precision. Short Runs retain the activity long enough to
-avoid flashing. This transient UI state is never committed to execution
-scrollback.
+the terminal background. Its left side begins with a square marker, one space,
+and the current default runnable as `A:name` for an agic or `F:name` for a flow.
+The current default model is right-aligned against the terminal edge; hotkey
+hints are omitted. During a Run, the marker animates through the single-width
+square frames `■`, `◰`, `◳`, `◲`, and `◱`, with the idle `■` serving as the
+spinner's first frame. A dim, whole-second elapsed time follows the runnable.
+Short Runs retain the running state long enough to avoid flashing. This
+transient UI state is never committed to execution scrollback.

@@ -398,32 +398,27 @@ two. Rendering the full cell as a background avoids glyph line gaps between
 adjacent rows.
 
 The bottom `StatusBar` does not paint a base background and therefore inherits
-the terminal background. It has no persistent left accent. It reserves column
-zero, renders another terminal-background space in column one, and begins the
-model name in column two so it aligns with control and quick-command text after
-their markers. One trailing terminal-background space completes the wrapped
-model region. The status bar omits the redundant `model ` label. When idle, both
-surrounding spaces and the entire model name use the terminal background.
-During a local Run, a four-cell comet enters through the space in column one and
-sweeps left to right across the wrapped region while the text and its column
-remain stable. Its head uses the configured Start accent and its three-cell tail
-uses successively dimmer sRGB-channel linear blends toward the configured fade
-color. The comet changes backgrounds only: it introduces no glyph whose line
-metrics could leave gaps. A six-cell blank interval separates sweeps.
+the terminal background. Its left side begins in column zero with a square
+marker, followed by one space and the current default runnable in column two.
+The runnable is rendered as `A:name` for an agic or `F:name` for a flow. Explicit
+session selection takes precedence; otherwise the client-provided runnable
+default and kind are used. The current resolved default model is right-aligned
+against the terminal edge. The status bar omits the redundant `model ` label and
+all hotkey hints.
 
-The comet advances one display cell every 80 milliseconds using monotonic
-elapsed time rather than accumulated frame steps. The UI checks the phase every
-80 milliseconds but redraws only when the visible state changes. A dim elapsed
-time immediately follows the wrapped model region while a Run is active. It is
-floored to whole seconds and rendered as `24s`, `1m 08s`, or
-`1h 01m 01s`; fractional seconds are never shown. Completion freezes the
-elapsed value and lets a currently visible comet leave the region before the
-activity disappears. The model name never shifts, and the animation and timer
-are never committed to scrollback.
+While idle, the marker is `■`. During a local Run, it advances every 80
+milliseconds through the single-width square frames `■`, `◰`, `◳`, `◲`, and
+`◱`, using monotonic elapsed time rather than accumulated frame steps. The idle
+marker is therefore exactly one stationary spinner frame rather than a separate
+symbol. The UI redraws only when the visible state changes. A dim elapsed time
+follows the runnable while a Run is active. It is floored to whole seconds and
+rendered as `24s`, `1m 08s`, or `1h 01m 01s`; fractional seconds are never
+shown. Completion freezes the elapsed value until the minimum visibility period
+ends. The model and runnable never shift, and the spinner and timer are never
+committed to scrollback.
 
 Run completion does not delay results or input, but the running appearance is
-held for at least 600 milliseconds and finishes the visible comet sweep so short
-Runs do not flash past abruptly.
+held for at least 600 milliseconds so short Runs do not flash past abruptly.
 
 ## Implementation Touchpoints
 
