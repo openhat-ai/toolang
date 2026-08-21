@@ -24,6 +24,7 @@ from .rendering import (
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
+_STATUS_IDLE_MARKER = "▣"
 _STATUS_SPINNER_FRAMES = ("◧", "◩", "◨", "◪")
 _STATUS_MODEL_COLOR = "#ffd866"
 
@@ -394,7 +395,7 @@ class StatusBar:
         marker = (
             _STATUS_SPINNER_FRAMES[self._spinner_index]
             if self.running
-            else _STATUS_SPINNER_FRAMES[0]
+            else _STATUS_IDLE_MARKER
         )
         runnable_style = (
             "class:status.flow"

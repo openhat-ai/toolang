@@ -1086,7 +1086,7 @@ def test_chat_status_bar_right_aligns_the_model_without_hotkeys(
 
     assert "^d exit" not in text
     assert "↑↓ history" not in text
-    assert text.startswith("◧ a:chat")
+    assert text.startswith("▣ a:chat")
     assert text.endswith("runtime model")
     assert len(text) == 80
 
@@ -1102,17 +1102,19 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
     status.set_activity(2, 68)
     next_frame = status._render()
 
-    assert idle_text.startswith("◧ a:chat")
+    assert idle_text.startswith("▣ a:chat")
     assert idle_text.endswith("runtime model")
     assert running_text.startswith("◧ a:chat 0s")
     assert running_text.endswith("runtime model")
     assert idle[:3] == [
-        ("class:status.marker", "◧"),
+        ("class:status.marker", "▣"),
         ("class:status.text", " "),
         ("class:status.agic", "a:chat"),
     ]
     assert running[:4] == [
-        *idle[:3],
+        ("class:status.marker", "◧"),
+        ("class:status.text", " "),
+        ("class:status.agic", "a:chat"),
         ("class:status.elapsed", " 0s"),
     ]
     assert next_frame[:4] == [
@@ -1141,7 +1143,11 @@ def test_chat_status_palette_has_no_base_background() -> None:
 def test_chat_status_spinner_uses_single_width_square_frames() -> None:
     step = tui._STATUS_SPINNER_FRAME_DURATION
 
+    assert step == pytest.approx(0.14)
+    assert widgets._STATUS_IDLE_MARKER == "▣"
     assert widgets._STATUS_SPINNER_FRAMES == ("◧", "◩", "◨", "◪")
+    assert widgets._STATUS_IDLE_MARKER not in widgets._STATUS_SPINNER_FRAMES
+    assert get_cwidth(widgets._STATUS_IDLE_MARKER) == 1
     assert all(get_cwidth(frame) == 1 for frame in widgets._STATUS_SPINNER_FRAMES)
     assert tui._status_spinner_index(0) == 0
     assert tui._status_spinner_index(step) == 1
@@ -1269,7 +1275,7 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
             assert not app.status_bar.running
             assert app.status_bar._render()[0] == (
                 "class:status.marker",
-                "◧",
+                "▣",
             )
         finally:
             animation.cancel()

@@ -289,8 +289,9 @@ accent. The status bar does not paint a base background and therefore inherits
 the terminal background. Its left side begins with a square marker, one space,
 and the current default runnable as `a:name` for an agic or `f:name` for a flow.
 The current default model is right-aligned against the terminal edge; hotkey
-hints are omitted. During a Run, the marker animates through the single-width
-square frames `◧`, `◩`, `◨`, and `◪`, with the idle `◧` serving as the spinner's
-first frame. A dim, whole-second elapsed time follows the runnable.
+hints are omitted. The idle marker is `▣`. During a Run, it is replaced by a
+spinner that advances every 140 milliseconds through the single-width square
+frames `◧`, `◩`, `◨`, and `◪`; `▣` is not part of the animation. A dim,
+whole-second elapsed time follows the runnable.
 Short Runs retain the running state long enough to avoid flashing. This
 transient UI state is never committed to execution scrollback.
