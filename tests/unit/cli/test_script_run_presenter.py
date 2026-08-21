@@ -419,6 +419,58 @@ def test_progress_markdown_uses_a_quiet_unicode_horizontal_rule() -> None:
     ]
 
 
+def test_tty_markdown_code_uses_the_dark_ansi_surface() -> None:
+    stream = _TtyStream()
+    console = ProgressConsole(stream, width=40)
+    console.apply(
+        ProgressUpdate(
+            committed=(
+                ProgressBlock(
+                    "step:run_one.0",
+                    (
+                        ProgressRow(
+                            "before `value`\n\n```python\nx = 1\n```",
+                            "normal",
+                            format="markdown",
+                            prefix="• ",
+                        ),
+                    ),
+                ),
+            )
+        )
+    )
+
+    rendered = stream.getvalue()
+    assert "\x1b[1;97;100mvalue" in rendered
+    assert "\x1b[100m" in rendered or ";100m" in rendered
+    assert "\x1b[38;2" not in rendered
+    assert "\x1b[48;2" not in rendered
+
+
+def test_non_tty_markdown_code_remains_color_free_and_unpadded() -> None:
+    stream = StringIO()
+    console = ProgressConsole(stream, width=40)
+    console.apply(
+        ProgressUpdate(
+            committed=(
+                ProgressBlock(
+                    "step:run_one.0",
+                    (
+                        ProgressRow(
+                            "```python\nx = 1\n\n```",
+                            "normal",
+                            format="markdown",
+                            prefix="• ",
+                        ),
+                    ),
+                ),
+            )
+        )
+    )
+
+    assert stream.getvalue() == "•  x = 1\n"
+
+
 def test_tty_wraps_finalized_parallel_lane_at_its_embedded_marker() -> None:
     stream = _TtyStream()
     console = ProgressConsole(stream, width=40)

@@ -8,19 +8,43 @@ from collections.abc import Sequence
 from typing import TextIO
 
 from prompt_toolkit.formatted_text import FormattedText
-from rich.color import Color, ColorSystem
+from rich.color import Color, ColorSystem, ColorType
 from rich.console import Console, RenderableType
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
 from wcwidth import wcswidth
 
+from toolang.cli.common.execution_progress.rich_rendering import (
+    TERMINAL_MARKDOWN_THEME,
+)
+
 ACCENT_CELL = " "
-INPUT_BACKGROUND = "#444444"
-CONTROL_BAR_BACKGROUND = INPUT_BACKGROUND
+# prompt-toolkit and Rich names for ANSI slot 8, respectively.
+INPUT_BACKGROUND = "ansibrightblack"
+CONTROL_BAR_BACKGROUND = "bright_black"
 QUICK_COMMAND_CONTROL_ACCENT = "#ffd866"
 START_CONTROL_ACCENT = "#8fd7ff"
 STEER_CONTROL_ACCENT = "#d7b3ff"
+
+_PROMPT_TOOLKIT_ANSI_COLORS = (
+    "ansiblack",
+    "ansired",
+    "ansigreen",
+    "ansiyellow",
+    "ansiblue",
+    "ansimagenta",
+    "ansicyan",
+    "ansigray",
+    "ansibrightblack",
+    "ansibrightred",
+    "ansibrightgreen",
+    "ansibrightyellow",
+    "ansibrightblue",
+    "ansibrightmagenta",
+    "ansibrightcyan",
+    "ansiwhite",
+)
 
 
 def terminal_width(default: int = 100) -> int:
@@ -35,6 +59,7 @@ def chat_console(*, width: int | None = None, file: TextIO | None = None) -> Con
         color_system="truecolor",
         force_terminal=True,
         legacy_windows=False,
+        theme=TERMINAL_MARKDOWN_THEME,
         _environ={"COLUMNS": str(fixed_width), "LINES": "24"},
     )
 
@@ -238,5 +263,9 @@ def truncate_display(text: str, *, width: int) -> str:
 
 
 def _prompt_toolkit_color(color: Color) -> str:
+    if color.type is ColorType.DEFAULT:
+        return "ansidefault"
+    if color.type is ColorType.STANDARD and color.number is not None:
+        return _PROMPT_TOOLKIT_ANSI_COLORS[color.number]
     triplet = color.get_truecolor()
     return f"#{triplet.red:02x}{triplet.green:02x}{triplet.blue:02x}"

@@ -6,10 +6,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
-from rich.markdown import Heading, HorizontalRule, Markdown
+from rich.markdown import CodeBlock, Heading, HorizontalRule, Markdown
 from rich.rule import Rule
 from rich.segment import Segment
+from rich.style import Style
+from rich.syntax import Syntax, SyntaxTheme, TokenType
 from rich.text import Text
+from rich.theme import Theme
 
 from .formatting import display_width, split_hanging_prefix, truncate
 from .types import ProgressBlock, ProgressRow, ProgressTone
@@ -22,6 +25,9 @@ _STYLES: dict[ProgressTone, str] = {
     "warning": "yellow",
 }
 RUN_DIVIDER_WIDTH = 42
+TERMINAL_MARKDOWN_THEME = Theme({"markdown.code": "bold bright_white on bright_black"})
+
+_ANSI_CODE_THEME = Syntax.get_theme("ansi_dark")
 
 
 class _ProgressHeading(Heading):
@@ -50,9 +56,39 @@ class _ProgressHorizontalRule(HorizontalRule):
         yield Text()
 
 
+class _ProgressCodeTheme(SyntaxTheme):
+    """Use terminal-owned ANSI colors on a consistent code surface."""
+
+    def get_style_for_token(self, token_type: TokenType) -> Style:
+        return _ANSI_CODE_THEME.get_style_for_token(token_type)
+
+    def get_background_style(self) -> Style:
+        return Style(color="bright_white", bgcolor="bright_black")
+
+
+class _ProgressCodeBlock(CodeBlock):
+    """Render fenced code with the shared terminal-native palette."""
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        code = str(self.text).rstrip()
+        yield Syntax(
+            code,
+            self.lexer_name,
+            theme=_ProgressCodeTheme(),
+            word_wrap=True,
+            padding=1,
+        )
+
+
 class _ProgressMarkdown(Markdown):
     elements = {
         **Markdown.elements,
+        "code_block": _ProgressCodeBlock,
+        "fence": _ProgressCodeBlock,
         "heading_open": _ProgressHeading,
         "hr": _ProgressHorizontalRule,
     }
