@@ -398,7 +398,7 @@ two. Rendering the full cell as a background avoids glyph line gaps between
 adjacent rows.
 
 The bottom `StatusBar` does not paint a base background and therefore inherits
-the terminal background. Its left side begins in column zero with a square
+the terminal background. Its left side begins in column zero with a
 marker, followed by one space and the current default runnable in column two.
 The runnable is rendered as `agic:name` or `flow:name`. Explicit session
 selection takes precedence; otherwise the client-provided runnable default and
@@ -409,14 +409,16 @@ terminal's default foreground and background without additional color or dim
 styling. The marker uses the configured Start accent; the error state retains a
 dedicated status style.
 
-While idle, the marker is the solid square `■`. During a local Run, it is
-replaced by a spinner that advances every 140 milliseconds through the
-single-width square frames
-`◧`, `◩`, `◨`, and `◪`, using monotonic elapsed time rather than accumulated
-frame steps. The idle marker does not participate in the spinner cycle. The UI
-redraws only when the visible state changes. An elapsed time follows the
-runnable while a Run is active. It is floored to whole seconds and
-rendered as `24s`, `1m 08s`, or `1h 01m 01s`; fractional seconds are never
+The default `dots` style uses the compact filled Braille cell `⠿` while idle.
+During a local Run, it rotates through the single-width frames `⠾`, `⠷`, `⠟`,
+and `⠻` every 140 milliseconds. The retained `squares` style uses idle `■` and
+running `◧`, `◩`, `◨`, and `◪`.
+An internal named style switch selects between the two without exposing an
+unsettled public setting. Animation uses monotonic elapsed time rather than
+accumulated frame steps, and the idle marker does not participate in either
+spinner cycle. The UI redraws only when the visible state changes. An elapsed
+time follows the runnable while a Run is active. It is floored to whole seconds
+and rendered as `24s`, `1m 08s`, or `1h 01m 01s`; fractional seconds are never
 shown. Completion freezes the elapsed value until the minimum visibility period
 ends. The model and runnable never shift, and the spinner and timer are never
 committed to scrollback.
