@@ -286,16 +286,18 @@ Chat submission and steer controls contain only their authored message. Their
 left background-filled accent cells distinguish start from steer without
 displaying Run IDs or execution state. Quick-command bars use the same
 background-cell treatment with their own accent, and the prompt uses the start
-accent. An empty prompt shows the muted placeholder `Ask anything`; the
+accent. Control bars and the input box share one surface background color. An
+empty prompt shows the muted placeholder `Ask anything`; the
 placeholder disappears as soon as the buffer contains text and is never part of
 the submitted message. The status bar does not paint a base background and
-therefore inherits
-the terminal background. Its left side begins with a marker, one space,
+therefore inherits the terminal background. Its left side begins with a marker,
+one space,
 and the current default runnable as `agic:name` or `flow:name`. The current
 default model is right-aligned against the terminal edge; hotkey hints are
 omitted. Runnable and model text inherit the terminal's default foreground
-without dim styling. The marker, spinner, and elapsed time use the terminal's
-dim attribute without an additional color. The default `squares` style uses `▪︎`
+without dim styling. The marker and spinner use the input background color as
+their foreground without painting a status background. The elapsed time uses
+the terminal's dim attribute. The default `squares` style uses `▪︎`
 while idle and rotates through `◧`, `◩`, `◨`, and `◪` every 300 milliseconds
 during a Run. The retained `triangles`, `quadrants`, `hatch`, and `dots` styles
 remain available through an internal named style switch. A whole-second elapsed

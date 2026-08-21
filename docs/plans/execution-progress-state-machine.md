@@ -395,8 +395,9 @@ cell whose background is the accent color. Start and Steer use distinct
 accents; quick-command bars use the same background-cell treatment with their
 own accent, and the bottom `PromptBox` uses the Start accent. The cell replaces
 prompt glyphs such as `>` and `+` while leaving message text aligned in column
-two. Rendering the full cell as a background avoids glyph line gaps between
-adjacent rows. An empty `PromptBox` shows the muted placeholder `Ask anything`.
+two. Control bars and the input box share one surface background color.
+Rendering the full cell as a background avoids glyph line gaps between adjacent
+rows. An empty `PromptBox` shows the muted placeholder `Ask anything`.
 The placeholder disappears as soon as the buffer contains text and is never
 part of submission or input history.
 
@@ -408,9 +409,10 @@ selection takes precedence; otherwise the client-provided runnable default and
 kind are used. The current resolved default model is right-aligned
 against the terminal edge. The status bar omits the redundant `model ` label and
 all hotkey hints. Its runnable, padding, and model inherit the terminal's default
-foreground and background without additional color or dim styling. The marker,
-spinner, and elapsed time use the terminal's dim attribute without an additional
-color. The error state retains a dedicated status style.
+foreground and background without additional color or dim styling. The marker
+and spinner use the input background color as their foreground without painting
+a status background. The elapsed time uses the terminal's dim attribute. The
+error state retains a dedicated status style.
 
 The default `squares` style uses `▪︎` while idle. During a local Run, the
 single-width frames `◧`, `◩`, `◨`, and `◪` rotate every 300 milliseconds. The

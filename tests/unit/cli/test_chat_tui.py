@@ -789,6 +789,7 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     assert widgets._chat_ui_palette()["control.start"] == (
         f"bg:{rendering.START_CONTROL_ACCENT}"
     )
+    assert rendering.CONTROL_BAR_BACKGROUND == rendering.INPUT_BACKGROUND
     assert isinstance(content, HSplit)
     input_row = content.children[1]
     assert isinstance(input_row, VSplit)
@@ -1152,11 +1153,11 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
     assert status._render() == idle
 
 
-def test_chat_status_palette_dims_activity_without_adding_color() -> None:
+def test_chat_status_palette_uses_input_background_for_marker_color() -> None:
     palette = widgets._chat_ui_palette()
 
     assert palette["status"] == ""
-    assert palette["status.marker"] == "dim"
+    assert palette["status.marker"] == f"fg:{rendering.INPUT_BACKGROUND}"
     assert palette["status.elapsed"] == "dim"
     assert (
         not {
