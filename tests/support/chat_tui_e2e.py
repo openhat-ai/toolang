@@ -22,6 +22,11 @@ class _DelayGate(AsyncGate):
         await asyncio.sleep(0.5)
 
 
+class _StatusDelayGate(AsyncGate):
+    async def wait(self) -> None:
+        await asyncio.sleep(1.5)
+
+
 def main() -> None:
     root = Path(sys.argv[1])
     mode = sys.argv[2] if len(sys.argv) > 2 else "agic"
@@ -31,8 +36,8 @@ def main() -> None:
         if long_output
         else "hello from terminal e2e"
     )
-    responses = (
-        [
+    if long_output:
+        responses = [
             ScriptedModelTurn(
                 result=ModelCallResult(message=Message.assistant(response)),
                 updates=(
@@ -46,9 +51,15 @@ def main() -> None:
                 after_updates_gate=_DelayGate(),
             )
         ]
-        if long_output
-        else [ModelCallResult(message=Message.assistant(response))]
-    )
+    elif mode == "status":
+        responses = [
+            ScriptedModelTurn(
+                result=ModelCallResult(message=Message.assistant(response)),
+                gate=_StatusDelayGate(),
+            )
+        ]
+    else:
+        responses = [ModelCallResult(message=Message.assistant(response))]
     harness = ExecutionHarness.create(
         root,
         source="""

@@ -1128,7 +1128,7 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
 
     assert idle_text.startswith("■ agic:chat")
     assert idle_text.endswith("runtime model")
-    assert running_text.startswith("◧ agic:chat 0s")
+    assert running_text.startswith("◧ agic:chat · 0s")
     assert running_text.endswith("runtime model")
     assert idle[:3] == [
         ("class:status.marker", "■"),
@@ -1139,13 +1139,13 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
         ("class:status.marker", "◧"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
-        ("class:status.elapsed", " 0s"),
+        ("class:status.elapsed", " · 0s"),
     ]
     assert next_frame[:4] == [
         ("class:status.marker", "◨"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
-        ("class:status.elapsed", " 1m 08s"),
+        ("class:status.elapsed", " · 1m 08s"),
     ]
     assert next_frame[-1] == ("class:status", "runtime model")
     assert status.spinner_index == 2
@@ -1153,6 +1153,55 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
 
     status.set_running(False)
     assert status._render() == idle
+
+
+def test_chat_status_bar_keeps_the_default_model_at_the_right_edge(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 80))
+    status = widgets.StatusBar("flow:research", "openai/gpt-5")
+    idle = "".join(text for _style, text in status._render())
+
+    status.set_active_runnable("agic:chat")
+    status.set_running(True)
+    status.set_activity(0, 18)
+    running = "".join(text for _style, text in status._render())
+
+    assert idle.startswith("■ flow:research")
+    assert running.startswith("◧ agic:chat · 18s")
+    assert running.endswith("flow:research · openai/gpt-5")
+    assert idle.rindex("openai/gpt-5") == running.rindex("openai/gpt-5")
+    assert get_cwidth(idle) == get_cwidth(running) == 80
+
+
+def test_chat_status_bar_omits_the_matching_default_runnable() -> None:
+    status = widgets.StatusBar("agic:chat", "openai/gpt-5")
+    status.set_active_runnable("agic:chat")
+    status.set_running(True)
+
+    text = "".join(fragment for _style, fragment in status._render())
+
+    assert text.count("agic:chat") == 1
+    assert text.endswith("openai/gpt-5")
+
+
+def test_chat_status_bar_truncates_labels_without_moving_the_model_edge(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 40))
+    status = widgets.StatusBar(
+        "flow:a_very_long_default_runnable",
+        "openai/gpt-5",
+    )
+    status.set_active_runnable("agic:a_very_long_active_runnable")
+    status.set_running(True)
+    status.set_activity(0, 18)
+
+    text = "".join(fragment for _style, fragment in status._render())
+
+    assert get_cwidth(text) == 40
+    assert text.endswith("openai/gpt-5")
+    assert "· openai/gpt-5" in text
 
 
 def test_chat_status_palette_uses_input_background_for_marker_color() -> None:
@@ -1307,16 +1356,19 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
         monkeypatch.setattr(app, "_stop_status_activity", record_activity_stop)
         animation = asyncio.create_task(app._animate_status())
         try:
+            app.status_bar.set_active_runnable("agic:active")
             app._set_status_running(True)
             app._set_status_running(False)
 
             assert app.status_bar.running
+            assert app.status_bar.active_runnable_label == "agic:active"
             assert app.status_bar._render()[0] == (
                 "class:status.marker",
                 "◧",
             )
             await asyncio.wait_for(activity_stopped.wait(), timeout=0.5)
             assert not app.status_bar.running
+            assert app.status_bar.active_runnable_label is None
             assert app.status_bar._render()[0] == (
                 "class:status.marker",
                 "■",
@@ -1405,7 +1457,7 @@ def test_chat_tui_uses_truecolor_for_live_block_rendering() -> None:
     assert app.app.color_depth == ColorDepth.DEPTH_24_BIT
 
 
-def test_chat_tui_status_bar_uses_resolved_model_and_clears_error_on_input() -> None:
+def test_chat_tui_keeps_default_model_and_clears_status_error() -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
         selects={},
@@ -1417,7 +1469,7 @@ def test_chat_tui_status_bar_uses_resolved_model_and_clears_error_on_input() -> 
     assert app.status_bar.model_label == "openai/gpt-5"
     assert app.status_bar.runnable_label == "agic:chat"
     app.handle_run_event(_model_step_begin(model="deepseek/deepseek-chat"))
-    assert app.status_bar.model_label == "deepseek/deepseek-chat"
+    assert app.status_bar.model_label == "openai/gpt-5"
 
     app.status_bar.set_error("Model selector matched no models")
     assert app.status_bar.error_message
@@ -1443,6 +1495,75 @@ def test_chat_tui_status_bar_compacts_the_current_default_runnable() -> None:
 
     app.selects = {"flow": "research"}
     assert app._runnable_label() == "flow:research"
+
+
+def test_chat_tui_uses_the_root_run_runnable_as_active_status(
+    monkeypatch: Any,
+) -> None:
+    app = tui.ChatTuiApp(
+        thread_id="term_status",
+        selects={"flow": "research"},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    monkeypatch.setattr(tui.events, "handle_run_event", lambda _event, _app: None)
+    app.status_bar.set_active_runnable("flow:research")
+    app.status_bar.set_running(True)
+
+    app.handle_run_event(_run_begin(executable_name="review"))
+    app.handle_run_event(
+        _run_begin(
+            run_id="run_child",
+            parent_run_id="run_1",
+            executable_kind="flow",
+            executable_name="child",
+        )
+    )
+
+    assert app.status_bar.active_runnable_label == "agic:review"
+
+
+def test_chat_tui_applies_default_settings_while_a_run_is_active() -> None:
+    class SettingsClient(FakeClient):
+        def apply_settings(
+            self,
+            commands: tuple[RunOverride, ...],
+            selects: Mapping[str, object],
+        ) -> Mapping[str, object]:
+            return apply_session_commands(selects, commands)
+
+    app = tui.ChatTuiApp(
+        thread_id="term_status",
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=SettingsClient(),
+    )
+    app.active_run_id = "run_active"
+    app.status_bar.set_active_runnable("agic:chat")
+    app.status_bar.set_running(True)
+
+    app.handle_submit(":flow research")
+
+    runnable_changed = "".join(text for _style, text in app.status_bar._render())
+    assert app.status_bar.active_runnable_label == "agic:chat"
+    assert app.status_bar.runnable_label == "flow:research"
+    assert runnable_changed.endswith("flow:research · openai/gpt-5")
+    assert app.queue == []
+
+    app.handle_submit(":model custom/model")
+
+    model_changed = "".join(text for _style, text in app.status_bar._render())
+    assert app.status_bar.active_runnable_label == "agic:chat"
+    assert app.status_bar.model_label == "custom/model"
+    assert model_changed.endswith("flow:research · custom/model")
+
+    app.handle_submit(":agic chat")
+
+    restored = "".join(text for _style, text in app.status_bar._render())
+    assert restored.count("agic:chat") == 1
+    assert restored.endswith("custom/model")
 
 
 def test_chat_default_settings_clear_explicit_model_and_runnable() -> None:
@@ -1558,6 +1679,27 @@ def test_chat_queue_captures_settings_at_submission_time() -> None:
 
     assert [item.source for item in app.queue] == ["first call", "second call"]
     assert [item.selects["model"] for item in app.queue] == ["first", "second"]
+
+
+def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> None:
+    app = tui.ChatTuiApp(
+        thread_id="term_busy",
+        selects={"agic": "chat"},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    app.active_run_id = "run_busy"
+    app.run_in_flight.set()
+    app.status_bar.set_active_runnable("agic:chat")
+    app.status_bar.set_running(True)
+    app.queue.append(QueuedCall("queued", {"flow": "research"}))
+
+    app._finish_active_run()
+
+    assert app.status_bar.running
+    assert app.status_bar.active_runnable_label == "flow:research"
+    assert app.run_in_flight.is_set()
 
 
 def test_chat_tui_empty_input_requires_two_interrupts_to_exit() -> None:
@@ -1804,6 +1946,7 @@ def _run_begin(
     run_id: str = "run_1",
     parent_run_id: str | None = None,
     executable_kind: str = "agic",
+    executable_name: str = "test",
 ) -> RunBegin:
     return RunBegin(
         run=run_id,
@@ -1812,7 +1955,7 @@ def _run_begin(
             StepPath.parse(f"{parent_run_id}.2") if parent_run_id is not None else None
         ),
         started_at="2026-01-01T00:00:00Z",
-        runnable=f"{executable_kind}:test",
+        runnable=f"{executable_kind}:{executable_name}",
     )
 
 
