@@ -940,6 +940,8 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert "executor" in rendered
     assert "local" in rendered
     lines = rendered.splitlines()
+    assert lines[0] == ""
+    assert lines[1].startswith("╭")
     assert next(index for index, line in enumerate(lines) if "home" in line) < next(
         index for index, line in enumerate(lines) if "executor" in line
     )

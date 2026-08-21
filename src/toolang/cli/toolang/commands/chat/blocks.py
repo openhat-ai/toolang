@@ -415,7 +415,7 @@ class HeaderBlock:
     version_label: str
 
     def render(self) -> RenderableType:
-        return Group(self, Text("\n"))
+        return Group(Text(), self, Text("\n"))
 
     def __rich_console__(
         self,
