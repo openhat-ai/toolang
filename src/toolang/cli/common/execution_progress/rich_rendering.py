@@ -233,9 +233,14 @@ class _MarkdownRow:
             options.update_width(content_width),
         )
         lines = list(Segment.split_lines(segments))
-        while lines and not _line_text(lines[0]).strip():
+        preserve_background = console.color_system is not None
+        while lines and not _line_has_content(
+            lines[0], preserve_background=preserve_background
+        ):
             lines.pop(0)
-        while lines and not _line_text(lines[-1]).strip():
+        while lines and not _line_has_content(
+            lines[-1], preserve_background=preserve_background
+        ):
             lines.pop()
         if not lines:
             yield Text(prefix.rstrip(), style=_STYLES[self.row.tone], no_wrap=True)
@@ -246,17 +251,62 @@ class _MarkdownRow:
             yield Text("", no_wrap=True)
         for index, line in enumerate(lines):
             rendered = Text(prefix if index == 0 else continuation)
-            for segment in line:
+            trimmed_line = _rstrip_unpainted(
+                line,
+                preserve_background=preserve_background,
+            )
+            for segment in trimmed_line:
                 if segment.control or not segment.text:
                     continue
                 rendered.append(
                     segment.text,
                     style=segment.style or _STYLES[self.row.tone],
                 )
-            rendered.rstrip()
+            if not trimmed_line:
+                rendered.rstrip()
             rendered.no_wrap = True
             yield rendered
 
 
 def _line_text(line: list[Segment]) -> str:
     return "".join(segment.text for segment in line if not segment.control)
+
+
+def _line_has_content(
+    line: list[Segment],
+    *,
+    preserve_background: bool,
+) -> bool:
+    return bool(_line_text(line).strip()) or (
+        preserve_background
+        and any(
+            segment.style is not None and segment.style.bgcolor is not None
+            for segment in line
+            if not segment.control and segment.text
+        )
+    )
+
+
+def _rstrip_unpainted(
+    line: list[Segment],
+    *,
+    preserve_background: bool,
+) -> list[Segment]:
+    trimmed = list(line)
+    while trimmed:
+        segment = trimmed[-1]
+        if segment.control or not segment.text:
+            trimmed.pop()
+            continue
+        if (
+            preserve_background
+            and segment.style is not None
+            and segment.style.bgcolor is not None
+        ):
+            break
+        text = segment.text.rstrip()
+        if text:
+            trimmed[-1] = Segment(text, segment.style, segment.control)
+            break
+        trimmed.pop()
+    return trimmed
