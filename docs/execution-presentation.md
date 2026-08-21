@@ -238,11 +238,12 @@ root-owned error row. There is no separate diagnostic marker.
 Script and Chat end a root Run with the same footer:
 
 ```text
-▴ run_nrqpt0mf succeeded ─────────────────
+• run_nrqpt0mf succeeded ─────────────────
   1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
-The divider is 42 cells wide: the solid `▴` marker and its following space
+The divider is 42 cells wide: the Step-compatible `•` marker and its following
+space
 occupy two cells, and the caption plus trailing rule fill the remaining 40.
 Narrow terminals shorten the divider without wrapping it. The marker, caption,
 and rule share the terminal status style: dim for success, red for failure, and
@@ -258,12 +259,12 @@ execution progress; later terminal errors belong to progress and its footer.
 The Chat TUI `:show` command introduces a durable result with a quiet divider:
 
 ```text
-▾ run_ma8hccd9 result ────────────────────
+• run_ma8hccd9 result ────────────────────
 
 • Result body rendered as Markdown.
 ```
 
-The solid `▾` marker, caption, and rule are dim, while the result body retains
+The `•` marker, caption, and rule are dim, while the result body retains
 normal intensity. The divider follows the same fixed 42-cell width as the root
 Run footer and shortens only when the available width requires caption
 truncation. Exactly one blank line separates the divider from the result body.
@@ -285,8 +286,21 @@ Chat submission and steer controls contain only their authored message. Their
 left background-filled accent cells distinguish start from steer without
 displaying Run IDs or execution state. Quick-command bars use the same
 background-cell treatment with their own accent, and the prompt uses the start
-accent. The status bar keeps the model name aligned while a run-scoped
-breathing fill moves across the model name and one surrounding cell on each
-side; there is no separate `model` label. Short Runs retain the activity long
-enough to avoid flashing. This transient UI state is never committed to
-execution scrollback.
+accent. Control bars and the input box share one surface background color. An
+empty prompt shows the muted placeholder `Ask anything`; the
+placeholder disappears as soon as the buffer contains text and is never part of
+the submitted message. The status bar does not paint a base background and
+therefore inherits the terminal background. Its left side begins with a marker,
+one space,
+and the current default runnable as `agic:name` or `flow:name`. The current
+default model is right-aligned against the terminal edge; hotkey hints are
+omitted. Runnable and model text inherit the terminal's default foreground
+without dim styling. The marker and spinner use the input background color as
+their foreground without painting a status background. The elapsed time uses
+the terminal's dim attribute. The default `squares` style uses `■`
+while idle and rotates through `◧`, `◩`, `◨`, and `◪` every 300 milliseconds
+during a Run. The retained `triangles`, `quadrants`, `hatch`, and `dots` styles
+remain available through an internal named style switch. A whole-second elapsed
+time follows the runnable.
+Short Runs retain the running state long enough to avoid flashing. This
+transient UI state is never committed to execution scrollback.

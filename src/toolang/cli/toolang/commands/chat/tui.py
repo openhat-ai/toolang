@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
-import math
 import threading
-from typing import TypeGuard
+from typing import TypeGuard, cast
 
 import click
 from prompt_toolkit.application import Application
@@ -30,6 +29,7 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.types import ModelStepGiven
+from toolang.execution.runnables import parse_runnable_ref
 from toolang.common.errors import ToolangError
 
 from toolang.cli.common.version import toolang_version
@@ -43,6 +43,7 @@ from .base import (
     AppContext,
     ChatClient,
     QueuedCall,
+    as_text,
     chat_status_label,
     friendly_error,
 )
@@ -66,46 +67,35 @@ _RUN_EVENT_TYPES = (
     StepEnd,
     RunEnd,
 )
-_STATUS_ACTIVITY_TICK = 0.08
-_STATUS_ACTIVITY_TROUGH_DURATION = 0.26
-_STATUS_ACTIVITY_EXPAND_DURATION = 0.72
-_STATUS_ACTIVITY_PEAK_DURATION = 0.18
-_STATUS_ACTIVITY_RETRACT_DURATION = 0.9
+_STATUS_ACTIVITY_TICK = 0.3
+_STATUS_SPINNER_FRAME_DURATION = 0.3
 _MIN_STATUS_ACTIVITY_DURATION = 0.6
 
 
-def _ease_in_out_sine(progress: float) -> float:
-    progress = max(0.0, min(1.0, progress))
-    return (1.0 - math.cos(math.pi * progress)) / 2.0
+def _status_spinner_index(elapsed: float) -> int:
+    return int(max(0.0, elapsed) / _STATUS_SPINNER_FRAME_DURATION) % len(
+        widgets._STATUS_SPINNER_FRAMES
+    )
 
 
-def _status_breathing_fill(elapsed: float, max_fill: int) -> int:
-    max_fill = max(0, max_fill)
-    if max_fill == 0:
-        return 0
-    cycle_duration = (
-        _STATUS_ACTIVITY_EXPAND_DURATION
-        + _STATUS_ACTIVITY_PEAK_DURATION
-        + _STATUS_ACTIVITY_RETRACT_DURATION
-        + _STATUS_ACTIVITY_TROUGH_DURATION
-    )
-    phase = elapsed % cycle_duration
-    if phase < _STATUS_ACTIVITY_EXPAND_DURATION:
-        progress = phase / _STATUS_ACTIVITY_EXPAND_DURATION
-        scale = _ease_in_out_sine(progress)
-    else:
-        phase -= _STATUS_ACTIVITY_EXPAND_DURATION
-        if phase < _STATUS_ACTIVITY_PEAK_DURATION:
-            return max_fill
-        phase -= _STATUS_ACTIVITY_PEAK_DURATION
-        if phase >= _STATUS_ACTIVITY_RETRACT_DURATION:
-            return 0
-        progress = phase / _STATUS_ACTIVITY_RETRACT_DURATION
-        scale = 1.0 - _ease_in_out_sine(progress)
-    return min(
-        max_fill,
-        int(max_fill * scale + 0.5),
-    )
+def _qualified_runnable_label(reference: str, payload: Mapping[str, object]) -> str:
+    try:
+        name, kind = parse_runnable_ref(reference)
+    except ValueError:
+        return reference
+    if kind is None:
+        items = payload.get("items")
+        if isinstance(items, Sequence) and not isinstance(items, (str, bytes)):
+            matches: set[str | None] = set()
+            for item in items:
+                if not isinstance(item, Mapping):
+                    continue
+                values = cast(Mapping[str, object], item)
+                if as_text(values.get("name")) == name:
+                    matches.add(as_text(values.get("kind")))
+            if len(matches) == 1:
+                kind = matches.pop()
+    return f"{kind}:{name}" if kind in {"agic", "flow"} else reference
 
 
 class ChatTuiAppContext:
@@ -163,7 +153,7 @@ class ChatTuiAppContext:
         self._app.status_bar.set_error(message)
 
     def refresh_status(self) -> None:
-        self._app.status_bar.set_status(self._app._status_label())
+        self._app.status_bar.set_status(*self._app._status_labels())
 
     def replace_input(self, text: str) -> None:
         self._app.prompt.replace_input(text)
@@ -225,8 +215,7 @@ class ChatTuiApp:
         self.status_animation_task: asyncio.Task[None] | None = None
         self._status_animation_wake = asyncio.Event()
         self._status_activity_started_at: float | None = None
-        self._status_retraction_started_at: float | None = None
-        self._status_retraction_start_fill = 0
+        self._status_completed_elapsed_seconds: int | None = None
         self._status_stop_handle: asyncio.TimerHandle | None = None
         self.actual_model: str | None = None
         self.presenter = ChatRunPresenter(max_width=progress_max_width)
@@ -234,7 +223,7 @@ class ChatTuiApp:
         self.queue_panel = widgets.QueuePanel(
             lambda: [item.source for item in self.queue]
         )
-        self.status_bar = widgets.StatusBar(self._status_label())
+        self.status_bar = widgets.StatusBar(*self._status_labels())
         self.prompt = widgets.PromptBox(
             self._enqueue_ui_event,
             self._invalidate_ui,
@@ -342,14 +331,29 @@ class ChatTuiApp:
                 self.actual_model if default_selected and self.actual_model else label
             )
 
-    def _status_label(self) -> str:
-        model_label = self._model_label()
-        flow = str(self.selects.get("flow") or "")
-        agic = str(self.selects.get("agic") or "")
-        if agic == "default":
-            agic = ""
-        executable = f"flow:{flow}" if flow else f"agic:{agic}" if agic else ""
-        return f"{model_label}  {executable}" if executable else model_label
+    def _runnable_label(self) -> str:
+        flow = as_text(self.selects.get("flow"))
+        agic = as_text(self.selects.get("agic"))
+        runnable = as_text(self.selects.get("runnable"))
+        reference = (
+            f"flow:{flow}"
+            if flow
+            else f"agic:{agic}"
+            if agic and agic != "default"
+            else runnable
+        )
+        payload: Mapping[str, object] = {}
+        if reference is None or ":" not in reference:
+            try:
+                payload = self.client.list_executables("runnable")
+            except (click.ClickException, ToolangError, ValueError):
+                pass
+        if reference is None:
+            reference = as_text(payload.get("default")) or "agic:default"
+        return _qualified_runnable_label(reference, payload)
+
+    def _status_labels(self) -> tuple[str, str]:
+        return self._runnable_label(), self._model_label()
 
     def _clear_status_error(self) -> None:
         self.interrupt_exit_pending = False
@@ -369,29 +373,17 @@ class ChatTuiApp:
                 self._update_status_activity(loop.time())
 
     def _update_status_activity(self, now: float) -> None:
-        if self._status_retraction_started_at is not None:
-            max_fill = self.status_bar.activity_width
-            if self._status_retraction_start_fill <= 0 or max_fill <= 0:
-                self._stop_status_activity()
-                return
-            start_fill = min(self._status_retraction_start_fill, max_fill)
-            elapsed = now - self._status_retraction_started_at
-            retract_duration = _STATUS_ACTIVITY_RETRACT_DURATION * (
-                start_fill / max_fill
-            )
-            if elapsed >= retract_duration:
-                self._stop_status_activity()
-                return
-            progress = elapsed / retract_duration
-            fill = int(start_fill * (1.0 - _ease_in_out_sine(progress)) + 0.5)
-        elif self._status_activity_started_at is not None:
-            fill = _status_breathing_fill(
-                now - self._status_activity_started_at,
-                self.status_bar.activity_width,
-            )
-        else:
+        if self._status_activity_started_at is None:
             return
-        if self.status_bar.set_activity(fill):
+        elapsed = max(0.0, now - self._status_activity_started_at)
+        elapsed_seconds = (
+            self._status_completed_elapsed_seconds
+            if self._status_completed_elapsed_seconds is not None
+            else int(elapsed)
+        )
+        if self.status_bar.set_activity(
+            _status_spinner_index(elapsed), elapsed_seconds
+        ):
             self._invalidate_ui()
 
     def _set_status_running(self, running: bool) -> None:
@@ -402,8 +394,7 @@ class ChatTuiApp:
             self._status_activity_started_at = (
                 self.loop.time() if self.loop is not None else None
             )
-            self._status_retraction_started_at = None
-            self._status_retraction_start_fill = 0
+            self._status_completed_elapsed_seconds = None
             self.status_bar.set_running(True)
             self._status_animation_wake.set()
             self._invalidate_ui()
@@ -413,38 +404,27 @@ class ChatTuiApp:
             and self.loop.is_running()
             and self._status_activity_started_at is not None
         ):
-            remaining = _MIN_STATUS_ACTIVITY_DURATION - (
-                self.loop.time() - self._status_activity_started_at
-            )
+            now = self.loop.time()
+            elapsed = max(0.0, now - self._status_activity_started_at)
+            self._status_completed_elapsed_seconds = int(elapsed)
+            self._update_status_activity(now)
+            remaining = _MIN_STATUS_ACTIVITY_DURATION - elapsed
             if remaining > 0:
                 if self._status_stop_handle is None:
                     self._status_stop_handle = self.loop.call_later(
-                        remaining, self._begin_status_retraction
+                        remaining, self._stop_status_activity
                     )
                 return
-            self._begin_status_retraction()
-            return
-        self._stop_status_activity()
-
-    def _begin_status_retraction(self) -> None:
-        if self._status_stop_handle is not None:
-            self._status_stop_handle.cancel()
-            self._status_stop_handle = None
-        loop = self.loop
-        if loop is None or not loop.is_running():
             self._stop_status_activity()
             return
-        self._status_retraction_started_at = loop.time()
-        self._status_retraction_start_fill = self.status_bar.activity_fill
-        self._status_animation_wake.set()
+        self._stop_status_activity()
 
     def _stop_status_activity(self) -> None:
         if self._status_stop_handle is not None:
             self._status_stop_handle.cancel()
         self._status_stop_handle = None
         self._status_activity_started_at = None
-        self._status_retraction_started_at = None
-        self._status_retraction_start_fill = 0
+        self._status_completed_elapsed_seconds = None
         self.status_bar.set_running(False)
         self._invalidate_ui()
 
@@ -601,7 +581,7 @@ class ChatTuiApp:
                 for command in chat_input
             ):
                 self.actual_model = None
-            self.status_bar.set_status(self._status_label())
+            self.status_bar.set_status(*self._status_labels())
             return
         if not is_runnable_input(chat_input):
             raise AssertionError("unknown chat input value")
@@ -678,7 +658,7 @@ class ChatTuiApp:
         if isinstance(event, StepBegin) and event.kind == "model":
             if isinstance(event.given, ModelStepGiven):
                 self.actual_model = event.given.model
-                self.status_bar.set_status(self._status_label())
+                self.status_bar.set_status(*self._status_labels())
         events.handle_run_event(event, self.app_context)
 
     def start_run(self, call: QueuedCall) -> None:

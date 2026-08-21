@@ -12,6 +12,7 @@ from prompt_toolkit.layout import HSplit, VSplit, Window
 from prompt_toolkit.layout.containers import ConditionalContainer
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
 from prompt_toolkit.utils import get_cwidth
 
 from .events import ChatUIEvent
@@ -20,63 +21,51 @@ from .rendering import (
     ACCENT_CELL,
     INPUT_BACKGROUND,
     START_CONTROL_ACCENT,
-    STATUS_BACKGROUND,
 )
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-_STATUS_ACTIVITY_SHADES = (
-    "bright",
-    "light",
-    "medium",
-    "muted",
-    "dark",
-    "faint",
-)
-_STATUS_ACTIVITY_MIXES = (0.0, 0.16, 0.32, 0.48, 0.64, 0.8)
-_STATUS_MODEL_COLOR = "#ffd866"
-
-
-def _mix_hex_colors(start: str, end: str, amount: float) -> str:
-    start_channels = tuple(int(start[index : index + 2], 16) for index in (1, 3, 5))
-    end_channels = tuple(int(end[index : index + 2], 16) for index in (1, 3, 5))
-    channels = (
-        round(start_channel + (end_channel - start_channel) * amount)
-        for start_channel, end_channel in zip(start_channels, end_channels, strict=True)
-    )
-    return "#" + "".join(f"{channel:02x}" for channel in channels)
+_INPUT_PLACEHOLDER = "Ask anything"
+_STATUS_SPINNER_STYLES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "quadrants": (" ", ("▖", "▘", "▝", "▗")),
+    "hatch": ("▦", ("▤", "▥", "▧", "▨")),
+    "dots": ("⠿", ("⠾", "⠷", "⠟", "⠻")),
+    "triangles": ("▪︎", ("◤", "◥", "◢", "◣")),
+    "squares": ("■", ("◧", "◩", "◨", "◪")),
+}
+_STATUS_SPINNER_STYLE = "squares"
+_STATUS_IDLE_MARKER, _STATUS_SPINNER_FRAMES = _STATUS_SPINNER_STYLES[
+    _STATUS_SPINNER_STYLE
+]
 
 
 def _chat_ui_palette() -> dict[str, str]:
-    palette = {
+    return {
         "": "",
         "queue": "fg:#f2f2f2 bg:#3a3a3a",
         "queue.dim": "fg:#b8b8b8 bg:#3a3a3a",
         "control.start": f"bg:{START_CONTROL_ACCENT}",
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
+        "input.placeholder": f"fg:#b8b8b8 bg:{INPUT_BACKGROUND}",
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
-        "status": f"fg:#f2f2f2 bg:{STATUS_BACKGROUND}",
-        "status.activity": f"bg:{START_CONTROL_ACCENT}",
-        "status.model": f"fg:{_STATUS_MODEL_COLOR}",
-        "status.agic": "fg:#8fd7ff",
-        "status.flow": "fg:#d7b3ff",
-        "status.text": "fg:ansigray",
+        "status": "",
+        "status.marker": f"fg:{INPUT_BACKGROUND}",
+        "status.elapsed": "dim",
         "status.error": "fg:#ffffff bg:#7a2e2e bold",
         "dim": "fg:ansigray",
     }
-    palette.update(
-        {
-            f"status.model.activity.{shade}": (
-                f"fg:{_STATUS_MODEL_COLOR} "
-                f"bg:{_mix_hex_colors(START_CONTROL_ACCENT, STATUS_BACKGROUND, mix)}"
-            )
-            for shade, mix in zip(
-                _STATUS_ACTIVITY_SHADES, _STATUS_ACTIVITY_MIXES, strict=True
-            )
-        }
-    )
-    return palette
+
+
+def _format_elapsed_seconds(seconds: int) -> str:
+    seconds = max(0, seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    if minutes:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"
 
 
 class QueuePanel:
@@ -178,7 +167,18 @@ class PromptBox:
                             char=" ",
                         ),
                         Window(
-                            BufferControl(buffer=self.buffer),
+                            BufferControl(
+                                buffer=self.buffer,
+                                input_processors=[
+                                    ConditionalProcessor(
+                                        AfterInput(
+                                            _INPUT_PLACEHOLDER,
+                                            style="class:input.placeholder",
+                                        ),
+                                        filter=Condition(lambda: not self.buffer.text),
+                                    )
+                                ],
+                            ),
                             height=self._input_rows,
                             wrap_lines=True,
                             style="class:input",
@@ -352,11 +352,13 @@ class PromptBox:
 
 
 class StatusBar:
-    def __init__(self, status_label: str) -> None:
-        self.status_label = status_label
+    def __init__(self, runnable_label: str, model_label: str) -> None:
+        self.runnable_label = runnable_label
+        self.model_label = model_label
         self.error_message = ""
         self.running = False
-        self._activity_fill = 0
+        self._spinner_index = 0
+        self._elapsed_seconds = 0
         self.view = FormattedTextControl(self._render)
 
     def container(self) -> Window:
@@ -368,9 +370,9 @@ class StatusBar:
             char=" ",
         )
 
-    def set_status(self, status_label: str) -> None:
-        self.status_label = status_label
-        self._activity_fill = min(self._activity_fill, self.activity_width)
+    def set_status(self, runnable_label: str, model_label: str) -> None:
+        self.runnable_label = runnable_label
+        self.model_label = model_label
 
     def set_error(self, message: str) -> None:
         self.error_message = message
@@ -380,90 +382,60 @@ class StatusBar:
 
     def set_running(self, running: bool) -> None:
         self.running = running
-        self._activity_fill = 0
+        self._spinner_index = 0
+        self._elapsed_seconds = 0
 
     @property
-    def activity_fill(self) -> int:
-        return self._activity_fill
+    def spinner_index(self) -> int:
+        return self._spinner_index
 
     @property
-    def activity_width(self) -> int:
-        pieces = [piece for piece in self.status_label.split("  ") if piece]
-        return get_cwidth(pieces[0]) + 2 if pieces else 0
+    def elapsed_seconds(self) -> int:
+        return self._elapsed_seconds
 
-    def set_activity(self, fill: int) -> bool:
-        fill = max(0, min(self.activity_width, fill))
-        if fill == self._activity_fill:
+    def set_activity(self, spinner_index: int, elapsed_seconds: int) -> bool:
+        spinner_index %= len(_STATUS_SPINNER_FRAMES)
+        elapsed_seconds = max(0, elapsed_seconds)
+        if (
+            spinner_index == self._spinner_index
+            and elapsed_seconds == self._elapsed_seconds
+        ):
             return False
-        self._activity_fill = fill
+        self._spinner_index = spinner_index
+        self._elapsed_seconds = elapsed_seconds
         return True
-
-    def _model_activity_segments(self, model: str) -> list[tuple[str, str]]:
-        activity_text = f" {model} "
-        fill = self._activity_fill if self.running else 0
-        activity_width = max(1, get_cwidth(activity_text))
-        shades = len(_STATUS_ACTIVITY_SHADES)
-        segments: list[tuple[str, str]] = []
-        cell_offset = 0
-        for index, character in enumerate(activity_text):
-            width = get_cwidth(character)
-            if width == 0 and segments:
-                style = segments[-1][0]
-            elif cell_offset + width <= fill:
-                shade_index = min(
-                    shades - 1,
-                    cell_offset * shades // activity_width,
-                )
-                style = (
-                    "class:status.model.activity."
-                    f"{_STATUS_ACTIVITY_SHADES[shade_index]}"
-                )
-            else:
-                style = (
-                    "class:status.text"
-                    if index in {0, len(activity_text) - 1}
-                    else "class:status.model"
-                )
-            if segments and segments[-1][0] == style:
-                previous_style, previous_text = segments[-1]
-                segments[-1] = (previous_style, previous_text + character)
-            else:
-                segments.append((style, character))
-            cell_offset += width
-        return segments
 
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
             text = f"! {self.error_message}"
             padding = " " * max(0, self._terminal_width() - get_cwidth(text))
             return [("class:status.error", f"{text}{padding}")]
-        pieces = [piece for piece in self.status_label.split("  ") if piece]
-        segments: list[tuple[str, str]] = []
-        if pieces:
-            segments.extend(
-                [
-                    ("class:status.activity", ACCENT_CELL),
-                    *self._model_activity_segments(pieces[0]),
-                ]
+        marker = (
+            _STATUS_SPINNER_FRAMES[self._spinner_index]
+            if self.running
+            else _STATUS_IDLE_MARKER
+        )
+        segments = [
+            ("class:status.marker", marker),
+            ("class:status", " "),
+            ("class:status", self.runnable_label),
+        ]
+        if self.running:
+            segments.append(
+                (
+                    "class:status.elapsed",
+                    f" {_format_elapsed_seconds(self._elapsed_seconds)}",
+                )
             )
-        for piece in pieces[1:]:
-            if piece.startswith("agic:"):
-                segments.extend(
-                    [("class:status.text", " "), ("class:status.agic", piece)]
-                )
-            elif piece.startswith("flow:"):
-                segments.extend(
-                    [("class:status.text", " "), ("class:status.flow", piece)]
-                )
-            else:
-                segments.append(("class:status.text", f" {piece}"))
-        shortcuts = "  ^d exit  ^j newline  ↑↓ history  "
         used = sum(get_cwidth(text) for _style, text in segments)
-        padding = max(2, self._terminal_width() - used - get_cwidth(shortcuts))
+        padding = max(
+            1,
+            self._terminal_width() - used - get_cwidth(self.model_label),
+        )
         return [
             *segments,
-            ("class:status.text", " " * padding),
-            ("class:status.text", shortcuts),
+            ("class:status", " " * padding),
+            ("class:status", self.model_label),
         ]
 
     @staticmethod

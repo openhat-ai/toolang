@@ -24,7 +24,7 @@ the source run and the result section without competing with the result body.
 
 ## Success Criteria
 
-- `:show` renders `▾ RUN_ID result ───` instead of `: Result RUN_ID`.
+- `:show` renders `• RUN_ID result ───` instead of `: Result RUN_ID`.
 - The marker, caption, and rule use Rich `dim` styling.
 - The result body remains the visually primary normal-intensity Markdown block.
 - Existing one-blank-line spacing between the divider and result body is
@@ -37,8 +37,7 @@ the source run and the result section without competing with the result body.
 
 - Add a dedicated Chat TUI result divider and use it for `:show`.
 - Share the root run footer's fixed divider width with the result divider.
-- Align the root footer and result markers as solid upward and downward
-  triangles with the same visual weight as a Step bullet.
+- Use the Step bullet for both the root footer and result divider markers.
 - Update Chat TUI unit and PTY expectations and current presentation docs.
 
 ### Out of Scope
@@ -54,7 +53,7 @@ the source run and the result section without competing with the result body.
 The stable output is:
 
 ```text
-▾ run_ma8hccd9 result ────────────────────
+• run_ma8hccd9 result ────────────────────
 
 • Result body rendered as Markdown.
 ```
@@ -64,22 +63,18 @@ unchanged.
 
 ### Marker
 
-Use `▾`.
+Use `•`, matching the Step marker.
 
-- `▾` points from the divider toward the result body below.
-- Its solid shape remains distinct from the Step marker `•`, while its dim style
-  matches the caption and rule.
-- Do not use `•`, because it denotes execution rows and would blur the divider
-  with the result body.
+- A shared marker gives execution rows and their dividers one visual vocabulary.
+- The divider remains distinguishable through its caption, trailing rule, and
+  dim style rather than a dedicated marker shape.
 - Do not use `◆`, because its larger shape carries more visual weight than a
   Step marker.
-- Do not use `◇`, because it identifies an object but does not communicate the
-  divider-to-body relationship as directly as `▾`.
+- Do not use `◇`, because the hollow shape conflicts with the solid Step marker.
 - Do not use `↳`, because a reopened result is not a child or causal closure of
   the `:show` command.
 
-The marker is presentational, not an interactive disclosure control. The Chat
-TUI does not add collapse or expand behavior in this scope.
+The marker is presentational and does not add collapse or expand behavior.
 
 ### Caption
 
@@ -109,8 +104,8 @@ while the result body should remain visually primary.
 ## Design Touchpoints
 
 - `src/toolang/cli/common/execution_progress/rich_rendering.py`: own the shared
-  divider width and the root footer's solid `▴` divider.
-- `src/toolang/cli/toolang/commands/chat/blocks.py`: own the dedicated `▾`
+  divider width and the root footer's `•` divider.
+- `src/toolang/cli/toolang/commands/chat/blocks.py`: own the dedicated `•`
   result divider and compose it with the existing Markdown result body.
 - `src/toolang/cli/toolang/commands/chat/tui.py`: pass the command message, run
   id, and output to the dedicated result block instead of constructing the
@@ -119,13 +114,13 @@ while the result body should remain visually primary.
   narrow width, and spacing.
 - `tests/system/cli/test_chat_tui_e2e.py`: verify the durable result divider in
   a pseudo-terminal.
-- `docs/execution-presentation.md`: document `▾` as a historical result-view
-  divider distinct from execution rows.
+- `docs/execution-presentation.md`: document the historical result-view
+  divider and its shared Step marker.
 
 ## Acceptance Tests
 
 1. Explicit and latest result lookup behavior is unchanged.
-2. `:show` renders a line beginning `▾ run_saved result `, followed only by `─`
+2. `:show` renders a line beginning `• run_saved result `, followed only by `─`
    rule cells.
 3. The complete divider contains exactly `RUN_DIVIDER_WIDTH` cells when the
    configured width permits.
@@ -136,16 +131,15 @@ while the result body should remain visually primary.
 6. Narrow-terminal rendering does not wrap or exceed the configured width.
 7. Help, model-list, queue, and other slash-command rendering is unchanged.
 8. The PTY flow scenario reopens a durable result and observes both
-   `▾ RUN_ID result` and the saved output without a traceback.
+   `• RUN_ID result` and the saved output without a traceback.
 9. The default offline verification suite passes.
 
 ## Risks
 
 - Generic slash-command spacing must not be changed while introducing the
   dedicated result block, or unrelated command layouts may regress.
-- `▾` can conventionally imply an interactive disclosure. Tests and
-  documentation must present it only as a static section marker unless a future
-  feature explicitly adds collapse behavior.
+- Reusing `•` reduces the marker-only distinction between a divider and an
+  execution row; the caption and trailing rule must remain intact.
 - Full-width Unicode rendering must use display-cell width rather than Python
   string length to avoid overflow in narrow or CJK terminals.
 

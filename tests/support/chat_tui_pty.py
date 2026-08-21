@@ -53,6 +53,7 @@ class ChatTuiPtySession:
             {
                 "COLUMNS": str(columns),
                 "LINES": str(rows),
+                "PROMPT_TOOLKIT_NO_CPR": "1",
                 "PYTHONUNBUFFERED": "1",
                 "TERM": "xterm-256color",
             }

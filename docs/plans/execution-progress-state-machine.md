@@ -358,11 +358,12 @@ Script and Chat display no Run header or output shape. After projected Steps
 they render the same root footer:
 
 ```text
-▴ run_nrqpt0mf succeeded ─────────────────
+• run_nrqpt0mf succeeded ─────────────────
   1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
-The divider uses a solid `▴` marker. Its line is 42 cells wide: the marker and
+The divider uses the same `•` marker as a Step. Its line is 42 cells wide: the
+marker and
 space occupy two cells, and the caption plus trailing rule fill the remaining
 40. Narrow terminals shorten the divider without wrapping it. The marker,
 caption, and rule use dim, red, and yellow for success, failure, and
@@ -394,35 +395,41 @@ cell whose background is the accent color. Start and Steer use distinct
 accents; quick-command bars use the same background-cell treatment with their
 own accent, and the bottom `PromptBox` uses the Start accent. The cell replaces
 prompt glyphs such as `>` and `+` while leaving message text aligned in column
-two. Rendering the full cell as a background avoids glyph line gaps between
-adjacent rows.
+two. Control bars and the input box share one surface background color.
+Rendering the full cell as a background avoids glyph line gaps between adjacent
+rows. An empty `PromptBox` shows the muted placeholder `Ask anything`.
+The placeholder disappears as soon as the buffer contains text and is never
+part of submission or input history.
 
-The bottom `StatusBar` renders a Start-accent background cell in column zero, a
-default-background space in column one, and the model name beginning in column
-two, followed by one default-background space. It omits the redundant `model `
-label. When idle, both surrounding spaces and the entire model name use the
-normal status background. During a local Run, background color grows from the
-space in column one, across the model name, through the trailing space, and then
-retracts while the text and its column remain stable. Active cell backgrounds
-use six sRGB-channel linear blends from the configured Start accent toward the
-configured status background, at blend amounts `0`, `.16`, `.32`, `.48`, `.64`,
-and `.80`, mapped across the wrapped region's display width. Changing either
-endpoint therefore updates the entire gradient.
+The bottom `StatusBar` does not paint a base background and therefore inherits
+the terminal background. Its left side begins in column zero with a
+marker, followed by one space and the current default runnable in column two.
+The runnable is rendered as `agic:name` or `flow:name`. Explicit session
+selection takes precedence; otherwise the client-provided runnable default and
+kind are used. The current resolved default model is right-aligned
+against the terminal edge. The status bar omits the redundant `model ` label and
+all hotkey hints. Its runnable, padding, and model inherit the terminal's default
+foreground and background without additional color or dim styling. The marker
+and spinner use the input background color as their foreground without painting
+a status background. The elapsed time uses the terminal's dim attribute. The
+error state retains a dedicated status style.
 
-The breathing cycle uses monotonic elapsed time rather than uniform frame
-steps: a 720-millisecond sine-eased expansion, a 180-millisecond peak, a
-900-millisecond sine-eased retraction, and a 260-millisecond trough. Every
-retraction returns the fill to zero for the trough while the leading background
-cell remains stable. The UI checks the phase every 80 milliseconds but redraws
-only when the visible state changes. Completion retracts from the current fill
-with the same easing and a duration proportional to the filled fraction of the
-wrapped model-name region. No glyph-based strip remains, no gap appears between
-filled cells, the model name never shifts, and animation is never committed to
-scrollback.
+The default `squares` style uses `■` while idle. During a local Run, the
+single-width frames `◧`, `◩`, `◨`, and `◪` rotate every 300 milliseconds. The
+retained `triangles`, `quadrants`, `hatch`, and `dots` styles remain available
+through an internal named style switch without exposing an unsettled public
+setting.
+Animation uses monotonic elapsed time rather than accumulated frame steps. The
+idle marker does not participate in the spinner cycle. The UI redraws only when
+the visible state changes. An elapsed time follows the runnable while
+a Run is active. It is floored to whole seconds
+and rendered as `24s`, `1m 08s`, or `1h 01m 01s`; fractional seconds are never
+shown. Completion freezes the elapsed value until the minimum visibility period
+ends. The model and runnable never shift, and the spinner and timer are never
+committed to scrollback.
 
 Run completion does not delay results or input, but the running appearance is
-held for at least 600 milliseconds and finishes its retraction so short Runs do
-not flash past abruptly.
+held for at least 600 milliseconds so short Runs do not flash past abruptly.
 
 ## Implementation Touchpoints
 

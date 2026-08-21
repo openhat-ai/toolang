@@ -382,7 +382,7 @@ class _SlashResultDivider:
         divider_width = min(width, RUN_DIVIDER_WIDTH)
         caption = f"{self.run_id} result"
         if divider_width < 5:
-            divider = Text("▾", style="dim")
+            divider = Text("•", style="dim")
             if divider_width > 1:
                 divider.append(" ", style="dim")
             if divider_width > 2:
@@ -397,7 +397,7 @@ class _SlashResultDivider:
         caption = truncate(caption, max(divider_width - 4, 1))
         caption_width = display_width(caption)
         divider = Text()
-        divider.append("▾", style="dim")
+        divider.append("•", style="dim")
         divider.append(" ", style="dim")
         divider.append(caption, style="dim")
         divider.append(" ", style="dim")
@@ -415,7 +415,7 @@ class HeaderBlock:
     version_label: str
 
     def render(self) -> RenderableType:
-        return Group(self, Text("\n"))
+        return Group(Text(), self, Text("\n"))
 
     def __rich_console__(
         self,
