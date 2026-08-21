@@ -27,10 +27,6 @@ def terminal_width(default: int = 100) -> int:
     return shutil.get_terminal_size((default, 24)).columns
 
 
-def markdown_width() -> int:
-    return min(100, max(40, terminal_width() - 4))
-
-
 def chat_console(*, width: int | None = None, file: TextIO | None = None) -> Console:
     fixed_width = width or terminal_width()
     return Console(

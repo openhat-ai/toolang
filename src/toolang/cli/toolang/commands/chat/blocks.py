@@ -10,7 +10,6 @@ from typing import Any
 
 from rich import box
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
-from rich.markdown import Markdown
 from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
@@ -21,7 +20,7 @@ from toolang.cli.common.output import toolang_logo, toolang_logo_text
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
 from toolang.execution.types import ExecutionError
 
-from toolang.cli.common.execution_progress import ProgressBlock
+from toolang.cli.common.execution_progress import ProgressBlock, ProgressRow
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from toolang.cli.common.execution_progress.formatting import (
     count,
@@ -48,8 +47,6 @@ from .rendering import (
     STEER_CONTROL_ACCENT,
     bar,
     display_len,
-    markdown_width,
-    render_segments,
     terminal_width,
 )
 
@@ -326,13 +323,19 @@ class AssistantResponseBlock(MutableBlock):
 
     text: str
     shape: str = ""
+    max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
 
     @classmethod
     def create(cls, event: StepEnd) -> AssistantResponseBlock:
         return cls(text=_parts_text(output_parts(event)), shape=shape_label(event))
 
     @classmethod
-    def from_parts(cls, parts: Sequence[Part]) -> AssistantResponseBlock:
+    def from_parts(
+        cls,
+        parts: Sequence[Part],
+        *,
+        max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
+    ) -> AssistantResponseBlock:
         text = _parts_text(parts)
         if not text and parts:
             text = json.dumps(
@@ -340,14 +343,28 @@ class AssistantResponseBlock(MutableBlock):
                 ensure_ascii=False,
                 indent=2,
             )
-        return cls(text=text)
+        return cls(text=text, max_width=max_width)
 
     def update(self, event: Any) -> None:
         del event
 
     def render(self) -> RenderableType | None:
         if self.text:
-            return _render_markdown_output(self.text.splitlines())
+            return progress_block_renderable(
+                ProgressBlock(
+                    "response",
+                    (
+                        ProgressRow(
+                            self.text,
+                            "normal",
+                            format="markdown",
+                            prefix="• ",
+                        ),
+                    ),
+                ),
+                live=False,
+                max_width=self.max_width,
+            )
         if self.shape:
             return Text.from_markup(f"[dim]• {escape(f'{self.shape} returned')}[/]")
         return None
@@ -363,7 +380,10 @@ class SlashResultBlock:
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
 
     def render(self) -> RenderableType:
-        response = AssistantResponseBlock.from_parts(self.parts).render()
+        response = AssistantResponseBlock.from_parts(
+            self.parts,
+            max_width=self.max_width,
+        ).render()
         lines = [
             *_slash_control_lines(self.message),
             _SlashResultDivider(self.run_id, max_width=self.max_width),
@@ -555,34 +575,6 @@ class SlashBlock:
                     )
             else:
                 text.append(token, style=style)
-
-
-def _render_markdown_output(lines: Sequence[str]) -> RenderableType:
-    rows: list[list[tuple[str, Any]]] = [[]]
-    width = max(20, markdown_width() - 2)
-    for segment in render_segments(Markdown("\n".join(lines)), width=width):
-        if segment.control or not segment.text:
-            continue
-        for index, part in enumerate(segment.text.split("\n")):
-            if index:
-                rows.append([])
-            if part:
-                rows[-1].append((part, segment.style))
-
-    while rows and not any(text.strip() for text, _style in rows[0]):
-        rows.pop(0)
-    while rows and not any(text.strip() for text, _style in rows[-1]):
-        rows.pop()
-    if not rows:
-        return Text.from_markup("[none]•[/]")
-
-    rendered_rows: list[Text] = []
-    for index, row in enumerate(rows):
-        line = Text("• " if index == 0 else "  ")
-        for text, style in row:
-            line.append(text, style=style)
-        rendered_rows.append(line)
-    return Group(*rendered_rows)
 
 
 def _split_columns(line: str) -> list[str]:

@@ -836,16 +836,36 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     assert not placeholder.filter()
 
 
-def test_chat_durable_response_wraps_markdown(
-    monkeypatch: Any,
-) -> None:
-    monkeypatch.setattr(blocks, "markdown_width", lambda: 44)
+def test_chat_durable_response_wraps_markdown() -> None:
     long_text = " ".join(f"word{i}" for i in range(40))
-    block = blocks.AssistantResponseBlock.from_parts((TextPart(long_text),))
-    final_lines = _render_text(block.render(), width=44).splitlines()
+    block = blocks.AssistantResponseBlock.from_parts(
+        (TextPart(long_text),),
+        max_width=44,
+    )
+    final_lines = _render_text(block.render(), width=80).splitlines()
 
     assert final_lines[0].startswith("• ")
     assert max(len(line) for line in final_lines) <= 44
+
+
+@pytest.mark.parametrize("live", [False, True])
+def test_chat_durable_response_matches_run_model_markdown(live: bool) -> None:
+    markdown = "# Heading\n\nbefore\n\n---\n\n- item\n\nafter"
+    durable = blocks.AssistantResponseBlock.from_parts((TextPart(markdown),))
+    progress = blocks.ExecutionProgressBlock(
+        ProgressBlock(
+            "step:run_1.0",
+            (ProgressRow(markdown, "normal", format="markdown", prefix="• "),),
+        ),
+        live=live,
+    )
+
+    durable_text = _render_text(durable.render(), width=40).rstrip("\n")
+    progress_text = _render_text(progress.render(), width=40).rstrip("\n")
+
+    assert durable_text.startswith("• Heading\n")
+    assert f"  {'─' * 38}\n" in durable_text
+    assert durable_text == progress_text
 
 
 def test_chat_live_viewport_keeps_latest_rows_and_reports_hidden_rows() -> None:
