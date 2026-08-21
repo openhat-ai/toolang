@@ -1107,7 +1107,7 @@ def test_chat_status_bar_right_aligns_the_model_without_hotkeys(
 
     assert "^d exit" not in text
     assert "↑↓ history" not in text
-    assert text.startswith("◧ agic:chat")
+    assert text.startswith("▪︎ agic:chat")
     assert text.endswith("runtime model")
     assert get_cwidth(text) == 80
 
@@ -1123,12 +1123,12 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
     status.set_activity(2, 68)
     next_frame = status._render()
 
-    assert idle_text.startswith("◧ agic:chat")
+    assert idle_text.startswith("▪︎ agic:chat")
     assert idle_text.endswith("runtime model")
     assert running_text.startswith("◧ agic:chat 0s")
     assert running_text.endswith("runtime model")
     assert idle[:3] == [
-        ("class:status.marker", "◧"),
+        ("class:status.marker", "▪︎"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
     ]
@@ -1180,11 +1180,11 @@ def test_chat_status_spinner_styles_use_single_width_frames() -> None:
         "hatch": ("▦", ("▤", "▥", "▧", "▨")),
         "dots": ("⠿", ("⠾", "⠷", "⠟", "⠻")),
         "triangles": ("▪︎", ("◤", "◥", "◢", "◣")),
-        "squares": ("◧", ("◧", "◩", "◨", "◪")),
+        "squares": ("▪︎", ("◧", "◩", "◨", "◪")),
     }
-    assert widgets._STATUS_IDLE_MARKER == "◧"
+    assert widgets._STATUS_IDLE_MARKER == "▪︎"
     assert widgets._STATUS_SPINNER_FRAMES == ("◧", "◩", "◨", "◪")
-    assert widgets._STATUS_IDLE_MARKER == widgets._STATUS_SPINNER_FRAMES[0]
+    assert widgets._STATUS_IDLE_MARKER not in widgets._STATUS_SPINNER_FRAMES
     assert all(
         get_cwidth(character) == 1
         for idle, frames in widgets._STATUS_SPINNER_STYLES.values()
@@ -1316,7 +1316,7 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
             assert not app.status_bar.running
             assert app.status_bar._render()[0] == (
                 "class:status.marker",
-                "◧",
+                "▪︎",
             )
         finally:
             animation.cancel()
