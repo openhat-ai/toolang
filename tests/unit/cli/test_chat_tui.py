@@ -765,6 +765,19 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     assert "pending for next step" not in steer_text
     assert "run_1" not in steer_text
     assert not steer_text.splitlines()[0].strip()
+    assert start_text.splitlines() == [
+        " " * 80,
+        f"{rendering.ACCENT_CELL} hello" + " " * 73,
+        " " * 80,
+        "",
+    ]
+    assert steer_text.splitlines() == [
+        "",
+        " " * 80,
+        f"{rendering.ACCENT_CELL} adjust" + " " * 72,
+        " " * 80,
+        "",
+    ]
 
     start_fragments = rendering.renderable_to_prompt_toolkit(start.render())
     steer_fragments = rendering.renderable_to_prompt_toolkit(steer.render())
@@ -794,6 +807,72 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
 
     steer.update(_model_step_begin(step_index=2))
     assert _render_text(steer.render()) == steer_text
+
+
+@pytest.mark.parametrize(
+    ("block", "accent"),
+    [
+        (
+            blocks.RunStartBlock.create("first\nsecond"),
+            rendering.START_CONTROL_ACCENT,
+        ),
+        (
+            blocks.RunSteerBlock.create(
+                message="first\nsecond",
+                run_id="run_1",
+            ),
+            rendering.STEER_CONTROL_ACCENT,
+        ),
+        (
+            blocks.SlashBlock("first\nsecond", ()),
+            rendering.QUICK_COMMAND_CONTROL_ACCENT,
+        ),
+    ],
+)
+def test_chat_two_line_control_bars_add_only_top_padding(
+    block: blocks.MutableBlock | blocks.SlashBlock,
+    accent: str,
+) -> None:
+    segments = rendering.render_segments(block.render(), width=20)
+    accent_cells = [
+        segment
+        for segment in segments
+        if segment.text == rendering.ACCENT_CELL
+        and segment.style is not None
+        and segment.style.bgcolor is not None
+        and segment.style.bgcolor.get_truecolor().hex == accent
+    ]
+
+    assert len(accent_cells) == 3
+    assert [
+        line.rstrip()
+        for line in _render_text(block.render(), width=20).splitlines()
+        if line.strip()
+    ] == ["  first", "  second"]
+
+
+def test_chat_control_bar_uses_three_row_minimum() -> None:
+    two_lines = _render_text(
+        blocks.RunStartBlock.create("first\nsecond").render(),
+        width=20,
+    ).splitlines()
+    three_lines = _render_text(
+        blocks.RunStartBlock.create("first\nsecond\nthird").render(),
+        width=20,
+    ).splitlines()
+
+    assert two_lines == [
+        " " * 20,
+        "  first" + " " * 13,
+        "  second" + " " * 12,
+        "",
+    ]
+    assert three_lines == [
+        "  first" + " " * 13,
+        "  second" + " " * 12,
+        "  third" + " " * 13,
+        "",
+    ]
 
 
 def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> None:
@@ -1164,12 +1243,13 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
     status.set_running(True)
     running = status._render()
     running_text = "".join(fragment for _style, fragment in running)
-    status.set_activity(2, 68)
+    status.set_activity(2, 1)
     next_frame = status._render()
 
     assert idle_text.startswith("■ agic:chat")
     assert idle_text.endswith("runtime model")
-    assert running_text.startswith("◧ agic:chat · 0s")
+    assert running_text.startswith("◐ agic:chat running")
+    assert "0s" not in running_text
     assert running_text.endswith("runtime model")
     assert idle[:3] == [
         ("class:status.marker", "■"),
@@ -1177,20 +1257,20 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
         ("class:status", "agic:chat"),
     ]
     assert running[:4] == [
-        ("class:status.marker", "◧"),
+        ("class:status.spinner", "◐"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
-        ("class:status.elapsed", " · 0s"),
+        ("class:status.elapsed", " running"),
     ]
     assert next_frame[:4] == [
-        ("class:status.marker", "◨"),
+        ("class:status.spinner", "◑"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
-        ("class:status.elapsed", " · 1m 08s"),
+        ("class:status.elapsed", " 1s"),
     ]
     assert next_frame[-1] == ("class:status", "runtime model")
     assert status.spinner_index == 2
-    assert status.elapsed_seconds == 68
+    assert status.elapsed_seconds == 1
 
     status.set_running(False)
     assert status._render() == idle
@@ -1209,7 +1289,7 @@ def test_chat_status_bar_keeps_the_default_model_at_the_right_edge(
     running = "".join(text for _style, text in status._render())
 
     assert idle.startswith("■ flow:research")
-    assert running.startswith("◧ agic:chat · 18s")
+    assert running.startswith("◐ agic:chat 18s")
     assert running.endswith("flow:research · openai/gpt-5")
     assert idle.rindex("openai/gpt-5") == running.rindex("openai/gpt-5")
     assert get_cwidth(idle) == get_cwidth(running) == 80
@@ -1250,6 +1330,7 @@ def test_chat_status_palette_uses_input_background_for_marker_color() -> None:
 
     assert palette["status"] == ""
     assert palette["status.marker"] == f"fg:{rendering.INPUT_BACKGROUND}"
+    assert palette["status.spinner"] == ""
     assert palette["status.elapsed"] == "dim"
     assert (
         not {
@@ -1267,8 +1348,9 @@ def test_chat_status_spinner_styles_use_single_width_frames() -> None:
 
     assert step == pytest.approx(0.3)
     assert tui._STATUS_ACTIVITY_TICK == pytest.approx(0.3)
-    assert widgets._STATUS_SPINNER_STYLE == "squares"
+    assert widgets._STATUS_SPINNER_STYLE == "circles"
     assert widgets._STATUS_SPINNER_STYLES == {
+        "circles": ("■", ("◐", "◓", "◑", "◒")),
         "quadrants": (" ", ("▖", "▘", "▝", "▗")),
         "hatch": ("▦", ("▤", "▥", "▧", "▨")),
         "dots": ("⠿", ("⠾", "⠷", "⠟", "⠻")),
@@ -1276,7 +1358,7 @@ def test_chat_status_spinner_styles_use_single_width_frames() -> None:
         "squares": ("■", ("◧", "◩", "◨", "◪")),
     }
     assert widgets._STATUS_IDLE_MARKER == "■"
-    assert widgets._STATUS_SPINNER_FRAMES == ("◧", "◩", "◨", "◪")
+    assert widgets._STATUS_SPINNER_FRAMES == ("◐", "◓", "◑", "◒")
     assert widgets._STATUS_IDLE_MARKER not in widgets._STATUS_SPINNER_FRAMES
     assert all(
         get_cwidth(character) == 1
@@ -1404,8 +1486,8 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
             assert app.status_bar.running
             assert app.status_bar.active_runnable_label == "agic:active"
             assert app.status_bar._render()[0] == (
-                "class:status.marker",
-                "◧",
+                "class:status.spinner",
+                "◐",
             )
             await asyncio.wait_for(activity_stopped.wait(), timeout=0.5)
             assert not app.status_bar.running
