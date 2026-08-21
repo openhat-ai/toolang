@@ -38,6 +38,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "",
+        "status.marker": f"fg:{START_CONTROL_ACCENT}",
         "status.error": "fg:#ffffff bg:#7a2e2e bold",
         "dim": "fg:ansigray",
     }
@@ -391,7 +392,7 @@ class StatusBar:
             else _STATUS_IDLE_MARKER
         )
         segments = [
-            ("class:status", marker),
+            ("class:status.marker", marker),
             ("class:status", " "),
             ("class:status", self.runnable_label),
         ]

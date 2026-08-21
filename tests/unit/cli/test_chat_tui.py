@@ -1109,18 +1109,18 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
     assert running_text.startswith("◧ agic:chat 0s")
     assert running_text.endswith("runtime model")
     assert idle[:3] == [
-        ("class:status", "■"),
+        ("class:status.marker", "■"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
     ]
     assert running[:4] == [
-        ("class:status", "◧"),
+        ("class:status.marker", "◧"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
         ("class:status", " 0s"),
     ]
     assert next_frame[:4] == [
-        ("class:status", "◨"),
+        ("class:status.marker", "◨"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
         ("class:status", " 1m 08s"),
@@ -1137,9 +1137,9 @@ def test_chat_status_palette_has_no_base_background() -> None:
     palette = widgets._chat_ui_palette()
 
     assert palette["status"] == ""
+    assert palette["status.marker"] == f"fg:{rendering.START_CONTROL_ACCENT}"
     assert (
         not {
-            "status.marker",
             "status.text",
             "status.agic",
             "status.flow",
@@ -1278,13 +1278,13 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
 
             assert app.status_bar.running
             assert app.status_bar._render()[0] == (
-                "class:status",
+                "class:status.marker",
                 "◧",
             )
             await asyncio.wait_for(activity_stopped.wait(), timeout=0.5)
             assert not app.status_bar.running
             assert app.status_bar._render()[0] == (
-                "class:status",
+                "class:status.marker",
                 "■",
             )
         finally:

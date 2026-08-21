@@ -290,9 +290,10 @@ the terminal background. Its left side begins with a square marker, one space,
 and the current default runnable as `agic:name` or `flow:name`. The current
 default model is right-aligned against the terminal edge; hotkey hints are
 omitted. Normal status text, including the marker, runnable, elapsed time, and
-model, inherits the terminal's default foreground without additional color or
-dim styling. The idle marker is the solid square `■`. During a Run, it is
-replaced by a spinner that advances every 140 milliseconds through the
+model, inherits the terminal's default foreground without dim styling. The
+marker alone uses the configured Start accent. The idle marker is the solid
+square `■`. During a Run, it is replaced by a spinner that advances every 140
+milliseconds through the
 single-width square frames `◧`, `◩`, `◨`, and `◪`; `■` is not part of the
 animation. A whole-second elapsed time follows the runnable. Short Runs retain
 the running state long enough to avoid flashing. This transient UI state is
