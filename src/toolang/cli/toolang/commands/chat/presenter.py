@@ -68,6 +68,7 @@ class ChatRunPresenter:
             stop.status = "failed"
             stop.error = ""
         stop.set_metrics(self._projector.root_metrics)
+        stop.gap_before = self._projector.needs_footer_gap
         app.finalize_block(stop)
         app.finish_run()
         self.reset()
@@ -100,6 +101,7 @@ class ChatRunPresenter:
             stop.update(event)
         stop.error = ""
         stop.set_metrics(self._projector.root_metrics)
+        stop.gap_before = self._projector.needs_footer_gap
         app.finalize_block(stop)
         app.finish_run()
         self.reset()

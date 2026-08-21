@@ -144,11 +144,17 @@ class ExecutionProgressBlock(MutableBlock):
             self.progress = event
 
     def render(self) -> RenderableType:
-        return progress_block_renderable(
+        rendered = progress_block_renderable(
             self.progress,
             live=self.live,
             max_width=self.max_width,
         )
+        if self.live:
+            return rendered
+        # Chat removes one terminal layout newline from every renderable. The
+        # sentinel is removed instead so finalized progress keeps every
+        # projected row, including a trailing semantic blank row.
+        return Group(rendered, Text())
 
 
 @dataclass(slots=True)
@@ -231,6 +237,7 @@ class RunStopBlock(MutableBlock):
     finished_at: str = ""
     metrics: Metrics = field(default_factory=Metrics)
     max_width: int = DEFAULT_MAX_PROGRESS_WIDTH
+    gap_before: bool = True
 
     @classmethod
     def create(
@@ -287,12 +294,12 @@ class RunStopBlock(MutableBlock):
         facts = self._facts()
         lines.extend(
             [
-                Text(),
                 run_footer_renderable(
                     run_id=self.run_id,
                     status=self.status,
                     facts=facts,
                     max_width=self.max_width,
+                    gap_before=self.gap_before,
                 ),
                 Text("\n"),
             ]

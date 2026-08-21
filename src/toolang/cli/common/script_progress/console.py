@@ -57,7 +57,6 @@ class ProgressConsole:
         )
         self._live: Live | None = None
         self._live_rows: list[ProgressRow] = []
-        self._last_was_blank = False
 
     def close(self) -> None:
         self.clear_live()
@@ -65,14 +64,9 @@ class ProgressConsole:
             self._live.stop()
             self._live = None
 
-    def blank(self) -> None:
-        if not self._last_was_blank:
-            self.write("")
-
     def write(self, value: str, *, tone: Tone = "progress") -> None:
         self.clear_live()
         self.console.print(Text(value, style=_STYLES[tone], no_wrap=True))
-        self._last_was_blank = not value
 
     def wrapped(
         self,
@@ -91,14 +85,12 @@ class ProgressConsole:
         self.console.print(
             progress_block_renderable(block, live=False, max_width=self.width)
         )
-        self._last_was_blank = False
 
     def write_renderable(self, value: RenderableType) -> None:
         """Append one complete shared Rich renderable."""
 
         self.clear_live()
         self.console.print(value)
-        self._last_was_blank = False
 
     def apply(self, update: ProgressUpdate) -> None:
         """Append committed fragments and atomically replace the live snapshot."""
@@ -115,11 +107,6 @@ class ProgressConsole:
         self._set_live(live_blocks)
         for renderable in committed:
             self.console.print(renderable)
-        if update.committed:
-            rows = update.committed[-1].rows
-            self._last_was_blank = bool(
-                rows and rows[-1].format == "plain" and not rows[-1].text
-            )
 
     def show_live_rows(self, rows: list[ProgressRow]) -> None:
         block = ProgressBlock("script:live", tuple(rows))

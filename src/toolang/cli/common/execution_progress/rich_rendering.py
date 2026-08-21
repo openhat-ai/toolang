@@ -82,15 +82,17 @@ def run_footer_renderable(
     status: str,
     facts: Sequence[str],
     max_width: int,
+    gap_before: bool,
 ) -> RenderableType:
-    """Render one shared root Run footer."""
+    """Render one shared root Run footer with its leading separator."""
 
-    return _RunFooter(
+    footer = _RunFooter(
         run_id=run_id,
         status=status,
         facts=" · ".join(facts),
         max_width=max_width,
     )
+    return Group(Text(), footer) if gap_before else footer
 
 
 def terminal_status_style(status: str) -> str:

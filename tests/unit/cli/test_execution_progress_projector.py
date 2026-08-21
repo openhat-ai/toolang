@@ -429,6 +429,7 @@ def test_model_markdown_closes_without_repeating_at_step_end() -> None:
     )
     assert _rows(final.live) == []
     assert final.committed == ()
+    assert reducer.needs_footer_gap
 
 
 def test_model_markdown_commits_stable_blocks_and_keeps_one_live_tail() -> None:
@@ -801,6 +802,7 @@ def test_flow_scalar_output_is_displayed_in_its_normal_output_slot() -> None:
 
     assert _rows(update.committed) == [["• agent runtimes", ""]]
     assert update.committed[0].rows[0].tone == "normal"
+    assert not reducer.needs_footer_gap
 
 
 def test_flow_list_output_uses_presentation_data_without_storage_tags() -> None:

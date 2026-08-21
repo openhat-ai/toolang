@@ -191,6 +191,24 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
         "ExecutionProgressBlock",
         "RunStopBlock",
     ]
+    transcript = "".join(_render_text(block.render()) for block in app.finalized)
+    assert "• drafting\n\n• run_1 succeeded" in transcript
+
+
+def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
+    app = FakeApp()
+
+    events.handle_run_event(_run_begin(executable_kind="flow"), app)
+    events.handle_run_event(_flow_step_begin(), app)
+    events.handle_run_event(_flow_step_end(), app)
+    events.handle_run_event(_run_end(status="succeeded", output_step_index=1), app)
+
+    transcript = "".join(_render_text(block.render()) for block in app.finalized)
+    assert "[1] Run summarize for each item, up to 2 at once\n\n• Mapped" in (
+        transcript
+    )
+    assert "items in parallel\n\n• run_1 succeeded" in transcript
+    assert "items in parallel\n\n\n• run_1 succeeded" not in transcript
 
 
 def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() -> None:
@@ -324,19 +342,22 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
     assert "0 | #0 | • failed model unavailable" in finalized
 
 
-def test_script_and_chat_sinks_preserve_the_same_semantic_rows() -> None:
-    progress = ProgressBlock(
-        "step:run_1.0",
-        (
-            ProgressRow("• executed web_search.search"),
-            ProgressRow("  5 results"),
-        ),
-    )
+@pytest.mark.parametrize(
+    "rows",
+    [
+        (ProgressRow("• executed web_search.search"), ProgressRow("  5 results")),
+        (ProgressRow("[0] Run summarize"), ProgressRow("")),
+    ],
+)
+def test_script_and_chat_sinks_preserve_the_same_semantic_rows(
+    rows: tuple[ProgressRow, ...],
+) -> None:
+    progress = ProgressBlock("step:run_1.0", rows)
     stream = StringIO()
     ProgressConsole(stream).apply(ProgressUpdate(committed=(progress,)))
     chat = blocks.ExecutionProgressBlock(progress)
 
-    assert stream.getvalue().splitlines() == _render_text(chat.render()).splitlines()
+    assert stream.getvalue() == _render_text(chat.render())
 
 
 def test_chat_submission_has_no_status_before_run_begin() -> None:

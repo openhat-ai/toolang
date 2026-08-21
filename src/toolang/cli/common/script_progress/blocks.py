@@ -34,9 +34,10 @@ class RunBlock:
         self,
         console: ProgressConsole,
         event: RunEnd,
+        *,
+        gap_before: bool,
     ) -> None:
         console.clear_live()
-        console.blank()
         duration = elapsed(self.started_at, event.finished_at)
         facts = self.metrics.facts(
             duration=duration,
@@ -50,5 +51,6 @@ class RunBlock:
                 status=event.status,
                 facts=facts,
                 max_width=console.width,
+                gap_before=gap_before,
             )
         )
