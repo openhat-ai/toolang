@@ -14,6 +14,7 @@ from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.utils import get_cwidth
 from rich.console import RenderableType
+from rich.segment import Segment
 from rich.text import Text
 import pytest
 
@@ -945,6 +946,27 @@ def test_chat_durable_response_matches_run_model_markdown(live: bool) -> None:
     assert durable_text.startswith("• Heading\n")
     assert f"  {'─' * 38}\n" in durable_text
     assert durable_text == progress_text
+
+
+def test_chat_fenced_code_preserves_one_rectangular_background() -> None:
+    block = blocks.AssistantResponseBlock.from_parts(
+        (TextPart("```python\nx = 1\n\ny = x + 1\n```"),),
+        max_width=42,
+    )
+
+    lines = list(
+        Segment.split_lines(rendering.render_segments(block.render(), width=42))
+    )
+    background_widths = [
+        sum(
+            len(segment.text)
+            for segment in line
+            if segment.style is not None and segment.style.bgcolor is not None
+        )
+        for line in lines
+    ]
+
+    assert background_widths == [40, 40, 40, 40, 40]
 
 
 def test_chat_live_viewport_keeps_latest_rows_and_reports_hidden_rows() -> None:
