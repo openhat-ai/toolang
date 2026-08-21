@@ -20,8 +20,9 @@ from toolang.cli.common.execution_progress.rich_rendering import (
 )
 
 ACCENT_CELL = " "
-INPUT_BACKGROUND = "#444444"
-CONTROL_BAR_BACKGROUND = INPUT_BACKGROUND
+# prompt-toolkit and Rich names for ANSI slot 8, respectively.
+INPUT_BACKGROUND = "ansibrightblack"
+CONTROL_BAR_BACKGROUND = "bright_black"
 QUICK_COMMAND_CONTROL_ACCENT = "#ffd866"
 START_CONTROL_ACCENT = "#8fd7ff"
 STEER_CONTROL_ACCENT = "#d7b3ff"

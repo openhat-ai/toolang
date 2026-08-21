@@ -3,7 +3,9 @@
 ## Work Type and Status
 
 Feature definition. Approved for implementation on 2026-08-21 after revision
-to use an ANSI code surface. This document does not implement product code.
+to use an ANSI code surface, then expanded by human confirmation to align the
+Chat input and control-bar background with that surface. This document does
+not implement product code.
 
 ## Verified Current Behavior
 
@@ -32,6 +34,7 @@ assuming one RGB theme. The feature succeeds when:
   terminal defaults, never fixed RGB values;
 - fenced and inline code use a consistent dark ANSI surface that remains
   independent of the terminal's default background;
+- the Chat input and control bars use the same ANSI surface as code; and
 - Chat live output, Chat stable scrollback, and Script TTY output preserve the
   same color identities.
 
@@ -93,6 +96,17 @@ so the design optimizes for common terminal palettes rather than guaranteeing
 contrast for arbitrary user-defined slot values. Toolang will not replace this
 heuristic with fixed RGB or terminal-color queries.
 
+### Related Chat Surfaces
+
+The Chat input and start, steer, and quick-command control bars use ANSI slot 8
+as their background. Rich and prompt-toolkit use different names for the same
+slot: `bright_black` and `ansibrightblack`, respectively. The implementation
+keeps both backend-specific names and verifies that the Rich-to-prompt-toolkit
+bridge maps them to the same color identity.
+
+This alignment does not change queue, cursor, status-error, control-accent, or
+foreground colors. Those remain separate presentation choices.
+
 ### Output Paths
 
 Chat may retain `ColorDepth.DEPTH_24_BIT` and its truecolor internal Rich
@@ -116,8 +130,8 @@ In scope:
 - `src/toolang/cli/common/script_progress/console.py`: install the shared Rich
   Markdown style overrides without changing non-TTY behavior.
 - `src/toolang/cli/toolang/commands/chat/rendering.py`: install the same Rich
-  overrides and preserve default and ANSI color identities in prompt-toolkit
-  styles.
+  overrides, preserve default and ANSI color identities in prompt-toolkit
+  styles, and align the input and control-bar background with ANSI slot 8.
 - `tests/unit/cli/test_chat_tui.py` and
   `tests/unit/cli/test_script_run_presenter.py`: cover color identity,
   code-block shape, live/stable parity, and non-TTY output.
@@ -126,7 +140,8 @@ In scope:
 
 Out of scope:
 
-- the fixed Chat input, queue, cursor, status-error, and control-bar palette;
+- the fixed Chat queue, cursor, status-error, control-accent, and foreground
+  palette;
 - automatic terminal-background detection;
 - user-selectable Toolang or Pygments themes;
 - full-TUI `NO_COLOR` behavior;
@@ -153,9 +168,11 @@ Out of scope:
 7. Inline code uses bold ANSI slot 15 text on ANSI slot 8 background.
 8. Script TTY output uses the same Markdown color identities, while Script
    non-TTY output remains color-free and does not gain padded trailing spaces.
-9. Existing Markdown text, spacing, wrapping, live/stable equivalence, and PTY
+9. Chat input and control bars use ANSI slot 8, and Rich control bars map to the
+   same prompt-toolkit `ansibrightblack` background as the input and code.
+10. Existing Markdown text, spacing, wrapping, live/stable equivalence, and PTY
    behavior remain unchanged apart from color styling.
-10. The default repository verification passes.
+11. The default repository verification passes.
 
 ## Risks
 
@@ -165,6 +182,9 @@ Out of scope:
 - A dark code surface inside a light terminal is deliberately more prominent
   than a theme-derived subtle surface. Avoiding that contrast would require
   reliable terminal-color discovery or an explicit light/dark setting.
+- User-defined slot 8 values may reduce contrast with the fixed Chat control
+  accents or foregrounds; this feature deliberately leaves those colors
+  unchanged.
 - Chat has two output routes. Updating only the live prompt-toolkit bridge or
   only stable ANSI scrollback would make colors change when content commits.
 - Mapping Rich `default` through its truecolor fallback would turn it into

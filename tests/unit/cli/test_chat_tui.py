@@ -804,8 +804,8 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
 
     assert start_accent == f"bg:{rendering.START_CONTROL_ACCENT}"
     assert steer_accent == f"bg:{rendering.STEER_CONTROL_ACCENT}"
-    assert f"bg:{rendering.CONTROL_BAR_BACKGROUND}" in start_message
-    assert f"bg:{rendering.CONTROL_BAR_BACKGROUND}" in steer_message
+    assert f"bg:{rendering.INPUT_BACKGROUND}" in start_message
+    assert f"bg:{rendering.INPUT_BACKGROUND}" in steer_message
 
     steer.update(_model_step_begin(step_index=2))
     assert _render_text(steer.render()) == steer_text
@@ -891,7 +891,12 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     assert widgets._chat_ui_palette()["control.start"] == (
         f"bg:{rendering.START_CONTROL_ACCENT}"
     )
-    assert rendering.CONTROL_BAR_BACKGROUND == rendering.INPUT_BACKGROUND
+    assert rendering.CONTROL_BAR_BACKGROUND == "bright_black"
+    assert rendering.INPUT_BACKGROUND == "ansibrightblack"
+    assert (
+        rendering._prompt_toolkit_color(Color.parse(rendering.CONTROL_BAR_BACKGROUND))
+        == rendering.INPUT_BACKGROUND
+    )
     assert isinstance(content, HSplit)
     input_row = content.children[1]
     assert isinstance(input_row, VSplit)
@@ -1057,7 +1062,7 @@ def test_chat_markdown_outputs_only_terminal_palette_colors() -> None:
     stable = rendering.renderables_output([block.render()])
 
     assert all("#" not in style for style in styles)
-    assert any("bg:ansibrightblack" in style for style in styles)
+    assert any(f"bg:{rendering.INPUT_BACKGROUND}" in style for style in styles)
     assert "\x1b[38;2" not in stable
     assert "\x1b[48;2" not in stable
 
