@@ -80,6 +80,7 @@ class ProgressProjector:
         self._committed_boundaries: set[str] = set()
         self._repeat_ordinals: dict[tuple[StepPath, int], int] = {}
         self._sequence = 0
+        self._ends_with_blank = False
 
     @property
     def root_metrics(self) -> Metrics:
@@ -87,6 +88,12 @@ class ProgressProjector:
 
         run = self._runs.get(self._root or "")
         return run.metrics if run is not None else Metrics()
+
+    @property
+    def needs_footer_gap(self) -> bool:
+        """Return whether the root footer needs a leading blank row."""
+
+        return not self._ends_with_blank
 
     def handle(self, event: RunEvent) -> ProgressUpdate:
         """Validate and reduce one ordered event without querying durable state."""
@@ -96,25 +103,34 @@ class ProgressProjector:
         try:
             if self._root_ended:
                 raise _PresentationError("progress event arrived after run completion")
-            committed = self._reduce(event)
+            committed = tuple(self._reduce(event))
+            self._note_committed(committed)
             return ProgressUpdate(
-                committed=tuple(committed),
+                committed=committed,
                 live=self._live_blocks(),
             )
         except _PresentationError as exc:
             self._broken = True
             self._parts.clear()
-            return ProgressUpdate(
-                committed=(self._diagnostic_block(str(exc)),),
-                live=(),
-            )
+            committed = (self._diagnostic_block(str(exc)),)
+            self._note_committed(committed)
+            return ProgressUpdate(committed=committed, live=())
 
     def diagnostic(self, message: str) -> ProgressUpdate:
         """Close live presentation with one ownerless execution diagnostic."""
 
         self._broken = True
         self._parts.clear()
-        return ProgressUpdate(committed=(self._diagnostic_block(message),), live=())
+        committed = (self._diagnostic_block(message),)
+        self._note_committed(committed)
+        return ProgressUpdate(committed=committed, live=())
+
+    def _note_committed(self, blocks: tuple[ProgressBlock, ...]) -> None:
+        for block in blocks:
+            if not block.rows:
+                continue
+            row = block.rows[-1]
+            self._ends_with_blank = row.format == "plain" and not row.text
 
     def _reduce(self, event: RunEvent) -> list[ProgressBlock]:
         if isinstance(event, RunBegin):

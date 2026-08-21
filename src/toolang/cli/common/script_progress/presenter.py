@@ -56,4 +56,8 @@ class ScriptRunPresenter(RunTracer):
         if root is None:
             return
         root.metrics = self._projector.root_metrics
-        root.render_result(self.console, event)
+        root.render_result(
+            self.console,
+            event,
+            gap_before=self._projector.needs_footer_gap,
+        )
