@@ -13,5 +13,9 @@ class ToolangValidationError(ToolangError):
     """Raised for invalid semantic AST programs."""
 
 
+class ToolangOutputError(ToolangError):
+    """Raised when a runnable result violates its declared output type."""
+
+
 class ToolangFormatError(ValueError):
     """Raised when source formatting cannot be completed safely."""
