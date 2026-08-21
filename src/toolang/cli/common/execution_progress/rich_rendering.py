@@ -120,7 +120,7 @@ class _RunFooter:
         title = f"{self.run_id} {self.status}"
         status_style = terminal_status_style(self.status)
         if divider_width < 5:
-            divider = Text("▴", style=status_style)
+            divider = Text("•", style=status_style)
             if divider_width > 1:
                 divider.append(" ", style=status_style)
             if divider_width > 2:
@@ -144,7 +144,7 @@ class _RunFooter:
         title = truncate(title, max(divider_width - 4, 1))
         title_cells = display_width(title)
         top = Text()
-        top.append("▴", style=status_style)
+        top.append("•", style=status_style)
         top.append(" ", style=status_style)
         top.append(title, style=status_style)
         top.append(" ", style=status_style)

@@ -238,11 +238,12 @@ root-owned error row. There is no separate diagnostic marker.
 Script and Chat end a root Run with the same footer:
 
 ```text
-▴ run_nrqpt0mf succeeded ─────────────────
+• run_nrqpt0mf succeeded ─────────────────
   1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
-The divider is 42 cells wide: the solid `▴` marker and its following space
+The divider is 42 cells wide: the Step-compatible `•` marker and its following
+space
 occupy two cells, and the caption plus trailing rule fill the remaining 40.
 Narrow terminals shorten the divider without wrapping it. The marker, caption,
 and rule share the terminal status style: dim for success, red for failure, and
@@ -258,12 +259,12 @@ execution progress; later terminal errors belong to progress and its footer.
 The Chat TUI `:show` command introduces a durable result with a quiet divider:
 
 ```text
-▾ run_ma8hccd9 result ────────────────────
+• run_ma8hccd9 result ────────────────────
 
 • Result body rendered as Markdown.
 ```
 
-The solid `▾` marker, caption, and rule are dim, while the result body retains
+The `•` marker, caption, and rule are dim, while the result body retains
 normal intensity. The divider follows the same fixed 42-cell width as the root
 Run footer and shortens only when the available width requires caption
 truncation. Exactly one blank line separates the divider from the result body.

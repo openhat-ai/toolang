@@ -358,11 +358,12 @@ Script and Chat display no Run header or output shape. After projected Steps
 they render the same root footer:
 
 ```text
-▴ run_nrqpt0mf succeeded ─────────────────
+• run_nrqpt0mf succeeded ─────────────────
   1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
-The divider uses a solid `▴` marker. Its line is 42 cells wide: the marker and
+The divider uses the same `•` marker as a Step. Its line is 42 cells wide: the
+marker and
 space occupy two cells, and the caption plus trailing rule fill the remaining
 40. Narrow terminals shorten the divider without wrapping it. The marker,
 caption, and rule use dim, red, and yellow for success, failure, and

@@ -405,7 +405,7 @@ def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
     rendered = _render_text(app.finalized[0].render())
     lines = rendered.splitlines()
     assert lines[0] == ""
-    assert lines[1].startswith("▴ run_1 canceled ")
+    assert lines[1].startswith("• run_1 canceled ")
     assert lines[2].startswith("  3.0s")
     assert lines[3] == ""
 
@@ -451,7 +451,7 @@ def test_chat_root_footer_uses_a_fixed_divider_width_for_short_facts() -> None:
     block.update(_run_end(run_id="run_pmqv7gfc", status="succeeded"))
 
     lines = [line for line in _render_text(block.render()).splitlines() if line]
-    prefix = "▴ run_pmqv7gfc succeeded "
+    prefix = "• run_pmqv7gfc succeeded "
 
     assert lines[0] == prefix + "─" * (42 - len(prefix))
 
@@ -474,7 +474,7 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
     ]
 
     assert len(lines[0]) == 32
-    assert lines[0].startswith("▴ run_1 failed ")
+    assert lines[0].startswith("• run_1 failed ")
     assert all(line.startswith("  ") for line in lines[1:])
     assert all(not line.startswith(("│", "└")) for line in lines[1:])
 
@@ -706,7 +706,7 @@ def test_chat_run_footer_styles_marker_caption_rule_and_facts(
             assert segment.style.color is not None
             assert segment.style.color.name == color
 
-    marker = next(segment for segment in segments if segment.text == "▴")
+    marker = next(segment for segment in segments if segment.text == "•")
     assert_status_style(marker)
     rule = [segment for segment in segments if "─" in segment.text]
     assert rule
@@ -1738,7 +1738,7 @@ def test_chat_tui_show_command_renders_durable_markdown(
     assert len(written) == 1
     rendered = _render_text(written[0])
     result_lines = [line.rstrip() for line in rendered.splitlines()]
-    divider = "▾ run_saved result "
+    divider = "• run_saved result "
     divider += "─" * (42 - len(divider))
     divider_index = result_lines.index(divider)
     assert result_lines[divider_index : divider_index + 3] == [
@@ -1753,7 +1753,7 @@ def test_chat_tui_show_command_renders_durable_markdown(
         for segment in rendering.render_segments(written[0], width=80)
         if segment.text.strip()
     ]
-    marker = next(segment for segment in segments if segment.text == "▾")
+    marker = next(segment for segment in segments if segment.text == "•")
     caption = next(
         segment for segment in segments if "run_saved result" in segment.text
     )
@@ -1781,7 +1781,7 @@ def test_chat_show_result_divider_truncates_without_wrapping(
     lines = [
         line.rstrip() for line in _render_text(block.render(), width=24).splitlines()
     ]
-    dividers = [line for line in lines if line.startswith("▾")]
+    dividers = [line for line in lines if line.startswith("•") and line.endswith("─")]
 
     assert len(dividers) == 1
     assert len(dividers[0]) == 24
