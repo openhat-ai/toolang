@@ -406,9 +406,9 @@ default and kind are used. The current resolved default model is right-aligned
 against the terminal edge. The status bar omits the redundant `model ` label and
 all hotkey hints.
 
-While idle, the marker is `■`. During a local Run, it advances every 80
-milliseconds through the single-width square frames `■`, `◰`, `◳`, `◲`, and
-`◱`, using monotonic elapsed time rather than accumulated frame steps. The idle
+While idle, the marker is `◧`. During a local Run, it advances every 80
+milliseconds through the single-width square frames `◧`, `◩`, `◨`, and `◪`,
+using monotonic elapsed time rather than accumulated frame steps. The idle
 marker is therefore exactly one stationary spinner frame rather than a separate
 symbol. The UI redraws only when the visible state changes. A dim elapsed time
 follows the runnable while a Run is active. It is floored to whole seconds and

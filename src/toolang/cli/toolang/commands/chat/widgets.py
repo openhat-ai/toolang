@@ -24,7 +24,7 @@ from .rendering import (
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-_STATUS_SPINNER_FRAMES = ("■", "◰", "◳", "◲", "◱")
+_STATUS_SPINNER_FRAMES = ("◧", "◩", "◨", "◪")
 _STATUS_MODEL_COLOR = "#ffd866"
 
 

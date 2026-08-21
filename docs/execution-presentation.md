@@ -290,7 +290,7 @@ the terminal background. Its left side begins with a square marker, one space,
 and the current default runnable as `A:name` for an agic or `F:name` for a flow.
 The current default model is right-aligned against the terminal edge; hotkey
 hints are omitted. During a Run, the marker animates through the single-width
-square frames `■`, `◰`, `◳`, `◲`, and `◱`, with the idle `■` serving as the
-spinner's first frame. A dim, whole-second elapsed time follows the runnable.
+square frames `◧`, `◩`, `◨`, and `◪`, with the idle `◧` serving as the spinner's
+first frame. A dim, whole-second elapsed time follows the runnable.
 Short Runs retain the running state long enough to avoid flashing. This
 transient UI state is never committed to execution scrollback.
