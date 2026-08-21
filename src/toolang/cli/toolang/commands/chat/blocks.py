@@ -102,14 +102,26 @@ def _control_bar_line(
     )
 
 
+def _control_bar_lines(message: str, *, accent: str) -> list[RenderableType]:
+    lines: list[RenderableType] = [
+        _control_bar_line(line, accent=accent) for line in message.splitlines() or [""]
+    ]
+    padding_count = max(0, 3 - len(lines))
+    top_padding_count = (padding_count + 1) // 2
+    bottom_padding_count = padding_count - top_padding_count
+    return [
+        *(_control_bar_line(accent=accent) for _ in range(top_padding_count)),
+        *lines,
+        *(_control_bar_line(accent=accent) for _ in range(bottom_padding_count)),
+    ]
+
+
 def _slash_control_lines(message: str) -> list[RenderableType]:
     return [
-        _control_bar_line(accent=QUICK_COMMAND_CONTROL_ACCENT),
-        *(
-            _control_bar_line(line, accent=QUICK_COMMAND_CONTROL_ACCENT)
-            for line in message.splitlines() or [""]
+        *_control_bar_lines(
+            message,
+            accent=QUICK_COMMAND_CONTROL_ACCENT,
         ),
-        _control_bar_line(accent=QUICK_COMMAND_CONTROL_ACCENT),
         Text(),
     ]
 
@@ -168,12 +180,10 @@ class RunStartBlock(MutableBlock):
         del event
 
     def render(self) -> RenderableType:
-        lines: list[RenderableType] = [_control_bar_line(accent=START_CONTROL_ACCENT)]
-        lines.extend(
-            _control_bar_line(line, accent=START_CONTROL_ACCENT)
-            for line in self.message.splitlines() or [""]
+        lines: list[RenderableType] = _control_bar_lines(
+            self.message,
+            accent=START_CONTROL_ACCENT,
         )
-        lines.append(_control_bar_line(accent=START_CONTROL_ACCENT))
         lines.append(Text("\n"))
         return Group(*lines)
 
@@ -211,15 +221,14 @@ class RunSteerBlock(MutableBlock):
         del event
 
     def render(self) -> RenderableType:
-        lines: list[RenderableType] = [
-            Text(),
-            _control_bar_line(accent=STEER_CONTROL_ACCENT),
-        ]
+        lines: list[RenderableType] = [Text()]
         lines.extend(
-            _control_bar_line(line, accent=STEER_CONTROL_ACCENT)
-            for line in self.message.splitlines() or [""]
+            _control_bar_lines(
+                self.message,
+                accent=STEER_CONTROL_ACCENT,
+            )
         )
-        lines.extend([_control_bar_line(accent=STEER_CONTROL_ACCENT), Text("\n")])
+        lines.append(Text("\n"))
         return Group(*lines)
 
 

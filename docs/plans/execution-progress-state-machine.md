@@ -402,31 +402,33 @@ The placeholder disappears as soon as the buffer contains text and is never
 part of submission or input history.
 
 The bottom `StatusBar` does not paint a base background and therefore inherits
-the terminal background. Its left side begins in column zero with a
-marker, followed by one space and the current default runnable in column two.
-The runnable is rendered as `agic:name` or `flow:name`. Explicit session
-selection takes precedence; otherwise the client-provided runnable default and
-kind are used. The current resolved default model is right-aligned
+the terminal background. Its left side begins in column zero with an idle
+marker or running spinner, followed by one space and the current default
+runnable, rendered as `agic:name` or `flow:name`. Explicit session selection
+takes precedence; otherwise the client-provided runnable default and kind are
+used. The current resolved default model is right-aligned
 against the terminal edge. The status bar omits the redundant `model ` label and
 all hotkey hints. Its runnable, padding, and model inherit the terminal's default
-foreground and background without additional color or dim styling. The marker
-and spinner use the input background color as their foreground without painting
-a status background. The elapsed time uses the terminal's dim attribute. The
-error state retains a dedicated status style.
+foreground and background without additional color or dim styling. The idle
+marker uses the input background color as its foreground without painting a
+status background. The running spinner inherits the terminal's normal
+foreground without dim styling. The activity label uses the terminal's dim
+attribute. The error state retains a dedicated status style.
 
-The default `squares` style uses `■` while idle. During a local Run, the
-single-width frames `◧`, `◩`, `◨`, and `◪` rotate every 300 milliseconds. The
-retained `triangles`, `quadrants`, `hatch`, and `dots` styles remain available
-through an internal named style switch without exposing an unsettled public
-setting.
+The default `circles` style uses `■` while idle. During a local Run, it rotates
+through the single-width frames `◐`, `◓`, `◑`, and `◒` every 300 milliseconds.
+The retained `squares`, `triangles`, `quadrants`, `hatch`, and `dots` styles
+remain available through an internal named style switch without exposing an
+unsettled public setting.
 Animation uses monotonic elapsed time rather than accumulated frame steps. The
-idle marker does not participate in the spinner cycle. The UI redraws only when
-the visible state changes. An elapsed time follows the runnable while
-a Run is active. It is floored to whole seconds
-and rendered as `24s`, `1m 08s`, or `1h 01m 01s`; fractional seconds are never
-shown. Completion freezes the elapsed value until the minimum visibility period
-ends. The model and runnable never shift, and the spinner and timer are never
-committed to scrollback.
+UI redraws only when the visible state changes. The spinner occupies column zero
+while a Run is active. The dim label `running` follows the active runnable below
+one elapsed second and is replaced at one second by elapsed time. The duration
+is floored to whole seconds and rendered as `24s`, `1m 08s`, or
+`1h 01m 01s`; `0s` and fractional seconds are never shown.
+Completion freezes the elapsed value until the minimum visibility period ends.
+The model and runnable never shift, and the spinner and timer are never committed
+to scrollback.
 
 Run completion does not delay results or input, but the running appearance is
 held for at least 600 milliseconds so short Runs do not flash past abruptly.

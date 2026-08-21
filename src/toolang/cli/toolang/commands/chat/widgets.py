@@ -29,13 +29,14 @@ MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
 _INPUT_PLACEHOLDER = "Ask anything"
 _STATUS_SPINNER_STYLES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "circles": ("■", ("◐", "◓", "◑", "◒")),
     "quadrants": (" ", ("▖", "▘", "▝", "▗")),
     "hatch": ("▦", ("▤", "▥", "▧", "▨")),
     "dots": ("⠿", ("⠾", "⠷", "⠟", "⠻")),
     "triangles": ("▪︎", ("◤", "◥", "◢", "◣")),
     "squares": ("■", ("◧", "◩", "◨", "◪")),
 }
-_STATUS_SPINNER_STYLE = "squares"
+_STATUS_SPINNER_STYLE = "circles"
 _STATUS_IDLE_MARKER, _STATUS_SPINNER_FRAMES = _STATUS_SPINNER_STYLES[
     _STATUS_SPINNER_STYLE
 ]
@@ -53,6 +54,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "",
         "status.marker": f"fg:{INPUT_BACKGROUND}",
+        "status.spinner": "",
         "status.elapsed": "dim",
         "status.error": "fg:#ffffff bg:#7a2e2e bold",
         "dim": "fg:ansigray",
@@ -423,6 +425,7 @@ class StatusBar:
             if self.running
             else _STATUS_IDLE_MARKER
         )
+        marker_style = "class:status.spinner" if self.running else "class:status.marker"
         displayed_runnable = (
             self.active_runnable_label or self.runnable_label
             if self.running
@@ -433,16 +436,17 @@ class StatusBar:
             if self.running and displayed_runnable != self.runnable_label
             else None
         )
-        elapsed = (
-            f" · {_format_elapsed_seconds(self._elapsed_seconds)}"
-            if self.running
-            else ""
+        activity_label = (
+            _format_elapsed_seconds(self._elapsed_seconds)
+            if self._elapsed_seconds >= 1
+            else "running"
         )
         terminal_width = self._terminal_width()
         runnable_width = get_cwidth(displayed_runnable)
         default_width = get_cwidth(default_runnable or "")
         model_width = get_cwidth(self.model_label)
-        fixed_width = 2 + get_cwidth(elapsed) + 1 + (3 if default_runnable else 0)
+        activity_width = 2 + (1 + get_cwidth(activity_label) if self.running else 0)
+        fixed_width = activity_width + 1 + (3 if default_runnable else 0)
         overflow = max(
             0,
             fixed_width + runnable_width + default_width + model_width - terminal_width,
@@ -458,17 +462,12 @@ class StatusBar:
         )
         model_label = truncate(self.model_label, fitted_model_width)
         segments = [
-            ("class:status.marker", marker),
+            (marker_style, marker),
             ("class:status", " "),
             ("class:status", displayed_runnable),
         ]
-        if elapsed:
-            segments.append(
-                (
-                    "class:status.elapsed",
-                    elapsed,
-                )
-            )
+        if self.running:
+            segments.append(("class:status.elapsed", f" {activity_label}"))
         used = sum(get_cwidth(text) for _style, text in segments)
         right_width = get_cwidth(model_label) + (
             get_cwidth(default_runnable) + 3 if default_runnable is not None else 0

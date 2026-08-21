@@ -119,7 +119,7 @@ def test_chat_tui_updates_defaults_while_a_run_is_active(tmp_path: Path) -> None
     try:
         session.wait_for("■ agic:chat", "test/scripted")
         session.send(b"hold status\r")
-        session.wait_for("agic:chat · 0s")
+        session.wait_for("◐ agic:chat running")
 
         session.send(b":flow relay\r")
         running = session.wait_for("flow:relay · test/scripted")

@@ -290,22 +290,25 @@ accent. Control bars and the input box share one surface background color. An
 empty prompt shows the muted placeholder `Ask anything`; the
 placeholder disappears as soon as the buffer contains text and is never part of
 the submitted message. The status bar does not paint a base background and
-therefore inherits the terminal background. Its left side begins with a marker,
-one space, and a runnable rendered as `agic:name` or `flow:name`. While idle,
-this is the current default runnable. While running, it is the active root
-runnable followed by a dim ` · DURATION`. If the current default runnable
-differs, it appears on the right as `DEFAULT_RUNNABLE · MODEL`; otherwise the
-right side contains only `MODEL`. `MODEL` is always the current default model,
-not an active model step, and remains right-aligned against the terminal edge
-as defaults change. Setting commands remain available while running and update
-these default values immediately without changing the active run. Hotkey hints
-are omitted. Runnable and model text inherit the terminal's default foreground
-without dim styling. The marker and spinner use the input background color as
-their foreground without painting a status background. The elapsed time uses
-the terminal's dim attribute. The default `squares` style uses `■`
-while idle and rotates through `◧`, `◩`, `◨`, and `◪` every 300 milliseconds
-during a Run. The retained `triangles`, `quadrants`, `hatch`, and `dots` styles
-remain available through an internal named style switch. A whole-second elapsed
-time follows the active runnable.
+therefore inherits the terminal background. Its left side begins in column zero
+with an idle marker or running spinner, followed by one space and a runnable
+rendered as `agic:name` or `flow:name`. While idle, this is the current default
+runnable. While running, it is the active root runnable. The dim label `running`
+follows the runnable below one elapsed second and is replaced by the whole-second
+duration at one second; `0s` is never shown. If the current default runnable
+differs, it appears on the right as
+`DEFAULT_RUNNABLE · MODEL`; otherwise the right side contains only `MODEL`.
+`MODEL` is always the current default model, not an active model step, and
+remains right-aligned against the terminal edge as defaults change. Setting
+commands remain available while running and update these default values
+immediately without changing the active run. Hotkey hints are omitted. Runnable
+and model text inherit the terminal's default foreground without dim styling.
+The idle marker uses the input background color as its foreground without
+painting a status background. The running spinner inherits the terminal's
+normal foreground without dim styling. The activity label uses the terminal's
+dim attribute. The default `circles` style uses `■` while idle and rotates
+through `◐`, `◓`, `◑`, and `◒` every 300 milliseconds during a Run. The retained
+`squares`, `triangles`, `quadrants`, `hatch`, and `dots` styles remain available
+through an internal named style switch.
 Short Runs retain the running state long enough to avoid flashing. This
 transient UI state is never committed to execution scrollback.
