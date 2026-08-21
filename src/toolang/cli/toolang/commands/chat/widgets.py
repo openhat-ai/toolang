@@ -31,7 +31,7 @@ _STATUS_SPINNER_STYLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "triangles": ("▪︎", ("◤", "◥", "◢", "◣")),
     "squares": ("▪︎", ("◧", "◩", "◨", "◪")),
 }
-_STATUS_SPINNER_STYLE = "triangles"
+_STATUS_SPINNER_STYLE = "squares"
 _STATUS_IDLE_MARKER, _STATUS_SPINNER_FRAMES = _STATUS_SPINNER_STYLES[
     _STATUS_SPINNER_STYLE
 ]

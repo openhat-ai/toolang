@@ -409,11 +409,11 @@ terminal's default foreground and background without additional color or dim
 styling. The marker inherits those terminal defaults without an accent. The
 error state retains a dedicated status style.
 
-The default `triangles` style uses `▪︎` while idle. During a local Run, the
-single-width, borderless frames `◤`, `◥`, `◢`, and `◣` rotate every 140
-milliseconds. The retained `squares`, `quadrants`, `hatch`, and `dots` styles
-remain available through an internal named style switch without exposing an
-unsettled public setting.
+The default `squares` style uses `▪︎` while idle. During a local Run, the
+single-width frames `◧`, `◩`, `◨`, and `◪` rotate every 140 milliseconds. The
+retained `triangles`, `quadrants`, `hatch`, and `dots` styles remain available
+through an internal named style switch without exposing an unsettled public
+setting.
 Animation uses monotonic elapsed time rather than accumulated frame steps, and
 the idle marker does not participate in any spinner cycle. The UI redraws only
 when the visible state changes. An elapsed time follows the runnable while a Run
