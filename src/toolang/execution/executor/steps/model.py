@@ -100,7 +100,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
                 tool.definition()
                 for tool in sorted(prepared.tools.values(), key=lambda item: item.name)
             )
-            if prepared.model.tools
+            if prepared.model.tools and not state.repairing_output
             else ()
         ),
         state=state.model_state,
