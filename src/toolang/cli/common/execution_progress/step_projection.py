@@ -99,16 +99,34 @@ def trace_terminal_rows(
     label = tool_label(begin.given)
     summary = event.noted.summary if isinstance(event.noted, ToolStepNoted) else ""
     if event.status == "succeeded":
-        rows = [ProgressRow(f"• {summary or f'executed {label}'}", tone)]
+        rows = [
+            ProgressRow(
+                f"• {summary or f'executed {label}'}",
+                tone,
+                surface="tool_summary",
+            )
+        ]
         rows.extend(
-            ProgressRow(f"  {line}", tone) for line in _tool_output_lines(event)
+            ProgressRow(f"  {line}", tone, surface="tool_detail")
+            for line in _tool_output_lines(event)
         )
         return tuple(rows)
     status = "failed" if event.status == "failed" else "canceled"
-    rows = [ProgressRow(f"• {summary or f'{status} {label}'}", tone)]
+    rows = [
+        ProgressRow(
+            f"• {summary or f'{status} {label}'}",
+            tone,
+            surface="tool_summary" if event.status == "failed" else "none",
+        )
+    ]
     if error:
         rows.extend(
-            ProgressRow(f"  {line}", tone) for line in _split_lines(error.strip())
+            ProgressRow(
+                f"  {line}",
+                tone,
+                surface="tool_detail" if event.status == "failed" else "none",
+            )
+            for line in _split_lines(error.strip())
         )
     return tuple(rows)
 

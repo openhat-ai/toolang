@@ -745,6 +745,8 @@ def test_tool_output_uses_compact_json_and_preserves_text_lines(
         ["• executed web_search.search", *expected_output]
     ]
     assert all(row.tone == "progress" for row in update.committed[0].rows)
+    assert update.committed[0].rows[0].surface == "tool_summary"
+    assert all(row.surface == "tool_detail" for row in update.committed[0].rows[1:])
 
 
 def test_tool_error_preserves_complete_multiline_output() -> None:
@@ -783,6 +785,45 @@ def test_tool_error_preserves_complete_multiline_output() -> None:
             "  retry after 60 seconds",
         ]
     ]
+    assert [row.surface for row in terminal.committed[0].rows] == [
+        "tool_summary",
+        "tool_detail",
+        "tool_detail",
+    ]
+
+
+def test_canceled_tool_summary_and_error_remain_plain_rows() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    path = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:demo",
+        )
+    )
+    projector.handle(
+        StepBegin(
+            step=path,
+            kind="tool",
+            given=_tool(summary="calling web search for Toolang"),
+        )
+    )
+
+    terminal = projector.handle(
+        StepEnd(
+            step=path,
+            kind="tool",
+            status="canceled",
+            noted=ToolStepNoted(summary="canceled web search for Toolang"),
+            error="interrupted by user",
+        )
+    )
+
+    assert _rows(terminal.committed) == [
+        ["• canceled web search for Toolang", "  interrupted by user"]
+    ]
+    assert all(row.surface == "none" for row in terminal.committed[0].rows)
 
 
 def test_flow_scalar_output_is_displayed_in_its_normal_output_slot() -> None:

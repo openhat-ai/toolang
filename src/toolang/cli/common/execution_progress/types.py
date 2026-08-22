@@ -7,6 +7,7 @@ from typing import Literal
 
 ProgressTone = Literal["progress", "normal", "active", "error", "warning"]
 ProgressFormat = Literal["plain", "markdown"]
+ProgressSurface = Literal["none", "tool_summary", "tool_detail"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +20,7 @@ class ProgressRow:
     format: ProgressFormat = "plain"
     prefix: str = ""
     gap_before: bool = False
+    surface: ProgressSurface = "none"
 
 
 @dataclass(frozen=True, slots=True)

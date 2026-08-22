@@ -6,6 +6,7 @@ from .types import (
     ProgressBlock,
     ProgressFormat,
     ProgressRow,
+    ProgressSurface,
     ProgressTone,
     ProgressUpdate,
 )
@@ -15,6 +16,7 @@ __all__ = [
     "ProgressBlock",
     "ProgressFormat",
     "ProgressRow",
+    "ProgressSurface",
     "ProgressTone",
     "ProgressUpdate",
     "ProgressProjector",

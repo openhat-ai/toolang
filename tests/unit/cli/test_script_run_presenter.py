@@ -202,6 +202,33 @@ def test_tool_output_uses_one_unmarked_continuation() -> None:
     assert "run_one.0" not in output
 
 
+def test_non_tty_tool_surfaces_remain_unpadded_plain_text() -> None:
+    stream = StringIO()
+    console = ProgressConsole(stream, width=32)
+    console.apply(
+        ProgressUpdate(
+            committed=(
+                ProgressBlock(
+                    "step:run_one.0",
+                    (
+                        ProgressRow(
+                            "• called read_text README.md",
+                            surface="tool_summary",
+                        ),
+                        ProgressRow("  contents", surface="tool_detail"),
+                    ),
+                ),
+            )
+        )
+    )
+
+    assert stream.getvalue().splitlines() == [
+        "• called read_text README.md",
+        "  contents",
+    ]
+    assert "\x1b[" not in stream.getvalue()
+
+
 def test_tty_replaces_live_rows_and_clears_them_on_shutdown() -> None:
     output = _render(
         [

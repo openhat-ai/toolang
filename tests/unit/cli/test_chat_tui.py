@@ -502,12 +502,13 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
     assert all(not line.startswith(("│", "└")) for line in lines[1:])
 
 
-def test_chat_tool_step_uses_bullet_marker_and_summary() -> None:
+def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() -> None:
     block = blocks.ExecutionProgressBlock(
         ProgressBlock(
             "step:run_1.1",
             (ProgressRow("• executing shell__execute", "active"),),
-        )
+        ),
+        max_width=32,
     )
 
     running_segments = [
@@ -520,28 +521,99 @@ def test_chat_tool_step_uses_bullet_marker_and_summary() -> None:
     assert all(
         segment.style is None or not segment.style.dim for segment in running_segments
     )
+    assert all(
+        segment.style is None or segment.style.bgcolor is None
+        for segment in running_segments
+    )
 
     block.update(
         ProgressBlock(
             "step:run_1.1",
             (
-                ProgressRow("• executed shell__execute"),
-                ProgressRow("  ok"),
+                ProgressRow(
+                    "• executed shell__execute",
+                    surface="tool_summary",
+                ),
+                ProgressRow("  ok", surface="tool_detail"),
             ),
         )
     )
     rendered = _render_text(block.render())
-    finalized_segments = [
-        segment
-        for segment in rendering.render_segments(block.render(), width=80)
-        if segment.text.strip()
+    lines = list(
+        Segment.split_lines(rendering.render_segments(block.render(), width=80))
+    )
+    painted_lines = [
+        [
+            segment
+            for segment in line
+            if segment.style is not None and segment.style.bgcolor is not None
+        ]
+        for line in lines
+        if any(segment.text.strip() for segment in line)
     ]
 
-    assert rendered.startswith("• executed shell__execute")
+    assert rendered.startswith("•  executed shell__execute")
     assert "ok" in rendered
+    assert len(painted_lines) == 2
+    assert [sum(len(segment.text) for segment in line) for line in painted_lines] == [
+        30,
+        30,
+    ]
+    background_numbers: list[set[int]] = []
+    for line in painted_lines:
+        numbers: set[int] = set()
+        for segment in line:
+            assert segment.style is not None
+            assert segment.style.bgcolor is not None
+            number = segment.style.bgcolor.number
+            assert number is not None
+            numbers.add(number)
+        background_numbers.append(numbers)
+    assert background_numbers == [{8}, {0}]
+
+
+def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
+    block = blocks.ExecutionProgressBlock(
+        ProgressBlock(
+            "step:run_1.1",
+            (
+                ProgressRow(
+                    "• called read_text a-very-long-document-name.md",
+                    surface="tool_summary",
+                ),
+                ProgressRow(
+                    "  a complete result that also wraps onto another row",
+                    surface="tool_detail",
+                ),
+            ),
+        ),
+        max_width=24,
+    )
+
+    lines = list(
+        Segment.split_lines(rendering.render_segments(block.render(), width=80))
+    )
+    painted_lines = [
+        line
+        for line in lines
+        if any(
+            segment.style is not None and segment.style.bgcolor is not None
+            for segment in line
+        )
+    ]
+
+    assert len(painted_lines) > 2
     assert all(
-        segment.style is not None and segment.style.dim
-        for segment in finalized_segments
+        sum(len(segment.text) for segment in line) == 24 for line in painted_lines
+    )
+    assert all(
+        sum(
+            len(segment.text)
+            for segment in line
+            if segment.style is not None and segment.style.bgcolor is not None
+        )
+        == 22
+        for line in painted_lines
     )
 
 

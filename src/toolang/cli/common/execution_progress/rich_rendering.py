@@ -15,7 +15,7 @@ from rich.text import Text
 from rich.theme import Theme
 
 from .formatting import display_width, split_hanging_prefix, truncate
-from .types import ProgressBlock, ProgressRow, ProgressTone
+from .types import ProgressBlock, ProgressRow, ProgressSurface, ProgressTone
 
 _STYLES: dict[ProgressTone, str] = {
     "progress": "dim",
@@ -26,6 +26,8 @@ _STYLES: dict[ProgressTone, str] = {
 }
 RUN_DIVIDER_WIDTH = 42
 TERMINAL_MARKDOWN_THEME = Theme({"markdown.code": "bold cyan"})
+TOOL_SUMMARY_BACKGROUND = "bright_black"
+TOOL_DETAIL_BACKGROUND = "black"
 
 _ANSI_CODE_THEME = Syntax.get_theme("ansi_dark")
 
@@ -103,13 +105,21 @@ def progress_block_renderable(
     """Render one semantic progress block with shared wrapping and Markdown."""
 
     return Group(
-        *(
-            _MarkdownRow(row, max_width=max_width)
-            if row.format == "markdown"
-            else _PlainRow(row, live=live, max_width=max_width)
-            for row in block.rows
-        )
+        *(_row_renderable(row, live=live, max_width=max_width) for row in block.rows)
     )
+
+
+def _row_renderable(
+    row: ProgressRow,
+    *,
+    live: bool,
+    max_width: int,
+) -> RenderableType:
+    if row.surface != "none":
+        return _ToolSurfaceRow(row, max_width=max_width)
+    if row.format == "markdown":
+        return _MarkdownRow(row, max_width=max_width)
+    return _PlainRow(row, live=live, max_width=max_width)
 
 
 def run_footer_renderable(
@@ -255,6 +265,68 @@ class _PlainRow:
                 style=style,
                 no_wrap=True,
             )
+
+
+@dataclass(frozen=True, slots=True)
+class _ToolSurfaceRow:
+    """Render one tool header or detail as a bounded, indented surface."""
+
+    row: ProgressRow
+    max_width: int
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        width = max(1, min(options.max_width, self.max_width))
+        prefix, content = split_hanging_prefix(self.row.text)
+        prefix_width = display_width(prefix)
+        if console.color_system is None or prefix_width + 2 >= width:
+            yield from _PlainRow(
+                self.row,
+                live=False,
+                max_width=self.max_width,
+            ).__rich_console__(console, options)
+            return
+
+        surface_width = width - prefix_width
+        content_width = max(surface_width - 2, 1)
+        lines = Text(content).wrap(
+            console,
+            content_width,
+            overflow="fold",
+        ) or [Text("")]
+        surface_style = _tool_surface_style(self.row.surface, self.row.tone)
+        prefix_style = _STYLES[self.row.tone]
+        continuation = " " * prefix_width
+        for index, line in enumerate(lines):
+            line.rstrip()
+            surface = Text(style=surface_style)
+            surface.append(" ")
+            surface.append(line.plain)
+            surface.pad_right(max(0, surface_width - surface.cell_len))
+            rendered = Text(
+                prefix if index == 0 else continuation,
+                style=prefix_style,
+            )
+            rendered.append_text(surface)
+            rendered.no_wrap = True
+            yield rendered
+
+
+def _tool_surface_style(surface: ProgressSurface, tone: ProgressTone) -> Style:
+    foreground = (
+        "bright_red"
+        if tone == "error"
+        else "bright_yellow"
+        if tone == "warning"
+        else "bright_white"
+    )
+    background = (
+        TOOL_SUMMARY_BACKGROUND if surface == "tool_summary" else TOOL_DETAIL_BACKGROUND
+    )
+    return Style(color=foreground, bgcolor=background)
 
 
 @dataclass(frozen=True, slots=True)
