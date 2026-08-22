@@ -2300,6 +2300,62 @@ def test_chat_tui_typing_resets_pending_interrupt_exit() -> None:
     assert app.status_bar.error_message == ""
 
 
+def test_chat_tui_clear_scrolls_one_separator_into_history_before_redrawing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    output = app.app.output
+    actions: list[object] = []
+    monkeypatch.setattr(app.app.renderer, "erase", lambda: actions.append("erase"))
+    monkeypatch.setattr(
+        type(output),
+        "get_size",
+        lambda _output: SimpleNamespace(rows=4, columns=80),
+    )
+    monkeypatch.setattr(
+        type(output),
+        "write_raw",
+        lambda _output, value: actions.append(("write_raw", value)),
+    )
+    monkeypatch.setattr(
+        type(output),
+        "erase_screen",
+        lambda _output: actions.append("erase_screen"),
+    )
+    monkeypatch.setattr(
+        type(output),
+        "cursor_goto",
+        lambda _output, row, column: actions.append(("cursor_goto", row, column)),
+    )
+    monkeypatch.setattr(
+        type(output),
+        "flush",
+        lambda _output: actions.append("flush"),
+    )
+    monkeypatch.setattr(
+        app.app.renderer,
+        "request_absolute_cursor_position",
+        lambda: actions.append("request_cursor_position"),
+    )
+
+    app._handle_clear()
+
+    assert actions == [
+        "erase",
+        ("write_raw", "\r\n" * 4),
+        "erase_screen",
+        ("cursor_goto", 0, 0),
+        "flush",
+        "request_cursor_position",
+    ]
+
+
 def test_chat_tui_removes_live_block_before_writing_scrollback(
     monkeypatch: Any,
 ) -> None:

@@ -518,7 +518,16 @@ class ChatTuiApp:
             self.status_bar.set_error("Cannot clear while a run is active.")
             return
         self.status_bar.clear_error()
-        self.app.renderer.clear()
+        renderer = self.app.renderer
+        output = self.app.output
+        renderer.erase()
+        # Scroll the cleared live origin off the display so it becomes one
+        # separator line after the prior terminal history.
+        output.write_raw("\r\n" * output.get_size().rows)
+        output.erase_screen()
+        output.cursor_goto(0, 0)
+        output.flush()
+        renderer.request_absolute_cursor_position()
 
     def _finish_active_run(self) -> None:
         self.active_run_id = None
