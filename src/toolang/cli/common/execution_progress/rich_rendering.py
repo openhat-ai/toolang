@@ -26,6 +26,8 @@ _STYLES: dict[ProgressTone, str] = {
 }
 RUN_DIVIDER_WIDTH = 42
 TERMINAL_MARKDOWN_THEME = Theme({"markdown.code": "bold cyan"})
+TERMINAL_SURFACE_BACKGROUND = "bright_black"
+TOOL_DETAIL_BACKGROUND = TERMINAL_SURFACE_BACKGROUND
 
 _ANSI_CODE_THEME = Syntax.get_theme("ansi_dark")
 
@@ -102,14 +104,48 @@ def progress_block_renderable(
 ) -> RenderableType:
     """Render one semantic progress block with shared wrapping and Markdown."""
 
-    return Group(
-        *(
-            _MarkdownRow(row, max_width=max_width)
-            if row.format == "markdown"
-            else _PlainRow(row, live=live, max_width=max_width)
-            for row in block.rows
+    rows = (
+        _row_renderable(
+            row,
+            live=live,
+            max_width=max_width,
+            open_tool_detail=(
+                row.surface == "tool_detail"
+                and (index == 0 or block.rows[index - 1].surface != "tool_detail")
+            ),
+            close_tool_detail=(
+                row.surface == "tool_detail"
+                and (
+                    index + 1 == len(block.rows)
+                    or block.rows[index + 1].surface != "tool_detail"
+                )
+            ),
         )
+        for index, row in enumerate(block.rows)
     )
+    return Group(Text(), *rows) if block.gap_before else Group(*rows)
+
+
+def _row_renderable(
+    row: ProgressRow,
+    *,
+    live: bool,
+    max_width: int,
+    open_tool_detail: bool,
+    close_tool_detail: bool,
+) -> RenderableType:
+    if row.surface == "tool_detail":
+        renderable: RenderableType = _ToolSurfaceRow(
+            row,
+            max_width=max_width,
+            open_detail=open_tool_detail,
+            close_detail=close_tool_detail,
+        )
+    elif row.format == "markdown":
+        renderable = _MarkdownRow(row, max_width=max_width)
+    else:
+        renderable = _PlainRow(row, live=live, max_width=max_width)
+    return renderable
 
 
 def run_footer_renderable(
@@ -258,6 +294,102 @@ class _PlainRow:
 
 
 @dataclass(frozen=True, slots=True)
+class _ToolSurfaceRow:
+    """Render one tool detail as a bounded, indented surface."""
+
+    row: ProgressRow
+    max_width: int
+    open_detail: bool
+    close_detail: bool
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        width = max(1, min(options.max_width, self.max_width))
+        prefix, content = split_hanging_prefix(self.row.text)
+        prefix_width = display_width(prefix)
+        minimum_overhead = 2
+        if prefix_width + minimum_overhead >= width:
+            yield from _PlainRow(
+                self.row,
+                live=False,
+                max_width=self.max_width,
+            ).__rich_console__(console, options)
+            return
+
+        region_width = width - prefix_width
+        surface_width = region_width
+        content_width = max(surface_width - 2, 1)
+        lines = Text(content).wrap(
+            console,
+            content_width,
+            overflow="fold",
+        ) or [Text("")]
+        surface_style = _tool_detail_style(self.row.tone)
+        prefix_style = _STYLES[self.row.tone]
+        continuation = " " * prefix_width
+        if self.row.surface == "tool_detail" and self.open_detail:
+            yield Text()
+            yield _tool_surface_line(
+                prefix=continuation,
+                content="",
+                surface_width=surface_width,
+                surface_style=surface_style,
+                prefix_style=prefix_style,
+            )
+        for index, line in enumerate(lines):
+            line.rstrip()
+            yield _tool_surface_line(
+                prefix=prefix if index == 0 else continuation,
+                content=line.plain,
+                surface_width=surface_width,
+                surface_style=surface_style,
+                prefix_style=prefix_style,
+            )
+        if self.row.surface == "tool_detail" and self.close_detail:
+            yield _tool_surface_line(
+                prefix=continuation,
+                content="",
+                surface_width=surface_width,
+                surface_style=surface_style,
+                prefix_style=prefix_style,
+            )
+
+
+def _tool_surface_line(
+    *,
+    prefix: str,
+    content: str,
+    surface_width: int,
+    surface_style: Style,
+    prefix_style: str,
+) -> Text:
+    """Render one padded tool-detail row."""
+
+    surface = Text(style=surface_style)
+    surface.append(" ")
+    surface.append(content)
+    surface.pad_right(max(0, surface_width - surface.cell_len))
+    rendered = Text(prefix, style=prefix_style)
+    rendered.append_text(surface)
+    rendered.no_wrap = True
+    return rendered
+
+
+def _tool_detail_style(tone: ProgressTone) -> Style:
+    foreground = (
+        "bright_red"
+        if tone == "error"
+        else "bright_yellow"
+        if tone == "warning"
+        else "bright_white"
+    )
+    return Style(color=foreground, bgcolor=TOOL_DETAIL_BACKGROUND)
+
+
+@dataclass(frozen=True, slots=True)
 class _MarkdownRow:
     row: ProgressRow
     max_width: int
@@ -276,7 +408,7 @@ class _MarkdownRow:
             options.update_width(content_width),
         )
         lines = list(Segment.split_lines(segments))
-        preserve_background = console.color_system is not None
+        preserve_background = True
         while lines and not _line_has_content(
             lines[0], preserve_background=preserve_background
         ):

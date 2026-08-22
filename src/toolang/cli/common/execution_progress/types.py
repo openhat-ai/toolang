@@ -7,6 +7,7 @@ from typing import Literal
 
 ProgressTone = Literal["progress", "normal", "active", "error", "warning"]
 ProgressFormat = Literal["plain", "markdown"]
+ProgressSurface = Literal["none", "tool_summary", "tool_detail"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,14 +20,16 @@ class ProgressRow:
     format: ProgressFormat = "plain"
     prefix: str = ""
     gap_before: bool = False
+    surface: ProgressSurface = "none"
 
 
 @dataclass(frozen=True, slots=True)
 class ProgressBlock:
-    """One committed fragment or atomically replaceable group of progress rows."""
+    """One progress fragment with an explicit inter-section leading gap."""
 
     key: str
     rows: tuple[ProgressRow, ...]
+    gap_before: bool = False
 
 
 @dataclass(frozen=True, slots=True)

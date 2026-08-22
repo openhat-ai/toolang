@@ -45,6 +45,7 @@ def live_row(begin: StepBegin, preview: str) -> ProgressRow:
             else f"executing {tool_label(begin.given)}"
         )
         text = f"• {summary}"
+        return ProgressRow(text, "active", surface="tool_summary")
     else:
         text = f"• running {begin.kind}"
     return ProgressRow(text, "active")
@@ -87,6 +88,9 @@ def trace_terminal_rows(
     tone = _tone(event.status)
     if begin.kind == "model":
         if event.status == "succeeded":
+            parts = output_parts(event)
+            if parts and all(isinstance(part, ToolCallPart) for part in parts):
+                return ()
             return _marked_rows(
                 _model_output_lines(event, include_text=include_model_text)
                 or ([] if not include_model_text else ["completed"]),
@@ -99,16 +103,34 @@ def trace_terminal_rows(
     label = tool_label(begin.given)
     summary = event.noted.summary if isinstance(event.noted, ToolStepNoted) else ""
     if event.status == "succeeded":
-        rows = [ProgressRow(f"• {summary or f'executed {label}'}", tone)]
+        rows = [
+            ProgressRow(
+                f"• {summary or f'executed {label}'}",
+                tone,
+                surface="tool_summary",
+            )
+        ]
         rows.extend(
-            ProgressRow(f"  {line}", tone) for line in _tool_output_lines(event)
+            ProgressRow(f"  {line}", tone, surface="tool_detail")
+            for line in _tool_output_lines(event)
         )
         return tuple(rows)
     status = "failed" if event.status == "failed" else "canceled"
-    rows = [ProgressRow(f"• {summary or f'{status} {label}'}", tone)]
+    rows = [
+        ProgressRow(
+            f"• {summary or f'{status} {label}'}",
+            tone,
+            surface="tool_summary",
+        )
+    ]
     if error:
         rows.extend(
-            ProgressRow(f"  {line}", tone) for line in _split_lines(error.strip())
+            ProgressRow(
+                f"  {line}",
+                tone,
+                surface="tool_detail" if event.status == "failed" else "none",
+            )
+            for line in _split_lines(error.strip())
         )
     return tuple(rows)
 
@@ -264,17 +286,17 @@ def lane_run_error_lines(error: str) -> tuple[str, ...]:
 
 
 def _model_output_lines(event: StepEnd, *, include_text: bool = True) -> list[str]:
+    parts = output_parts(event)
     lines: list[str] = []
-    for part in output_parts(event):
+    for part in parts:
         if isinstance(part, TextPart):
             if include_text:
                 lines.extend(_split_lines(part.text))
         elif isinstance(part, ToolCallPart):
-            name = part.tool_name or part.tool_family or "tool"
-            lines.append(f"requested {name}")
+            continue
         else:
             lines.extend(_json_lines(part.to_data()))
-    if lines:
+    if lines or parts:
         return lines
     return _flow_output_lines(event) if include_text else []
 

@@ -33,7 +33,8 @@ than separate Run headers or closure rows.
 Progress is at most 120 terminal cells wide by default and never wider than an
 attached TTY. Set `TOOLANG_PROGRESS_MAX_WIDTH` to a positive integer to change
 the maximum for both surfaces. Non-TTY script output uses that configured
-maximum.
+maximum as its available width, equivalent to a TTY with no narrower physical
+width.
 
 Execution markers start in column zero. Wrapped content and unmarked
 continuations align with the text after the marker:
@@ -126,9 +127,30 @@ Tool activity and terminal output use this form:
 
 ```text
 • calling search “Toolang plugin protocol”
+
 • called search “Toolang plugin protocol”
-  {"results":[{"url":"https://example.com"}]}
+
+  [                                                            ] background
+  [ {"results":[{"url":"https://example.com"}]}          ]
+  [                                                            ]
 ```
+
+The brackets above label colored cells; they are not emitted as terminal
+glyphs.
+
+Every Step begins after one unpainted blank line, including model output that
+follows a Tool Step. A preceding statement, iteration, or condition header can
+own that same separator through its trailing blank row; the following Step
+does not add a second one. Continuation rows from the same Step do not add
+another separator. Tool summaries remain ordinary progress rows. After another
+unpainted blank line, a succeeded result or failed diagnostic follows on a
+borderless, background-filled detail surface. The detail content has one empty
+row above and below it and one empty column on each side, matching code-block
+padding. The detail surface wraps like a code block and fills the available
+progress width up to `TOOLANG_PROGRESS_MAX_WIDTH`. Non-TTY output preserves
+the same gaps, padding, and width while omitting ANSI sequences. The surface
+shares ANSI palette slot 8 with the Chat control bar and input box, so terminal
+themes retain ownership of the actual color.
 
 The executor records a human-readable `summary` when the Tool Step begins and
 another when it ends. Summary generation receives the tool `family`, leaf
@@ -142,8 +164,12 @@ Historical Steps without summaries retain the compatibility forms `executing
 TOOL`, `executed TOOL`, `failed TOOL`, and `canceled TOOL`.
 
 Structured Tool results use compact single-line JSON. Textual `stdout` and
-`stderr` preserve their original lines. A model Tool request without a Tool
-result is displayed as `• requested TOOL`.
+`stderr` preserve their original lines. Model `ToolCallPart` values are not
+displayed; the following Tool Step owns the visible call activity. Mixed Model
+output retains its text and other displayable Parts. A successful Model Step
+containing only tool-call Parts commits no terminal row and leaves its live
+position to the following Tool Step. This presentation suppression does not
+change execution status, records, metrics, or footer facts.
 
 For a streamed Model Text Part, concatenated deltas must be an exact prefix of
 the authoritative Part closure. A successful Step result must contain that
@@ -293,7 +319,9 @@ Script writes progress to stderr. It does not copy the durable root result to
 stdout by default. `--save -` writes the result to stdout and `--save PATH`
 atomically writes it to a file. Failed and canceled Runs do not write the
 selected destination. Non-TTY output contains stable newline-delimited content
-without color, cursor movement, or partial delta lines.
+without color, cursor movement, or partial delta lines. Its semantic rows and
+block geometry match TTY output; only live replacement and ANSI emission are
+absent.
 
 TTY script output uses one event-driven Rich `Live` area per root Run. Chat
 does not create a Rich `Live` because prompt_toolkit owns its terminal; it uses
@@ -323,8 +351,10 @@ displaying Run IDs or execution state. The start accent uses the same ANSI
 bright cyan as the banner logo and wordmark. Quick-command bars use the same
 background-cell treatment with their own accent, and the prompt uses the start
 accent. Control bars and the input box share the fenced-code surface's ANSI
-slot 8 background, leaving its actual RGB value to the terminal theme. An empty
-prompt shows the muted placeholder `Ask anything`; the
+slot 8 background, leaving its actual RGB value to the terminal theme. Control
+bar messages use the terminal's default foreground and explicitly clear dim
+styling in both stable and live output. An empty prompt shows the muted
+placeholder `Ask anything`; the
 placeholder disappears as soon as the buffer contains text and is never part of
 the submitted message. The status bar does not paint a base background and
 therefore inherits the terminal background. Its left side begins in column zero

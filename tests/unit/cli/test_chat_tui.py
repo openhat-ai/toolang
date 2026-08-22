@@ -132,6 +132,23 @@ def test_chat_run_begin_finalizes_local_submission_block() -> None:
     assert "run_1" not in _render_text(app.finalized[0].render())
 
 
+def test_chat_first_agic_step_has_exactly_one_gap_after_submission() -> None:
+    app = FakeApp()
+    app.live_blocks.append(blocks.RunStartBlock.create("hello"))
+
+    events.handle_run_event(_run_begin(), app)
+    events.handle_run_event(_model_step_begin(), app)
+
+    transcript = "".join(
+        _render_text(block.render())
+        for block in (*app.finalized, *app.live_blocks)
+        if not isinstance(block, blocks.RunStopBlock)
+    )
+    control_bottom = " " * 80
+    assert f"{control_bottom}\n\n• thinking" in transcript
+    assert f"{control_bottom}\n\n\n• thinking" not in transcript
+
+
 def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() -> None:
     app = FakeApp()
 
@@ -197,8 +214,54 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
     assert "• drafting\n\n• run_1 succeeded" in transcript
 
 
+def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None:
+    app = FakeApp()
+
+    events.handle_run_event(_run_begin(), app)
+    events.handle_run_event(_model_step_begin(), app)
+    stop = app.live_blocks[-1]
+    assert [block.type for block in app.live_blocks] == [
+        "ExecutionProgressBlock",
+        "RunStopBlock",
+    ]
+
+    events.handle_run_event(
+        StepEnd(
+            step=StepPath.parse("run_1.1"),
+            kind="model",
+            status="succeeded",
+            output=_parts(
+                ToolCallPart(
+                    tool_call_id="call_1",
+                    tool_name="shell__execute",
+                    tool_family="shell",
+                    input={"command": "echo ok"},
+                )
+            ),
+            noted=ModelStepNoted(tokens=ModelTokenCount(input=12, output=3)),
+        ),
+        app,
+    )
+
+    assert app.finalized == []
+    assert app.live_blocks == [stop]
+
+    events.handle_run_event(_tool_step_begin(step_index=2), app)
+
+    assert [block.type for block in app.live_blocks] == [
+        "ExecutionProgressBlock",
+        "RunStopBlock",
+    ]
+    assert app.live_blocks[-1] is stop
+    rendered = _render_text(app.live_blocks[0].render())
+    assert "executing shell__execute" in rendered
+    assert "thinking" not in rendered
+    assert "requested" not in rendered
+
+
 def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
     app = FakeApp()
+    app.live_blocks.append(blocks.RunStartBlock.create("map the items"))
 
     events.handle_run_event(_run_begin(executable_kind="flow"), app)
     events.handle_run_event(_flow_step_begin(), app)
@@ -206,6 +269,9 @@ def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
     events.handle_run_event(_run_end(status="succeeded", output_step_index=1), app)
 
     transcript = "".join(_render_text(block.render()) for block in app.finalized)
+    control_bottom = " " * 80
+    assert f"{control_bottom}\n\n[1] Run summarize" in transcript
+    assert f"{control_bottom}\n\n\n[1] Run summarize" not in transcript
     assert "[1] Run summarize for each item, up to 2 at once\n\n• Mapped" in (
         transcript
     )
@@ -228,14 +294,14 @@ def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() ->
         app,
     )
     assert app.finalized == []
-    assert _render_text(app.live_blocks[0].render()).startswith("• Heading")
+    assert _render_text(app.live_blocks[0].render()).startswith("\n• Heading")
 
     events.handle_run_event(
         PartDelta(step=path, part=0, delta=TextDelta("Paragraph")),
         app,
     )
     assert len(app.finalized) == 1
-    assert _render_text(app.finalized[0].render()).startswith("• Heading")
+    assert _render_text(app.finalized[0].render()).startswith("\n• Heading")
     assert _render_text(app.live_blocks[0].render()).splitlines() == [
         "",
         "  Paragraph",
@@ -359,7 +425,7 @@ def test_script_and_chat_sinks_preserve_the_same_semantic_rows(
     ProgressConsole(stream).apply(ProgressUpdate(committed=(progress,)))
     chat = blocks.ExecutionProgressBlock(progress)
 
-    assert stream.getvalue() == _render_text(chat.render())
+    assert stream.getvalue() == _render_text(chat.render()).removeprefix("\n")
 
 
 def test_chat_submission_has_no_status_before_run_begin() -> None:
@@ -377,7 +443,6 @@ def test_chat_submission_has_no_status_before_run_begin() -> None:
         blank_control_line,
         control_line,
         blank_control_line,
-        "",
     ]
 
 
@@ -398,6 +463,9 @@ def test_chat_preaccept_error_does_not_render_a_failed_run() -> None:
     assert "starting" not in rendered
     assert "run failed" not in rendered
     assert app.finished
+    transcript = "".join(_render_text(block.render()) for block in app.finalized)
+    assert "\n\n• Runnable not found: missing" in transcript
+    assert "\n\n\n• Runnable not found: missing" not in transcript
 
 
 def test_chat_local_stop_updates_existing_run_stop_block() -> None:
@@ -502,12 +570,20 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
     assert all(not line.startswith(("│", "└")) for line in lines[1:])
 
 
-def test_chat_tool_step_uses_bullet_marker_and_summary() -> None:
+def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() -> None:
     block = blocks.ExecutionProgressBlock(
         ProgressBlock(
             "step:run_1.1",
-            (ProgressRow("• executing shell__execute", "active"),),
-        )
+            (
+                ProgressRow(
+                    "• executing shell__execute",
+                    "active",
+                    surface="tool_summary",
+                ),
+            ),
+            gap_before=True,
+        ),
+        max_width=32,
     )
 
     running_segments = [
@@ -516,33 +592,210 @@ def test_chat_tool_step_uses_bullet_marker_and_summary() -> None:
         if segment.text.strip()
     ]
     assert running_segments
-    assert "• executing shell__execute" in _render_text(block.render())
+    assert _render_text(block.render()).startswith("\n• executing shell__execute")
     assert all(
         segment.style is None or not segment.style.dim for segment in running_segments
+    )
+    assert all(
+        segment.style is None or segment.style.bgcolor is None
+        for segment in running_segments
     )
 
     block.update(
         ProgressBlock(
             "step:run_1.1",
             (
-                ProgressRow("• executed shell__execute"),
-                ProgressRow("  ok"),
+                ProgressRow(
+                    "• executed shell__execute",
+                    surface="tool_summary",
+                ),
+                ProgressRow("  ok", surface="tool_detail"),
             ),
+            gap_before=True,
         )
     )
     rendered = _render_text(block.render())
-    finalized_segments = [
-        segment
-        for segment in rendering.render_segments(block.render(), width=80)
-        if segment.text.strip()
+    lines = list(
+        Segment.split_lines(rendering.render_segments(block.render(), width=80))
+    )
+    painted_lines = [
+        [
+            segment
+            for segment in line
+            if segment.style is not None and segment.style.bgcolor is not None
+        ]
+        for line in lines
+    ]
+    painted_lines = [line for line in painted_lines if line]
+
+    assert rendered.startswith("\n• executed shell__execute\n\n")
+    assert "ok" in rendered
+    assert not any(character in rendered for character in "│└─┘▏▕▔")
+    assert all(
+        segment.style is None or segment.style.bgcolor is None for segment in lines[1]
+    )
+    assert all(not segment.text for segment in lines[0])
+    assert all(not segment.text for segment in lines[2])
+    assert len(painted_lines) == 3
+    assert all(
+        sum(len(segment.text) for segment in line) == 30 for line in painted_lines
+    )
+    background_numbers: list[set[int]] = []
+    for line in painted_lines:
+        numbers: set[int] = set()
+        for segment in line:
+            assert segment.style is not None
+            assert segment.style.bgcolor is not None
+            number = segment.style.bgcolor.number
+            assert number is not None
+            numbers.add(number)
+        background_numbers.append(numbers)
+    assert background_numbers == [{8}, {8}, {8}]
+
+    painted_offsets: list[tuple[int, int]] = []
+    for line in lines:
+        offset = 0
+        painted_start: int | None = None
+        painted_end: int | None = None
+        for segment in line:
+            end = offset + len(segment.text)
+            if segment.style is not None and segment.style.bgcolor is not None:
+                painted_start = offset if painted_start is None else painted_start
+                painted_end = end
+            offset = end
+        if painted_start is not None and painted_end is not None:
+            painted_offsets.append((painted_start, painted_end))
+    assert painted_offsets == [(2, 32), (2, 32), (2, 32)]
+
+    rendered_lines = [
+        "".join(segment.text for segment in line)
+        for line in lines
+        if any(segment.text for segment in line)
+    ]
+    padding = " " * 32
+    assert rendered_lines[1] == padding
+    assert rendered_lines[2].startswith("   ok")
+    assert rendered_lines[2].endswith(" ")
+    assert rendered_lines[3] == padding
+
+
+def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
+    block = blocks.ExecutionProgressBlock(
+        ProgressBlock(
+            "step:run_1.1",
+            (
+                ProgressRow(
+                    "• called read_text a-very-long-document-name.md",
+                    surface="tool_summary",
+                ),
+                ProgressRow(
+                    f"  {'x' * 40}",
+                    surface="tool_detail",
+                ),
+            ),
+        ),
+        max_width=24,
+    )
+
+    lines = list(
+        Segment.split_lines(rendering.render_segments(block.render(), width=80))
+    )
+    painted_lines = [
+        line
+        for line in lines
+        if any(
+            segment.style is not None and segment.style.bgcolor is not None
+            for segment in line
+        )
     ]
 
-    assert rendered.startswith("• executed shell__execute")
-    assert "ok" in rendered
+    assert len(painted_lines) > 2
     assert all(
-        segment.style is not None and segment.style.dim
-        for segment in finalized_segments
+        sum(len(segment.text) for segment in line) == 24 for line in painted_lines
     )
+    background_widths: dict[int, set[int]] = {}
+    for line in painted_lines:
+        backgrounds = [
+            segment
+            for segment in line
+            if segment.style is not None and segment.style.bgcolor is not None
+        ]
+        assert backgrounds
+        widths: dict[int, int] = {}
+        for segment in backgrounds:
+            style = segment.style
+            assert style is not None and style.bgcolor is not None
+            number = style.bgcolor.number
+            assert number is not None
+            widths[number] = widths.get(number, 0) + len(segment.text)
+        for number, width in widths.items():
+            background_widths.setdefault(number, set()).add(width)
+    assert background_widths == {8: {22}}
+
+    rendered_lines = [
+        "".join(segment.text for segment in line)
+        for line in lines
+        if any(segment.text for segment in line)
+    ]
+    assert all(len(line) <= 24 for line in rendered_lines)
+    assert any(len(line) < 24 for line in rendered_lines)
+    full_content = next(
+        segment.text
+        for line in lines
+        for segment in line
+        if segment.style is not None
+        and segment.style.bgcolor is not None
+        and segment.style.bgcolor.number == 8
+        and "x" * 20 in segment.text
+    )
+    assert full_content == f" {'x' * 20} "
+    assert rendered_lines.count(" " * 24) == 2
+    assert not any(character in "".join(rendered_lines) for character in "│└─┘▏▕▔")
+
+
+def test_chat_model_step_starts_after_a_blank_row() -> None:
+    block = blocks.ExecutionProgressBlock(
+        ProgressBlock(
+            "step:run_1.2",
+            (
+                ProgressRow(
+                    "model answer",
+                    format="markdown",
+                    prefix="• ",
+                ),
+            ),
+            gap_before=True,
+        )
+    )
+
+    assert _render_text(block.render()).startswith("\n• model answer")
+
+
+def test_chat_nested_headers_and_model_step_use_single_gaps() -> None:
+    header = blocks.ExecutionProgressBlock(
+        ProgressBlock(
+            "step:run_1.0.0",
+            (
+                ProgressRow("--- iteration 1 of 3 ---"),
+                ProgressRow(""),
+                ProgressRow("[0] Run review"),
+                ProgressRow(""),
+            ),
+        )
+    )
+    model = blocks.ExecutionProgressBlock(
+        ProgressBlock(
+            "step:run_review.0",
+            (ProgressRow("• thinking", "active"),),
+        ),
+        live=True,
+    )
+
+    transcript = _render_text(header.render()) + _render_text(model.render())
+
+    assert "--- iteration 1 of 3 ---\n\n[0] Run review" in transcript
+    assert "[0] Run review\n\n• thinking" in transcript
+    assert "[0] Run review\n\n\n• thinking" not in transcript
 
 
 def test_chat_truncates_live_lane_but_preserves_its_finalized_output() -> None:
@@ -582,6 +835,7 @@ def test_chat_wraps_trace_model_activity_across_live_rows() -> None:
                     wrap_live=True,
                 ),
             ),
+            gap_before=True,
         ),
         live=True,
     )
@@ -590,9 +844,11 @@ def test_chat_wraps_trace_model_activity_across_live_rows() -> None:
 
     lines = rendered.splitlines()
     assert len(lines) > 1
-    assert rendered.startswith("• first")
+    assert rendered.startswith("\n• first")
     assert "..." not in rendered
-    assert " ".join(line.strip().removeprefix("• ") for line in lines) == content
+    assert (
+        " ".join(line.strip().removeprefix("• ") for line in lines if line) == content
+    )
 
 
 def test_chat_progress_width_is_bounded_on_a_wide_terminal() -> None:
@@ -601,14 +857,18 @@ def test_chat_progress_width_is_bounded_on_a_wide_terminal() -> None:
         ProgressBlock(
             "step:run_1.0",
             (ProgressRow(f"• {content}"),),
+            gap_before=True,
         )
     )
 
     rendered = _render_text(block.render(), width=160)
     lines = rendered.splitlines()
 
+    assert lines[0] == ""
     assert all(rendering.display_len(line) <= 120 for line in lines)
-    assert " ".join(line.strip().removeprefix("• ") for line in lines) == content
+    assert (
+        " ".join(line.strip().removeprefix("• ") for line in lines if line) == content
+    )
 
 
 def test_chat_progress_width_honors_configured_maximum() -> None:
@@ -617,6 +877,7 @@ def test_chat_progress_width_honors_configured_maximum() -> None:
         ProgressBlock(
             "step:run_1.0",
             (ProgressRow(f"• {content}"),),
+            gap_before=True,
         ),
         max_width=48,
     )
@@ -624,8 +885,11 @@ def test_chat_progress_width_honors_configured_maximum() -> None:
     rendered = _render_text(block.render(), width=160)
     lines = rendered.splitlines()
 
+    assert lines[0] == ""
     assert all(rendering.display_len(line) <= 48 for line in lines)
-    assert " ".join(line.strip().removeprefix("• ") for line in lines) == content
+    assert (
+        " ".join(line.strip().removeprefix("• ") for line in lines if line) == content
+    )
 
 
 def test_chat_wraps_finalized_parallel_lane_at_its_embedded_marker() -> None:
@@ -771,18 +1035,24 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
         " " * 80,
         f"{rendering.ACCENT_CELL} hello" + " " * 73,
         " " * 80,
-        "",
     ]
     assert steer_text.splitlines() == [
         "",
         " " * 80,
         f"{rendering.ACCENT_CELL} adjust" + " " * 72,
         " " * 80,
-        "",
     ]
 
     start_fragments = rendering.renderable_to_prompt_toolkit(start.render())
     steer_fragments = rendering.renderable_to_prompt_toolkit(steer.render())
+    stable_start = rendering.renderables_output([start.render()])
+    start_segments = rendering.render_segments(start.render())
+    start_message_segment = next(
+        segment for segment in start_segments if "hello" in segment.text
+    )
+    assert start_message_segment.style is not None
+    assert start_message_segment.style.color is None
+    assert start_message_segment.style.dim is False
     start_prompt_accent = rendering._prompt_toolkit_color(
         Color.parse(rendering.START_CONTROL_ACCENT)
     )
@@ -806,10 +1076,13 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     )
 
     assert rendering.START_CONTROL_ACCENT == "bright_cyan"
-    assert start_accent == f"bg:{start_prompt_accent}"
-    assert steer_accent == f"bg:{rendering.STEER_CONTROL_ACCENT}"
+    assert start_accent == f"bg:{start_prompt_accent} nodim"
+    assert steer_accent == f"bg:{rendering.STEER_CONTROL_ACCENT} nodim"
     assert f"bg:{rendering.INPUT_BACKGROUND}" in start_message
     assert f"bg:{rendering.INPUT_BACKGROUND}" in steer_message
+    assert "nodim" in start_message.split()
+    assert "nodim" in steer_message.split()
+    assert "\x1b[22m" in stable_start
 
     steer.update(_model_step_begin(step_index=2))
     assert _render_text(steer.render()) == steer_text
@@ -872,13 +1145,11 @@ def test_chat_control_bar_uses_three_row_minimum() -> None:
         " " * 20,
         "  first" + " " * 13,
         "  second" + " " * 12,
-        "",
     ]
     assert three_lines == [
         "  first" + " " * 13,
         "  second" + " " * 12,
         "  third" + " " * 13,
-        "",
     ]
 
 
@@ -1009,7 +1280,7 @@ def test_chat_durable_response_matches_run_model_markdown(live: bool) -> None:
 
     assert durable_text.startswith("• Heading\n")
     assert f"  {'─' * 38}\n" in durable_text
-    assert durable_text == progress_text
+    assert durable_text == progress_text.removeprefix("\n")
 
 
 def test_chat_fenced_code_preserves_one_rectangular_background() -> None:
@@ -2027,6 +2298,62 @@ def test_chat_tui_typing_resets_pending_interrupt_exit() -> None:
 
     assert not app.interrupt_exit_pending
     assert app.status_bar.error_message == ""
+
+
+def test_chat_tui_clear_scrolls_one_separator_into_history_before_redrawing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    output = app.app.output
+    actions: list[object] = []
+    monkeypatch.setattr(app.app.renderer, "erase", lambda: actions.append("erase"))
+    monkeypatch.setattr(
+        type(output),
+        "get_size",
+        lambda _output: SimpleNamespace(rows=4, columns=80),
+    )
+    monkeypatch.setattr(
+        type(output),
+        "write_raw",
+        lambda _output, value: actions.append(("write_raw", value)),
+    )
+    monkeypatch.setattr(
+        type(output),
+        "erase_screen",
+        lambda _output: actions.append("erase_screen"),
+    )
+    monkeypatch.setattr(
+        type(output),
+        "cursor_goto",
+        lambda _output, row, column: actions.append(("cursor_goto", row, column)),
+    )
+    monkeypatch.setattr(
+        type(output),
+        "flush",
+        lambda _output: actions.append("flush"),
+    )
+    monkeypatch.setattr(
+        app.app.renderer,
+        "request_absolute_cursor_position",
+        lambda: actions.append("request_cursor_position"),
+    )
+
+    app._handle_clear()
+
+    assert actions == [
+        "erase",
+        ("write_raw", "\r\n" * 4),
+        "erase_screen",
+        ("cursor_goto", 0, 0),
+        "flush",
+        "request_cursor_position",
+    ]
 
 
 def test_chat_tui_removes_live_block_before_writing_scrollback(

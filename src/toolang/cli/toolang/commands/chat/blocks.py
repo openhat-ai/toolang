@@ -97,10 +97,13 @@ def _control_bar_line(
     background = CONTROL_BAR_BACKGROUND
     return bar(
         [
-            (ACCENT_CELL, f"on {accent}"),
-            (f" {content}" if content else "", f"white on {background}"),
+            (ACCENT_CELL, f"not dim on {accent}"),
+            (
+                f" {content}" if content else "",
+                f"not dim on {background}",
+            ),
         ],
-        style=f"on {background}",
+        style=f"not dim on {background}",
         width=width,
     )
 
@@ -196,12 +199,13 @@ class RunStartBlock(MutableBlock):
         del event
 
     def render(self) -> RenderableType:
-        lines: list[RenderableType] = _control_bar_lines(
-            self.message,
-            accent=START_CONTROL_ACCENT,
+        return Group(
+            *_control_bar_lines(
+                self.message,
+                accent=START_CONTROL_ACCENT,
+            ),
+            Text(),
         )
-        lines.append(Text("\n"))
-        return Group(*lines)
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,9 +218,12 @@ class SubmissionErrorBlock(MutableBlock):
         del event
 
     def render(self) -> RenderableType:
-        lines = [
-            Text.from_markup(f"[red]• {escape(line)}[/]")
-            for line in _wrap_plain_lines(friendly_error(self.error))
+        lines: list[RenderableType] = [
+            Text(),
+            *(
+                Text.from_markup(f"[red]• {escape(line)}[/]")
+                for line in _wrap_plain_lines(friendly_error(self.error))
+            ),
         ]
         lines.append(Text("\n"))
         return Group(*lines)
@@ -244,7 +251,7 @@ class RunSteerBlock(MutableBlock):
                 accent=STEER_CONTROL_ACCENT,
             )
         )
-        lines.append(Text("\n"))
+        lines.append(Text())
         return Group(*lines)
 
 

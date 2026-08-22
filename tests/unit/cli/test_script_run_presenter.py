@@ -8,7 +8,12 @@ from os import terminal_size
 import pytest
 from rich.live import Live
 
-from toolang.base.types.message import TextDelta, TextPart, ToolResultPart
+from toolang.base.types.message import (
+    TextDelta,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+)
 from toolang.base.types.run import ModelCall, ToolCall
 from toolang.cli.common.execution_progress import (
     ProgressBlock,
@@ -127,7 +132,7 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
     )
 
     assert "thinking" not in output
-    assert output.startswith("• Use a shared reducer.\n")
+    assert output.startswith("\n• Use a shared reducer.\n")
     assert "• Use a shared reducer.\n\n• run_one succeeded" in output
     assert "run_one.0" not in output
     assert "deepseek/deepseek-chat" not in output
@@ -141,6 +146,54 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
     assert "┌" not in output
     assert "└" not in output
     assert "2.0s · 1 model call · ↑3.4k ↓86 $0.01" in output
+
+
+@pytest.mark.parametrize("tty", [False, True])
+def test_script_tool_call_only_model_step_clears_live_without_scrollback(
+    tty: bool,
+) -> None:
+    stream = _TtyStream() if tty else StringIO()
+    presenter = ScriptRunPresenter(run_id="run_one", stream=stream)
+    path = StepPath.parse("run_one.0")
+
+    async def scenario() -> None:
+        await presenter.on_event(_root_begin())
+        await presenter.on_event(StepBegin(step=path, kind="model", given=_model()))
+        assert [row.text for row in presenter.console._live_rows] == ["• thinking"]
+
+        await presenter.on_event(
+            StepEnd(
+                step=path,
+                kind="model",
+                status="succeeded",
+                output=Local.typed(
+                    "Part[]",
+                    (
+                        ToolCallPart(
+                            tool_call_id="call_1",
+                            tool_name="web_search.search",
+                            tool_family="web_search",
+                            input={"query": "agent runtimes"},
+                        ),
+                    ),
+                    "_",
+                    0,
+                ),
+            )
+        )
+
+        assert presenter.console._live_rows == []
+        presenter.close()
+
+    asyncio.run(scenario())
+    output = stream.getvalue()
+
+    assert "requested" not in output
+    assert "web_search.search" not in output
+    if tty:
+        assert "\r\x1b[2K" in output
+    else:
+        assert output == ""
 
 
 def test_tty_model_output_uses_normal_style() -> None:
@@ -198,8 +251,47 @@ def test_tool_output_uses_one_unmarked_continuation() -> None:
         ]
     )
 
-    assert '• executed web_search.search\n  {"results":[{},{},{}]}' in output
+    assert [line.strip() for line in output.splitlines()][1:6] == [
+        "• executed web_search.search",
+        "",
+        "",
+        '{"results":[{},{},{}]}',
+        "",
+    ]
     assert "run_one.0" not in output
+
+
+def test_non_tty_tool_surfaces_preserve_tty_block_geometry_without_ansi() -> None:
+    stream = StringIO()
+    console = ProgressConsole(stream, width=32)
+    console.apply(
+        ProgressUpdate(
+            committed=(
+                ProgressBlock(
+                    "step:run_one.0",
+                    (
+                        ProgressRow(
+                            "• called read_text README.md",
+                            surface="tool_summary",
+                        ),
+                        ProgressRow("  contents", surface="tool_detail"),
+                    ),
+                ),
+            )
+        )
+    )
+
+    lines = stream.getvalue().splitlines()
+    assert [line.strip() for line in lines] == [
+        "• called read_text README.md",
+        "",
+        "",
+        "contents",
+        "",
+    ]
+    assert all(len(line) == 32 for line in lines[2:])
+    assert "\x1b[" not in stream.getvalue()
+    assert not any(character in stream.getvalue() for character in "│└─┘▏▕▔")
 
 
 def test_tty_replaces_live_rows_and_clears_them_on_shutdown() -> None:
@@ -252,7 +344,13 @@ def test_step_error_and_ownerless_run_error_use_bullet_rows() -> None:
         ]
     )
 
-    assert "• failed web_search.search\n  provider returned status 429" in step_error
+    assert [line.strip() for line in step_error.splitlines()][1:6] == [
+        "• failed web_search.search",
+        "",
+        "",
+        "provider returned status 429",
+        "",
+    ]
     assert step_error.count("provider returned status 429") == 1
     assert "!" not in step_error
     assert "• progress stream ended early" in ownerless
@@ -271,6 +369,7 @@ def test_tty_wraps_finalized_model_output_without_adding_a_marker() -> None:
                             "• executed Alpha beta gamma delta epsilon zeta eta theta"
                         ),
                     ),
+                    gap_before=True,
                 ),
             )
         )
@@ -278,6 +377,7 @@ def test_tty_wraps_finalized_model_output_without_adding_a_marker() -> None:
     rendered = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", stream.getvalue())
 
     assert rendered.splitlines() == [
+        "",
         "• executed Alpha beta gamma delta",
         "  epsilon zeta eta theta",
     ]
@@ -447,7 +547,7 @@ def test_tty_markdown_separates_inline_and_fenced_code_surfaces() -> None:
     assert "\x1b[48;2" not in rendered
 
 
-def test_non_tty_markdown_code_remains_color_free_and_unpadded() -> None:
+def test_non_tty_markdown_code_preserves_tty_geometry_without_ansi() -> None:
     stream = StringIO()
     console = ProgressConsole(stream, width=40)
     console.apply(
@@ -468,7 +568,9 @@ def test_non_tty_markdown_code_remains_color_free_and_unpadded() -> None:
         )
     )
 
-    assert stream.getvalue() == "•  x = 1\n"
+    lines = stream.getvalue().splitlines()
+    assert [line.strip() for line in lines] == ["•", "x = 1", ""]
+    assert all(len(line) == 40 for line in lines)
 
 
 def test_tty_wraps_finalized_parallel_lane_at_its_embedded_marker() -> None:
@@ -644,6 +746,7 @@ def test_tty_wraps_complete_cjk_output_by_terminal_cell_width() -> None:
                             "• 已完成对多个来源中的证据和结论的整理并生成最终摘要"
                         ),
                     ),
+                    gap_before=True,
                 ),
             )
         )
@@ -654,5 +757,6 @@ def test_tty_wraps_complete_cjk_output_by_terminal_cell_width() -> None:
     assert "".join(line.strip() for line in lines).replace("•", "", 1).strip() == (
         "已完成对多个来源中的证据和结论的整理并生成最终摘要"
     )
+    assert lines[0] == ""
     assert all(display_width(line) <= 40 for line in lines)
-    assert lines[1].startswith("  ")
+    assert lines[2].startswith("  ")

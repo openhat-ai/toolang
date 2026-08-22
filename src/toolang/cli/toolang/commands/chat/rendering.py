@@ -17,17 +17,19 @@ from wcwidth import wcswidth
 
 from toolang.cli.common.execution_progress.rich_rendering import (
     TERMINAL_MARKDOWN_THEME,
+    TERMINAL_SURFACE_BACKGROUND,
 )
 from toolang.cli.common.output import TOOLANG_COLOR
 
 ACCENT_CELL = " "
 # prompt-toolkit and Rich names for ANSI slot 8, respectively.
 INPUT_BACKGROUND = "ansibrightblack"
-CONTROL_BAR_BACKGROUND = "bright_black"
+CONTROL_BAR_BACKGROUND = TERMINAL_SURFACE_BACKGROUND
 QUICK_COMMAND_CONTROL_ACCENT = "#ffd866"
 START_CONTROL_ACCENT = TOOLANG_COLOR
 START_CONTROL_ACCENT_PROMPT_TOOLKIT = "ansibrightcyan"
 STEER_CONTROL_ACCENT = "#d7b3ff"
+_ANSI_NOT_DIM = "\x1b[22m"
 
 _PROMPT_TOOLKIT_ANSI_COLORS = (
     "ansiblack",
@@ -199,17 +201,23 @@ def renderables_output(renderables: Sequence[RenderableType | None]) -> str:
 
 def _renderable_output(renderable: RenderableType) -> str:
     output = "".join(
-        segment.style.render(
-            segment.text,
-            color_system=ColorSystem.TRUECOLOR,
-            legacy_windows=False,
-        )
-        if segment.style is not None
-        else segment.text
+        _styled_segment_output(segment)
         for segment in render_segments(renderable)
         if not segment.control
     )
     return output if not output or output.endswith("\n") else f"{output}\n"
+
+
+def _styled_segment_output(segment: Segment) -> str:
+    style = segment.style
+    if style is None:
+        return segment.text
+    output = style.render(
+        segment.text,
+        color_system=ColorSystem.TRUECOLOR,
+        legacy_windows=False,
+    )
+    return f"{_ANSI_NOT_DIM}{output}" if style.dim is False else output
 
 
 def rich_style_to_prompt_toolkit(style: Style | None) -> str:
@@ -226,8 +234,10 @@ def rich_style_to_prompt_toolkit(style: Style | None) -> str:
         parts.append("italic")
     if style.underline:
         parts.append("underline")
-    if style.dim:
+    if style.dim is True:
         parts.append("dim")
+    elif style.dim is False:
+        parts.append("nodim")
     if style.reverse:
         parts.append("reverse")
     return " ".join(parts)
