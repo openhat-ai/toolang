@@ -97,7 +97,8 @@ Examples include:
 A direct single-Run Flow Step preserves that Run's leaf trace and emits no
 synthetic success row. Absence of an error means success. Direct values are
 displayed as values; output shapes such as `1 item` or `6-item list` are not
-displayed.
+displayed. When the Flow Step has aggregate facts, they continue immediately
+after the leaf output without opening another visual section.
 
 ## Model and Tool Trace
 
