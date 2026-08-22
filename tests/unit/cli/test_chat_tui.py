@@ -882,6 +882,33 @@ def test_chat_control_bar_uses_three_row_minimum() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("message", "expected_rows"),
+    [("x" * 40, 3), ("中文" * 20, 5)],
+)
+def test_chat_control_bar_wraps_every_physical_row(
+    message: str,
+    expected_rows: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(blocks, "terminal_width", lambda: 20)
+    monkeypatch.setattr(rendering, "terminal_width", lambda: 20)
+
+    rendered_lines = [
+        line
+        for line in _render_text(
+            blocks.RunStartBlock.create(message).render(),
+            width=20,
+        ).splitlines()
+        if line.strip()
+    ]
+
+    assert len(rendered_lines) == expected_rows
+    assert all(line.startswith("  ") for line in rendered_lines)
+    assert all(rendering.display_len(line) == 20 for line in rendered_lines)
+    assert "".join(line[2:].rstrip() for line in rendered_lines) == message
+
+
 def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> None:
     prompt = widgets.PromptBox(lambda _event: None, lambda: None)
 
@@ -903,18 +930,23 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     assert isinstance(content, HSplit)
     input_row = content.children[1]
     assert isinstance(input_row, VSplit)
-    padding = input_row.children[0]
-    assert isinstance(padding, Window)
-    assert padding.width == 1
+    left_padding = input_row.children[0]
+    assert isinstance(left_padding, Window)
+    assert left_padding.width == 1
     input_window = input_row.children[1]
     assert isinstance(input_window, Window)
     assert isinstance(input_window.content, BufferControl)
+    right_padding = input_row.children[2]
+    assert isinstance(right_padding, Window)
+    assert right_padding.width == 1
+    assert right_padding.style == "class:input"
+    assert right_padding.char == " "
     assert input_window.content.input_processors is not None
     placeholder = input_window.content.input_processors[0]
     assert isinstance(placeholder, ConditionalProcessor)
     assert isinstance(placeholder.processor, AfterInput)
     assert placeholder.processor.style == "class:input.placeholder"
-    assert placeholder.processor.text == "Ask anything"
+    assert placeholder.processor.text == "Ask or describe a task"
     assert placeholder.filter()
     assert widgets._chat_ui_palette()["input.placeholder"] == (
         f"fg:#b8b8b8 bg:{rendering.INPUT_BACKGROUND}"
@@ -923,6 +955,29 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     prompt.buffer.text = "hello"
 
     assert not placeholder.filter()
+
+
+def test_chat_prompt_grows_for_wrapped_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompt = widgets.PromptBox(lambda _event: None, lambda: None)
+    monkeypatch.setattr(
+        widgets.shutil,
+        "get_terminal_size",
+        lambda _fallback: SimpleNamespace(columns=10),
+    )
+
+    prompt.buffer.text = "123456"
+    assert prompt.rows() == 3
+
+    prompt.buffer.text = "1234567"
+    assert prompt.rows() == 4
+
+    prompt.buffer.text = "中文中文"
+    assert prompt.rows() == 4
+
+    prompt.buffer.text = "x" * 80
+    assert prompt.rows() == widgets.MAX_INPUT_ROWS + 2
 
 
 def test_chat_durable_response_wraps_markdown() -> None:

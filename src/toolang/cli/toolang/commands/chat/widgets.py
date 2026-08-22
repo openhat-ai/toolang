@@ -27,7 +27,7 @@ from .rendering import (
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-_INPUT_PLACEHOLDER = "Ask anything"
+_INPUT_PLACEHOLDER = "Ask or describe a task"
 _STATUS_SPINNER_STYLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "circles": ("■", ("◐", "◓", "◑", "◒")),
     "quadrants": (" ", ("▖", "▘", "▝", "▗")),
@@ -188,6 +188,12 @@ class PromptBox:
                             style="class:input",
                             char=" ",
                         ),
+                        Window(
+                            width=1,
+                            style="class:input",
+                            always_hide_cursor=True,
+                            char=" ",
+                        ),
                     ],
                     height=self._input_rows,
                     style="class:input",
@@ -343,7 +349,14 @@ class PromptBox:
             self.history_draft = ""
 
     def _input_rows(self) -> int:
-        return min(MAX_INPUT_ROWS, max(1, self.buffer.document.line_count))
+        terminal_width = shutil.get_terminal_size((100, 24)).columns
+        input_width = max(1, terminal_width - 3)
+        # BufferControl reserves one trailing cursor cell per logical line.
+        rows = sum(
+            max(1, (get_cwidth(line) + input_width) // input_width)
+            for line in self.buffer.document.lines
+        )
+        return min(MAX_INPUT_ROWS, rows)
 
     def _height_dimension(self) -> Dimension:
         rows = self.rows()
