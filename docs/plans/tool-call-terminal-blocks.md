@@ -21,9 +21,11 @@ presentation, and obey the shared progress width limit in both Chat and Script.
 - Frame the tool-detail surface with straight left and right borders and a
   square-cornered bottom border. The summary surface acts as the visual top, so
   the detail does not add a separate top border.
-- Build borders from full cells painted with the summary background rather
-  than box-drawing glyphs. Glyph strokes sit inside cells and cannot align with
-  the summary background's cell boundary.
+- Build borders from fractional block elements placed at cell edges rather
+  than centered box-drawing strokes or full-cell bands. Use `▏` and `▕` for
+  the outer eighth of side cells and `▔` for the upper eighth of the next row.
+  This preserves the summary background's cell boundary with less visual
+  weight.
 - Keep the bullet outside the summary surface and use the normal two-cell
   continuation indent, matching model code-block alignment.
 - Fill each colored row to the available width, bounded by
@@ -53,9 +55,10 @@ presentation, and obey the shared progress width limit in both Chat and Script.
 2. Succeeded and failed summaries use the summary surface.
 3. Results and errors use the detail surface.
 4. Both surfaces have distinct ANSI backgrounds and align after the bullet.
-5. Detail borders use solid background cells with square corners, share the
-   summary surface's outer cell boundaries, and count toward the configured
-   progress width. No box-drawing glyphs are emitted.
+5. Detail borders use edge-aligned fractional block elements with square
+   corners, share the summary surface's outer cell boundaries, and count
+   toward the configured progress width. No centered box-drawing glyphs or
+   full-cell border bands are emitted.
 6. Surface rows wrap and fill no farther than the configured progress width.
 7. Script non-TTY output remains uncolored and has no padded trailing cells or
    decorative borders.

@@ -28,7 +28,8 @@ RUN_DIVIDER_WIDTH = 42
 TERMINAL_MARKDOWN_THEME = Theme({"markdown.code": "bold cyan"})
 TOOL_SUMMARY_BACKGROUND = "bright_black"
 TOOL_DETAIL_BACKGROUND = "black"
-TOOL_DETAIL_BORDER = f"on {TOOL_SUMMARY_BACKGROUND}"
+TOOL_DETAIL_SIDE_BORDER = f"{TOOL_SUMMARY_BACKGROUND} on {TOOL_DETAIL_BACKGROUND}"
+TOOL_DETAIL_BOTTOM_BORDER = TOOL_SUMMARY_BACKGROUND
 
 _ANSI_CODE_THEME = Syntax.get_theme("ansi_dark")
 
@@ -336,15 +337,15 @@ class _ToolSurfaceRow:
                 style=prefix_style,
             )
             if self.row.surface == "tool_detail":
-                rendered.append(" ", style=TOOL_DETAIL_BORDER)
+                rendered.append("▏", style=TOOL_DETAIL_SIDE_BORDER)
             rendered.append_text(surface)
             if self.row.surface == "tool_detail":
-                rendered.append(" ", style=TOOL_DETAIL_BORDER)
+                rendered.append("▕", style=TOOL_DETAIL_SIDE_BORDER)
             rendered.no_wrap = True
             yield rendered
         if self.row.surface == "tool_detail" and self.close_detail:
             bottom = Text(continuation)
-            bottom.append(" " * region_width, style=TOOL_DETAIL_BORDER)
+            bottom.append("▔" * region_width, style=TOOL_DETAIL_BOTTOM_BORDER)
             bottom.no_wrap = True
             yield bottom
 
