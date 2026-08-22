@@ -903,12 +903,17 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     assert isinstance(content, HSplit)
     input_row = content.children[1]
     assert isinstance(input_row, VSplit)
-    padding = input_row.children[0]
-    assert isinstance(padding, Window)
-    assert padding.width == 1
+    left_padding = input_row.children[0]
+    assert isinstance(left_padding, Window)
+    assert left_padding.width == 1
     input_window = input_row.children[1]
     assert isinstance(input_window, Window)
     assert isinstance(input_window.content, BufferControl)
+    right_padding = input_row.children[2]
+    assert isinstance(right_padding, Window)
+    assert right_padding.width == 1
+    assert right_padding.style == "class:input"
+    assert right_padding.char == " "
     assert input_window.content.input_processors is not None
     placeholder = input_window.content.input_processors[0]
     assert isinstance(placeholder, ConditionalProcessor)
@@ -935,10 +940,10 @@ def test_chat_prompt_grows_for_wrapped_input(
         lambda _fallback: SimpleNamespace(columns=10),
     )
 
-    prompt.buffer.text = "1234567"
+    prompt.buffer.text = "123456"
     assert prompt.rows() == 3
 
-    prompt.buffer.text = "12345678"
+    prompt.buffer.text = "1234567"
     assert prompt.rows() == 4
 
     prompt.buffer.text = "中文中文"

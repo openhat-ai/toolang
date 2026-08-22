@@ -188,6 +188,12 @@ class PromptBox:
                             style="class:input",
                             char=" ",
                         ),
+                        Window(
+                            width=1,
+                            style="class:input",
+                            always_hide_cursor=True,
+                            char=" ",
+                        ),
                     ],
                     height=self._input_rows,
                     style="class:input",
@@ -344,7 +350,7 @@ class PromptBox:
 
     def _input_rows(self) -> int:
         terminal_width = shutil.get_terminal_size((100, 24)).columns
-        input_width = max(1, terminal_width - 2)
+        input_width = max(1, terminal_width - 3)
         # BufferControl reserves one trailing cursor cell per logical line.
         rows = sum(
             max(1, (get_cwidth(line) + input_width) // input_width)
