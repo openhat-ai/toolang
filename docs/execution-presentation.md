@@ -105,7 +105,7 @@ Outside parallel work, every leaf Step leaves a complete trace. Model text is
 incrementally projected as Markdown. The initial live row:
 
 ```text
-• thinking
+• Thinking...
 ```
 
 is replaced once text arrives, while stable Markdown progressively enters
@@ -119,16 +119,16 @@ scrollback:
 ```
 
 Complete Markdown blocks move to scrollback as soon as later input makes them
-stable. Only the unfinished block remains live. The transition does not add an
-ellipsis or visibly change already-rendered text. At Part closure the remaining
-tail is committed, and Step closure does not repeat the final output.
+stable. Only the unfinished block remains live. The transition does not visibly
+change already-rendered text. At Part closure the remaining tail is committed,
+and Step closure does not repeat the final output.
 
 Tool activity and terminal output use this form:
 
 ```text
-• calling search “Toolang plugin protocol”
+• Executing search “Toolang plugin protocol” ...
 
-• called search “Toolang plugin protocol”
+• Executed search “Toolang plugin protocol”
 
   [                                                            ] background
   [ {"results":[{"url":"https://example.com"}]}          ]
@@ -142,23 +142,27 @@ Every Step begins after one unpainted blank line, including model output that
 follows a Tool Step. A preceding statement, iteration, or condition header can
 own that same separator through its trailing blank row; the following Step
 does not add a second one. Continuation rows from the same Step do not add
-another separator. Tool summaries remain ordinary progress rows. After another
-unpainted blank line, a succeeded result or failed diagnostic follows on a
-borderless, background-filled detail surface. The detail content has one empty
-row above and below it and one empty column on each side, matching code-block
-padding. The detail surface wraps like a code block and fills the available
-progress width up to `TOOLANG_PROGRESS_MAX_WIDTH`. Non-TTY output preserves
-the same gaps, padding, and width while omitting ANSI sequences. The surface
-shares ANSI palette slot 8 with the Chat control bar and input box, so terminal
-themes retain ownership of the actual color.
+another separator. A standalone live Tool summary is dim, including its marker;
+terminal Tool summaries remain ordinary progress rows. After another unpainted
+blank line, a succeeded result or failed diagnostic follows on a borderless,
+background-filled detail surface. The detail content has one empty row above
+and below it and one empty column on each side, matching code-block padding. The
+detail surface wraps like a code block and fills the available progress width
+up to `TOOLANG_PROGRESS_MAX_WIDTH`. Non-TTY output preserves the same gaps,
+padding, and width while omitting ANSI sequences. The surface shares ANSI
+palette slot 8 with the Chat control bar and input box, so terminal themes
+retain ownership of the actual color.
 
 The executor records a human-readable `summary` when the Tool Step begins and
 another when it ends. Summary generation receives the tool `family`, leaf
 `name`, and supplied `args` in tool-schema declaration order. The default
 summary uses only `name` and the first argument; it does not repeat `family`.
-Argument previews are single-line, bounded, and redact sensitive fields. A
-failed or canceled Tool Step records the corresponding terminal summary; its
-concrete error remains a separate diagnostic continuation.
+The default running form is `Executing NAME ARG ...`; the succeeded and failed
+forms are `Executed NAME ARG` and `Failed NAME ARG`; the canceled form is
+`Canceled NAME ARG`. Argument previews are single-line, bounded, and redact
+sensitive fields. A failed or canceled Tool Step records the corresponding
+terminal summary; its concrete error remains a separate diagnostic
+continuation.
 
 Historical Steps without summaries retain the compatibility forms `executing
 TOOL`, `executed TOOL`, `failed TOOL`, and `canceled TOOL`.
@@ -200,7 +204,7 @@ lane. Lane rows are truncated rather than wrapped:
 
 ```text
 • running · 4/18 succeeded · 3 active
-  0 | #4 | • thinking
+  0 | #4 | • Thinking...
   1 | #5 | • executing web_search.search
   2 | #6 | • Source summary prepared
 ```
@@ -238,7 +242,7 @@ normal trace-or-lane rule for its child statement:
 
 <?> completion_check
 
-• thinking
+• Thinking...
 • true
 ```
 

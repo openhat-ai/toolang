@@ -98,10 +98,12 @@ Toolang runtime owns:
 
 Summary generation receives the tool family, leaf name, and supplied arguments
 in the tool definition's parameter order. The default summary combines only
-the leaf name and first supplied argument; it does not display the family.
-Toolang normalizes and bounds argument previews and redacts sensitive parameter
-names or schemas before the summary enters execution events. The running
-summary is stored in `ToolStepGiven.summary`; the terminal summary uses the same
-key in `ToolStepNoted`.
+the leaf name and first supplied argument; it does not display the family. Its
+running form is `Executing NAME ARG ...`; its succeeded and failed forms are
+`Executed NAME ARG` and `Failed NAME ARG`. The canceled form is
+`Canceled NAME ARG`. Toolang normalizes and bounds argument previews and
+redacts sensitive parameter names or schemas before the summary enters
+execution events. The running summary is stored in `ToolStepGiven.summary`;
+the terminal summary uses the same key in `ToolStepNoted`.
 
 Plugin-defined summary templates are not part of the current tool contract.

@@ -10,12 +10,13 @@ below.
 
 Make completed tool calls easier to scan by visually separating their summary
 from their result or error. The feature succeeds when tool results and errors
-use a compact rectangular surface, all summaries remain plain, and the display
-obeys the shared progress width limit in both Chat and Script.
+use a compact rectangular surface, live summaries are visually quiet, and the
+display obeys the shared progress width limit in both Chat and Script.
 
 ## Scope and Design
 
-- Render all tool summaries as ordinary progress rows.
+- Render standalone running tool summaries as dim progress rows, including the
+  marker. Keep terminal summaries as ordinary progress rows.
 - Begin every Step with one unpainted blank row, including a model Step after a
   Tool Step. A preceding statement, iteration, or condition header's trailing
   blank row satisfies that boundary; do not duplicate it. Do not repeat the gap
@@ -34,10 +35,11 @@ obeys the shared progress width limit in both Chat and Script.
   the detail background, with ANSI foregrounds that preserve failure tone.
 - Preserve the same gaps, padding, and configured width in non-TTY output while
   omitting ANSI sequences and live replacement.
+- Use `Executing NAME ARG ...`, `Executed NAME ARG`, `Failed NAME ARG`, and
+  `Canceled NAME ARG` as the default lifecycle summaries.
 - Keep compact parallel-lane summaries unchanged; they remain one-line lane
   content rather than expanding into cards.
-- Do not change execution events, durable records, tool summaries, result
-  serialization, or web/API presentation.
+- Do not change result serialization or web/API presentation.
 
 ## Touchpoints
 
@@ -45,27 +47,32 @@ obeys the shared progress width limit in both Chat and Script.
 - `src/toolang/cli/common/execution_progress/step_projection.py`
 - `src/toolang/cli/common/execution_progress/rich_rendering.py`
 - `src/toolang/cli/toolang/commands/chat/rendering.py`
+- `src/toolang/execution/executor/steps/tool.py`
 - `tests/unit/cli/test_execution_progress_projector.py`
 - `tests/unit/cli/test_chat_tui.py`
 - `tests/unit/cli/test_script_run_presenter.py`
+- `tests/unit/execution/test_tool_step_summary.py`
 - `docs/execution-presentation.md`
+- `docs/tools.md`
 
 ## Acceptance Tests
 
-1. Running and canceled tool summaries retain plain styling, and every Step
-   begins after exactly one unpainted blank row unless the preceding header
-   already owns that row.
+1. A standalone running tool summary is entirely dim, including its marker;
+   canceled summaries retain plain styling. Every Step begins after exactly one
+   unpainted blank row unless the preceding header already owns that row.
 2. Succeeded and failed summaries remain plain and have no background.
-3. Results and errors use the detail surface.
-4. The detail surface has an ANSI background and aligns after the bullet.
-5. Detail surfaces emit no border glyphs or separate border color.
-6. Surface rows wrap and fill no farther than the configured progress width.
-7. One unpainted blank row separates the summary and detail, and detail content
+3. Default lifecycle summaries use the approved running, succeeded, failed, and
+   canceled forms without displaying the tool family.
+4. Results and errors use the detail surface.
+5. The detail surface has an ANSI background and aligns after the bullet.
+6. Detail surfaces emit no border glyphs or separate border color.
+7. Surface rows wrap and fill no farther than the configured progress width.
+8. One unpainted blank row separates the summary and detail, and detail content
    has exactly one internal padding row above and below and one padding column
    on each side.
-8. Script non-TTY output remains uncolored, retains the same block geometry as
+9. Script non-TTY output remains uncolored, retains the same block geometry as
    TTY output, and has no decorative borders.
-9. The default repository verification passes.
+10. The default repository verification passes.
 
 ## Risks and Open Questions
 

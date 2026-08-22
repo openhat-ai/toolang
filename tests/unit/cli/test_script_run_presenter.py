@@ -131,7 +131,7 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
         ]
     )
 
-    assert "thinking" not in output
+    assert "Thinking..." not in output
     assert output.startswith("\n• Use a shared reducer.\n")
     assert "• Use a shared reducer.\n\n• run_one succeeded" in output
     assert "run_one.0" not in output
@@ -159,7 +159,7 @@ def test_script_tool_call_only_model_step_clears_live_without_scrollback(
     async def scenario() -> None:
         await presenter.on_event(_root_begin())
         await presenter.on_event(StepBegin(step=path, kind="model", given=_model()))
-        assert [row.text for row in presenter.console._live_rows] == ["• thinking"]
+        assert [row.text for row in presenter.console._live_rows] == ["• Thinking..."]
 
         await presenter.on_event(
             StepEnd(
@@ -307,7 +307,7 @@ def test_tty_replaces_live_rows_and_clears_them_on_shutdown() -> None:
         tty=True,
     )
 
-    assert "• thinking" in output
+    assert "• Thinking..." in output
     assert "\r\x1b[2K" in output
 
 
@@ -630,7 +630,7 @@ def test_tty_hides_cursor_for_the_lifetime_of_parallel_live_output() -> None:
     console = ProgressConsole(stream, width=40)
     rows = [
         ProgressRow("• running · 1 active", "active"),
-        ProgressRow("  0 | #0 | • thinking", "active"),
+        ProgressRow("  0 | #0 | • Thinking...", "active"),
     ]
 
     console.show_live_rows(rows)

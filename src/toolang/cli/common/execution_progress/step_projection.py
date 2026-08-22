@@ -37,7 +37,7 @@ def live_row(begin: StepBegin, preview: str) -> ProgressRow:
 
     if begin.kind == "model":
         detail = one_line(preview)
-        text = f"• {detail}" if detail else "• thinking"
+        text = f"• {detail}" if detail else "• Thinking..."
     elif begin.kind == "tool":
         summary = (
             begin.given.summary
