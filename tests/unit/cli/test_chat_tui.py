@@ -925,6 +925,29 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     assert not placeholder.filter()
 
 
+def test_chat_prompt_grows_for_wrapped_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompt = widgets.PromptBox(lambda _event: None, lambda: None)
+    monkeypatch.setattr(
+        widgets.shutil,
+        "get_terminal_size",
+        lambda _fallback: SimpleNamespace(columns=10),
+    )
+
+    prompt.buffer.text = "1234567"
+    assert prompt.rows() == 3
+
+    prompt.buffer.text = "12345678"
+    assert prompt.rows() == 4
+
+    prompt.buffer.text = "中文中文"
+    assert prompt.rows() == 4
+
+    prompt.buffer.text = "x" * 80
+    assert prompt.rows() == widgets.MAX_INPUT_ROWS + 2
+
+
 def test_chat_durable_response_wraps_markdown() -> None:
     long_text = " ".join(f"word{i}" for i in range(40))
     block = blocks.AssistantResponseBlock.from_parts(

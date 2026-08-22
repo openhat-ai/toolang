@@ -343,7 +343,14 @@ class PromptBox:
             self.history_draft = ""
 
     def _input_rows(self) -> int:
-        return min(MAX_INPUT_ROWS, max(1, self.buffer.document.line_count))
+        terminal_width = shutil.get_terminal_size((100, 24)).columns
+        input_width = max(1, terminal_width - 2)
+        # BufferControl reserves one trailing cursor cell per logical line.
+        rows = sum(
+            max(1, (get_cwidth(line) + input_width) // input_width)
+            for line in self.buffer.document.lines
+        )
+        return min(MAX_INPUT_ROWS, rows)
 
     def _height_dimension(self) -> Dimension:
         rows = self.rows()
