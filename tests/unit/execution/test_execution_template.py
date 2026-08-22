@@ -45,6 +45,19 @@ def test_render_text_template_does_not_escape_plain_text_values() -> None:
     assert rendered == "<keep & raw>"
 
 
+def test_render_text_template_supports_sequence_indexes() -> None:
+    rendered = render_text_template(
+        "{{family}} {{name}} {{args.0}} {{args.1}}",
+        {
+            "family": "filesystem",
+            "name": "read_text",
+            "args": ("README.md", "utf-8"),
+        },
+    )
+
+    assert rendered == "filesystem read_text README.md utf-8"
+
+
 @pytest.mark.parametrize(
     "template, match",
     [

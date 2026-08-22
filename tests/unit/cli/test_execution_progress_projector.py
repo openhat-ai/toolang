@@ -40,6 +40,7 @@ from toolang.execution.types import (
     StepPath,
     StepStatus,
     ToolStepGiven,
+    ToolStepNoted,
     TypedPointer,
 )
 from toolang.lang.ast import (
@@ -67,7 +68,7 @@ def _model(model: str = "deepseek/deepseek-chat") -> ModelStepGiven:
     return ModelStepGiven(model=model, call=ModelCall(instructions="", messages=[]))
 
 
-def _tool(name: str = "web_search.search") -> ToolStepGiven:
+def _tool(name: str = "web_search.search", *, summary: str = "") -> ToolStepGiven:
     return ToolStepGiven(
         plugin=name.split(".", 1)[0],
         call=ToolCall(
@@ -76,6 +77,7 @@ def _tool(name: str = "web_search.search") -> ToolStepGiven:
             name=name,
             input={},
         ),
+        summary=summary,
     )
 
 
@@ -755,20 +757,28 @@ def test_tool_error_preserves_complete_multiline_output() -> None:
             runnable="agic:demo",
         )
     )
-    projector.handle(StepBegin(step=path, kind="tool", given=_tool()))
+    live = projector.handle(
+        StepBegin(
+            step=path,
+            kind="tool",
+            given=_tool(summary="calling web search for Toolang"),
+        )
+    )
+    assert _rows(live.live) == [["• calling web search for Toolang"]]
 
     terminal = projector.handle(
         StepEnd(
             step=path,
             kind="tool",
             status="failed",
+            noted=ToolStepNoted(summary="failed to call web search for Toolang"),
             error="provider rejected the request\nretry after 60 seconds",
         )
     )
 
     assert _rows(terminal.committed) == [
         [
-            "• failed web_search.search",
+            "• failed to call web search for Toolang",
             "  provider rejected the request",
             "  retry after 60 seconds",
         ]

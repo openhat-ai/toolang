@@ -17,15 +17,27 @@ from tests.support.execution_harness import (
 from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult, ToolCall
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
-from toolang.execution.types import StepPath, ThreadPrefix
+from toolang.execution.types import (
+    StepPath,
+    ThreadPrefix,
+    ToolStepGiven,
+    ToolStepNoted,
+)
 from toolang.lang.ast import StormStmt
 from toolang.lang.input import resolve_input_parts
 
 
-def test_tool_loop_events_are_complete_ordered_and_non_redundant(
+def test_tool_loop_events_include_durable_generic_summaries(
     tmp_path: Path,
 ) -> None:
-    tool = RecordingTool("math__double", output={"value": 6})
+    tool = RecordingTool(
+        "math__double",
+        output={"value": 6},
+        parameters={
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+        },
+    )
     call = ToolCall(
         tool_call_id="tool-1",
         call_id="call-1",
@@ -78,6 +90,29 @@ agic calculate(_: Text) -> Text:
                 f"step_end:{run.id}.2:model:succeeded",
                 f"run_end:{run.id}:succeeded",
             ]
+            tool_begin = next(
+                event
+                for event in tracer.events
+                if isinstance(event, StepBegin) and event.kind == "tool"
+            )
+            tool_end = next(
+                event
+                for event in tracer.events
+                if isinstance(event, StepEnd) and event.kind == "tool"
+            )
+            assert isinstance(tool_begin.given, ToolStepGiven)
+            assert tool_begin.given.summary == "calling double 3"
+            assert isinstance(tool_end.noted, ToolStepNoted)
+            assert tool_end.noted.summary == "called double 3"
+
+            stored_tool = next(
+                step
+                for step in harness.store.list_steps(run_id=run.id)
+                if step.path == tool_begin.step
+            )
+            assert isinstance(stored_tool.given, ToolStepGiven)
+            assert stored_tool.given.summary == "calling double 3"
+            assert stored_tool.noted == ToolStepNoted(summary="called double 3")
 
     asyncio.run(scenario())
 

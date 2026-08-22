@@ -10,7 +10,12 @@ from toolang.base.types.message import (
     ToolResultPart,
 )
 from toolang.execution.events import StepBegin, StepEnd
-from toolang.execution.types import CollectionStepNoted, LoopStepNoted
+from toolang.execution.types import (
+    CollectionStepNoted,
+    LoopStepNoted,
+    ToolStepGiven,
+    ToolStepNoted,
+)
 from toolang.execution.values import parts_from_local
 from toolang.lang.ast import (
     DropStmt,
@@ -34,7 +39,12 @@ def live_row(begin: StepBegin, preview: str) -> ProgressRow:
         detail = one_line(preview)
         text = f"• {detail}" if detail else "• thinking"
     elif begin.kind == "tool":
-        text = f"• executing {tool_label(begin.given)}"
+        summary = (
+            begin.given.summary
+            if isinstance(begin.given, ToolStepGiven) and begin.given.summary
+            else f"executing {tool_label(begin.given)}"
+        )
+        text = f"• {summary}"
     else:
         text = f"• running {begin.kind}"
     return ProgressRow(text, "active")
@@ -87,14 +97,15 @@ def trace_terminal_rows(
         return _error_rows("canceled", error, tone)
 
     label = tool_label(begin.given)
+    summary = event.noted.summary if isinstance(event.noted, ToolStepNoted) else ""
     if event.status == "succeeded":
-        rows = [ProgressRow(f"• executed {label}", tone)]
+        rows = [ProgressRow(f"• {summary or f'executed {label}'}", tone)]
         rows.extend(
             ProgressRow(f"  {line}", tone) for line in _tool_output_lines(event)
         )
         return tuple(rows)
     status = "failed" if event.status == "failed" else "canceled"
-    rows = [ProgressRow(f"• {status} {label}", tone)]
+    rows = [ProgressRow(f"• {summary or f'{status} {label}'}", tone)]
     if error:
         rows.extend(
             ProgressRow(f"  {line}", tone) for line in _split_lines(error.strip())

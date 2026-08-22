@@ -160,8 +160,24 @@ later persisted in step output.
 
 `given` contains information known when `StepBegin` is emitted. `noted`
 contains additional information recorded by `StepEnd`. Neither repeats the
-step's input, output, status, or error. `RunRecord.context`, `StepRecord.given`,
-and `StepRecord.noted` remain open dictionaries.
+step's input, output, status, or error. Both fields use kind-specific typed
+payloads rather than open dictionaries.
+
+For a Tool Step, both lifecycle payloads use the same `summary` key:
+
+```text
+given:
+  plugin
+  call
+  summary
+noted:
+  summary
+```
+
+`given.summary` is the running description known at `StepBegin`.
+`noted.summary` is the succeeded, failed, or canceled description selected at
+`StepEnd`. New execution always records both. Readers accept older Tool Steps
+without either summary and use the legacy tool-name presentation.
 
 A succeeded flow step also notes its typed local result (`shape`, `type`, and
 `value`). This makes the step a reusable commit boundary for retry without a

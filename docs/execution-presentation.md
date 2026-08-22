@@ -125,10 +125,21 @@ tail is committed, and Step closure does not repeat the final output.
 Tool activity and terminal output use this form:
 
 ```text
-• executing web_search.search
-• executed web_search.search
+• calling search “Toolang plugin protocol”
+• called search “Toolang plugin protocol”
   {"results":[{"url":"https://example.com"}]}
 ```
+
+The executor records a human-readable `summary` when the Tool Step begins and
+another when it ends. Summary generation receives the tool `family`, leaf
+`name`, and supplied `args` in tool-schema declaration order. The default
+summary uses only `name` and the first argument; it does not repeat `family`.
+Argument previews are single-line, bounded, and redact sensitive fields. A
+failed or canceled Tool Step records the corresponding terminal summary; its
+concrete error remains a separate diagnostic continuation.
+
+Historical Steps without summaries retain the compatibility forms `executing
+TOOL`, `executed TOOL`, `failed TOOL`, and `canceled TOOL`.
 
 Structured Tool results use compact single-line JSON. Textual `stdout` and
 `stderr` preserve their original lines. A model Tool request without a Tool

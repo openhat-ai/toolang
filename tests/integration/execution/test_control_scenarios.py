@@ -20,7 +20,13 @@ from tests.support.execution_harness import (
 )
 from toolang.base.types.message import Message, TextPart, ToolResultPart
 from toolang.base.types.run import ModelCallResult, ToolCall
-from toolang.execution.types import ControlTiming, StepPath, ThreadPrefix, Pointer
+from toolang.execution.types import (
+    ControlTiming,
+    Pointer,
+    StepPath,
+    ThreadPrefix,
+    ToolStepNoted,
+)
 from toolang.lang.input import resolve_input_parts
 
 
@@ -226,6 +232,10 @@ def test_stop_cancels_an_active_tool_step(tmp_path: Path) -> None:
     tool = RecordingTool(
         "math__slow",
         output={"value": 6},
+        parameters={
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+        },
         gate=gate,
     )
     tool_call = ToolCall(
@@ -267,10 +277,12 @@ agic calculate(_: Part[]) -> Part[]:
             record = await asyncio.wait_for(handle, timeout=2)
 
             assert record.status == "canceled"
-            assert [
-                (step.kind, step.status)
-                for step in harness.store.list_steps(run_id=record.id)
-            ] == [("model", "succeeded"), ("tool", "canceled")]
+            steps = harness.store.list_steps(run_id=record.id)
+            assert [(step.kind, step.status) for step in steps] == [
+                ("model", "succeeded"),
+                ("tool", "canceled"),
+            ]
+            assert steps[1].noted == ToolStepNoted(summary="canceled slow 3")
             stored_control = harness.store.get_run_control(
                 run_id=record.id,
                 index=control.index,

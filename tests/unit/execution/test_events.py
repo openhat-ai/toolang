@@ -39,6 +39,7 @@ from toolang.execution.types import (
     StepPath,
     StepStatus,
     ToolStepGiven,
+    ToolStepNoted,
 )
 from toolang.lang.ast import KeepStmt, RepeatStmt, RunStmt, ScatterStmt, Span
 
@@ -142,7 +143,7 @@ def test_step_events_reject_mismatched_typed_facts() -> None:
             kind="value",
             given=ModelStepGiven(model="test/model", call=ModelCall("", [])),
         )
-    with pytest.raises(TypeError, match="tool Step does not accept noted facts"):
+    with pytest.raises(TypeError, match="tool Step noted requires ToolStepNoted"):
         StepEnd(
             step=StepPath.parse("run_root.0"),
             kind="tool",
@@ -187,6 +188,39 @@ def test_loop_step_noted_round_trips_with_its_terminal_cause() -> None:
 
     assert run_event_from_data(run_event_to_data(begin)) == begin
     assert run_event_from_data(run_event_to_data(end)) == end
+
+
+def test_tool_step_summary_round_trips_and_accepts_legacy_given() -> None:
+    begin = StepBegin(
+        step=StepPath.parse("run_root.1"),
+        kind="tool",
+        given=ToolStepGiven(
+            plugin="filesystem",
+            call=ToolCall(
+                "tool-1",
+                "call-1",
+                "filesystem__read_text",
+                {"path": "README.md"},
+            ),
+            summary="calling filesystem__read_text README.md",
+        ),
+    )
+    end = StepEnd(
+        step=begin.step,
+        kind="tool",
+        status="succeeded",
+        noted=ToolStepNoted(summary="called filesystem__read_text README.md"),
+    )
+
+    assert run_event_from_data(run_event_to_data(begin)) == begin
+    assert run_event_from_data(run_event_to_data(end)) == end
+
+    legacy = run_event_to_data(begin)
+    del legacy["given"]["summary"]
+    parsed = run_event_from_data(legacy)
+    assert isinstance(parsed, StepBegin)
+    assert isinstance(parsed.given, ToolStepGiven)
+    assert parsed.given.summary == ""
 
 
 def test_loop_step_noted_round_trips_through_the_step_schema() -> None:
