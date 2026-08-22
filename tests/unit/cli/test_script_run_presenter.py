@@ -227,6 +227,7 @@ def test_non_tty_tool_surfaces_remain_unpadded_plain_text() -> None:
         "  contents",
     ]
     assert "\x1b[" not in stream.getvalue()
+    assert not any(character in stream.getvalue() for character in "│└─┘")
 
 
 def test_tty_replaces_live_rows_and_clears_them_on_shutdown() -> None:

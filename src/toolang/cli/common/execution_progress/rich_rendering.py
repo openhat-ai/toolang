@@ -28,6 +28,7 @@ RUN_DIVIDER_WIDTH = 42
 TERMINAL_MARKDOWN_THEME = Theme({"markdown.code": "bold cyan"})
 TOOL_SUMMARY_BACKGROUND = "bright_black"
 TOOL_DETAIL_BACKGROUND = "black"
+TOOL_DETAIL_BORDER = "bright_black"
 
 _ANSI_CODE_THEME = Syntax.get_theme("ansi_dark")
 
@@ -105,7 +106,21 @@ def progress_block_renderable(
     """Render one semantic progress block with shared wrapping and Markdown."""
 
     return Group(
-        *(_row_renderable(row, live=live, max_width=max_width) for row in block.rows)
+        *(
+            _row_renderable(
+                row,
+                live=live,
+                max_width=max_width,
+                close_tool_detail=(
+                    row.surface == "tool_detail"
+                    and (
+                        index + 1 == len(block.rows)
+                        or block.rows[index + 1].surface != "tool_detail"
+                    )
+                ),
+            )
+            for index, row in enumerate(block.rows)
+        )
     )
 
 
@@ -114,9 +129,14 @@ def _row_renderable(
     *,
     live: bool,
     max_width: int,
+    close_tool_detail: bool,
 ) -> RenderableType:
     if row.surface != "none":
-        return _ToolSurfaceRow(row, max_width=max_width)
+        return _ToolSurfaceRow(
+            row,
+            max_width=max_width,
+            close_detail=close_tool_detail,
+        )
     if row.format == "markdown":
         return _MarkdownRow(row, max_width=max_width)
     return _PlainRow(row, live=live, max_width=max_width)
@@ -273,6 +293,7 @@ class _ToolSurfaceRow:
 
     row: ProgressRow
     max_width: int
+    close_detail: bool
 
     def __rich_console__(
         self,
@@ -282,7 +303,8 @@ class _ToolSurfaceRow:
         width = max(1, min(options.max_width, self.max_width))
         prefix, content = split_hanging_prefix(self.row.text)
         prefix_width = display_width(prefix)
-        if console.color_system is None or prefix_width + 2 >= width:
+        minimum_overhead = 4 if self.row.surface == "tool_detail" else 2
+        if console.color_system is None or prefix_width + minimum_overhead >= width:
             yield from _PlainRow(
                 self.row,
                 live=False,
@@ -290,7 +312,10 @@ class _ToolSurfaceRow:
             ).__rich_console__(console, options)
             return
 
-        surface_width = width - prefix_width
+        region_width = width - prefix_width
+        surface_width = (
+            region_width - 2 if self.row.surface == "tool_detail" else region_width
+        )
         content_width = max(surface_width - 2, 1)
         lines = Text(content).wrap(
             console,
@@ -310,9 +335,21 @@ class _ToolSurfaceRow:
                 prefix if index == 0 else continuation,
                 style=prefix_style,
             )
+            if self.row.surface == "tool_detail":
+                rendered.append("│", style=TOOL_DETAIL_BORDER)
             rendered.append_text(surface)
+            if self.row.surface == "tool_detail":
+                rendered.append("│", style=TOOL_DETAIL_BORDER)
             rendered.no_wrap = True
             yield rendered
+        if self.row.surface == "tool_detail" and self.close_detail:
+            bottom = Text(continuation)
+            bottom.append(
+                f"└{'─' * (region_width - 2)}┘",
+                style=TOOL_DETAIL_BORDER,
+            )
+            bottom.no_wrap = True
+            yield bottom
 
 
 def _tool_surface_style(surface: ProgressSurface, tone: ProgressTone) -> Style:

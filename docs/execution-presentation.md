@@ -127,17 +127,20 @@ Tool activity and terminal output use this form:
 ```text
 • calling search “Toolang plugin protocol”
 • [ called search “Toolang plugin protocol”                 ] summary surface
-  [ {"results":[{"url":"https://example.com"}]}          ] detail surface
+  │[ {"results":[{"url":"https://example.com"}]}        ]│ detail surface
+  └──────────────────────────────────────────────────────────┘
 ```
 
 Running and canceled summaries remain ordinary progress rows. Succeeded and
 failed summaries use an indented, background-filled summary surface. A
 succeeded result or failed diagnostic follows on a second background-filled
-detail surface. Both surfaces wrap like code blocks and fill the available
-progress width up to `TOOLANG_PROGRESS_MAX_WIDTH`; non-TTY output remains
-unpadded plain text. ANSI palette slots 8 and 0 provide the summary and detail
-backgrounds, respectively, so terminal themes retain ownership of their actual
-colors.
+detail surface. The detail surface has straight left and right borders and a
+square-cornered bottom border; the summary surface forms its visual top. Both
+surfaces wrap like code blocks and fill the available progress width up to
+`TOOLANG_PROGRESS_MAX_WIDTH`; borders count toward that width, while non-TTY
+output remains unpadded plain text. ANSI palette slots 8 and 0 provide the
+summary and detail backgrounds, respectively, so terminal themes retain
+ownership of their actual colors.
 
 The executor records a human-readable `summary` when the Tool Step begins and
 another when it ends. Summary generation receives the tool `family`, leaf

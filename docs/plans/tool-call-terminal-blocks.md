@@ -18,6 +18,9 @@ presentation, and obey the shared progress width limit in both Chat and Script.
 - Keep running and canceled tool summaries as ordinary progress rows.
 - Render succeeded and failed summaries on the tool-summary surface.
 - Render succeeded results and failed errors on the tool-detail surface.
+- Frame the tool-detail surface with straight left and right borders and a
+  square-cornered bottom border. The summary surface acts as the visual top, so
+  the detail does not add a separate top border.
 - Keep the bullet outside the surface and use the normal two-cell continuation
   indent, matching model code-block alignment.
 - Fill each colored row to the available width, bounded by
@@ -47,9 +50,12 @@ presentation, and obey the shared progress width limit in both Chat and Script.
 2. Succeeded and failed summaries use the summary surface.
 3. Results and errors use the detail surface.
 4. Both surfaces have distinct ANSI backgrounds and align after the bullet.
-5. Surface rows wrap and fill no farther than the configured progress width.
-6. Script non-TTY output remains uncolored and has no padded trailing cells.
-7. The default repository verification passes.
+5. Detail borders use `│`, `└`, `─`, and `┘`, and count toward the configured
+   progress width.
+6. Surface rows wrap and fill no farther than the configured progress width.
+7. Script non-TTY output remains uncolored and has no padded trailing cells or
+   decorative borders.
+8. The default repository verification passes.
 
 ## Risks and Open Questions
 

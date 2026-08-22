@@ -549,15 +549,17 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
             if segment.style is not None and segment.style.bgcolor is not None
         ]
         for line in lines
-        if any(segment.text.strip() for segment in line)
     ]
+    painted_lines = [line for line in painted_lines if line]
 
     assert rendered.startswith("•  executed shell__execute")
     assert "ok" in rendered
+    assert "  │ ok" in rendered
+    assert "  └" in rendered and "┘" in rendered
     assert len(painted_lines) == 2
     assert [sum(len(segment.text) for segment in line) for line in painted_lines] == [
         30,
-        30,
+        28,
     ]
     background_numbers: list[set[int]] = []
     for line in painted_lines:
@@ -606,15 +608,30 @@ def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
     assert all(
         sum(len(segment.text) for segment in line) == 24 for line in painted_lines
     )
-    assert all(
-        sum(
-            len(segment.text)
+    background_rows: list[tuple[int, int]] = []
+    for line in painted_lines:
+        backgrounds = [
+            segment
             for segment in line
             if segment.style is not None and segment.style.bgcolor is not None
+        ]
+        assert backgrounds
+        background = backgrounds[0].style
+        assert background is not None and background.bgcolor is not None
+        number = background.bgcolor.number
+        assert number is not None
+        background_rows.append(
+            (number, sum(len(segment.text) for segment in backgrounds))
         )
-        == 22
-        for line in painted_lines
-    )
+    assert {width for number, width in background_rows if number == 8} == {22}
+    assert {width for number, width in background_rows if number == 0} == {20}
+
+    rendered_lines = [
+        "".join(segment.text for segment in line) for line in lines if line
+    ]
+    bottom = next(line for line in rendered_lines if "└" in line)
+    assert bottom == f"  └{'─' * 20}┘"
+    assert len(bottom) == 24
 
 
 def test_chat_truncates_live_lane_but_preserves_its_finalized_output() -> None:
