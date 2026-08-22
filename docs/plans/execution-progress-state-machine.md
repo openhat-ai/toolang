@@ -253,7 +253,8 @@ transforms instead describe their semantic result, such as `Kept the first 2
 items out of 6` or `Dropped the last item out of 6, leaving 5`. A Flow `run`
 with one child Run emits no synthetic success row; the absence of an error
 means success. Flow output shape such as `1 item` or `6-item list` is never
-displayed.
+displayed. If the owning Flow Step has aggregate facts, they continue directly
+after the child Run's leaf output without another section gap.
 
 ## Flow Facts
 
