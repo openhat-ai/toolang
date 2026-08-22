@@ -35,8 +35,8 @@ display obeys the shared progress width limit in both Chat and Script.
   the detail background, with ANSI foregrounds that preserve failure tone.
 - Preserve the same gaps, padding, and configured width in non-TTY output while
   omitting ANSI sequences and live replacement.
-- Use `NAME ARG executing ...` as the default running summary and `NAME ARG` as
-  the default succeeded or failed summary. Keep the canceled default unchanged.
+- Use `Executing NAME ARG ...`, `Executed NAME ARG`, `Failed NAME ARG`, and
+  `Canceled NAME ARG` as the default lifecycle summaries.
 - Keep compact parallel-lane summaries unchanged; they remain one-line lane
   content rather than expanding into cards.
 - Do not change result serialization or web/API presentation.

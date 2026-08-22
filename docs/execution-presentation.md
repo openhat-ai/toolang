@@ -105,7 +105,7 @@ Outside parallel work, every leaf Step leaves a complete trace. Model text is
 incrementally projected as Markdown. The initial live row:
 
 ```text
-• thinking ...
+• Thinking...
 ```
 
 is replaced once text arrives, while stable Markdown progressively enters
@@ -126,9 +126,9 @@ and Step closure does not repeat the final output.
 Tool activity and terminal output use this form:
 
 ```text
-• search “Toolang plugin protocol” executing ...
+• Executing search “Toolang plugin protocol” ...
 
-• search “Toolang plugin protocol”
+• Executed search “Toolang plugin protocol”
 
   [                                                            ] background
   [ {"results":[{"url":"https://example.com"}]}          ]
@@ -157,8 +157,9 @@ The executor records a human-readable `summary` when the Tool Step begins and
 another when it ends. Summary generation receives the tool `family`, leaf
 `name`, and supplied `args` in tool-schema declaration order. The default
 summary uses only `name` and the first argument; it does not repeat `family`.
-The default running form is `NAME ARG executing ...`; the succeeded and failed
-forms are `NAME ARG`. Argument previews are single-line, bounded, and redact
+The default running form is `Executing NAME ARG ...`; the succeeded and failed
+forms are `Executed NAME ARG` and `Failed NAME ARG`; the canceled form is
+`Canceled NAME ARG`. Argument previews are single-line, bounded, and redact
 sensitive fields. A failed or canceled Tool Step records the corresponding
 terminal summary; its concrete error remains a separate diagnostic
 continuation.
@@ -203,7 +204,7 @@ lane. Lane rows are truncated rather than wrapped:
 
 ```text
 • running · 4/18 succeeded · 3 active
-  0 | #4 | • thinking ...
+  0 | #4 | • Thinking...
   1 | #5 | • executing web_search.search
   2 | #6 | • Source summary prepared
 ```
@@ -241,7 +242,7 @@ normal trace-or-lane rule for its child statement:
 
 <?> completion_check
 
-• thinking ...
+• Thinking...
 • true
 ```
 
