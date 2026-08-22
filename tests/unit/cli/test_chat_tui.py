@@ -919,7 +919,7 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     assert isinstance(placeholder, ConditionalProcessor)
     assert isinstance(placeholder.processor, AfterInput)
     assert placeholder.processor.style == "class:input.placeholder"
-    assert placeholder.processor.text == "Ask anything"
+    assert placeholder.processor.text == "Ask or describe a task"
     assert placeholder.filter()
     assert widgets._chat_ui_palette()["input.placeholder"] == (
         f"fg:#b8b8b8 bg:{rendering.INPUT_BACKGROUND}"

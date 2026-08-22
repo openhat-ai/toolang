@@ -27,7 +27,7 @@ from .rendering import (
 
 MAX_INPUT_ROWS = 6
 MAX_QUEUE_ROWS = 4
-_INPUT_PLACEHOLDER = "Ask anything"
+_INPUT_PLACEHOLDER = "Ask or describe a task"
 _STATUS_SPINNER_STYLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "circles": ("■", ("◐", "◓", "◑", "◒")),
     "quadrants": (" ", ("▖", "▘", "▝", "▗")),
