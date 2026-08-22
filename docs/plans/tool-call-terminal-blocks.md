@@ -21,8 +21,11 @@ presentation, and obey the shared progress width limit in both Chat and Script.
 - Frame the tool-detail surface with straight left and right borders and a
   square-cornered bottom border. The summary surface acts as the visual top, so
   the detail does not add a separate top border.
-- Keep the bullet outside the surface and use the normal two-cell continuation
-  indent, matching model code-block alignment.
+- Build borders from full cells painted with the summary background rather
+  than box-drawing glyphs. Glyph strokes sit inside cells and cannot align with
+  the summary background's cell boundary.
+- Keep the bullet outside the summary surface and use the normal two-cell
+  continuation indent, matching model code-block alignment.
 - Fill each colored row to the available width, bounded by
   `TOOLANG_PROGRESS_MAX_WIDTH` (120 by default), and wrap long content inside
   that width.
@@ -50,8 +53,9 @@ presentation, and obey the shared progress width limit in both Chat and Script.
 2. Succeeded and failed summaries use the summary surface.
 3. Results and errors use the detail surface.
 4. Both surfaces have distinct ANSI backgrounds and align after the bullet.
-5. Detail borders use `│`, `└`, `─`, and `┘`, and count toward the configured
-   progress width.
+5. Detail borders use solid background cells with square corners, share the
+   summary surface's outer cell boundaries, and count toward the configured
+   progress width. No box-drawing glyphs are emitted.
 6. Surface rows wrap and fill no farther than the configured progress width.
 7. Script non-TTY output remains uncolored and has no padded trailing cells or
    decorative borders.

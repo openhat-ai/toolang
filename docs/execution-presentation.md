@@ -126,17 +126,23 @@ Tool activity and terminal output use this form:
 
 ```text
 • calling search “Toolang plugin protocol”
-• [ called search “Toolang plugin protocol”                 ] summary surface
-  │[ {"results":[{"url":"https://example.com"}]}        ]│ detail surface
-  └──────────────────────────────────────────────────────────┘
+• [ called search “Toolang plugin protocol”                 ] background 1
+  [1][ {"results":[{"url":"https://example.com"}]}      ][1]
+  [1----------------------------------------------------------1]
 ```
+
+The brackets and digits above label colored cells; they are not emitted as
+terminal glyphs.
 
 Running and canceled summaries remain ordinary progress rows. Succeeded and
 failed summaries use an indented, background-filled summary surface. A
 succeeded result or failed diagnostic follows on a second background-filled
 detail surface. The detail surface has straight left and right borders and a
-square-cornered bottom border; the summary surface forms its visual top. Both
-surfaces wrap like code blocks and fill the available progress width up to
+square-cornered bottom border; the summary surface forms its visual top. The
+borders are full cells painted with the summary background, not box-drawing
+glyphs whose centered strokes cannot align with cell edges. This makes all
+four outer edges share exact cell boundaries. Both surfaces wrap like code
+blocks and fill the available progress width up to
 `TOOLANG_PROGRESS_MAX_WIDTH`; borders count toward that width, while non-TTY
 output remains unpadded plain text. ANSI palette slots 8 and 0 provide the
 summary and detail backgrounds, respectively, so terminal themes retain

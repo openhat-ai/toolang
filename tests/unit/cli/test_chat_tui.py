@@ -554,13 +554,11 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
 
     assert rendered.startswith("•  executed shell__execute")
     assert "ok" in rendered
-    assert "  │ ok" in rendered
-    assert "  └" in rendered and "┘" in rendered
-    assert len(painted_lines) == 2
-    assert [sum(len(segment.text) for segment in line) for line in painted_lines] == [
-        30,
-        28,
-    ]
+    assert not any(character in rendered for character in "│└─┘")
+    assert len(painted_lines) == 3
+    assert all(
+        sum(len(segment.text) for segment in line) == 30 for line in painted_lines
+    )
     background_numbers: list[set[int]] = []
     for line in painted_lines:
         numbers: set[int] = set()
@@ -571,7 +569,22 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
             assert number is not None
             numbers.add(number)
         background_numbers.append(numbers)
-    assert background_numbers == [{8}, {0}]
+    assert background_numbers == [{8}, {0, 8}, {8}]
+
+    painted_offsets: list[tuple[int, int]] = []
+    for line in lines:
+        offset = 0
+        painted_start: int | None = None
+        painted_end: int | None = None
+        for segment in line:
+            end = offset + len(segment.text)
+            if segment.style is not None and segment.style.bgcolor is not None:
+                painted_start = offset if painted_start is None else painted_start
+                painted_end = end
+            offset = end
+        if painted_start is not None and painted_end is not None:
+            painted_offsets.append((painted_start, painted_end))
+    assert painted_offsets == [(2, 32), (2, 32), (2, 32)]
 
 
 def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
@@ -608,7 +621,7 @@ def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
     assert all(
         sum(len(segment.text) for segment in line) == 24 for line in painted_lines
     )
-    background_rows: list[tuple[int, int]] = []
+    background_widths: dict[int, set[int]] = {}
     for line in painted_lines:
         backgrounds = [
             segment
@@ -616,22 +629,25 @@ def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
             if segment.style is not None and segment.style.bgcolor is not None
         ]
         assert backgrounds
-        background = backgrounds[0].style
-        assert background is not None and background.bgcolor is not None
-        number = background.bgcolor.number
-        assert number is not None
-        background_rows.append(
-            (number, sum(len(segment.text) for segment in backgrounds))
-        )
-    assert {width for number, width in background_rows if number == 8} == {22}
-    assert {width for number, width in background_rows if number == 0} == {20}
+        widths: dict[int, int] = {}
+        for segment in backgrounds:
+            style = segment.style
+            assert style is not None and style.bgcolor is not None
+            number = style.bgcolor.number
+            assert number is not None
+            widths[number] = widths.get(number, 0) + len(segment.text)
+        for number, width in widths.items():
+            background_widths.setdefault(number, set()).add(width)
+    assert background_widths == {8: {2, 22}, 0: {20}}
 
     rendered_lines = [
-        "".join(segment.text for segment in line) for line in lines if line
+        "".join(segment.text for segment in line)
+        for line in lines
+        if any(segment.text for segment in line)
     ]
-    bottom = next(line for line in rendered_lines if "└" in line)
-    assert bottom == f"  └{'─' * 20}┘"
-    assert len(bottom) == 24
+    assert all(len(line) == 24 for line in rendered_lines)
+    assert rendered_lines[-1] == " " * 24
+    assert not any(character in "".join(rendered_lines) for character in "│└─┘")
 
 
 def test_chat_truncates_live_lane_but_preserves_its_finalized_output() -> None:
