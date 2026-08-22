@@ -29,6 +29,7 @@ from toolang.cli.common.execution_progress.formatting import (
     output_parts,
     shape_label,
     truncate,
+    wrap_display,
 )
 from toolang.cli.common.execution_progress.rich_rendering import (
     RUN_DIVIDER_WIDTH,
@@ -91,6 +92,7 @@ def _control_bar_line(
     content: str = "",
     *,
     accent: str,
+    width: int | None = None,
 ) -> Text:
     background = CONTROL_BAR_BACKGROUND
     return bar(
@@ -99,20 +101,34 @@ def _control_bar_line(
             (f" {content}" if content else "", f"white on {background}"),
         ],
         style=f"on {background}",
+        width=width,
     )
 
 
 def _control_bar_lines(message: str, *, accent: str) -> list[RenderableType]:
+    width = terminal_width()
+    content_width = max(1, width - 2)
+    wrapped_lines = [
+        wrapped_line
+        for line in message.splitlines() or [""]
+        for wrapped_line in wrap_display(line, content_width)
+    ]
     lines: list[RenderableType] = [
-        _control_bar_line(line, accent=accent) for line in message.splitlines() or [""]
+        _control_bar_line(line, accent=accent, width=width) for line in wrapped_lines
     ]
     padding_count = max(0, 3 - len(lines))
     top_padding_count = (padding_count + 1) // 2
     bottom_padding_count = padding_count - top_padding_count
     return [
-        *(_control_bar_line(accent=accent) for _ in range(top_padding_count)),
+        *(
+            _control_bar_line(accent=accent, width=width)
+            for _ in range(top_padding_count)
+        ),
         *lines,
-        *(_control_bar_line(accent=accent) for _ in range(bottom_padding_count)),
+        *(
+            _control_bar_line(accent=accent, width=width)
+            for _ in range(bottom_padding_count)
+        ),
     ]
 
 

@@ -882,6 +882,33 @@ def test_chat_control_bar_uses_three_row_minimum() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("message", "expected_rows"),
+    [("x" * 40, 3), ("中文" * 20, 5)],
+)
+def test_chat_control_bar_wraps_every_physical_row(
+    message: str,
+    expected_rows: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(blocks, "terminal_width", lambda: 20)
+    monkeypatch.setattr(rendering, "terminal_width", lambda: 20)
+
+    rendered_lines = [
+        line
+        for line in _render_text(
+            blocks.RunStartBlock.create(message).render(),
+            width=20,
+        ).splitlines()
+        if line.strip()
+    ]
+
+    assert len(rendered_lines) == expected_rows
+    assert all(line.startswith("  ") for line in rendered_lines)
+    assert all(rendering.display_len(line) == 20 for line in rendered_lines)
+    assert "".join(line[2:].rstrip() for line in rendered_lines) == message
+
+
 def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> None:
     prompt = widgets.PromptBox(lambda _event: None, lambda: None)
 
