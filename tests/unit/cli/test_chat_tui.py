@@ -1000,13 +1000,14 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
 
     start_fragments = rendering.renderable_to_prompt_toolkit(start.render())
     steer_fragments = rendering.renderable_to_prompt_toolkit(steer.render())
+    stable_start = rendering.renderables_output([start.render()])
     start_segments = rendering.render_segments(start.render())
     start_message_segment = next(
         segment for segment in start_segments if "hello" in segment.text
     )
     assert start_message_segment.style is not None
     assert start_message_segment.style.color is None
-    assert start_message_segment.style.dim is None
+    assert start_message_segment.style.dim is False
     start_prompt_accent = rendering._prompt_toolkit_color(
         Color.parse(rendering.START_CONTROL_ACCENT)
     )
@@ -1030,10 +1031,13 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     )
 
     assert rendering.START_CONTROL_ACCENT == "bright_cyan"
-    assert start_accent == f"bg:{start_prompt_accent}"
-    assert steer_accent == f"bg:{rendering.STEER_CONTROL_ACCENT}"
+    assert start_accent == f"bg:{start_prompt_accent} nodim"
+    assert steer_accent == f"bg:{rendering.STEER_CONTROL_ACCENT} nodim"
     assert f"bg:{rendering.INPUT_BACKGROUND}" in start_message
     assert f"bg:{rendering.INPUT_BACKGROUND}" in steer_message
+    assert "nodim" in start_message.split()
+    assert "nodim" in steer_message.split()
+    assert "\x1b[22m" in stable_start
 
     steer.update(_model_step_begin(step_index=2))
     assert _render_text(steer.render()) == steer_text

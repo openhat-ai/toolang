@@ -97,10 +97,13 @@ def _control_bar_line(
     background = CONTROL_BAR_BACKGROUND
     return bar(
         [
-            (ACCENT_CELL, f"on {accent}"),
-            (f" {content}" if content else "", f"on {background}"),
+            (ACCENT_CELL, f"not dim on {accent}"),
+            (
+                f" {content}" if content else "",
+                f"not dim on {background}",
+            ),
         ],
-        style=f"on {background}",
+        style=f"not dim on {background}",
         width=width,
     )
 

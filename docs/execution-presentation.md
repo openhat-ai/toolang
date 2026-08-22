@@ -348,8 +348,9 @@ bright cyan as the banner logo and wordmark. Quick-command bars use the same
 background-cell treatment with their own accent, and the prompt uses the start
 accent. Control bars and the input box share the fenced-code surface's ANSI
 slot 8 background, leaving its actual RGB value to the terminal theme. Control
-bar messages inherit the terminal's default foreground and text attributes. An
-empty prompt shows the muted placeholder `Ask anything`; the
+bar messages use the terminal's default foreground and explicitly clear dim
+styling in both stable and live output. An empty prompt shows the muted
+placeholder `Ask anything`; the
 placeholder disappears as soon as the buffer contains text and is never part of
 the submitted message. The status bar does not paint a base background and
 therefore inherits the terminal background. Its left side begins in column zero

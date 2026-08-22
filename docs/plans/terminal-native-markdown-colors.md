@@ -107,9 +107,10 @@ slot: `bright_black` and `ansibrightblack`, respectively. The implementation
 keeps both backend-specific names and verifies that the Rich-to-prompt-toolkit
 bridge maps them to the same color identity.
 
-Control-bar message text inherits the terminal's default foreground and text
-attributes. Queue, cursor, status-error, control-accent, input, and other
-foreground colors remain separate presentation choices.
+Control-bar message text uses the terminal's default foreground and explicitly
+clears dim styling in both the Rich and prompt-toolkit paths. Queue, cursor,
+status-error, control-accent, input, and other foreground colors remain
+separate presentation choices.
 
 ### Output Paths
 
@@ -171,11 +172,11 @@ Out of scope:
    token colors without emitting RGB.
 7. Inline code uses bold ANSI slot 6 text with no explicit background color.
 8. Script TTY output uses the same Markdown color identities, while Script
-   non-TTY output remains color-free and does not gain padded trailing spaces.
+   non-TTY output remains color-free and preserves the same block geometry.
 9. Chat input and control bars use ANSI slot 8, Rich control bars map to the
    same prompt-toolkit `ansibrightblack` background as the input and fenced
-   code, and control-bar messages inherit the terminal's default foreground and
-   text attributes.
+   code, and control-bar messages use the terminal's default foreground while
+   explicitly clearing dim styling.
 10. Existing Markdown text, spacing, wrapping, live/stable equivalence, and PTY
    behavior remain unchanged apart from color styling.
 11. The default repository verification passes.
