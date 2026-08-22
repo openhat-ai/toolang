@@ -556,7 +556,7 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
     assert "ok" in rendered
     assert not any(character in rendered for character in "│└─┘")
     assert all(character in rendered for character in "▏▕▔")
-    assert len(painted_lines) == 2
+    assert len(painted_lines) == 4
     assert all(
         sum(len(segment.text) for segment in line) == 30 for line in painted_lines
     )
@@ -570,7 +570,7 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
             assert number is not None
             numbers.add(number)
         background_numbers.append(numbers)
-    assert background_numbers == [{8}, {0}]
+    assert background_numbers == [{8}, {0}, {0}, {0}]
 
     painted_offsets: list[tuple[int, int]] = []
     for line in lines:
@@ -585,16 +585,19 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
             offset = end
         if painted_start is not None and painted_end is not None:
             painted_offsets.append((painted_start, painted_end))
-    assert painted_offsets == [(2, 32), (2, 32)]
+    assert painted_offsets == [(2, 32), (2, 32), (2, 32), (2, 32)]
 
     rendered_lines = [
         "".join(segment.text for segment in line)
         for line in lines
         if any(segment.text for segment in line)
     ]
-    assert rendered_lines[1].startswith("  ▏")
-    assert rendered_lines[1].endswith("▕")
-    assert rendered_lines[2] == f"  {'▔' * 30}"
+    padding = f"  ▏{' ' * 28}▕"
+    assert rendered_lines[1] == padding
+    assert rendered_lines[2].startswith("  ▏ ok")
+    assert rendered_lines[2].endswith("▕")
+    assert rendered_lines[3] == padding
+    assert rendered_lines[4] == f"  {'▔' * 30}"
 
 
 def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
@@ -607,7 +610,7 @@ def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
                     surface="tool_summary",
                 ),
                 ProgressRow(
-                    "  a complete result that also wraps onto another row",
+                    f"  {'x' * 40}",
                     surface="tool_detail",
                 ),
             ),
@@ -656,6 +659,17 @@ def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
         if any(segment.text for segment in line)
     ]
     assert all(len(line) == 24 for line in rendered_lines)
+    full_content = next(
+        segment.text
+        for line in lines
+        for segment in line
+        if segment.style is not None
+        and segment.style.bgcolor is not None
+        and segment.style.bgcolor.number == 0
+        and "x" * 18 in segment.text
+    )
+    assert full_content == f" {'x' * 18} "
+    assert rendered_lines.count(f"  ▏{' ' * 20}▕") == 2
     assert rendered_lines[-1] == f"  {'▔' * 22}"
     assert not any(character in "".join(rendered_lines) for character in "│└─┘")
 

@@ -127,7 +127,9 @@ Tool activity and terminal output use this form:
 ```text
 • calling search “Toolang plugin protocol”
 • [ called search “Toolang plugin protocol”                 ] background 1
+  ▏[                                                          ]▕
   ▏[ {"results":[{"url":"https://example.com"}]}        ]▕ background 2
+  ▏[                                                          ]▕
   ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
 ```
 
@@ -143,8 +145,10 @@ borders use fractional block elements at the cell edges rather than centered
 box-drawing strokes: `▏` and `▕` occupy the outer eighth of the side cells, and
 `▔` occupies the upper eighth of the next row. This keeps all outer edges on
 the summary surface's cell boundaries without the weight of full-cell border
-bands. Both surfaces wrap like code blocks and fill the available progress
-width up to
+bands. The detail content has one empty row above and below it and one empty
+column on each side, matching code-block padding without adding another border
+cell. Both surfaces wrap like code blocks and fill the available progress width
+up to
 `TOOLANG_PROGRESS_MAX_WIDTH`; borders count toward that width, while non-TTY
 output remains unpadded plain text. ANSI palette slots 8 and 0 provide the
 summary and detail backgrounds, respectively, so terminal themes retain

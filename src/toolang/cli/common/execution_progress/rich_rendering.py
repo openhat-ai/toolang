@@ -112,6 +112,10 @@ def progress_block_renderable(
                 row,
                 live=live,
                 max_width=max_width,
+                open_tool_detail=(
+                    row.surface == "tool_detail"
+                    and (index == 0 or block.rows[index - 1].surface != "tool_detail")
+                ),
                 close_tool_detail=(
                     row.surface == "tool_detail"
                     and (
@@ -130,12 +134,14 @@ def _row_renderable(
     *,
     live: bool,
     max_width: int,
+    open_tool_detail: bool,
     close_tool_detail: bool,
 ) -> RenderableType:
     if row.surface != "none":
         return _ToolSurfaceRow(
             row,
             max_width=max_width,
+            open_detail=open_tool_detail,
             close_detail=close_tool_detail,
         )
     if row.format == "markdown":
@@ -294,6 +300,7 @@ class _ToolSurfaceRow:
 
     row: ProgressRow
     max_width: int
+    open_detail: bool
     close_detail: bool
 
     def __rich_console__(
@@ -326,28 +333,63 @@ class _ToolSurfaceRow:
         surface_style = _tool_surface_style(self.row.surface, self.row.tone)
         prefix_style = _STYLES[self.row.tone]
         continuation = " " * prefix_width
+        if self.row.surface == "tool_detail" and self.open_detail:
+            yield _tool_surface_line(
+                prefix=continuation,
+                content="",
+                surface_width=surface_width,
+                surface_style=surface_style,
+                prefix_style=prefix_style,
+                framed=True,
+            )
         for index, line in enumerate(lines):
             line.rstrip()
-            surface = Text(style=surface_style)
-            surface.append(" ")
-            surface.append(line.plain)
-            surface.pad_right(max(0, surface_width - surface.cell_len))
-            rendered = Text(
-                prefix if index == 0 else continuation,
-                style=prefix_style,
+            yield _tool_surface_line(
+                prefix=prefix if index == 0 else continuation,
+                content=line.plain,
+                surface_width=surface_width,
+                surface_style=surface_style,
+                prefix_style=prefix_style,
+                framed=self.row.surface == "tool_detail",
             )
-            if self.row.surface == "tool_detail":
-                rendered.append("▏", style=TOOL_DETAIL_SIDE_BORDER)
-            rendered.append_text(surface)
-            if self.row.surface == "tool_detail":
-                rendered.append("▕", style=TOOL_DETAIL_SIDE_BORDER)
-            rendered.no_wrap = True
-            yield rendered
         if self.row.surface == "tool_detail" and self.close_detail:
+            yield _tool_surface_line(
+                prefix=continuation,
+                content="",
+                surface_width=surface_width,
+                surface_style=surface_style,
+                prefix_style=prefix_style,
+                framed=True,
+            )
             bottom = Text(continuation)
             bottom.append("▔" * region_width, style=TOOL_DETAIL_BOTTOM_BORDER)
             bottom.no_wrap = True
             yield bottom
+
+
+def _tool_surface_line(
+    *,
+    prefix: str,
+    content: str,
+    surface_width: int,
+    surface_style: Style,
+    prefix_style: str,
+    framed: bool,
+) -> Text:
+    """Render one padded tool-surface row inside its optional side frame."""
+
+    surface = Text(style=surface_style)
+    surface.append(" ")
+    surface.append(content)
+    surface.pad_right(max(0, surface_width - surface.cell_len))
+    rendered = Text(prefix, style=prefix_style)
+    if framed:
+        rendered.append("▏", style=TOOL_DETAIL_SIDE_BORDER)
+    rendered.append_text(surface)
+    if framed:
+        rendered.append("▕", style=TOOL_DETAIL_SIDE_BORDER)
+    rendered.no_wrap = True
+    return rendered
 
 
 def _tool_surface_style(surface: ProgressSurface, tone: ProgressTone) -> Style:

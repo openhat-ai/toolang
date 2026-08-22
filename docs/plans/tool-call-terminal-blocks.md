@@ -28,6 +28,8 @@ presentation, and obey the shared progress width limit in both Chat and Script.
   weight.
 - Keep the bullet outside the summary surface and use the normal two-cell
   continuation indent, matching model code-block alignment.
+- Pad detail content by one empty row above and below and one empty column on
+  the left and right, inside the lightweight frame.
 - Fill each colored row to the available width, bounded by
   `TOOLANG_PROGRESS_MAX_WIDTH` (120 by default), and wrap long content inside
   that width.
@@ -60,9 +62,11 @@ presentation, and obey the shared progress width limit in both Chat and Script.
    toward the configured progress width. No centered box-drawing glyphs or
    full-cell border bands are emitted.
 6. Surface rows wrap and fill no farther than the configured progress width.
-7. Script non-TTY output remains uncolored and has no padded trailing cells or
+7. Detail content has exactly one internal padding row above and below and one
+   padding column on each side.
+8. Script non-TTY output remains uncolored and has no padded trailing cells or
    decorative borders.
-8. The default repository verification passes.
+9. The default repository verification passes.
 
 ## Risks and Open Questions
 
