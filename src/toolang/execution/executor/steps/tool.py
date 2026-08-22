@@ -31,9 +31,9 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 _MAX_ARGUMENT_PREVIEW_CHARS = 80
 _DEFAULT_TOOL_SUMMARY_TEMPLATES = {
-    "running": "calling {{name}} {{args.0}}",
-    "succeeded": "called {{name}} {{args.0}}",
-    "failed": "failed to call {{name}} {{args.0}}",
+    "running": "{{name}} {{args.0}} executing ...",
+    "succeeded": "{{name}} {{args.0}}",
+    "failed": "{{name}} {{args.0}}",
     "canceled": "canceled {{name}} {{args.0}}",
 }
 _SENSITIVE_ARGUMENT_MARKERS = (

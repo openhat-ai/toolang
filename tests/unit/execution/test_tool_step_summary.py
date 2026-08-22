@@ -58,7 +58,7 @@ def test_default_summary_uses_schema_order_instead_of_call_input_order() -> None
     assert context.family == "demo"
     assert context.name == "call"
     assert context.args == ("“primary value”", "later")
-    assert _tool_summary(context, "running") == "calling call “primary value”"
+    assert _tool_summary(context, "running") == "call “primary value” executing ..."
 
 
 @pytest.mark.parametrize(
@@ -83,7 +83,7 @@ def test_default_summary_redacts_sensitive_argument(
     context = _tool_summary_context(_call({name: "do-not-show"}), tool)
 
     assert context.args == ("<redacted>",)
-    assert _tool_summary(context, "failed") == "failed to call call <redacted>"
+    assert _tool_summary(context, "failed") == "call <redacted>"
 
 
 def test_default_summary_compacts_and_bounds_argument_preview() -> None:
@@ -111,4 +111,4 @@ def test_default_summary_omits_argument_without_a_schema_property() -> None:
     assert context.family == "demo"
     assert context.name == "call"
     assert context.args == ()
-    assert _tool_summary(context, "succeeded") == "called call"
+    assert _tool_summary(context, "succeeded") == "call"

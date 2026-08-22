@@ -253,7 +253,11 @@ class _PlainRow:
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        style = _STYLES[self.row.tone]
+        style = (
+            "dim"
+            if self.live and self.row.surface == "tool_summary"
+            else _STYLES[self.row.tone]
+        )
         width = max(1, min(options.max_width, self.max_width))
         if self.live and not self.row.wrap_live:
             yield Text(

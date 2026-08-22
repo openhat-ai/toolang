@@ -174,7 +174,7 @@ Repeat iteration and condition boundaries are:
 
 <?> completion_check
 
-• thinking
+• thinking ...
 • true
 ```
 
@@ -190,7 +190,7 @@ Part closure the remaining tail is committed, and `StepEnd` does not repeat the
 same output:
 
 ```text
-• thinking
+• thinking ...
 • # Deep Research Brief
   ## Executive summary
   The evidence supports explicit ownership
@@ -198,10 +198,11 @@ same output:
 
 The first rendered Model fragment owns `•`; every later fragment uses the same
 two-space continuation alignment, so moving unchanged content from live state
-to scrollback produces no visible text change. Active labels and streamed
-content do not append an ellipsis. Committed and live fragments are independent
-Markdown render units; syntax cannot reopen a committed fragment, and a later
-reference definition affects only its own fragment.
+to scrollback produces no visible text change. Streamed content does not append
+an ellipsis; the initial `thinking ...` label is the deliberate activity suffix.
+Committed and live fragments are independent Markdown render units; syntax
+cannot reopen a committed fragment, and a later reference definition affects
+only its own fragment.
 
 When authored Markdown separates top-level blocks with a blank line, that gap
 belongs to the following fragment as `gap_before`. The same leading gap is
@@ -279,7 +280,7 @@ semantic content.
 
 ```text
 • running · 4/18 succeeded · 3 active
-  0 | #4 | • thinking
+  0 | #4 | • thinking ...
   1 | #5 | • executing web_search.search
   2 | #6 | • Source summary prepared
 ```

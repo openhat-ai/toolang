@@ -145,8 +145,8 @@ def test_chat_first_agic_step_has_exactly_one_gap_after_submission() -> None:
         if not isinstance(block, blocks.RunStopBlock)
     )
     control_bottom = " " * 80
-    assert f"{control_bottom}\n\n• thinking" in transcript
-    assert f"{control_bottom}\n\n\n• thinking" not in transcript
+    assert f"{control_bottom}\n\n• thinking ..." in transcript
+    assert f"{control_bottom}\n\n\n• thinking ..." not in transcript
 
 
 def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() -> None:
@@ -158,7 +158,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
         "ExecutionProgressBlock",
         "RunStopBlock",
     ]
-    assert "• thinking" in _render_text(app.live_blocks[0].render())
+    assert "• thinking ..." in _render_text(app.live_blocks[0].render())
 
     events.handle_run_event(
         PartBegin(
@@ -362,8 +362,8 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
         )
 
     live = _render_text(app.live_blocks[0].render())
-    assert "0 | #0 | • thinking" in live
-    assert "1 | #1 | • thinking" in live
+    assert "0 | #0 | • thinking ..." in live
+    assert "1 | #1 | • thinking ..." in live
 
     events.handle_run_event(
         StepEnd(
@@ -570,7 +570,7 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
     assert all(not line.startswith(("│", "└")) for line in lines[1:])
 
 
-def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() -> None:
+def test_chat_tool_step_dims_running_row_and_renders_terminal_surfaces() -> None:
     block = blocks.ExecutionProgressBlock(
         ProgressBlock(
             "step:run_1.1",
@@ -583,6 +583,7 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
             ),
             gap_before=True,
         ),
+        live=True,
         max_width=32,
     )
 
@@ -594,13 +595,14 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
     assert running_segments
     assert _render_text(block.render()).startswith("\n• executing shell__execute")
     assert all(
-        segment.style is None or not segment.style.dim for segment in running_segments
+        segment.style is not None and segment.style.dim for segment in running_segments
     )
     assert all(
         segment.style is None or segment.style.bgcolor is None
         for segment in running_segments
     )
 
+    block.live = False
     block.update(
         ProgressBlock(
             "step:run_1.1",
@@ -786,7 +788,7 @@ def test_chat_nested_headers_and_model_step_use_single_gaps() -> None:
     model = blocks.ExecutionProgressBlock(
         ProgressBlock(
             "step:run_review.0",
-            (ProgressRow("• thinking", "active"),),
+            (ProgressRow("• thinking ...", "active"),),
         ),
         live=True,
     )
@@ -794,8 +796,8 @@ def test_chat_nested_headers_and_model_step_use_single_gaps() -> None:
     transcript = _render_text(header.render()) + _render_text(model.render())
 
     assert "--- iteration 1 of 3 ---\n\n[0] Run review" in transcript
-    assert "[0] Run review\n\n• thinking" in transcript
-    assert "[0] Run review\n\n\n• thinking" not in transcript
+    assert "[0] Run review\n\n• thinking ..." in transcript
+    assert "[0] Run review\n\n\n• thinking ..." not in transcript
 
 
 def test_chat_truncates_live_lane_but_preserves_its_finalized_output() -> None:
