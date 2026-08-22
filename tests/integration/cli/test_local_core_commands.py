@@ -7,9 +7,11 @@ import json
 from pathlib import Path
 from collections.abc import Mapping
 import sqlite3
+import sys
 from typing import Any, cast
 
 import click
+from click.utils import strip_ansi
 import pytest
 from click.testing import CliRunner
 
@@ -471,9 +473,11 @@ def test_run_controls_are_persisted_without_an_api_server(tmp_path: Path) -> Non
     )
 
 
+@pytest.mark.parametrize("tty", (False, True), ids=("non-tty", "tty"))
 def test_retry_and_rerun_execute_locally_with_limit_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    tty: bool,
 ) -> None:
     harness = ExecutionHarness.create(
         tmp_path / "toolang",
@@ -547,6 +551,7 @@ agic reply(_: Part[]) -> Part[]:
             source.id,
             "--limit",
             "tokens=10",
+            tty=tty,
         )
         retried = harness.store.get_run(run_id=source.id)
         assert retry.exit_code == 0, (
@@ -564,13 +569,46 @@ agic reply(_: Part[]) -> Part[]:
             source.id,
             "--limit",
             "time=30",
+            tty=tty,
         )
 
-        assert retry.stdout.strip() == f"retried {source.id}: succeeded"
         assert rerun.exit_code == 0, rerun.stderr
-        words = rerun.stdout.strip().split()
-        rerun_id = words[3].removesuffix(":")
-        assert words == ["reran", source.id, "as", f"{rerun_id}:", "succeeded"]
+        rerun_records = [
+            run
+            for run in harness.store.list_runs(thread_id=source.thread)
+            if run.id != source.id
+        ]
+        assert len(rerun_records) == 1
+        rerun_id = rerun_records[0].id
+        if tty:
+            assert retry.stdout == ""
+            retry_output = strip_ansi(retry.stderr)
+            assert "• recovered" in retry_output
+            retry_footer = next(
+                line
+                for line in retry_output.splitlines()
+                if f"{source.id}: retry succeeded" in line
+            )
+            assert retry_footer.startswith(f"• {source.id}: retry succeeded ")
+            assert len(retry_footer) == 42
+
+            assert rerun.stdout == ""
+            rerun_output = strip_ansi(rerun.stderr)
+            assert "• reran" in rerun_output
+            rerun_footer = next(
+                line
+                for line in rerun_output.splitlines()
+                if f"{rerun_id}: rerun succeeded" in line
+            )
+            assert rerun_footer.startswith(f"• {rerun_id}: rerun succeeded ")
+            assert len(rerun_footer) == 42
+        else:
+            assert retry.stdout.strip() == f"retried {source.id}: succeeded"
+            assert rerun.stdout.strip() == (
+                f"reran {source.id} as {rerun_id}: succeeded"
+            )
+            assert retry.stderr == ""
+            assert rerun.stderr == ""
 
         retry_control = harness.store.list_run_controls(run_id=source.id)[-1]
         rerun_control = harness.store.get_run_control(run_id=rerun_id, index=0)
@@ -798,12 +836,14 @@ def test_visiting_agent_info_uses_the_materialized_layout(
     assert rows["Home"] == shorten_home_path(layout.home)
 
 
-def _invoke(root: Path, *args: str):
+def _invoke(root: Path, *args: str, tty: bool = False):
     @click.command(
         context_settings={"ignore_unknown_options": True, "allow_extra_args": True}
     )
     @click.argument("arguments", nargs=-1, type=click.UNPROCESSED)
     def public_cli(arguments: tuple[str, ...]) -> None:
+        if tty:
+            setattr(sys.stderr, "isatty", lambda: True)
         raise click.exceptions.Exit(cli.main(["--root", str(root), *arguments]))
 
     return runner.invoke(public_cli, list(args), env={})

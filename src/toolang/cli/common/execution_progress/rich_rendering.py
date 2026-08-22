@@ -115,6 +115,7 @@ def progress_block_renderable(
 def run_footer_renderable(
     *,
     run_id: str,
+    operation: str | None = None,
     status: str,
     facts: Sequence[str],
     max_width: int,
@@ -124,6 +125,7 @@ def run_footer_renderable(
 
     footer = _RunFooter(
         run_id=run_id,
+        operation=operation,
         status=status,
         facts=" · ".join(facts),
         max_width=max_width,
@@ -144,6 +146,7 @@ def terminal_status_style(status: str) -> str:
 @dataclass(frozen=True, slots=True)
 class _RunFooter:
     run_id: str
+    operation: str | None
     status: str
     facts: str
     max_width: int
@@ -155,7 +158,11 @@ class _RunFooter:
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
         divider_width = min(width, RUN_DIVIDER_WIDTH)
-        title = f"{self.run_id} {self.status}"
+        title = (
+            f"{self.run_id}: {self.operation} {self.status}"
+            if self.operation is not None
+            else f"{self.run_id} {self.status}"
+        )
         status_style = terminal_status_style(self.status)
         if divider_width < 5:
             divider = Text("•", style=status_style)

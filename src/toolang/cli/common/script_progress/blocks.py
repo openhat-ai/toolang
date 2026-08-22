@@ -21,13 +21,20 @@ class RunBlock:
 
     run_id: str
     started_at: str
+    operation: str | None = None
     metrics: Metrics = field(default_factory=lambda: Metrics(runs=1))
 
     @classmethod
-    def from_event(cls, event: RunBegin) -> RunBlock:
+    def from_event(
+        cls,
+        event: RunBegin,
+        *,
+        operation: str | None = None,
+    ) -> RunBlock:
         return cls(
             run_id=event.run,
             started_at=event.started_at,
+            operation=operation,
         )
 
     def render_result(
@@ -48,6 +55,7 @@ class RunBlock:
         console.write_renderable(
             run_footer_renderable(
                 run_id=event.run,
+                operation=self.operation,
                 status=event.status,
                 facts=facts,
                 max_width=console.width,
