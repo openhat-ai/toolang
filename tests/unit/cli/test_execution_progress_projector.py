@@ -387,6 +387,7 @@ def test_model_markdown_closes_without_repeating_at_step_end() -> None:
         )
     )
     assert _rows(live.live) == [["• thinking"]]
+    assert live.live[0].gap_before is True
 
     reducer.handle(
         PartBegin(
@@ -1863,6 +1864,8 @@ def test_settle_uses_the_shared_loop_iteration_boundary() -> None:
 
     assert _rows(live.committed) == [["--- iteration 1 of 2 ---", ""]]
     assert _rows(live.live) == [["• thinking"]]
+    assert live.committed[0].gap_before is False
+    assert live.live[0].gap_before is False
 
 
 def test_parallel_terminal_retains_each_independent_failed_lane() -> None:

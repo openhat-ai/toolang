@@ -132,6 +132,23 @@ def test_chat_run_begin_finalizes_local_submission_block() -> None:
     assert "run_1" not in _render_text(app.finalized[0].render())
 
 
+def test_chat_first_agic_step_has_exactly_one_gap_after_submission() -> None:
+    app = FakeApp()
+    app.live_blocks.append(blocks.RunStartBlock.create("hello"))
+
+    events.handle_run_event(_run_begin(), app)
+    events.handle_run_event(_model_step_begin(), app)
+
+    transcript = "".join(
+        _render_text(block.render())
+        for block in (*app.finalized, *app.live_blocks)
+        if not isinstance(block, blocks.RunStopBlock)
+    )
+    control_bottom = " " * 80
+    assert f"{control_bottom}\n\n• thinking" in transcript
+    assert f"{control_bottom}\n\n\n• thinking" not in transcript
+
+
 def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() -> None:
     app = FakeApp()
 
@@ -199,6 +216,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
 
 def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
     app = FakeApp()
+    app.live_blocks.append(blocks.RunStartBlock.create("map the items"))
 
     events.handle_run_event(_run_begin(executable_kind="flow"), app)
     events.handle_run_event(_flow_step_begin(), app)
@@ -206,6 +224,9 @@ def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
     events.handle_run_event(_run_end(status="succeeded", output_step_index=1), app)
 
     transcript = "".join(_render_text(block.render()) for block in app.finalized)
+    control_bottom = " " * 80
+    assert f"{control_bottom}\n\n[1] Run summarize" in transcript
+    assert f"{control_bottom}\n\n\n[1] Run summarize" not in transcript
     assert "[1] Run summarize for each item, up to 2 at once\n\n• Mapped" in (
         transcript
     )
@@ -377,7 +398,6 @@ def test_chat_submission_has_no_status_before_run_begin() -> None:
         blank_control_line,
         control_line,
         blank_control_line,
-        "",
     ]
 
 
@@ -398,6 +418,9 @@ def test_chat_preaccept_error_does_not_render_a_failed_run() -> None:
     assert "starting" not in rendered
     assert "run failed" not in rendered
     assert app.finished
+    transcript = "".join(_render_text(block.render()) for block in app.finalized)
+    assert "\n\n• Runnable not found: missing" in transcript
+    assert "\n\n\n• Runnable not found: missing" not in transcript
 
 
 def test_chat_local_stop_updates_existing_run_stop_block() -> None:
@@ -513,6 +536,7 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
                     surface="tool_summary",
                 ),
             ),
+            gap_before=True,
         ),
         max_width=32,
     )
@@ -542,6 +566,7 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
                 ),
                 ProgressRow("  ok", surface="tool_detail"),
             ),
+            gap_before=True,
         )
     )
     rendered = _render_text(block.render())
@@ -694,10 +719,38 @@ def test_chat_model_step_starts_after_a_blank_row() -> None:
                     prefix="• ",
                 ),
             ),
+            gap_before=True,
         )
     )
 
     assert _render_text(block.render()).startswith("\n• model answer")
+
+
+def test_chat_nested_headers_and_model_step_use_single_gaps() -> None:
+    header = blocks.ExecutionProgressBlock(
+        ProgressBlock(
+            "step:run_1.0.0",
+            (
+                ProgressRow("--- iteration 1 of 3 ---"),
+                ProgressRow(""),
+                ProgressRow("[0] Run review"),
+                ProgressRow(""),
+            ),
+        )
+    )
+    model = blocks.ExecutionProgressBlock(
+        ProgressBlock(
+            "step:run_review.0",
+            (ProgressRow("• thinking", "active"),),
+        ),
+        live=True,
+    )
+
+    transcript = _render_text(header.render()) + _render_text(model.render())
+
+    assert "--- iteration 1 of 3 ---\n\n[0] Run review" in transcript
+    assert "[0] Run review\n\n• thinking" in transcript
+    assert "[0] Run review\n\n\n• thinking" not in transcript
 
 
 def test_chat_truncates_live_lane_but_preserves_its_finalized_output() -> None:
@@ -737,6 +790,7 @@ def test_chat_wraps_trace_model_activity_across_live_rows() -> None:
                     wrap_live=True,
                 ),
             ),
+            gap_before=True,
         ),
         live=True,
     )
@@ -758,6 +812,7 @@ def test_chat_progress_width_is_bounded_on_a_wide_terminal() -> None:
         ProgressBlock(
             "step:run_1.0",
             (ProgressRow(f"• {content}"),),
+            gap_before=True,
         )
     )
 
@@ -777,6 +832,7 @@ def test_chat_progress_width_honors_configured_maximum() -> None:
         ProgressBlock(
             "step:run_1.0",
             (ProgressRow(f"• {content}"),),
+            gap_before=True,
         ),
         max_width=48,
     )
@@ -934,14 +990,12 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
         " " * 80,
         f"{rendering.ACCENT_CELL} hello" + " " * 73,
         " " * 80,
-        "",
     ]
     assert steer_text.splitlines() == [
         "",
         " " * 80,
         f"{rendering.ACCENT_CELL} adjust" + " " * 72,
         " " * 80,
-        "",
     ]
 
     start_fragments = rendering.renderable_to_prompt_toolkit(start.render())
@@ -1042,13 +1096,11 @@ def test_chat_control_bar_uses_three_row_minimum() -> None:
         " " * 20,
         "  first" + " " * 13,
         "  second" + " " * 12,
-        "",
     ]
     assert three_lines == [
         "  first" + " " * 13,
         "  second" + " " * 12,
         "  third" + " " * 13,
-        "",
     ]
 
 

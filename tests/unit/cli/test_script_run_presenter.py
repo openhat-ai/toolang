@@ -127,7 +127,7 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
     )
 
     assert "thinking" not in output
-    assert output.startswith("• Use a shared reducer.\n")
+    assert output.startswith("\n• Use a shared reducer.\n")
     assert "• Use a shared reducer.\n\n• run_one succeeded" in output
     assert "run_one.0" not in output
     assert "deepseek/deepseek-chat" not in output
@@ -198,11 +198,17 @@ def test_tool_output_uses_one_unmarked_continuation() -> None:
         ]
     )
 
-    assert '• executed web_search.search\n  {"results":[{},{},{}]}' in output
+    assert [line.strip() for line in output.splitlines()][1:6] == [
+        "• executed web_search.search",
+        "",
+        "",
+        '{"results":[{},{},{}]}',
+        "",
+    ]
     assert "run_one.0" not in output
 
 
-def test_non_tty_tool_surfaces_remain_unpadded_plain_text() -> None:
+def test_non_tty_tool_surfaces_preserve_tty_block_geometry_without_ansi() -> None:
     stream = StringIO()
     console = ProgressConsole(stream, width=32)
     console.apply(
@@ -222,10 +228,15 @@ def test_non_tty_tool_surfaces_remain_unpadded_plain_text() -> None:
         )
     )
 
-    assert stream.getvalue().splitlines() == [
+    lines = stream.getvalue().splitlines()
+    assert [line.strip() for line in lines] == [
         "• called read_text README.md",
-        "  contents",
+        "",
+        "",
+        "contents",
+        "",
     ]
+    assert all(len(line) == 32 for line in lines[2:])
     assert "\x1b[" not in stream.getvalue()
     assert not any(character in stream.getvalue() for character in "│└─┘▏▕▔")
 
@@ -280,7 +291,13 @@ def test_step_error_and_ownerless_run_error_use_bullet_rows() -> None:
         ]
     )
 
-    assert "• failed web_search.search\n  provider returned status 429" in step_error
+    assert [line.strip() for line in step_error.splitlines()][1:6] == [
+        "• failed web_search.search",
+        "",
+        "",
+        "provider returned status 429",
+        "",
+    ]
     assert step_error.count("provider returned status 429") == 1
     assert "!" not in step_error
     assert "• progress stream ended early" in ownerless
@@ -299,6 +316,7 @@ def test_tty_wraps_finalized_model_output_without_adding_a_marker() -> None:
                             "• executed Alpha beta gamma delta epsilon zeta eta theta"
                         ),
                     ),
+                    gap_before=True,
                 ),
             )
         )
@@ -476,7 +494,7 @@ def test_tty_markdown_separates_inline_and_fenced_code_surfaces() -> None:
     assert "\x1b[48;2" not in rendered
 
 
-def test_non_tty_markdown_code_remains_color_free_and_unpadded() -> None:
+def test_non_tty_markdown_code_preserves_tty_geometry_without_ansi() -> None:
     stream = StringIO()
     console = ProgressConsole(stream, width=40)
     console.apply(
@@ -497,7 +515,9 @@ def test_non_tty_markdown_code_remains_color_free_and_unpadded() -> None:
         )
     )
 
-    assert stream.getvalue() == "•  x = 1\n"
+    lines = stream.getvalue().splitlines()
+    assert [line.strip() for line in lines] == ["•", "x = 1", ""]
+    assert all(len(line) == 40 for line in lines)
 
 
 def test_tty_wraps_finalized_parallel_lane_at_its_embedded_marker() -> None:
@@ -673,6 +693,7 @@ def test_tty_wraps_complete_cjk_output_by_terminal_cell_width() -> None:
                             "• 已完成对多个来源中的证据和结论的整理并生成最终摘要"
                         ),
                     ),
+                    gap_before=True,
                 ),
             )
         )

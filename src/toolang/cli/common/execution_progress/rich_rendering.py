@@ -104,32 +104,26 @@ def progress_block_renderable(
 ) -> RenderableType:
     """Render one semantic progress block with shared wrapping and Markdown."""
 
-    return Group(
-        *(
-            _row_renderable(
-                row,
-                live=live,
-                max_width=max_width,
-                open_tool_detail=(
-                    row.surface == "tool_detail"
-                    and (index == 0 or block.rows[index - 1].surface != "tool_detail")
-                ),
-                close_tool_detail=(
-                    row.surface == "tool_detail"
-                    and (
-                        index + 1 == len(block.rows)
-                        or block.rows[index + 1].surface != "tool_detail"
-                    )
-                ),
-                separate_step=(
-                    block.key.startswith("step:")
-                    and _starts_step(row)
-                    and (index == 0 or bool(block.rows[index - 1].text.strip()))
-                ),
-            )
-            for index, row in enumerate(block.rows)
+    rows = (
+        _row_renderable(
+            row,
+            live=live,
+            max_width=max_width,
+            open_tool_detail=(
+                row.surface == "tool_detail"
+                and (index == 0 or block.rows[index - 1].surface != "tool_detail")
+            ),
+            close_tool_detail=(
+                row.surface == "tool_detail"
+                and (
+                    index + 1 == len(block.rows)
+                    or block.rows[index + 1].surface != "tool_detail"
+                )
+            ),
         )
+        for index, row in enumerate(block.rows)
     )
+    return Group(Text(), *rows) if block.gap_before else Group(*rows)
 
 
 def _row_renderable(
@@ -139,7 +133,6 @@ def _row_renderable(
     max_width: int,
     open_tool_detail: bool,
     close_tool_detail: bool,
-    separate_step: bool,
 ) -> RenderableType:
     if row.surface == "tool_detail":
         renderable: RenderableType = _ToolSurfaceRow(
@@ -152,13 +145,7 @@ def _row_renderable(
         renderable = _MarkdownRow(row, max_width=max_width)
     else:
         renderable = _PlainRow(row, live=live, max_width=max_width)
-    return _StepStartRow(renderable) if separate_step else renderable
-
-
-def _starts_step(row: ProgressRow) -> bool:
-    """Return whether a row carries the leading marker for a new Step."""
-
-    return row.text.startswith("• ") or row.prefix == "• "
+    return renderable
 
 
 def run_footer_renderable(
@@ -307,22 +294,6 @@ class _PlainRow:
 
 
 @dataclass(frozen=True, slots=True)
-class _StepStartRow:
-    """Separate one Step's leading row in colored terminal output."""
-
-    renderable: RenderableType
-
-    def __rich_console__(
-        self,
-        console: Console,
-        options: ConsoleOptions,
-    ) -> RenderResult:
-        if console.color_system is not None:
-            yield Text()
-        yield self.renderable
-
-
-@dataclass(frozen=True, slots=True)
 class _ToolSurfaceRow:
     """Render one tool detail as a bounded, indented surface."""
 
@@ -340,7 +311,7 @@ class _ToolSurfaceRow:
         prefix, content = split_hanging_prefix(self.row.text)
         prefix_width = display_width(prefix)
         minimum_overhead = 2
-        if console.color_system is None or prefix_width + minimum_overhead >= width:
+        if prefix_width + minimum_overhead >= width:
             yield from _PlainRow(
                 self.row,
                 live=False,
@@ -437,7 +408,7 @@ class _MarkdownRow:
             options.update_width(content_width),
         )
         lines = list(Segment.split_lines(segments))
-        preserve_background = console.color_system is not None
+        preserve_background = True
         while lines and not _line_has_content(
             lines[0], preserve_background=preserve_background
         ):

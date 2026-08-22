@@ -196,12 +196,13 @@ class RunStartBlock(MutableBlock):
         del event
 
     def render(self) -> RenderableType:
-        lines: list[RenderableType] = _control_bar_lines(
-            self.message,
-            accent=START_CONTROL_ACCENT,
+        return Group(
+            *_control_bar_lines(
+                self.message,
+                accent=START_CONTROL_ACCENT,
+            ),
+            Text(),
         )
-        lines.append(Text("\n"))
-        return Group(*lines)
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,9 +215,12 @@ class SubmissionErrorBlock(MutableBlock):
         del event
 
     def render(self) -> RenderableType:
-        lines = [
-            Text.from_markup(f"[red]• {escape(line)}[/]")
-            for line in _wrap_plain_lines(friendly_error(self.error))
+        lines: list[RenderableType] = [
+            Text(),
+            *(
+                Text.from_markup(f"[red]• {escape(line)}[/]")
+                for line in _wrap_plain_lines(friendly_error(self.error))
+            ),
         ]
         lines.append(Text("\n"))
         return Group(*lines)
@@ -244,7 +248,7 @@ class RunSteerBlock(MutableBlock):
                 accent=STEER_CONTROL_ACCENT,
             )
         )
-        lines.append(Text("\n"))
+        lines.append(Text())
         return Group(*lines)
 
 

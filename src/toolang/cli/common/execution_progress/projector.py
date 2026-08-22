@@ -334,7 +334,11 @@ class ProgressProjector:
             return None
         self._commit_boundaries(state.boundaries)
         state.boundaries = ()
-        return ProgressBlock(block_key, rows)
+        return ProgressBlock(
+            block_key,
+            rows,
+            gap_before=not self._ends_with_blank,
+        )
 
     def _end_step(self, event: StepEnd) -> ProgressBlock | None:
         state = self._steps.get(event.step)
@@ -555,6 +559,7 @@ class ProgressProjector:
     ) -> ProgressBlock | None:
         if not source:
             return None
+        starts_step = not state.model.marker_committed
         prefix = "  " if state.model.marker_committed else "• "
         state.model.marker_committed = True
         return ProgressBlock(
@@ -568,6 +573,7 @@ class ProgressProjector:
                     gap_before=gap_before,
                 ),
             ),
+            gap_before=starts_step and not self._ends_with_blank,
         )
 
     def _flow_terminal_rows(
@@ -677,7 +683,11 @@ class ProgressProjector:
             *flow_error_rows(self._error_text(error)),
         )
         self._commit_boundaries(boundaries)
-        return ProgressBlock(f"run:{run.begin.run}", rows)
+        return ProgressBlock(
+            f"run:{run.begin.run}",
+            rows,
+            gap_before=not self._ends_with_blank,
+        )
 
     def _commit_block(
         self,
@@ -687,6 +697,7 @@ class ProgressProjector:
         block = ProgressBlock(
             self._block_key(state),
             (*self._rows_for_boundaries(state.boundaries), *rows),
+            gap_before=self._step_gap_before(state),
         )
         self._commit_boundaries(state.boundaries)
         return block
@@ -716,7 +727,14 @@ class ProgressProjector:
                 )
                 if rows:
                     blocks.append(
-                        (state.sequence, ProgressBlock(self._block_key(state), rows))
+                        (
+                            state.sequence,
+                            ProgressBlock(
+                                self._block_key(state),
+                                rows,
+                                gap_before=self._step_gap_before(state),
+                            ),
+                        )
                     )
             elif state.begin.kind == "par":
                 rows = (
@@ -724,7 +742,14 @@ class ProgressProjector:
                     *self._par_live_rows(state),
                 )
                 blocks.append(
-                    (state.sequence, ProgressBlock(self._block_key(state), rows))
+                    (
+                        state.sequence,
+                        ProgressBlock(
+                            self._block_key(state),
+                            rows,
+                            gap_before=self._step_gap_before(state),
+                        ),
+                    )
                 )
         return tuple(
             block for _sequence, block in sorted(blocks, key=lambda item: item[0])
@@ -1049,6 +1074,13 @@ class ProgressProjector:
         prefix = "par" if state.begin.kind == "par" else "step"
         return f"{prefix}:{state.begin.step}"
 
+    def _step_gap_before(self, state: StepState) -> bool:
+        """Return whether this fragment begins a visible Step section."""
+
+        if state.begin.kind == "model" and state.model.marker_committed:
+            return False
+        return not self._ends_with_blank
+
     def _diagnostic_block(self, message: str) -> ProgressBlock:
         boundaries = tuple(self._boundary_rows)
         rows = (
@@ -1056,7 +1088,11 @@ class ProgressProjector:
             *flow_error_rows(message),
         )
         self._commit_boundaries(boundaries)
-        return ProgressBlock("run:diagnostic", rows)
+        return ProgressBlock(
+            "run:diagnostic",
+            rows,
+            gap_before=not self._ends_with_blank,
+        )
 
 
 def _sentence_list(values: list[str]) -> str:

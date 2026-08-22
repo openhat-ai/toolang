@@ -33,7 +33,8 @@ than separate Run headers or closure rows.
 Progress is at most 120 terminal cells wide by default and never wider than an
 attached TTY. Set `TOOLANG_PROGRESS_MAX_WIDTH` to a positive integer to change
 the maximum for both surfaces. Non-TTY script output uses that configured
-maximum.
+maximum as its available width, equivalent to a TTY with no narrower physical
+width.
 
 Execution markers start in column zero. Wrapped content and unmarked
 continuations align with the text after the marker:
@@ -137,17 +138,19 @@ Tool activity and terminal output use this form:
 The brackets above label colored cells; they are not emitted as terminal
 glyphs.
 
-Every Step's leading `• ` row begins after one unpainted blank line, including
-model output that follows a Tool Step. Continuation rows from the same Step do
-not add another separator. Tool summaries remain ordinary progress rows. After
-another unpainted blank line, a succeeded result or failed diagnostic follows
-on a borderless, background-filled detail surface. The detail content has one
-empty row above and below it and one empty column on each side, matching
-code-block padding. The detail surface wraps like a code block and fills the
-available progress width up to `TOOLANG_PROGRESS_MAX_WIDTH`, while non-TTY
-output remains compact, unpadded plain text. It shares ANSI palette slot 8 with
-the Chat control bar and input box, so terminal themes retain ownership of the
-actual color.
+Every Step begins after one unpainted blank line, including model output that
+follows a Tool Step. A preceding statement, iteration, or condition header can
+own that same separator through its trailing blank row; the following Step
+does not add a second one. Continuation rows from the same Step do not add
+another separator. Tool summaries remain ordinary progress rows. After another
+unpainted blank line, a succeeded result or failed diagnostic follows on a
+borderless, background-filled detail surface. The detail content has one empty
+row above and below it and one empty column on each side, matching code-block
+padding. The detail surface wraps like a code block and fills the available
+progress width up to `TOOLANG_PROGRESS_MAX_WIDTH`. Non-TTY output preserves
+the same gaps, padding, and width while omitting ANSI sequences. The surface
+shares ANSI palette slot 8 with the Chat control bar and input box, so terminal
+themes retain ownership of the actual color.
 
 The executor records a human-readable `summary` when the Tool Step begins and
 another when it ends. Summary generation receives the tool `family`, leaf
@@ -312,7 +315,9 @@ Script writes progress to stderr. It does not copy the durable root result to
 stdout by default. `--save -` writes the result to stdout and `--save PATH`
 atomically writes it to a file. Failed and canceled Runs do not write the
 selected destination. Non-TTY output contains stable newline-delimited content
-without color, cursor movement, or partial delta lines.
+without color, cursor movement, or partial delta lines. Its semantic rows and
+block geometry match TTY output; only live replacement and ANSI emission are
+absent.
 
 TTY script output uses one event-driven Rich `Live` area per root Run. Chat
 does not create a Rich `Live` because prompt_toolkit owns its terminal; it uses

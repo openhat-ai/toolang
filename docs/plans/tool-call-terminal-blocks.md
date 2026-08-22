@@ -16,15 +16,15 @@ obeys the shared progress width limit in both Chat and Script.
 ## Scope and Design
 
 - Render all tool summaries as ordinary progress rows.
-- Begin every Step's leading `• ` row with one unpainted blank row in colored
-  terminal output, including a model Step after a Tool Step. Do not repeat the
-  gap for continuation fragments from the same Step.
+- Begin every Step with one unpainted blank row, including a model Step after a
+  Tool Step. A preceding statement, iteration, or condition header's trailing
+  blank row satisfies that boundary; do not duplicate it. Do not repeat the gap
+  for continuation fragments from the same Step.
 - Render succeeded results and failed errors on the tool-detail surface.
 - Keep the tool-detail surface borderless.
 - Keep the normal two-cell continuation indent, matching model code-block
   alignment.
-- Separate the summary from the detail surface with one unpainted blank row in
-  colored terminal output.
+- Separate the summary from the detail surface with one unpainted blank row.
 - Pad detail content by one empty row above and below and one empty column on
   the left and right.
 - Fill each detail row to the available width, bounded by
@@ -32,7 +32,8 @@ obeys the shared progress width limit in both Chat and Script.
   that width.
 - Share terminal-owned ANSI slot 8 with the Chat control bar and input box for
   the detail background, with ANSI foregrounds that preserve failure tone.
-- Preserve plain, unpadded, color-free non-TTY output.
+- Preserve the same gaps, padding, and configured width in non-TTY output while
+  omitting ANSI sequences and live replacement.
 - Keep compact parallel-lane summaries unchanged; they remain one-line lane
   content rather than expanding into cards.
 - Do not change execution events, durable records, tool summaries, result
@@ -51,8 +52,9 @@ obeys the shared progress width limit in both Chat and Script.
 
 ## Acceptance Tests
 
-1. Running and canceled tool summaries retain plain styling, and every Step's
-   leading `• ` row begins after one unpainted blank row in colored terminals.
+1. Running and canceled tool summaries retain plain styling, and every Step
+   begins after exactly one unpainted blank row unless the preceding header
+   already owns that row.
 2. Succeeded and failed summaries remain plain and have no background.
 3. Results and errors use the detail surface.
 4. The detail surface has an ANSI background and aligns after the bullet.
@@ -61,8 +63,8 @@ obeys the shared progress width limit in both Chat and Script.
 7. One unpainted blank row separates the summary and detail, and detail content
    has exactly one internal padding row above and below and one padding column
    on each side.
-8. Script non-TTY output remains uncolored and has no padded trailing cells or
-   decorative borders.
+8. Script non-TTY output remains uncolored, retains the same block geometry as
+   TTY output, and has no decorative borders.
 9. The default repository verification passes.
 
 ## Risks and Open Questions

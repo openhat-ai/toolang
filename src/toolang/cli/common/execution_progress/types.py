@@ -25,10 +25,11 @@ class ProgressRow:
 
 @dataclass(frozen=True, slots=True)
 class ProgressBlock:
-    """One committed fragment or atomically replaceable group of progress rows."""
+    """One progress fragment with an explicit inter-section leading gap."""
 
     key: str
     rows: tuple[ProgressRow, ...]
+    gap_before: bool = False
 
 
 @dataclass(frozen=True, slots=True)
