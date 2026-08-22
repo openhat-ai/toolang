@@ -879,6 +879,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
             "",
         ]
     ]
+    assert wrapper.committed[0].gap_before is False
 
 
 @pytest.mark.parametrize(

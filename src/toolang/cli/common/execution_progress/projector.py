@@ -27,6 +27,7 @@ from toolang.lang.ast import (
     MapStmt,
     RankStmt,
     RepeatStmt,
+    RunStmt,
     SettleStmt,
     StormStmt,
 )
@@ -1077,6 +1078,8 @@ class ProgressProjector:
     def _step_gap_before(self, state: StepState) -> bool:
         """Return whether this fragment begins a visible Step section."""
 
+        if isinstance(state.statement, RunStmt):
+            return False
         if state.begin.kind == "model" and state.model.marker_committed:
             return False
         return not self._ends_with_blank
