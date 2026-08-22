@@ -419,7 +419,7 @@ def test_progress_markdown_uses_a_quiet_unicode_horizontal_rule() -> None:
     ]
 
 
-def test_tty_markdown_code_uses_the_dark_ansi_surface() -> None:
+def test_tty_markdown_separates_inline_and_fenced_code_surfaces() -> None:
     stream = _TtyStream()
     console = ProgressConsole(stream, width=40)
     console.apply(
@@ -441,7 +441,7 @@ def test_tty_markdown_code_uses_the_dark_ansi_surface() -> None:
     )
 
     rendered = stream.getvalue()
-    assert "\x1b[1;97;100mvalue" in rendered
+    assert "\x1b[1mvalue\x1b[0m" in rendered
     assert "\x1b[100m" in rendered or ";100m" in rendered
     assert "\x1b[38;2" not in rendered
     assert "\x1b[48;2" not in rendered

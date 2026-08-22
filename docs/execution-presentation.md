@@ -284,9 +284,10 @@ scrollback and retaining only replaceable fragments in its live container.
 
 Model and result Markdown leaves ordinary text on the terminal's default
 foreground and background. Semantic styles use named ANSI colors, so the
-terminal theme owns their actual RGB values. Inline code uses bold ANSI slot 15
-text on an ANSI slot 8 background. Fenced code uses the same base foreground
-and background with Rich's `ansi_dark` token palette. Its top and bottom
+terminal theme owns their actual RGB values. Inline code uses bold text on the
+terminal's default foreground and background, avoiding isolated background
+spans around short identifiers. Fenced code uses ANSI slot 15 text on an ANSI
+slot 8 background with Rich's `ansi_dark` token palette. Its top and bottom
 padding, trailing background cells, and authored blank lines remain one
 rectangular surface. This is a conventional dark code surface rather than a
 guarantee of contrast for arbitrarily redefined ANSI slots.
@@ -301,9 +302,9 @@ Chat submission and steer controls contain only their authored message. Their
 left background-filled accent cells distinguish start from steer without
 displaying Run IDs or execution state. Quick-command bars use the same
 background-cell treatment with their own accent, and the prompt uses the start
-accent. Control bars and the input box share the code surface's ANSI slot 8
-background, leaving its actual RGB value to the terminal theme. An empty prompt
-shows the muted placeholder `Ask anything`; the
+accent. Control bars and the input box share the fenced-code surface's ANSI
+slot 8 background, leaving its actual RGB value to the terminal theme. An empty
+prompt shows the muted placeholder `Ask anything`; the
 placeholder disappears as soon as the buffer contains text and is never part of
 the submitted message. The status bar does not paint a base background and
 therefore inherits the terminal background. Its left side begins in column zero
