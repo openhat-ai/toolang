@@ -8,7 +8,10 @@ import pytest
 
 from toolang.base.types.run import ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
-from toolang.execution.executor.steps.tool import _tool_summary_target
+from toolang.execution.executor.steps.tool import (
+    _tool_summary,
+    _tool_summary_context,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,13 +50,15 @@ def test_default_summary_uses_schema_order_instead_of_call_input_order() -> None
         }
     )
 
-    assert (
-        _tool_summary_target(
-            _call({"second": "later", "first": "primary value"}),
-            tool,
-        )
-        == "demo__call “primary value”"
+    context = _tool_summary_context(
+        _call({"second": "later", "first": "primary value"}),
+        tool,
     )
+
+    assert context.family == "demo"
+    assert context.name == "call"
+    assert context.args == ("“primary value”", "later")
+    assert _tool_summary(context, "running") == "calling call “primary value”"
 
 
 @pytest.mark.parametrize(
@@ -75,9 +80,10 @@ def test_default_summary_redacts_sensitive_argument(
         }
     )
 
-    assert _tool_summary_target(_call({name: "do-not-show"}), tool) == (
-        "demo__call <redacted>"
-    )
+    context = _tool_summary_context(_call({name: "do-not-show"}), tool)
+
+    assert context.args == ("<redacted>",)
+    assert _tool_summary(context, "failed") == "failed to call call <redacted>"
 
 
 def test_default_summary_compacts_and_bounds_argument_preview() -> None:
@@ -88,10 +94,10 @@ def test_default_summary_compacts_and_bounds_argument_preview() -> None:
         }
     )
 
-    target = _tool_summary_target(_call({"query": "word\n" * 40}), tool)
-    preview = target.removeprefix("demo__call ")
+    context = _tool_summary_context(_call({"query": "word\n" * 40}), tool)
+    preview = context.args[0]
 
-    assert "\n" not in target
+    assert "\n" not in preview
     assert len(preview) <= 80
     assert preview.startswith("“word word")
     assert preview.endswith("…”")
@@ -100,4 +106,9 @@ def test_default_summary_compacts_and_bounds_argument_preview() -> None:
 def test_default_summary_omits_argument_without_a_schema_property() -> None:
     tool = _Tool({"type": "object"})
 
-    assert _tool_summary_target(_call({"value": 3}), tool) == "demo__call"
+    context = _tool_summary_context(_call({"value": 3}), tool)
+
+    assert context.family == "demo"
+    assert context.name == "call"
+    assert context.args == ()
+    assert _tool_summary(context, "succeeded") == "called call"

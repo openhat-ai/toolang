@@ -878,8 +878,8 @@ agic calculate(_: Text) -> Text:
                 "unknown tool call: missing__tool",
             ]
             assert [step.noted for step in steps[1:3]] == [
-                ToolStepNoted(summary="failed to call math__broken 3"),
-                ToolStepNoted(summary="failed to call missing__tool"),
+                ToolStepNoted(summary="failed to call broken 3"),
+                ToolStepNoted(summary="failed to call tool"),
             ]
             followup = harness.adapter.invocations[1].call.messages
             results = [

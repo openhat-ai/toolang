@@ -10,7 +10,9 @@ import mstache
 
 from toolang.common.errors import ToolangError
 
-_TAG_NAME_RE = re.compile(r"^(\.|[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*)$")
+_TAG_NAME_RE = re.compile(
+    r"^(\.|[A-Za-z_][\w-]*(?:\.(?:[A-Za-z_][\w-]*|0|[1-9]\d*))*)$"
+)
 
 
 def render_text_template(template: str, context: Mapping[str, object]) -> str:

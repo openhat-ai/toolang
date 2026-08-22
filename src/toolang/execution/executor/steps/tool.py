@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import json
 import logging
 from collections.abc import Mapping
@@ -16,6 +17,7 @@ from toolang.base.types.run import ToolCall, ToolCallResult
 from toolang.base.types.tool import ToolContext, ToolService
 from toolang.common.errors import ToolangError
 from toolang.common.layout import AgentLayout
+from toolang.common.template import render_text_template
 from toolang.common.time import elapsed_ms, utc_now
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
@@ -28,6 +30,12 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_ARGUMENT_PREVIEW_CHARS = 80
+_DEFAULT_TOOL_SUMMARY_TEMPLATES = {
+    "running": "calling {{name}} {{args.0}}",
+    "succeeded": "called {{name}} {{args.0}}",
+    "failed": "failed to call {{name}} {{args.0}}",
+    "canceled": "canceled {{name}} {{args.0}}",
+}
 _SENSITIVE_ARGUMENT_MARKERS = (
     "apikey",
     "authorization",
@@ -38,6 +46,13 @@ _SENSITIVE_ARGUMENT_MARKERS = (
     "secret",
     "token",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _ToolSummaryContext:
+    family: str
+    name: str
+    args: tuple[str, ...]
 
 
 async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
@@ -52,7 +67,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     started_at = utc_now()
     tool = prepared.tools.get(call.name)
     plugin_name = _plugin_name(tool)
-    summary_target = _tool_summary_target(call, tool)
+    summary_context = _tool_summary_context(call, tool)
     source = state.tool_call_sources.get(call.tool_call_id)
     step_input: tuple[Pointer, ...]
     if source is not None:
@@ -83,7 +98,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             given=ToolStepGiven(
                 plugin=plugin_name,
                 call=call,
-                summary=_tool_summary(summary_target, "running"),
+                summary=_tool_summary(summary_context, "running"),
             ),
             started_at=started_at,
         )
@@ -102,7 +117,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
                 step=StepPath(run.run_id, (step_index,)),
                 kind="tool",
                 status="canceled",
-                noted=ToolStepNoted(summary=_tool_summary(summary_target, "canceled")),
+                noted=ToolStepNoted(summary=_tool_summary(summary_context, "canceled")),
                 finished_at=utc_now(),
             )
         )
@@ -114,7 +129,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
                 step=StepPath(run.run_id, (step_index,)),
                 kind="tool",
                 status="failed",
-                noted=ToolStepNoted(summary=_tool_summary(summary_target, "failed")),
+                noted=ToolStepNoted(summary=_tool_summary(summary_context, "failed")),
                 error=error,
                 finished_at=utc_now(),
             )
@@ -165,7 +180,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             kind="tool",
             status=status,
             output=Local.typed("ToolResultPart", part, None, 0),
-            noted=ToolStepNoted(summary=_tool_summary(summary_target, status)),
+            noted=ToolStepNoted(summary=_tool_summary(summary_context, status)),
             finished_at=utc_now(),
             error=record.error,
         )
@@ -191,39 +206,76 @@ def _plugin_name(tool: AgentTool | None) -> str:
     return "-"
 
 
-def _tool_summary_target(call: ToolCall, tool: AgentTool | None) -> str:
-    name = call.name or "tool"
-    preview = _first_argument_preview(call, tool)
-    return f"{name} {preview}" if preview else name
+def _tool_summary_context(
+    call: ToolCall,
+    tool: AgentTool | None,
+) -> _ToolSummaryContext:
+    family, name = _tool_identity(call, tool)
+    return _ToolSummaryContext(
+        family=family,
+        name=name,
+        args=_argument_previews(call, tool),
+    )
 
 
-def _tool_summary(target: str, status: str) -> str:
-    prefix = {
-        "running": "calling",
-        "succeeded": "called",
-        "failed": "failed to call",
-        "canceled": "canceled",
-    }.get(status, status)
-    return f"{prefix} {target}"
+def _tool_summary(context: _ToolSummaryContext, status: str) -> str:
+    template = _DEFAULT_TOOL_SUMMARY_TEMPLATES.get(status, "{{name}} {{args.0}}")
+    rendered = render_text_template(
+        template,
+        {
+            "family": context.family,
+            "name": context.name,
+            "args": context.args,
+        },
+    )
+    return " ".join(rendered.split())
 
 
-def _first_argument_preview(call: ToolCall, tool: AgentTool | None) -> str:
+def _tool_identity(
+    call: ToolCall,
+    tool: AgentTool | None,
+) -> tuple[str, str]:
+    ref = getattr(tool, "ref", None)
+    family = getattr(ref, "namespace", None)
+    name = getattr(ref, "name", None)
+    if isinstance(family, str) and family and isinstance(name, str) and name:
+        return family, name
+
+    family, separator, name = call.name.partition("__")
+    if separator and family and name:
+        return family, name
+
+    fallback_family = getattr(tool, "namespace", None) or getattr(
+        tool, "plugin_name", ""
+    )
+    return (
+        fallback_family if isinstance(fallback_family, str) else "",
+        call.name or "tool",
+    )
+
+
+def _argument_previews(
+    call: ToolCall,
+    tool: AgentTool | None,
+) -> tuple[str, ...]:
     if tool is None:
-        return ""
+        return ()
     try:
         properties = tool.definition().parameters.get("properties")
     except Exception:
-        return ""
+        return ()
     if not isinstance(properties, Mapping):
-        return ""
+        return ()
+    previews: list[str] = []
     for raw_name, raw_schema in properties.items():
         if not isinstance(raw_name, str) or raw_name not in call.input:
             continue
         schema = raw_schema if isinstance(raw_schema, Mapping) else {}
         if _is_sensitive_argument(raw_name, schema):
-            return "<redacted>"
-        return _format_argument_preview(call.input[raw_name])
-    return ""
+            previews.append("<redacted>")
+        else:
+            previews.append(_format_argument_preview(call.input[raw_name]))
+    return tuple(previews)
 
 
 def _is_sensitive_argument(name: str, schema: Mapping[object, object]) -> bool:
