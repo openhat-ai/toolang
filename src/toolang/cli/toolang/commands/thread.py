@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 import json
 import os
+import sys
 from typing import Annotated, Any, Literal, cast
 
 import click
@@ -30,7 +31,9 @@ from toolang.state.watcher import StateWatcher
 
 from ...common.context import context_layout, load_runtime_environ, user_call
 from ...common.execution import ExecutionResources, open_execution
+from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.output import echo_table, executable_label, parse_utc_timestamp
+from ...common.script_progress import ScriptRunPresenter
 
 
 InspectDocument = dict[str, Any]
@@ -238,6 +241,7 @@ def retry_command(
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         _thread_id, run_id = _anchor(RunHistory(resources.store), run)
+        show_progress = sys.stderr.isatty()
         result = user_call(
             asyncio.run,
             _restart_run(
@@ -249,10 +253,12 @@ def retry_command(
                 allow_options=allows,
                 default_options=defaults,
                 limit_options=limit,
+                show_progress=show_progress,
             ),
         )
     status = _display_status(result.status)
-    typer.echo(f"retried {result.id}: {status}")
+    if not show_progress:
+        typer.echo(f"retried {result.id}: {status}")
     if result.status != "succeeded":
         raise typer.Exit(1)
 
@@ -285,6 +291,7 @@ def rerun_command(
         if resources is None:  # pragma: no cover
             raise RuntimeError("execution resources were not opened")
         _thread_id, source = _anchor(RunHistory(resources.store), run)
+        show_progress = sys.stderr.isatty()
         result = user_call(
             asyncio.run,
             _restart_run(
@@ -296,10 +303,12 @@ def rerun_command(
                 allow_options=allows,
                 default_options=defaults,
                 limit_options=limit,
+                show_progress=show_progress,
             ),
         )
     status = _display_status(result.status)
-    typer.echo(f"reran {source} as {result.id}: {status}")
+    if not show_progress:
+        typer.echo(f"reran {source} as {result.id}: {status}")
     if result.status != "succeeded":
         raise typer.Exit(1)
 
@@ -706,6 +715,7 @@ async def _restart_run(
     allow_options: list[str] | None,
     default_options: list[str] | None,
     limit_options: list[str] | None,
+    show_progress: bool,
 ) -> RunRecord:
     environ = load_runtime_environ(layout, base_environ=os.environ)
     cli_bindings = resolve_binding_overrides({}, default_options)
@@ -723,6 +733,16 @@ async def _restart_run(
     ).refresh()
     state = await StateWatcher(layout).refresh()
     executor = RunExecutor(resources.store, resources.ids)
+    run_id = source if kind == "retry" else resources.ids.issue_run()
+    tracer = (
+        ScriptRunPresenter(
+            run_id=run_id,
+            operation=kind,
+            max_width=resolve_progress_max_width(environ),
+        )
+        if show_progress
+        else None
+    )
     try:
         handle = (
             executor.retry(
@@ -731,6 +751,7 @@ async def _restart_run(
                 state=state,
                 anchor=anchor,
                 model=setup.bindings.model,
+                tracer=tracer,
             )
             if kind == "retry"
             else executor.rerun(
@@ -738,11 +759,17 @@ async def _restart_run(
                 setup=setup,
                 state=state,
                 model=setup.bindings.model,
+                run_id=run_id,
+                tracer=tracer,
             )
         )
         return await handle
     finally:
-        await executor.shutdown()
+        try:
+            await executor.shutdown()
+        finally:
+            if tracer is not None:
+                tracer.close()
 
 
 def _retry_anchor(run_id: str, value: str | None) -> StepPath | None:

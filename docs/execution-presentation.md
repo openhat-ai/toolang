@@ -242,6 +242,13 @@ Script and Chat end a root Run with the same footer:
   1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
+A CLI retry or rerun identifies the operation in the same footer instead of
+appending a separate result line:
+
+```text
+• run_zvczap2h: retry succeeded ──────────
+```
+
 The divider is 42 cells wide: the Step-compatible `•` marker and its following
 space
 occupy two cells, and the caption plus trailing rule fill the remaining 40.

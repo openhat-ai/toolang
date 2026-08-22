@@ -20,11 +20,13 @@ class ScriptRunPresenter(RunTracer):
         self,
         *,
         run_id: str,
+        operation: str | None = None,
         stream: TextIO | None = None,
         width: int | None = None,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
     ) -> None:
         self.run_id = run_id
+        self.operation = operation
         self.console = ProgressConsole(
             stream or sys.stderr,
             width=width,
@@ -48,7 +50,7 @@ class ScriptRunPresenter(RunTracer):
         self.console.close()
 
     def _begin_root(self, event: RunBegin) -> None:
-        root = RunBlock.from_event(event)
+        root = RunBlock.from_event(event, operation=self.operation)
         self._root = root
 
     def _end_root(self, event: RunEnd) -> None:
