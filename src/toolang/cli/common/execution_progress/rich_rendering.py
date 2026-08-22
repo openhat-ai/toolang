@@ -26,10 +26,8 @@ _STYLES: dict[ProgressTone, str] = {
 }
 RUN_DIVIDER_WIDTH = 42
 TERMINAL_MARKDOWN_THEME = Theme({"markdown.code": "bold cyan"})
-TOOL_DETAIL_BACKGROUND = "black"
-TOOL_DETAIL_BORDER = "bright_black"
-TOOL_DETAIL_SIDE_BORDER = f"{TOOL_DETAIL_BORDER} on {TOOL_DETAIL_BACKGROUND}"
-TOOL_DETAIL_BOTTOM_BORDER = TOOL_DETAIL_BORDER
+TERMINAL_SURFACE_BACKGROUND = "bright_black"
+TOOL_DETAIL_BACKGROUND = TERMINAL_SURFACE_BACKGROUND
 
 _ANSI_CODE_THEME = Syntax.get_theme("ansi_dark")
 
@@ -311,7 +309,7 @@ class _ToolSurfaceRow:
         width = max(1, min(options.max_width, self.max_width))
         prefix, content = split_hanging_prefix(self.row.text)
         prefix_width = display_width(prefix)
-        minimum_overhead = 4 if self.row.surface == "tool_detail" else 2
+        minimum_overhead = 2
         if console.color_system is None or prefix_width + minimum_overhead >= width:
             yield from _PlainRow(
                 self.row,
@@ -321,9 +319,7 @@ class _ToolSurfaceRow:
             return
 
         region_width = width - prefix_width
-        surface_width = (
-            region_width - 2 if self.row.surface == "tool_detail" else region_width
-        )
+        surface_width = region_width
         content_width = max(surface_width - 2, 1)
         lines = Text(content).wrap(
             console,
@@ -334,13 +330,13 @@ class _ToolSurfaceRow:
         prefix_style = _STYLES[self.row.tone]
         continuation = " " * prefix_width
         if self.row.surface == "tool_detail" and self.open_detail:
+            yield Text()
             yield _tool_surface_line(
                 prefix=continuation,
                 content="",
                 surface_width=surface_width,
                 surface_style=surface_style,
                 prefix_style=prefix_style,
-                framed=True,
             )
         for index, line in enumerate(lines):
             line.rstrip()
@@ -350,7 +346,6 @@ class _ToolSurfaceRow:
                 surface_width=surface_width,
                 surface_style=surface_style,
                 prefix_style=prefix_style,
-                framed=self.row.surface == "tool_detail",
             )
         if self.row.surface == "tool_detail" and self.close_detail:
             yield _tool_surface_line(
@@ -359,12 +354,7 @@ class _ToolSurfaceRow:
                 surface_width=surface_width,
                 surface_style=surface_style,
                 prefix_style=prefix_style,
-                framed=True,
             )
-            bottom = Text(continuation)
-            bottom.append("▔" * region_width, style=TOOL_DETAIL_BOTTOM_BORDER)
-            bottom.no_wrap = True
-            yield bottom
 
 
 def _tool_surface_line(
@@ -374,20 +364,15 @@ def _tool_surface_line(
     surface_width: int,
     surface_style: Style,
     prefix_style: str,
-    framed: bool,
 ) -> Text:
-    """Render one padded tool-surface row inside its optional side frame."""
+    """Render one padded tool-detail row."""
 
     surface = Text(style=surface_style)
     surface.append(" ")
     surface.append(content)
     surface.pad_right(max(0, surface_width - surface.cell_len))
     rendered = Text(prefix, style=prefix_style)
-    if framed:
-        rendered.append("▏", style=TOOL_DETAIL_SIDE_BORDER)
     rendered.append_text(surface)
-    if framed:
-        rendered.append("▕", style=TOOL_DETAIL_SIDE_BORDER)
     rendered.no_wrap = True
     return rendered
 

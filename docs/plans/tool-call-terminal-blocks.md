@@ -17,21 +17,18 @@ obeys the shared progress width limit in both Chat and Script.
 
 - Render all tool summaries as ordinary progress rows.
 - Render succeeded results and failed errors on the tool-detail surface.
-- Frame the tool-detail surface with straight left and right borders and a
-  square-cornered bottom border.
-- Build borders from fractional block elements placed at cell edges rather
-  than centered box-drawing strokes or full-cell bands. Use `▏` and `▕` for
-  the outer eighth of side cells and `▔` for the upper eighth of the next row.
-  This creates a lightweight frame around the detail surface.
+- Keep the tool-detail surface borderless.
 - Keep the normal two-cell continuation indent, matching model code-block
   alignment.
+- Separate the summary from the detail surface with one unpainted blank row in
+  colored terminal output.
 - Pad detail content by one empty row above and below and one empty column on
-  the left and right, inside the lightweight frame.
+  the left and right.
 - Fill each detail row to the available width, bounded by
   `TOOLANG_PROGRESS_MAX_WIDTH` (120 by default), and wrap long content inside
   that width.
-- Use terminal-owned ANSI slot 0 for the detail background and slot 8 for its
-  border, with ANSI foregrounds that preserve failure tone.
+- Share terminal-owned ANSI slot 8 with the Chat control bar and input box for
+  the detail background, with ANSI foregrounds that preserve failure tone.
 - Preserve plain, unpadded, color-free non-TTY output.
 - Keep compact parallel-lane summaries unchanged; they remain one-line lane
   content rather than expanding into cards.
@@ -43,6 +40,7 @@ obeys the shared progress width limit in both Chat and Script.
 - `src/toolang/cli/common/execution_progress/types.py`
 - `src/toolang/cli/common/execution_progress/step_projection.py`
 - `src/toolang/cli/common/execution_progress/rich_rendering.py`
+- `src/toolang/cli/toolang/commands/chat/rendering.py`
 - `tests/unit/cli/test_execution_progress_projector.py`
 - `tests/unit/cli/test_chat_tui.py`
 - `tests/unit/cli/test_script_run_presenter.py`
@@ -54,12 +52,11 @@ obeys the shared progress width limit in both Chat and Script.
 2. Succeeded and failed summaries remain plain and have no background.
 3. Results and errors use the detail surface.
 4. The detail surface has an ANSI background and aligns after the bullet.
-5. Detail borders use edge-aligned fractional block elements with square
-   corners and count toward the configured progress width. No centered
-   box-drawing glyphs or full-cell border bands are emitted.
+5. Detail surfaces emit no border glyphs or separate border color.
 6. Surface rows wrap and fill no farther than the configured progress width.
-7. Detail content has exactly one internal padding row above and below and one
-   padding column on each side.
+7. One unpainted blank row separates the summary and detail, and detail content
+   has exactly one internal padding row above and below and one padding column
+   on each side.
 8. Script non-TTY output remains uncolored and has no padded trailing cells or
    decorative borders.
 9. The default repository verification passes.

@@ -127,29 +127,23 @@ Tool activity and terminal output use this form:
 ```text
 • calling search “Toolang plugin protocol”
 • called search “Toolang plugin protocol”
-  ▏[                                                          ]▕
-  ▏[ {"results":[{"url":"https://example.com"}]}        ]▕ background
-  ▏[                                                          ]▕
-  ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+
+  [                                                            ] background
+  [ {"results":[{"url":"https://example.com"}]}          ]
+  [                                                            ]
 ```
 
 The brackets above label colored cells; they are not emitted as terminal
-glyphs. The edge blocks are emitted as shown.
+glyphs.
 
-All tool summaries remain ordinary progress rows. A succeeded result or failed
-diagnostic follows on a background-filled detail surface. The detail surface
-has straight left and right borders and a square-cornered bottom border. The
-borders use fractional block elements at the cell edges rather than centered
-box-drawing strokes: `▏` and `▕` occupy the outer eighth of the side cells, and
-`▔` occupies the upper eighth of the next row. This keeps the frame light
-without the weight of full-cell border bands. The detail content has one empty
-row above and below it and one empty column on each side, matching code-block
-padding without adding another border cell. The detail surface wraps like a
-code block and fills the available progress width up to
-`TOOLANG_PROGRESS_MAX_WIDTH`; borders count toward that width, while non-TTY
-output remains unpadded plain text. ANSI palette slot 0 provides the detail
-background, while slot 8 provides its lightweight border, so terminal themes
-retain ownership of their actual colors.
+All tool summaries remain ordinary progress rows. After one unpainted blank
+line, a succeeded result or failed diagnostic follows on a borderless,
+background-filled detail surface. The detail content has one empty row above
+and below it and one empty column on each side, matching code-block padding.
+The detail surface wraps like a code block and fills the available progress
+width up to `TOOLANG_PROGRESS_MAX_WIDTH`, while non-TTY output remains compact,
+unpadded plain text. It shares ANSI palette slot 8 with the Chat control bar and
+input box, so terminal themes retain ownership of the actual color.
 
 The executor records a human-readable `summary` when the Tool Step begins and
 another when it ends. Summary generation receives the tool `family`, leaf
