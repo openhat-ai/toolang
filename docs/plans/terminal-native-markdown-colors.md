@@ -5,8 +5,9 @@
 Feature definition. Approved for implementation on 2026-08-21 after revision
 to use an ANSI code surface, then expanded by human confirmation to align the
 Chat input and control-bar background with that surface. The inline-code
-decision was revised on 2026-08-22 after usability feedback to use the terminal
-default surface. This document does not implement product code.
+decision was revised on 2026-08-22 after usability feedback to use ANSI cyan on
+the terminal-default background. This document does not implement product
+code.
 
 ## Verified Current Behavior
 
@@ -34,7 +35,8 @@ assuming one RGB theme. The feature succeeds when:
 - all Markdown semantic and syntax colors use named ANSI palette entries or
   terminal defaults, never fixed RGB values;
 - fenced code uses a dark ANSI surface independent of the terminal's default
-  background, while inline code uses the terminal default surface;
+  background, while inline code uses ANSI cyan on the terminal-default
+  background;
 - the Chat input and control bars use the same ANSI surface as fenced code; and
 - Chat live output, Chat stable scrollback, and Script TTY output preserve the
   same color identities.
@@ -61,8 +63,7 @@ The shared Rich console theme will override the Markdown styles that currently
 assume fixed colors:
 
 - paragraphs and ordinary text use the terminal defaults;
-- inline code uses bold text with the terminal-default foreground and
-  background;
+- inline code uses bold ANSI cyan text with the terminal-default background;
 - fenced code uses ANSI slot 15 as its base foreground and ANSI slot 8 as its
   background;
 - existing headings, lists, block quotes, links, rules, and tables continue to
@@ -167,7 +168,7 @@ Out of scope:
    rows, and bottom padding; every cell uses ANSI slot 8 as its background.
 6. Fenced code uses ANSI slot 15 as its base foreground and Rich `ansi_dark`
    token colors without emitting RGB.
-7. Inline code uses bold text with no explicit foreground or background color.
+7. Inline code uses bold ANSI slot 6 text with no explicit background color.
 8. Script TTY output uses the same Markdown color identities, while Script
    non-TTY output remains color-free and does not gain padded trailing spaces.
 9. Chat input and control bars use ANSI slot 8, and Rich control bars map to the

@@ -25,7 +25,7 @@ _STYLES: dict[ProgressTone, str] = {
     "warning": "yellow",
 }
 RUN_DIVIDER_WIDTH = 42
-TERMINAL_MARKDOWN_THEME = Theme({"markdown.code": "bold"})
+TERMINAL_MARKDOWN_THEME = Theme({"markdown.code": "bold cyan"})
 
 _ANSI_CODE_THEME = Syntax.get_theme("ansi_dark")
 

@@ -284,13 +284,14 @@ scrollback and retaining only replaceable fragments in its live container.
 
 Model and result Markdown leaves ordinary text on the terminal's default
 foreground and background. Semantic styles use named ANSI colors, so the
-terminal theme owns their actual RGB values. Inline code uses bold text on the
-terminal's default foreground and background, avoiding isolated background
-spans around short identifiers. Fenced code uses ANSI slot 15 text on an ANSI
-slot 8 background with Rich's `ansi_dark` token palette. Its top and bottom
-padding, trailing background cells, and authored blank lines remain one
-rectangular surface. This is a conventional dark code surface rather than a
-guarantee of contrast for arbitrarily redefined ANSI slots.
+terminal theme owns their actual RGB values. Inline code uses bold ANSI cyan
+text on the terminal's default background, distinguishing it from ordinary bold
+text without isolated background spans around short identifiers.
+Fenced code uses ANSI slot 15 text on an ANSI slot 8 background with Rich's
+`ansi_dark` token palette. Its top and bottom padding, trailing background
+cells, and authored blank lines remain one rectangular surface. This is a
+conventional dark code surface rather than a guarantee of contrast for
+arbitrarily redefined ANSI slots.
 
 Chat preserves terminal-default and 16-color ANSI identities through both its
 live prompt_toolkit path and stable scrollback path. Script uses the same

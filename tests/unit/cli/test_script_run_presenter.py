@@ -441,7 +441,7 @@ def test_tty_markdown_separates_inline_and_fenced_code_surfaces() -> None:
     )
 
     rendered = stream.getvalue()
-    assert "\x1b[1mvalue\x1b[0m" in rendered
+    assert "\x1b[1;36mvalue\x1b[0m" in rendered
     assert "\x1b[100m" in rendered or ";100m" in rendered
     assert "\x1b[38;2" not in rendered
     assert "\x1b[48;2" not in rendered
