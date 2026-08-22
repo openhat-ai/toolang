@@ -391,9 +391,10 @@ authored message: Run ids, pending state, and other execution status belong to
 execution progress rather than the control.
 
 Both control bars use the same background and reserve column zero for a blank
-cell whose background is the accent color. Start and Steer use distinct
-accents; quick-command bars use the same background-cell treatment with their
-own accent, and the bottom `PromptBox` uses the Start accent. The cell replaces
+cell whose background is the accent color. Start uses the same ANSI bright cyan
+as the banner logo and wordmark, while Steer keeps a distinct accent.
+Quick-command bars use the same background-cell treatment with their own
+accent, and the bottom `PromptBox` uses the Start accent. The cell replaces
 prompt glyphs such as `>` and `+` while leaving message text aligned in column
 two. Control bars and the input box share one surface background color.
 Rendering the full cell as a background avoids glyph line gaps between adjacent

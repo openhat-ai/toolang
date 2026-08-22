@@ -18,13 +18,15 @@ from wcwidth import wcswidth
 from toolang.cli.common.execution_progress.rich_rendering import (
     TERMINAL_MARKDOWN_THEME,
 )
+from toolang.cli.common.output import TOOLANG_COLOR
 
 ACCENT_CELL = " "
 # prompt-toolkit and Rich names for ANSI slot 8, respectively.
 INPUT_BACKGROUND = "ansibrightblack"
 CONTROL_BAR_BACKGROUND = "bright_black"
 QUICK_COMMAND_CONTROL_ACCENT = "#ffd866"
-START_CONTROL_ACCENT = "#8fd7ff"
+START_CONTROL_ACCENT = TOOLANG_COLOR
+START_CONTROL_ACCENT_PROMPT_TOOLKIT = "ansibrightcyan"
 STEER_CONTROL_ACCENT = "#d7b3ff"
 
 _PROMPT_TOOLKIT_ANSI_COLORS = (

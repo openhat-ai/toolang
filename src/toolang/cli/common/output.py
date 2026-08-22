@@ -31,6 +31,7 @@ TOOLANG_LOGO_TEXT = """
  ██   ⬤   ⬤    ██
  ██          ████
 """.strip("\n")
+TOOLANG_COLOR = "bright_cyan"
 
 
 def toolang_logo_text() -> str:
@@ -47,10 +48,13 @@ def toolang_logo(console: Console) -> Text:
 
     logo = Text()
     for character in TOOLANG_LOGO_TEXT:
-        logo.append(
-            " " if character == "█" else character,
-            style="reverse" if character == "█" else None,
-        )
+        if character == "█":
+            style = f"{TOOLANG_COLOR} on {TOOLANG_COLOR}"
+        elif character == "⬤":
+            style = TOOLANG_COLOR
+        else:
+            style = None
+        logo.append(character, style=style)
     return logo
 
 

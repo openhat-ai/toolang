@@ -301,7 +301,8 @@ or dark.
 
 Chat submission and steer controls contain only their authored message. Their
 left background-filled accent cells distinguish start from steer without
-displaying Run IDs or execution state. Quick-command bars use the same
+displaying Run IDs or execution state. The start accent uses the same ANSI
+bright cyan as the banner logo and wordmark. Quick-command bars use the same
 background-cell treatment with their own accent, and the prompt uses the start
 accent. Control bars and the input box share the fenced-code surface's ANSI
 slot 8 background, leaving its actual RGB value to the terminal theme. An empty

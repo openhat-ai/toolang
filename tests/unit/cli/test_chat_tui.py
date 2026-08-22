@@ -783,11 +783,14 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
 
     start_fragments = rendering.renderable_to_prompt_toolkit(start.render())
     steer_fragments = rendering.renderable_to_prompt_toolkit(steer.render())
+    start_prompt_accent = rendering._prompt_toolkit_color(
+        Color.parse(rendering.START_CONTROL_ACCENT)
+    )
     start_accent = next(
         fragment[0]
         for fragment in start_fragments
         if fragment[1] == rendering.ACCENT_CELL
-        and f"bg:{rendering.START_CONTROL_ACCENT}" in fragment[0]
+        and f"bg:{start_prompt_accent}" in fragment[0]
     )
     steer_accent = next(
         fragment[0]
@@ -802,7 +805,8 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
         fragment[0] for fragment in steer_fragments if "adjust" in fragment[1]
     )
 
-    assert start_accent == f"bg:{rendering.START_CONTROL_ACCENT}"
+    assert rendering.START_CONTROL_ACCENT == "bright_cyan"
+    assert start_accent == f"bg:{start_prompt_accent}"
     assert steer_accent == f"bg:{rendering.STEER_CONTROL_ACCENT}"
     assert f"bg:{rendering.INPUT_BACKGROUND}" in start_message
     assert f"bg:{rendering.INPUT_BACKGROUND}" in steer_message
@@ -842,7 +846,8 @@ def test_chat_two_line_control_bars_add_only_top_padding(
         if segment.text == rendering.ACCENT_CELL
         and segment.style is not None
         and segment.style.bgcolor is not None
-        and segment.style.bgcolor.get_truecolor().hex == accent
+        and segment.style.bgcolor.get_truecolor().hex
+        == Color.parse(accent).get_truecolor().hex
     ]
 
     assert len(accent_cells) == 3
@@ -888,9 +893,7 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     assert accent.width == 1
     assert accent.style == "class:control.start"
     assert accent.char == rendering.ACCENT_CELL
-    assert widgets._chat_ui_palette()["control.start"] == (
-        f"bg:{rendering.START_CONTROL_ACCENT}"
-    )
+    assert widgets._chat_ui_palette()["control.start"] == "bg:ansibrightcyan"
     assert rendering.CONTROL_BAR_BACKGROUND == "bright_black"
     assert rendering.INPUT_BACKGROUND == "ansibrightblack"
     assert (
@@ -1168,7 +1171,7 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     )
     rendered = _render_text(block.render(), width=80)
 
-    assert "█" not in rendered
+    assert "████           ██" in rendered
     assert "⬤   ⬤" in rendered
     assert "Toolang" in rendered
     assert "0.1.0" in rendered
@@ -1184,8 +1187,8 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert next(index for index, line in enumerate(lines) if "home" in line) < next(
         index for index, line in enumerate(lines) if "executor" in line
     )
-    assert next(index for index, line in enumerate(lines) if "Toolang" in line) < next(
-        index for index, line in enumerate(lines) if "⬤" in line
+    assert next(index for index, line in enumerate(lines) if "████" in line) == next(
+        index for index, line in enumerate(lines) if "Toolang" in line
     )
     assert next(index for index, line in enumerate(lines) if "⬤" in line) == next(
         index for index, line in enumerate(lines) if "home" in line
@@ -1193,11 +1196,11 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     bordered_lines = [line for line in lines if line]
     assert len({len(line) for line in bordered_lines}) == 1
     assert not bordered_lines[1].strip("│ ")
-    assert "Toolang" in bordered_lines[2]
+    assert "████" in bordered_lines[2]
     assert "executor" in bordered_lines[-3]
     assert not bordered_lines[-2].strip("│ ")
     logo_line = next(line for line in lines if "Toolang" in line)
-    assert logo_line.startswith("│" + " " * 23 + "Toolang")
+    assert logo_line.startswith("│  ████           ██    Toolang")
     assert "Toolang 0.1.0" in logo_line
     assert "Toolang  0.1.0" not in logo_line
 
@@ -1222,7 +1225,7 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     assert "alice-with-a-long-home" in unwrapped
 
 
-def test_chat_header_keeps_logo_color_neutral_and_styles_metadata() -> None:
+def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     segments = rendering.render_segments(
         blocks.HeaderBlock(
             home="/tmp/toolang/agents/alice",
@@ -1231,11 +1234,7 @@ def test_chat_header_keeps_logo_color_neutral_and_styles_metadata() -> None:
         width=80,
     )
 
-    logo_blocks = [
-        segment
-        for segment in segments
-        if segment.style is not None and segment.style.reverse
-    ]
+    logo_blocks = [segment for segment in segments if "█" in segment.text]
     logo_dots = [segment for segment in segments if "⬤" in segment.text]
     brand = next(segment for segment in segments if segment.text.strip() == "Toolang")
     version = next(segment for segment in segments if segment.text.strip() == "0.1.0")
@@ -1248,23 +1247,22 @@ def test_chat_header_keeps_logo_color_neutral_and_styles_metadata() -> None:
         for value in ("/tmp/toolang/agents/alice", "local")
     ]
 
-    assert "█" not in "".join(segment.text for segment in segments)
-    assert sum(len(segment.text) for segment in logo_blocks) == 16
-    assert all(segment.text.isspace() for segment in logo_blocks)
+    assert sum(segment.text.count("█") for segment in logo_blocks) == 16
     assert all(
         segment.style is not None
-        and segment.style.color is None
-        and segment.style.bgcolor is None
+        and segment.style.color is not None
+        and segment.style.color.name == "bright_cyan"
+        and segment.style.bgcolor == segment.style.color
+        and not segment.style.reverse
         for segment in logo_blocks
     )
     assert logo_dots
     assert all(
-        segment.style is None
-        or (
-            segment.style.color is None
-            and segment.style.bgcolor is None
-            and not segment.style.reverse
-        )
+        segment.style is not None
+        and segment.style.color is not None
+        and segment.style.color.name == "bright_cyan"
+        and segment.style.bgcolor is None
+        and not segment.style.reverse
         for segment in logo_dots
     )
     assert brand.style is not None and brand.style.bold
