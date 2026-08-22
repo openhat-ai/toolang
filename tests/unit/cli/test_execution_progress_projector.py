@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from toolang.base.types.message import (
+    Part,
     TextDelta,
     TextPart,
     ToolCallPart,
@@ -83,6 +84,19 @@ def _tool(name: str = "web_search.search", *, summary: str = "") -> ToolStepGive
 
 def _parts(text: str) -> Local:
     return Local.typed("Part[]", (TextPart(text),), "_", 0)
+
+
+def _part_output(*parts: Part) -> Local:
+    return Local.typed("Part[]", parts, "_", 0)
+
+
+def _tool_call_part() -> ToolCallPart:
+    return ToolCallPart(
+        tool_call_id="call_1",
+        tool_name="web_search.search",
+        tool_family="web_search",
+        input={"query": "agent runtimes"},
+    )
 
 
 def _rows(blocks: tuple[ProgressBlock, ...]) -> list[list[str]]:
@@ -581,7 +595,7 @@ def test_partial_model_output_is_committed_before_terminal_failure(
     assert ended.committed[0].rows[0].tone == ("error" if error else "warning")
 
 
-def test_model_tool_request_uses_a_typed_summary_instead_of_runtime_repr() -> None:
+def test_model_tool_call_only_output_discards_live_presentation() -> None:
     reducer = ProgressProjector(show_boundaries=False)
     reducer.handle(
         RunBegin(
@@ -603,25 +617,203 @@ def test_model_tool_request_uses_a_typed_summary_instead_of_runtime_repr() -> No
             step=StepPath.parse("run_root.0"),
             kind="model",
             status="succeeded",
-            output=Local.typed(
-                "Part[]",
-                (
-                    ToolCallPart(
-                        tool_call_id="call_1",
-                        tool_name="web_search.search",
-                        tool_family="web_search",
-                        input={"query": "agent runtimes"},
-                    ),
-                ),
-                "_",
-                0,
+            output=_part_output(_tool_call_part()),
+            noted=ModelStepNoted(
+                tokens=ModelTokenCount(input=12, output=3),
+                cost="0.001",
             ),
         )
     )
 
-    assert _rows(update.committed) == [["• requested web_search.search"]]
-    assert "Array(" not in update.committed[0].rows[0].text
+    assert update.committed == ()
+    assert update.live == ()
     assert reducer._steps == {}
+    assert reducer.root_metrics.model_calls == 1
+    assert reducer.root_metrics.input_tokens == 12
+    assert reducer.root_metrics.output_tokens == 3
+
+
+def test_model_mixed_output_hides_tool_calls_and_keeps_visible_parts() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    path = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:demo",
+        )
+    )
+    projector.handle(StepBegin(step=path, kind="model", given=_model()))
+
+    update = projector.handle(
+        StepEnd(
+            step=path,
+            kind="model",
+            status="succeeded",
+            output=_part_output(
+                _tool_call_part(),
+                TextPart("I will search for current evidence."),
+            ),
+        )
+    )
+
+    assert _rows(update.committed) == [["• I will search for current evidence."]]
+    assert "web_search" not in update.committed[0].rows[0].text
+
+
+def test_model_committed_text_is_not_replaced_by_later_tool_call_part() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    path = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:demo",
+        )
+    )
+    projector.handle(StepBegin(step=path, kind="model", given=_model()))
+    projector.handle(PartBegin(step=path, part=0, part_type="text"))
+    visible = projector.handle(
+        PartEnd(step=path, part=0, data=TextPart("Visible reasoning."))
+    )
+    projector.handle(PartBegin(step=path, part=1, part_type="tool_call"))
+    hidden = projector.handle(PartEnd(step=path, part=1, data=_tool_call_part()))
+
+    terminal = projector.handle(
+        StepEnd(
+            step=path,
+            kind="model",
+            status="succeeded",
+            output=_part_output(TextPart("Visible reasoning."), _tool_call_part()),
+        )
+    )
+
+    assert _rows(visible.committed) == [["Visible reasoning."]]
+    assert hidden.committed == ()
+    assert hidden.live == ()
+    assert terminal.committed == ()
+    assert terminal.live == ()
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "expected"),
+    [
+        ("failed", "provider unavailable", "• failed provider unavailable"),
+        ("canceled", None, "• canceled"),
+    ],
+)
+def test_model_tool_call_output_keeps_failure_diagnostics(
+    status: StepStatus,
+    error: str | None,
+    expected: str,
+) -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    path = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:demo",
+        )
+    )
+    projector.handle(StepBegin(step=path, kind="model", given=_model()))
+
+    update = projector.handle(
+        StepEnd(
+            step=path,
+            kind="model",
+            status=status,
+            output=_part_output(_tool_call_part()),
+            error=error,
+        )
+    )
+
+    assert _rows(update.committed) == [[expected]]
+
+
+def test_model_empty_success_keeps_completed_fallback() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    path = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="agic:demo",
+        )
+    )
+    projector.handle(StepBegin(step=path, kind="model", given=_model()))
+
+    update = projector.handle(
+        StepEnd(
+            step=path,
+            kind="model",
+            status="succeeded",
+            output=_part_output(),
+        )
+    )
+
+    assert _rows(update.committed) == [["• completed"]]
+
+
+def test_parallel_lane_tool_call_only_model_hands_activity_to_tool_step() -> None:
+    projector = ProgressProjector(show_boundaries=False)
+    par = StepPath.parse("run_root.0")
+    projector.handle(
+        RunBegin(
+            run="run_root",
+            control=ControlRef("run_root", 0),
+            runnable="flow:demo",
+        )
+    )
+    projector.handle(
+        StepBegin(
+            step=par,
+            kind="par",
+            given=MapStmt(span=SPAN, runnable="research", lanes=1),
+        )
+    )
+    projector.handle(
+        RunBegin(
+            run="run_child",
+            parent=par,
+            control=ControlRef("run_child", 0),
+            runnable="agic:research",
+            occurrence=Occurrence(
+                item=OccurrencePosition(index=0, count=1),
+                lane=OccurrencePosition(index=0, count=1),
+            ),
+        )
+    )
+    model = StepPath.parse("run_child.0")
+    projector.handle(StepBegin(step=model, kind="model", given=_model()))
+
+    hidden = projector.handle(
+        StepEnd(
+            step=model,
+            kind="model",
+            status="succeeded",
+            output=_part_output(_tool_call_part()),
+        )
+    )
+
+    assert hidden.committed == ()
+    assert "requested" not in " ".join(row.text for row in hidden.live[0].rows)
+    assert "web_search.search" not in " ".join(row.text for row in hidden.live[0].rows)
+
+    tool = projector.handle(
+        StepBegin(
+            step=StepPath.parse("run_child.1"),
+            kind="tool",
+            given=_tool(),
+        )
+    )
+
+    assert _rows(tool.live) == [
+        [
+            "• running · 0/1 succeeded · 1 active",
+            "  0 | #0 | • executing web_search.search",
+        ]
+    ]
 
 
 def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:

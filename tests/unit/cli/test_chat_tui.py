@@ -214,6 +214,51 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
     assert "• drafting\n\n• run_1 succeeded" in transcript
 
 
+def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None:
+    app = FakeApp()
+
+    events.handle_run_event(_run_begin(), app)
+    events.handle_run_event(_model_step_begin(), app)
+    stop = app.live_blocks[-1]
+    assert [block.type for block in app.live_blocks] == [
+        "ExecutionProgressBlock",
+        "RunStopBlock",
+    ]
+
+    events.handle_run_event(
+        StepEnd(
+            step=StepPath.parse("run_1.1"),
+            kind="model",
+            status="succeeded",
+            output=_parts(
+                ToolCallPart(
+                    tool_call_id="call_1",
+                    tool_name="shell__execute",
+                    tool_family="shell",
+                    input={"command": "echo ok"},
+                )
+            ),
+            noted=ModelStepNoted(tokens=ModelTokenCount(input=12, output=3)),
+        ),
+        app,
+    )
+
+    assert app.finalized == []
+    assert app.live_blocks == [stop]
+
+    events.handle_run_event(_tool_step_begin(step_index=2), app)
+
+    assert [block.type for block in app.live_blocks] == [
+        "ExecutionProgressBlock",
+        "RunStopBlock",
+    ]
+    assert app.live_blocks[-1] is stop
+    rendered = _render_text(app.live_blocks[0].render())
+    assert "executing shell__execute" in rendered
+    assert "thinking" not in rendered
+    assert "requested" not in rendered
+
+
 def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
     app = FakeApp()
     app.live_blocks.append(blocks.RunStartBlock.create("map the items"))

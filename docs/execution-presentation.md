@@ -164,8 +164,12 @@ Historical Steps without summaries retain the compatibility forms `executing
 TOOL`, `executed TOOL`, `failed TOOL`, and `canceled TOOL`.
 
 Structured Tool results use compact single-line JSON. Textual `stdout` and
-`stderr` preserve their original lines. A model Tool request without a Tool
-result is displayed as `• requested TOOL`.
+`stderr` preserve their original lines. Model `ToolCallPart` values are not
+displayed; the following Tool Step owns the visible call activity. Mixed Model
+output retains its text and other displayable Parts. A successful Model Step
+containing only tool-call Parts commits no terminal row and leaves its live
+position to the following Tool Step. This presentation suppression does not
+change execution status, records, metrics, or footer facts.
 
 For a streamed Model Text Part, concatenated deltas must be an exact prefix of
 the authoritative Part closure. A successful Step result must contain that

@@ -8,7 +8,12 @@ from os import terminal_size
 import pytest
 from rich.live import Live
 
-from toolang.base.types.message import TextDelta, TextPart, ToolResultPart
+from toolang.base.types.message import (
+    TextDelta,
+    TextPart,
+    ToolCallPart,
+    ToolResultPart,
+)
 from toolang.base.types.run import ModelCall, ToolCall
 from toolang.cli.common.execution_progress import (
     ProgressBlock,
@@ -141,6 +146,54 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
     assert "┌" not in output
     assert "└" not in output
     assert "2.0s · 1 model call · ↑3.4k ↓86 $0.01" in output
+
+
+@pytest.mark.parametrize("tty", [False, True])
+def test_script_tool_call_only_model_step_clears_live_without_scrollback(
+    tty: bool,
+) -> None:
+    stream = _TtyStream() if tty else StringIO()
+    presenter = ScriptRunPresenter(run_id="run_one", stream=stream)
+    path = StepPath.parse("run_one.0")
+
+    async def scenario() -> None:
+        await presenter.on_event(_root_begin())
+        await presenter.on_event(StepBegin(step=path, kind="model", given=_model()))
+        assert [row.text for row in presenter.console._live_rows] == ["• thinking"]
+
+        await presenter.on_event(
+            StepEnd(
+                step=path,
+                kind="model",
+                status="succeeded",
+                output=Local.typed(
+                    "Part[]",
+                    (
+                        ToolCallPart(
+                            tool_call_id="call_1",
+                            tool_name="web_search.search",
+                            tool_family="web_search",
+                            input={"query": "agent runtimes"},
+                        ),
+                    ),
+                    "_",
+                    0,
+                ),
+            )
+        )
+
+        assert presenter.console._live_rows == []
+        presenter.close()
+
+    asyncio.run(scenario())
+    output = stream.getvalue()
+
+    assert "requested" not in output
+    assert "web_search.search" not in output
+    if tty:
+        assert "\r\x1b[2K" in output
+    else:
+        assert output == ""
 
 
 def test_tty_model_output_uses_normal_style() -> None:
