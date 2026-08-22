@@ -53,12 +53,12 @@ def test_info_avatar_renders_selectable_solid_cells_without_gaps(
         style = avatar.get_style_at_offset(console, offset)
         if character == "█":
             assert style.color is not None
-            assert style.color.name == "cyan"
+            assert style.color.name == "bright_cyan"
             assert style.bgcolor == style.color
             assert not style.reverse
         elif character == "⬤":
             assert style.color is not None
-            assert style.color.name == "cyan"
+            assert style.color.name == "bright_cyan"
             assert style.bgcolor is None
             assert not style.reverse
 

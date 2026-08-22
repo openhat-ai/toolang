@@ -31,7 +31,7 @@ TOOLANG_LOGO_TEXT = """
  ██   ⬤   ⬤    ██
  ██          ████
 """.strip("\n")
-TOOLANG_COLOR = "cyan"
+TOOLANG_COLOR = "bright_cyan"
 
 
 def toolang_logo_text() -> str:

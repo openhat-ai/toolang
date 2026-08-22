@@ -805,7 +805,7 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
         fragment[0] for fragment in steer_fragments if "adjust" in fragment[1]
     )
 
-    assert rendering.START_CONTROL_ACCENT == "cyan"
+    assert rendering.START_CONTROL_ACCENT == "bright_cyan"
     assert start_accent == f"bg:{start_prompt_accent}"
     assert steer_accent == f"bg:{rendering.STEER_CONTROL_ACCENT}"
     assert f"bg:{rendering.INPUT_BACKGROUND}" in start_message
@@ -893,7 +893,7 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     assert accent.width == 1
     assert accent.style == "class:control.start"
     assert accent.char == rendering.ACCENT_CELL
-    assert widgets._chat_ui_palette()["control.start"] == "bg:ansicyan"
+    assert widgets._chat_ui_palette()["control.start"] == "bg:ansibrightcyan"
     assert rendering.CONTROL_BAR_BACKGROUND == "bright_black"
     assert rendering.INPUT_BACKGROUND == "ansibrightblack"
     assert (
@@ -1251,7 +1251,7 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     assert all(
         segment.style is not None
         and segment.style.color is not None
-        and segment.style.color.name == "cyan"
+        and segment.style.color.name == "bright_cyan"
         and segment.style.bgcolor == segment.style.color
         and not segment.style.reverse
         for segment in logo_blocks
@@ -1260,14 +1260,14 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     assert all(
         segment.style is not None
         and segment.style.color is not None
-        and segment.style.color.name == "cyan"
+        and segment.style.color.name == "bright_cyan"
         and segment.style.bgcolor is None
         and not segment.style.reverse
         for segment in logo_dots
     )
     assert brand.style is not None and brand.style.bold
     assert brand.style.color is not None
-    assert brand.style.color.name == "cyan"
+    assert brand.style.color.name == "bright_cyan"
     assert version.style is None or not version.style.dim
     assert all(segment.style is not None and segment.style.dim for segment in keys)
     assert all(
