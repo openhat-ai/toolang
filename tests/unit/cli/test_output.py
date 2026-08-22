@@ -35,7 +35,7 @@ def test_info_avatar_uses_compact_logo(monkeypatch) -> None:
     assert avatar.spans == []
 
 
-def test_info_avatar_renders_solid_cells_with_terminal_background(
+def test_info_avatar_renders_selectable_solid_cells_without_gaps(
     monkeypatch,
 ) -> None:
     console = Console(
@@ -48,13 +48,19 @@ def test_info_avatar_renders_solid_cells_with_terminal_background(
 
     avatar = agent_avatar()
 
-    assert avatar.plain == EXPECTED_INFO_AVATAR.replace("█", " ")
+    assert avatar.plain == EXPECTED_INFO_AVATAR
     for offset, character in enumerate(EXPECTED_INFO_AVATAR):
         style = avatar.get_style_at_offset(console, offset)
-        assert bool(style.reverse) is (character == "█")
-        if character in {"█", "⬤"}:
-            assert style.color is None
+        if character == "█":
+            assert style.color is not None
+            assert style.color.name == "bright_cyan"
+            assert style.bgcolor == style.color
+            assert not style.reverse
+        elif character == "⬤":
+            assert style.color is not None
+            assert style.color.name == "bright_cyan"
             assert style.bgcolor is None
+            assert not style.reverse
 
 
 def test_info_layout_aligns_avatar_with_first_detail_row(monkeypatch) -> None:
