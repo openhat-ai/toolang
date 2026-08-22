@@ -48,6 +48,7 @@ from .types import (
     StepStatus,
     ThreadPeerType,
     ToolStepGiven,
+    ToolStepNoted,
     Pointer,
     TypedPointer,
     local_from_protocol_data,
@@ -848,13 +849,22 @@ def step_given_from_data(kind: StepKind, data: object) -> StepGiven:
             raise ValueError("model given identity must be text")
         return ModelStepGiven(model=model, call=model_call_from_data(payload["call"]))
     if kind == "tool":
-        payload = _canonical_object(data, fields={"plugin", "call"}, label="tool given")
+        if not isinstance(data, Mapping) or set(data) not in {
+            frozenset({"plugin", "call"}),
+            frozenset({"plugin", "call", "summary"}),
+        }:
+            raise ValueError("tool given requires: plugin, call, and optional summary")
+        payload = cast(Mapping[str, object], data)
         plugin = payload["plugin"]
         if not isinstance(plugin, str):
             raise ValueError("tool given plugin must be text")
+        raw_summary = payload.get("summary", "")
+        if not isinstance(raw_summary, str):
+            raise ValueError("tool given summary must be text")
         return ToolStepGiven(
             plugin=plugin,
             call=_TOOL_CALL_ADAPTER.validate_python(payload["call"]),
+            summary=raw_summary,
         )
     statement = flow_stmt_from_data(data)
     from .types import validate_step_given
@@ -871,13 +881,16 @@ def step_given_to_data(kind: StepKind, given: StepGiven) -> dict[str, object]:
     if isinstance(given, ModelStepGiven):
         return {"model": given.model, "call": model_call_to_data(given.call)}
     if isinstance(given, ToolStepGiven):
-        return {
+        data: dict[str, object] = {
             "plugin": given.plugin,
             "call": cast(
                 dict[str, object],
                 _TOOL_CALL_ADAPTER.dump_python(given.call, mode="json"),
             ),
         }
+        if given.summary:
+            data["summary"] = given.summary
+        return data
     return cast(dict[str, object], ast_to_data(given))
 
 
@@ -954,6 +967,12 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
 
     if data is None:
         return None
+    if kind == "tool":
+        payload = _canonical_object(data, fields={"summary"}, label="tool noted")
+        summary = payload["summary"]
+        if not isinstance(summary, str):
+            raise ValueError("tool noted summary must be text")
+        return ToolStepNoted(summary=summary)
     if kind in {"value", "par"}:
         payload = _canonical_object(
             data,
@@ -1044,6 +1063,8 @@ def step_noted_to_data(kind: StepKind, noted: StepNoted) -> dict[str, object] | 
     validate_step_noted(kind, noted)
     if noted is None:
         return None
+    if isinstance(noted, ToolStepNoted):
+        return {"summary": noted.summary}
     if isinstance(noted, CollectionStepNoted):
         return {
             "total_items": noted.total_items,

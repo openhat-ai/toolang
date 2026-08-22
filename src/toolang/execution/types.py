@@ -883,12 +883,14 @@ class ToolStepGiven:
 
     plugin: str
     call: ToolCall
+    summary: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.plugin, str) or not self.plugin:
             raise ValueError("tool Step given requires a plugin identity")
         if not isinstance(self.call, ToolCall):
             raise TypeError("tool Step given requires a ToolCall")
+        _validate_step_summary(self.summary, label="tool Step given", allow_empty=True)
 
 
 def _serialize_step_given(value: StepGiven, handler: Any) -> object:
@@ -957,6 +959,16 @@ class ModelStepNoted:
             raise TypeError("model Step state must be an object")
 
 
+@dataclass(frozen=True, slots=True)
+class ToolStepNoted:
+    """Human-readable terminal summary learned when a tool Step ends."""
+
+    summary: str
+
+    def __post_init__(self) -> None:
+        _validate_step_summary(self.summary, label="tool Step noted")
+
+
 LoopTermination = Literal["exhausted", "satisfied", "failed", "canceled"]
 
 
@@ -1011,7 +1023,9 @@ class LoopStepNoted:
             raise ValueError(f"unknown loop Step termination: {self.termination}")
 
 
-StepNoted: TypeAlias = ModelStepNoted | CollectionStepNoted | LoopStepNoted | None
+StepNoted: TypeAlias = (
+    ModelStepNoted | ToolStepNoted | CollectionStepNoted | LoopStepNoted | None
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1111,6 +1125,12 @@ def validate_step_noted(
         if noted is not None and not isinstance(noted, ModelStepNoted):
             raise TypeError("model Step noted requires ModelStepNoted or None")
         return noted
+    if kind == "tool":
+        if noted is not None and not isinstance(noted, ToolStepNoted):
+            raise TypeError("tool Step noted requires ToolStepNoted or None")
+        if status in {"pending", "running"} and noted is not None:
+            raise ValueError(f"{status} tool Step cannot have terminal noted facts")
+        return noted
     if kind == "loop":
         if noted is not None and not isinstance(noted, LoopStepNoted):
             raise TypeError("loop Step noted requires LoopStepNoted or None")
@@ -1151,6 +1171,22 @@ def validate_step_noted(
     if noted is not None:
         raise TypeError(f"{kind} Step does not accept noted facts")
     return None
+
+
+def _validate_step_summary(
+    summary: object,
+    *,
+    label: str,
+    allow_empty: bool = False,
+) -> None:
+    if not isinstance(summary, str):
+        raise TypeError(f"{label} summary must be text")
+    if not summary:
+        if allow_empty:
+            return
+        raise ValueError(f"{label} summary must be non-empty")
+    if summary != summary.strip() or "\n" in summary or "\r" in summary:
+        raise ValueError(f"{label} summary must be canonical single-line text")
 
 
 def _flow_statement_matches_kind(value: object, kind: StepKind) -> bool:

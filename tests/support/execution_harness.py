@@ -218,6 +218,7 @@ class RecordingTool:
         *,
         output: Mapping[str, Any],
         description: str = "A deterministic execution-test tool.",
+        parameters: Mapping[str, Any] | None = None,
         gate: AsyncGate | None = None,
         error: Exception | None = None,
     ) -> None:
@@ -227,6 +228,7 @@ class RecordingTool:
         self.plugin_name = name.split("__", 1)[0]
         self.output = dict(output)
         self.description = description
+        self.parameters = dict(parameters or {"type": "object"})
         self.gate = gate
         self.error = error
         self.calls: list[tuple[dict[str, Any], ToolContext]] = []
@@ -235,7 +237,7 @@ class RecordingTool:
         return ToolDefinition(
             name=self.name,
             description=self.description,
-            parameters={"type": "object"},
+            parameters=dict(self.parameters),
         )
 
     async def invoke(

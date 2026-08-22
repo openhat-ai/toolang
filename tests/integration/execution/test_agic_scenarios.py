@@ -48,6 +48,7 @@ from toolang.execution.types import (
     ModelTokenPrice,
     StepPath,
     ThreadPrefix,
+    ToolStepNoted,
     Pointer,
 )
 from toolang.lang.input import resolve_input_parts
@@ -815,6 +816,10 @@ def test_multiple_tool_failures_are_reported_in_order_and_can_recover(
     broken = RecordingTool(
         "math__broken",
         output={},
+        parameters={
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+        },
         error=RuntimeError("calculator unavailable"),
     )
     calls = (
@@ -871,6 +876,10 @@ agic calculate(_: Text) -> Text:
             assert [step.error for step in steps[1:3]] == [
                 "calculator unavailable",
                 "unknown tool call: missing__tool",
+            ]
+            assert [step.noted for step in steps[1:3]] == [
+                ToolStepNoted(summary="failed to call math__broken 3"),
+                ToolStepNoted(summary="failed to call missing__tool"),
             ]
             followup = harness.adapter.invocations[1].call.messages
             results = [
