@@ -45,6 +45,7 @@ def live_row(begin: StepBegin, preview: str) -> ProgressRow:
             else f"executing {tool_label(begin.given)}"
         )
         text = f"• {summary}"
+        return ProgressRow(text, "active", surface="tool_summary")
     else:
         text = f"• running {begin.kind}"
     return ProgressRow(text, "active")
@@ -116,7 +117,7 @@ def trace_terminal_rows(
         ProgressRow(
             f"• {summary or f'{status} {label}'}",
             tone,
-            surface="tool_summary" if event.status == "failed" else "none",
+            surface="tool_summary",
         )
     ]
     if error:

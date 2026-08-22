@@ -126,6 +126,7 @@ Tool activity and terminal output use this form:
 
 ```text
 • calling search “Toolang plugin protocol”
+
 • called search “Toolang plugin protocol”
 
   [                                                            ] background
@@ -136,8 +137,9 @@ Tool activity and terminal output use this form:
 The brackets above label colored cells; they are not emitted as terminal
 glyphs.
 
-All tool summaries remain ordinary progress rows. After one unpainted blank
-line, a succeeded result or failed diagnostic follows on a borderless,
+All tool summaries remain ordinary progress rows and begin after one unpainted
+blank line, keeping Tool Steps visually separated. After another unpainted
+blank line, a succeeded result or failed diagnostic follows on a borderless,
 background-filled detail surface. The detail content has one empty row above
 and below it and one empty column on each side, matching code-block padding.
 The detail surface wraps like a code block and fills the available progress

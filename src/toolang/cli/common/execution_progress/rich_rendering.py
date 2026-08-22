@@ -142,6 +142,8 @@ def _row_renderable(
             open_detail=open_tool_detail,
             close_detail=close_tool_detail,
         )
+    if row.surface == "tool_summary":
+        return _ToolSummaryRow(row, live=live, max_width=max_width)
     if row.format == "markdown":
         return _MarkdownRow(row, max_width=max_width)
     return _PlainRow(row, live=live, max_width=max_width)
@@ -290,6 +292,28 @@ class _PlainRow:
                 style=style,
                 no_wrap=True,
             )
+
+
+@dataclass(frozen=True, slots=True)
+class _ToolSummaryRow:
+    """Separate one plain tool summary from the preceding terminal step."""
+
+    row: ProgressRow
+    live: bool
+    max_width: int
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        if console.color_system is not None:
+            yield Text()
+        yield from _PlainRow(
+            self.row,
+            live=self.live,
+            max_width=self.max_width,
+        ).__rich_console__(console, options)
 
 
 @dataclass(frozen=True, slots=True)

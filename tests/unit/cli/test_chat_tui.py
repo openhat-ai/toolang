@@ -506,7 +506,13 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
     block = blocks.ExecutionProgressBlock(
         ProgressBlock(
             "step:run_1.1",
-            (ProgressRow("• executing shell__execute", "active"),),
+            (
+                ProgressRow(
+                    "• executing shell__execute",
+                    "active",
+                    surface="tool_summary",
+                ),
+            ),
         ),
         max_width=32,
     )
@@ -517,7 +523,7 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
         if segment.text.strip()
     ]
     assert running_segments
-    assert "• executing shell__execute" in _render_text(block.render())
+    assert _render_text(block.render()).startswith("\n• executing shell__execute")
     assert all(
         segment.style is None or not segment.style.dim for segment in running_segments
     )
@@ -552,13 +558,14 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
     ]
     painted_lines = [line for line in painted_lines if line]
 
-    assert rendered.startswith("• executed shell__execute\n\n")
+    assert rendered.startswith("\n• executed shell__execute\n\n")
     assert "ok" in rendered
     assert not any(character in rendered for character in "│└─┘▏▕▔")
     assert all(
-        segment.style is None or segment.style.bgcolor is None for segment in lines[0]
+        segment.style is None or segment.style.bgcolor is None for segment in lines[1]
     )
-    assert all(not segment.text for segment in lines[1])
+    assert all(not segment.text for segment in lines[0])
+    assert all(not segment.text for segment in lines[2])
     assert len(painted_lines) == 3
     assert all(
         sum(len(segment.text) for segment in line) == 30 for line in painted_lines

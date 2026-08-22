@@ -721,6 +721,7 @@ def test_tool_output_uses_compact_json_and_preserves_text_lines(
         )
     )
     assert live.live[0].rows[0].tone == "active"
+    assert live.live[0].rows[0].surface == "tool_summary"
     update = reducer.handle(
         StepEnd(
             step=StepPath.parse("run_root.0"),
@@ -792,7 +793,7 @@ def test_tool_error_preserves_complete_multiline_output() -> None:
     ]
 
 
-def test_canceled_tool_summary_and_error_remain_plain_rows() -> None:
+def test_canceled_tool_summary_is_separated_but_error_remains_plain() -> None:
     projector = ProgressProjector(show_boundaries=False)
     path = StepPath.parse("run_root.0")
     projector.handle(
@@ -823,7 +824,10 @@ def test_canceled_tool_summary_and_error_remain_plain_rows() -> None:
     assert _rows(terminal.committed) == [
         ["• canceled web search for Toolang", "  interrupted by user"]
     ]
-    assert all(row.surface == "none" for row in terminal.committed[0].rows)
+    assert [row.surface for row in terminal.committed[0].rows] == [
+        "tool_summary",
+        "none",
+    ]
 
 
 def test_flow_scalar_output_is_displayed_in_its_normal_output_slot() -> None:

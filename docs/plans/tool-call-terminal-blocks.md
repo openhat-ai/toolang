@@ -16,6 +16,8 @@ obeys the shared progress width limit in both Chat and Script.
 ## Scope and Design
 
 - Render all tool summaries as ordinary progress rows.
+- Begin every Tool Step summary with one unpainted blank row in colored
+  terminal output, keeping adjacent Tool Steps separated.
 - Render succeeded results and failed errors on the tool-detail surface.
 - Keep the tool-detail surface borderless.
 - Keep the normal two-cell continuation indent, matching model code-block
@@ -48,7 +50,8 @@ obeys the shared progress width limit in both Chat and Script.
 
 ## Acceptance Tests
 
-1. Running and canceled tool summaries retain their existing plain rows.
+1. Running and canceled tool summaries retain plain styling, and every Tool
+   Step summary begins after one unpainted blank row in colored terminals.
 2. Succeeded and failed summaries remain plain and have no background.
 3. Results and errors use the detail surface.
 4. The detail surface has an ANSI background and aligns after the bullet.
