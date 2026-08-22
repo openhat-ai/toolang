@@ -552,11 +552,14 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
     ]
     painted_lines = [line for line in painted_lines if line]
 
-    assert rendered.startswith("•  executed shell__execute")
+    assert rendered.startswith("• executed shell__execute")
     assert "ok" in rendered
     assert not any(character in rendered for character in "│└─┘")
     assert all(character in rendered for character in "▏▕▔")
-    assert len(painted_lines) == 4
+    assert all(
+        segment.style is None or segment.style.bgcolor is None for segment in lines[0]
+    )
+    assert len(painted_lines) == 3
     assert all(
         sum(len(segment.text) for segment in line) == 30 for line in painted_lines
     )
@@ -570,7 +573,7 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
             assert number is not None
             numbers.add(number)
         background_numbers.append(numbers)
-    assert background_numbers == [{8}, {0}, {0}, {0}]
+    assert background_numbers == [{0}, {0}, {0}]
 
     painted_offsets: list[tuple[int, int]] = []
     for line in lines:
@@ -585,7 +588,7 @@ def test_chat_tool_step_preserves_running_row_and_renders_terminal_surfaces() ->
             offset = end
         if painted_start is not None and painted_end is not None:
             painted_offsets.append((painted_start, painted_end))
-    assert painted_offsets == [(2, 32), (2, 32), (2, 32), (2, 32)]
+    assert painted_offsets == [(2, 32), (2, 32), (2, 32)]
 
     rendered_lines = [
         "".join(segment.text for segment in line)
@@ -651,14 +654,15 @@ def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
             widths[number] = widths.get(number, 0) + len(segment.text)
         for number, width in widths.items():
             background_widths.setdefault(number, set()).add(width)
-    assert background_widths == {8: {22}, 0: {22}}
+    assert background_widths == {0: {22}}
 
     rendered_lines = [
         "".join(segment.text for segment in line)
         for line in lines
         if any(segment.text for segment in line)
     ]
-    assert all(len(line) == 24 for line in rendered_lines)
+    assert all(len(line) <= 24 for line in rendered_lines)
+    assert any(len(line) < 24 for line in rendered_lines)
     full_content = next(
         segment.text
         for line in lines

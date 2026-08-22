@@ -15,7 +15,7 @@ from rich.text import Text
 from rich.theme import Theme
 
 from .formatting import display_width, split_hanging_prefix, truncate
-from .types import ProgressBlock, ProgressRow, ProgressSurface, ProgressTone
+from .types import ProgressBlock, ProgressRow, ProgressTone
 
 _STYLES: dict[ProgressTone, str] = {
     "progress": "dim",
@@ -26,10 +26,10 @@ _STYLES: dict[ProgressTone, str] = {
 }
 RUN_DIVIDER_WIDTH = 42
 TERMINAL_MARKDOWN_THEME = Theme({"markdown.code": "bold cyan"})
-TOOL_SUMMARY_BACKGROUND = "bright_black"
 TOOL_DETAIL_BACKGROUND = "black"
-TOOL_DETAIL_SIDE_BORDER = f"{TOOL_SUMMARY_BACKGROUND} on {TOOL_DETAIL_BACKGROUND}"
-TOOL_DETAIL_BOTTOM_BORDER = TOOL_SUMMARY_BACKGROUND
+TOOL_DETAIL_BORDER = "bright_black"
+TOOL_DETAIL_SIDE_BORDER = f"{TOOL_DETAIL_BORDER} on {TOOL_DETAIL_BACKGROUND}"
+TOOL_DETAIL_BOTTOM_BORDER = TOOL_DETAIL_BORDER
 
 _ANSI_CODE_THEME = Syntax.get_theme("ansi_dark")
 
@@ -137,7 +137,7 @@ def _row_renderable(
     open_tool_detail: bool,
     close_tool_detail: bool,
 ) -> RenderableType:
-    if row.surface != "none":
+    if row.surface == "tool_detail":
         return _ToolSurfaceRow(
             row,
             max_width=max_width,
@@ -296,7 +296,7 @@ class _PlainRow:
 
 @dataclass(frozen=True, slots=True)
 class _ToolSurfaceRow:
-    """Render one tool header or detail as a bounded, indented surface."""
+    """Render one tool detail as a bounded, indented surface."""
 
     row: ProgressRow
     max_width: int
@@ -330,7 +330,7 @@ class _ToolSurfaceRow:
             content_width,
             overflow="fold",
         ) or [Text("")]
-        surface_style = _tool_surface_style(self.row.surface, self.row.tone)
+        surface_style = _tool_detail_style(self.row.tone)
         prefix_style = _STYLES[self.row.tone]
         continuation = " " * prefix_width
         if self.row.surface == "tool_detail" and self.open_detail:
@@ -392,7 +392,7 @@ def _tool_surface_line(
     return rendered
 
 
-def _tool_surface_style(surface: ProgressSurface, tone: ProgressTone) -> Style:
+def _tool_detail_style(tone: ProgressTone) -> Style:
     foreground = (
         "bright_red"
         if tone == "error"
@@ -400,10 +400,7 @@ def _tool_surface_style(surface: ProgressSurface, tone: ProgressTone) -> Style:
         if tone == "warning"
         else "bright_white"
     )
-    background = (
-        TOOL_SUMMARY_BACKGROUND if surface == "tool_summary" else TOOL_DETAIL_BACKGROUND
-    )
-    return Style(color=foreground, bgcolor=background)
+    return Style(color=foreground, bgcolor=TOOL_DETAIL_BACKGROUND)
 
 
 @dataclass(frozen=True, slots=True)

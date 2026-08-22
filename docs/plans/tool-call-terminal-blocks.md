@@ -9,32 +9,29 @@ below.
 ## Goal and Success Criteria
 
 Make completed tool calls easier to scan by visually separating their summary
-from their result or error. The feature succeeds when terminal tool calls use
-two compact rectangular surfaces, retain the existing live and cancellation
-presentation, and obey the shared progress width limit in both Chat and Script.
+from their result or error. The feature succeeds when tool results and errors
+use a compact rectangular surface, all summaries remain plain, and the display
+obeys the shared progress width limit in both Chat and Script.
 
 ## Scope and Design
 
-- Keep running and canceled tool summaries as ordinary progress rows.
-- Render succeeded and failed summaries on the tool-summary surface.
+- Render all tool summaries as ordinary progress rows.
 - Render succeeded results and failed errors on the tool-detail surface.
 - Frame the tool-detail surface with straight left and right borders and a
-  square-cornered bottom border. The summary surface acts as the visual top, so
-  the detail does not add a separate top border.
+  square-cornered bottom border.
 - Build borders from fractional block elements placed at cell edges rather
   than centered box-drawing strokes or full-cell bands. Use `▏` and `▕` for
   the outer eighth of side cells and `▔` for the upper eighth of the next row.
-  This preserves the summary background's cell boundary with less visual
-  weight.
-- Keep the bullet outside the summary surface and use the normal two-cell
-  continuation indent, matching model code-block alignment.
+  This creates a lightweight frame around the detail surface.
+- Keep the normal two-cell continuation indent, matching model code-block
+  alignment.
 - Pad detail content by one empty row above and below and one empty column on
   the left and right, inside the lightweight frame.
-- Fill each colored row to the available width, bounded by
+- Fill each detail row to the available width, bounded by
   `TOOLANG_PROGRESS_MAX_WIDTH` (120 by default), and wrap long content inside
   that width.
-- Use terminal-owned ANSI backgrounds: slot 8 for summaries and slot 0 for
-  details, with ANSI foregrounds that preserve failure tone.
+- Use terminal-owned ANSI slot 0 for the detail background and slot 8 for its
+  border, with ANSI foregrounds that preserve failure tone.
 - Preserve plain, unpadded, color-free non-TTY output.
 - Keep compact parallel-lane summaries unchanged; they remain one-line lane
   content rather than expanding into cards.
@@ -54,13 +51,12 @@ presentation, and obey the shared progress width limit in both Chat and Script.
 ## Acceptance Tests
 
 1. Running and canceled tool summaries retain their existing plain rows.
-2. Succeeded and failed summaries use the summary surface.
+2. Succeeded and failed summaries remain plain and have no background.
 3. Results and errors use the detail surface.
-4. Both surfaces have distinct ANSI backgrounds and align after the bullet.
+4. The detail surface has an ANSI background and aligns after the bullet.
 5. Detail borders use edge-aligned fractional block elements with square
-   corners, share the summary surface's outer cell boundaries, and count
-   toward the configured progress width. No centered box-drawing glyphs or
-   full-cell border bands are emitted.
+   corners and count toward the configured progress width. No centered
+   box-drawing glyphs or full-cell border bands are emitted.
 6. Surface rows wrap and fill no farther than the configured progress width.
 7. Detail content has exactly one internal padding row above and below and one
    padding column on each side.
