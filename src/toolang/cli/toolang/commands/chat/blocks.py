@@ -98,7 +98,7 @@ def _control_bar_line(
     return bar(
         [
             (ACCENT_CELL, f"on {accent}"),
-            (f" {content}" if content else "", f"white on {background}"),
+            (f" {content}" if content else "", f"on {background}"),
         ],
         style=f"on {background}",
         width=width,

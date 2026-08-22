@@ -946,6 +946,13 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
 
     start_fragments = rendering.renderable_to_prompt_toolkit(start.render())
     steer_fragments = rendering.renderable_to_prompt_toolkit(steer.render())
+    start_segments = rendering.render_segments(start.render())
+    start_message_segment = next(
+        segment for segment in start_segments if "hello" in segment.text
+    )
+    assert start_message_segment.style is not None
+    assert start_message_segment.style.color is None
+    assert start_message_segment.style.dim is None
     start_prompt_accent = rendering._prompt_toolkit_color(
         Color.parse(rendering.START_CONTROL_ACCENT)
     )
