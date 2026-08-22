@@ -998,7 +998,7 @@ def test_chat_fenced_code_preserves_one_rectangular_background() -> None:
     assert number.style.color.number == 12
 
 
-def test_chat_inline_code_uses_the_dark_ansi_surface() -> None:
+def test_chat_inline_code_uses_cyan_on_the_terminal_default_background() -> None:
     block = blocks.AssistantResponseBlock.from_parts(
         (TextPart("before `value` after"),),
     )
@@ -1012,9 +1012,8 @@ def test_chat_inline_code_uses_the_dark_ansi_surface() -> None:
     assert code.style is not None
     assert code.style.bold
     assert code.style.color is not None
-    assert code.style.color.number == 15
-    assert code.style.bgcolor is not None
-    assert code.style.bgcolor.number == 8
+    assert code.style.color.number == 6
+    assert code.style.bgcolor is None
 
 
 @pytest.mark.parametrize(
