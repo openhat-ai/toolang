@@ -10,7 +10,7 @@ model in the status bar, where it can change during a chat.
 
 The change succeeds when:
 
-- the banner shows the bright-cyan three-line logo beside `Toolang` and its
+- the banner shows the cyan three-line logo beside `Toolang` and its
   exact version value, separated by one ordinary space;
 - `home` appears above `executor`, and the current process-local chat path shows
   `executor  local`;
@@ -24,11 +24,11 @@ The change succeeds when:
 ## Scope and presentation
 
 The rounded panel keeps a dim border, two columns of horizontal padding, and one
-empty row above and below its content. The logo uses ANSI bright cyan. Its solid
+empty row above and below its content. The logo uses ANSI cyan. Its solid
 cells use block characters with matching foreground and background colors, so
 they remain gapless while retaining selectable foreground glyphs. Plain
 terminals fall back to unstyled block characters.
-`Toolang` is bold bright cyan. Its exact `toolang_version()` value follows after
+`Toolang` is bold cyan. Its exact `toolang_version()` value follows after
 one space in the normal foreground rather than participating in key/value
 alignment. The `home` and `executor` keys are dim, and their values use the
 normal foreground. The metadata order is Toolang/version, home, then executor.

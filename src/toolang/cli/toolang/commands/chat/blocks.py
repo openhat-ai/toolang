@@ -16,7 +16,7 @@ from rich.table import Table
 from rich.text import Text
 
 from toolang.base.types.message import Part, TextPart
-from toolang.cli.common.output import toolang_logo, toolang_logo_text
+from toolang.cli.common.output import TOOLANG_COLOR, toolang_logo, toolang_logo_text
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin, StepEnd
 from toolang.execution.types import ExecutionError
 
@@ -459,7 +459,7 @@ class HeaderBlock:
         options: ConsoleOptions,
     ) -> RenderResult:
         identity = Text()
-        identity.append("Toolang", style="bold bright_cyan")
+        identity.append("Toolang", style=f"bold {TOOLANG_COLOR}")
         identity.append(f" {self.version_label}")
 
         fields = Table.grid(padding=(0, _HEADER_FIELD_GAP))

@@ -22,7 +22,7 @@ from .history import ChatInputHistoryStore
 from .rendering import (
     ACCENT_CELL,
     INPUT_BACKGROUND,
-    START_CONTROL_ACCENT,
+    START_CONTROL_ACCENT_PROMPT_TOOLKIT,
 )
 
 MAX_INPUT_ROWS = 6
@@ -47,7 +47,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "": "",
         "queue": "fg:#f2f2f2 bg:#3a3a3a",
         "queue.dim": "fg:#b8b8b8 bg:#3a3a3a",
-        "control.start": f"bg:{START_CONTROL_ACCENT}",
+        "control.start": f"bg:{START_CONTROL_ACCENT_PROMPT_TOOLKIT}",
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "input.placeholder": f"fg:#b8b8b8 bg:{INPUT_BACKGROUND}",
         "cursor": "fg:#111111 bg:#eeeeee",

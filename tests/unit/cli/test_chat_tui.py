@@ -783,11 +783,14 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
 
     start_fragments = rendering.renderable_to_prompt_toolkit(start.render())
     steer_fragments = rendering.renderable_to_prompt_toolkit(steer.render())
+    start_prompt_accent = rendering._prompt_toolkit_color(
+        Color.parse(rendering.START_CONTROL_ACCENT)
+    )
     start_accent = next(
         fragment[0]
         for fragment in start_fragments
         if fragment[1] == rendering.ACCENT_CELL
-        and f"bg:{rendering.START_CONTROL_ACCENT}" in fragment[0]
+        and f"bg:{start_prompt_accent}" in fragment[0]
     )
     steer_accent = next(
         fragment[0]
@@ -802,7 +805,8 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
         fragment[0] for fragment in steer_fragments if "adjust" in fragment[1]
     )
 
-    assert start_accent == f"bg:{rendering.START_CONTROL_ACCENT}"
+    assert rendering.START_CONTROL_ACCENT == "cyan"
+    assert start_accent == f"bg:{start_prompt_accent}"
     assert steer_accent == f"bg:{rendering.STEER_CONTROL_ACCENT}"
     assert f"bg:{rendering.INPUT_BACKGROUND}" in start_message
     assert f"bg:{rendering.INPUT_BACKGROUND}" in steer_message
@@ -842,7 +846,8 @@ def test_chat_two_line_control_bars_add_only_top_padding(
         if segment.text == rendering.ACCENT_CELL
         and segment.style is not None
         and segment.style.bgcolor is not None
-        and segment.style.bgcolor.get_truecolor().hex == accent
+        and segment.style.bgcolor.get_truecolor().hex
+        == Color.parse(accent).get_truecolor().hex
     ]
 
     assert len(accent_cells) == 3
@@ -888,9 +893,7 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     assert accent.width == 1
     assert accent.style == "class:control.start"
     assert accent.char == rendering.ACCENT_CELL
-    assert widgets._chat_ui_palette()["control.start"] == (
-        f"bg:{rendering.START_CONTROL_ACCENT}"
-    )
+    assert widgets._chat_ui_palette()["control.start"] == "bg:ansicyan"
     assert rendering.CONTROL_BAR_BACKGROUND == "bright_black"
     assert rendering.INPUT_BACKGROUND == "ansibrightblack"
     assert (
@@ -1248,7 +1251,7 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     assert all(
         segment.style is not None
         and segment.style.color is not None
-        and segment.style.color.name == "bright_cyan"
+        and segment.style.color.name == "cyan"
         and segment.style.bgcolor == segment.style.color
         and not segment.style.reverse
         for segment in logo_blocks
@@ -1257,14 +1260,14 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     assert all(
         segment.style is not None
         and segment.style.color is not None
-        and segment.style.color.name == "bright_cyan"
+        and segment.style.color.name == "cyan"
         and segment.style.bgcolor is None
         and not segment.style.reverse
         for segment in logo_dots
     )
     assert brand.style is not None and brand.style.bold
     assert brand.style.color is not None
-    assert brand.style.color.name == "bright_cyan"
+    assert brand.style.color.name == "cyan"
     assert version.style is None or not version.style.dim
     assert all(segment.style is not None and segment.style.dim for segment in keys)
     assert all(
