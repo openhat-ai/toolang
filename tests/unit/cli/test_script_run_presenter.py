@@ -306,6 +306,7 @@ def test_tty_wraps_finalized_model_output_without_adding_a_marker() -> None:
     rendered = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", stream.getvalue())
 
     assert rendered.splitlines() == [
+        "",
         "• executed Alpha beta gamma delta",
         "  epsilon zeta eta theta",
     ]
@@ -682,5 +683,6 @@ def test_tty_wraps_complete_cjk_output_by_terminal_cell_width() -> None:
     assert "".join(line.strip() for line in lines).replace("•", "", 1).strip() == (
         "已完成对多个来源中的证据和结论的整理并生成最终摘要"
     )
+    assert lines[0] == ""
     assert all(display_width(line) <= 40 for line in lines)
-    assert lines[1].startswith("  ")
+    assert lines[2].startswith("  ")

@@ -121,6 +121,11 @@ def progress_block_renderable(
                         or block.rows[index + 1].surface != "tool_detail"
                     )
                 ),
+                separate_step=(
+                    block.key.startswith("step:")
+                    and _starts_step(row)
+                    and (index == 0 or bool(block.rows[index - 1].text.strip()))
+                ),
             )
             for index, row in enumerate(block.rows)
         )
@@ -134,19 +139,26 @@ def _row_renderable(
     max_width: int,
     open_tool_detail: bool,
     close_tool_detail: bool,
+    separate_step: bool,
 ) -> RenderableType:
     if row.surface == "tool_detail":
-        return _ToolSurfaceRow(
+        renderable: RenderableType = _ToolSurfaceRow(
             row,
             max_width=max_width,
             open_detail=open_tool_detail,
             close_detail=close_tool_detail,
         )
-    if row.surface == "tool_summary":
-        return _ToolSummaryRow(row, live=live, max_width=max_width)
-    if row.format == "markdown":
-        return _MarkdownRow(row, max_width=max_width)
-    return _PlainRow(row, live=live, max_width=max_width)
+    elif row.format == "markdown":
+        renderable = _MarkdownRow(row, max_width=max_width)
+    else:
+        renderable = _PlainRow(row, live=live, max_width=max_width)
+    return _StepStartRow(renderable) if separate_step else renderable
+
+
+def _starts_step(row: ProgressRow) -> bool:
+    """Return whether a row carries the leading marker for a new Step."""
+
+    return row.text.startswith("• ") or row.prefix == "• "
 
 
 def run_footer_renderable(
@@ -295,12 +307,10 @@ class _PlainRow:
 
 
 @dataclass(frozen=True, slots=True)
-class _ToolSummaryRow:
-    """Separate one plain tool summary from the preceding terminal step."""
+class _StepStartRow:
+    """Separate one Step's leading row in colored terminal output."""
 
-    row: ProgressRow
-    live: bool
-    max_width: int
+    renderable: RenderableType
 
     def __rich_console__(
         self,
@@ -309,11 +319,7 @@ class _ToolSummaryRow:
     ) -> RenderResult:
         if console.color_system is not None:
             yield Text()
-        yield from _PlainRow(
-            self.row,
-            live=self.live,
-            max_width=self.max_width,
-        ).__rich_console__(console, options)
+        yield self.renderable
 
 
 @dataclass(frozen=True, slots=True)

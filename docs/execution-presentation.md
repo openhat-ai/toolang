@@ -137,15 +137,17 @@ Tool activity and terminal output use this form:
 The brackets above label colored cells; they are not emitted as terminal
 glyphs.
 
-All tool summaries remain ordinary progress rows and begin after one unpainted
-blank line, keeping Tool Steps visually separated. After another unpainted
-blank line, a succeeded result or failed diagnostic follows on a borderless,
-background-filled detail surface. The detail content has one empty row above
-and below it and one empty column on each side, matching code-block padding.
-The detail surface wraps like a code block and fills the available progress
-width up to `TOOLANG_PROGRESS_MAX_WIDTH`, while non-TTY output remains compact,
-unpadded plain text. It shares ANSI palette slot 8 with the Chat control bar and
-input box, so terminal themes retain ownership of the actual color.
+Every Step's leading `• ` row begins after one unpainted blank line, including
+model output that follows a Tool Step. Continuation rows from the same Step do
+not add another separator. Tool summaries remain ordinary progress rows. After
+another unpainted blank line, a succeeded result or failed diagnostic follows
+on a borderless, background-filled detail surface. The detail content has one
+empty row above and below it and one empty column on each side, matching
+code-block padding. The detail surface wraps like a code block and fills the
+available progress width up to `TOOLANG_PROGRESS_MAX_WIDTH`, while non-TTY
+output remains compact, unpadded plain text. It shares ANSI palette slot 8 with
+the Chat control bar and input box, so terminal themes retain ownership of the
+actual color.
 
 The executor records a human-readable `summary` when the Tool Step begins and
 another when it ends. Summary generation receives the tool `family`, leaf

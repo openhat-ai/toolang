@@ -228,14 +228,14 @@ def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() ->
         app,
     )
     assert app.finalized == []
-    assert _render_text(app.live_blocks[0].render()).startswith("• Heading")
+    assert _render_text(app.live_blocks[0].render()).startswith("\n• Heading")
 
     events.handle_run_event(
         PartDelta(step=path, part=0, delta=TextDelta("Paragraph")),
         app,
     )
     assert len(app.finalized) == 1
-    assert _render_text(app.finalized[0].render()).startswith("• Heading")
+    assert _render_text(app.finalized[0].render()).startswith("\n• Heading")
     assert _render_text(app.live_blocks[0].render()).splitlines() == [
         "",
         "  Paragraph",
@@ -359,7 +359,7 @@ def test_script_and_chat_sinks_preserve_the_same_semantic_rows(
     ProgressConsole(stream).apply(ProgressUpdate(committed=(progress,)))
     chat = blocks.ExecutionProgressBlock(progress)
 
-    assert stream.getvalue() == _render_text(chat.render())
+    assert stream.getvalue() == _render_text(chat.render()).removeprefix("\n")
 
 
 def test_chat_submission_has_no_status_before_run_begin() -> None:
@@ -683,6 +683,23 @@ def test_chat_tool_surfaces_wrap_within_the_configured_progress_width() -> None:
     assert not any(character in "".join(rendered_lines) for character in "│└─┘▏▕▔")
 
 
+def test_chat_model_step_starts_after_a_blank_row() -> None:
+    block = blocks.ExecutionProgressBlock(
+        ProgressBlock(
+            "step:run_1.2",
+            (
+                ProgressRow(
+                    "model answer",
+                    format="markdown",
+                    prefix="• ",
+                ),
+            ),
+        )
+    )
+
+    assert _render_text(block.render()).startswith("\n• model answer")
+
+
 def test_chat_truncates_live_lane_but_preserves_its_finalized_output() -> None:
     row = ProgressRow(
         "  0 | #0 | • failed " + "provider returned a complete long diagnostic",
@@ -728,9 +745,11 @@ def test_chat_wraps_trace_model_activity_across_live_rows() -> None:
 
     lines = rendered.splitlines()
     assert len(lines) > 1
-    assert rendered.startswith("• first")
+    assert rendered.startswith("\n• first")
     assert "..." not in rendered
-    assert " ".join(line.strip().removeprefix("• ") for line in lines) == content
+    assert (
+        " ".join(line.strip().removeprefix("• ") for line in lines if line) == content
+    )
 
 
 def test_chat_progress_width_is_bounded_on_a_wide_terminal() -> None:
@@ -745,8 +764,11 @@ def test_chat_progress_width_is_bounded_on_a_wide_terminal() -> None:
     rendered = _render_text(block.render(), width=160)
     lines = rendered.splitlines()
 
+    assert lines[0] == ""
     assert all(rendering.display_len(line) <= 120 for line in lines)
-    assert " ".join(line.strip().removeprefix("• ") for line in lines) == content
+    assert (
+        " ".join(line.strip().removeprefix("• ") for line in lines if line) == content
+    )
 
 
 def test_chat_progress_width_honors_configured_maximum() -> None:
@@ -762,8 +784,11 @@ def test_chat_progress_width_honors_configured_maximum() -> None:
     rendered = _render_text(block.render(), width=160)
     lines = rendered.splitlines()
 
+    assert lines[0] == ""
     assert all(rendering.display_len(line) <= 48 for line in lines)
-    assert " ".join(line.strip().removeprefix("• ") for line in lines) == content
+    assert (
+        " ".join(line.strip().removeprefix("• ") for line in lines if line) == content
+    )
 
 
 def test_chat_wraps_finalized_parallel_lane_at_its_embedded_marker() -> None:
@@ -1147,7 +1172,7 @@ def test_chat_durable_response_matches_run_model_markdown(live: bool) -> None:
 
     assert durable_text.startswith("• Heading\n")
     assert f"  {'─' * 38}\n" in durable_text
-    assert durable_text == progress_text
+    assert durable_text == progress_text.removeprefix("\n")
 
 
 def test_chat_fenced_code_preserves_one_rectangular_background() -> None:
