@@ -298,6 +298,7 @@ class ChatTuiApp:
         rendering.write_renderable(
             blocks.HeaderBlock(
                 home=self.home,
+                executor_label=self.client.executor_label,
                 version_label=toolang_version(),
             ).render(),
             hide_cursor=False,

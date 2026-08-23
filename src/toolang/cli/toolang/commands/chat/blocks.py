@@ -54,7 +54,6 @@ from .rendering import (
 _HEADER_MIN_WIDE_WIDTH = 69
 _HEADER_HORIZONTAL_PADDING = 2
 _HEADER_COLUMN_GAP = 4
-_HEADER_FIELD_GAP = 2
 
 
 def _terminal_diagnostic(status: str, error: ExecutionError) -> str:
@@ -471,6 +470,7 @@ class _SlashResultDivider:
 @dataclass(frozen=True, slots=True)
 class HeaderBlock:
     home: str
+    executor_label: str
     version_label: str
 
     def render(self) -> RenderableType:
@@ -485,25 +485,21 @@ class HeaderBlock:
         identity.append("Toolang", style=f"bold {TOOLANG_COLOR}")
         identity.append(f" {self.version_label}")
 
-        fields = Table.grid(padding=(0, _HEADER_FIELD_GAP))
-        fields.add_column(no_wrap=True)
-        fields.add_column(no_wrap=False, overflow="fold")
-        fields.add_row(Text("home", style="dim"), Text(self.home))
-        fields.add_row(Text("executor", style="dim"), Text("local"))
+        executor = f"executor {self.executor_label}"
 
         details = Table.grid(padding=0)
-        details.add_column(no_wrap=False)
+        details.add_column(no_wrap=False, overflow="fold")
         details.add_row(identity)
-        details.add_row(fields)
+        details.add_row(Text(self.home))
+        details.add_row(Text(executor))
 
         logo_text = toolang_logo_text()
         logo = toolang_logo(console)
         logo_width = max(display_width(line) for line in logo_text.splitlines())
         details_width = max(
             display_width("Toolang") + 1 + display_width(self.version_label),
-            display_width("executor")
-            + _HEADER_FIELD_GAP
-            + max(display_width(self.home), display_width("local")),
+            display_width(self.home),
+            display_width(executor),
         )
         wide_width = (
             2

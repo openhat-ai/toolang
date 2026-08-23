@@ -44,6 +44,8 @@ class _CallbackTracer(RunTracer):
 class LocalChatSession:
     """Expose the chat-client contract over one process-local executor."""
 
+    executor_label = "embedded"
+
     def __init__(
         self,
         layout: AgentLayout,

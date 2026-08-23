@@ -1498,6 +1498,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
 def test_chat_header_uses_wide_local_executor_layout() -> None:
     block = blocks.HeaderBlock(
         home="/tmp/toolang/agents/alice",
+        executor_label="embedded",
         version_label="0.1.0",
     )
     rendered = _render_text(block.render(), width=80)
@@ -1508,27 +1509,29 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert "0.1.0" in rendered
     assert "v0.1.0" not in rendered
     assert "model" not in rendered
-    assert "home" in rendered
+    assert "home" not in rendered
     assert "/tmp/toolang/agents/alice" in rendered
-    assert "executor" in rendered
-    assert "local" in rendered
+    assert "executor embedded" in rendered
     lines = rendered.splitlines()
     assert lines[0] == ""
     assert lines[1].startswith("╭")
-    assert next(index for index, line in enumerate(lines) if "home" in line) < next(
-        index for index, line in enumerate(lines) if "executor" in line
-    )
+    home_line = next(line for line in lines if "/tmp/toolang/agents/alice" in line)
+    executor_line = next(line for line in lines if "executor embedded" in line)
+    assert lines.index(home_line) < lines.index(executor_line)
     assert next(index for index, line in enumerate(lines) if "████" in line) == next(
         index for index, line in enumerate(lines) if "Toolang" in line
     )
     assert next(index for index, line in enumerate(lines) if "⬤" in line) == next(
-        index for index, line in enumerate(lines) if "home" in line
+        index for index, line in enumerate(lines) if "/tmp/toolang/agents/alice" in line
+    )
+    assert home_line.index("/tmp/toolang/agents/alice") == executor_line.index(
+        "executor embedded"
     )
     bordered_lines = [line for line in lines if line]
     assert len({len(line) for line in bordered_lines}) == 1
     assert not bordered_lines[1].strip("│ ")
     assert "████" in bordered_lines[2]
-    assert "executor" in bordered_lines[-3]
+    assert "executor embedded" in bordered_lines[-3]
     assert not bordered_lines[-2].strip("│ ")
     logo_line = next(line for line in lines if "Toolang" in line)
     assert logo_line.startswith("│  ████           ██    Toolang")
@@ -1540,6 +1543,7 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
             home="/tmp/toolang/agents/alice-with-a-long-home",
+            executor_label="at https://executor.example.com/v1/chat",
             version_label="0.1.0",
         ).render(),
         width=40,
@@ -1554,12 +1558,34 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     assert len({len(line) for line in bordered_lines}) == 1
     unwrapped = rendered.replace("\n", "").replace("│", "").replace(" ", "")
     assert "alice-with-a-long-home" in unwrapped
+    assert "executorathttps://executor.example.com/v1/chat" in unwrapped
+
+
+@pytest.mark.parametrize(
+    "executor_label",
+    (
+        "at http://localhost:7001",
+        "at https://executor.example.com",
+    ),
+)
+def test_chat_header_supports_http_executor_locations(executor_label: str) -> None:
+    rendered = _render_text(
+        blocks.HeaderBlock(
+            home="~/.toolang/agents/alice",
+            executor_label=executor_label,
+            version_label="0.1.0",
+        ).render(),
+        width=120,
+    )
+
+    assert f"executor {executor_label}" in rendered
 
 
 def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     segments = rendering.render_segments(
         blocks.HeaderBlock(
             home="/tmp/toolang/agents/alice",
+            executor_label="embedded",
             version_label="0.1.0",
         ).render(),
         width=80,
@@ -1569,13 +1595,9 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     logo_dots = [segment for segment in segments if "⬤" in segment.text]
     brand = next(segment for segment in segments if segment.text.strip() == "Toolang")
     version = next(segment for segment in segments if segment.text.strip() == "0.1.0")
-    keys = [
-        next(segment for segment in segments if segment.text.strip() == key)
-        for key in ("home", "executor")
-    ]
     values = [
         next(segment for segment in segments if segment.text.strip() == value)
-        for value in ("/tmp/toolang/agents/alice", "local")
+        for value in ("/tmp/toolang/agents/alice", "executor embedded")
     ]
 
     assert sum(segment.text.count("█") for segment in logo_blocks) == 16
@@ -1600,7 +1622,6 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     assert brand.style.color is not None
     assert brand.style.color.name == "bright_cyan"
     assert version.style is None or not version.style.dim
-    assert all(segment.style is not None and segment.style.dim for segment in keys)
     assert all(
         segment.style is None or (not segment.style.bold and not segment.style.dim)
         for segment in values
@@ -2830,6 +2851,8 @@ class FakeApp:
 
 
 class FakeClient(ChatClient):
+    executor_label = "embedded"
+
     def list_models(self) -> dict[str, object]:
         return {
             "default": "openai/gpt-5[openai]",

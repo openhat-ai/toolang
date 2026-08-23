@@ -1,6 +1,6 @@
 # Chat TUI Banner Metadata
 
-Status: Proposed.
+Status: Implemented
 
 ## Goal and success criteria
 
@@ -69,8 +69,10 @@ panel but must not acquire key/value indentation or be clipped.
 - `tests/unit/cli/test_chat_tui.py`: cover the exact embedded and HTTP/HTTPS
   text, absence of the `home` key, row order, normal styles, wide layout, and
   narrow folding.
-- Existing command and system tests continue to cover process-local startup and
-  unchanged chat behavior.
+- `tests/unit/cli/test_chat_command.py`: keep scripted test clients conformant
+  with the expanded client contract.
+- `tests/system/cli/test_chat_tui_e2e.py`: continue to cover process-local
+  startup with the new embedded label and unchanged chat behavior.
 
 Acceptance requires the focused banner tests and the default repository
 verification to pass. Risks are widening the banner unexpectedly for endpoint
