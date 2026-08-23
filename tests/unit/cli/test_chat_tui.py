@@ -1711,7 +1711,7 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
         ("class:status.elapsed", " running"),
     ]
     assert next_frame[:4] == [
-        ("class:status.spinner", "◩"),
+        ("class:status.spinner", "◨"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
         ("class:status.elapsed", " 1s"),
@@ -1805,10 +1805,10 @@ def test_chat_status_spinner_styles_use_single_width_frames() -> None:
         "hatch": ("▦", ("▤", "▥", "▧", "▨")),
         "dots": ("⠿", ("⠾", "⠷", "⠟", "⠻")),
         "triangles": ("▪︎", ("◤", "◥", "◢", "◣")),
-        "squares": ("■", ("◧", "◨", "◩", "◪")),
+        "squares": ("■", ("◧", "◩", "◨", "◪")),
     }
     assert widgets._STATUS_IDLE_MARKER == "■"
-    assert widgets._STATUS_SPINNER_FRAMES == ("◧", "◨", "◩", "◪")
+    assert widgets._STATUS_SPINNER_FRAMES == ("◧", "◩", "◨", "◪")
     assert widgets._STATUS_IDLE_MARKER not in widgets._STATUS_SPINNER_FRAMES
     assert all(
         get_cwidth(character) == 1
