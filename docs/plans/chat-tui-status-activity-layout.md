@@ -33,10 +33,10 @@ The stable shapes are:
 ```
 
 The idle marker or running spinner begins in column zero, followed by one space
-and the runnable in column two. A dim activity label follows the runnable only
-while running. That label is `running` below one elapsed second and the
-whole-second duration thereafter. It never renders `0s`, `for`, or an extra
-separator glyph.
+and the runnable in column two. The idle marker is dim; the running spinner
+retains its active accent. A dim activity label follows the runnable only while
+running. That label is `running` below one elapsed second and the whole-second
+duration thereafter. It never renders `0s`, `for`, or an extra separator glyph.
 
 The model remains the final, right-aligned segment. A differing default
 runnable retains the existing `DEFAULT_RUNNABLE · MODEL` form on the right.
@@ -44,7 +44,8 @@ Error status and status-bar background behavior are unchanged.
 
 ## State and Width Rules
 
-- Idle uses the current default runnable and default model.
+- Idle uses the current default runnable and default model, with the marker
+  rendered through dim `class:status.marker` styling.
 - Running uses the active root runnable on the left and the current defaults on
   the right under the existing active/default rules.
 - The default spinner rotates through `◐`, `◓`, `◑`, and `◒` at the existing
@@ -64,7 +65,7 @@ Error status and status-bar background behavior are unchanged.
 In scope:
 
 - `src/toolang/cli/toolang/commands/chat/widgets.py`: compose idle and running
-  status segments and update width accounting.
+  status segments, style the static marker as dim, and retain width accounting.
 - `tests/unit/cli/test_chat_tui.py`: cover exact idle/running order, styles,
   state transitions, narrow widths, and right-edge alignment.
 - `tests/system/cli/test_chat_tui_e2e.py`: update real-terminal expectations
@@ -82,7 +83,7 @@ Out of scope:
 
 ## Acceptance Tests
 
-1. Idle status starts with `IDLE_MARKER RUNNABLE`, with the marker in column
+1. Idle status starts with `IDLE_MARKER RUNNABLE`, with a dim marker in column
    zero and runnable in column two.
 2. Running status below one elapsed second starts with
    `SPINNER RUNNABLE running` and does not contain `0s`.

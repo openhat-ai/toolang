@@ -1808,7 +1808,7 @@ def test_chat_status_palette_uses_state_colors_for_markers() -> None:
     palette = widgets._chat_ui_palette()
 
     assert palette["status"] == ""
-    assert palette["status.marker"] == ""
+    assert palette["status.marker"] == "dim"
     assert palette["status.spinner"] == (
         f"fg:{rendering.START_CONTROL_ACCENT_PROMPT_TOOLKIT}"
     )
