@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 from prompt_toolkit.layout import HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.utils import get_cwidth
 from rich.color import Color, ColorType
@@ -1777,6 +1778,8 @@ def test_chat_status_palette_uses_input_background_for_marker_color() -> None:
     assert palette["status.marker"] == f"fg:{rendering.INPUT_BACKGROUND}"
     assert palette["status.spinner"] == ""
     assert palette["status.elapsed"] == "dim"
+    assert palette["status.error.marker"] == "fg:ansired"
+    assert palette["status.error"] == "fg:ansired"
     assert (
         not {
             "status.text",
@@ -2000,7 +2003,9 @@ def test_chat_tui_run_lifecycle_starts_and_stops_status_activity() -> None:
     assert not app.status_bar.running
 
 
-def test_chat_status_bar_error_uses_full_width_error_line(monkeypatch: Any) -> None:
+def test_chat_status_bar_error_uses_red_foreground_without_a_background(
+    monkeypatch: Any,
+) -> None:
     monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 40))
     status = widgets.StatusBar("agic:chat", "runtime model")
     status.set_error("No active run to steer.")
@@ -2008,7 +2013,11 @@ def test_chat_status_bar_error_uses_full_width_error_line(monkeypatch: Any) -> N
     rendered = status._render()
     text = "".join(fragment for _style, fragment in rendered)
 
-    assert rendered == [("class:status.error", text)]
+    assert rendered == [
+        ("class:status.error.marker", "!"),
+        ("class:status.error", " No active run to steer."),
+        ("class:status", " " * 15),
+    ]
     assert text.startswith("! No active run to steer.")
     assert len(text) == 40
 
@@ -2044,6 +2053,26 @@ def test_chat_tui_keeps_default_model_and_clears_status_error() -> None:
 
     app.prompt.buffer.text = "retry"
 
+    assert app.status_bar.error_message == ""
+
+
+@pytest.mark.parametrize("key", [Keys.Escape, Keys.Enter, Keys.Up])
+def test_chat_tui_non_text_input_clears_status_error(key: Keys) -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    app.status_bar.set_error("Model selector matched no models")
+
+    key_bindings = app.app.key_bindings
+    assert key_bindings is not None
+    bindings = key_bindings.get_bindings_for_keys((key,))
+
+    assert bindings
+    bindings[-1].handler(cast(Any, None))
     assert app.status_bar.error_message == ""
 
 

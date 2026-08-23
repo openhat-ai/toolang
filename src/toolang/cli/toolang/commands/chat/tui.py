@@ -224,7 +224,7 @@ class ChatTuiApp:
         self.prompt = widgets.PromptBox(
             self._enqueue_ui_event,
             self._invalidate_ui,
-            on_text_changed=self._clear_status_error,
+            on_input=self._clear_status_error,
             history_store=self.input_history,
         )
         keys = KeyBindings()
