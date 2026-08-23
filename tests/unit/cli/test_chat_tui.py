@@ -1630,7 +1630,7 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     assert brand.style is not None and brand.style.bold
     assert brand.style.color is not None
     assert brand.style.color.name == "bright_cyan"
-    assert version.style is None or not version.style.dim
+    assert version.style is not None and version.style.dim
     assert all(segment.style is not None and segment.style.dim for segment in keys)
     assert all(
         segment.style is None or (not segment.style.bold and not segment.style.dim)

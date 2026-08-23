@@ -487,7 +487,7 @@ class HeaderBlock:
         details.add_column(no_wrap=False, overflow="fold")
         details.add_row(
             Text("Toolang", style=f"bold {TOOLANG_COLOR}"),
-            Text(f"v{self.version_label}"),
+            Text(f"v{self.version_label}", style="dim"),
         )
         details.add_row(Text("home", style="dim"), Text(self.home))
         details.add_row(Text("executor", style="dim"), Text(self.executor_label))

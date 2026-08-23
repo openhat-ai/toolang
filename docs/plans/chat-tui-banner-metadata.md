@@ -12,7 +12,7 @@ the identity-row and executor-value presentation defined by
 
 The change succeeds when:
 
-- bold bright-cyan `Toolang` appears in the first column with normal-style
+- bold bright-cyan `Toolang` appears in the first column with the complete dim
   `v<exact-version>` in the second column;
 - the dim `home` key and its normal-style resolved, abbreviated agent-home
   value appear on the next row;
@@ -31,8 +31,8 @@ The change succeeds when:
 
 The wide banner keeps the logo and details side by side. All three detail rows
 use one two-column grid. The existing bold bright-cyan `Toolang` styling
-remains. The `home` and `executor` labels are dim; the `v`-prefixed version,
-home directory, and complete executor value use the normal foreground.
+remains. The `home` and `executor` labels and complete `v`-prefixed version are
+dim; the home directory and complete executor value use the normal foreground.
 
 ```text
 ╭────────────────────────────────────────────────────────╮
@@ -64,8 +64,9 @@ value column but must not be clipped.
 - `src/toolang/cli/toolang/commands/chat/local.py`: identify the process-local
   executor as `embedded`.
 - `src/toolang/cli/toolang/commands/chat/blocks.py`: accept the executor suffix,
-  render all three detail rows in one two-column grid, prefix the version with
-  `v`, and calculate responsive width from the labels and longest value.
+  render all three detail rows in one two-column grid, prefix and dim the
+  complete version, and calculate responsive width from the labels and longest
+  value.
 - `src/toolang/cli/toolang/commands/chat/tui.py`: pass the active client's
   executor suffix into the header.
 - `tests/unit/cli/test_chat_tui.py`: cover the exact embedded and HTTP/HTTPS
