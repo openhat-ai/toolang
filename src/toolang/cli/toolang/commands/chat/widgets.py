@@ -53,7 +53,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "",
-        "status.marker": f"fg:{INPUT_BACKGROUND}",
+        "status.marker": "",
         "status.spinner": "",
         "status.elapsed": "dim",
         "status.error.marker": "fg:ansired",

@@ -1773,11 +1773,11 @@ def test_chat_status_bar_truncates_labels_without_moving_the_model_edge(
     assert "· openai/gpt-5" in text
 
 
-def test_chat_status_palette_uses_input_background_for_marker_color() -> None:
+def test_chat_status_palette_uses_normal_foreground_for_idle_marker() -> None:
     palette = widgets._chat_ui_palette()
 
     assert palette["status"] == ""
-    assert palette["status.marker"] == f"fg:{rendering.INPUT_BACKGROUND}"
+    assert palette["status.marker"] == ""
     assert palette["status.spinner"] == ""
     assert palette["status.elapsed"] == "dim"
     assert palette["status.error.marker"] == "fg:ansired"
