@@ -35,6 +35,9 @@ class QueuedCall:
 
 
 class ChatClient(Protocol):
+    @property
+    def executor_label(self) -> str: ...
+
     def list_models(self) -> Mapping[str, Any]: ...
 
     def list_executables(self, kind: str) -> Mapping[str, Any]: ...

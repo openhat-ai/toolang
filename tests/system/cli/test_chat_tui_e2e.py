@@ -24,7 +24,7 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
         session.wait_for(
             "Toolang",
             "executor",
-            "local",
+            "embedded",
             "Ask or describe a task",
             "■ agic:chat",
             "test/scripted",

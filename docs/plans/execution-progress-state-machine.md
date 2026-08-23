@@ -412,10 +412,10 @@ used. The current resolved default model is right-aligned
 against the terminal edge. The status bar omits the redundant `model ` label and
 all hotkey hints. Its runnable, padding, and model inherit the terminal's default
 foreground and background without additional color or dim styling. The idle
-marker uses the input background color as its foreground without painting a
-status background. The running spinner inherits the terminal's normal
-foreground without dim styling. The activity label uses the terminal's dim
-attribute. The error state retains a dedicated status style.
+marker uses the terminal's dim attribute without painting a status background.
+The running spinner inherits the terminal's normal foreground without dim
+styling. The activity label uses the terminal's dim attribute. The error state
+retains a dedicated status style.
 
 The default `circles` style uses `■` while idle. During a local Run, it rotates
 through the single-width frames `◐`, `◓`, `◑`, and `◒` every 300 milliseconds.

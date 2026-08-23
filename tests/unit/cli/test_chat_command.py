@@ -20,6 +20,8 @@ from toolang.execution.types import Local, RunOverride, StepPath
 
 
 class _Client:
+    executor_label = "embedded"
+
     def __init__(self) -> None:
         self.created = 0
         self.starts: list[tuple[str, str, dict[str, object]]] = []

@@ -374,10 +374,10 @@ remains right-aligned against the terminal edge as defaults change. Setting
 commands remain available while running and update these default values
 immediately without changing the active run. Hotkey hints are omitted. Runnable
 and model text inherit the terminal's default foreground without dim styling.
-The idle marker uses the input background color as its foreground without
-painting a status background. The running spinner inherits the terminal's
-normal foreground without dim styling. The activity label uses the terminal's
-dim attribute. The default `circles` style uses `■` while idle and rotates
+The idle marker uses the terminal's dim attribute without painting a status
+background. The running spinner inherits the terminal's normal foreground
+without dim styling. The activity label uses the terminal's dim attribute. The
+default `circles` style uses `■` while idle and rotates
 through `◐`, `◓`, `◑`, and `◒` every 300 milliseconds during a Run. The retained
 `squares`, `triangles`, `quadrants`, `hatch`, and `dots` styles remain available
 through an internal named style switch.

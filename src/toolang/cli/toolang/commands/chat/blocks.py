@@ -471,6 +471,7 @@ class _SlashResultDivider:
 @dataclass(frozen=True, slots=True)
 class HeaderBlock:
     home: str
+    executor_label: str
     version_label: str
 
     def render(self) -> RenderableType:
@@ -481,29 +482,27 @@ class HeaderBlock:
         console: Console,
         options: ConsoleOptions,
     ) -> RenderResult:
-        identity = Text()
-        identity.append("Toolang", style=f"bold {TOOLANG_COLOR}")
-        identity.append(f" {self.version_label}")
-
-        fields = Table.grid(padding=(0, _HEADER_FIELD_GAP))
-        fields.add_column(no_wrap=True)
-        fields.add_column(no_wrap=False, overflow="fold")
-        fields.add_row(Text("home", style="dim"), Text(self.home))
-        fields.add_row(Text("executor", style="dim"), Text("local"))
-
-        details = Table.grid(padding=0)
-        details.add_column(no_wrap=False)
-        details.add_row(identity)
-        details.add_row(fields)
+        details = Table.grid(padding=(0, _HEADER_FIELD_GAP))
+        details.add_column(no_wrap=True)
+        details.add_column(no_wrap=False, overflow="fold")
+        details.add_row(
+            Text("Toolang", style=f"bold {TOOLANG_COLOR}"),
+            Text(f"v{self.version_label}", style="dim"),
+        )
+        details.add_row(Text("home", style="dim"), Text(self.home))
+        details.add_row(Text("executor", style="dim"), Text(self.executor_label))
 
         logo_text = toolang_logo_text()
         logo = toolang_logo(console)
         logo_width = max(display_width(line) for line in logo_text.splitlines())
-        details_width = max(
-            display_width("Toolang") + 1 + display_width(self.version_label),
+        details_width = (
             display_width("executor")
             + _HEADER_FIELD_GAP
-            + max(display_width(self.home), display_width("local")),
+            + max(
+                1 + display_width(self.version_label),
+                display_width(self.home),
+                display_width(self.executor_label),
+            )
         )
         wide_width = (
             2
