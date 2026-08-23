@@ -1507,7 +1507,7 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert "⬤   ⬤" in rendered
     assert "Toolang" in rendered
     assert "0.1.0" in rendered
-    assert "v0.1.0" not in rendered
+    assert "v0.1.0" in rendered
     assert "model" not in rendered
     assert "home" in rendered
     assert "/tmp/toolang/agents/alice" in rendered
@@ -1518,6 +1518,8 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert lines[1].startswith("╭")
     home_line = next(line for line in lines if "/tmp/toolang/agents/alice" in line)
     executor_line = next(line for line in lines if "embedded" in line)
+    version_line = next(line for line in lines if "v0.1.0" in line)
+    assert lines.index(version_line) < lines.index(home_line)
     assert lines.index(home_line) < lines.index(executor_line)
     assert next(index for index, line in enumerate(lines) if "████" in line) == next(
         index for index, line in enumerate(lines) if "Toolang" in line
@@ -1525,10 +1527,11 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert next(index for index, line in enumerate(lines) if "⬤" in line) == next(
         index for index, line in enumerate(lines) if "/tmp/toolang/agents/alice" in line
     )
+    assert version_line.index("Toolang") == home_line.index("home")
     assert home_line.index("home") == executor_line.index("executor")
-    assert home_line.index("/tmp/toolang/agents/alice") == executor_line.index(
-        "embedded"
-    )
+    value_column = version_line.index("v0.1.0")
+    assert value_column == home_line.index("/tmp/toolang/agents/alice")
+    assert value_column == executor_line.index("embedded")
     bordered_lines = [line for line in lines if line]
     assert len({len(line) for line in bordered_lines}) == 1
     assert not bordered_lines[1].strip("│ ")
@@ -1538,8 +1541,7 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert not bordered_lines[-2].strip("│ ")
     logo_line = next(line for line in lines if "Toolang" in line)
     assert logo_line.startswith("│  ████           ██    Toolang")
-    assert "Toolang 0.1.0" in logo_line
-    assert "Toolang  0.1.0" not in logo_line
+    assert "Toolang v0.1.0" in " ".join(logo_line.split())
 
 
 def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
@@ -1597,7 +1599,7 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     logo_blocks = [segment for segment in segments if "█" in segment.text]
     logo_dots = [segment for segment in segments if "⬤" in segment.text]
     brand = next(segment for segment in segments if segment.text.strip() == "Toolang")
-    version = next(segment for segment in segments if segment.text.strip() == "0.1.0")
+    version = next(segment for segment in segments if segment.text.strip() == "v0.1.0")
     keys = [
         next(segment for segment in segments if segment.text.strip() == key)
         for key in ("home", "executor")

@@ -4,20 +4,24 @@ Status: Implemented
 
 ## Goal and success criteria
 
-Keep the Chat TUI banner metadata in a compact two-column key/value grid and
-name the execution location in terms that also work for a future remote chat
-client. This follow-up supersedes the executor value defined by
-`chat-tui-banner.md` while retaining its keyed metadata layout.
+Keep the Chat TUI banner metadata in a compact two-column label/value grid,
+align the version with the other values, and name the execution location in
+terms that also work for a future remote chat client. This follow-up supersedes
+the identity-row and executor-value presentation defined by
+`chat-tui-banner.md`.
 
 The change succeeds when:
 
+- bold bright-cyan `Toolang` appears in the first column with normal-style
+  `v<exact-version>` in the second column;
 - the dim `home` key and its normal-style resolved, abbreviated agent-home
-  value appear on the first metadata row;
+  value appear on the next row;
 - the dim `executor` key and normal-style `embedded` value appear on the next
   row for the process-local client;
 - the executor value can instead render `at <endpoint>`, including
   `http://localhost:7001` and remote `https://` endpoints;
-- the keys share one column and the values share a second aligned column;
+- `Toolang`, `home`, and `executor` share the first column, while the version,
+  home, and executor values share a second aligned column;
 - wide and narrow layouts continue to fit or fold the complete metadata
   without clipping; and
 - logo, Toolang/version, panel, path abbreviation, status bar, and chat
@@ -25,16 +29,15 @@ The change succeeds when:
 
 ## Scope and design
 
-The wide banner keeps the logo and details side by side. The details area has
-the Toolang/version identity row followed by a two-column key/value grid. The
-existing bold bright-cyan `Toolang` styling remains. The `home` and `executor`
-keys are dim; the version, home directory, and complete executor value use the
-normal foreground.
+The wide banner keeps the logo and details side by side. All three detail rows
+use one two-column grid. The existing bold bright-cyan `Toolang` styling
+remains. The `home` and `executor` labels are dim; the `v`-prefixed version,
+home directory, and complete executor value use the normal foreground.
 
 ```text
 ╭────────────────────────────────────────────────────────╮
 │                                                        │
-│  ████           ██    Toolang 0.3.0                    │
+│  ████           ██    Toolang   v0.3.0                 │
 │   ██   ⬤   ⬤    ██    home      ~/.toolang/agents/eve  │
 │   ██          ████    executor  embedded               │
 │                                                        │
@@ -61,13 +64,13 @@ value column but must not be clipped.
 - `src/toolang/cli/toolang/commands/chat/local.py`: identify the process-local
   executor as `embedded`.
 - `src/toolang/cli/toolang/commands/chat/blocks.py`: accept the executor suffix,
-  render the home and executor values in a keyed two-column grid, and calculate
-  responsive width from both keys and the longest value.
+  render all three detail rows in one two-column grid, prefix the version with
+  `v`, and calculate responsive width from the labels and longest value.
 - `src/toolang/cli/toolang/commands/chat/tui.py`: pass the active client's
   executor suffix into the header.
 - `tests/unit/cli/test_chat_tui.py`: cover the exact embedded and HTTP/HTTPS
-  values, key/value alignment and styles, row order, wide layout, and narrow
-  folding.
+  values, version prefix, column alignment and styles, row order, wide layout,
+  and narrow folding.
 - `tests/unit/cli/test_chat_command.py`: keep scripted test clients conformant
   with the expanded client contract.
 - `tests/system/cli/test_chat_tui_e2e.py`: continue to cover process-local
@@ -84,8 +87,8 @@ location explicitly.
 
 - Implementing an HTTP ChatClient or remote execution transport.
 - Selecting, discovering, validating, or authenticating an endpoint.
-- Changing the `info` command, home-path abbreviation, logo, version, panel,
-  status bar, transcript, or run behavior.
+- Changing the `info` command, home-path abbreviation, logo, resolved version,
+  panel, status bar, transcript, or run behavior.
 
 ## Open questions
 
