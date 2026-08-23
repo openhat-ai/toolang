@@ -1696,7 +1696,7 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
 
     assert idle_text.startswith("■ agic:chat")
     assert idle_text.endswith("runtime model")
-    assert running_text.startswith("◐ agic:chat running")
+    assert running_text.startswith("◧ agic:chat running")
     assert "0s" not in running_text
     assert running_text.endswith("runtime model")
     assert idle[:3] == [
@@ -1705,13 +1705,13 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
         ("class:status", "agic:chat"),
     ]
     assert running[:4] == [
-        ("class:status.spinner", "◐"),
+        ("class:status.spinner", "◧"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
         ("class:status.elapsed", " running"),
     ]
     assert next_frame[:4] == [
-        ("class:status.spinner", "◑"),
+        ("class:status.spinner", "◩"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
         ("class:status.elapsed", " 1s"),
@@ -1737,7 +1737,7 @@ def test_chat_status_bar_keeps_the_default_model_at_the_right_edge(
     running = "".join(text for _style, text in status._render())
 
     assert idle.startswith("■ flow:research")
-    assert running.startswith("◐ agic:chat 18s")
+    assert running.startswith("◧ agic:chat 18s")
     assert running.endswith("flow:research · openai/gpt-5")
     assert idle.rindex("openai/gpt-5") == running.rindex("openai/gpt-5")
     assert get_cwidth(idle) == get_cwidth(running) == 80
@@ -1798,17 +1798,17 @@ def test_chat_status_spinner_styles_use_single_width_frames() -> None:
 
     assert step == pytest.approx(0.3)
     assert tui._STATUS_ACTIVITY_TICK == pytest.approx(0.3)
-    assert widgets._STATUS_SPINNER_STYLE == "circles"
+    assert widgets._STATUS_SPINNER_STYLE == "squares"
     assert widgets._STATUS_SPINNER_STYLES == {
         "circles": ("■", ("◐", "◓", "◑", "◒")),
         "quadrants": (" ", ("▖", "▘", "▝", "▗")),
         "hatch": ("▦", ("▤", "▥", "▧", "▨")),
         "dots": ("⠿", ("⠾", "⠷", "⠟", "⠻")),
         "triangles": ("▪︎", ("◤", "◥", "◢", "◣")),
-        "squares": ("■", ("◧", "◩", "◨", "◪")),
+        "squares": ("■", ("◧", "◨", "◩", "◪")),
     }
     assert widgets._STATUS_IDLE_MARKER == "■"
-    assert widgets._STATUS_SPINNER_FRAMES == ("◐", "◓", "◑", "◒")
+    assert widgets._STATUS_SPINNER_FRAMES == ("◧", "◨", "◩", "◪")
     assert widgets._STATUS_IDLE_MARKER not in widgets._STATUS_SPINNER_FRAMES
     assert all(
         get_cwidth(character) == 1
@@ -1937,7 +1937,7 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
             assert app.status_bar.active_runnable_label == "agic:active"
             assert app.status_bar._render()[0] == (
                 "class:status.spinner",
-                "◐",
+                "◧",
             )
             await asyncio.wait_for(activity_stopped.wait(), timeout=0.5)
             assert not app.status_bar.running
