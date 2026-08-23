@@ -54,7 +54,7 @@ def _chat_ui_palette() -> dict[str, str]:
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "",
         "status.marker": "",
-        "status.spinner": "",
+        "status.spinner": f"fg:{START_CONTROL_ACCENT_PROMPT_TOOLKIT}",
         "status.elapsed": "dim",
         "status.error.marker": "fg:ansired",
         "status.error": "fg:ansired",
