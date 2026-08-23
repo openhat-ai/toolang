@@ -38,6 +38,7 @@ from .commands import plugin as plugin_commands
 from .commands import program as program_commands
 from .commands import runtime as runtime_commands
 from .commands import job as job_commands
+from .commands import model_catalog as model_catalog_commands
 from .commands import thread as thread_commands
 
 _PREFIX_AGENT: ContextVar[str | None] = ContextVar(
@@ -75,7 +76,15 @@ _THREAD_PANEL_COMMAND_ORDER = (
     "runs",
     "threads",
 )
-_RUNTIME_PANEL_COMMAND_ORDER = ("model", "tool", "channel", "sandbox")
+_RUNTIME_PANEL_COMMAND_ORDER = (
+    "models",
+    "providers",
+    "adapters",
+    "model",
+    "tool",
+    "channel",
+    "sandbox",
+)
 _REGISTERED_COMMANDS: set[str] = set()
 
 
@@ -159,6 +168,13 @@ def callback(
         Path | None,
         typer.Option("--root", "-r", help="Use a custom Toolang root."),
     ] = None,
+    model_catalog: Annotated[
+        Path | None,
+        typer.Option(
+            "--model-catalog",
+            help="Use one complete models.dev-compatible catalog file.",
+        ),
+    ] = None,
     version: Annotated[
         bool,
         typer.Option(
@@ -181,6 +197,11 @@ def callback(
         root=resolve_root(toolang_root),
         agent=_PREFIX_AGENT.get(),
         layout=_SELECTED_LAYOUT.get(),
+        model_catalog=(
+            model_catalog.expanduser().resolve(strict=False)
+            if model_catalog is not None
+            else None
+        ),
     )
 
 
@@ -362,6 +383,21 @@ _registered_command(
     rich_help_panel=THREAD_COMMAND_PANEL,
 )(thread_commands.fork_command)
 
+_registered_group(
+    model_catalog_commands.models_app,
+    name="models",
+    rich_help_panel=RUNTIME_COMMAND_PANEL,
+)
+_registered_command(
+    "providers",
+    help="Inspect model providers.",
+    rich_help_panel=RUNTIME_COMMAND_PANEL,
+)(model_catalog_commands.providers_command)
+_registered_command(
+    "adapters",
+    help="Inspect installed model adapters.",
+    rich_help_panel=RUNTIME_COMMAND_PANEL,
+)(model_catalog_commands.adapters_command)
 _registered_group(
     plugin_commands.model_app,
     name="model",

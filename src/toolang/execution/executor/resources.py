@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
 
-from toolang.base.protocols.model import ModelProvider
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
 from toolang.base.types.policy import AgentCeiling
@@ -21,6 +20,7 @@ from toolang.lang.ast import AgicDecl, Directive, FlowDecl
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
 from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE
 from toolang.plugin.models.resolution import (
+    CatalogProvider,
     resolve_model,
     select_model_selectors,
     selectable_model_targets,
@@ -34,7 +34,7 @@ _Executable = AgicDecl | FlowDecl
 
 
 class _ModelSelection(Protocol):
-    providers: Mapping[str, ModelProvider]
+    providers: Mapping[str, CatalogProvider]
     models: tuple[ModelInfo, ...]
     model_aliases: Mapping[str, ModelAlias]
     default_models: tuple[str, ...]
@@ -43,7 +43,7 @@ class _ModelSelection(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class _SnapshotModelSelection:
-    providers: Mapping[str, ModelProvider]
+    providers: Mapping[str, CatalogProvider]
     models: tuple[ModelInfo, ...]
     model_aliases: Mapping[str, ModelAlias]
     default_models: tuple[str, ...]

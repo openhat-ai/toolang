@@ -11,7 +11,6 @@ import threading
 import time
 from typing import Any, Literal, cast
 
-from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import ModelInfo, ModelTarget
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
@@ -26,9 +25,11 @@ from toolang.lang.input import (
 )
 from toolang.lang.types import Value
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
+from toolang.plugin.models.resolution import CatalogProvider
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 
+from ..accounting import selected_usd_cost
 from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin
 from ..records import (
     PreparationControlPayload,
@@ -864,13 +865,28 @@ class _Execution:
             if step.kind == "model" and step.status == "succeeded"
         ):
             noted = step.noted if isinstance(step.noted, ModelStepNoted) else None
-            input_tokens = noted.tokens.input if noted and noted.tokens else None
-            output_tokens = noted.tokens.output if noted and noted.tokens else None
+            input_tokens = (
+                noted.accounting.input_tokens
+                if noted and noted.accounting
+                else noted.tokens.input
+                if noted and noted.tokens
+                else None
+            )
+            output_tokens = (
+                noted.accounting.output_tokens
+                if noted and noted.accounting
+                else noted.tokens.output
+                if noted and noted.tokens
+                else None
+            )
             raw_cost = noted.cost if noted is not None else None
-            try:
-                cost = Decimal(str(raw_cost)) if raw_cost is not None else None
-            except InvalidOperation:
-                cost = None
+            if noted is not None and noted.accounting is not None:
+                cost = selected_usd_cost(noted.accounting)
+            else:
+                try:
+                    cost = Decimal(str(raw_cost)) if raw_cost is not None else None
+                except InvalidOperation:
+                    cost = None
             self._limits.restore(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -882,7 +898,7 @@ class _Execution:
         return self.executor.store
 
     @property
-    def providers(self) -> Mapping[str, ModelProvider]:
+    def providers(self) -> Mapping[str, CatalogProvider]:
         return self.setup.providers
 
     @property
@@ -923,7 +939,12 @@ class _Execution:
     ) -> _ModelAccounting:
         """Build accounting facts for one completed model call."""
 
-        return _model_accounting(target, self.models, usage)
+        return _model_accounting(
+            target,
+            self.models,
+            usage,
+            catalog=self.setup.catalog,
+        )
 
     def record_model_accounting(
         self,

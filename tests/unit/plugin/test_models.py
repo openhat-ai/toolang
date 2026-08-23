@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
 import logging
 from pathlib import Path
 import tomllib
@@ -40,7 +41,8 @@ from toolang.plugin.models.providers import ollama as ollama_models
 from toolang.plugin.models.providers import openai as openai_models
 from toolang.plugin.models.providers import openrouter as openrouter_models
 from toolang.setup import AgentSetup
-from toolang.plugin.models.loading import load_model_adapters, load_model_providers
+from toolang.plugin.models.catalog import PACKAGED_MODEL_CATALOG, load_model_catalog
+from toolang.plugin.models.loading import load_model_adapters
 from toolang.plugin.models.adapters import chat_completions as chat_completions_models
 from toolang.plugin.models.adapters import responses as responses_models
 from toolang.plugin.models.adapters.responses import encode_message, response_payload
@@ -986,17 +988,15 @@ def test_ollama_provider_discovers_local_models(monkeypatch) -> None:
     )
 
 
-def test_builtin_model_provider_loader_includes_deepseek_google_and_openrouter() -> (
-    None
-):
-    providers = load_model_providers()
+def test_packaged_catalog_includes_mainstream_remote_providers() -> None:
+    snapshot = load_model_catalog(PACKAGED_MODEL_CATALOG)
 
-    assert {"custom", "deepseek", "google", "ollama", "openai", "openrouter"} <= set(
-        providers
+    assert {"anthropic", "deepseek", "google", "openai", "openrouter"} <= set(
+        snapshot.providers
     )
-    assert providers["deepseek"].default_api_key_env() == "DEEPSEEK_API_KEY"
-    assert providers["google"].default_api_key_env() == "GEMINI_API_KEY"
-    assert providers["openrouter"].default_api_key_env() == "OPENROUTER_API_KEY"
+    assert snapshot.providers["deepseek"].env == ("DEEPSEEK_API_KEY",)
+    assert "GOOGLE_GENERATIVE_AI_API_KEY" in snapshot.providers["google"].env
+    assert snapshot.providers["openrouter"].env == ("OPENROUTER_API_KEY",)
 
 
 def test_builtin_model_adapter_loader_includes_chat_completions_and_responses() -> None:
@@ -1784,6 +1784,79 @@ def test_responses_payload_uses_typed_input_items() -> None:
             "content": [{"type": "output_text", "text": "done"}],
         },
     ]
+
+
+def test_protocol_payloads_apply_normalized_reasoning_controls() -> None:
+    request = ModelCall(instructions="", messages=[Message.user("hello")])
+    target = ModelTarget(
+        ref="openai/gpt-5",
+        provider="openai",
+        name="gpt-5",
+        model="gpt-5",
+        adapter="responses",
+        reasoning={"effort": "high"},
+    )
+
+    responses_payload = response_payload(target, request, stateful=False)
+    chat_payload = chat_completions_models.chat_completion_payload(
+        target,
+        request,
+        stream=False,
+    )
+
+    assert responses_payload["reasoning"] == {"effort": "high"}
+    assert chat_payload["reasoning"] == {"effort": "high"}
+
+
+def test_protocol_usage_normalizes_cache_reasoning_audio_and_reported_cost() -> None:
+    chat = chat_completions_models.chat_usage(
+        SimpleNamespace(
+            usage=SimpleNamespace(
+                prompt_tokens=100,
+                completion_tokens=40,
+                prompt_tokens_details=SimpleNamespace(
+                    cached_tokens=60,
+                    audio_tokens=10,
+                ),
+                completion_tokens_details=SimpleNamespace(
+                    reasoning_tokens=30,
+                    audio_tokens=5,
+                ),
+                cost="0.03",
+            )
+        )
+    )
+    responses = responses_models.response_usage(
+        SimpleNamespace(
+            usage=SimpleNamespace(
+                input_tokens=100,
+                output_tokens=40,
+                input_tokens_details=SimpleNamespace(cached_tokens=60),
+                output_tokens_details=SimpleNamespace(reasoning_tokens=30),
+            )
+        )
+    )
+
+    assert chat == ModelUsage(
+        input_tokens=100,
+        output_tokens=40,
+        input_uncached_tokens=40,
+        input_cache_read_tokens=60,
+        input_audio_tokens=10,
+        output_visible_tokens=10,
+        output_reasoning_tokens=30,
+        output_audio_tokens=5,
+        reported_cost=Decimal("0.03"),
+        reported_currency="USD",
+    )
+    assert responses == ModelUsage(
+        input_tokens=100,
+        output_tokens=40,
+        input_uncached_tokens=40,
+        input_cache_read_tokens=60,
+        output_visible_tokens=10,
+        output_reasoning_tokens=30,
+    )
 
 
 def test_execute_run_input_reuses_provider_state_for_followups() -> None:

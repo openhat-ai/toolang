@@ -1,17 +1,25 @@
-"""Shared model provider and adapter protocols."""
+"""Shared model catalog and adapter protocols."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
-from ..types.model import ModelInfo, ModelTarget
+from ..types.model import ModelCatalogSnapshot, ModelInfo, ModelTarget
 from ..types.run import ModelCall, ModelCallResult, ModelStreamHandler
 
 
 @runtime_checkable
+class ModelCatalog(Protocol):
+    """Source of one immutable model catalog snapshot."""
+
+    async def snapshot(self) -> ModelCatalogSnapshot:
+        """Return the source's current immutable snapshot."""
+
+
+@runtime_checkable
 class ModelProvider(Protocol):
-    """Minimal model provider contract."""
+    """Deprecated compatibility contract for pre-catalog providers."""
 
     name: str
     description: str | None

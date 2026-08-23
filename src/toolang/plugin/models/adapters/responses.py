@@ -308,6 +308,8 @@ def response_payload(
     options = dict(target.options)
     if options:
         payload.update(options)
+    if target.reasoning:
+        payload["reasoning"] = dict(target.reasoning)
     return payload
 
 
@@ -575,7 +577,31 @@ def response_usage(response: Any) -> ModelUsage | None:
     output_tokens = getattr(usage, "output_tokens", None)
     if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
         return None
-    return ModelUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+    input_details = getattr(usage, "input_tokens_details", None)
+    output_details = getattr(usage, "output_tokens_details", None)
+    cached = _usage_detail(input_details, "cached_tokens")
+    reasoning = _usage_detail(output_details, "reasoning_tokens")
+    return ModelUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        input_uncached_tokens=(input_tokens - cached if cached is not None else None),
+        input_cache_read_tokens=cached,
+        output_visible_tokens=(
+            output_tokens - reasoning if reasoning is not None else None
+        ),
+        output_reasoning_tokens=reasoning,
+    )
+
+
+def _usage_detail(value: object, name: str) -> int | None:
+    raw = (
+        cast(Mapping[str, object], value).get(name)
+        if isinstance(value, Mapping)
+        else getattr(value, name, None)
+    )
+    return (
+        raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0 else None
+    )
 
 
 def parse_tool_arguments(raw: object) -> dict[str, Any]:

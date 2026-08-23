@@ -22,7 +22,12 @@ from toolang.execution.history import RunHistory
 from toolang.execution.records import execution_error_message
 from toolang.execution.types import StepPath
 from toolang.lang.types import Array
-from toolang.cli.common.context import context_layout, load_runtime_environ, user_call
+from toolang.cli.common.context import (
+    context_layout,
+    context_model_catalog,
+    load_runtime_environ,
+    user_call,
+)
 from toolang.cli.common.execution import open_execution
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
 from toolang.cli.common.output import shorten_home_path
@@ -109,8 +114,12 @@ def _chat_runtime(
         )
     layout = context_layout(ctx)
     environ = load_runtime_environ(layout, base_environ=os.environ)
+    model_catalog = (
+        context_model_catalog(ctx) if isinstance(ctx, typer.Context) else None
+    )
     local = LocalChatSession(
         layout,
+        **({"model_catalog": model_catalog} if model_catalog is not None else {}),
         ceiling_overrides=user_call(
             resolve_ceiling_overrides,
             environ,

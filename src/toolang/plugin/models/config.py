@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from toolang.base.errors import ToolangError
-from toolang.base.types.model import ModelAlias
+from toolang.base.types.model import ModelAlias, Provider
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +21,101 @@ class ModelProviderConfig:
     scope: str | None = None
     options: dict[str, Any] = field(default_factory=dict)
     details: str | None = None
+
+
+def configure_catalog_providers(
+    providers: Mapping[str, Provider],
+    configs: Mapping[str, ModelProviderConfig],
+) -> dict[str, Provider]:
+    """Apply runtime-only provider configuration without changing catalog data."""
+
+    configured = {
+        provider_id: _configured_provider(provider, configs.get(provider_id))
+        for provider_id, provider in providers.items()
+    }
+    for provider_id, config in configs.items():
+        if provider_id in configured:
+            continue
+        configured[provider_id] = _configured_provider(
+            Provider(
+                id=provider_id,
+                name=provider_id,
+                env=(config.key_env,) if config.key_env else (),
+                npm="@ai-sdk/openai-compatible",
+                api=config.endpoint,
+                models={},
+                local=_local_endpoint(config.endpoint),
+            ),
+            config,
+        )
+    configured.setdefault(
+        "custom",
+        Provider(
+            id="custom",
+            name="Custom",
+            env=(),
+            npm="@ai-sdk/openai-compatible",
+            models={},
+        ),
+    )
+    return configured
+
+
+def catalog_provider_config(provider: Provider) -> ModelProviderConfig | None:
+    """Return runtime configuration carried by a configured provider copy."""
+
+    payload = provider.extra.get("_toolang")
+    if not isinstance(payload, Mapping):
+        return None
+    data = cast(Mapping[str, object], payload)
+    return ModelProviderConfig(
+        name=provider.id,
+        endpoint=_optional_model_config_str(data.get("endpoint")),
+        key_env=_optional_model_config_str(data.get("key_env")),
+        adapter=_optional_model_config_str(data.get("adapter")),
+        scope=_optional_model_config_str(data.get("scope")),
+        options=(
+            dict(cast(Mapping[str, object], data.get("options")))
+            if isinstance(data.get("options"), Mapping)
+            else {}
+        ),
+        details=_optional_model_config_str(data.get("details")),
+    )
+
+
+def _configured_provider(
+    provider: Provider,
+    config: ModelProviderConfig | None,
+) -> Provider:
+    if config is None:
+        return provider
+    runtime = {
+        "endpoint": config.endpoint,
+        "key_env": config.key_env,
+        "adapter": config.adapter,
+        "scope": config.scope,
+        "options": dict(config.options),
+        "details": config.details,
+    }
+    return Provider(
+        id=provider.id,
+        name=provider.name,
+        env=(config.key_env,) if config.key_env else provider.env,
+        npm=provider.npm,
+        api=config.endpoint or provider.api,
+        doc=provider.doc,
+        models=provider.models,
+        extra={**provider.extra, "_toolang": runtime},
+        local=provider.local or _local_endpoint(config.endpoint),
+    )
+
+
+def _local_endpoint(endpoint: str | None) -> bool:
+    if endpoint is None:
+        return False
+    return endpoint.lower().startswith(
+        ("http://127.0.0.1", "http://localhost", "http://[::1]")
+    )
 
 
 def parse_model_aliases(

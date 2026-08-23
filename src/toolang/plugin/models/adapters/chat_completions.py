@@ -6,6 +6,7 @@ import json
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
 from toolang.base.errors import ToolangError
@@ -251,6 +252,8 @@ def chat_completion_payload(
     options = dict(target.options)
     if options:
         payload.update(options)
+    if target.reasoning:
+        payload["reasoning"] = dict(target.reasoning)
     payload["stream"] = stream
     if stream and target.provider == "deepseek" and "stream_options" not in payload:
         payload["stream_options"] = {"include_usage": True}
@@ -400,7 +403,51 @@ def chat_usage(response: Any) -> ModelUsage | None:
     output_tokens = getattr(usage, "completion_tokens", None)
     if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
         return None
-    return ModelUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+    input_details = getattr(usage, "prompt_tokens_details", None)
+    output_details = getattr(usage, "completion_tokens_details", None)
+    cached = _usage_int(input_details, "cached_tokens")
+    reasoning = _usage_int(output_details, "reasoning_tokens")
+    reported_cost = _usage_decimal(usage, "cost")
+    return ModelUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        input_uncached_tokens=(input_tokens - cached if cached is not None else None),
+        input_cache_read_tokens=cached,
+        input_audio_tokens=_usage_int(input_details, "audio_tokens"),
+        output_visible_tokens=(
+            output_tokens - reasoning if reasoning is not None else None
+        ),
+        output_reasoning_tokens=reasoning,
+        output_audio_tokens=_usage_int(output_details, "audio_tokens"),
+        reported_cost=reported_cost,
+        reported_currency="USD" if reported_cost is not None else None,
+    )
+
+
+def _usage_int(value: object, name: str) -> int | None:
+    raw = (
+        cast(Mapping[str, object], value).get(name)
+        if isinstance(value, Mapping)
+        else getattr(value, name, None)
+    )
+    return (
+        raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0 else None
+    )
+
+
+def _usage_decimal(value: object, name: str) -> Decimal | None:
+    raw = (
+        cast(Mapping[str, object], value).get(name)
+        if isinstance(value, Mapping)
+        else getattr(value, name, None)
+    )
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        parsed = Decimal(str(raw))
+    except (InvalidOperation, ValueError):
+        return None
+    return parsed if parsed.is_finite() and parsed >= 0 else None
 
 
 def parse_tool_arguments(raw: object) -> dict[str, Any]:

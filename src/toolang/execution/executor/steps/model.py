@@ -536,6 +536,7 @@ def _model_step_noted(
             else None
         ),
         cost=_decimal_text(accounting.cost),
+        accounting=accounting.accounting,
         state=dict(state) if state is not None else None,
     )
 

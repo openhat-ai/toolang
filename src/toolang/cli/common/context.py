@@ -25,6 +25,7 @@ class CliContext:
     root: Path
     agent: str | None = None
     layout: AgentLayout | None = None
+    model_catalog: Path | None = None
 
 
 def cli_context(ctx: typer.Context) -> CliContext:
@@ -35,6 +36,12 @@ def cli_context(ctx: typer.Context) -> CliContext:
 
 def context_root(ctx: typer.Context) -> Path:
     return cli_context(ctx).root
+
+
+def context_model_catalog(ctx: typer.Context) -> Path | None:
+    """Return the process-level explicit model catalog override."""
+
+    return cli_context(ctx).model_catalog
 
 
 def context_agent(ctx: typer.Context) -> str | None:

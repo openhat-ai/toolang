@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from ...common.context import context_agent, context_root
+from ...common.context import context_agent, context_model_catalog, context_root
 from ...common.output import echo_table
 from toolang.cli.config import load_config_layers
 from toolang.common.layout import AgentLayout
@@ -65,12 +66,17 @@ def list_models(
         typer.Option("--refresh", help="Refresh cached provider model lists."),
     ] = False,
 ) -> None:
+    _model_migration_warning("too models")
     from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE
     from toolang.plugin.models.resolution import split_model_selectors
 
     layout = _layout(ctx)
     config_layers = load_config_layers(layout.root, _configured_agent(ctx))
-    setup = _setup(layout, force=refresh)
+    setup = _setup(
+        layout,
+        force=refresh,
+        model_catalog=context_model_catalog(ctx),
+    )
     selectors = split_model_selectors(tuple(filter_ or ()))
     rows = model_rows(
         setup,
@@ -96,9 +102,10 @@ def list_models(
 
 @model_app.command("providers", help="Show configured model providers.")
 def list_model_providers(ctx: typer.Context) -> None:
+    _model_migration_warning("too providers")
     layout = _layout(ctx)
     rows = model_provider_rows(
-        _setup(layout),
+        _setup(layout, model_catalog=context_model_catalog(ctx)),
         config_layers=load_config_layers(layout.root, _configured_agent(ctx)),
     )
     if not rows:
@@ -109,7 +116,8 @@ def list_model_providers(ctx: typer.Context) -> None:
 
 @model_app.command("adapters", help="List available model API adapters.")
 def list_model_adapters(ctx: typer.Context) -> None:
-    setup = _setup(_layout(ctx))
+    _model_migration_warning("too adapters")
+    setup = _setup(_layout(ctx), model_catalog=context_model_catalog(ctx))
     echo_table(("ADAPTER",), [(name,) for name in sorted(setup.adapters)])
 
 
@@ -221,8 +229,15 @@ def tool_rows(
     )
 
 
-def _setup(layout: AgentLayout, *, force: bool = False) -> AgentSetup:
-    return asyncio.run(SetupWatcher(layout).refresh(force=force))
+def _setup(
+    layout: AgentLayout,
+    *,
+    force: bool = False,
+    model_catalog: Path | None = None,
+) -> AgentSetup:
+    return asyncio.run(
+        SetupWatcher(layout, model_catalog=model_catalog).refresh(force=force)
+    )
 
 
 def _layout(ctx: typer.Context) -> AgentLayout:
@@ -242,3 +257,10 @@ def plugin_info_rows(group: str) -> list[tuple[str, str]]:
 
 def plugin_sources(group: str) -> dict[str, str]:
     return {info.name: info.source for info in list_plugin_infos(group=group)}
+
+
+def _model_migration_warning(replacement: str) -> None:
+    typer.echo(
+        f"Warning: this singular model command is deprecated; use `{replacement}`.",
+        err=True,
+    )

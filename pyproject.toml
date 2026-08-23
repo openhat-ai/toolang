@@ -68,14 +68,6 @@ shell = "toolang.plugin.tools.shell:create_tool_set"
 web_search = "toolang.plugin.tools.web_search:create_tool_set"
 agent_state = "toolang.execution.tools.agent_state:create_tool_set"
 
-[project.entry-points."toolang.model_provider"]
-custom = "toolang.plugin.models.providers.custom:create_model_provider"
-deepseek = "toolang.plugin.models.providers.deepseek:create_model_provider"
-google = "toolang.plugin.models.providers.google:create_model_provider"
-openai = "toolang.plugin.models.providers.openai:create_model_provider"
-openrouter = "toolang.plugin.models.providers.openrouter:create_model_provider"
-ollama = "toolang.plugin.models.providers.ollama:create_model_provider"
-
 [project.entry-points."toolang.model_adapter"]
 chat_completions = "toolang.plugin.models.adapters.chat_completions:create_model_adapter"
 responses = "toolang.plugin.models.adapters.responses:create_model_adapter"

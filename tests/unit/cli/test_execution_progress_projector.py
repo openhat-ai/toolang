@@ -875,7 +875,7 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
     )
     assert _rows(wrapper.committed) == [
         [
-            "  2.0s · 1 run · 1 model call · ↑639 ↓215 $0.00",
+            "  2.0s · 1 run · 1 model call · ↑639 ↓215 ~$0.001490",
             "",
         ]
     ]

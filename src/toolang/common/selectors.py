@@ -17,7 +17,27 @@ _T = TypeVar("_T")
 _IDENTITY_FILTER_KEYS = frozenset({"family", "kind", "name", "namespace", "ref"})
 _ALLOWED_FILTER_KEYS: dict[SelectorDomain, frozenset[str]] = {
     "model": frozenset(
-        {"provider", "adapter", "scope", "tools", "streaming", "alias", "tag"}
+        {
+            "provider",
+            "adapter",
+            "scope",
+            "tools",
+            "tool_call",
+            "streaming",
+            "alias",
+            "tag",
+            "family",
+            "reasoning",
+            "temperature",
+            "structured_output",
+            "attachment",
+            "open_weights",
+            "modalities.input",
+            "modalities.output",
+            "status",
+            "available",
+            "availability",
+        }
     ),
     "tool": frozenset({"plugin"}),
     "cap": frozenset({"scope", "form", "origin"}),
@@ -25,7 +45,7 @@ _ALLOWED_FILTER_KEYS: dict[SelectorDomain, frozenset[str]] = {
 _MODEL_SHORTHANDS = {
     "local": ("scope", "local"),
     "remote": ("scope", "remote"),
-    "tools": ("tools", "true"),
+    "tools": ("tool_call", "true"),
     "streaming": ("streaming", "true"),
 }
 _CAP_SHORTHANDS = {
@@ -226,7 +246,7 @@ def _parse_filter_item(item: str, *, domain: SelectorDomain) -> tuple[str, str]:
 
 
 def _validate_filter_key(key: str, *, domain: SelectorDomain) -> None:
-    if key in _IDENTITY_FILTER_KEYS:
+    if key in _IDENTITY_FILTER_KEYS and not (domain == "model" and key == "family"):
         raise ToolangError(
             f"selector identity belongs in the pattern, not filter {key!r}"
         )
@@ -253,7 +273,18 @@ def _normalize_shorthand(
 
 
 def _normalize_filter_value(key: str, value: str) -> str:
-    if key in {"streaming", "tools"}:
+    if key in {
+        "streaming",
+        "tools",
+        "tool_call",
+        "reasoning",
+        "temperature",
+        "structured_output",
+        "attachment",
+        "open_weights",
+        "available",
+        "availability",
+    }:
         return _normalize_bool_filter(value)
     return value
 

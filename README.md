@@ -92,7 +92,9 @@ toolang start <agent>                # Start an agent in the background
 toolang stop <agent>                 # Stop a running agent
 
 # Runtime
-toolang model list                   # List available models
+toolang models                       # List model knowledge and availability
+toolang providers                    # List catalog providers
+toolang adapters                     # List installed model API adapters
 toolang tool list                    # List available tools
 
 # Caps
@@ -102,6 +104,15 @@ caps [agent] service add <ref>       # Add an MCP server
 caps [agent] prompt add <ref>        # Add a slash command
 caps [agent] skill list              # List skills
 caps [agent] list                    # List all caps
+```
+
+Model knowledge comes from a models.dev-compatible `models.json`. Toolang uses
+`--model-catalog`, `TOOLANG_MODEL_CATALOG`, agent-home, root, then the packaged
+catalog in that order. Update a managed root or agent-home snapshot with:
+
+```bash
+toolang models update --root
+toolang models update --home
 ```
 
 ## Links
