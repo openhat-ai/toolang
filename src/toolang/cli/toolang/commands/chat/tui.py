@@ -11,6 +11,8 @@ from typing import TypeGuard, cast
 import click
 from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding.key_processor import KeyProcessor
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import HSplit, Layout, Window
 from prompt_toolkit.layout.containers import DynamicContainer
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -248,6 +250,7 @@ class ChatTuiApp:
             erase_when_done=True,
             mouse_support=False,
         )
+        self.app.key_processor.after_key_press += self._clear_status_error_on_escape
         self.app_context: AppContext = ChatTuiAppContext(self)
 
     def _live_blocks_container(self) -> HSplit | Window:
@@ -353,6 +356,10 @@ class ChatTuiApp:
         if self.status_bar.error_message:
             self.status_bar.clear_error()
             self._invalidate_ui()
+
+    def _clear_status_error_on_escape(self, key_processor: KeyProcessor) -> None:
+        if key_processor.key_buffer and key_processor.key_buffer[-1].key == Keys.Escape:
+            self._clear_status_error()
 
     async def _animate_status(self) -> None:
         while True:

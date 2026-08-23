@@ -448,13 +448,14 @@ class StatusBar:
 
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
+            marker = _STATUS_IDLE_MARKER
             message = f" {self.error_message}"
             padding = " " * max(
                 0,
-                self._terminal_width() - get_cwidth(f"!{message}"),
+                self._terminal_width() - get_cwidth(f"{marker}{message}"),
             )
             return [
-                ("class:status.error.marker", "!"),
+                ("class:status.error.marker", marker),
                 ("class:status.error", message),
                 ("class:status", padding),
             ]

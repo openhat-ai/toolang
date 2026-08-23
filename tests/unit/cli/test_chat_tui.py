@@ -8,6 +8,8 @@ import threading
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 
+from prompt_toolkit.application.current import set_app
+from prompt_toolkit.key_binding.key_processor import KeyPress
 from prompt_toolkit.layout import HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
@@ -2014,11 +2016,11 @@ def test_chat_status_bar_error_uses_red_foreground_without_a_background(
     text = "".join(fragment for _style, fragment in rendered)
 
     assert rendered == [
-        ("class:status.error.marker", "!"),
+        ("class:status.error.marker", widgets._STATUS_IDLE_MARKER),
         ("class:status.error", " No active run to steer."),
         ("class:status", " " * 15),
     ]
-    assert text.startswith("! No active run to steer.")
+    assert text.startswith(f"{widgets._STATUS_IDLE_MARKER} No active run to steer.")
     assert len(text) == 40
 
 
@@ -2056,7 +2058,7 @@ def test_chat_tui_keeps_default_model_and_clears_status_error() -> None:
     assert app.status_bar.error_message == ""
 
 
-@pytest.mark.parametrize("key", [Keys.Escape, Keys.Enter, Keys.Up])
+@pytest.mark.parametrize("key", [Keys.Enter, Keys.Up])
 def test_chat_tui_non_text_input_clears_status_error(key: Keys) -> None:
     app = tui.ChatTuiApp(
         thread_id=None,
@@ -2073,6 +2075,24 @@ def test_chat_tui_non_text_input_clears_status_error(key: Keys) -> None:
 
     assert bindings
     bindings[-1].handler(cast(Any, None))
+    assert app.status_bar.error_message == ""
+
+
+def test_chat_tui_first_escape_immediately_clears_status_error() -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    app.status_bar.set_error("Model selector matched no models")
+    app.app.timeoutlen = None
+
+    with set_app(app.app):
+        app.app.key_processor.feed(KeyPress(Keys.Escape))
+        app.app.key_processor.process_keys()
+
     assert app.status_bar.error_message == ""
 
 
