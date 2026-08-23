@@ -8,9 +8,12 @@ import threading
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 
+from prompt_toolkit.application.current import set_app
+from prompt_toolkit.key_binding.key_processor import KeyPress
 from prompt_toolkit.layout import HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import BufferControl
 from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.utils import get_cwidth
 from rich.color import Color, ColorType
@@ -1693,7 +1696,7 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
 
     assert idle_text.startswith("■ agic:chat")
     assert idle_text.endswith("runtime model")
-    assert running_text.startswith("◐ agic:chat running")
+    assert running_text.startswith("◧ agic:chat running")
     assert "0s" not in running_text
     assert running_text.endswith("runtime model")
     assert idle[:3] == [
@@ -1702,13 +1705,13 @@ def test_chat_status_bar_animates_its_marker_and_shows_elapsed_time() -> None:
         ("class:status", "agic:chat"),
     ]
     assert running[:4] == [
-        ("class:status.spinner", "◐"),
+        ("class:status.spinner", "◧"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
         ("class:status.elapsed", " running"),
     ]
     assert next_frame[:4] == [
-        ("class:status.spinner", "◑"),
+        ("class:status.spinner", "◨"),
         ("class:status", " "),
         ("class:status", "agic:chat"),
         ("class:status.elapsed", " 1s"),
@@ -1734,7 +1737,7 @@ def test_chat_status_bar_keeps_the_default_model_at_the_right_edge(
     running = "".join(text for _style, text in status._render())
 
     assert idle.startswith("■ flow:research")
-    assert running.startswith("◐ agic:chat 18s")
+    assert running.startswith("◧ agic:chat 18s")
     assert running.endswith("flow:research · openai/gpt-5")
     assert idle.rindex("openai/gpt-5") == running.rindex("openai/gpt-5")
     assert get_cwidth(idle) == get_cwidth(running) == 80
@@ -1770,13 +1773,17 @@ def test_chat_status_bar_truncates_labels_without_moving_the_model_edge(
     assert "· openai/gpt-5" in text
 
 
-def test_chat_status_palette_uses_input_background_for_marker_color() -> None:
+def test_chat_status_palette_uses_state_colors_for_markers() -> None:
     palette = widgets._chat_ui_palette()
 
     assert palette["status"] == ""
-    assert palette["status.marker"] == f"fg:{rendering.INPUT_BACKGROUND}"
-    assert palette["status.spinner"] == ""
+    assert palette["status.marker"] == ""
+    assert palette["status.spinner"] == (
+        f"fg:{rendering.START_CONTROL_ACCENT_PROMPT_TOOLKIT}"
+    )
     assert palette["status.elapsed"] == "dim"
+    assert palette["status.error.marker"] == "fg:ansired"
+    assert palette["status.error"] == "fg:ansired"
     assert (
         not {
             "status.text",
@@ -1793,7 +1800,7 @@ def test_chat_status_spinner_styles_use_single_width_frames() -> None:
 
     assert step == pytest.approx(0.3)
     assert tui._STATUS_ACTIVITY_TICK == pytest.approx(0.3)
-    assert widgets._STATUS_SPINNER_STYLE == "circles"
+    assert widgets._STATUS_SPINNER_STYLE == "squares"
     assert widgets._STATUS_SPINNER_STYLES == {
         "circles": ("■", ("◐", "◓", "◑", "◒")),
         "quadrants": (" ", ("▖", "▘", "▝", "▗")),
@@ -1803,7 +1810,7 @@ def test_chat_status_spinner_styles_use_single_width_frames() -> None:
         "squares": ("■", ("◧", "◩", "◨", "◪")),
     }
     assert widgets._STATUS_IDLE_MARKER == "■"
-    assert widgets._STATUS_SPINNER_FRAMES == ("◐", "◓", "◑", "◒")
+    assert widgets._STATUS_SPINNER_FRAMES == ("◧", "◩", "◨", "◪")
     assert widgets._STATUS_IDLE_MARKER not in widgets._STATUS_SPINNER_FRAMES
     assert all(
         get_cwidth(character) == 1
@@ -1932,7 +1939,7 @@ def test_chat_tui_keeps_short_run_activity_visible(monkeypatch: Any) -> None:
             assert app.status_bar.active_runnable_label == "agic:active"
             assert app.status_bar._render()[0] == (
                 "class:status.spinner",
-                "◐",
+                "◧",
             )
             await asyncio.wait_for(activity_stopped.wait(), timeout=0.5)
             assert not app.status_bar.running
@@ -2000,7 +2007,9 @@ def test_chat_tui_run_lifecycle_starts_and_stops_status_activity() -> None:
     assert not app.status_bar.running
 
 
-def test_chat_status_bar_error_uses_full_width_error_line(monkeypatch: Any) -> None:
+def test_chat_status_bar_error_uses_red_foreground_without_a_background(
+    monkeypatch: Any,
+) -> None:
     monkeypatch.setattr(widgets.StatusBar, "_terminal_width", staticmethod(lambda: 40))
     status = widgets.StatusBar("agic:chat", "runtime model")
     status.set_error("No active run to steer.")
@@ -2008,8 +2017,12 @@ def test_chat_status_bar_error_uses_full_width_error_line(monkeypatch: Any) -> N
     rendered = status._render()
     text = "".join(fragment for _style, fragment in rendered)
 
-    assert rendered == [("class:status.error", text)]
-    assert text.startswith("! No active run to steer.")
+    assert rendered == [
+        ("class:status.error.marker", widgets._STATUS_IDLE_MARKER),
+        ("class:status.error", " No active run to steer."),
+        ("class:status", " " * 15),
+    ]
+    assert text.startswith(f"{widgets._STATUS_IDLE_MARKER} No active run to steer.")
     assert len(text) == 40
 
 
@@ -2043,6 +2056,44 @@ def test_chat_tui_keeps_default_model_and_clears_status_error() -> None:
     assert app.status_bar.error_message
 
     app.prompt.buffer.text = "retry"
+
+    assert app.status_bar.error_message == ""
+
+
+@pytest.mark.parametrize("key", [Keys.Enter, Keys.Up])
+def test_chat_tui_non_text_input_clears_status_error(key: Keys) -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    app.status_bar.set_error("Model selector matched no models")
+
+    key_bindings = app.app.key_bindings
+    assert key_bindings is not None
+    bindings = key_bindings.get_bindings_for_keys((key,))
+
+    assert bindings
+    bindings[-1].handler(cast(Any, None))
+    assert app.status_bar.error_message == ""
+
+
+def test_chat_tui_first_escape_immediately_clears_status_error() -> None:
+    app = tui.ChatTuiApp(
+        thread_id=None,
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    app.status_bar.set_error("Model selector matched no models")
+    app.app.timeoutlen = None
+
+    with set_app(app.app):
+        app.app.key_processor.feed(KeyPress(Keys.Escape))
+        app.app.key_processor.process_keys()
 
     assert app.status_bar.error_message == ""
 

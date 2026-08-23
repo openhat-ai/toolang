@@ -36,7 +36,7 @@ _STATUS_SPINNER_STYLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "triangles": ("▪︎", ("◤", "◥", "◢", "◣")),
     "squares": ("■", ("◧", "◩", "◨", "◪")),
 }
-_STATUS_SPINNER_STYLE = "circles"
+_STATUS_SPINNER_STYLE = "squares"
 _STATUS_IDLE_MARKER, _STATUS_SPINNER_FRAMES = _STATUS_SPINNER_STYLES[
     _STATUS_SPINNER_STYLE
 ]
@@ -53,10 +53,11 @@ def _chat_ui_palette() -> dict[str, str]:
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "",
-        "status.marker": f"fg:{INPUT_BACKGROUND}",
-        "status.spinner": "",
+        "status.marker": "",
+        "status.spinner": f"fg:{START_CONTROL_ACCENT_PROMPT_TOOLKIT}",
         "status.elapsed": "dim",
-        "status.error": "fg:#ffffff bg:#7a2e2e bold",
+        "status.error.marker": "fg:ansired",
+        "status.error": "fg:ansired",
         "dim": "fg:ansigray",
     }
 
@@ -141,12 +142,12 @@ class PromptBox:
         emit: Callable[[ChatUIEvent], None],
         invalidate: Callable[[], None],
         *,
-        on_text_changed: Callable[[], None] | None = None,
+        on_input: Callable[[], None] | None = None,
         history_store: ChatInputHistoryStore | None = None,
     ) -> None:
         self.emit = emit
         self.invalidate = invalidate
-        self.on_text_changed = on_text_changed
+        self.on_input = on_input
         self.history = InMemoryHistory()
         self.history_store = history_store
         for entry in history_store.load() if history_store is not None else ():
@@ -155,6 +156,7 @@ class PromptBox:
         self.history_index: int | None = None
         self.history_draft = ""
         self.buffer.on_text_changed += self._handle_text_changed
+        self.buffer.on_cursor_position_changed += self._handle_cursor_position_changed
 
     def container(self) -> VSplit:
         content = HSplit(
@@ -221,6 +223,7 @@ class PromptBox:
     def bind(self, keys: KeyBindings) -> None:
         @keys.add("enter")
         def submit(_event) -> None:
+            self._notify_input()
             message = self.buffer.text.strip()
             if not message:
                 return
@@ -237,6 +240,7 @@ class PromptBox:
 
         @keys.add("c-d")
         def eof(_event) -> None:
+            self._notify_input()
             self.emit(ChatUIEvent("eof"))
 
         @keys.add("c-q")
@@ -245,6 +249,7 @@ class PromptBox:
 
         @keys.add("c-l")
         def clear_screen(_event) -> None:
+            self._notify_input()
             self.emit(ChatUIEvent("clear"))
 
         @keys.add("c-j")
@@ -252,18 +257,25 @@ class PromptBox:
         def insert_newline(_event) -> None:
             self._insert_newline()
 
+        @keys.add("escape")
+        def dismiss_status_error(_event) -> None:
+            self._notify_input()
+
         @keys.add("escape", "escape", eager=True)
         def cancel_run(_event) -> None:
+            self._notify_input()
             self.emit(ChatUIEvent("cancel"))
 
         @keys.add("up")
         @keys.add("c-p")
         def previous_history(_event) -> None:
+            self._notify_input()
             self._previous_history()
 
         @keys.add("down")
         @keys.add("c-n")
         def next_history(_event) -> None:
+            self._notify_input()
             self._next_history()
 
         try:
@@ -339,14 +351,20 @@ class PromptBox:
         self.invalidate()
 
     def _handle_text_changed(self, _buffer: Buffer) -> None:
-        if self.on_text_changed is not None:
-            self.on_text_changed()
+        self._notify_input()
         if self.history_index is None:
             return
         entries = self._history_entries()
         if self.buffer.text != entries[self.history_index]:
             self.history_index = None
             self.history_draft = ""
+
+    def _handle_cursor_position_changed(self, _buffer: Buffer) -> None:
+        self._notify_input()
+
+    def _notify_input(self) -> None:
+        if self.on_input is not None:
+            self.on_input()
 
     def _input_rows(self) -> int:
         terminal_width = shutil.get_terminal_size((100, 24)).columns
@@ -430,9 +448,17 @@ class StatusBar:
 
     def _render(self) -> list[tuple[str, str]]:
         if self.error_message:
-            text = f"! {self.error_message}"
-            padding = " " * max(0, self._terminal_width() - get_cwidth(text))
-            return [("class:status.error", f"{text}{padding}")]
+            marker = _STATUS_IDLE_MARKER
+            message = f" {self.error_message}"
+            padding = " " * max(
+                0,
+                self._terminal_width() - get_cwidth(f"{marker}{message}"),
+            )
+            return [
+                ("class:status.error.marker", marker),
+                ("class:status.error", message),
+                ("class:status", padding),
+            ]
         marker = (
             _STATUS_SPINNER_FRAMES[self._spinner_index]
             if self.running
