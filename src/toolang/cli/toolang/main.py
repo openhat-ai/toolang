@@ -74,15 +74,15 @@ _CONTROL_PANEL_COMMAND_ORDER = (
     "fork",
 )
 _INSPECTION_PANEL_COMMAND_ORDER = (
-    "runs",
     "threads",
+    "runs",
     "inspect",
-    "models",
-    "tools",
     "caps",
+    "tools",
+    "sandboxes",
+    "models",
     "providers",
     "adapters",
-    "sandboxes",
 )
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,

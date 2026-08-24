@@ -30,19 +30,19 @@ agent-prefix routing.
 Replace `Runtime Commands` with `Inspection Commands`. It contains, in order:
 
 ```text
-runs
 threads
+runs
 inspect
-models
-tools
 caps
+tools
+sandboxes
+models
 providers
 adapters
-sandboxes
 ```
 
-The order keeps common execution and resource inspection first, followed by
-provider, adapter, and sandbox plugin details.
+The order keeps thread and run inspection first, then cap, tool, and sandbox
+resources, followed by the model catalog stack.
 
 Rename public `tool` to `tools` and `sandbox` to `sandboxes`. They directly list
 their resources without a `list` subcommand. Keep `too caps` and move it into

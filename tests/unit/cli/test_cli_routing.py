@@ -175,15 +175,15 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "fork",
         ),
         "Inspection Commands": (
-            "runs",
             "threads",
+            "runs",
             "inspect",
-            "models",
-            "tools",
             "caps",
+            "tools",
+            "sandboxes",
+            "models",
             "providers",
             "adapters",
-            "sandboxes",
         ),
     }
 
