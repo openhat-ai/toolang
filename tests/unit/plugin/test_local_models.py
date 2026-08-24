@@ -55,6 +55,10 @@ def test_ollama_catalog_enriches_models_from_tags_and_show(
     model = snapshot.find("ollama", "gemma3:4b")
 
     assert model is not None
+    provider_runtime = cast(
+        Mapping[str, object], snapshot.providers["ollama"].extra["runtime"]
+    )
+    assert provider_runtime["status"] == "ready"
     assert model.family == "gemma3"
     assert model.last_updated == "2026-08-24"
     assert model.limit == {"context": 131_072}
@@ -124,6 +128,10 @@ def test_llama_cpp_catalog_combines_model_meta_and_server_props(
     model = snapshot.find("llama_cpp", "llama-3.1-8b")
 
     assert model is not None
+    provider_runtime = cast(
+        Mapping[str, object], snapshot.providers["llama_cpp"].extra["runtime"]
+    )
+    assert provider_runtime["status"] == "ready"
     assert model.limit == {"context": 65_536, "output": 4_096}
     assert model.modalities == {"input": ("text", "image"), "output": ("text",)}
     assert model.attachment is True
@@ -190,6 +198,21 @@ def test_local_detail_failures_keep_list_metadata(
     assert llama_model.limit == {"context": 32_768}
     assert llama_model.tool_call is None
     assert llama_model.cost == {"input": 0, "output": 0}
+
+
+def test_local_list_failure_marks_provider_offline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient(
+        gets={"http://ollama.test/api/tags": httpx.ConnectError("endpoint unavailable")}
+    )
+    monkeypatch.setattr(local_models.httpx, "AsyncClient", client.factory)
+
+    snapshot = asyncio.run(OllamaModels({}, endpoint="http://ollama.test").snapshot())
+
+    runtime = cast(Mapping[str, object], snapshot.providers["ollama"].extra["runtime"])
+    assert snapshot.models == ()
+    assert runtime["status"] == "offline"
 
 
 class _FakeResponse:

@@ -85,6 +85,21 @@ def resolve_catalog_adapter(
     return _default_provider_adapter(provider.name)
 
 
+def catalog_model_endpoint(
+    provider: CatalogProvider,
+    model: Model,
+    *,
+    envs: Mapping[str, str],
+) -> str | None:
+    """Resolve the configured or catalog endpoint for one model record."""
+
+    model_provider = model.provider
+    value = model_provider.get("api") if isinstance(model_provider, Mapping) else None
+    if isinstance(value, str) and value.strip():
+        return Template(value.strip()).safe_substitute(envs)
+    return default_provider_base_url(provider, environ=envs)
+
+
 class SupportsModelSelection(Protocol):
     """Minimal context shape needed to resolve model selectors."""
 

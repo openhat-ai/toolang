@@ -27,10 +27,12 @@ class OllamaModels(ModelCatalog):
         host = _ollama_host(self.endpoint, self.environ)
         entries: tuple[tuple[str, dict[str, object]], ...] = ()
         models: tuple[Model, ...] = ()
+        online = False
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(f"{host}/api/tags")
                 response.raise_for_status()
+                online = True
                 payload = response.json()
                 raw_models = (
                     payload.get("models") if isinstance(payload, dict) else None
@@ -52,7 +54,11 @@ class OllamaModels(ModelCatalog):
             provider_name="Ollama",
             endpoint=f"{host}/v1",
             models=models,
-            provider_runtime={"kind": "ollama", "endpoint": host},
+            provider_runtime={
+                "kind": "ollama",
+                "endpoint": host,
+                "status": "ready" if online else "offline",
+            },
         )
 
 
@@ -68,10 +74,12 @@ class LlamaCppModels(ModelCatalog):
         endpoint = _llama_cpp_endpoint(self.endpoint, self.environ)
         entries: tuple[tuple[str, dict[str, object]], ...] = ()
         props: dict[str, object] = {}
+        online = False
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(f"{endpoint}/models")
                 response.raise_for_status()
+                online = True
                 payload = response.json()
                 raw_models = payload.get("data") if isinstance(payload, dict) else None
                 if isinstance(raw_models, list):
@@ -94,6 +102,7 @@ class LlamaCppModels(ModelCatalog):
             {
                 "kind": "llama_cpp",
                 "endpoint": endpoint,
+                "status": "ready" if online else "offline",
                 "build_info": props.get("build_info"),
             }
         )

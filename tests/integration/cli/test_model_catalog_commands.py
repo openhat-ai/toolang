@@ -7,7 +7,7 @@ from pathlib import Path
 from click import unstyle
 from typer.testing import CliRunner
 
-from toolang.base.types.model import ModelCatalogSnapshot
+from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 import toolang.cli.toolang.main as cli
 from toolang.plugin.models.catalog import parse_model_catalog_data
 from toolang.plugin.models.local import LlamaCppModels, OllamaModels
@@ -99,6 +99,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     assert all(
         label in header
         for label in (
+            "STATUS",
             "CONTEXT",
             "OUTPUT",
             "INPUT",
@@ -108,6 +109,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     )
     values = (
         "test/one",
+        "missing key",
         "1,000,000",
         "100,000",
         "text,image",
@@ -127,6 +129,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
         ) + len(row_value)
     assert "PROFILE" not in stdout
     assert "per 1m" not in stdout
+    assert "1 model · models.dev 2 @ sha256:" in stdout
 
 
 def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> None:
@@ -180,6 +183,77 @@ def test_models_inspect_json_labels_catalog_entries(
     )
 
 
+def test_models_summary_lists_local_catalog_endpoints(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+
+    async def ollama_snapshot(_source) -> ModelCatalogSnapshot:
+        model = Model(
+            provider_id="ollama",
+            id="local",
+            name="local",
+            modalities={"input": ("text",), "output": ("text",)},
+            cost={"input": 0, "output": 0},
+            local=True,
+        )
+        provider = Provider(
+            id="ollama",
+            name="Ollama",
+            env=(),
+            npm="@ai-sdk/openai-compatible",
+            api="http://ollama.test/v1",
+            models={model.id: model},
+            extra={"runtime": {"status": "ready"}},
+            local=True,
+        )
+        return ModelCatalogSnapshot(
+            providers={provider.id: provider},
+            models=(model,),
+            revision="runtime:ollama",
+        )
+
+    async def llama_snapshot(_source) -> ModelCatalogSnapshot:
+        provider = Provider(
+            id="llama_cpp",
+            name="llama.cpp",
+            env=(),
+            npm="@ai-sdk/openai-compatible",
+            api="http://llama.test/v1",
+            models={},
+            extra={"runtime": {"status": "offline"}},
+            local=True,
+        )
+        return ModelCatalogSnapshot(
+            providers={provider.id: provider},
+            models=(),
+            revision="runtime:llama_cpp",
+        )
+
+    monkeypatch.setattr(OllamaModels, "snapshot", ollama_snapshot)
+    monkeypatch.setattr(LlamaCppModels, "snapshot", llama_snapshot)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "--models",
+            str(catalog),
+            "models",
+        ],
+        env={},
+    )
+
+    assert result.exit_code == 0, result.stderr
+    stdout = unstyle(result.stdout)
+    assert "3 models · models.dev 2 @ sha256:" in stdout
+    assert "ollama 1 @ http://ollama.test/v1" in stdout
+    assert "llama_cpp offline @ http://llama.test/v1" in stdout
+
+
 def _disable_local_discovery(monkeypatch) -> None:
     async def empty_snapshot(_source) -> ModelCatalogSnapshot:
         return ModelCatalogSnapshot(providers={}, models=(), revision="runtime:test")
@@ -193,8 +267,9 @@ def _catalog_data() -> dict[str, object]:
         "test": {
             "id": "test",
             "name": "Test",
-            "env": [],
+            "env": ["TEST_API_KEY"],
             "npm": "@ai-sdk/openai-compatible",
+            "api": "https://api.test/v1",
             "models": {
                 model_id: {
                     "id": model_id,

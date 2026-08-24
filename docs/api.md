@@ -411,12 +411,14 @@ ephemeral port.
 including:
 
 - canonical provider/model identity
-- whether the model is currently available
+- configuration status: `ready` or concise missing endpoint, key, and adapter
+  reasons
 - right-aligned context and maximum output sizes with thousands separators
 - input modalities and a comma-separated `CAPABILITY` list
 - right-aligned base input/output prices formatted as `$input / $output` under
   `PRICE ($/1M)`, with every numeric rate shown to two decimal places
-- a summary count and catalog revision
+- a summary count plus models.dev and local catalog model counts, revisions,
+  endpoints, and local offline status
 
 Pass `--filter` to preview selector filtering, for example
 `toolang models --filter "[remote]"` or
@@ -432,6 +434,12 @@ Discovered Ollama and llama.cpp records include concise runtime metadata in
 and capabilities populate the same catalog fields used by remote models. Their
 API token prices are explicitly zero; local compute costs are outside model
 token accounting.
+
+`ready` means the endpoint is resolved, a required key is present, and the
+adapter is installed. Remote endpoint reachability, credentials, and account
+entitlement are not probed by this listing. Local endpoints are probed for model
+discovery, so an unreachable Ollama or llama.cpp catalog is shown as `offline`
+with its endpoint in the summary.
 
 
 ## Plugin Commands

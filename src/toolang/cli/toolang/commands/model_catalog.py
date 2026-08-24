@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 
-from toolang.base.types.model import Model, Provider
+from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 from toolang.cli.common.context import (
     context_agent,
     context_model_catalog,
@@ -29,7 +29,12 @@ from toolang.plugin.models.catalog import (
     filter_catalog_models,
 )
 from toolang.plugin.models.config import parse_model_aliases
-from toolang.plugin.models.resolution import ModelTargetResolver
+from toolang.plugin.models.discovery import missing_provider_env_vars
+from toolang.plugin.models.resolution import (
+    ModelTargetResolver,
+    catalog_model_endpoint,
+    resolve_catalog_adapter,
+)
 from toolang.plugin.models.update import DEFAULT_MODELS_DEV_URL, update_model_catalog
 from toolang.setup import AgentSetup, SetupWatcher
 
@@ -99,7 +104,7 @@ def models_command(
     rows = [
         (
             model.identity,
-            "yes" if model.identity in available else "no",
+            _model_status(setup, model, available=available),
             *_model_table_fields(model),
         )
         for model in selected
@@ -110,7 +115,7 @@ def models_command(
     echo_table(
         (
             "MODEL",
-            "AVAILABLE",
+            "STATUS",
             "CONTEXT",
             "OUTPUT",
             "INPUT",
@@ -121,10 +126,7 @@ def models_command(
         justify=(None, None, "right", "right", None, None, "right"),
     )
     typer.echo()
-    typer.echo(
-        f" {len(rows)} {'model' if len(rows) == 1 else 'models'}, "
-        f"catalog={snapshot.revision[:19]}"
-    )
+    typer.echo(f" {_catalog_summary(snapshot, shown=len(rows))}")
 
 
 @models_app.command("inspect", help="Inspect model catalog entries and availability.")
@@ -177,7 +179,7 @@ def inspect_models(
         (
             model.identity,
             _model_adapter(setup, model),
-            "yes" if model.identity in available_ids else "no",
+            _model_status(setup, model, available=available_ids),
             model.last_updated or "-",
             *_model_table_fields(model),
         )
@@ -192,7 +194,7 @@ def inspect_models(
         (
             "MODEL",
             "ADAPTER",
-            "AVAILABLE",
+            "STATUS",
             "UPDATED",
             "CONTEXT",
             "OUTPUT",
@@ -357,7 +359,58 @@ def _available_identities(ctx: typer.Context, setup: AgentSetup) -> set[str]:
         default_models=(),
         envs=setup.envs,
     ).selectable()
-    return {target.ref for _selector, target in targets}
+    candidates = {target.ref for _selector, target in targets}
+    snapshot = _catalog(setup)
+    return {
+        model.identity
+        for model in snapshot.models
+        if model.identity in candidates and not _model_missing_reasons(setup, model)
+    }
+
+
+def _model_status(
+    setup: AgentSetup,
+    model: Model,
+    *,
+    available: set[str],
+) -> str:
+    reasons = _model_missing_reasons(setup, model)
+    if reasons:
+        return f"missing {'+'.join(reasons)}"
+    return "ready" if model.identity in available else "unavailable"
+
+
+def _model_missing_reasons(setup: AgentSetup, model: Model) -> tuple[str, ...]:
+    provider = setup.providers.get(model.provider_id)
+    if provider is None:
+        return ("provider",)
+    reasons: list[str] = []
+    if catalog_model_endpoint(provider, model, envs=setup.envs) is None:
+        reasons.append("endpoint")
+    if missing_provider_env_vars(provider, environ=setup.envs):
+        reasons.append("key")
+    adapter = resolve_catalog_adapter(provider, model=model)
+    if adapter is None or adapter not in setup.adapters:
+        reasons.append("adapter")
+    return tuple(reasons)
+
+
+def _catalog_summary(snapshot: ModelCatalogSnapshot, *, shown: int) -> str:
+    static_count = sum(not model.local for model in snapshot.models)
+    parts = [f"models.dev {static_count} @ {snapshot.revision[:19]}"]
+    for provider in snapshot.providers.values():
+        if not provider.local:
+            continue
+        runtime = provider.extra.get("runtime")
+        status = (
+            cast(Mapping[str, object], runtime).get("status")
+            if isinstance(runtime, Mapping)
+            else None
+        )
+        label = "offline" if status == "offline" else str(len(provider.models))
+        parts.append(f"{provider.id} {label} @ {provider.api or '-'}")
+    noun = "model" if shown == 1 else "models"
+    return f"{shown} {noun} · " + " · ".join(parts)
 
 
 def _model_adapter(setup: AgentSetup, model: Model) -> str:

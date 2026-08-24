@@ -172,8 +172,10 @@ clear list when selected local-only models cannot satisfy the schema.
 Static model catalog entries remain inspectable even when unavailable. Remote
 providers are selectable when explicit configuration or required environment
 variables resolve an executable target; this means configured, not confirmed
-account entitlement. Local models are selectable only when their endpoint
-reports the exact ID.
+account entitlement. Catalog-list readiness requires a resolved endpoint,
+present required key, and installed adapter. Model tables show `ready` or
+concise `missing endpoint+key+adapter` reasons. Local models are selectable only
+when their endpoint reports the exact ID.
 
 Selectors use `PATTERN[field:value,...]`. Identity is
 `provider/model_id`. Catalog filters directly expose fields such as `family`,
@@ -203,6 +205,11 @@ capabilities are comma-separated and use models.dev field names such as
 header owns the per-million unit. Context and output sizes use full integers
 with thousands separators. Every numeric price is rounded and padded to two
 decimal places. The context, output, and price columns are right-aligned.
+
+The model-list summary names every catalog component. It shows the selected row
+count, the models.dev-compatible file model count and short revision, plus each
+local provider's total model count and endpoint. An unreachable local catalog is
+shown as `offline @ endpoint` rather than disappearing from the summary.
 
 The singular `too model` group is removed. The public catalog commands are
 `too models`, `too providers`, and `too adapters`.
