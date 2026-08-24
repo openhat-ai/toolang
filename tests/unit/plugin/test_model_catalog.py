@@ -220,7 +220,8 @@ def test_anthropic_catalog_signal_resolves_messages_adapter() -> None:
 
     assert resolve_catalog_adapter(provider) == "messages"
     assert (
-        default_provider_base_url(provider, environ={}) == "https://api.anthropic.com"
+        default_provider_base_url(provider, environ={})
+        == "https://api.anthropic.com/v1"
     )
 
 

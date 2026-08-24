@@ -45,7 +45,7 @@ class GenerateContentModelAdapter(ModelAdapter):
 
     name: str = "generate_content"
     description: str | None = "Use the Google Gemini Generate Content API shape."
-    default_endpoint: str | None = "https://generativelanguage.googleapis.com/v1beta"
+    default_api: str | None = "https://generativelanguage.googleapis.com/v1beta"
 
     async def invoke(
         self,
@@ -397,7 +397,7 @@ def _candidate_parts(payload: Mapping[str, object]) -> tuple[dict[str, object], 
 
 def _generate_url(target: ModelTarget, *, stream: bool) -> str:
     if target.base_url is None:
-        raise ToolangError("Generate Content adapter requires a resolved endpoint")
+        raise ToolangError("Generate Content adapter requires a resolved API")
     action = "streamGenerateContent" if stream else "generateContent"
     suffix = "?alt=sse" if stream else ""
     model = quote(target.model, safe="")

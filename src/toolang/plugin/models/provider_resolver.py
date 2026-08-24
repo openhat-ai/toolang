@@ -24,7 +24,7 @@ _CREDENTIAL_SUFFIXES = ("_API_KEY", "_PAT", "_TOKEN")
 @dataclass(frozen=True, slots=True)
 class _ProtocolRoute:
     adapter: str
-    endpoint: str | None = None
+    api: str | None = None
 
 
 _NPM_ROUTES = {
@@ -104,22 +104,22 @@ def resolve_provider(
     environ: Mapping[str, str],
     config: ProviderConfig | None = None,
 ) -> Provider:
-    """Attach one provider's adapter, endpoint, env rule, and readiness."""
+    """Attach one provider's adapter, API, env rule, and readiness."""
 
     provider_route = _NPM_ROUTES.get(provider.npm)
     adapter_name = _configured_adapter(config) or (
         provider_route.adapter if provider_route is not None else None
     )
     adapter = adapters.get(adapter_name) if adapter_name is not None else None
-    endpoint = _resolve_endpoint(
+    api = _resolve_api(
         config.endpoint if config is not None and config.endpoint else provider.api,
         environ=environ,
         default=(
-            provider_route.endpoint
+            provider_route.api
             if (config is None or config.adapter is None)
             and provider_route is not None
-            and provider_route.endpoint is not None
-            else adapter.default_endpoint
+            and provider_route.api is not None
+            else adapter.default_api
             if adapter is not None
             else None
         ),
@@ -133,13 +133,13 @@ def resolve_provider(
     )
     ready = (
         adapter is not None
-        and endpoint is not None
+        and api is not None
         and env_is_ready(env, environ=environ)
         and not _local_provider_offline(provider)
     )
     default = ResolvedProvider(
         adapter=adapter_name,
-        endpoint=endpoint,
+        api=api,
         env=env,
         ready=ready,
     )
@@ -183,26 +183,21 @@ def _resolve_model(
     else:
         adapter_name = default.adapter
     adapter = adapters.get(adapter_name) if adapter_name is not None else None
-    configured_endpoint = config.endpoint if config is not None else None
-    endpoint_value = (
-        configured_endpoint or _optional_text(override.get("api")) or provider.api
-    )
-    route_endpoint = (
-        route.endpoint
+    configured_api = config.endpoint if config is not None else None
+    api_value = configured_api or _optional_text(override.get("api")) or provider.api
+    route_api = (
+        route.api
         if (config is None or config.adapter is None) and route is not None
         else None
     )
-    endpoint = _resolve_endpoint(
-        endpoint_value,
+    api = _resolve_api(
+        api_value,
         environ=environ,
-        default=(
-            route_endpoint
-            or (adapter.default_endpoint if adapter is not None else None)
-        ),
+        default=(route_api or (adapter.default_api if adapter is not None else None)),
     )
     ready = (
         adapter is not None
-        and endpoint is not None
+        and api is not None
         and env_is_ready(default.env, environ=environ)
         and not _local_provider_offline(provider)
     )
@@ -210,7 +205,7 @@ def _resolve_model(
         model,
         resolved=ResolvedModel(
             adapter=adapter_name,
-            endpoint=endpoint,
+            api=api,
             ready=ready,
         ),
     )
@@ -301,7 +296,7 @@ def _compact_group(names: tuple[str, ...]) -> str | tuple[str, ...]:
     return names[0] if len(names) == 1 else names
 
 
-def _resolve_endpoint(
+def _resolve_api(
     value: str | None,
     *,
     environ: Mapping[str, str],
@@ -311,10 +306,10 @@ def _resolve_endpoint(
     if template is None:
         return None
     try:
-        endpoint = Template(template).substitute(environ).strip()
+        api = Template(template).substitute(environ).strip()
     except (KeyError, ValueError):
         return None
-    return endpoint or None
+    return api or None
 
 
 def _env_value(environ: Mapping[str, str], name: str) -> bool:

@@ -33,7 +33,7 @@ def test_resolver_maps_mainstream_npm_packages_to_adapter_defaults() -> None:
             "@ai-sdk/anthropic",
             "ANTHROPIC_API_KEY",
             "messages",
-            "https://api.anthropic.com",
+            "https://api.anthropic.com/v1",
         ),
         (
             "google",
@@ -51,7 +51,7 @@ def test_resolver_maps_mainstream_npm_packages_to_adapter_defaults() -> None:
         ),
     )
 
-    for provider_id, npm, env_name, adapter, endpoint in cases:
+    for provider_id, npm, env_name, adapter, api in cases:
         resolved = resolve_provider(
             _provider(provider_id, npm=npm, env=(env_name,)),
             adapters=adapters,
@@ -60,7 +60,7 @@ def test_resolver_maps_mainstream_npm_packages_to_adapter_defaults() -> None:
 
         assert resolved is not None
         assert resolved.adapter == adapter
-        assert resolved.endpoint == endpoint
+        assert resolved.api == api
         assert resolved.env == (env_name,)
         assert resolved.ready is True
 
@@ -89,7 +89,7 @@ def test_resolver_uses_config_then_catalog_then_adapter_endpoint() -> None:
     ).resolved
 
     assert resolved is not None
-    assert resolved.endpoint == "https://configured.example/v1"
+    assert resolved.api == "https://configured.example/v1"
     assert resolved.ready is True
 
 
@@ -110,7 +110,7 @@ def test_resolver_models_env_as_or_of_and_without_storing_secrets() -> None:
     resolved = resolved_provider.resolved
 
     assert resolved is not None
-    assert resolved.endpoint == "https://team.example/v1"
+    assert resolved.api == "https://team.example/v1"
     assert resolved.env == (
         ("CLOUD_ACCOUNT", "CLOUD_API_KEY"),
         ("CLOUD_ACCOUNT", "CLOUD_TOKEN"),
@@ -163,22 +163,22 @@ def test_resolver_prefers_configured_key_env_over_bedrock_defaults() -> None:
     assert resolved.env == ("CUSTOM_BEDROCK_TOKEN",)
 
 
-def test_resolver_requires_installed_adapter_and_concrete_endpoint() -> None:
+def test_resolver_requires_installed_adapter_and_concrete_api() -> None:
     provider = _provider(
         "custom",
         npm="@ai-sdk/openai-compatible",
         env=(),
     )
 
-    missing_endpoint = resolve_provider(
+    missing_api = resolve_provider(
         provider,
         adapters={"chat_completions": ChatCompletionsModelAdapter()},
         environ={},
     ).resolved
     missing_adapter = resolve_provider(provider, adapters={}, environ={}).resolved
 
-    assert missing_endpoint is not None and missing_endpoint.ready is False
-    assert missing_endpoint.endpoint is None
+    assert missing_api is not None and missing_api.ready is False
+    assert missing_api.api is None
     assert missing_adapter is not None and missing_adapter.ready is False
     assert missing_adapter.adapter == "chat_completions"
 
@@ -210,7 +210,7 @@ def test_model_provider_override_resolves_its_own_protocol_route() -> None:
         name="Claude",
         provider={
             "npm": "@ai-sdk/anthropic",
-            "api": "https://router.example/anthropic",
+            "api": "https://router.example/anthropic/v1",
         },
     )
     provider = Provider(
@@ -236,8 +236,7 @@ def test_model_provider_override_resolves_its_own_protocol_route() -> None:
     assert resolved.models["claude"].resolved is not None
     assert resolved.models["claude"].resolved.adapter == "messages"
     assert (
-        resolved.models["claude"].resolved.endpoint
-        == "https://router.example/anthropic"
+        resolved.models["claude"].resolved.api == "https://router.example/anthropic/v1"
     )
     assert resolved.models["claude"].resolved.ready is True
 
@@ -270,7 +269,7 @@ def test_raw_toolang_extension_is_preserved_but_never_used_as_runtime_config() -
 
     assert resolved.resolved is not None
     assert resolved.resolved.adapter == "responses"
-    assert resolved.resolved.endpoint == "https://api.openai.com/v1"
+    assert resolved.resolved.api == "https://api.openai.com/v1"
     assert resolved.resolved.env == ("OPENAI_API_KEY",)
     assert resolved.to_data()["_toolang"] == provider.extra["_toolang"]
 

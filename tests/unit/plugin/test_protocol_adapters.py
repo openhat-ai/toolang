@@ -28,6 +28,26 @@ from toolang.plugin.models.adapters.messages import (
 )
 
 
+@pytest.mark.parametrize(
+    "api",
+    (
+        "https://api.anthropic.com/v1",
+        "https://api.minimax.io/anthropic/v1",
+    ),
+)
+def test_messages_adapter_appends_resource_to_resolved_api(api: str) -> None:
+    target = ModelTarget(
+        ref="provider/model",
+        provider="provider",
+        name="model",
+        model="model",
+        adapter="messages",
+        base_url=api,
+    )
+
+    assert messages_adapter._messages_url(target) == f"{api}/messages"
+
+
 def test_messages_payload_maps_reasoning_and_parse_normalizes_cache_usage() -> None:
     target = ModelTarget(
         ref="anthropic/claude-sonnet",
@@ -35,7 +55,7 @@ def test_messages_payload_maps_reasoning_and_parse_normalizes_cache_usage() -> N
         name="claude-sonnet",
         model="claude-sonnet",
         adapter="messages",
-        base_url="https://api.anthropic.com",
+        base_url="https://api.anthropic.com/v1",
         api_key="secret",
         reasoning={"effort": "high"},
     )
@@ -381,7 +401,7 @@ def test_messages_stream_returns_normalized_final_usage(monkeypatch) -> None:
                 name="test",
                 model="test",
                 adapter="messages",
-                base_url="https://api.anthropic.com",
+                base_url="https://api.anthropic.com/v1",
                 api_key="secret",
             ),
             ModelCall(instructions="", messages=[Message.user("hello")]),

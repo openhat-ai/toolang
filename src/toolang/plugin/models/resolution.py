@@ -56,20 +56,20 @@ def resolve_catalog_adapter(
     return provider.resolved.adapter
 
 
-def catalog_model_endpoint(
+def catalog_model_api(
     provider: Provider,
     model: Model,
     *,
     envs: Mapping[str, str],
 ) -> str | None:
-    """Resolve the configured or catalog endpoint for one model record."""
+    """Return the resolved API base for one model record."""
 
     del envs
     if model.resolved is not None:
-        return model.resolved.endpoint
+        return model.resolved.api
     if provider.resolved is None:
         raise RuntimeError(f"provider {provider.id!r} has not been resolved")
-    return provider.resolved.endpoint
+    return provider.resolved.api
 
 
 class SupportsModelSelection(Protocol):
@@ -710,7 +710,7 @@ def _target_from_info(
     endpoint = (
         alias.endpoint
         if alias is not None and alias.endpoint is not None
-        else _metadata_text(info.metadata, "resolved_endpoint")
+        else _metadata_text(info.metadata, "resolved_api")
     )
     scope = _target_scope(
         provider,
@@ -765,7 +765,7 @@ def _target_from_alias_only(
     resolved = provider.resolved
     if resolved is None:
         raise RuntimeError(f"provider {provider.id!r} has not been resolved")
-    endpoint = alias.endpoint or resolved.endpoint
+    endpoint = alias.endpoint or resolved.api
     config = provider_configs.get(provider.id)
     scope = alias.scope or _configured_scope(config) or _scope_from_endpoint(endpoint)
     scope = scope or _provider_scope(alias.provider)

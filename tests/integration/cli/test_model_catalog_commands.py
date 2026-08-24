@@ -267,7 +267,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
         "NAME",
         "AVAILABLE",
         "ADAPTERS",
-        "ENDPOINT",
+        "API",
         "ENV",
     )
     by_provider = {str(row[0]): row for row in captured_rows}
@@ -277,13 +277,13 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
     assert isinstance(llama_adapters, Text)
     assert llama_adapters.plain == "chat_completions"
     assert not _is_dim(llama_adapters, 0)
-    llama_endpoint = by_provider["llama_cpp"][4]
-    assert isinstance(llama_endpoint, Text)
-    assert llama_endpoint.plain == "http://llama.test/v1"
-    assert _is_dim(llama_endpoint, 0)
+    llama_api = by_provider["llama_cpp"][4]
+    assert isinstance(llama_api, Text)
+    assert llama_api.plain == "http://llama.test/v1"
+    assert _is_dim(llama_api, 0)
 
 
-def test_providers_lists_effective_endpoint_and_model_adapters(
+def test_providers_lists_resolved_api_and_model_adapters(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -312,10 +312,10 @@ def test_providers_lists_effective_endpoint_and_model_adapters(
 
     assert result.exit_code == 0, result.stderr
     stdout = unstyle(result.stdout)
-    header = next(line for line in stdout.splitlines() if "ENDPOINT" in line)
+    header = next(line for line in stdout.splitlines() if "API" in line)
     row = next(line for line in stdout.splitlines() if "https://api.test/v1" in line)
-    assert [header.index(label) for label in ("ADAPTERS", "ENDPOINT", "ENV")] == sorted(
-        header.index(label) for label in ("ADAPTERS", "ENDPOINT", "ENV")
+    assert [header.index(label) for label in ("ADAPTERS", "API", "ENV")] == sorted(
+        header.index(label) for label in ("ADAPTERS", "API", "ENV")
     )
     assert "https://api.test/v1" in row
     assert "messages" in row

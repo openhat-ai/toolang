@@ -140,13 +140,13 @@ def providers_command(
             provider.name,
             _provider_availability(provider, available=available),
             _provider_adapters_cell(setup, provider),
-            _provider_endpoint_cell(setup, provider),
+            _provider_api_cell(setup, provider),
             _provider_env_cell(setup, provider),
         )
         for provider in providers
     ]
     echo_table(
-        ("PROVIDER", "NAME", "AVAILABLE", "ADAPTERS", "ENDPOINT", "ENV"),
+        ("PROVIDER", "NAME", "AVAILABLE", "ADAPTERS", "API", "ENV"),
         rows,
     )
     typer.echo()
@@ -256,9 +256,9 @@ def _adapter_by_identity(setup: AgentSetup) -> dict[str, str]:
     return {info.ref: info.adapter for info in setup.models}
 
 
-def _provider_endpoint(setup: AgentSetup, provider: Provider) -> str | None:
+def _provider_api(setup: AgentSetup, provider: Provider) -> str | None:
     del setup
-    return provider.resolved.endpoint if provider.resolved is not None else None
+    return provider.resolved.api if provider.resolved is not None else None
 
 
 def _provider_adapters(provider: Provider) -> tuple[str, ...]:
@@ -293,10 +293,10 @@ def _provider_adapters_cell(setup: AgentSetup, provider: Provider) -> Text:
     return cell
 
 
-def _provider_endpoint_cell(setup: AgentSetup, provider: Provider) -> Text:
-    endpoint = _provider_endpoint(setup, provider)
-    unavailable = endpoint is None or (provider.local and _provider_offline(provider))
-    return Text(endpoint or "-", style="dim" if unavailable else "")
+def _provider_api_cell(setup: AgentSetup, provider: Provider) -> Text:
+    api = _provider_api(setup, provider)
+    unavailable = api is None or (provider.local and _provider_offline(provider))
+    return Text(api or "-", style="dim" if unavailable else "")
 
 
 def _provider_env_cell(setup: AgentSetup, provider: Provider) -> Text:

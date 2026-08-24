@@ -21,7 +21,7 @@ records.
 - Catalog plugins expose raw-schema `Provider` and `Model` values; adapters do
   not own model discovery, matching, availability, or pricing.
 - Every loaded provider is enriched once as
-  `resolved: {adapter, endpoint, env, ready}`. Inspection, selection, and calls
+  `resolved: {adapter, api, env, ready}`. Inspection, selection, and calls
   consume only that value; catalog JSON and hashes remain raw.
 - Ollama and llama.cpp add currently discovered local models without writing
   them into the static catalog or inheriting same-name remote prices.
@@ -70,9 +70,9 @@ Out of scope:
   explicit Toolang configuration to `Provider.resolved` exactly once. External
   npm names are data only and never trigger installation or import.
 - `ModelTarget` is the resolved runtime value containing model identity,
-  adapter, endpoint, runtime credentials, headers, and options. Secrets are
+  adapter, API base URL, runtime credentials, headers, and options. Secrets are
   never catalog fields, persisted, or printed.
-- `ModelAdapter` owns its protocol default endpoint, invocation, streaming, and
+- `ModelAdapter` owns its protocol default API, invocation, streaming, and
   response/usage normalization only. There is no `ModelProvider`,
   `ProviderConnection`, or adapter matching declaration.
 
@@ -132,19 +132,21 @@ their starting source revision and never reprice history.
 default route:
 
 ```text
-resolved: {adapter: string?, endpoint: string?, env: (string | string[])[], ready: bool}
+resolved: {adapter: string?, api: string?, env: (string | string[])[], ready: bool}
 ```
 
-Each `Model` also receives a runtime-only `{adapter, endpoint, ready}` route so
+Each `Model` also receives a runtime-only `{adapter, api, ready}` route so
 model-level provider overrides can select a different protocol without changing
 raw JSON. The outer `env` list is OR; a nested list is AND. An empty list means no
 environment requirement. Default inference treats names ending in `_API_KEY`,
 `_PAT`, or `_TOKEN` as alternatives and requires every other name, distributing
 the common requirements into each alternative. Small provider-specific rules
 cover credential schemes such as Amazon Bedrock. A provider is ready only when
-its adapter is installed, its endpoint is concrete after configuration,
+its adapter is installed, its API base is concrete after configuration,
 catalog, and adapter-default precedence, and one environment alternative is
 satisfied. No call-time fallback or re-resolution is permitted.
+The raw `Provider.api` remains unchanged; `Provider.resolved.api` is the
+effective API base and becomes `ModelTarget.base_url` only at the call boundary.
 
 Ollama probes its configured/default endpoint's `/api/tags` and enriches each
 listed model through `/api/show`. llama.cpp combines `/v1/models` metadata with
@@ -213,16 +215,16 @@ decimal places. The context, output, and price columns are right-aligned.
 The model-list summary names every catalog component and its displayed model
 count in the form
 `18 models from 3 catalogs: models.dev 15, ollama 2, llama_cpp 1`. It does not
-repeat revisions, endpoints, or runtime status.
+repeat revisions, APIs, or runtime status.
 
-The provider table orders its diagnostic columns as `ADAPTERS`, `ENDPOINT`, and
+The provider table orders its diagnostic columns as `ADAPTERS`, `API`, and
 `ENV`. All three columns render only `Provider.resolved`. Unavailable adapter
-and endpoint values are dimmed. The outer environment list uses comma for OR
+and API values are dimmed. The outer environment list uses comma for OR
 and nested groups use ` + ` for AND; separators remain unstyled.
 Offline local providers remain listed with `AVAILABLE` equal to `0` and a dimmed
-endpoint. Online providers use `n/m`. Provider and model `--json` output
+API. Online providers use `n/m`. Provider and model `--json` output
 excludes `resolved` and remains a valid raw models.dev-compatible document.
-Anthropic, OpenAI, and Google endpoints are made concrete from their installed
+Anthropic, OpenAI, and Google APIs are made concrete from their installed
 adapters during provider resolution.
 The provider footer uses the same source-count form as the model footer, for
 example `7 providers from 3 catalogs: models.dev 5, ollama 1, llama_cpp 1`.
@@ -312,7 +314,7 @@ and estimated amounts, differences, and coverage.
    SHA provenance, parse reuse, invalidation on file/link change, and root/home
    isolation.
 3. Prove exact provider/model identity, nested model IDs, one-time provider
-   resolution, endpoint precedence, env OR/AND inference and overrides,
+   resolution, API precedence, env OR/AND inference and overrides,
    missing-adapter failure, secret redaction, raw-only JSON, and no npm
    auto-loading.
 4. Prove configured remote availability and enriched Ollama/llama.cpp discovery,

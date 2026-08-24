@@ -119,7 +119,7 @@ class ResolvedModel:
     """One model's immutable load-time protocol route."""
 
     adapter: str | None
-    endpoint: str | None
+    api: str | None
     ready: bool
 
 
@@ -128,7 +128,7 @@ class ResolvedProvider:
     """One provider's immutable load-time runtime resolution."""
 
     adapter: str | None
-    endpoint: str | None
+    api: str | None
     env: ResolvedEnv
     ready: bool
 

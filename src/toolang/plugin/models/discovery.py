@@ -55,7 +55,7 @@ def default_provider_base_url(
     del environ
     if provider.resolved is None:
         raise RuntimeError(f"provider {provider.id!r} has not been resolved")
-    return provider.resolved.endpoint
+    return provider.resolved.api
 
 
 def default_provider_api_key_env(provider: Provider) -> str | None:

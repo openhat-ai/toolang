@@ -24,7 +24,7 @@ class ModelAdapter(Protocol):
 
     name: str
     description: str | None
-    default_endpoint: str | None
+    default_api: str | None
 
     async def invoke(
         self,

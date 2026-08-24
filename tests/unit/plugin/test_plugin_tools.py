@@ -211,7 +211,7 @@ def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> 
     class Adapter(ModelAdapter):
         name: str = "package_adapter"
         description: str | None = None
-        default_endpoint: str | None = "https://example.invalid/v1"
+        default_api: str | None = "https://example.invalid/v1"
 
         async def invoke(
             self,

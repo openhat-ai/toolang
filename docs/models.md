@@ -86,21 +86,26 @@ After catalog snapshots are merged, the setup resolver enriches every
 ```text
 resolved: {
   adapter: string?,
-  endpoint: string?,
+  api: string?,
   env: (string | string[])[],
   ready: bool
 }
 ```
 
-The model route has `adapter`, `endpoint`, and `ready`. Model-level
+The model route has `adapter`, `api`, and `ready`. Model-level
 `provider.npm`, `provider.shape`, and `provider.api` override the provider's
 default protocol facts. This supports mixed-protocol routers without a provider
 plugin.
 
+`Provider.api` is the raw catalog value. `Provider.resolved.api` is the
+effective API base after configuration, catalog, and adapter-default
+precedence. It becomes `ModelTarget.base_url` only at the call boundary, where
+`base_url` is the client SDK term.
+
 The resolver applies:
 
 - explicit provider configuration before catalog `api` before the adapter's
-  protocol default endpoint;
+  protocol default API;
 - a small maintained `npm`-to-protocol map, including the major native packages
   whose services expose one of the built-in wire protocols;
 - environment availability rules;
@@ -119,16 +124,16 @@ cover schemes that cannot be inferred, such as Amazon Bedrock:
 ]
 ```
 
-`ready` is true only when an adapter is installed, an endpoint is concrete, one
+`ready` is true only when an adapter is installed, an API base is concrete, one
 environment alternative is satisfied, and any local probe succeeded. Secrets
 are selected only while constructing `ModelTarget`; they are never stored in
 `Provider.resolved`, catalog JSON, hashes, or inspection output.
 
 Local provider configuration is passed separately to the resolver. It is never
 inserted into raw catalog `extra` fields, so unknown catalog extensions cannot
-be interpreted as trusted endpoints or credentials. Selection, inspection, and
+be interpreted as trusted API routes or credentials. Selection, inspection, and
 execution consume resolved facts directly; they do not repeat npm matching,
-endpoint fallback, or env interpretation. `--json` therefore remains a raw
+API fallback, or env interpretation. `--json` therefore remains a raw
 catalog projection.
 
 ## Adapter Plugins
@@ -139,7 +144,7 @@ Adapter plugins use the `toolang.model_adapter` entry-point group and implement:
 class ModelAdapter(Protocol):
     name: str
     description: str | None
-    default_endpoint: str | None
+    default_api: str | None
 
     async def invoke(self, target, request) -> ModelCallResult: ...
     async def stream(self, target, request, *, on_event) -> ModelCallResult: ...
@@ -152,13 +157,13 @@ Built-in adapters are:
 - `messages`;
 - `generate_content`.
 
-Adapters receive a concrete endpoint in `ModelTarget`. They translate canonical
-messages and tools, normalize streaming, usage, cache, reasoning, and audio
-meters, and preserve protocol state needed by later calls. For example, the
-Generate Content adapter retains Gemini thought signatures in provider state
-and restores them on subsequent tool-call turns. The Messages adapter likewise
-preserves signed Anthropic thinking and redacted-thinking blocks and replays
-them before the associated tool use.
+Adapters receive a concrete API base URL in `ModelTarget`. They translate
+canonical messages and tools, normalize streaming, usage, cache, reasoning,
+and audio meters, and preserve protocol state needed by later calls. For
+example, the Generate Content adapter retains Gemini thought signatures in
+provider state and restores them on subsequent tool-call turns. The Messages
+adapter likewise preserves signed Anthropic thinking and redacted-thinking
+blocks and replays them before the associated tool use.
 
 Canonical reasoning controls use `enabled`, `effort`, and `budget_tokens`.
 Adapters translate those names to their wire protocol and reject unsupported or
@@ -190,7 +195,7 @@ too adapters [--filter GLOB] [--json]
 ```
 
 `too models` shows catalog knowledge plus a simple `AVAILABLE` yes/no column.
-`too providers` owns readiness diagnostics and shows `ADAPTERS`, `ENDPOINT`,
+`too providers` owns readiness diagnostics and shows `ADAPTERS`, `API`,
 and `ENV` from `Provider.resolved`. Comma separates OR environment alternatives;
 ` + ` separates simultaneous requirements.
 

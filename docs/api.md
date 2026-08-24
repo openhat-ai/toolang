@@ -431,12 +431,12 @@ modalities, and capabilities to populate the same table fields used by remote
 models. Their API token prices are explicitly zero; local compute costs are
 outside model token accounting.
 
-`yes` means the endpoint is resolved, a required key is present, and the adapter
-is installed. Remote endpoint reachability, credentials, and account entitlement
+`yes` means the API is resolved, a required key is present, and the adapter
+is installed. Remote API reachability, credentials, and account entitlement
 are not probed by this listing. Local endpoints are probed for discovery;
 unavailable local models are omitted from the model table.
 
-`toolang providers` shows `ADAPTERS`, `ENDPOINT`, and `ENV` in that order.
+`toolang providers` shows `ADAPTERS`, `API`, and `ENV` in that order.
 `ADAPTERS` is the deduplicated set resolved across the provider's catalog
 models, including model-level protocol overrides; it is not a preferred-adapter
 hint. Catalog-known protocols remain visible when no implementation is
@@ -444,9 +444,9 @@ installed, such as `messages` for Anthropic. An empty or offline local catalog
 uses the provider-level adapter signal. Unavailable field values are dimmed.
 Multiple alternative environment variables use an unstyled `, ` separator and
 are all dimmed only when none is configured. An offline local provider remains
-in the table with `AVAILABLE` set to `0` and its endpoint dimmed. JSON output
+in the table with `AVAILABLE` set to `0` and its API dimmed. JSON output
 remains the original models.dev-compatible provider data and does not expose
-resolved endpoint, adapter, environment, or readiness facts.
+resolved API, adapter, environment, or readiness facts.
 Anthropic uses the known default endpoint `https://api.anthropic.com` when the
 models.dev record omits `api`.
 The provider table footer mirrors the model footer, for example

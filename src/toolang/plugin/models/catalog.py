@@ -333,7 +333,7 @@ def model_info_from_catalog(
         metadata={
             "catalog": model.catalog,
             "catalog_revision": model.catalog_revision or revision,
-            "resolved_endpoint": model.resolved.endpoint if model.resolved else None,
+            "resolved_api": model.resolved.api if model.resolved else None,
             "resolved_ready": model.resolved.ready if model.resolved else False,
             "family": model.family,
             "reasoning": model.reasoning,

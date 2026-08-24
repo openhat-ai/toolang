@@ -48,7 +48,7 @@ class ChatCompletionsModelAdapter(ModelAdapter):
 
     name: str = "chat_completions"
     description: str | None = "Use the OpenAI Chat Completions-compatible API shape."
-    default_endpoint: str | None = None
+    default_api: str | None = None
 
     async def invoke(
         self,
@@ -82,7 +82,7 @@ def create_client(target: ModelTarget) -> Any:
     """Create one OpenAI-compatible client for a resolved model target."""
 
     if target.base_url is None:
-        raise ToolangError("Chat Completions adapter requires a resolved endpoint")
+        raise ToolangError("Chat Completions adapter requires a resolved API")
     try:
         from openai import AsyncOpenAI
     except ImportError as exc:  # pragma: no cover - environment dependent

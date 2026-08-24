@@ -54,7 +54,7 @@ class ResponsesModelAdapter(ModelAdapter):
 
     name: str = "responses"
     description: str | None = "Use the OpenAI Responses-compatible API shape."
-    default_endpoint: str | None = "https://api.openai.com/v1"
+    default_api: str | None = "https://api.openai.com/v1"
 
     async def invoke(
         self,
@@ -141,7 +141,7 @@ def create_client(target: ModelTarget) -> Any:
     """Create one OpenAI-compatible client for a resolved model target."""
 
     if target.base_url is None:
-        raise ToolangError("Responses adapter requires a resolved endpoint")
+        raise ToolangError("Responses adapter requires a resolved API")
     try:
         from openai import AsyncOpenAI
     except ImportError as exc:  # pragma: no cover - environment dependent

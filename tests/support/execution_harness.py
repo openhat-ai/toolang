@@ -103,7 +103,7 @@ class ScriptedModelAdapter:
 
     name = "scripted"
     description = "Deterministic execution-test model adapter."
-    default_endpoint = "https://example.invalid/v1"
+    default_api = "https://example.invalid/v1"
 
     def __init__(self, responses: Sequence[ScriptedResponse]) -> None:
         self._responses = deque(responses)
@@ -206,7 +206,7 @@ class FakeModels:
             models={},
             resolved=ResolvedProvider(
                 adapter=ScriptedModelAdapter.name,
-                endpoint="https://example.invalid/v1",
+                api="https://example.invalid/v1",
                 env=(),
                 ready=True,
             ),

@@ -84,7 +84,7 @@ class _FakeModels(ModelAdapter):
     ) -> None:
         self.name = name
         self.description = None
-        self.default_endpoint = default_base_url
+        self.default_api = default_base_url
         self._models = tuple(models)
         self._responses = list(responses or [])
         self._required_env_vars = tuple(required_env_vars)
@@ -129,7 +129,7 @@ class _FakeModels(ModelAdapter):
             models={},
             resolved=ResolvedProvider(
                 adapter=adapter,
-                endpoint=endpoint,
+                api=endpoint,
                 env=(tuple(env),) if len(env) > 1 else env,
                 ready=all(str(environ.get(name, "")).strip() for name in env),
             ),

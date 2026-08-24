@@ -43,7 +43,7 @@ class MessagesModelAdapter(ModelAdapter):
 
     name: str = "messages"
     description: str | None = "Use the Anthropic Messages API shape."
-    default_endpoint: str | None = "https://api.anthropic.com"
+    default_api: str | None = "https://api.anthropic.com/v1"
 
     async def invoke(
         self,
@@ -430,9 +430,8 @@ def _encode_message(
 
 def _messages_url(target: ModelTarget) -> str:
     if target.base_url is None:
-        raise ToolangError("Messages adapter requires a resolved endpoint")
-    base = target.base_url.rstrip("/")
-    return f"{base}/messages" if base.endswith("/v1") else f"{base}/v1/messages"
+        raise ToolangError("Messages adapter requires a resolved API")
+    return f"{target.base_url.rstrip('/')}/messages"
 
 
 def _headers(target: ModelTarget) -> dict[str, str]:

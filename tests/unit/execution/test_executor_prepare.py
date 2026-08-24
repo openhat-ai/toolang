@@ -64,7 +64,7 @@ def _provider() -> Provider:
         models={},
         resolved=ResolvedProvider(
             adapter="test",
-            endpoint="https://models.example/v1",
+            api="https://models.example/v1",
             env=(),
             ready=True,
         ),
@@ -74,7 +74,7 @@ def _provider() -> Provider:
 class _Adapter:
     name = "test"
     description = None
-    default_endpoint = "https://example.invalid/v1"
+    default_api = "https://example.invalid/v1"
 
     def __init__(self, response: Message | None = None) -> None:
         self.requests: list[ModelCall] = []
