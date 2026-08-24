@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved for implementation on 2026-08-23.
+Approved for implementation on 2026-08-24.
 
 ## Goal
 
@@ -18,8 +18,11 @@ records.
   an explicit, agent-home, root, or packaged source.
 - Explicit, agent-home, and root catalog files allow replacement without a
   Toolang release.
-- `ModelCatalog` exposes raw-schema `Provider` and `Model` values; adapters do
+- Catalog plugins expose raw-schema `Provider` and `Model` values; adapters do
   not own model discovery, matching, availability, or pricing.
+- Every loaded provider is enriched once as
+  `resolved: {adapter, endpoint, env, ready}`. Inspection, selection, and calls
+  consume only that value; catalog JSON and hashes remain raw.
 - Ollama and llama.cpp add currently discovered local models without writing
   them into the static catalog or inheriting same-name remote prices.
 - Model filters can be exported as another valid, deterministic `models.json`.
@@ -39,7 +42,7 @@ In scope:
 - configured remote availability and explicit local endpoint discovery;
 - reasoning controls, normalized usage meters, models.dev pricing, reported and
   estimated cost, compact totals, and best-effort cost limits;
-- one-cycle compatibility for current model CLI entry points and durable data.
+- compatibility decoding for existing durable accounting data.
 
 Out of scope:
 
@@ -58,23 +61,25 @@ Out of scope:
   separates provider from model; the remaining model ID may contain `/`.
 - Models.dev fields remain top-level. Missing optional booleans mean unknown;
   there is no `capabilities` object and no Toolang `variants` abstraction.
-- `ModelCatalog` provides providers and models. Implementations are
+- `ModelCatalog` is the catalog plugin protocol that provides providers and
+  models. Implementations are
   `ModelsDevModels`, `OllamaModels`, `LlamaCppModels`, and
   `MergedModelCatalog`.
-- `ModelTargetResolver` maps catalog `npm`/provider request-shape signals and
-  explicit Toolang configuration to an installed adapter. External npm names
-  are data only and never trigger installation or import.
+- A thin loader-owned resolver maps catalog `npm`, `api`, and `env` plus
+  explicit Toolang configuration to `Provider.resolved` exactly once. External
+  npm names are data only and never trigger installation or import.
 - `ModelTarget` is the resolved runtime value containing model identity,
   adapter, endpoint, runtime credentials, headers, and options. Secrets are
   never catalog fields, persisted, or printed.
-- `ModelAdapter` owns protocol invocation, streaming, and response/usage
-  normalization only. There is no `ModelProvider`, `ProviderConnection`,
-  catalog plugin, or adapter matching declaration.
+- `ModelAdapter` owns its protocol default endpoint, invocation, streaming, and
+  response/usage normalization only. There is no `ModelProvider`,
+  `ProviderConnection`, or adapter matching declaration.
 
-The execution path is:
+The loading and execution path is:
 
 ```text
-MergedModelCatalog -> ModelTargetResolver -> ModelTarget -> ModelAdapter
+Catalog plugins -> MergedModelCatalog -> Provider resolver -> frozen snapshot
+frozen snapshot -> ModelTarget -> ModelAdapter
 ```
 
 ## Models.dev Schema
@@ -117,10 +122,27 @@ for `openai`, `anthropic`, `google`, `deepseek`, and `openrouter`; it is not
 copied into root on first setup.
 
 Each setup/process holds one immutable `ModelCatalogSnapshot`, including source
-path, SHA-256 revision, file identity, providers, and models. Parsing occurs
-once and the snapshot is reused. A new setup, symlink-target change, or file
-identity change builds a new snapshot. Runs retain their starting revision and
-never reprice history.
+path, SHA-256 revision, file identity, providers, and models. Parsing and
+provider resolution occur once and the snapshot is reused. A new setup,
+configuration/environment change, symlink-target change, or file identity
+change builds a new snapshot. Runs retain their starting revision and never
+reprice history.
+
+`Provider` retains the raw models.dev fields and adds one optional runtime-only
+value:
+
+```text
+resolved: {adapter: string?, endpoint: string?, env: (string | string[])[], ready: bool}
+```
+
+The outer `env` list is OR; a nested list is AND. An empty list means no
+environment requirement. Default inference treats names ending in `_API_KEY`,
+`_PAT`, or `_TOKEN` as alternatives and requires every other name, distributing
+the common requirements into each alternative. Small provider-specific rules
+cover credential schemes such as Amazon Bedrock. A provider is ready only when
+its adapter is installed, its endpoint is concrete after configuration,
+catalog, and adapter-default precedence, and one environment alternative is
+satisfied. No call-time fallback or re-resolution is permitted.
 
 Ollama probes its configured/default endpoint's `/api/tags` and enriches each
 listed model through `/api/show`. llama.cpp combines `/v1/models` metadata with
@@ -167,8 +189,8 @@ no `--output` or `--force` options.
 Static model catalog entries remain inspectable even when unavailable. Remote
 providers are selectable when explicit configuration or required environment
 variables resolve an executable target; this means configured, not confirmed
-account entitlement. Catalog-list readiness requires a resolved endpoint,
-present required key, and installed adapter. Model tables expose only
+account entitlement. Catalog-list readiness uses `Provider.resolved.ready`.
+Model tables expose only
 `AVAILABLE` as `yes` or `no`; provider diagnostics own the missing configuration
 details. Local models are selectable and displayed only when their endpoint
 reports the exact ID and their runtime target is available.
@@ -206,17 +228,14 @@ count in the form
 repeat revisions, endpoints, or runtime status.
 
 The provider table orders its diagnostic columns as `ADAPTERS`, `ENDPOINT`, and
-`ENV`. `ADAPTERS` is the deduplicated set resolved across the provider's catalog
-models. It includes model-level protocol overrides, does not represent a
-preferred adapter, and shows catalog-known protocols such as Anthropic
-`messages` even when the implementation is not installed. An empty local
-catalog falls back to its provider-level adapter signal. Unavailable adapter and
-endpoint values are dimmed. Alternative environment variable names use ` | `;
-when none is configured, every name is dimmed while separators remain unstyled.
+`ENV`. All three columns render only `Provider.resolved`. Unavailable adapter
+and endpoint values are dimmed. The outer environment list uses comma for OR
+and nested groups use ` + ` for AND; separators remain unstyled.
 Offline local providers remain listed with `AVAILABLE` equal to `0` and a dimmed
-endpoint. Online providers use `n/m`. Provider JSON exposes `endpoint` and
-`adapters` without presentation styling. Anthropic falls back to its known
-`https://api.anthropic.com` base URL when its models.dev record omits `api`.
+endpoint. Online providers use `n/m`. Provider and model `--json` output
+excludes `resolved` and remains a valid raw models.dev-compatible document.
+Anthropic, OpenAI, and Google endpoints are made concrete from their installed
+adapters during provider resolution.
 The provider footer uses the same source-count form as the model footer, for
 example `7 providers from 3 catalogs: models.dev 5, ollama 1, llama_cpp 1`.
 
@@ -275,9 +294,10 @@ and estimated amounts, differences, and coverage.
   cost treated as an estimate of unknown revision.
 - New records retain current summary token/price/cost projections for one
   compatibility cycle.
-- Current aliases and authored selectors continue to resolve through
-  `ModelTargetResolver`; legacy `tools` filters map to `tool_call` for one cycle.
-- Existing singular CLI commands forward for one cycle.
+- Current configured aliases and authored selectors continue to resolve through
+  `ModelTargetResolver`.
+- Singular model/provider inspection commands are removed without forwarding
+  aliases; the plural resource commands are the only public interface.
 - Existing provider model-list cache records stop being read or written and the
   `${TOOLANG_ROOT}/.setup/models/` data can be removed by a later explicit
   cleanup; implementation does not destructively delete user files.
@@ -287,8 +307,8 @@ and estimated amounts, differences, and coverage.
 - `src/toolang/base/types/model.py`, `run.py`, and protocol exports;
 - new catalog-owned schema/import/update modules under
   `src/toolang/plugin/models/` and packaged `data/models.json`;
-- `src/toolang/plugin/models/resolution.py`, adapters, local discovery, views,
-  configuration, and plugin loading;
+- `src/toolang/plugin/models/resolution.py`, catalog and adapter plugins, local
+  discovery, views, configuration, and plugin loading;
 - `src/toolang/setup/models.py`, setup types/configuration, and watchers;
 - `src/toolang/execution/records.py`, schemas, model steps, limits, inspection,
   and API projections;
@@ -304,23 +324,26 @@ and estimated amounts, differences, and coverage.
    SHA provenance, parse reuse, and invalidation on file/link change.
 3. Prove atomic update, same-SHA no-op, regular-file archival, immutable version
    naming, failure recovery, lock behavior, and root/home isolation.
-4. Prove exact provider/model identity, nested model IDs, adapter selection,
-   missing-adapter failure, secret redaction, and no npm auto-loading.
+4. Prove exact provider/model identity, nested model IDs, one-time provider
+   resolution, endpoint precedence, env OR/AND inference and overrides,
+   missing-adapter failure, secret redaction, raw-only JSON, and no npm
+   auto-loading.
 5. Prove configured remote availability and enriched Ollama/llama.cpp discovery,
    endpoint failure, no port scan, no stale result, and zero-priced local-only
    models.
 6. Round-trip filtered JSON output through the importer and cover OR filters,
    nested fields, unknown booleans, deterministic output, and local-only export
    failure.
-7. Normalize cached input, cache writes, visible output, reasoning/thinking,
+7. Cover Chat Completions, Responses, Messages, and Generate Content adapters;
+   normalize cached input, cache writes, visible output, reasoning/thinking,
    audio, inclusive provider totals, and streaming without double counting.
 8. Estimate flat and tiered models.dev prices, prefer reported USD, preserve
    partial/unknown cost, retain historical applied rates, and enforce the
    best-effort completed-call limit.
 9. Render cache ratio, reported/estimated marker, and unknown cost exactly;
    expose full details through run inspection.
-10. Keep compatibility decoders and CLI aliases working for one cycle and keep
-    all default tests offline and deterministic.
+10. Keep durable compatibility decoders working and all default tests offline
+    and deterministic; prove removed singular CLI resources do not resolve.
 11. Pass `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`,
     and `uv run pytest`.
 

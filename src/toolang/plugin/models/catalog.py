@@ -54,6 +54,7 @@ class ModelsDevModels(ModelCatalog):
 
     path: Path
     max_bytes: int = DEFAULT_MAX_CATALOG_BYTES
+    name: str = "models_dev"
 
     async def snapshot(self) -> ModelCatalogSnapshot:
         """Load and validate the selected catalog file."""
@@ -66,6 +67,7 @@ class MergedModelCatalog(ModelCatalog):
     """Merge exact provider/model records from ordered catalog sources."""
 
     sources: tuple[ModelCatalog, ...]
+    name: str = "merged"
 
     async def snapshot(self) -> ModelCatalogSnapshot:
         """Load sources in order and reject conflicting exact identities."""
@@ -94,6 +96,18 @@ class MergedModelCatalog(ModelCatalog):
             revision=snapshots[0].revision,
             source=snapshots[0].source,
         )
+
+
+def create_models_dev_catalog(config: Mapping[str, object]) -> ModelCatalog:
+    """Create the built-in models.dev file catalog plugin."""
+
+    value = config.get("path")
+    if not isinstance(value, str | Path):
+        raise ValueError("models_dev catalog requires path")
+    max_bytes = config.get("max_bytes", DEFAULT_MAX_CATALOG_BYTES)
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int):
+        raise TypeError("models_dev catalog max_bytes must be an integer")
+    return ModelsDevModels(Path(value), max_bytes=max_bytes)
 
 
 def resolve_model_catalog_path(

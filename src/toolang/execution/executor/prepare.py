@@ -136,16 +136,13 @@ def prepare_agic(
         ),
     )
     instructions = _render_instructions(run.state.program, agic, system_runtime)
-    provider = run.setup.providers[model.provider]
-    prepare_target = getattr(provider, "prepare_target", None)
-    prepared_model = prepare_target(model) if callable(prepare_target) else model
-    adapter = run.setup.adapters.get(prepared_model.adapter)
+    adapter = run.setup.adapters.get(model.adapter)
     if adapter is None:
-        raise ToolangError(f"unknown model adapter: {prepared_model.adapter}")
+        raise ToolangError(f"unknown model adapter: {model.adapter}")
     prepared = _AgicFrame(
         run=run,
         agic=agic,
-        model=prepared_model,
+        model=model,
         adapter=adapter,
         instructions=instructions,
         prompt_context=prompt_context,

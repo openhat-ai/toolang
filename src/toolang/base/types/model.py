@@ -9,6 +9,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Self
 
+ResolvedEnv = tuple[str | tuple[str, ...], ...]
+
 
 @dataclass(frozen=True, slots=True)
 class Model:
@@ -77,7 +79,7 @@ class Model:
     def to_data(self) -> dict[str, object]:
         """Return this model in models.dev-compatible JSON form."""
 
-        data = dict(self.extra)
+        data = {key: value for key, value in self.extra.items() if key != "_toolang"}
         data.update(
             {
                 "id": self.id,
@@ -112,6 +114,31 @@ class Model:
 
 
 @dataclass(frozen=True, slots=True)
+class ResolvedProvider:
+    """One provider's immutable load-time runtime resolution."""
+
+    adapter: str | None
+    endpoint: str | None
+    env: ResolvedEnv
+    ready: bool
+
+    def __post_init__(self) -> None:
+        normalized: list[str | tuple[str, ...]] = []
+        for alternative in self.env:
+            if isinstance(alternative, str):
+                name = alternative.strip()
+                if not name:
+                    raise ValueError("resolved provider env names must be non-empty")
+                normalized.append(name)
+                continue
+            group = tuple(name.strip() for name in alternative if name.strip())
+            if not group:
+                raise ValueError("resolved provider env groups must be non-empty")
+            normalized.append(group[0] if len(group) == 1 else group)
+        object.__setattr__(self, "env", tuple(normalized))
+
+
+@dataclass(frozen=True, slots=True)
 class Provider:
     """One models.dev-compatible provider and its model catalog entries."""
 
@@ -124,6 +151,7 @@ class Provider:
     doc: str | None = None
     extra: Mapping[str, object] = field(default_factory=dict)
     local: bool = False
+    resolved: ResolvedProvider | None = None
 
     def __post_init__(self) -> None:
         if not self.id or not self.name or not self.npm:
@@ -141,7 +169,7 @@ class Provider:
     ) -> dict[str, object]:
         """Return this provider in models.dev-compatible JSON form."""
 
-        data = dict(self.extra)
+        data = {key: value for key, value in self.extra.items() if key != "_toolang"}
         data.update(
             {
                 "id": self.id,

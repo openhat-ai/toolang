@@ -11,7 +11,7 @@ from toolang.base.types.model import ModelAlias, Provider
 
 
 @dataclass(frozen=True, slots=True)
-class ModelProviderConfig:
+class ProviderConfig:
     """Local configuration overrides for one model provider."""
 
     name: str
@@ -25,7 +25,7 @@ class ModelProviderConfig:
 
 def configure_catalog_providers(
     providers: Mapping[str, Provider],
-    configs: Mapping[str, ModelProviderConfig],
+    configs: Mapping[str, ProviderConfig],
 ) -> dict[str, Provider]:
     """Apply runtime-only provider configuration without changing catalog data."""
 
@@ -61,14 +61,14 @@ def configure_catalog_providers(
     return configured
 
 
-def catalog_provider_config(provider: Provider) -> ModelProviderConfig | None:
+def catalog_provider_config(provider: Provider) -> ProviderConfig | None:
     """Return runtime configuration carried by a configured provider copy."""
 
     payload = provider.extra.get("_toolang")
     if not isinstance(payload, Mapping):
         return None
     data = cast(Mapping[str, object], payload)
-    return ModelProviderConfig(
+    return ProviderConfig(
         name=provider.id,
         endpoint=_optional_model_config_str(data.get("endpoint")),
         key_env=_optional_model_config_str(data.get("key_env")),
@@ -85,7 +85,7 @@ def catalog_provider_config(provider: Provider) -> ModelProviderConfig | None:
 
 def _configured_provider(
     provider: Provider,
-    config: ModelProviderConfig | None,
+    config: ProviderConfig | None,
 ) -> Provider:
     if config is None:
         return provider
@@ -100,9 +100,9 @@ def _configured_provider(
     return Provider(
         id=provider.id,
         name=provider.name,
-        env=(config.key_env,) if config.key_env else provider.env,
+        env=provider.env,
         npm=provider.npm,
-        api=config.endpoint or provider.api,
+        api=provider.api,
         doc=provider.doc,
         models=provider.models,
         extra={**provider.extra, "_toolang": runtime},
@@ -136,12 +136,12 @@ def parse_model_aliases(
     return aliases
 
 
-def parse_model_provider_configs(
+def parse_provider_configs(
     config_layers: Sequence[Mapping[str, object]],
-) -> dict[str, ModelProviderConfig]:
+) -> dict[str, ProviderConfig]:
     """Parse model provider configuration overrides."""
 
-    configs: dict[str, ModelProviderConfig] = {}
+    configs: dict[str, ProviderConfig] = {}
     for payload in config_layers:
         models_table = _models_table(payload)
         raw_providers = models_table.get("providers")
@@ -150,7 +150,7 @@ def parse_model_provider_configs(
         for name, value in raw_providers.items():
             if not isinstance(name, str) or not isinstance(value, Mapping):
                 continue
-            configs[name] = parse_model_provider_config(
+            configs[name] = parse_provider_config(
                 name, cast(Mapping[str, object], value)
             )
     return configs
@@ -218,9 +218,7 @@ def parse_model_alias(name: str, payload: Mapping[str, object]) -> ModelAlias:
     )
 
 
-def parse_model_provider_config(
-    name: str, payload: Mapping[str, object]
-) -> ModelProviderConfig:
+def parse_provider_config(name: str, payload: Mapping[str, object]) -> ProviderConfig:
     """Parse one `[models.providers.<name>]` table."""
 
     options = (
@@ -228,7 +226,7 @@ def parse_model_provider_config(
         if isinstance(payload.get("options"), Mapping)
         else {}
     )
-    return ModelProviderConfig(
+    return ProviderConfig(
         name=name,
         endpoint=_optional_model_config_str(payload.get("endpoint")),
         key_env=_optional_model_config_str(payload.get("key_env")),

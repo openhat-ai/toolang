@@ -47,6 +47,7 @@ class ChatCompletionsModelAdapter(ModelAdapter):
 
     name: str = "chat_completions"
     description: str | None = "Use the OpenAI Chat Completions-compatible API shape."
+    default_endpoint: str | None = None
 
     async def invoke(
         self,
@@ -79,17 +80,18 @@ def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
 def create_client(target: ModelTarget) -> Any:
     """Create one OpenAI-compatible client for a resolved model target."""
 
+    if target.base_url is None:
+        raise ToolangError("Chat Completions adapter requires a resolved endpoint")
     try:
         from openai import AsyncOpenAI
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise ToolangError(
             "The 'openai' package is not installed. Reinstall toolang with its runtime dependencies to enable runtime execution."
         ) from exc
-    kwargs: dict[str, Any] = {}
-    if target.base_url:
-        kwargs["base_url"] = target.base_url
-    if target.api_key is not None:
-        kwargs["api_key"] = target.api_key
+    kwargs: dict[str, Any] = {
+        "base_url": target.base_url,
+        "api_key": target.api_key or "toolang",
+    }
     if target.headers:
         kwargs["default_headers"] = dict(target.headers)
     return AsyncOpenAI(**kwargs)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 import sys
 
@@ -14,7 +15,7 @@ def main() -> None:
     model = sys.argv[2]
     kind = sys.argv[3]
     runnable = {"agic": "smoke", "flow": "relay"}[kind]
-    setup, state = create_live_agent(root, model=model)
+    setup, state = asyncio.run(create_live_agent(root, model=model))
     run_chat_tui(
         setup,
         state,

@@ -8,7 +8,7 @@ from pathlib import Path
 import platform
 from types import MappingProxyType
 
-from toolang.base.protocols.model import ModelAdapter, ModelProvider
+from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelCatalogSnapshot, ModelInfo, Provider
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
@@ -55,7 +55,7 @@ class AgentSetup:
     """Effective immutable runtime setup fixed for one root run."""
 
     layout: AgentLayout
-    providers: Mapping[str, ModelProvider | Provider]
+    providers: Mapping[str, Provider]
     adapters: Mapping[str, ModelAdapter]
     models: tuple[ModelInfo, ...]
     tools: Mapping[str, AgentTool]
@@ -78,11 +78,7 @@ class AgentSetup:
         if not isinstance(self.limits, RunLimits):
             raise TypeError("setup limits must be RunLimits")
         for key, provider in providers.items():
-            identity = (
-                provider.id
-                if isinstance(provider, Provider)
-                else getattr(provider, "name", key)
-            )
+            identity = provider.id
             if key != identity:
                 raise ValueError(
                     f"provider mapping key {key!r} does not match {identity!r}"

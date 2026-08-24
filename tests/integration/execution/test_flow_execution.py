@@ -65,7 +65,7 @@ from toolang.lang.ast import (
 )
 from toolang.setup import AgentSetup
 from tests.support.execution_fixtures import accept_run_start
-from tests.support.execution_harness import FakeModelProvider, RecordingTool
+from tests.support.execution_harness import FakeModels, RecordingTool
 
 
 class _RecordingTracer(RunTracer):
@@ -131,10 +131,10 @@ def _setup() -> AgentSetup:
 
 
 def _model_setup() -> AgentSetup:
-    provider = FakeModelProvider(streaming=False)
+    provider = FakeModels(streaming=False)
     return AgentSetup(
         layout=AgentLayout.resident(Path("/"), "alice"),
-        providers={provider.name: provider},
+        providers={provider.name: provider.catalog_provider()},
         adapters={},
         models=provider.list_models(environ={}),
         tools={},

@@ -27,15 +27,7 @@ from toolang.plugin.models.catalog import (
     filter_catalog_models,
 )
 from toolang.plugin.models.config import parse_model_aliases
-from toolang.plugin.models.discovery import (
-    default_provider_base_url,
-    missing_provider_env_vars,
-)
-from toolang.plugin.models.resolution import (
-    ModelTargetResolver,
-    catalog_model_endpoint,
-    resolve_catalog_adapter,
-)
+from toolang.plugin.models.resolution import ModelTargetResolver
 from toolang.setup import AgentSetup, SetupWatcher
 
 
@@ -130,24 +122,14 @@ def providers_command(
     providers = tuple(
         provider
         for provider_id, provider in sorted(snapshot.providers.items())
-        if any(fnmatchcase(provider_id, pattern) for pattern in patterns)
+        if provider_id != "custom"
+        and any(fnmatchcase(provider_id, pattern) for pattern in patterns)
     )
     available = _available_identities(ctx, setup)
     if json_:
         typer.echo(
             catalog_json_dumps(
-                {
-                    provider.id: {
-                        **provider.to_data(),
-                        "available_models": sum(
-                            f"{provider.id}/{model_id}" in available
-                            for model_id in provider.models
-                        ),
-                        "endpoint": _provider_endpoint(setup, provider),
-                        "adapters": list(_provider_adapters(provider)),
-                    }
-                    for provider in providers
-                }
+                {provider.id: provider.to_data() for provider in providers}
             ),
             nl=False,
         )
@@ -243,17 +225,10 @@ def _available_identities(ctx: typer.Context, setup: AgentSetup) -> set[str]:
 
 def _model_missing_reasons(setup: AgentSetup, model: Model) -> tuple[str, ...]:
     provider = setup.providers.get(model.provider_id)
-    if provider is None:
+    if provider is None or not isinstance(provider, Provider):
         return ("provider",)
-    reasons: list[str] = []
-    if catalog_model_endpoint(provider, model, envs=setup.envs) is None:
-        reasons.append("endpoint")
-    if missing_provider_env_vars(provider, environ=setup.envs):
-        reasons.append("key")
-    adapter = resolve_catalog_adapter(provider, model=model)
-    if adapter is None or adapter not in setup.adapters:
-        reasons.append("adapter")
-    return tuple(reasons)
+    resolved = provider.resolved
+    return () if resolved is not None and resolved.ready else ("provider",)
 
 
 def _catalog_summary(
@@ -280,19 +255,13 @@ def _adapter_by_identity(setup: AgentSetup) -> dict[str, str]:
 
 
 def _provider_endpoint(setup: AgentSetup, provider: Provider) -> str | None:
-    return default_provider_base_url(provider, environ=setup.envs)
+    del setup
+    return provider.resolved.endpoint if provider.resolved is not None else None
 
 
 def _provider_adapters(provider: Provider) -> tuple[str, ...]:
-    adapters = {
-        adapter
-        for model in provider.models.values()
-        if (adapter := resolve_catalog_adapter(provider, model=model)) is not None
-    }
-    default = resolve_catalog_adapter(provider)
-    if not adapters and default is not None:
-        adapters.add(default)
-    return tuple(sorted(adapters))
+    resolved = provider.resolved
+    return (resolved.adapter,) if resolved is not None and resolved.adapter else ()
 
 
 def _provider_availability(provider: Provider, *, available: set[str]) -> str:
@@ -323,14 +292,19 @@ def _provider_endpoint_cell(setup: AgentSetup, provider: Provider) -> Text:
 
 
 def _provider_env_cell(setup: AgentSetup, provider: Provider) -> Text:
-    if not provider.env:
+    resolved = provider.resolved
+    if resolved is None or not resolved.env:
         return Text("-")
-    unavailable = bool(missing_provider_env_vars(provider, environ=setup.envs))
     cell = Text()
-    for index, name in enumerate(provider.env):
+    for index, alternative in enumerate(resolved.env):
         if index:
-            cell.append(" | ")
-        cell.append(name, style="dim" if unavailable else None)
+            cell.append(", ")
+        names = (alternative,) if isinstance(alternative, str) else alternative
+        for group_index, name in enumerate(names):
+            if group_index:
+                cell.append(" + ")
+            missing = not str(setup.envs.get(name, "")).strip()
+            cell.append(name, style="dim" if missing else None)
     return cell
 
 

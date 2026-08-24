@@ -10,6 +10,7 @@ from toolang.base.types.model import ModelCatalogSnapshot, Provider
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.adapters.responses import ResponsesModelAdapter
 from toolang.plugin.models.catalog import ModelsDevModels
+from toolang.plugin.models.local import LlamaCppModels, OllamaModels
 from toolang.setup import SetupWatcher
 from toolang.setup import watcher as watcher_module
 
@@ -68,8 +69,8 @@ def test_setup_watcher_reuses_static_parse_and_force_reprobes_local_sources(
         return _empty_local(provider_id)
 
     monkeypatch.setattr(ModelsDevModels, "snapshot", count_parse)
-    monkeypatch.setattr(watcher_module.OllamaModels, "snapshot", count_local)
-    monkeypatch.setattr(watcher_module.LlamaCppModels, "snapshot", count_local)
+    monkeypatch.setattr(OllamaModels, "snapshot", count_local)
+    monkeypatch.setattr(LlamaCppModels, "snapshot", count_local)
     watcher = _watcher(
         monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"}, patch_local=False
     )
@@ -162,8 +163,8 @@ def _watcher(
         async def empty_llama(_self: object) -> ModelCatalogSnapshot:
             return _empty_local("llama_cpp")
 
-        monkeypatch.setattr(watcher_module.OllamaModels, "snapshot", empty_ollama)
-        monkeypatch.setattr(watcher_module.LlamaCppModels, "snapshot", empty_llama)
+        monkeypatch.setattr(OllamaModels, "snapshot", empty_ollama)
+        monkeypatch.setattr(LlamaCppModels, "snapshot", empty_llama)
     return SetupWatcher(AgentLayout.resident(root, "alice"))
 
 

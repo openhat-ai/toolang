@@ -11,7 +11,7 @@ import threading
 import time
 from typing import Any, Literal, cast
 
-from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.model import ModelInfo, ModelTarget, Provider
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import Message, TextPart
@@ -25,7 +25,6 @@ from toolang.lang.input import (
 )
 from toolang.lang.types import Value
 from toolang.plugin.models.config import parse_default_models, parse_model_aliases
-from toolang.plugin.models.resolution import CatalogProvider
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 
@@ -898,7 +897,7 @@ class _Execution:
         return self.executor.store
 
     @property
-    def providers(self) -> Mapping[str, CatalogProvider]:
+    def providers(self) -> Mapping[str, Provider]:
         return self.setup.providers
 
     @property

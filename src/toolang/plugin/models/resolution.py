@@ -5,21 +5,18 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from string import Template
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import Model, ModelAlias, ModelInfo, ModelTarget, Provider
 from toolang.plugin.models.config import catalog_provider_config
-from toolang.plugin.models.discovery import (
-    default_provider_api_key_env,
-    default_provider_base_url,
-    required_provider_env_vars,
-)
 from toolang.plugin.models.messages import (
     NO_AVAILABLE_MODELS_MESSAGE,
     NO_MATCHED_MODELS_MESSAGE,
+)
+from toolang.plugin.models.provider_resolver import (
+    env_is_ready,
+    selected_credential_value,
 )
 from toolang.common.selectors import (
     Selector as ModelSelector,
@@ -31,7 +28,6 @@ from toolang.common.selectors import (
 
 DEFAULT_MODEL_SELECTOR = "gpt-5"
 CUSTOM_MODEL_PROVIDER = "custom"
-CatalogProvider: TypeAlias = ModelProvider | Provider
 
 
 def split_model_selectors(items: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
@@ -47,65 +43,36 @@ def parse_model_selector(raw: str) -> ModelSelector:
 
 
 def resolve_catalog_adapter(
-    provider: CatalogProvider,
+    provider: Provider,
     *,
     model: Model | None = None,
 ) -> str | None:
     """Resolve a protocol adapter from explicit config and catalog signals."""
 
-    if isinstance(provider, Provider):
-        config = catalog_provider_config(provider)
-        if config is not None and config.adapter is not None:
-            return config.adapter
-        model_provider = model.provider if model is not None else None
-        model_npm = (
-            model_provider.get("npm") if isinstance(model_provider, Mapping) else None
-        )
-        npm = model_npm if isinstance(model_npm, str) else provider.npm
-        shape = (
-            model_provider.get("shape") if isinstance(model_provider, Mapping) else None
-        )
-        if shape in {"completions", "chat_completions"}:
-            return "chat_completions"
-        if provider.id == "openai" or npm == "@ai-sdk/openai":
-            return "responses"
-        if provider.id == "anthropic" or npm == "@ai-sdk/anthropic":
-            return "messages"
-        if provider.id in {
-            "custom",
-            "deepseek",
-            "google",
-            "llama_cpp",
-            "ollama",
-            "openrouter",
-        } or npm in {
-            "@ai-sdk/openai-compatible",
-            "@openrouter/ai-sdk-provider",
-        }:
-            return "chat_completions"
-        return None
-    return _default_provider_adapter(provider.name)
+    del model
+    if provider.resolved is None:
+        raise RuntimeError(f"provider {provider.id!r} has not been resolved")
+    return provider.resolved.adapter
 
 
 def catalog_model_endpoint(
-    provider: CatalogProvider,
+    provider: Provider,
     model: Model,
     *,
     envs: Mapping[str, str],
 ) -> str | None:
     """Resolve the configured or catalog endpoint for one model record."""
 
-    model_provider = model.provider
-    value = model_provider.get("api") if isinstance(model_provider, Mapping) else None
-    if isinstance(value, str) and value.strip():
-        return Template(value.strip()).safe_substitute(envs)
-    return default_provider_base_url(provider, environ=envs)
+    del model, envs
+    if provider.resolved is None:
+        raise RuntimeError(f"provider {provider.id!r} has not been resolved")
+    return provider.resolved.endpoint
 
 
 class SupportsModelSelection(Protocol):
     """Minimal context shape needed to resolve model selectors."""
 
-    providers: Mapping[str, CatalogProvider]
+    providers: Mapping[str, Provider]
     models: tuple[ModelInfo, ...]
     model_aliases: Mapping[str, ModelAlias]
     default_models: tuple[str, ...]
@@ -125,7 +92,7 @@ class _Candidate:
 class ModelTargetResolver:
     """Resolve model catalog entries and runtime configuration into targets."""
 
-    providers: Mapping[str, CatalogProvider]
+    providers: Mapping[str, Provider]
     models: tuple[ModelInfo, ...]
     model_aliases: Mapping[str, ModelAlias]
     default_models: tuple[str, ...]
@@ -305,7 +272,7 @@ def select_model_selectors(
 
 def selectable_model_targets(
     *,
-    providers: Mapping[str, CatalogProvider],
+    providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
@@ -338,7 +305,7 @@ def selectable_model_targets(
 def _resolve_allowed_targets(
     selectors: Sequence[str] | None,
     *,
-    providers: Mapping[str, CatalogProvider],
+    providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
@@ -357,7 +324,7 @@ def _resolve_allowed_targets(
 
 def _discover_available_candidates(
     *,
-    providers: Mapping[str, CatalogProvider],
+    providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
@@ -414,7 +381,7 @@ def _discover_available_candidates(
 def _resolve_selector_targets(
     selectors: Sequence[str] | None,
     *,
-    providers: Mapping[str, CatalogProvider],
+    providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
@@ -479,7 +446,7 @@ def _resolve_selector_targets(
 def _resolve_exact_ref(
     ref: str,
     *,
-    providers: Mapping[str, CatalogProvider],
+    providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
@@ -618,7 +585,7 @@ def _looks_exact_ref(selector: ModelSelector) -> bool:
 def _target_from_alias(
     alias: ModelAlias,
     *,
-    providers: Mapping[str, CatalogProvider],
+    providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
     envs: Mapping[str, str],
     strict: bool,
@@ -663,7 +630,7 @@ def _find_model_info_by_ref(
 
 
 def _target_from_info(
-    provider: CatalogProvider,
+    provider: Provider,
     info: ModelInfo,
     *,
     envs: Mapping[str, str],
@@ -677,17 +644,18 @@ def _target_from_info(
     _validate_reasoning_request(reasoning, info=info)
     mode_body, mode_headers = _model_mode_request(info, mode)
     mode_body.update(request_options)
-    api_key_env = (
-        alias.key_env
+    resolved = provider.resolved
+    if resolved is None:
+        raise RuntimeError(f"provider {provider.id!r} has not been resolved")
+    api_key = (
+        envs.get(alias.key_env)
         if alias is not None and alias.key_env is not None
-        else _provider_api_key_env(provider, envs=envs)
+        else selected_credential_value(provider, environ=envs)
     )
-    api_key = envs.get(api_key_env) if api_key_env else None
-    model_endpoint = _model_provider_endpoint(info, envs=envs)
     endpoint = (
         alias.endpoint
         if alias is not None and alias.endpoint is not None
-        else model_endpoint or default_provider_base_url(provider, environ=envs)
+        else resolved.endpoint
     )
     scope = _target_scope(provider, info=info, alias=alias, endpoint=endpoint)
     return ModelTarget(
@@ -725,16 +693,18 @@ def _target_from_info(
 
 
 def _target_from_alias_only(
-    provider: CatalogProvider,
+    provider: Provider,
     alias: ModelAlias,
     *,
     envs: Mapping[str, str],
 ) -> ModelTarget:
     model_name = alias.model or _provider_model_name_from_ref(alias.provider, alias.ref)
-    endpoint = alias.endpoint or default_provider_base_url(provider, environ=envs)
+    resolved = provider.resolved
+    if resolved is None:
+        raise RuntimeError(f"provider {provider.id!r} has not been resolved")
+    endpoint = alias.endpoint or resolved.endpoint
     scope = alias.scope or _configured_scope(provider) or _scope_from_endpoint(endpoint)
     scope = scope or _provider_scope(alias.provider)
-    api_key_env = alias.key_env or _provider_api_key_env(provider, envs=envs)
     request_options = _target_options(provider, dict(alias.options))
     reasoning = _reasoning_options(request_options)
     mode = _mode_option(request_options)
@@ -745,7 +715,11 @@ def _target_from_alias_only(
         model=model_name,
         adapter=alias.adapter or resolve_catalog_adapter(provider) or "unavailable",
         base_url=endpoint,
-        api_key=envs.get(api_key_env) if api_key_env else None,
+        api_key=(
+            envs.get(alias.key_env)
+            if alias.key_env is not None
+            else selected_credential_value(provider, environ=envs)
+        ),
         scope=scope,
         tags=alias.tags,
         headers=_target_headers(provider, dict(alias.headers)),
@@ -766,12 +740,6 @@ def _provider_model_name_from_ref(provider: str, ref: str) -> str:
     return ref.strip()
 
 
-def _default_provider_adapter(provider: str) -> str:
-    if provider in {"deepseek", "google", "openrouter"}:
-        return "chat_completions"
-    return "responses"
-
-
 def _provider_scope(provider: str) -> str:
     return "local" if provider in {"ollama", "llama_cpp"} else "remote"
 
@@ -788,59 +756,36 @@ def _scope_from_endpoint(endpoint: str | None) -> str | None:
 
 
 def _missing_target_env_vars(
-    provider: CatalogProvider,
+    provider: Provider,
     *,
     alias: ModelAlias | None,
     envs: Mapping[str, str],
 ) -> tuple[str, ...]:
-    if isinstance(provider, Provider):
-        if alias is not None and alias.key_env is not None:
-            return () if str(envs.get(alias.key_env, "")).strip() else (alias.key_env,)
-        return (
-            ()
-            if not provider.env
-            or any(str(envs.get(name, "")).strip() for name in provider.env)
-            else provider.env
-        )
-    required = list(required_provider_env_vars(provider))
-    default_key_env = default_provider_api_key_env(provider)
     if alias is not None and alias.key_env is not None:
-        required = [
-            alias.key_env if name == default_key_env else name for name in required
-        ]
-        if default_key_env is None or alias.key_env not in required:
-            required.append(alias.key_env)
-    seen: set[str] = set()
-    missing: list[str] = []
-    for name in required:
-        env_name = name.strip()
-        if not env_name or env_name in seen:
-            continue
-        seen.add(env_name)
-        if not str(envs.get(env_name, "")).strip():
-            missing.append(env_name)
-    return tuple(missing)
-
-
-def _provider_id(provider: CatalogProvider) -> str:
-    return provider.id if isinstance(provider, Provider) else provider.name
-
-
-def _provider_api_key_env(
-    provider: CatalogProvider,
-    *,
-    envs: Mapping[str, str],
-) -> str | None:
-    if isinstance(provider, Provider):
-        return next(
-            (name for name in provider.env if str(envs.get(name, "")).strip()),
-            provider.env[0] if provider.env else None,
+        return () if str(envs.get(alias.key_env, "")).strip() else (alias.key_env,)
+    resolved = provider.resolved
+    if resolved is None:
+        raise RuntimeError(f"provider {provider.id!r} has not been resolved")
+    if env_is_ready(resolved.env, environ=envs):
+        return ()
+    return tuple(
+        dict.fromkeys(
+            name
+            for alternative in resolved.env
+            for name in (
+                (alternative,) if isinstance(alternative, str) else alternative
+            )
+            if not str(envs.get(name, "")).strip()
         )
-    return default_provider_api_key_env(provider)
+    )
+
+
+def _provider_id(provider: Provider) -> str:
+    return provider.id
 
 
 def _target_headers(
-    provider: CatalogProvider,
+    provider: Provider,
     *overrides: Mapping[str, str],
 ) -> dict[str, str]:
     defaults: dict[str, str] = {}
@@ -862,14 +807,13 @@ def _target_headers(
 
 
 def _target_options(
-    provider: CatalogProvider,
+    provider: Provider,
     overrides: Mapping[str, object],
 ) -> dict[str, object]:
     options: dict[str, object] = {}
-    if isinstance(provider, Provider):
-        config = catalog_provider_config(provider)
-        if config is not None:
-            options.update(config.options)
+    config = catalog_provider_config(provider)
+    if config is not None:
+        options.update(config.options)
     options.update(overrides)
     return options
 
@@ -914,20 +858,8 @@ def _model_mode_request(
     )
 
 
-def _model_provider_endpoint(
-    info: ModelInfo,
-    *,
-    envs: Mapping[str, str],
-) -> str | None:
-    provider = info.metadata.get("provider")
-    value = provider.get("api") if isinstance(provider, Mapping) else None
-    if not isinstance(value, str) or not value.strip():
-        return None
-    return Template(value.strip()).safe_substitute(envs)
-
-
 def _target_scope(
-    provider: CatalogProvider,
+    provider: Provider,
     *,
     info: ModelInfo,
     alias: ModelAlias | None,
@@ -943,9 +875,7 @@ def _target_scope(
     )
 
 
-def _configured_scope(provider: CatalogProvider) -> str | None:
-    if not isinstance(provider, Provider):
-        return None
+def _configured_scope(provider: Provider) -> str | None:
     config = catalog_provider_config(provider)
     return config.scope if config is not None else None
 
@@ -1076,7 +1006,7 @@ def _dedupe(items: Iterable[str]) -> tuple[str, ...]:
 
 def _empty_model_selection_message(
     *,
-    providers: Mapping[str, CatalogProvider],
+    providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
-from ..types.model import ModelCatalogSnapshot, ModelInfo, ModelTarget
+from ..types.model import ModelCatalogSnapshot, ModelTarget
 from ..types.run import ModelCall, ModelCallResult, ModelStreamHandler
 
 
@@ -13,33 +12,10 @@ from ..types.run import ModelCall, ModelCallResult, ModelStreamHandler
 class ModelCatalog(Protocol):
     """Source of one immutable model catalog snapshot."""
 
+    name: str
+
     async def snapshot(self) -> ModelCatalogSnapshot:
         """Return the source's current immutable snapshot."""
-
-
-@runtime_checkable
-class ModelProvider(Protocol):
-    """Deprecated compatibility contract for pre-catalog providers."""
-
-    name: str
-    description: str | None
-
-    def required_env_vars(self) -> tuple[str, ...]:
-        """Return required environment variables for this provider."""
-
-    def default_base_url(self, *, environ: Mapping[str, str]) -> str | None:
-        """Return the default API base URL for this provider when known."""
-
-    def default_api_key_env(self) -> str | None:
-        """Return the default API key environment variable name when known."""
-
-    def list_models(self, *, environ: Mapping[str, str]) -> tuple[ModelInfo, ...]:
-        """Return model infos exposed by this provider."""
-
-    def prepare_target(self, target: ModelTarget) -> ModelTarget:
-        """Return a provider-adjusted model target before adapter execution."""
-
-        return target
 
 
 @runtime_checkable
@@ -48,6 +24,7 @@ class ModelAdapter(Protocol):
 
     name: str
     description: str | None
+    default_endpoint: str | None
 
     async def invoke(
         self,

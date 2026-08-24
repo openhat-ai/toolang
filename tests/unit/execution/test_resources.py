@@ -24,7 +24,7 @@ from toolang.execution.types import (
 )
 from toolang.lang.ast import AgicDecl, Directive, FlowDecl, Span
 from toolang.setup import AgentSetup
-from tests.support.execution_harness import FakeModelProvider
+from tests.support.execution_harness import FakeModels
 
 
 class _Tool:
@@ -63,10 +63,10 @@ def _snapshots(tmp_path: Path) -> tuple[AgentSetup, Any, Any]:
         "alpha__one": _Tool("alpha", "one"),
         "beta__two": _Tool("beta", "two"),
     }
-    provider = FakeModelProvider(streaming=False)
+    provider = FakeModels(streaming=False)
     setup = AgentSetup(
         layout=AgentLayout.resident(tmp_path, "alice"),
-        providers={provider.name: provider},
+        providers={provider.name: provider.catalog_provider()},
         adapters={},
         models=provider.list_models(environ={}),
         tools=tools,

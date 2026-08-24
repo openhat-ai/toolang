@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
+from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget, Provider
 from toolang.plugin.models.discovery import (
     default_provider_api_key_env,
     default_provider_base_url,
@@ -12,12 +12,11 @@ from toolang.plugin.models.discovery import (
     required_provider_env_vars,
 )
 from toolang.plugin.models.resolution import selectable_model_targets
-from toolang.plugin.models.resolution import CatalogProvider
 
 
 def model_list_rows(
     *,
-    providers: Mapping[str, CatalogProvider],
+    providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
@@ -48,7 +47,7 @@ def model_list_rows(
 
 def model_provider_rows(
     *,
-    providers: Mapping[str, CatalogProvider],
+    providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     provider_configs: Mapping[str, object],
@@ -131,7 +130,7 @@ def model_target_profile(
 def model_alias_status(
     alias: ModelAlias,
     *,
-    providers: Mapping[str, CatalogProvider],
+    providers: Mapping[str, Provider],
     environ: Mapping[str, str],
 ) -> tuple[str, str]:
     """Return adapter and config status for one alias."""
@@ -156,7 +155,7 @@ def model_alias_status(
 
 
 def model_provider_config(
-    provider: CatalogProvider,
+    provider: Provider,
     *,
     environ: Mapping[str, str],
     adapter: str,
@@ -223,7 +222,7 @@ def _env_status(required: tuple[str, ...], missing: tuple[str, ...]) -> str:
 
 
 def _provider_url_offline(
-    provider: CatalogProvider,
+    provider: Provider,
     *,
     model_count: int | None,
     available_count: int | None,
@@ -239,7 +238,7 @@ def _provider_url_offline(
 def _model_alias_missing_env(
     alias: ModelAlias,
     *,
-    provider: CatalogProvider,
+    provider: Provider,
     environ: Mapping[str, str],
 ) -> tuple[str, ...]:
     required = list(required_provider_env_vars(provider))
@@ -264,7 +263,7 @@ def _model_alias_missing_env(
 def _model_alias_details(
     alias: ModelAlias,
     *,
-    provider: CatalogProvider,
+    provider: Provider,
     environ: Mapping[str, str],
 ) -> str:
     endpoint = alias.endpoint or default_provider_base_url(provider, environ=environ)

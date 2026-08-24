@@ -17,7 +17,12 @@ from toolang.base.types.message import (
     TextPart,
     message_text,
 )
-from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
+from toolang.base.types.model import (
+    ModelAlias,
+    ModelTarget,
+    Provider,
+    ResolvedProvider,
+)
 from toolang.base.types.policy import RunBindings
 from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.base.types.tool import ToolContext, ToolDefinition
@@ -50,29 +55,26 @@ from toolang.plugin.tools.registry import tool_ref_for_model_tool
 from toolang.setup import AgentEnvironment, AgentSetup
 
 
-class _Provider:
-    name = "test"
-    description = None
-
-    def required_env_vars(self) -> tuple[str, ...]:
-        return ()
-
-    def default_base_url(self, *, environ) -> str | None:
-        return None
-
-    def default_api_key_env(self) -> str | None:
-        return None
-
-    def list_models(self, *, environ) -> tuple[ModelInfo, ...]:
-        return ()
-
-    def prepare_target(self, target: ModelTarget) -> ModelTarget:
-        return target
+def _provider() -> Provider:
+    return Provider(
+        id="test",
+        name="Test",
+        env=(),
+        npm="@ai-sdk/openai-compatible",
+        models={},
+        resolved=ResolvedProvider(
+            adapter="test",
+            endpoint="https://models.example/v1",
+            env=(),
+            ready=True,
+        ),
+    )
 
 
 class _Adapter:
     name = "test"
     description = None
+    default_endpoint = "https://example.invalid/v1"
 
     def __init__(self, response: Message | None = None) -> None:
         self.requests: list[ModelCall] = []
@@ -158,12 +160,12 @@ def test_empty_structured_list_is_not_treated_as_empty_parts() -> None:
 def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     home = root / "agents" / "alice"
-    provider = _Provider()
+    provider = _provider()
     adapter = _Adapter()
     tool = _Tool()
     setup = AgentSetup(
         layout=AgentLayout.resident(root, "alice"),
-        providers={provider.name: provider},
+        providers={provider.id: provider},
         adapters={adapter.name: adapter},
         models=(),
         tools={tool.name: tool},
@@ -271,11 +273,11 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
 
 def test_prepare_agic_includes_declared_output_contract(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
-    provider = _Provider()
+    provider = _provider()
     adapter = _Adapter()
     setup = AgentSetup(
         layout=AgentLayout.resident(root, "alice"),
-        providers={provider.name: provider},
+        providers={provider.id: provider},
         adapters={adapter.name: adapter},
         models=(),
         tools={},
@@ -362,11 +364,11 @@ def test_prepare_agic_includes_declared_output_contract(tmp_path: Path) -> None:
 
 def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
-    provider = _Provider()
+    provider = _provider()
     adapter = _Adapter()
     setup = AgentSetup(
         layout=AgentLayout.resident(root, "alice"),
-        providers={provider.name: provider},
+        providers={provider.id: provider},
         adapters={adapter.name: adapter},
         models=(),
         tools={},
@@ -456,7 +458,7 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
 def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     home = root / "agents" / "alice"
-    provider = _Provider()
+    provider = _provider()
     audio = AudioPart(
         data="ZGF0YQ==",
         format="wav",
@@ -466,7 +468,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
     tool = _Tool()
     setup = AgentSetup(
         layout=AgentLayout.resident(root, "alice"),
-        providers={provider.name: provider},
+        providers={provider.id: provider},
         adapters={adapter.name: adapter},
         models=(),
         tools={tool.name: tool},

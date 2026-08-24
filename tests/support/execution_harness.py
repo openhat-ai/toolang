@@ -13,7 +13,7 @@ from typing import Any, Self
 
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.message import Part
-from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.model import ModelInfo, ModelTarget, Provider, ResolvedProvider
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import (
     ModelCall,
@@ -103,6 +103,7 @@ class ScriptedModelAdapter:
 
     name = "scripted"
     description = "Deterministic execution-test model adapter."
+    default_endpoint = "https://example.invalid/v1"
 
     def __init__(self, responses: Sequence[ScriptedResponse]) -> None:
         self._responses = deque(responses)
@@ -162,7 +163,7 @@ class ScriptedModelAdapter:
         return len(self._responses)
 
 
-class FakeModelProvider:
+class FakeModels:
     """Expose exactly one model for execution tests."""
 
     name = "test"
@@ -195,8 +196,21 @@ class FakeModelProvider:
             ),
         )
 
-    def prepare_target(self, target: ModelTarget) -> ModelTarget:
-        return target
+    def catalog_provider(self) -> Provider:
+        return Provider(
+            id=self.name,
+            name="Test",
+            env=(),
+            npm="@ai-sdk/openai-compatible",
+            api="https://example.invalid/v1",
+            models={},
+            resolved=ResolvedProvider(
+                adapter=ScriptedModelAdapter.name,
+                endpoint="https://example.invalid/v1",
+                env=(),
+                ready=True,
+            ),
+        )
 
 
 class RecordingRunTracer(RunTracer):
@@ -295,11 +309,11 @@ class ExecutionHarness:
             caps=(),
             loaded_at="2026-01-01T00:00:00Z",
         )
-        provider = FakeModelProvider(streaming=streaming)
+        provider = FakeModels(streaming=streaming)
         adapter = ScriptedModelAdapter(responses)
         setup = AgentSetup(
             layout=AgentLayout.resident(root, "alice"),
-            providers={provider.name: provider},
+            providers={provider.name: provider.catalog_provider()},
             adapters={adapter.name: adapter},
             models=provider.list_models(environ={}),
             tools=tools or {},

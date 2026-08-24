@@ -22,6 +22,7 @@ class OllamaModels(ModelCatalog):
     environ: Mapping[str, str]
     endpoint: str | None = None
     timeout: float = 2.0
+    name: str = "ollama"
 
     async def snapshot(self) -> ModelCatalogSnapshot:
         host = _ollama_host(self.endpoint, self.environ)
@@ -69,6 +70,7 @@ class LlamaCppModels(ModelCatalog):
     environ: Mapping[str, str]
     endpoint: str | None = None
     timeout: float = 2.0
+    name: str = "llama_cpp"
 
     async def snapshot(self) -> ModelCatalogSnapshot:
         endpoint = _llama_cpp_endpoint(self.endpoint, self.environ)
@@ -251,6 +253,44 @@ async def _optional_json(client: httpx.AsyncClient, url: str) -> dict[str, objec
     except (httpx.HTTPError, TypeError, ValueError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def create_ollama_catalog(config: Mapping[str, object]) -> ModelCatalog:
+    """Create the built-in Ollama catalog plugin."""
+
+    return OllamaModels(
+        _config_environ(config),
+        endpoint=_optional_string(config.get("endpoint")),
+        timeout=_config_timeout(config),
+    )
+
+
+def create_llama_cpp_catalog(config: Mapping[str, object]) -> ModelCatalog:
+    """Create the built-in llama.cpp catalog plugin."""
+
+    return LlamaCppModels(
+        _config_environ(config),
+        endpoint=_optional_string(config.get("endpoint")),
+        timeout=_config_timeout(config),
+    )
+
+
+def _config_environ(config: Mapping[str, object]) -> Mapping[str, str]:
+    value = config.get("environ")
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): str(item)
+        for key, item in value.items()
+        if isinstance(key, str) and isinstance(item, str)
+    }
+
+
+def _config_timeout(config: Mapping[str, object]) -> float:
+    value = config.get("timeout", 2.0)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise TypeError("local model catalog timeout must be numeric")
+    return float(value)
 
 
 def _local_snapshot(

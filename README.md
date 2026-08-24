@@ -108,13 +108,10 @@ caps [agent] list                    # List all caps
 ```
 
 The model catalog comes from a models.dev-compatible `models.json`. Toolang uses
-`--models`, `TOOLANG_MODEL_CATALOG`, agent-home, root, then the packaged
-catalog in that order. Update a managed root or agent-home snapshot with:
-
-```bash
-toolang models update --root
-toolang models update --home
-```
+`--models`, `TOOLANG_MODEL_CATALOG`, agent-home, root, then the packaged catalog
+in that order. To update it, replace the selected root or agent-home file with a
+complete downloaded snapshot. `toolang models` is inspection-only and never
+downloads during startup.
 
 ## Links
 

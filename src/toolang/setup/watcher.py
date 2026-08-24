@@ -16,18 +16,16 @@ from toolang.common.layout import AgentLayout
 from toolang.plugin.config import merge_named_configs
 from toolang.plugin.models.catalog import (
     MergedModelCatalog,
-    ModelsDevModels,
     model_info_from_catalog,
     resolve_model_catalog_path,
 )
 from toolang.plugin.models.config import (
-    ModelProviderConfig,
+    ProviderConfig,
     configure_catalog_providers,
-    parse_model_provider_configs,
+    parse_provider_configs,
 )
-from toolang.plugin.models.loading import load_model_adapters
-from toolang.plugin.models.local import LlamaCppModels, OllamaModels
-from toolang.plugin.models.resolution import resolve_catalog_adapter
+from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
+from toolang.plugin.models.provider_resolver import resolve_catalog_providers
 from toolang.plugin.tools.loading import load_runtime_tools
 
 from .config import (
@@ -47,6 +45,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True, slots=True)
 class _SnapshotModels(ModelCatalog):
     value: ModelCatalogSnapshot
+    name: str = "models_dev"
 
     async def snapshot(self) -> ModelCatalogSnapshot:
         return self.value
@@ -123,7 +122,7 @@ class SetupWatcher:
                 configs,
                 overrides=self._limit_overrides,
             )
-            provider_configs = parse_model_provider_configs(configs)
+            provider_configs = parse_provider_configs(configs)
             if config_changed or not self._adapters:
                 self._adapters = load_model_adapters()
             if config_changed or envs_changed or not self._tools:
@@ -134,41 +133,66 @@ class SetupWatcher:
                         environ=envs,
                     )
                 )
+            ollama = provider_configs.get("ollama")
+            llama_cpp = provider_configs.get("llama_cpp")
+            catalogs = load_model_catalogs(
+                {
+                    "models_dev": {"path": catalog_path},
+                    "ollama": {"environ": envs, "endpoint": _endpoint(ollama)},
+                    "llama_cpp": {
+                        "environ": envs,
+                        "endpoint": _endpoint(llama_cpp),
+                    },
+                }
+            )
+            models_dev = catalogs.pop("models_dev", None)
+            if models_dev is None:
+                raise RuntimeError("models_dev catalog plugin is not installed")
             if self._static_catalog is None or catalog_changed:
-                self._static_catalog = await ModelsDevModels(catalog_path).snapshot()
+                self._static_catalog = await models_dev.snapshot()
 
             static = self._static_catalog
             assert static is not None
-            ollama = provider_configs.get("ollama")
-            llama_cpp = provider_configs.get("llama_cpp")
+            ordered_catalogs = tuple(
+                catalogs.pop(name)
+                for name in ("ollama", "llama_cpp")
+                if name in catalogs
+            ) + tuple(catalogs[name] for name in sorted(catalogs))
             merged = await MergedModelCatalog(
                 (
                     _SnapshotModels(static),
-                    OllamaModels(envs, endpoint=_endpoint(ollama)),
-                    LlamaCppModels(envs, endpoint=_endpoint(llama_cpp)),
+                    *ordered_catalogs,
                 )
             ).snapshot()
             providers = configure_catalog_providers(
                 merged.providers,
                 provider_configs,
             )
+            resolved_catalog = resolve_catalog_providers(
+                ModelCatalogSnapshot(
+                    providers=providers,
+                    models=merged.models,
+                    revision=merged.revision,
+                    source=merged.source,
+                ),
+                adapters=self._adapters,
+                environ=envs,
+            )
+            providers = dict(resolved_catalog.providers)
             models = tuple(
                 model_info_from_catalog(
                     model,
                     adapter=(
-                        adapter
-                        if (
-                            adapter := resolve_catalog_adapter(
-                                providers[model.provider_id],
-                                model=model,
-                            )
-                        )
-                        in self._adapters
+                        resolved.adapter
+                        if (resolved := providers[model.provider_id].resolved)
+                        is not None
+                        and resolved.ready
+                        and resolved.adapter is not None
                         else "unavailable"
                     ),
                     revision=static.revision,
                 )
-                for model in merged.models
+                for model in resolved_catalog.models
             )
             setup = AgentSetup(
                 layout=self.layout,
@@ -177,7 +201,7 @@ class SetupWatcher:
                 models=models,
                 tools=self._tools,
                 envs=envs,
-                catalog=merged,
+                catalog=resolved_catalog,
                 provider_configs=provider_configs,
                 environment=AgentEnvironment.capture(self.layout, envs=envs),
                 ceiling=ceiling,
@@ -231,7 +255,7 @@ class SetupWatcher:
             pass
 
 
-def _endpoint(config: ModelProviderConfig | None) -> str | None:
+def _endpoint(config: ProviderConfig | None) -> str | None:
     return config.endpoint if config is not None else None
 
 

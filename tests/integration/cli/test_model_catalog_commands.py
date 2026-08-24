@@ -318,8 +318,8 @@ def test_providers_lists_effective_endpoint_and_model_adapters(
         header.index(label) for label in ("ADAPTERS", "ENDPOINT", "ENV")
     )
     assert "https://api.test/v1" in row
-    assert "chat_completions,messages" in row
-    assert "TEST_API_KEY | TEST_ALT_API_KEY" in row
+    assert "messages" in row
+    assert "TEST_API_KEY, TEST_ALT_API_KEY" in row
     assert "1 provider from 1 catalog: models.dev 1" in stdout
 
     captured_rows: list[tuple[str | Text, ...]] = []
@@ -352,15 +352,14 @@ def test_providers_lists_effective_endpoint_and_model_adapters(
     endpoint = styled_row[4]
     env = styled_row[5]
     assert isinstance(adapters, Text)
-    assert adapters.plain == "chat_completions,messages"
-    assert not _is_dim(adapters, adapters.plain.index(","))
-    assert _is_dim(adapters, adapters.plain.index("messages"))
+    assert adapters.plain == "messages"
+    assert not _is_dim(adapters, 0)
     assert isinstance(endpoint, Text)
     assert not _is_dim(endpoint, 0)
     assert isinstance(env, Text)
-    assert env.plain == "TEST_API_KEY | TEST_ALT_API_KEY"
+    assert env.plain == "TEST_API_KEY, TEST_ALT_API_KEY"
     assert _is_dim(env, 0)
-    assert not _is_dim(env, env.plain.index("|"))
+    assert not _is_dim(env, env.plain.index(","))
     assert _is_dim(env, env.plain.index("TEST_ALT_API_KEY"))
 
     json_result = runner.invoke(
@@ -378,9 +377,9 @@ def test_providers_lists_effective_endpoint_and_model_adapters(
 
     assert json_result.exit_code == 0, json_result.stderr
     provider = json.loads(json_result.stdout)["test"]
-    assert provider["endpoint"] == "https://api.test/v1"
-    assert provider["adapters"] == ["chat_completions", "messages"]
-    assert "adapter" not in provider
+    assert provider["api"] == "https://api.test/v1"
+    assert provider["npm"] == "@ai-sdk/anthropic"
+    assert "resolved" not in provider
 
 
 def _disable_local_discovery(monkeypatch) -> None:

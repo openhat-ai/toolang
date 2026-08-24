@@ -23,7 +23,12 @@ from toolang.plugin.models.catalog import (
     parse_model_catalog_data,
     resolve_model_catalog_path,
 )
+from toolang.plugin.models.adapters.chat_completions import (
+    ChatCompletionsModelAdapter,
+)
+from toolang.plugin.models.adapters.messages import MessagesModelAdapter
 from toolang.plugin.models.discovery import default_provider_base_url
+from toolang.plugin.models.provider_resolver import resolve_provider
 from toolang.plugin.models.resolution import (
     ModelTargetResolver,
     resolve_catalog_adapter,
@@ -164,25 +169,29 @@ def test_strict_export_rejects_local_only_models() -> None:
         snapshot.to_data()
 
 
-def test_model_provider_signal_can_override_provider_adapter_shape() -> None:
-    provider = _provider({})
+def test_resolved_provider_adapter_ignores_model_protocol_hints() -> None:
+    provider = _resolve(_provider({}), ChatCompletionsModelAdapter())
     model = Model(
         provider_id="test",
         id="one",
         name="One",
-        provider={"npm": "@ai-sdk/openai-compatible", "shape": "completions"},
+        provider={"npm": "@ai-sdk/anthropic"},
     )
 
     assert resolve_catalog_adapter(provider, model=model) == "chat_completions"
 
 
 def test_anthropic_catalog_signal_resolves_messages_adapter() -> None:
-    provider = Provider(
-        id="anthropic",
-        name="Anthropic",
-        env=("ANTHROPIC_API_KEY",),
-        npm="@ai-sdk/anthropic",
-        models={},
+    provider = _resolve(
+        Provider(
+            id="anthropic",
+            name="Anthropic",
+            env=("ANTHROPIC_API_KEY",),
+            npm="@ai-sdk/anthropic",
+            models={},
+        ),
+        MessagesModelAdapter(),
+        environ={"ANTHROPIC_API_KEY": "secret"},
     )
 
     assert resolve_catalog_adapter(provider) == "messages"
@@ -210,7 +219,7 @@ def test_resolver_applies_advertised_mode_request_and_keeps_control_metadata() -
             }
         },
     )
-    provider = _provider({"one": model})
+    provider = _resolve(_provider({"one": model}), ChatCompletionsModelAdapter())
     info = model_info_from_catalog(
         model,
         adapter="chat_completions",
@@ -294,7 +303,21 @@ def _provider(models: dict[str, Model]) -> Provider:
         name="Test",
         env=("TEST_API_KEY",),
         npm="@ai-sdk/openai-compatible",
+        api="https://api.test/v1",
         models=models,
+    )
+
+
+def _resolve(
+    provider: Provider,
+    adapter: ChatCompletionsModelAdapter | MessagesModelAdapter,
+    *,
+    environ: dict[str, str] | None = None,
+) -> Provider:
+    return resolve_provider(
+        provider,
+        adapters={adapter.name: adapter},
+        environ=environ or {"TEST_API_KEY": "secret"},
     )
 
 
