@@ -65,6 +65,7 @@ async def _start_run_stream(
                     ),
                 ),
                 limits=limits,
+                space=payload.space,
                 input=resolve_runnable_input(
                     runnable,
                     primary=parse_parts(payload.input) if payload.input else None,

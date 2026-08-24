@@ -13,7 +13,7 @@ import click
 import typer
 
 from toolang.catalog.job import AuthoredJobs
-from toolang.catalog.agent import LocalAgents
+from toolang.catalog.agent import LocalAgents, materialize_agent_runspaces
 from toolang.common.layout import AgentLayout
 from toolang.up import process as agents
 from toolang.catalog import templates
@@ -88,6 +88,7 @@ def clone_agent(
                 home,
                 ignore=shutil.ignore_patterns(".caps", ".state", ".runtime"),
             )
+            materialize_agent_runspaces(AgentLayout.resident(root, target))
         else:
             ref = agents.resolve_agent_selector_ref(selector)
             name = target or selector.default_name()

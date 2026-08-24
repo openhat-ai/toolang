@@ -37,6 +37,10 @@ ${TOOLANG_ROOT}/
       skills/
       services/
       prompts/
+      collab/
+        MEMO.md
+      lab/
+        MEMO.md
       tasks/
       chores/
       archive/
@@ -71,6 +75,8 @@ Key paths:
 | --- | --- |
 | `agent.too` | Agent program |
 | `config.toml` | Agent-local configuration |
+| `collab/MEMO.md` | Agent-maintained collaboration notes |
+| `lab/MEMO.md` | Agent-maintained exploration notes |
 | `psyches/`, `skills/`, `services/`, `prompts/` | Agent-local cap definitions |
 | `tasks/` | Ready task documents |
 | `chores/` | Ready chore documents |
@@ -160,6 +166,7 @@ Durable authored state lives in:
 - agent `config.toml`
 - agent program
 - agent cap directories
+- agent `collab/` and `lab/` run spaces
 - agent `tasks/`
 - agent `chores/`
 - agent `drafts/`
@@ -167,6 +174,9 @@ Durable authored state lives in:
 
 Durable execution state does not live in authored files. It lives in
 `jobs.db`, `runs.db`, and `files.db`.
+
+External workspace grants live only in the agent `config.toml` `[workspaces]`
+table. They are not copied into either memo file.
 
 Inbox directories passed with `--inbox` are external user directories. Toolang
 does not write marker files into them; file request progress is recorded under

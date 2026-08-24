@@ -19,12 +19,12 @@ DEFAULT_MAX_OUTPUT_CHARS = 20_000
 
 @dataclass(slots=True)
 class ShellPlugin:
-    """Shell execution tools scoped to one agent home."""
+    """Shell execution tools rooted in the current run's allowed directories."""
 
     config: dict[str, Any]
     name: str = "shell"
     description: str | None = (
-        "Run non-interactive shell commands inside the current agent home."
+        "Run non-interactive shell commands from an allowed run directory."
     )
     _timeout_sec: int = field(init=False, repr=False)
     _max_output_chars: int = field(init=False, repr=False)
@@ -98,12 +98,10 @@ def _resolve_cwd(raw_cwd: str | None, *, context: ToolContext | None) -> Path:
     if not candidate.is_absolute():
         candidate = context.wd / candidate
     resolved = candidate.resolve()
-    root = context.home.resolve()
-    try:
-        resolved.relative_to(root)
-    except ValueError as exc:
-        raise ToolangError(f"shell cwd escapes agent home: {resolved}") from exc
-    return resolved
+    roots = tuple(root.resolve() for root in context.roots) or (context.home.resolve(),)
+    if any(resolved == root or resolved.is_relative_to(root) for root in roots):
+        return resolved
+    raise ToolangError(f"shell cwd escapes allowed roots: {resolved}")
 
 
 def _int_value(value: object, *, default: int) -> int:

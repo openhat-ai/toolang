@@ -101,6 +101,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
         ),
         _command("task", "before", placements=_RESIDENT, prepare="program"),
         _command("chore", "before", placements=_RESIDENT, prepare="program"),
+        _command("workspace", "before", placements=_RESIDENT, prepare="layout"),
         _command("chat", "before", placements=_ALL_PLACEMENTS, prepare="program"),
         _command("threads", "before", placements=_ALL_PLACEMENTS, prepare="layout"),
         _command("runs", "before", placements=_ALL_PLACEMENTS, prepare="layout"),

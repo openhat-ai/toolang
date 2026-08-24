@@ -43,6 +43,8 @@ class HostingRequest:
     log_path: Path | None
     envs: dict[str, str] = field(default_factory=dict)
     mounts: tuple[HostingMount, ...] = ()
+    workspaces: dict[str, Path] = field(default_factory=dict)
+    workspace_sources: dict[str, Path] = field(default_factory=dict)
     local_dev_artifact: Path | None = None
 
 

@@ -60,6 +60,7 @@ class AgentSetup:
     models: tuple[ModelInfo, ...]
     tools: Mapping[str, AgentTool]
     envs: Mapping[str, str]
+    workspaces: Mapping[str, Path] = field(default_factory=dict)
     catalog: ModelCatalogSnapshot | None = None
     provider_configs: Mapping[str, object] = field(default_factory=dict)
     environment: AgentEnvironment | None = None
@@ -99,6 +100,16 @@ class AgentSetup:
         object.__setattr__(self, "models", models)
         object.__setattr__(self, "tools", MappingProxyType(dict(self.tools)))
         object.__setattr__(self, "envs", MappingProxyType(dict(self.envs)))
+        object.__setattr__(
+            self,
+            "workspaces",
+            MappingProxyType(
+                {
+                    name: path.expanduser().resolve()
+                    for name, path in self.workspaces.items()
+                }
+            ),
+        )
         object.__setattr__(
             self,
             "provider_configs",

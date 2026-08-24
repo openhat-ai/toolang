@@ -134,12 +134,26 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
 
     monkeypatch.setattr(hosting, "_wait_ready", ready)
     spec = _launch_spec(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    spec.serve.layout.config.write_text(
+        f'[workspaces]\nproject = "{project}"\n', encoding="utf-8"
+    )
 
     handle = asyncio.run(hosting.launch(spec))
 
     prepare = implementation.calls[0]
     assert isinstance(prepare, tuple)
     assert prepare[:2] == ("prepare", "value:with:colons")
+    request = prepare[2]
+    assert isinstance(request, HostingRequest)
+    hosted_project = Path("/root/.toolang/agents/alice/.runtime/workspaces/project")
+    assert request.workspaces == {"project": hosted_project}
+    assert request.workspace_sources == {"project": project.resolve()}
+    assert (project.resolve(), hosted_project) in {
+        (mount.local_path, mount.hosted_path) for mount in request.mounts
+    }
+    assert "TOOLANG_ACTIVE_WORKSPACES" in request.envs
     assert hosting.HostingState.load(spec.serve.layout.hosting_state) == handle.state
 
     assert asyncio.run(hosting.stop(spec.serve.layout, force=True)) is True

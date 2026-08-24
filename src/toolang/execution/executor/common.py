@@ -56,6 +56,7 @@ from ..types import (
     StepStatus,
     Pointer,
     TypedPointer,
+    RunAccess,
 )
 
 Shape = Literal["none", "item", "list"]
@@ -94,6 +95,7 @@ class BoundRun:
     state: AgentState
     setup: AgentSetup
     created_at: str
+    access: RunAccess | None = None
     control_index: int = 0
     limits: RunLimits = RunLimits()
     ceilings: tuple[AgentCeiling, ...] = ()

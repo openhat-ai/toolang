@@ -21,7 +21,8 @@ Current built-in tools are:
 
 ## Filesystem
 
-`filesystem` is scoped to the current agent home.
+`filesystem` resolves relative paths from the selected `collab/` or `lab/`
+directory. It accepts only that run space and active collab workspaces.
 
 It provides structured file operations such as:
 
@@ -35,7 +36,9 @@ It provides structured file operations such as:
 
 ## Shell
 
-`shell` runs one non-interactive command inside the current agent home.
+`shell` runs one non-interactive command with the selected run space as its
+default working directory. An explicit cwd must be inside an allowed root;
+command text is not a hard filesystem sandbox.
 
 It returns structured:
 

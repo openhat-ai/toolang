@@ -63,6 +63,8 @@ def test_script_binds_options_arguments_and_primary_input(
             "cost=2.5",
             "--limit",
             "time=60",
+            "--space",
+            "lab",
             "--save",
             "-",
             "count=2.5",
@@ -86,6 +88,7 @@ def test_script_binds_options_arguments_and_primary_input(
     )
     assert "verbosity" not in captured
     assert captured["save"] == "-"
+    assert captured["space"] == "lab"
     assert captured["limit_options"] == (
         "tokens=1000",
         "cost=2.5",
@@ -121,6 +124,28 @@ def test_script_reads_primary_input_from_stdin(
     input = captured["input"]
     assert isinstance(input, RunnableInputRaw)
     assert input.primary == "from stdin"
+    assert captured["space"] == "collab"
+
+
+def test_script_rejects_the_removed_work_space_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _write_source(tmp_path)
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("invalid space must not run"),
+    )
+
+    result = script.dispatch(
+        [],
+        [str(source), "demo", "--space", "work", "count=2", "hello"],
+        prog_name="toolang",
+        stdin=StringIO(),
+    )
+
+    assert result == 2
 
 
 def test_script_stdin_can_override_the_cli_runnable(

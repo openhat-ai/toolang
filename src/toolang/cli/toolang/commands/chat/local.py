@@ -277,6 +277,7 @@ class LocalChatSession:
             setup=setup,
             state=state,
             thread=thread_id,
+            space="collab",
             default_runnable=_default_runnable(state),
             session_commands=commands_from_selects(selects),
             include=lambda reference: resolve_file_include(reference, base=base),

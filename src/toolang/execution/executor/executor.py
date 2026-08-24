@@ -33,6 +33,7 @@ from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 
 from ..accounting import selected_usd_cost
+from ..access import capture_run_access
 from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin
 from ..records import (
     PreparationControlPayload,
@@ -53,6 +54,8 @@ from ..types import (
     ModelStepNoted,
     Occurrence,
     OccurrencePosition,
+    RunAccess,
+    RunSpace,
     TypedPointer,
 )
 from ..runnables import parse_runnable_ref, resolve_runnable
@@ -114,6 +117,8 @@ class RunSpec:
     thread: str
     bindings: RunBindings
     limits: RunLimits
+    space: RunSpace
+    access: RunAccess | None = None
     ceilings: tuple[AgentCeiling, ...] = ()
     input: RunnableInput = RunnableInput()
 
@@ -204,7 +209,9 @@ class RunExecutor:
 
         self._require_available()
         loop = asyncio.get_running_loop()
-        executable, input, agent_resources, resources = _prepare_start_spec(spec)
+        executable, input, agent_resources, resources, access = _prepare_start_spec(
+            spec
+        )
         if not isinstance(spec.limits, RunLimits):
             raise TypeError("run limits must be RunLimits")
         bound = _bind_run(
@@ -214,6 +221,7 @@ class RunExecutor:
             input=input,
             agent_resources=agent_resources,
             resources=resources,
+            access=access,
         )
         self.store.accept_start(
             run_id=bound.run_id,
@@ -225,6 +233,7 @@ class RunExecutor:
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             locals=bound.control_locals,
+            access=bound.access,
             occurrence=bound.occurrence,
             request_id=request_id,
             created_at=bound.created_at,
@@ -255,8 +264,11 @@ class RunExecutor:
             ceiling=ceiling,
             model=model,
             limits=limits if limits is not None else setup.limits,
+            reuse_access=False,
         )
-        executable, input, agent_resources, resources = _prepare_start_spec(spec)
+        executable, input, agent_resources, resources, access = _prepare_start_spec(
+            spec
+        )
         bound = _bind_run(
             spec,
             executable=executable,
@@ -264,6 +276,7 @@ class RunExecutor:
             input=input,
             agent_resources=agent_resources,
             resources=resources,
+            access=access,
         )
         self.store.accept_start(
             run_id=bound.run_id,
@@ -275,6 +288,7 @@ class RunExecutor:
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             locals=bound.control_locals,
+            access=bound.access,
             occurrence=bound.occurrence,
             request_id=request_id,
             created_at=bound.created_at,
@@ -308,8 +322,11 @@ class RunExecutor:
             ceiling=ceiling,
             model=model,
             limits=limits if limits is not None else setup.limits,
+            reuse_access=True,
         )
-        executable, input, agent_resources, resources = _prepare_start_spec(spec)
+        executable, input, agent_resources, resources, access = _prepare_start_spec(
+            spec
+        )
         bound = _bind_run(
             spec,
             executable=executable,
@@ -317,6 +334,7 @@ class RunExecutor:
             input=input,
             agent_resources=agent_resources,
             resources=resources,
+            access=access,
         )
         _reopened, control, _ejected = self.store.accept_retry(
             run_id=run_id,
@@ -327,6 +345,7 @@ class RunExecutor:
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             locals=bound.control_locals,
+            access=bound.access,
             request_id=request_id,
             created_at=bound.created_at,
         )
@@ -348,6 +367,7 @@ class RunExecutor:
         ceiling: AgentCeiling,
         model: str | None,
         limits: RunLimits,
+        reuse_access: bool,
     ) -> RunSpec:
         run = self.store.get_run(run_id=run_id)
         if run is None or run.parent is not None:
@@ -364,6 +384,7 @@ class RunExecutor:
         if not runnable:
             raise ValueError(f"run runnable not found: {run_id}")
         executable = resolve_runnable(state.program, runnable)
+        source_access = control.payload.access
         return RunSpec(
             setup=setup,
             state=state,
@@ -373,6 +394,8 @@ class RunExecutor:
                 model=model if model is not None else control.payload.model,
             ),
             limits=limits,
+            space=source_access.space if source_access is not None else "collab",
+            access=source_access if reuse_access else None,
             ceilings=(
                 (ceiling,)
                 if any(
@@ -1181,6 +1204,7 @@ class _Execution:
             runnable=_bound_runnable(binding),
             model=_bound_model(binding),
             locals=binding.control_locals,
+            access=binding.access,
             occurrence=binding.occurrence,
             request_id=None,
             created_at=binding.created_at,
@@ -1469,6 +1493,7 @@ def _child_binding(
         control_locals=tuple(control_locals),
         state=parent.state,
         setup=parent.setup,
+        access=parent.access,
         limits=parent.limits,
         ceilings=parent.ceilings,
         agent_resources=parent.agent_resources,
@@ -1500,6 +1525,7 @@ def _bind_run(
     input: RunnableInput,
     agent_resources: AgentResources,
     resources: AgentResources,
+    access: RunAccess,
 ) -> BoundRun:
     if not spec.thread or spec.thread != spec.thread.strip():
         raise ValueError("run spec requires a canonical thread id")
@@ -1517,6 +1543,7 @@ def _bind_run(
         control_locals=control_locals,
         state=spec.state,
         setup=spec.setup,
+        access=access,
         limits=spec.limits,
         ceilings=spec.ceilings,
         agent_resources=agent_resources,
@@ -1539,7 +1566,13 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
 
 def _prepare_start_spec(
     spec: RunSpec,
-) -> tuple[AgicDecl | FlowDecl, RunnableInput, AgentResources, AgentResources]:
+) -> tuple[
+    AgicDecl | FlowDecl,
+    RunnableInput,
+    AgentResources,
+    AgentResources,
+    RunAccess,
+]:
     if spec.bindings.runnable is None:
         raise ValueError("run spec requires a runnable binding")
     runnable_name, runnable_kind = parse_runnable_ref(spec.bindings.runnable)
@@ -1576,7 +1609,10 @@ def _prepare_start_spec(
         resources=resources,
         model=spec.bindings.model,
     )
-    return executable, input, agent_resources, resources
+    access = spec.access or capture_run_access(spec.setup, spec.space)
+    if access.space != spec.space:
+        raise ValueError("run access does not match the selected space")
+    return executable, input, agent_resources, resources, access
 
 
 def _prepare_child_run(

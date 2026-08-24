@@ -95,8 +95,8 @@ class DockerHosting:
         )
 
         mounts = [
-            *request.mounts,
             HostingMount(request.local_home, request.hosted_home),
+            *request.mounts,
             HostingMount(stage_dir, runtime_dir),
             *extra_mounts,
         ]
@@ -126,6 +126,15 @@ class DockerHosting:
                 "container_name": container_name,
                 "image": image,
                 "stage_dir": str(stage_dir),
+                "workspaces": {
+                    name: {
+                        "configured_path": str(
+                            request.workspace_sources.get(name, path)
+                        ),
+                        "active_path": str(path),
+                    }
+                    for name, path in request.workspaces.items()
+                },
             },
         )
 
@@ -157,6 +166,7 @@ class DockerHosting:
                 "container_id": container_id,
                 "image": image,
                 "stage_dir": _plan_text(plan, "stage_dir"),
+                "workspaces": dict(plan.meta.get("workspaces", {})),
                 "follow_logs": plan.log_path is None,
             },
         )

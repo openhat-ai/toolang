@@ -19,7 +19,7 @@ from toolang.state.state import AgentState
 
 from .policy import parse_policy_prefix, resolve_commands
 from .runnables import parse_runnable_ref, resolve_runnable
-from .types import RunOverride
+from .types import RunOverride, RunSpace
 
 if TYPE_CHECKING:
     from .executor.executor import RunSpec
@@ -42,6 +42,7 @@ def resolve_spec(
     setup: AgentSetup,
     state: AgentState,
     thread: str,
+    space: RunSpace,
     default_runnable: str,
     surface: RunBindings = RunBindings(),
     session_commands: Sequence[RunOverride] = (),
@@ -98,6 +99,7 @@ def resolve_spec(
             runnable=f"{runnable.kind}:{runnable.name}",
         ),
         limits=limits,
+        space=space,
         ceilings=ceilings,
         input=resolve_runnable_input(
             runnable,

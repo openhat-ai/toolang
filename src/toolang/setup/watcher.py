@@ -13,6 +13,11 @@ from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelCatalogSnapshot
 from toolang.common.layout import AgentLayout
+from toolang.common.workspace import (
+    Workspace,
+    resolve_active_workspaces,
+    workspace_paths_overlap,
+)
 from toolang.plugin.config import merge_named_configs
 from toolang.plugin.models.catalog import (
     MergedModelCatalog,
@@ -114,6 +119,8 @@ class SetupWatcher:
                 configs,
                 overrides=self._limit_overrides,
             )
+            workspaces = resolve_active_workspaces(agent_config, environ=envs)
+            _validate_workspace_locations(self.layout, envs, workspaces)
             provider_configs = parse_provider_configs(configs)
             if config_changed or not self._adapters:
                 self._adapters = load_model_adapters()
@@ -196,6 +203,7 @@ class SetupWatcher:
                 models=models,
                 tools=self._tools,
                 envs=envs,
+                workspaces={item.name: item.path for item in workspaces},
                 catalog=resolved_catalog,
                 provider_configs=provider_configs,
                 environment=AgentEnvironment.capture(self.layout, envs=envs),
@@ -254,6 +262,23 @@ class SetupWatcher:
 
 def _endpoint(config: ProviderConfig | None) -> str | None:
     return config.endpoint if config is not None else None
+
+
+def _validate_workspace_locations(
+    layout: AgentLayout,
+    envs: Mapping[str, str],
+    workspaces: tuple[Workspace, ...],
+) -> None:
+    sandbox = envs.get("TOOLANG_SANDBOX", "none").partition(":")[0]
+    for workspace in workspaces:
+        if sandbox == "docker":
+            expected = (layout.hosted_workspaces / workspace.name).resolve()
+            if workspace.path != expected:
+                raise ValueError(
+                    f"active workspace path does not match its mount: {workspace.name}"
+                )
+        elif workspace_paths_overlap(layout.home.resolve(), workspace.path):
+            raise ValueError(f"workspace path overlaps agent home: {workspace.path}")
 
 
 def _catalog_file_identity(path: Path) -> tuple[Path, int, int, int, int]:

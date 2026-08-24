@@ -41,7 +41,13 @@ from toolang.base.types.run import (
 from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd
 from toolang.execution.executor import RunLimits
-from toolang.execution.records import RunControlRef, StartControlPayload
+from toolang.execution.history import RunHistory
+from toolang.execution.records import (
+    RerunControlPayload,
+    RetryControlPayload,
+    RunControlRef,
+    StartControlPayload,
+)
 from toolang.execution.types import (
     ModelStepNoted,
     ModelTokenCount,
@@ -213,6 +219,115 @@ agic reply(_: Part[]) -> Part[]:
                 [Message.user("hello")],
                 [Message.user("hello")],
             ]
+
+    asyncio.run(scenario())
+
+
+def test_retry_reuses_run_access_while_rerun_recaptures_notes(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic reply(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[
+            RuntimeError("temporary failure"),
+            ModelCallResult(message=Message.assistant("recovered")),
+            ModelCallResult(message=Message.assistant("rerun")),
+        ],
+    )
+    original_workspace = tmp_path / "original-workspace"
+    current_workspace = tmp_path / "current-workspace"
+    original_workspace.mkdir()
+    current_workspace.mkdir()
+    harness.setup = replace(
+        harness.setup,
+        workspaces={"original": original_workspace},
+    )
+    harness.setup.layout.collab.mkdir(exist_ok=True)
+    harness.setup.layout.collab_memo.write_text("original notes\n", encoding="utf-8")
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            failed = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="reply",
+                    primary=(TextPart("hello"),),
+                )
+            )
+            assert failed.status == "failed"
+            harness.setup.layout.collab_memo.write_text(
+                "changed before retry\n", encoding="utf-8"
+            )
+            harness.setup = replace(
+                harness.setup,
+                workspaces={"current": current_workspace},
+            )
+
+            retried = await harness.executor.retry(
+                failed.id,
+                setup=harness.setup,
+                state=harness.state,
+            )
+            assert retried.status == "succeeded"
+            harness.setup.layout.collab_memo.write_text(
+                "fresh rerun notes\n", encoding="utf-8"
+            )
+            rerun = await harness.executor.rerun(
+                retried.id,
+                setup=harness.setup,
+                state=harness.state,
+            )
+            assert rerun.status == "succeeded"
+
+            start = harness.store.get_run_control(run_id=failed.id, index=0)
+            retry = harness.store.get_run_control(run_id=failed.id, index=1)
+            rerun_control = harness.store.get_run_control(run_id=rerun.id, index=0)
+            assert start is not None and isinstance(start.payload, StartControlPayload)
+            assert retry is not None and isinstance(retry.payload, RetryControlPayload)
+            assert rerun_control is not None and isinstance(
+                rerun_control.payload, RerunControlPayload
+            )
+            assert retry.payload.access == start.payload.access
+            assert start.payload.access is not None
+            assert start.payload.access.memo == "original notes\n"
+            assert [item.name for item in start.payload.access.workspaces] == [
+                "original"
+            ]
+            assert rerun_control.payload.access is not None
+            assert rerun_control.payload.access.memo == "fresh rerun notes\n"
+            assert [item.name for item in rerun_control.payload.access.workspaces] == [
+                "current"
+            ]
+            failed_detail = RunHistory(harness.store).get_run(failed.id)
+            rerun_detail = RunHistory(harness.store).get_run(rerun.id)
+            assert failed_detail is not None and failed_detail.space == "collab"
+            assert rerun_detail is not None and rerun_detail.space == "collab"
+            assert "original notes" in harness.adapter.invocations[1].call.instructions
+            assert (
+                "changed before retry"
+                not in harness.adapter.invocations[1].call.instructions
+            )
+            assert (
+                str(original_workspace)
+                in harness.adapter.invocations[1].call.instructions
+            )
+            assert (
+                str(current_workspace)
+                not in harness.adapter.invocations[1].call.instructions
+            )
+            assert (
+                "fresh rerun notes" in harness.adapter.invocations[2].call.instructions
+            )
+            assert (
+                str(current_workspace)
+                in harness.adapter.invocations[2].call.instructions
+            )
 
     asyncio.run(scenario())
 

@@ -29,6 +29,7 @@ from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
+from toolang.execution.types import RunSpace
 from toolang.lang import Program
 from toolang.lang.input import resolve_runnable_input
 from toolang.state.state import AgentState, agent_state_version
@@ -340,6 +341,7 @@ class ExecutionHarness:
         named: Mapping[str, object] | None = None,
         model: str | None = None,
         limits: RunLimits | None = None,
+        space: RunSpace = "collab",
         ceilings: tuple[AgentCeiling, ...] = (),
     ) -> RunSpec:
         """Build a run spec while keeping scenario tests focused on behavior."""
@@ -356,6 +358,7 @@ class ExecutionHarness:
             thread=thread,
             bindings=RunBindings(model=model, runnable=runnable),
             limits=limits if limits is not None else self.setup.limits,
+            space=space,
             ceilings=ceilings,
             input=resolve_runnable_input(
                 executable,

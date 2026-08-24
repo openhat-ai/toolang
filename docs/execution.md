@@ -247,14 +247,13 @@ check; it is not part of the public manager API.
 
 ## State Capture
 
-`RunSpec` carries one explicit immutable `AgentState`,
-`toolang.setup.AgentSetup`, effective `RunBindings` and `RunLimits`, and zero
-or more `AgentCeiling` restrictions. `AgentSetup` supplies the immutable
-`AgentLayout`, root-scoped installed runtime implementations, and captured
-policy defaults. `SetupWatcher` resolves
-root and agent-home `[allow]`, `[default]`, and `[limit]` config on every
-refresh, then applies frozen field-level environment/CLI overrides before
-publishing the setup snapshot.
+`RunSpec` carries one explicit `RunSpace` (`collab` or `lab`), immutable
+`AgentState`, `toolang.setup.AgentSetup`, effective `RunBindings` and
+`RunLimits`, and zero or more `AgentCeiling` restrictions. `AgentSetup` supplies
+the immutable `AgentLayout`, root-scoped installed runtime implementations, and
+captured policy defaults. `SetupWatcher` resolves root and agent-home `[allow]`,
+`[default]`, and `[limit]` config on every refresh, then applies frozen
+field-level environment/CLI overrides before publishing the setup snapshot.
 Execution uses that layout directly for the agent identity, home, and runtime
 rooms. `RunSpec.input.primary` is one protocol-level `Percept`;
 after runnable resolution, input coercion exposes that value as `Part[]` or
@@ -264,3 +263,10 @@ complete snapshots; the executor computes concrete `AgentResources` instead of
 receiving filtered copies. Child runs inherit setup and state. Source changes
 affect only runs accepted after the new state is observed. Invalid later setup
 config does not replace the last valid snapshot.
+
+Before accepting a root run, the executor captures `RunAccess`: the selected
+working directory, bounded `MEMO.md` text, and active workspace paths. Child
+runs inherit it, retry reuses it exactly, and rerun keeps the space while
+recapturing current notes and grants. Run inspection exposes `space`; the
+preparation control retains the complete access snapshot. Lab runs never carry
+external workspaces.

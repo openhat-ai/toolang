@@ -23,6 +23,7 @@ Top-level commands are:
 - `remove`
 - `list`
 - `info`
+- `workspace`
 - `chat`
 - `retry`
 - `rerun`
@@ -59,6 +60,12 @@ Cap commands:
 - `caps [AGENT] <kind> add <ref>`
 - `caps [AGENT] <kind> remove <name>`
 - `caps [AGENT] <kind> template [template-name]`
+
+Workspace commands:
+
+- `too AGENT workspace add PATH [--name NAME]`
+- `too AGENT workspace list`
+- `too AGENT workspace remove NAME`
 
 `<kind>` is one of `psyche`, `skill`, `service`, or `prompt`. Without `AGENT`,
 cap mutations target root caps. With `AGENT`, they target the selected agent home's caps.
@@ -101,6 +108,9 @@ toolang start alice --sandbox docker
 toolang stop alice
 toolang info alice
 toolang alice info
+toolang alice workspace add ./project --name project
+toolang alice workspace list
+toolang alice workspace remove project
 toolang ./examples/deep_search.too info
 toolang alice chat
 toolang alice chat term_3nprht9x
@@ -122,8 +132,8 @@ Top-level routing uses three command shapes:
 - catalog commands are command-first only: `new`, `clone`, `list`, and
   `remove AGENT`
 - agent-self commands accept either order: `info`, `run`, `start`, and `stop`
-- commands for an agent's threads, runs, caps, tasks, or chores require the
-  target first, such as `toolang alice retry RUN` or
+- commands for an agent's threads, runs, caps, tasks, chores, or workspaces
+  require the target first, such as `toolang alice retry RUN` or
   `toolang alice skill list`
 
 A command name wins whenever an unassigned token could be either a command or
@@ -223,6 +233,7 @@ Behavior:
   append-only, and contains no ANSI control sequences
 - `-q` or `--quiet` suppresses prepare and execution progress
 - `--default model=SELECTOR` supplies the invocation's setup model binding
+- `--space collab|lab` selects the run space and defaults to `collab`
 - `--limit FIELD=VALUE` overrides one run-limit field; it may be repeated
 - `--allow DOMAIN=SELECTORS` sets model, tool, cap, or cap-kind allow fields and
   may be repeated
@@ -830,8 +841,8 @@ Delete is destructive and is available only through archived routes.
 `/api/v1/runs/{run_id}` is the main trace-detail endpoint.
 
 Run collections return `RunInfo` arrays directly. `RunInfo` combines run
-identity, status, input text, output summary, failure, and timestamps; there is
-no separate `RunSummary` response type.
+identity, run space, status, input text, output summary, failure, and timestamps;
+there is no separate `RunSummary` response type.
 
 `RunDetail.output` contains the canonical message parts resolved from the
 run's durable output edge. It is `null` until the run has an output edge and
@@ -863,6 +874,7 @@ these thread operations starts a follow-up run.
 - `model`: optional model selector; omission uses the current setup binding
 - `args`: optional runnable argument mapping
 - `limits`: optional partial run-limit mapping
+- `space`: `collab` by default, or `lab`
 
 HTTP limit fields are `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`,
 and `time`. Omitted fields inherit the latest valid setup snapshot; an explicit

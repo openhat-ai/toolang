@@ -33,6 +33,7 @@ from toolang.execution.events import (
 from toolang.execution.records import (
     RerunControlPayload,
     RetryControlPayload,
+    StartControlPayload,
     ThreadControlRef,
     ThreadPeer,
 )
@@ -137,6 +138,10 @@ agic answer(_: Part[]) -> Part[]:
         assert events[2][1]["part_type"] == "text"
         assert "type_" not in events[2][1]
         assert events[-1][1]["status"] == "succeeded"
+        start = core.store.get_run_control(run_id=str(events[0][1]["run"]), index=0)
+        assert start is not None and isinstance(start.payload, StartControlPayload)
+        assert start.payload.access is not None
+        assert start.payload.access.space == "collab"
         assert harness.adapter.invocations[0].call.messages == [
             Message(
                 role="user",
@@ -150,6 +155,63 @@ agic answer(_: Part[]) -> Part[]:
                 ),
             )
         ]
+    finally:
+        asyncio.run(core.close())
+
+
+def test_run_stream_selects_lab_notes_without_workspaces(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic answer(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[ModelCallResult(message=Message.assistant("done"))],
+    )
+    project = tmp_path / "project"
+    project.mkdir()
+    setup = replace(harness.setup, workspaces={"project": project})
+    setup.layout.lab.mkdir(exist_ok=True)
+    setup.layout.lab_memo.write_text("explore carefully\n", encoding="utf-8")
+    harness.store.close()
+    core = AgentCore(setup.layout)
+    core.setup = _Snapshot(setup)
+    core.state = _Snapshot(harness.state)
+    app = create_app(
+        core,
+        CapsManager(core.layout),
+        JobsManager(core.layout),
+        cors_allowed_origins=(),
+    )
+
+    try:
+        with TestClient(app) as client:
+            created = client.post("/api/v1/threads", json={"client": "script"})
+            response = client.post(
+                "/api/v1/runs/stream",
+                json={
+                    "thread": created.json()["thread"]["id"],
+                    "runnable": "answer",
+                    "input": [{"type": "text", "text": "hello"}],
+                    "space": "lab",
+                },
+            )
+            run_id = str(_sse_events(response.text)[0][1]["run"])
+            detail = client.get(f"/api/v1/runs/{run_id}").json()
+
+        start = core.store.get_run_control(run_id=run_id, index=0)
+        assert response.status_code == 200
+        assert detail["space"] == "lab"
+        assert start is not None and isinstance(start.payload, StartControlPayload)
+        assert start.payload.access is not None
+        assert start.payload.access.space == "lab"
+        assert start.payload.access.workspaces == ()
+        instructions = harness.adapter.invocations[0].call.instructions
+        assert "explore carefully" in instructions
+        assert str(project) not in instructions
     finally:
         asyncio.run(core.close())
 

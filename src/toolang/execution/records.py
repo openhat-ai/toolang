@@ -46,6 +46,7 @@ from .types import (
     OccurrencePosition,
     IterationOccurrence,
     RunId,
+    RunAccess,
     RunStatus,
     StepKind,
     StepGiven,
@@ -138,6 +139,7 @@ class StartControlPayload:
     runnable: str
     model: str
     locals: tuple[Local, ...]
+    access: RunAccess | None = None
 
     def __post_init__(self) -> None:
         _validate_preparation_payload(
@@ -156,6 +158,7 @@ class RerunControlPayload:
     model: str
     locals: tuple[Local, ...]
     rerun_from: RunId
+    access: RunAccess | None = None
 
     def __post_init__(self) -> None:
         _validate_preparation_payload(
@@ -176,6 +179,7 @@ class RetryControlPayload:
     model: str
     locals: tuple[Local, ...] | None
     retry_from: StepPath | None
+    access: RunAccess | None = None
 
     def __post_init__(self) -> None:
         _validate_preparation_payload(
@@ -626,6 +630,14 @@ def _control_payload_from_data(
         state = _required_payload_text(payload, "state")
         runnable = _required_payload_text(payload, "runnable")
         model = _required_payload_text(payload, "model")
+        raw_access = payload.get("access")
+        if raw_access is not None and not isinstance(raw_access, Mapping):
+            raise ValueError(f"{kind} payload access must be an object or null")
+        access = (
+            RunAccess.from_data(cast(Mapping[str, object], raw_access))
+            if isinstance(raw_access, Mapping)
+            else None
+        )
         raw_locals = payload.get("locals")
         if raw_locals is None:
             locals_value = None
@@ -649,6 +661,7 @@ def _control_payload_from_data(
                 runnable=runnable,
                 model=model,
                 locals=locals_value or (),
+                access=access,
             )
         if kind == "rerun":
             return RerunControlPayload(
@@ -659,6 +672,7 @@ def _control_payload_from_data(
                 model=model,
                 locals=locals_value or (),
                 rerun_from=_required_payload_text(payload, "rerun_from"),
+                access=access,
             )
         raw_retry_from = payload.get("retry_from")
         return RetryControlPayload(
@@ -673,6 +687,7 @@ def _control_payload_from_data(
                 if raw_retry_from is not None
                 else None
             ),
+            access=access,
         )
     if kind in {"steer", "stop"}:
         raw_locals = payload.get("locals", ())
@@ -1463,6 +1478,7 @@ def _preparation_payload_data(
             if payload.locals is not None
             else None
         ),
+        "access": payload.access.to_data() if payload.access is not None else None,
     }
 
 

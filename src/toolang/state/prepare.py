@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import cast
 
+from toolang.catalog.agent import materialize_agent_runspaces
 from toolang.common.layout import AgentLayout
 
 from ..common.progress import ProgressSink
@@ -119,6 +120,7 @@ def prepare_root_home(
 
     _require_root(layout)
     _require_agent_home(layout)
+    materialize_agent_runspaces(layout)
     root = prepare_root(
         layout,
         toolang_version=toolang_version,

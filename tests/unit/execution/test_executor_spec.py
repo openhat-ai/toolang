@@ -31,6 +31,8 @@ def test_run_spec_has_minimal_execution_contract() -> None:
         "thread",
         "bindings",
         "limits",
+        "space",
+        "access",
         "ceilings",
         "input",
     )
@@ -44,6 +46,7 @@ def test_run_spec_defaults_are_immutable() -> None:
         thread="term_first",
         bindings=RunBindings(runnable="chat"),
         limits=first_setup.limits,
+        space="collab",
     )
     second_setup = _setup()
     second = RunSpec(
@@ -52,6 +55,7 @@ def test_run_spec_defaults_are_immutable() -> None:
         thread="term_second",
         bindings=RunBindings(runnable="chat"),
         limits=second_setup.limits,
+        space="collab",
     )
 
     assert first.input.primary is None

@@ -69,6 +69,7 @@ from .types import (
     ExecutionError,
     ControlTiming,
     RunStatus,
+    RunAccess,
     StepKind,
     StepGiven,
     StepNoted,
@@ -202,6 +203,7 @@ class RunStore:
         created_at: str,
         kind: Literal["start", "rerun"] = "start",
         source: str | None = None,
+        access: RunAccess | None = None,
     ) -> tuple[RunRecord, RunControlRecord]:
         """Atomically insert one new run and its start control."""
 
@@ -320,6 +322,7 @@ class RunStore:
                         runnable=runnable,
                         model=model,
                         locals=locals,
+                        access=access,
                     )
                     if kind == "start"
                     else RerunControlPayload(
@@ -330,6 +333,7 @@ class RunStore:
                         model=model,
                         locals=locals,
                         rerun_from=cast(str, source),
+                        access=access,
                     )
                 )
                 self._insert_control(
@@ -512,6 +516,7 @@ class RunStore:
         locals: tuple[Local, ...] | None,
         request_id: str | None,
         created_at: str,
+        access: RunAccess | None = None,
     ) -> tuple[RunRecord, RunControlRecord, tuple[StepPath, ...]]:
         """Atomically cut one root run at a step and reopen it for execution."""
 
@@ -597,6 +602,7 @@ class RunStore:
                         model=model,
                         locals=locals,
                         retry_from=resolved_anchor,
+                        access=access,
                     ),
                     request=request_id,
                     status="applied",

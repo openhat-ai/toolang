@@ -144,6 +144,8 @@ def test_resolve_visiting_layout_materializes_and_reuses_program(
     assert first is not second
     assert first == second == AgentLayout.visiting(source, "researcher")
     assert first.program.read_text(encoding="utf-8") == "agent researcher\n"
+    assert first.collab_memo.read_text(encoding="utf-8") == "\n"
+    assert first.lab_memo.read_text(encoding="utf-8") == "\n"
     assert fetches == [source]
 
 
@@ -158,5 +160,7 @@ def test_materialize_roaming_program_links_source_and_config(tmp_path: Path) -> 
     assert layout == AgentLayout.roaming(source)
     assert layout.program.is_symlink()
     assert layout.config.is_symlink()
+    assert layout.collab_memo.read_text(encoding="utf-8") == "\n"
+    assert layout.lab_memo.read_text(encoding="utf-8") == "\n"
     assert (layout.program.parent / os.readlink(layout.program)).resolve() == source
     assert (layout.config.parent / os.readlink(layout.config)).resolve() == config

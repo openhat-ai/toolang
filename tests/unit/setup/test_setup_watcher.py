@@ -177,6 +177,29 @@ def test_setup_watcher_rebuilds_when_environment_changes(
     assert second.envs["TEST_API_KEY"] == "second"
 
 
+def test_setup_watcher_publishes_workspace_config_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one",))
+    project = tmp_path / "project"
+    project.mkdir()
+    agent_config: dict[str, object] = {}
+    watcher = _watcher(monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"})
+    monkeypatch.setattr(
+        watcher_module,
+        "load_agent_config",
+        lambda _layout: dict(agent_config),
+    )
+
+    first = asyncio.run(watcher.refresh())
+    agent_config["workspaces"] = {"project": str(project)}
+    second = asyncio.run(watcher.refresh())
+
+    assert first.workspaces == {}
+    assert second.workspaces == {"project": project.resolve()}
+
+
 def test_setup_watcher_failed_refresh_keeps_last_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

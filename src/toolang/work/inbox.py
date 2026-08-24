@@ -129,6 +129,7 @@ async def run(
                             model=setup.bindings.model,
                         ),
                         limits=setup.limits,
+                        space="collab",
                         input=resolve_runnable_input(
                             runnable,
                             primary=submission.input.parts,
