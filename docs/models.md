@@ -160,6 +160,12 @@ and restores them on subsequent tool-call turns. The Messages adapter likewise
 preserves signed Anthropic thinking and redacted-thinking blocks and replays
 them before the associated tool use.
 
+Canonical reasoning controls use `enabled`, `effort`, and `budget_tokens`.
+Adapters translate those names to their wire protocol and reject unsupported or
+conflicting combinations. The Chat Completions adapter includes only small,
+explicit dialect mappings for well-known compatible providers; unknown provider
+extensions are not inferred.
+
 An external adapter should contain no provider matching table. If a new npm
 package needs to use it automatically, add that small mapping to the resolver;
 users can also select the adapter explicitly in provider configuration.

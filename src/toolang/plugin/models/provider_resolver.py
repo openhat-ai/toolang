@@ -129,6 +129,7 @@ def resolve_provider(
         names=(config.key_env,)
         if config is not None and config.key_env is not None
         else provider.env,
+        provider_override=config is None or config.key_env is None,
     )
     ready = (
         adapter is not None
@@ -276,8 +277,13 @@ def selected_credential_value(
     return environ.get(credential) if credential is not None else None
 
 
-def _resolve_env(provider: Provider, *, names: tuple[str, ...]) -> ResolvedEnv:
-    override = _ENV_OVERRIDES.get(provider.id)
+def _resolve_env(
+    provider: Provider,
+    *,
+    names: tuple[str, ...],
+    provider_override: bool = True,
+) -> ResolvedEnv:
+    override = _ENV_OVERRIDES.get(provider.id) if provider_override else None
     if override is not None:
         return override
     credentials = tuple(name for name in names if name.endswith(_CREDENTIAL_SUFFIXES))

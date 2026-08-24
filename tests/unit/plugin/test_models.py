@@ -1581,7 +1581,7 @@ def test_protocol_payloads_apply_normalized_reasoning_controls() -> None:
     )
 
     assert responses_payload["reasoning"] == {"effort": "high"}
-    assert chat_payload["reasoning"] == {"effort": "high"}
+    assert chat_payload["reasoning_effort"] == "high"
 
 
 def test_protocol_usage_normalizes_cache_reasoning_audio_and_reported_cost() -> None:

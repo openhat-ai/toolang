@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import cast
+from typing import Literal, cast
 
 from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelTarget
 from toolang.base.types.run import ModelUsage
@@ -50,11 +50,7 @@ def build_model_accounting(
         if usage.reported_cost is not None
         else None
     )
-    selected = (
-        "reported"
-        if reported is not None
-        else ("estimated" if estimate is not None else "none")
-    )
+    selected = _selected_cost_source(reported=reported, estimate=estimate)
     return ModelAccounting(
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
@@ -97,6 +93,22 @@ def selected_usd_cost(accounting: ModelAccounting | None) -> Decimal | None:
     if selected is None or selected.currency.upper() != "USD":
         return None
     return Decimal(selected.amount)
+
+
+def _selected_cost_source(
+    *,
+    reported: ModelCost | None,
+    estimate: ModelCost | None,
+) -> Literal["reported", "estimated", "none"]:
+    if reported is not None and reported.currency.upper() == "USD":
+        return "reported"
+    if estimate is not None and estimate.currency.upper() == "USD":
+        return "estimated"
+    if reported is not None:
+        return "reported"
+    if estimate is not None:
+        return "estimated"
+    return "none"
 
 
 def selected_cost_is_approximate(accounting: ModelAccounting | None) -> bool:
@@ -158,7 +170,7 @@ def _selected_rates(
                 rates = cast(Mapping[str, object], mode_cost)
     tiers = rates.get("tiers")
     selected_tier: Mapping[str, object] | None = None
-    if isinstance(tiers, list):
+    if isinstance(tiers, tuple | list):
         for item in tiers:
             if not isinstance(item, Mapping):
                 continue

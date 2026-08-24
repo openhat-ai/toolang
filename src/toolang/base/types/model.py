@@ -55,22 +55,20 @@ class Model:
             ),
         )
         object.__setattr__(self, "limit", MappingProxyType(dict(self.limit)))
-        object.__setattr__(self, "extra", MappingProxyType(dict(self.extra)))
+        object.__setattr__(self, "extra", _immutable_mapping(self.extra))
         if self.reasoning_options is not None:
             object.__setattr__(
                 self,
                 "reasoning_options",
-                tuple(
-                    MappingProxyType(dict(option)) for option in self.reasoning_options
-                ),
+                tuple(_immutable_mapping(option) for option in self.reasoning_options),
             )
         for name in ("experimental", "provider", "cost"):
             value = getattr(self, name)
             if value is not None:
-                object.__setattr__(self, name, MappingProxyType(dict(value)))
+                object.__setattr__(self, name, _immutable_mapping(value))
         if isinstance(self.interleaved, Mapping):
             object.__setattr__(
-                self, "interleaved", MappingProxyType(dict(self.interleaved))
+                self, "interleaved", _immutable_mapping(self.interleaved)
             )
 
     @property
@@ -176,7 +174,7 @@ class Provider:
         if any(model.provider_id != self.id for model in normalized.values()):
             raise ValueError(f"provider {self.id!r} contains foreign models")
         object.__setattr__(self, "models", MappingProxyType(normalized))
-        object.__setattr__(self, "extra", MappingProxyType(dict(self.extra)))
+        object.__setattr__(self, "extra", _immutable_mapping(self.extra))
 
     def to_data(
         self, *, models: Mapping[str, Model] | None = None
@@ -405,4 +403,20 @@ def _mutable_json(value: object) -> object:
         return [_mutable_json(item) for item in value]
     if isinstance(value, Decimal):
         return value
+    return value
+
+
+def _immutable_mapping(value: Mapping[str, object]) -> Mapping[str, object]:
+    return MappingProxyType(
+        {str(key): _immutable_json(item) for key, item in value.items()}
+    )
+
+
+def _immutable_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _immutable_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, tuple | list):
+        return tuple(_immutable_json(item) for item in value)
     return value

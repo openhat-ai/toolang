@@ -6,6 +6,9 @@ import json
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
+
+from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message, TextPart, ToolCallPart, ToolResultPart
 from toolang.base.types.model import ModelTarget
 from toolang.base.types.run import ModelCall, ModelUsage, ModelUsageMeter, ToolCall
@@ -441,6 +444,169 @@ def test_generate_content_stream_returns_normalized_final_usage(monkeypatch) -> 
         output_visible_tokens=7,
         output_reasoning_tokens=2,
     )
+
+
+def test_messages_payload_supports_effort_with_a_token_budget() -> None:
+    target = ModelTarget(
+        ref="anthropic/claude",
+        provider="anthropic",
+        name="claude",
+        model="claude",
+        adapter="messages",
+        options={"max_tokens": 4096},
+        reasoning={"enabled": True, "effort": "high", "budget_tokens": 2048},
+    )
+
+    payload = messages_payload(
+        target,
+        ModelCall(instructions="", messages=[Message.user("hello")]),
+        stream=False,
+    )
+
+    assert payload["thinking"] == {"type": "enabled", "budget_tokens": 2048}
+    assert payload["output_config"] == {"effort": "high"}
+
+
+def test_generate_content_auth_uses_header_instead_of_url_query() -> None:
+    target = ModelTarget(
+        ref="google/gemini",
+        provider="google",
+        name="gemini",
+        model="gemini/preview",
+        adapter="generate_content",
+        base_url="https://generativelanguage.googleapis.com/v1beta",
+        api_key="secret-key",
+    )
+
+    url = generate_content_adapter._generate_url(target, stream=True)
+    headers = generate_content_adapter._generate_headers(target)
+
+    assert url.endswith("/models/gemini%2Fpreview:streamGenerateContent?alt=sse")
+    assert "secret-key" not in url
+    assert "key=" not in url
+    assert headers["x-goog-api-key"] == "secret-key"
+
+
+def test_generate_content_rejects_overlapping_effort_and_budget() -> None:
+    target = ModelTarget(
+        ref="google/gemini",
+        provider="google",
+        name="gemini",
+        model="gemini",
+        adapter="generate_content",
+        reasoning={"effort": "high", "budget_tokens": 2048},
+    )
+
+    with pytest.raises(ToolangError, match="either reasoning effort or budget_tokens"):
+        generate_content_payload(
+            target,
+            ModelCall(instructions="", messages=[Message.user("hello")]),
+        )
+
+
+@pytest.mark.parametrize(
+    ("provider", "reasoning", "expected"),
+    (
+        (
+            "openrouter",
+            {"enabled": True, "budget_tokens": 2048},
+            {"reasoning": {"enabled": True, "max_tokens": 2048}},
+        ),
+        (
+            "deepseek",
+            {"enabled": True, "effort": "max"},
+            {
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "max",
+            },
+        ),
+        ("xai", {"effort": "high"}, {"reasoning_effort": "high"}),
+        ("groq", {"enabled": False}, {"reasoning_effort": "none"}),
+        ("custom", {"effort": "high"}, {"reasoning_effort": "high"}),
+    ),
+)
+def test_chat_completions_maps_known_reasoning_dialects(
+    provider: str,
+    reasoning: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    target = ModelTarget(
+        ref=f"{provider}/model",
+        provider=provider,
+        name="model",
+        model="model",
+        adapter="chat_completions",
+        reasoning=reasoning,
+    )
+
+    payload = chat_completions.chat_completion_payload(
+        target,
+        ModelCall(instructions="", messages=[Message.user("hello")]),
+        stream=False,
+    )
+
+    for key, value in expected.items():
+        assert payload[key] == value
+    assert "budget_tokens" not in json.dumps(payload)
+
+
+def test_chat_completions_rejects_unsupported_or_overlapping_reasoning() -> None:
+    request = ModelCall(instructions="", messages=[Message.user("hello")])
+    with pytest.raises(ToolangError, match="either reasoning effort or budget_tokens"):
+        chat_completions.chat_completion_payload(
+            ModelTarget(
+                ref="openrouter/model",
+                provider="openrouter",
+                name="model",
+                model="model",
+                adapter="chat_completions",
+                reasoning={"effort": "high", "budget_tokens": 2048},
+            ),
+            request,
+            stream=False,
+        )
+    with pytest.raises(ToolangError, match="xai.*does not support token budgets"):
+        chat_completions.chat_completion_payload(
+            ModelTarget(
+                ref="xai/model",
+                provider="xai",
+                name="model",
+                model="model",
+                adapter="chat_completions",
+                reasoning={"budget_tokens": 2048},
+            ),
+            request,
+            stream=False,
+        )
+
+
+def test_responses_maps_supported_reasoning_and_rejects_token_budgets() -> None:
+    request = ModelCall(instructions="", messages=[Message.user("hello")])
+    disabled = ModelTarget(
+        ref="openai/model",
+        provider="openai",
+        name="model",
+        model="model",
+        adapter="responses",
+        reasoning={"enabled": False},
+    )
+
+    assert responses.response_payload(disabled, request, stateful=False)[
+        "reasoning"
+    ] == {"effort": "none"}
+    with pytest.raises(ToolangError, match="does not support reasoning token budgets"):
+        responses.response_payload(
+            ModelTarget(
+                ref="openai/model",
+                provider="openai",
+                name="model",
+                model="model",
+                adapter="responses",
+                reasoning={"budget_tokens": 2048},
+            ),
+            request,
+            stateful=False,
+        )
 
 
 class _FakeStreamResponse:

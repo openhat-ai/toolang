@@ -144,6 +144,25 @@ def test_resolver_applies_explicit_bedrock_env_alternatives() -> None:
     assert resolved.ready is False
 
 
+def test_resolver_prefers_configured_key_env_over_bedrock_defaults() -> None:
+    resolved = resolve_provider(
+        _provider(
+            "amazon-bedrock",
+            npm="@ai-sdk/amazon-bedrock",
+            env=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"),
+        ),
+        adapters={},
+        environ={"CUSTOM_BEDROCK_TOKEN": "secret"},
+        config=ProviderConfig(
+            name="amazon-bedrock",
+            key_env="CUSTOM_BEDROCK_TOKEN",
+        ),
+    ).resolved
+
+    assert resolved is not None
+    assert resolved.env == ("CUSTOM_BEDROCK_TOKEN",)
+
+
 def test_resolver_requires_installed_adapter_and_concrete_endpoint() -> None:
     provider = _provider(
         "custom",

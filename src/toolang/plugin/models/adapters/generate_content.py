@@ -55,7 +55,7 @@ class GenerateContentModelAdapter(ModelAdapter):
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 _generate_url(target, stream=False),
-                headers={"content-type": "application/json", **target.headers},
+                headers=_generate_headers(target),
                 json=generate_content_payload(target, request),
             )
             response.raise_for_status()
@@ -77,7 +77,7 @@ class GenerateContentModelAdapter(ModelAdapter):
             async with client.stream(
                 "POST",
                 _generate_url(target, stream=True),
-                headers={"content-type": "application/json", **target.headers},
+                headers=_generate_headers(target),
                 json=generate_content_payload(target, request),
             ) as response:
                 response.raise_for_status()
@@ -398,15 +398,20 @@ def _candidate_parts(payload: Mapping[str, object]) -> tuple[dict[str, object], 
 def _generate_url(target: ModelTarget, *, stream: bool) -> str:
     if target.base_url is None:
         raise ToolangError("Generate Content adapter requires a resolved endpoint")
+    action = "streamGenerateContent" if stream else "generateContent"
+    suffix = "?alt=sse" if stream else ""
+    model = quote(target.model, safe="")
+    return f"{target.base_url.rstrip('/')}/models/{model}:{action}{suffix}"
+
+
+def _generate_headers(target: ModelTarget) -> dict[str, str]:
     if not target.api_key:
         raise ToolangError("Generate Content adapter requires a resolved API key")
-    action = "streamGenerateContent" if stream else "generateContent"
-    suffix = "&alt=sse" if stream else ""
-    model = quote(target.model, safe="")
-    return (
-        f"{target.base_url.rstrip('/')}/models/{model}:{action}"
-        f"?key={quote(target.api_key, safe='')}{suffix}"
-    )
+    return {
+        "content-type": "application/json",
+        "x-goog-api-key": target.api_key,
+        **target.headers,
+    }
 
 
 def _function_call(value: Mapping[str, object], *, fallback: int) -> ToolCall:
@@ -483,16 +488,36 @@ def _apply_reasoning(
         if isinstance(raw_thinking, Mapping)
         else {}
     )
+    unknown = set(reasoning) - {"enabled", "effort", "budget_tokens"}
+    if unknown:
+        joined = ", ".join(sorted(unknown))
+        raise ToolangError(f"unknown Generate Content reasoning controls: {joined}")
     enabled = reasoning.get("enabled")
     effort = reasoning.get("effort")
     budget = reasoning.get("budget_tokens")
+    if enabled is False and effort not in (None, "none"):
+        raise ToolangError(
+            "disabled Generate Content reasoning conflicts with an effort"
+        )
+    if enabled is True and effort == "none":
+        raise ToolangError(
+            "enabled Generate Content reasoning conflicts with effort 'none'"
+        )
+    if (enabled is False or effort == "none") and budget is not None:
+        raise ToolangError(
+            "disabled Generate Content reasoning conflicts with a token budget"
+        )
+    if budget is not None and effort is not None:
+        raise ToolangError(
+            "Generate Content accepts either reasoning effort or budget_tokens"
+        )
     if enabled is False or effort == "none":
         thinking["thinkingBudget"] = 0
     elif isinstance(budget, int) and not isinstance(budget, bool):
         thinking["thinkingBudget"] = budget
+    elif isinstance(effort, str):
+        thinking["thinkingLevel"] = effort.upper()
     elif enabled is True:
         thinking["thinkingBudget"] = -1
-    if isinstance(effort, str) and effort != "none":
-        thinking["thinkingLevel"] = effort.upper()
     generation["thinkingConfig"] = thinking
     payload["generationConfig"] = generation

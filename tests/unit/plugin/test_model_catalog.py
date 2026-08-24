@@ -63,10 +63,34 @@ def test_catalog_import_preserves_unknown_fields_and_decimal_prices(
 
     assert model is not None
     assert model.cost == {"input": Decimal("1.25"), "output": 2}
-    assert model.extra["future_model_field"] == ["value"]
+    assert model.extra["future_model_field"] == ("value",)
     exported = cast(dict[str, Any], snapshot.to_data())
     assert exported["test"]["future_provider_field"] == {"enabled": True}
     assert exported["test"]["models"]["one"]["future_model_field"] == ["value"]
+
+
+def test_catalog_values_are_deeply_immutable(tmp_path: Path) -> None:
+    path = tmp_path / "models.json"
+    payload = _catalog_data()
+    payload["test"]["models"]["one"]["cost"]["tiers"] = [
+        {"input": 3, "tier": {"type": "context", "size": 200}}
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    model = load_model_catalog(path).find("test", "one")
+
+    assert model is not None and model.cost is not None
+    tiers = cast(tuple[object, ...], model.cost["tiers"])
+    tier = cast(dict[str, object], tiers[0])
+    nested = cast(dict[str, object], tier["tier"])
+    with pytest.raises(TypeError):
+        tier["input"] = 999
+    with pytest.raises(TypeError):
+        nested["size"] = 999
+    exported = cast(dict[str, Any], load_model_catalog(path).to_data())
+    assert exported["test"]["models"]["one"]["cost"]["tiers"] == [
+        {"input": 3, "tier": {"type": "context", "size": 200}}
+    ]
 
 
 def test_catalog_rejects_inconsistent_identity_as_a_complete_snapshot() -> None:

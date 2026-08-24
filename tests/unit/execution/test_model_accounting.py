@@ -7,6 +7,7 @@ from toolang.base.types.run import ModelUsage
 from toolang.execution.accounting import (
     build_model_accounting,
     cache_hit_ratio,
+    selected_cost_is_approximate,
     selected_usd_cost,
 )
 from toolang.execution.records import step_noted_from_data, step_noted_to_data
@@ -136,7 +137,7 @@ def test_zero_prices_produce_a_complete_zero_cost() -> None:
     assert selected_usd_cost(accounting) == Decimal("0")
 
 
-def test_non_usd_reported_cost_is_not_applied_to_usd_limit() -> None:
+def test_non_usd_reported_cost_falls_back_to_catalog_usd_estimate() -> None:
     accounting = build_model_accounting(
         _target(),
         ModelUsage(
@@ -148,8 +149,13 @@ def test_non_usd_reported_cost_is_not_applied_to_usd_limit() -> None:
         _catalog({"input": 1, "output": 2}),
     )
 
-    assert accounting is not None and accounting.selected == "reported"
-    assert selected_usd_cost(accounting) is None
+    assert accounting is not None and accounting.selected == "estimated"
+    assert accounting.reported is not None
+    assert accounting.reported.amount == "2"
+    assert accounting.reported.currency == "EUR"
+    assert accounting.estimate is not None
+    assert selected_usd_cost(accounting) == Decimal("0.00002")
+    assert selected_cost_is_approximate(accounting) is True
 
 
 def test_unknown_cache_breakdown_marks_estimate_partial() -> None:

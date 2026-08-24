@@ -312,9 +312,37 @@ def response_payload(
     options = dict(target.options)
     if options:
         payload.update(options)
-    if target.reasoning:
-        payload["reasoning"] = dict(target.reasoning)
+    _apply_reasoning(payload, target.reasoning)
     return payload
+
+
+def _apply_reasoning(
+    payload: dict[str, Any],
+    reasoning: Mapping[str, object],
+) -> None:
+    if not reasoning:
+        return
+    unknown = set(reasoning) - {"enabled", "effort", "budget_tokens"}
+    if unknown:
+        joined = ", ".join(sorted(unknown))
+        raise ToolangError(f"unknown Responses reasoning controls: {joined}")
+    enabled = reasoning.get("enabled")
+    effort = reasoning.get("effort")
+    budget = reasoning.get("budget_tokens")
+    if budget is not None:
+        raise ToolangError("Responses does not support reasoning token budgets")
+    if enabled is False and effort not in (None, "none"):
+        raise ToolangError("disabled Responses reasoning conflicts with an effort")
+    if enabled is True and effort == "none":
+        raise ToolangError("enabled Responses reasoning conflicts with effort 'none'")
+    wire: dict[str, object] = {}
+    if enabled is False:
+        wire["effort"] = "none"
+    elif isinstance(effort, str):
+        wire["effort"] = effort
+    payload.pop("reasoning", None)
+    if wire:
+        payload["reasoning"] = wire
 
 
 def parse_response(

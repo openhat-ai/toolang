@@ -107,8 +107,7 @@ class ModelUsage:
             self.input_cache_write_tokens,
         )
         if (
-            all(value is not None for value in input_components)
-            and sum(value for value in input_components if value is not None)
+            sum(value for value in input_components if value is not None)
             > self.input_tokens
         ):
             raise ValueError("model input usage components exceed total input")

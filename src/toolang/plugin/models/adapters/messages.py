@@ -487,9 +487,19 @@ def _apply_reasoning(
 ) -> None:
     if not reasoning:
         return
+    unknown = set(reasoning) - {"enabled", "effort", "budget_tokens"}
+    if unknown:
+        joined = ", ".join(sorted(unknown))
+        raise ToolangError(f"unknown Messages reasoning controls: {joined}")
     enabled = reasoning.get("enabled")
     effort = reasoning.get("effort")
     budget = reasoning.get("budget_tokens")
+    if enabled is False and effort not in (None, "none"):
+        raise ToolangError("disabled Messages reasoning conflicts with an effort")
+    if enabled is True and effort == "none":
+        raise ToolangError("enabled Messages reasoning conflicts with effort 'none'")
+    if (enabled is False or effort == "none") and budget is not None:
+        raise ToolangError("disabled Messages reasoning conflicts with a token budget")
     if enabled is False or effort == "none":
         payload["thinking"] = {"type": "disabled"}
         return

@@ -46,7 +46,8 @@ In scope:
 
 Out of scope:
 
-- automatic background catalog downloads or startup downloads;
+- built-in catalog download/update commands, managed catalog versions, automatic
+  background downloads, or startup downloads;
 - provider plugins, generic capability or variant wrappers, and automatic npm
   installation from catalog metadata;
 - persistent discovery/result caches, local port scanning, stale local results,
@@ -160,22 +161,8 @@ accounting.
 
 There is no catalog update CLI command. Users replace an explicit, agent-home,
 or root `models.json` through their preferred external download or file
-management workflow. The internal catalog update utility remains available to
-library callers. It validates the entire snapshot, computes SHA-256, takes a
-destination lock, and writes:
-
-```text
-models/models-YYYYMMDDTHHMMSSZ-<sha12>.json
-models.json -> models/models-YYYYMMDDTHHMMSSZ-<sha12>.json
-```
-
-Timestamps use the successful UTC download time. Same-SHA content is a no-op.
-The link switch is atomic and there is no `prev` link. Old immutable versions
-remain. If an existing active `models.json` is a valid regular file, update
-archives it under the same timestamp/SHA convention before installing the
-managed relative link. A failure never changes the active catalog. Platforms
-without symlink support fall back to an atomic regular-file replacement while
-retaining the immutable version file.
+management workflow. Toolang validates the selected complete snapshot when it
+loads it but does not download, archive, version, or replace catalog files.
 
 `too models --filter SELECTOR --json` writes a complete, valid catalog document
 to stdout: full provider fields, only selected nested models, and no empty
@@ -306,7 +293,7 @@ and estimated amounts, differences, and coverage.
 ## Implementation Touchpoints
 
 - `src/toolang/base/types/model.py`, `run.py`, and protocol exports;
-- new catalog-owned schema/import/update modules under
+- new catalog-owned schema/import modules under
   `src/toolang/plugin/models/` and packaged `data/models.json`;
 - `src/toolang/plugin/models/resolution.py`, catalog and adapter plugins, local
   discovery, views, configuration, and plugin loading;
@@ -322,28 +309,27 @@ and estimated amounts, differences, and coverage.
 1. Import representative upstream data, preserve unknown fields, reject an
    incompatible complete snapshot, and round-trip Decimal prices deterministically.
 2. Prove source precedence, explicit-source failure, regular/symlink loading,
-   SHA provenance, parse reuse, and invalidation on file/link change.
-3. Prove atomic update, same-SHA no-op, regular-file archival, immutable version
-   naming, failure recovery, lock behavior, and root/home isolation.
-4. Prove exact provider/model identity, nested model IDs, one-time provider
+   SHA provenance, parse reuse, invalidation on file/link change, and root/home
+   isolation.
+3. Prove exact provider/model identity, nested model IDs, one-time provider
    resolution, endpoint precedence, env OR/AND inference and overrides,
    missing-adapter failure, secret redaction, raw-only JSON, and no npm
    auto-loading.
-5. Prove configured remote availability and enriched Ollama/llama.cpp discovery,
+4. Prove configured remote availability and enriched Ollama/llama.cpp discovery,
    endpoint failure, no port scan, no stale result, and zero-priced local-only
    models.
-6. Round-trip filtered JSON output through the importer and cover OR filters,
+5. Round-trip filtered JSON output through the importer and cover OR filters,
    nested fields, unknown booleans, deterministic output, and local-only export
    failure.
-7. Cover Chat Completions, Responses, Messages, and Generate Content adapters;
+6. Cover Chat Completions, Responses, Messages, and Generate Content adapters;
    normalize cached input, cache writes, visible output, reasoning/thinking,
    audio, inclusive provider totals, and streaming without double counting.
-8. Estimate flat and tiered models.dev prices, prefer reported USD, preserve
+7. Estimate flat and tiered models.dev prices, prefer reported USD, preserve
    partial/unknown cost, retain historical applied rates, and enforce the
    best-effort completed-call limit.
-9. Render cache ratio, reported/estimated marker, and unknown cost exactly;
+8. Render cache ratio, reported/estimated marker, and unknown cost exactly;
    expose full details through run inspection.
-10. Keep durable compatibility decoders working and all default tests offline
+9. Keep durable compatibility decoders working and all default tests offline
     and deterministic; prove removed singular CLI resources do not resolve.
 11. Pass `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`,
     and `uv run pytest`.
