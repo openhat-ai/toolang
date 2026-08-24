@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, fields, is_dataclass
 import json
 import os
@@ -15,21 +16,43 @@ import click
 import typer
 
 from toolang.base.types.message import Message
+from toolang.base.types.policy import RunBindings
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor import RunExecutor
+from toolang.execution.calls import resolve_spec
+from toolang.execution.executor import RunExecutor, prepare_model_call
 from toolang.execution.history import RunHistory
+from toolang.execution.model_requests import project_model_request
 from toolang.execution.records import RunRecord
 from toolang.execution.schemas import RunDetail, StepData
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import Local, RunStatus, StepPath, local_to_protocol_data
-from toolang.setup import SetupWatcher
+from toolang.execution.types import (
+    Local,
+    ModelStepGiven,
+    RunStatus,
+    StepPath,
+    local_to_protocol_data,
+)
+from toolang.lang.includes import resolve_file_include
+from toolang.lang.input import RunnableInputRaw
+from toolang.setup import AgentSetup, SetupWatcher
+from toolang.state.state import AgentState
 from toolang.state.watcher import StateWatcher
 
+from ...common.inspection import (
+    HistoricalModelCallOwner,
+    InspectTarget,
+    ModelCallInspectTarget,
+    ProspectiveModelCallOwner,
+    RunInspectTarget,
+    StepInspectTarget,
+    ThreadInspectTarget,
+    parse_inspect_target as _parse_inspect_target,
+)
 from ...common.context import (
     context_layout,
     context_model_catalog,
@@ -43,15 +66,32 @@ from ...common.script_progress import ScriptRunPresenter
 
 
 InspectDocument = dict[str, Any]
+_PREVIEW_RUN_ID = "<preview-run>"
+_PREVIEW_THREAD_ID = "<preview-thread>"
+_MODEL_HISTORY_LIMIT = 32
 
 
 @dataclass(frozen=True, slots=True)
-class InspectTarget:
-    """One parsed thread, run, or step inspection target."""
+class InspectOptions:
+    """Validated view inputs shared by every inspect handler."""
 
-    kind: Literal["thread", "run"]
-    identifier: str
-    path: tuple[int, ...] = ()
+    limit: int
+    json_view: bool = False
+    full: bool = False
+    request_model: str | None = None
+    input_source: str | None = None
+    arguments: tuple[str, ...] = ()
+    include_thread: bool = False
+    allows: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class InspectRequirements:
+    """Resources one parsed inspect target needs before dispatch."""
+
+    execution: Literal["none", "required"]
+    setup: bool = False
+    state: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,20 +195,94 @@ def inspect_command(
     json_view: Annotated[
         bool, typer.Option("--json", help="Render inspection data as JSON.")
     ] = False,
+    full: Annotated[
+        bool, typer.Option("--full", help="Do not truncate a model call view.")
+    ] = False,
+    request_model: Annotated[
+        str | None,
+        typer.Option(
+            "--request",
+            metavar="MODEL_ID",
+            help="Render the provider JSON body for one exact model id.",
+        ),
+    ] = None,
+    input_source: Annotated[
+        str | None,
+        typer.Option(
+            "--input",
+            metavar="CONTENT",
+            help="Set prospective primary input; use - for stdin.",
+        ),
+    ] = None,
+    arguments: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--arg",
+            metavar="NAME=CONTENT",
+            help="Set a prospective named input. Repeat for another input.",
+        ),
+    ] = None,
+    include_thread: Annotated[
+        bool,
+        typer.Option(
+            "--thread",
+            help="Include history when exactly one current thread exists.",
+        ),
+    ] = False,
+    allows: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--allow",
+            metavar="DOMAIN=SELECTORS",
+            help="Set a prospective capability ceiling. Repeat by domain.",
+        ),
+    ] = None,
 ) -> None:
-    """Inspect one thread, run, or run step path."""
+    """Inspect one execution path or historical/prospective model call."""
 
     if limit < 1:
         raise click.ClickException("--limit must be at least 1")
     parsed = parse_inspect_target(target)
-    with open_execution(ctx, required=True) as resources:
-        if resources is None:  # pragma: no cover - required=True guarantees this
-            raise RuntimeError("execution resources were not opened")
-        document = _inspect(resources, parsed, limit=limit)
-    if json_view:
+    options = InspectOptions(
+        limit=limit,
+        json_view=json_view,
+        full=full,
+        request_model=request_model,
+        input_source=input_source,
+        arguments=tuple(arguments or ()),
+        include_thread=include_thread,
+        allows=tuple(allows or ()),
+    )
+    requirements = _INSPECT_DISPATCHER.requirements(parsed, options)
+    execution = (
+        open_execution(ctx, required=True)
+        if requirements.execution == "required"
+        else nullcontext(None)
+    )
+    with execution as resources:
+        document = user_call(
+            asyncio.run,
+            _INSPECT_DISPATCHER.dispatch(
+                ctx,
+                parsed,
+                options,
+                requirements=requirements,
+                resources=resources,
+            ),
+        )
+    if document.get("kind") == "model_request":
+        typer.echo(
+            json.dumps(
+                document.get("request"),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+    if options.json_view:
         typer.echo(json.dumps(document, ensure_ascii=False, indent=2))
         return
-    _render_inspect(document)
+    _render_inspect(document, full=options.full)
 
 
 def steer_command(
@@ -381,52 +495,345 @@ def fork_command(
 def parse_inspect_target(target: str) -> InspectTarget:
     """Parse a CLI inspection target."""
 
-    value = target.strip()
-    if not value:
-        raise click.ClickException("inspect target is required")
-    if ":" in value or "/" in value:
-        raise click.ClickException(f"invalid inspect path: {value}")
-    if "." in value:
-        if not value.startswith("run_"):
-            raise click.ClickException(f"invalid inspect path: {value}")
-        try:
-            step = StepPath.parse(value)
-        except ValueError as exc:
-            raise click.ClickException(f"invalid inspect path: {value}") from exc
-        return InspectTarget(kind="run", identifier=step.run, path=step.indices)
-    return InspectTarget(
-        kind="run" if value.startswith("run_") else "thread",
-        identifier=value,
+    try:
+        return _parse_inspect_target(target)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+class InspectDispatcher:
+    """Validate, route, and dispatch every typed inspect target."""
+
+    def requirements(
+        self,
+        target: InspectTarget,
+        options: InspectOptions,
+    ) -> InspectRequirements:
+        self._validate_options(target, options)
+        if not isinstance(target, ModelCallInspectTarget):
+            return InspectRequirements(execution="required")
+        if isinstance(target.owner, HistoricalModelCallOwner):
+            return InspectRequirements(
+                execution="required",
+                setup=options.request_model is not None,
+            )
+        return InspectRequirements(
+            execution="required" if options.include_thread else "none",
+            setup=True,
+            state=True,
+        )
+
+    async def dispatch(
+        self,
+        ctx: typer.Context,
+        target: InspectTarget,
+        options: InspectOptions,
+        *,
+        requirements: InspectRequirements,
+        resources: ExecutionResources | None,
+    ) -> InspectDocument:
+        if not isinstance(target, ModelCallInspectTarget):
+            return _inspect_execution(
+                _require_execution(resources),
+                target,
+                limit=options.limit,
+            )
+        setup = (
+            await _inspect_setup(ctx, allows=options.allows)
+            if requirements.setup
+            else None
+        )
+        if isinstance(target.owner, HistoricalModelCallOwner):
+            return _inspect_historical_model_call(
+                _require_execution(resources),
+                target,
+                request_model=options.request_model,
+                setup=setup,
+            )
+        state = await StateWatcher(context_layout(ctx)).refresh()
+        if setup is None:  # pragma: no cover - prospective requirements need setup
+            raise RuntimeError("prospective inspection setup was not prepared")
+        return _inspect_prospective_model_call(
+            target,
+            options,
+            setup=setup,
+            state=state,
+            resources=resources,
+        )
+
+    def _validate_options(
+        self,
+        target: InspectTarget,
+        options: InspectOptions,
+    ) -> None:
+        model_call = isinstance(target, ModelCallInspectTarget)
+        if not model_call and (
+            options.full
+            or options.request_model is not None
+            or options.input_source is not None
+            or options.arguments
+            or options.include_thread
+            or options.allows
+        ):
+            raise click.ClickException(
+                "model call options require a model_call@... target"
+            )
+        if options.full and options.json_view:
+            raise click.ClickException("--full and --json cannot be combined")
+        if options.request_model is not None and (options.full or options.json_view):
+            raise click.ClickException(
+                "--request cannot be combined with --full or --json"
+            )
+        if not isinstance(target, ModelCallInspectTarget):
+            return
+        prospective = isinstance(target.owner, ProspectiveModelCallOwner)
+        if not prospective and (
+            options.input_source is not None
+            or options.arguments
+            or options.include_thread
+            or options.allows
+        ):
+            raise click.ClickException(
+                "--input, --arg, --thread, and --allow require model_call@agic:NAME"
+            )
+
+
+_INSPECT_DISPATCHER = InspectDispatcher()
+
+
+async def _inspect_setup(
+    ctx: typer.Context,
+    *,
+    allows: Sequence[str],
+) -> AgentSetup:
+    layout = context_layout(ctx)
+    environ = load_runtime_environ(layout, base_environ=os.environ)
+    return await SetupWatcher(
+        layout,
+        model_catalog=context_model_catalog(ctx),
+        ceiling_overrides=resolve_ceiling_overrides(environ, allows),
+        binding_overrides=resolve_binding_overrides(environ),
+    ).refresh()
+
+
+def _inspect_historical_model_call(
+    resources: ExecutionResources,
+    target: ModelCallInspectTarget,
+    *,
+    request_model: str | None,
+    setup: AgentSetup | None,
+) -> InspectDocument:
+    owner = target.owner
+    if not isinstance(owner, HistoricalModelCallOwner):  # pragma: no cover
+        raise TypeError("historical model-call handler received a prospective owner")
+    path = owner.step_path
+    run = RunHistory(resources.store).get_run(path.run)
+    if run is None:
+        raise click.ClickException(f"run not found: {path.run}")
+    step = next((item for item in run.steps if item.path == path), None)
+    if step is None:
+        raise click.ClickException(f"step not found: {path}")
+    if not isinstance(step.given, ModelStepGiven):
+        raise click.ClickException(f"step is not a model call: {path}")
+    selector = f"model_call@{path}"
+    if request_model is not None:
+        if setup is None:  # pragma: no cover - requirements prepare setup
+            raise RuntimeError("request inspection setup was not prepared")
+        projection = project_model_request(
+            setup,
+            model_id=request_model,
+            call=step.given.call,
+        )
+        return {
+            "kind": "model_request",
+            "target": selector,
+            "state": "historical",
+            "model": projection.model.ref,
+            "request": projection.payload,
+        }
+    return _model_call_document(
+        selector=selector,
+        state="historical",
+        model=step.given.model,
+        call=step.given.call,
+        basis={
+            "run_id": path.run,
+            "step_path": str(path),
+            "preview": False,
+        },
     )
 
 
-def _inspect(
+def _inspect_prospective_model_call(
+    target: ModelCallInspectTarget,
+    options: InspectOptions,
+    *,
+    setup: AgentSetup,
+    state: AgentState,
+    resources: ExecutionResources | None,
+) -> InspectDocument:
+    owner = target.owner
+    if not isinstance(owner, ProspectiveModelCallOwner):  # pragma: no cover
+        raise TypeError("prospective handler received a historical owner")
+    thread_id, history = _preview_history(
+        resources,
+        include=options.include_thread,
+    )
+    raw_input = _preview_input(options)
+    runnable = f"agic:{owner.agic_name}"
+    spec = resolve_spec(
+        (),
+        raw_input,
+        setup=setup,
+        state=state,
+        thread=thread_id,
+        default_runnable=runnable,
+        surface=RunBindings(
+            runnable=runnable,
+            model=options.request_model,
+        ),
+        include=lambda reference: resolve_file_include(
+            reference,
+            base=Path.cwd(),
+        ),
+    )
+    preview = prepare_model_call(
+        spec,
+        run_id=_PREVIEW_RUN_ID,
+        history=history,
+    )
+    selector = f"model_call@agic:{owner.agic_name}"
+    if options.request_model is not None:
+        projection = project_model_request(
+            setup,
+            model_id=options.request_model,
+            call=preview.call,
+        )
+        return {
+            "kind": "model_request",
+            "target": selector,
+            "state": "prospective",
+            "model": projection.model.ref,
+            "request": projection.payload,
+        }
+    return _model_call_document(
+        selector=selector,
+        state="prospective",
+        model=preview.model.ref,
+        call=preview.call,
+        basis={
+            "run_id": preview.run_id,
+            "thread_id": preview.thread_id,
+            "step_path": f"{preview.run_id}.0",
+            "created_at": preview.created_at,
+            "prompt_context": preview.prompt_context,
+            "preview": True,
+        },
+    )
+
+
+def _preview_input(options: InspectOptions) -> RunnableInputRaw:
+    primary = options.input_source
+    if primary == "-":
+        primary = sys.stdin.read()
+    named: list[tuple[str, str]] = []
+    for item in options.arguments:
+        name, separator, value = item.partition("=")
+        if not separator or not name or not value:
+            raise click.ClickException("--arg must use NAME=CONTENT")
+        named.append((name, value))
+    return RunnableInputRaw(primary=primary, named=tuple(named))
+
+
+def _preview_history(
+    resources: ExecutionResources | None,
+    *,
+    include: bool,
+) -> tuple[str, tuple[Message, ...]]:
+    if not include:
+        return _PREVIEW_THREAD_ID, ()
+    store = _require_execution(resources).store
+    threads = RunHistory(store).list_threads(limit=2)
+    if not threads:
+        raise click.ClickException("--thread requires one current thread")
+    if len(threads) > 1:
+        raise click.ClickException("--thread is ambiguous: multiple threads exist")
+    thread_id = threads[0].id
+    return (
+        thread_id,
+        tuple(
+            store.recent_conversation_messages(
+                thread_id=thread_id,
+                limit=_MODEL_HISTORY_LIMIT,
+            )
+        ),
+    )
+
+
+def _model_call_document(
+    *,
+    selector: str,
+    state: Literal["historical", "prospective"],
+    model: str,
+    call: object,
+    basis: Mapping[str, object],
+) -> InspectDocument:
+    return {
+        "kind": "model_call",
+        "target": selector,
+        "state": state,
+        "model": model,
+        "call": _inspect_data(call),
+        "basis": _inspect_data(dict(basis)),
+        "diagnostics": [],
+    }
+
+
+def _require_execution(
+    resources: ExecutionResources | None,
+) -> ExecutionResources:
+    if resources is None:
+        raise RuntimeError("execution resources were not opened")
+    return resources
+
+
+def _inspect_execution(
     resources: ExecutionResources,
     target: InspectTarget,
     *,
     limit: int,
 ) -> InspectDocument:
     history = RunHistory(resources.store)
-    if target.kind == "thread":
-        thread = history.get_thread(target.identifier, run_limit=limit)
+    if isinstance(target, ThreadInspectTarget):
+        thread = history.get_thread(target.thread_id, run_limit=limit)
         if thread is None:
-            raise click.ClickException(f"thread not found: {target.identifier}")
+            raise click.ClickException(f"thread not found: {target.thread_id}")
         return {
             "kind": "thread",
-            "target": target.identifier,
+            "target": target.thread_id,
             "thread": _inspect_data(thread),
         }
-
-    run = history.get_run(target.identifier)
+    run_id = (
+        target.run_id
+        if isinstance(target, RunInspectTarget)
+        else target.step_path.run
+        if isinstance(target, StepInspectTarget)
+        else None
+    )
+    if run_id is None:
+        raise TypeError(
+            f"unsupported execution inspect target: {type(target).__name__}"
+        )
+    run = history.get_run(run_id)
     if run is None:
-        raise click.ClickException(f"run not found: {target.identifier}")
+        raise click.ClickException(f"run not found: {run_id}")
     thread = history.get_thread(run.thread_id, run_limit=None)
     runs = thread.runs if thread is not None else [run]
     run_by_id = {item.id: item for item in runs}
     display_run = run_by_id.get(run.id, run)
     nodes = _run_nodes(display_run, run_by_id=run_by_id)
-    if target.path:
-        step_path = StepPath(target.identifier, target.path)
+    if isinstance(target, StepInspectTarget):
+        step_path = target.step_path
         node = _find_step_node(nodes, step_path)
         if node is None:
             raise click.ClickException(f"step not found: {step_path}")
@@ -438,7 +845,7 @@ def _inspect(
         }
     return {
         "kind": "run",
-        "target": target.identifier,
+        "target": run_id,
         "run": _run_data(display_run, include_steps=False),
         "steps": [_node_data(node) for node in nodes],
     }
@@ -534,8 +941,15 @@ def _record_data(value: Any) -> dict[str, Any]:
     }
 
 
-def _render_inspect(document: Mapping[str, Any]) -> None:
+def _render_inspect(
+    document: Mapping[str, Any],
+    *,
+    full: bool = False,
+) -> None:
     kind = document.get("kind")
+    if kind == "model_call":
+        _render_model_call(document, full=full)
+        return
     if kind == "thread":
         _render_thread(_mapping(document.get("thread")))
         return
@@ -546,6 +960,43 @@ def _render_inspect(document: Mapping[str, Any]) -> None:
         _mapping(document.get("run")),
         [_mapping(item) for item in _list(document.get("steps"))],
     )
+
+
+def _render_model_call(document: Mapping[str, Any], *, full: bool) -> None:
+    _section("model call")
+    typer.echo(
+        "  ".join(
+            (
+                str(document.get("target", "-")),
+                str(document.get("state", "-")),
+                f"model={document.get('model', '-')}",
+            )
+        )
+    )
+    _section("basis")
+    typer.echo(_bounded_json(document.get("basis"), full=full))
+    call = _mapping(document.get("call"))
+    for name in ("instructions", "messages", "tools", "state"):
+        _section(name)
+        value = call.get(name)
+        if name == "instructions" and isinstance(value, str):
+            typer.echo(_bounded_text(value, full=full))
+        else:
+            typer.echo(_bounded_json(value, full=full))
+
+
+def _bounded_json(value: object, *, full: bool) -> str:
+    return _bounded_text(
+        json.dumps(value, ensure_ascii=False, indent=2),
+        full=full,
+    )
+
+
+def _bounded_text(value: str, *, full: bool, limit: int = 12_000) -> str:
+    if full or len(value) <= limit:
+        return value if value else "<empty>"
+    omitted = len(value) - limit
+    return f"{value[:limit]}\n... <truncated {omitted} characters; use --full>"
 
 
 def _render_thread(thread: Mapping[str, Any]) -> None:

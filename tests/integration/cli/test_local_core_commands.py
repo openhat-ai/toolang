@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-from collections.abc import Mapping
 import sqlite3
 import sys
 from typing import Any, cast
@@ -16,7 +16,7 @@ import pytest
 from click.testing import CliRunner
 
 from toolang.base.types.message import Message, TextPart
-from toolang.base.types.run import ModelCallResult, ModelUsage
+from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.catalog import templates
 from toolang.catalog.agent import LocalAgents
@@ -28,19 +28,21 @@ import toolang.cli.toolang.main as cli
 from toolang.cli.common.output import shorten_home_path
 from toolang.common.layout import AgentLayout
 from toolang.execution.history import RunHistory
+from toolang.execution.events import StepBegin
 from toolang.execution.records import (
     RerunControlPayload,
     RetryControlPayload,
     SteerControlPayload,
 )
 from toolang.execution.store import RunStore
-from toolang.execution.types import Local, StepPath, ThreadPrefix
+from toolang.execution.types import Local, ModelStepGiven, StepPath, ThreadPrefix
 from toolang.lang.input import resolve_input_parts
 from toolang.setup import AgentSetup
 from toolang.up import process as agents
 from toolang.work.state import load_ready_jobs
 from toolang.work.store import JobStore
 from tests.support.execution_fixtures import (
+    persist_event,
     project_run_end,
     project_run_start,
     project_step,
@@ -265,6 +267,300 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
         "name": "_",
         "dim": 0,
     }
+
+    model_call_result = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "model_call@run_inspect.0",
+    )
+    assert model_call_result.exit_code == 1
+    assert "step is not a model call: run_inspect.0" in model_call_result.stderr
+
+
+def test_inspect_reads_historical_model_call_as_a_direct_target(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_model_call",
+            thread_id="term_model_call",
+            origin="chat",
+            input=Message.user("Inspect the model call"),
+        )
+        persist_event(
+            store,
+            StepBegin(
+                step=StepPath(run.id, (0,)),
+                kind="model",
+                input=(),
+                given=ModelStepGiven(
+                    model="test/model",
+                    call=ModelCall(
+                        instructions="Historical instructions",
+                        messages=[Message.user("Historical message")],
+                    ),
+                ),
+                started_at="2026-08-24T01:00:00Z",
+            ),
+        )
+    finally:
+        store.close()
+
+    result = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "model_call@run_model_call.0",
+        "--json",
+    )
+
+    assert result.exit_code == 0, result.stderr
+    document = json.loads(result.stdout)
+    assert document == {
+        "kind": "model_call",
+        "target": "model_call@run_model_call.0",
+        "state": "historical",
+        "model": "test/model",
+        "call": {
+            "instructions": "Historical instructions",
+            "messages": [
+                {
+                    "role": "user",
+                    "parts": [{"type": "text", "text": "Historical message"}],
+                }
+            ],
+            "tools": [],
+            "state": None,
+        },
+        "basis": {
+            "run_id": "run_model_call",
+            "step_path": "run_model_call.0",
+            "preview": False,
+        },
+        "diagnostics": [],
+    }
+
+
+def test_inspect_prepares_prospective_model_call_and_provider_json(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    (layout.home / "agent.too").write_text(
+        """context:
+  Context for {{runnable.name}} on {{date}}.
+
+instruct:
+  Inspect instruction for {{agent.name}}.
+
+agic review(_: Text, focus: Text):
+  models = test/model
+  tools = none
+  recall = none
+
+  Review {{_}} with focus {{focus}}.
+""",
+        encoding="utf-8",
+    )
+    catalog = tmp_path / "models.json"
+    catalog.write_text(json.dumps(_inspect_model_catalog()), encoding="utf-8")
+    common = (
+        "--models",
+        str(catalog),
+        "alice",
+        "inspect",
+        "model_call@agic:review",
+        "--input",
+        "draft",
+        "--arg",
+        "focus=security",
+    )
+    env = {"TEST_API_KEY": "top-secret"}
+
+    human_result = _invoke(root, *common, env=env)
+    call_result = _invoke(root, *common, "--json", env=env)
+    request_result = _invoke(
+        root,
+        *common,
+        "--request",
+        "test/model",
+        env=env,
+    )
+    stdin_result = _invoke(
+        root,
+        "--models",
+        str(catalog),
+        "alice",
+        "inspect",
+        "model_call@agic:review",
+        "--input",
+        "-",
+        "--arg",
+        "focus=security",
+        "--json",
+        env=env,
+        stdin="from standard input\n",
+    )
+
+    assert human_result.exit_code == 0, human_result.stderr
+    assert "# model call" in human_result.stdout
+    assert "# instructions" in human_result.stdout
+    assert "Inspect instruction for alice." in human_result.stdout
+    assert "# messages" in human_result.stdout
+    assert call_result.exit_code == 0, call_result.stderr
+    call_document = json.loads(call_result.stdout)
+    assert call_document["kind"] == "model_call"
+    assert call_document["state"] == "prospective"
+    assert call_document["model"] == "test/model"
+    assert call_document["basis"]["preview"] is True
+    assert call_document["basis"]["run_id"] == "<preview-run>"
+    assert "Inspect instruction for alice." in call_document["call"]["instructions"]
+    assert (
+        "Context for review"
+        in call_document["call"]["messages"][-1]["parts"][0]["text"]
+    )
+    assert (
+        "Review draft with focus security."
+        in (call_document["call"]["messages"][-1]["parts"][0]["text"])
+    )
+    assert request_result.exit_code == 0, request_result.stderr
+    request = json.loads(request_result.stdout)
+    assert set(request) >= {"model", "messages", "stream"}
+    assert request["model"] == "model"
+    assert request["stream"] is True
+    assert "kind" not in request
+    assert "top-secret" not in request_result.stdout
+    assert stdin_result.exit_code == 0, stdin_result.stderr
+    stdin_document = json.loads(stdin_result.stdout)
+    assert (
+        "Review from standard input"
+        in (stdin_document["call"]["messages"][-1]["parts"][0]["text"])
+    )
+    assert not layout.run_store.exists()
+
+
+def test_inspect_can_include_one_unambiguous_thread_history(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    (layout.home / "agent.too").write_text(
+        """agic review(_: Text):
+  models = test/model
+  tools = none
+  recall = history
+
+  Continue {{_}}.
+""",
+        encoding="utf-8",
+    )
+    catalog = tmp_path / "models.json"
+    catalog.write_text(json.dumps(_inspect_model_catalog()), encoding="utf-8")
+    store = RunStore(layout.run_store)
+    try:
+        first = project_run_start(
+            store,
+            run_id="run_history_one",
+            thread_id="term_history_one",
+            origin="chat",
+            input=Message.user("Earlier question"),
+        )
+        project_step(
+            store,
+            run_id=first.id,
+            step_index=0,
+            kind="model",
+            status="succeeded",
+            input=(),
+            output=Message.assistant("Earlier answer").parts,
+            started_at="2026-08-24T01:00:00Z",
+            finished_at="2026-08-24T01:00:01Z",
+        )
+        project_run_end(store, run_id=first.id)
+    finally:
+        store.close()
+
+    result = _invoke(
+        root,
+        "--models",
+        str(catalog),
+        "alice",
+        "inspect",
+        "model_call@agic:review",
+        "--input",
+        "next question",
+        "--thread",
+        "--json",
+        env={"TEST_API_KEY": "top-secret"},
+    )
+
+    assert result.exit_code == 0, result.stderr
+    document = json.loads(result.stdout)
+    assert document["basis"]["thread_id"] == "term_history_one"
+    messages = document["call"]["messages"]
+    assert messages[0]["parts"][0]["text"] == "Earlier question"
+    assert messages[1]["parts"][0]["text"] == "Earlier answer"
+
+    store = RunStore(layout.run_store)
+    try:
+        second = project_run_start(
+            store,
+            run_id="run_history_two",
+            thread_id="term_history_two",
+            origin="chat",
+            input=Message.user("Another question"),
+        )
+        project_run_end(store, run_id=second.id)
+    finally:
+        store.close()
+    ambiguous = _invoke(
+        root,
+        "--models",
+        str(catalog),
+        "alice",
+        "inspect",
+        "model_call@agic:review",
+        "--input",
+        "next question",
+        "--thread",
+        env={"TEST_API_KEY": "top-secret"},
+    )
+    assert ambiguous.exit_code == 1
+    assert "--thread is ambiguous: multiple threads exist" in ambiguous.stderr
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    (
+        (("--request",), "Option '--request' requires an argument"),
+        (("--request", "test/model", "--json"), "cannot be combined"),
+        (("--request", "test/model", "--full"), "cannot be combined"),
+        (("--send",), "No such option: --send"),
+    ),
+)
+def test_inspect_rejects_invalid_model_call_view_options(
+    tmp_path: Path,
+    options: tuple[str, ...],
+    message: str,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+
+    result = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "model_call@agic:default",
+        *options,
+    )
+
+    assert result.exit_code != 0
+    assert message in result.stderr
 
 
 def test_inspect_step_path_does_not_cross_run_boundaries(tmp_path: Path) -> None:
@@ -849,7 +1145,13 @@ def test_visiting_agent_info_uses_the_materialized_layout(
     assert rows["Home"] == shorten_home_path(layout.home)
 
 
-def _invoke(root: Path, *args: str, tty: bool = False):
+def _invoke(
+    root: Path,
+    *args: str,
+    tty: bool = False,
+    env: Mapping[str, str] | None = None,
+    stdin: str | None = None,
+):
     @click.command(
         context_settings={"ignore_unknown_options": True, "allow_extra_args": True}
     )
@@ -859,7 +1161,41 @@ def _invoke(root: Path, *args: str, tty: bool = False):
             setattr(sys.stderr, "isatty", lambda: True)
         raise click.exceptions.Exit(cli.main(["--root", str(root), *arguments]))
 
-    return runner.invoke(public_cli, list(args), env={})
+    return runner.invoke(
+        public_cli,
+        list(args),
+        env=dict(env or {}),
+        input=stdin,
+    )
+
+
+def _inspect_model_catalog() -> dict[str, object]:
+    return {
+        "test": {
+            "id": "test",
+            "name": "Test",
+            "env": ["TEST_API_KEY"],
+            "npm": "@ai-sdk/openai-compatible",
+            "api": "https://api.test/v1",
+            "models": {
+                "model": {
+                    "id": "model",
+                    "name": "Model",
+                    "attachment": False,
+                    "reasoning": False,
+                    "tool_call": True,
+                    "structured_output": True,
+                    "temperature": True,
+                    "modalities": {
+                        "input": ["text"],
+                        "output": ["text"],
+                    },
+                    "open_weights": False,
+                    "limit": {"context": 10_000, "output": 1_000},
+                }
+            },
+        }
+    }
 
 
 def _create_agent(root: Path, name: str = "alice") -> None:

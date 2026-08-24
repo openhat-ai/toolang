@@ -689,6 +689,46 @@ def test_cli_routes_visiting_inspect_without_materialization(
     }
 
 
+def test_cli_materializes_visiting_prospective_model_call_inspection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selector = "brice/researcher"
+    layout = AgentLayout(
+        root=tmp_path / "visiting",
+        name="researcher",
+        placement="visiting",
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        agents,
+        "visiting_layout",
+        lambda *_args, **_kwargs: pytest.fail(
+            "prospective model calls require program materialization"
+        ),
+    )
+
+    def resolve(source: str, *, progress: object) -> AgentLayout:
+        captured.update(source=source, progress=progress)
+        return layout
+
+    monkeypatch.setattr(agents, "resolve_visiting_layout", resolve)
+
+    result = dispatch_visiting(
+        [selector, "inspect", "model_call@agic:review"],
+        run_app=lambda args, selected: (
+            captured.update(args=args, layout=selected) or 14
+        ),
+    )
+
+    assert result == 14
+    assert captured["source"] == selector
+    assert captured["args"] == ["inspect", "model_call@agic:review"]
+    assert captured["layout"] == layout
+    assert captured["progress"] is not None
+
+
 def test_cli_routes_command_before_visiting_info_through_materialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

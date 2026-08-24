@@ -22,7 +22,6 @@ from toolang.base.types.message import (
     message_text,
 )
 from toolang.base.types.run import (
-    ModelCall,
     ModelCallResult,
     ModelPartDelta,
     ModelPartEnd,
@@ -49,6 +48,7 @@ from ...types import (
 from ..common import _StepFailed
 from ..diagnostics import log_model_request, log_model_result, log_model_target
 from ..limits import _ModelAccounting
+from ..prepare import build_model_call
 
 if TYPE_CHECKING:
     from ..runs.agic import _AgicState
@@ -92,18 +92,11 @@ async def execute(state: _AgicState) -> ModelCallResult:
         run.run_id,
         step_index,
     )
-    request = ModelCall(
-        instructions=prepared.instructions,
-        messages=list(next_messages),
-        tools=(
-            tuple(
-                tool.definition()
-                for tool in sorted(prepared.tools.values(), key=lambda item: item.name)
-            )
-            if prepared.model.tools and not state.repairing_output
-            else ()
-        ),
+    request = build_model_call(
+        prepared,
+        messages=next_messages,
         state=state.model_state,
+        include_tools=not state.repairing_output,
     )
     await state.emit(
         StepBegin(

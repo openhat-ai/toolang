@@ -166,6 +166,15 @@ class MessagesModelAdapter(ModelAdapter):
             ),
         )
 
+    def request_payload(
+        self,
+        target: ModelTarget,
+        request: ModelCall,
+    ) -> Mapping[str, object]:
+        """Build the provider request body without invoking the provider."""
+
+        return messages_payload(target, request, stream=target.streaming)
+
 
 def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
     """Create the built-in Messages adapter."""

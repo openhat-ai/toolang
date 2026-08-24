@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from ..types.model import ModelCatalogSnapshot, ModelTarget
@@ -41,3 +42,15 @@ class ModelAdapter(Protocol):
         on_event: ModelStreamHandler,
     ) -> ModelCallResult:
         """Execute one streaming model turn."""
+
+
+@runtime_checkable
+class InspectableModelAdapter(Protocol):
+    """Optional adapter capability for read-only provider request projection."""
+
+    def request_payload(
+        self,
+        target: ModelTarget,
+        request: ModelCall,
+    ) -> Mapping[str, object]:
+        """Build the provider-native JSON body without network I/O."""

@@ -150,6 +150,38 @@ the source invocation. Fork retains the anchor run, while rewind removes it and
 the following visible suffix.
 
 
+## Model Call Inspection
+
+`inspect` accepts a persisted model step or an authored `agic` as a direct
+model-call target:
+
+```bash
+toolang alice inspect model_call@run_ppkp9e94.0
+toolang alice inspect model_call@agic:review --input "Review this draft"
+```
+
+The historical form displays the normalized `ModelCall` stored for that step.
+The prospective form prepares the first normalized call from the current
+program and explicit `--input` and repeatable `--arg NAME=CONTENT` values, but
+does not start a run or contact a model. `--input -` reads the primary input
+from standard input. `--thread` includes history only when the agent has one
+unambiguous current thread.
+
+The default output is a structured human view. `--json` emits its complete JSON
+document, and `--full` disables human-view truncation. To inspect the exact JSON
+body a bundled adapter would send for a concrete catalog model, use:
+
+```bash
+toolang alice inspect model_call@agic:review \
+  --input "Review this draft" \
+  --request openai/gpt-5
+```
+
+`--request` requires an exact `provider/model_id`, implies JSON output, and does
+not send the request. Model-call inspection is read-only; `--send` is not a
+supported option.
+
+
 ## Agent Selectors
 
 Runtime commands accept these selector forms:
