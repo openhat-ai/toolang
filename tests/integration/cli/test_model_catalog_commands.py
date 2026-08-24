@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from toolang.base.types.model import ModelCatalogSnapshot
@@ -16,14 +17,15 @@ runner = CliRunner()
 
 def test_plural_model_commands_are_public_resources() -> None:
     result = runner.invoke(cli.app, ["--help"])
+    stdout = unstyle(result.stdout)
 
     assert result.exit_code == 0, result.stderr
-    assert "models" in result.stdout
-    assert "providers" in result.stdout
-    assert "adapters" in result.stdout
-    assert "--models" in result.stdout
-    assert "Use a specified model knowledge catalog." in result.stdout
-    assert "--model-catalog" not in result.stdout
+    assert "models" in stdout
+    assert "providers" in stdout
+    assert "adapters" in stdout
+    assert "--models" in stdout
+    assert "Use a specified model knowledge catalog." in stdout
+    assert "--model-catalog" not in stdout
 
 
 def test_models_filter_exports_a_valid_complete_catalog(
