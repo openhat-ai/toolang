@@ -415,7 +415,7 @@ _registered_group(
 )
 _registered_command(
     "caps",
-    help="Inspect available caps.",
+    help="Inspect caps.",
     cls=OptionalPrefixAgentListCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(cap_commands.list_caps)

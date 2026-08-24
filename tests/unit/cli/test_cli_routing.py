@@ -215,6 +215,8 @@ def test_cli_removes_singular_resources_and_hides_channels() -> None:
     assert isinstance(group, click.Group)
     assert {"model", "tool", "sandbox"}.isdisjoint(group.commands)
     assert {"models", "tools", "sandboxes", "caps"} <= set(group.commands)
+    assert group.commands["models"].help == "Inspect models."
+    assert group.commands["caps"].help == "Inspect caps."
     assert group.commands["tools"].help == "Inspect installed tools."
     assert group.commands["sandboxes"].help == "Inspect installed sandboxes."
     assert group.commands["channel"].hidden

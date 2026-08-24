@@ -25,7 +25,7 @@ def test_plural_model_commands_are_public_resources() -> None:
     assert "adapters" in stdout
     assert "--models" in stdout
     assert "Use a specified model catalog." in stdout
-    assert "Inspect and update the model catalog." in stdout
+    assert "Inspect models." in stdout
     assert "--model-catalog" not in stdout
 
 

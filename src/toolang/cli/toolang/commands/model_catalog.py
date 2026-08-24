@@ -33,7 +33,7 @@ from toolang.plugin.models.update import DEFAULT_MODELS_DEV_URL, update_model_ca
 from toolang.setup import AgentSetup, SetupWatcher
 
 models_app = typer.Typer(
-    help="Inspect and update the model catalog.",
+    help="Inspect models.",
     add_completion=False,
     invoke_without_command=True,
     pretty_exceptions_enable=False,
