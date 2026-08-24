@@ -218,7 +218,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
         "RunStopBlock",
     ]
     transcript = "".join(_render_text(block.render()) for block in app.finalized)
-    assert "• drafting\n\n▪︎ run_1 succeeded" in transcript
+    assert "• drafting\n\n[ run_1 succeeded" in transcript
 
 
 def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None:
@@ -282,8 +282,8 @@ def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
     assert "[1] Run summarize for each item, up to 2 at once\n\n• Mapped" in (
         transcript
     )
-    assert "items in parallel\n\n▪︎ run_1 succeeded" in transcript
-    assert "items in parallel\n\n\n▪︎ run_1 succeeded" not in transcript
+    assert "items in parallel\n\n[ run_1 succeeded" in transcript
+    assert "items in parallel\n\n\n[ run_1 succeeded" not in transcript
 
 
 def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() -> None:
@@ -503,7 +503,7 @@ def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
     rendered = _render_text(app.finalized[0].render())
     lines = rendered.splitlines()
     assert lines[0] == ""
-    assert lines[1].startswith("▪︎ run_1 canceled · 3.0s")
+    assert lines[1] == "[ run_1 canceled · 3.0s ]"
     assert lines[2] == ""
 
 
@@ -529,7 +529,8 @@ def test_chat_root_footer_counts_child_runs_for_any_runnable_kind() -> None:
     assert "2 tool calls" in rendered
     assert all(rendering.display_len(line) <= 72 for line in lines)
     assert all(not line.endswith("·") for line in lines)
-    assert lines[0].startswith("▪︎ run_1")
+    assert lines[0].startswith("[ run_1")
+    assert lines[-1].endswith(" ]")
     assert all(line.startswith("  ") for line in lines[1:])
 
 
@@ -610,7 +611,7 @@ def test_chat_root_footer_keeps_short_facts_inline() -> None:
     block.update(_run_end(run_id="run_pmqv7gfc", status="succeeded"))
 
     lines = [line for line in _render_text(block.render()).splitlines() if line]
-    assert lines == ["▪︎ run_pmqv7gfc succeeded · 3.0s"]
+    assert lines == ["[ run_pmqv7gfc succeeded · 3.0s ]"]
 
 
 def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> None:
@@ -631,7 +632,8 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
     ]
 
     assert all(len(line) <= 32 for line in lines)
-    assert lines[0].startswith("▪︎ run_1 failed · ")
+    assert lines[0].startswith("[ run_1 failed · ")
+    assert lines[-1].endswith(" ]")
     assert all(line.startswith("  ") for line in lines[1:])
     assert all("─" not in line for line in lines)
 
@@ -1032,19 +1034,16 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
 
 
 @pytest.mark.parametrize(
-    ("status", "expected_marker", "color", "dim", "marker_bold"),
+    ("status", "color"),
     [
-        ("succeeded", "▪︎", None, True, False),
-        ("failed", "▪︎", "red", False, False),
-        ("canceled", "▪︎", "yellow", False, True),
+        ("succeeded", None),
+        ("failed", "red"),
+        ("canceled", "yellow"),
     ],
 )
-def test_chat_run_footer_styles_marker_caption_and_facts(
+def test_chat_run_footer_dims_and_colors_the_entire_line(
     status: Literal["succeeded", "failed", "canceled"],
-    expected_marker: str,
     color: str | None,
-    dim: bool,
-    marker_bold: bool,
 ) -> None:
     root_summary = blocks.RunStopBlock.create(_run_begin())
     root_summary.update(_run_end(status=status))
@@ -1054,29 +1053,17 @@ def test_chat_run_footer_styles_marker_caption_and_facts(
         if segment.text.strip()
     ]
 
-    def assert_status_style(segment: Any) -> None:
+    assert _render_text(root_summary.render()).strip().startswith("[ ")
+    assert _render_text(root_summary.render()).strip().endswith(" ]")
+    for segment in segments:
         assert segment.style is not None
-        assert bool(segment.style.dim) is dim
+        assert segment.style.dim
+        assert not segment.style.bold
         if color is None:
             assert segment.style.color is None
         else:
             assert segment.style.color is not None
             assert segment.style.color.name == color
-
-    marker = next(segment for segment in segments if segment.text == expected_marker)
-    assert_status_style(marker)
-    assert marker.style is not None
-    assert bool(marker.style.bold) is marker_bold
-    assert all("─" not in segment.text for segment in segments)
-    caption = next(segment for segment in segments if "run_1" in segment.text)
-    assert_status_style(caption)
-    assert caption.style is not None and not caption.style.bold
-    facts = [segment for segment in segments if segment not in (marker, caption)]
-    assert facts
-    assert all(
-        segment.style is not None and segment.style.color is None and segment.style.dim
-        for segment in facts
-    )
 
 
 def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:

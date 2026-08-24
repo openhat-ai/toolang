@@ -279,23 +279,22 @@ root-owned error row. There is no separate diagnostic marker.
 Script and Chat end a root Run with the same footer:
 
 ```text
-▪︎ run_nrqpt0mf succeeded · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
-▪︎ run_nrqpt0mf failed · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
-▪︎ run_nrqpt0mf canceled · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
+[ run_nrqpt0mf succeeded · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01 ]
+[ run_nrqpt0mf failed · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01 ]
+[ run_nrqpt0mf canceled · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01 ]
 ```
 
 A CLI retry or rerun identifies the operation in the same footer instead of
 appending a separate result line:
 
 ```text
-▪︎ run_zvczap2h: retry succeeded · 2.0s · 1 model call
+[ run_zvczap2h: retry succeeded · 2.0s · 1 model call ]
 ```
 
-All terminal statuses use the text-style `▪︎` marker. The cancellation
-marker is bold. Markers and captions use the terminal status style: dim for
-success, red for failure, and yellow for cancellation. Facts remain dim and
-follow the caption on the same line. Narrow terminals wrap the caption and
-facts with a two-cell hanging indent.
+Square brackets frame the complete footer. The entire footer is dim and uses
+the terminal status color: no color for success, red for failure, and yellow
+for cancellation. Narrow terminals wrap the caption and facts with a two-cell
+hanging indent and place the closing bracket on the final line.
 
 The footer owns total duration and whole-tree Run facts. Script does not append
 a separate `Run: RUN_ID` line. Errors before `RunBegin` are reported outside

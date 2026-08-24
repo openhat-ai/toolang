@@ -198,46 +198,50 @@ class _RunFooter:
             if self.operation is not None
             else f"{self.run_id} {self.status}"
         )
-        status_style = terminal_status_style(self.status)
-        marker = "▪︎" if self.status in {"succeeded", "failed", "canceled"} else "•"
-        marker_style = (
-            f"bold {status_style}" if self.status == "canceled" else status_style
-        )
-        prefix_width = display_width(marker) + 1
-        if width <= prefix_width:
-            yield Text(truncate(marker, width), style=marker_style, no_wrap=True)
+        footer_style = {
+            "succeeded": "dim",
+            "failed": "dim red",
+            "canceled": "dim yellow",
+        }.get(self.status, "dim")
+        prefix = "[ "
+        suffix = " ]"
+        framing_width = display_width(prefix + suffix)
+        if width <= framing_width:
+            yield Text(
+                truncate(f"{prefix}{title}{suffix}", width),
+                style=footer_style,
+                no_wrap=True,
+            )
             return
 
-        content_width = width - prefix_width
-        title_text = Text()
-        title_text.append(title, style=status_style)
+        content_width = width - framing_width
+        title_text = Text(title, style=footer_style)
         content_lines = title_text.wrap(
             console,
             content_width,
             overflow="fold",
-        ) or [Text("", style=status_style)]
+        ) or [Text("", style=footer_style)]
         for fact in self.facts:
             current = content_lines[-1]
             separator = " · " if current.plain else ""
             if display_width(current.plain + separator + fact) <= content_width:
-                current.append(separator + fact, style="dim")
+                current.append(separator + fact, style=footer_style)
                 continue
-            fact_lines = Text(fact, style="dim").wrap(
+            fact_lines = Text(fact, style=footer_style).wrap(
                 console,
                 content_width,
                 overflow="fold",
-            ) or [Text("", style="dim")]
+            ) or [Text("", style=footer_style)]
             content_lines.extend(fact_lines)
         for line in content_lines:
             line.rstrip()
         for index, content_line in enumerate(content_lines):
-            line = Text(no_wrap=True)
-            if index == 0:
-                line.append(marker, style=marker_style)
-                line.append(" ")
-            else:
-                line.append(" " * prefix_width)
+            line = Text(prefix if index == 0 else " " * display_width(prefix))
             line.append_text(content_line)
+            if index + 1 == len(content_lines):
+                line.append(suffix, style=footer_style)
+            line.stylize(footer_style)
+            line.no_wrap = True
             yield line
 
 
