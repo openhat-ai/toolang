@@ -16,7 +16,12 @@ from urllib.request import urlopen
 from weakref import WeakKeyDictionary
 
 from toolang.base.protocols.hosting import Hosting
-from toolang.base.types.hosting import HostingRef, HostingRequest
+from toolang.base.types.hosting import HostingMount, HostingRef, HostingRequest
+from toolang.catalog.workspace import AgentWorkspaces
+from toolang.common.workspace import (
+    hosted_workspaces_env,
+    workspace_config_values,
+)
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import (
@@ -25,6 +30,7 @@ from toolang.plugin.config import (
 )
 from toolang.plugin.sandboxes.loading import load_hosting
 from toolang.state.state import AgentState
+from toolang.setup.config import load_agent_config
 from toolang.state.watcher import StateWatcher
 from toolang.up.mounts import prepare_root_mounts
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
@@ -178,6 +184,42 @@ async def _launch_locked(spec: LaunchSpec) -> HostingHandle:
         config=spec.config,
     )
     hosted_home = hosted_root / "agents" / spec.serve.layout.name
+    configured_workspaces = AgentWorkspaces(spec.serve.layout).list()
+    authored_workspace_paths = workspace_config_values(
+        load_agent_config(spec.serve.layout)
+    )
+    active_workspaces = {
+        item.name: (
+            item.path
+            if name == "none"
+            else hosted_home / ".runtime" / "workspaces" / item.name
+        )
+        for item in configured_workspaces
+    }
+    workspace_mounts = (
+        ()
+        if name == "none"
+        else tuple(
+            HostingMount(
+                local_path=item.path,
+                hosted_path=active_workspaces[item.name],
+            )
+            for item in configured_workspaces
+        )
+    )
+    if name == "none":
+        workspace_env = {}
+    else:
+        workspace_env_name, workspace_env_value = hosted_workspaces_env(
+            {
+                item.name: (
+                    authored_workspace_paths[item.name],
+                    active_workspaces[item.name],
+                )
+                for item in configured_workspaces
+            }
+        )
+        workspace_env = {workspace_env_name: workspace_env_value}
     request = HostingRequest(
         local_root=spec.serve.layout.root,
         local_home=spec.serve.layout.home,
@@ -202,12 +244,18 @@ async def _launch_locked(spec: LaunchSpec) -> HostingHandle:
             **spec.environ,
             "TOOLANG_ROOT": str(hosted_root),
             "TOOLANG_SANDBOX": spec.sandbox,
+            **workspace_env,
         },
         mounts=(
             ()
             if name == "none"
-            else prepare_root_mounts(spec.serve.layout.root, hosted_root)
+            else (
+                *prepare_root_mounts(spec.serve.layout.root, hosted_root),
+                *workspace_mounts,
+            )
         ),
+        workspaces=active_workspaces,
+        workspace_sources={item.name: item.path for item in configured_workspaces},
         local_dev_artifact=spec.dev_artifact,
     )
     plan = implementation.prepare(raw_spec, request)

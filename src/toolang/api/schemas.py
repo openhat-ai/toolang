@@ -195,6 +195,7 @@ class RunCreateRequest(ApiRequest):
     model: str | None = None
     args: dict[str, object] | None = None
     limits: RunLimitsPayload | None = None
+    space: Literal["collab", "lab"] = "collab"
 
 
 class RunRerunRequest(ApiRequest):

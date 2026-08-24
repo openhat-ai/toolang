@@ -19,11 +19,11 @@ DEFAULT_MAX_CHARS = 20_000
 
 @dataclass(slots=True)
 class FilesystemPlugin:
-    """Filesystem tools scoped to one agent home."""
+    """Filesystem tools scoped to the current run's allowed roots."""
 
     config: dict[str, Any]
     name: str = "filesystem"
-    description: str | None = "Inspect and edit files inside the current agent home."
+    description: str | None = "Inspect and edit files inside the current run roots."
     _max_chars: int = field(init=False, repr=False)
     _tools: dict[str, AgentTool] = field(init=False, repr=False)
     _path_locks: dict[Path, threading.Lock] = field(init=False, repr=False)
@@ -151,6 +151,8 @@ class FilesystemPlugin:
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             resolved = _resolve_path(path, context=context)
+            if _is_allowed_root(resolved, context=context):
+                raise ToolangError(f"cannot remove an allowed root: {resolved}")
             if not resolved.exists():
                 raise ToolangError(f"path does not exist: {resolved}")
             if resolved.is_dir():
@@ -198,12 +200,17 @@ def _resolve_path(path_value: str, *, context: ToolContext | None) -> Path:
     if not candidate.is_absolute():
         candidate = context.wd / candidate
     resolved = candidate.resolve()
-    root = context.home.resolve()
-    try:
-        resolved.relative_to(root)
-    except ValueError as exc:
-        raise ToolangError(f"filesystem path escapes agent home: {resolved}") from exc
-    return resolved
+    roots = tuple(root.resolve() for root in context.roots) or (context.home.resolve(),)
+    if any(resolved == root or resolved.is_relative_to(root) for root in roots):
+        return resolved
+    raise ToolangError(f"filesystem path escapes allowed roots: {resolved}")
+
+
+def _is_allowed_root(path: Path, *, context: ToolContext | None) -> bool:
+    if context is None:
+        return False
+    roots = tuple(root.resolve() for root in context.roots) or (context.home.resolve(),)
+    return any(path == root for root in roots)
 
 
 def _int_value(value: object, *, default: int) -> int:

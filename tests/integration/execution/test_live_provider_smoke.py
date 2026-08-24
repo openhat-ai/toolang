@@ -97,6 +97,7 @@ class _LiveExecution:
                     thread=thread,
                     bindings=RunBindings(runnable=runnable),
                     limits=self.setup.limits,
+                    space="collab",
                     input=resolve_runnable_input(
                         executable,
                         primary=resolve_input_parts(marker),

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
 import math
+from pathlib import Path
 import re
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
@@ -23,6 +24,7 @@ from toolang.base.types.message import (
     part_from_data,
 )
 from toolang.base.types.run import ModelCall, ToolCall
+from toolang.common.workspace import validate_workspace_name
 from toolang.lang.ast import (
     AskStmt,
     DropStmt,
@@ -46,6 +48,7 @@ from toolang.lang.types import Array, Struct, Value, validate_type, value_type
 
 
 RunId = str
+RunSpace = Literal["collab", "lab"]
 _EXECUTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _LOCAL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PolicyGroup = Literal["allow", "default", "limit"]
@@ -65,6 +68,121 @@ DEFAULT_POLICY_FIELDS = frozenset({"model", "runnable"})
 LIMIT_POLICY_FIELDS = frozenset(
     {"agic_model_calls", "agic_tool_calls", "tokens", "cost", "time"}
 )
+
+
+@dataclass(frozen=True, slots=True)
+class RunWorkspace:
+    """One active workspace path captured for a root run."""
+
+    name: str
+    path: Path
+
+    def __post_init__(self) -> None:
+        validate_workspace_name(self.name)
+        if not self.path.is_absolute():
+            raise ValueError("run workspace path must be absolute")
+
+    @classmethod
+    def from_data(cls, payload: Mapping[str, object]) -> RunWorkspace:
+        if set(payload) != {"name", "path"}:
+            raise ValueError("run workspace requires name and path")
+        name = payload.get("name")
+        path = payload.get("path")
+        if not isinstance(name, str) or not isinstance(path, str):
+            raise ValueError("run workspace name and path must be text")
+        return cls(name=name, path=Path(path))
+
+    def to_data(self) -> dict[str, str]:
+        return {"name": self.name, "path": str(self.path)}
+
+
+@dataclass(frozen=True, slots=True)
+class RunAccess:
+    """Immutable runspace, notes, and workspace snapshot for one root run."""
+
+    space: RunSpace
+    working_directory: Path
+    memo_file: Path
+    memo: str
+    memo_truncated: bool
+    workspaces: tuple[RunWorkspace, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.space not in {"collab", "lab"}:
+            raise ValueError(f"invalid run space: {self.space!r}")
+        if not self.working_directory.is_absolute() or not self.memo_file.is_absolute():
+            raise ValueError("run access paths must be absolute")
+        if not self.memo_file.is_relative_to(self.working_directory):
+            raise ValueError("run memo must be inside the selected runspace")
+        if not isinstance(self.memo, str) or not isinstance(self.memo_truncated, bool):
+            raise TypeError("run memo snapshot is invalid")
+        if not all(isinstance(item, RunWorkspace) for item in self.workspaces):
+            raise TypeError("run workspaces must be RunWorkspace values")
+        names = tuple(item.name for item in self.workspaces)
+        if len(names) != len(set(names)):
+            raise ValueError("run workspace names must be unique")
+        if self.space == "lab" and self.workspaces:
+            raise ValueError("lab runs cannot access external workspaces")
+
+    @property
+    def writable_directories(self) -> tuple[Path, ...]:
+        return (
+            self.working_directory,
+            *(workspace.path for workspace in self.workspaces),
+        )
+
+    @classmethod
+    def from_data(cls, payload: Mapping[str, object]) -> RunAccess:
+        if set(payload) != {
+            "space",
+            "working_directory",
+            "memo_file",
+            "memo",
+            "memo_truncated",
+            "workspaces",
+        }:
+            raise ValueError("run access requires canonical fields")
+        space = payload.get("space")
+        working_directory = payload.get("working_directory")
+        memo_file = payload.get("memo_file")
+        memo = payload.get("memo")
+        memo_truncated = payload.get("memo_truncated")
+        raw_workspaces = payload.get("workspaces")
+        if space not in {"collab", "lab"}:
+            raise ValueError("run access space must be collab or lab")
+        if not all(
+            isinstance(item, str) for item in (working_directory, memo_file, memo)
+        ):
+            raise ValueError("run access paths and memo must be text")
+        if not isinstance(memo_truncated, bool):
+            raise ValueError("run access memo_truncated must be boolean")
+        if not isinstance(raw_workspaces, Sequence) or isinstance(
+            raw_workspaces, (str, bytes, bytearray)
+        ):
+            raise ValueError("run access workspaces must be an array")
+        if not all(isinstance(item, Mapping) for item in raw_workspaces):
+            raise ValueError("run access contains an invalid workspace")
+        return cls(
+            space=cast(RunSpace, space),
+            working_directory=Path(cast(str, working_directory)),
+            memo_file=Path(cast(str, memo_file)),
+            memo=cast(str, memo),
+            memo_truncated=memo_truncated,
+            workspaces=tuple(
+                RunWorkspace.from_data(cast(Mapping[str, object], item))
+                for item in raw_workspaces
+            ),
+        )
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "space": self.space,
+            "working_directory": str(self.working_directory),
+            "memo_file": str(self.memo_file),
+            "memo": self.memo,
+            "memo_truncated": self.memo_truncated,
+            "workspaces": [workspace.to_data() for workspace in self.workspaces],
+        }
 
 
 @dataclass(frozen=True, slots=True)

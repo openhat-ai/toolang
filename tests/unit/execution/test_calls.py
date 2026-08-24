@@ -40,6 +40,7 @@ def test_resolve_spec_binds_policy_primary_and_typed_named_inputs(
             setup=harness.setup,
             state=harness.state,
             thread="term_test",
+            space="collab",
             default_runnable="default",
         )
 
@@ -66,6 +67,7 @@ def test_run_default_returns_to_surface_binding_not_session_binding(
             setup=harness.setup,
             state=harness.state,
             thread="term_test",
+            space="collab",
             default_runnable="default",
             surface=RunBindings(runnable="agic:default"),
             session_commands=(RunOverride("default", "runnable", "agic:review"),),
@@ -100,6 +102,7 @@ def test_setup_bindings_are_below_surface_session_and_run_selections(
             setup=setup,
             state=harness.state,
             thread="term_test",
+            space="collab",
             default_runnable="default",
             surface=surface,
             session_commands=session,
@@ -149,6 +152,7 @@ def test_invalid_explicit_model_is_rejected_before_run_persistence(tmp_path) -> 
             setup=harness.setup,
             state=harness.state,
             thread=thread,
+            space="collab",
             default_runnable="default",
         )
 
@@ -183,6 +187,7 @@ def test_missing_default_model_is_rejected_before_run_persistence(tmp_path) -> N
             setup=setup,
             state=harness.state,
             thread=thread,
+            space="collab",
             default_runnable="default",
         )
 

@@ -23,12 +23,15 @@ def _tool_context(
     *,
     run_id: str = "run-1",
     services: tuple[ToolService, ...] = (),
+    wd: Path | None = None,
+    roots: tuple[Path, ...] = (),
 ) -> ToolContext:
     return ToolContext(
         run_id=run_id,
         home=home,
         room=home / ".runtime" / "tools" / plugin_name,
-        wd=home,
+        wd=wd or home,
+        roots=roots,
         services=services,
     )
 
@@ -116,12 +119,46 @@ def test_filesystem_tool_rejects_paths_outside_agent_home(tmp_path: Path) -> Non
     home.mkdir()
     tool = create_filesystem_tool({}).tools()["read_text"]
 
-    with pytest.raises(Exception, match="escapes agent home"):
+    with pytest.raises(Exception, match="escapes allowed roots"):
         _invoke(
             tool,
             {"path": "../secret.txt"},
             _tool_context(home, "filesystem"),
         )
+
+
+def test_filesystem_tool_uses_runspace_and_workspace_roots(tmp_path: Path) -> None:
+    home = tmp_path / "alice"
+    collab = home / "collab"
+    lab = home / "lab"
+    workspace = tmp_path / "project"
+    outside = tmp_path / "outside"
+    for directory in (collab, lab, workspace, outside):
+        directory.mkdir(parents=True)
+    (collab / "escape").symlink_to(outside, target_is_directory=True)
+    tools = create_filesystem_tool({}).tools()
+    context = _tool_context(
+        home,
+        "filesystem",
+        wd=collab,
+        roots=(collab, workspace),
+    )
+
+    _invoke(tools["write_text"], {"path": "notes.md", "text": "hello"}, context)
+    _invoke(
+        tools["write_text"],
+        {"path": str(workspace / "result.txt"), "text": "done"},
+        context,
+    )
+
+    assert (collab / "notes.md").read_text(encoding="utf-8") == "hello"
+    assert (workspace / "result.txt").read_text(encoding="utf-8") == "done"
+    with pytest.raises(ToolangError, match="escapes allowed roots"):
+        _invoke(tools["list"], {"path": str(lab)}, context)
+    with pytest.raises(ToolangError, match="escapes allowed roots"):
+        _invoke(tools["list"], {"path": "escape"}, context)
+    with pytest.raises(ToolangError, match="cannot remove an allowed root"):
+        _invoke(tools["remove"], {"path": ".", "recursive": True}, context)
 
 
 def test_shell_tool_runs_one_command(tmp_path: Path) -> None:
@@ -138,6 +175,34 @@ def test_shell_tool_runs_one_command(tmp_path: Path) -> None:
     assert result["ok"] is True
     assert result["exit_code"] == 0
     assert result["stdout"] == "hi"
+
+
+def test_shell_tool_accepts_only_allowed_cwds(tmp_path: Path) -> None:
+    home = tmp_path / "alice"
+    collab = home / "collab"
+    lab = home / "lab"
+    workspace = tmp_path / "project"
+    for directory in (collab, lab, workspace):
+        directory.mkdir(parents=True)
+    tool = create_shell_tool({}).tools()["execute"]
+    context = _tool_context(
+        home,
+        "shell",
+        wd=collab,
+        roots=(collab, workspace),
+    )
+
+    default = _invoke(tool, {"command": "pwd"}, context)
+    granted = _invoke(
+        tool,
+        {"command": "pwd", "cwd": str(workspace)},
+        context,
+    )
+
+    assert default["stdout"].strip() == str(collab)
+    assert granted["stdout"].strip() == str(workspace)
+    with pytest.raises(ToolangError, match="escapes allowed roots"):
+        _invoke(tool, {"command": "pwd", "cwd": str(lab)}, context)
 
 
 def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:

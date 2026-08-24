@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 
+from toolang.common.layout import AgentLayout
+
 
 class LocalAgents:
     """CRUD for agent homes below one explicitly supplied directory."""
@@ -36,6 +38,7 @@ class LocalAgents:
             raise FileExistsError(f"agent already exists: {home}")
         home.mkdir(parents=True)
         (home / "agent.too").write_text(content, encoding="utf-8")
+        materialize_agent_runspaces(AgentLayout.resident(self.directory.parent, name))
         return home
 
     def rename(self, name: str, new_name: str) -> Path:
@@ -63,3 +66,26 @@ class LocalAgents:
 def _validate_name(name: str) -> None:
     if not name.strip() or name in {".", ".."} or "/" in name or "\\" in name:
         raise ValueError(f"invalid agent name: {name!r}")
+
+
+def materialize_agent_runspaces(layout: AgentLayout) -> None:
+    """Create durable runspace directories without replacing existing data."""
+
+    _materialize_runspace(layout.collab, layout.collab_memo)
+    _materialize_runspace(layout.lab, layout.lab_memo)
+
+
+def _materialize_runspace(directory: Path, memo: Path) -> None:
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        raise FileExistsError(f"runspace path is not a directory: {directory}")
+    directory.mkdir(parents=True, exist_ok=True)
+    if memo.is_symlink() or (memo.exists() and not memo.is_file()):
+        raise FileExistsError(f"runspace memo path is not a file: {memo}")
+    if memo.exists():
+        return
+    try:
+        with memo.open("x", encoding="utf-8") as stream:
+            stream.write("\n")
+    except FileExistsError:
+        if memo.is_symlink() or not memo.is_file():
+            raise FileExistsError(f"runspace memo path is not a file: {memo}") from None

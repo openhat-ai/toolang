@@ -18,6 +18,8 @@ def test_local_agents_crud_returns_home_paths(tmp_path: Path) -> None:
 
     assert alice == directory / "alice"
     assert (alice / "agent.too").read_text(encoding="utf-8") == "agent source\n"
+    assert (alice / "collab" / "MEMO.md").read_text(encoding="utf-8") == "\n"
+    assert (alice / "lab" / "MEMO.md").read_text(encoding="utf-8") == "\n"
     assert agents.list() == ("alice", "bob")
     assert agents.get("bob") == bob
 
@@ -59,3 +61,26 @@ def test_local_agents_reports_missing_and_conflicting_mutations(tmp_path: Path) 
 def test_local_agents_rejects_invalid_names(tmp_path: Path, name: str) -> None:
     with pytest.raises(ValueError, match="invalid agent name"):
         LocalAgents(tmp_path / "agents").path(name)
+
+
+def test_materialize_runspaces_preserves_notes_and_rejects_conflicts(
+    tmp_path: Path,
+) -> None:
+    from toolang.catalog.agent import materialize_agent_runspaces
+    from toolang.common.layout import AgentLayout
+
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.collab.mkdir()
+    layout.collab_memo.write_text("remember\n", encoding="utf-8")
+
+    materialize_agent_runspaces(layout)
+    materialize_agent_runspaces(layout)
+
+    assert layout.collab_memo.read_text(encoding="utf-8") == "remember\n"
+    assert layout.lab_memo.read_text(encoding="utf-8") == "\n"
+
+    layout.lab_memo.unlink()
+    layout.lab_memo.mkdir()
+    with pytest.raises(FileExistsError, match="memo path is not a file"):
+        materialize_agent_runspaces(layout)

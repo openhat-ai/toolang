@@ -82,6 +82,22 @@ class AgentLayout:
         return self.home / ".env"
 
     @property
+    def collab(self) -> Path:
+        return self.home / "collab"
+
+    @property
+    def collab_memo(self) -> Path:
+        return self.collab / "MEMO.md"
+
+    @property
+    def lab(self) -> Path:
+        return self.home / "lab"
+
+    @property
+    def lab_memo(self) -> Path:
+        return self.lab / "MEMO.md"
+
+    @property
     def root_setup(self) -> Path:
         return self.root / ".setup"
 
@@ -136,6 +152,10 @@ class AgentLayout:
     @property
     def runtime_log(self) -> Path:
         return self.runtime / "agent.log"
+
+    @property
+    def hosted_workspaces(self) -> Path:
+        return self.runtime / "workspaces"
 
     def run_log(self, runnable: str | None, run_id: str) -> Path:
         """Return the log path for one script invocation."""

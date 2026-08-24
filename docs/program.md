@@ -388,6 +388,9 @@ declaration named `<context:LINE>` or `<instruct:LINE>`. Omitting the statement
 leaves the AST reference as `None`; runtime policy normally resolves that like
 `default`. The string `"none"` explicitly disables the layer.
 
+Runtime access instructions and the selected run-space `MEMO.md` are mandatory
+run context. `instruct: none` and `context: none` do not remove them.
+
 `system:` is not an agic message block. Use `instruct:` for instructions and
 `context:` for data.
 

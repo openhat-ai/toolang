@@ -40,6 +40,7 @@ from .commands import runtime as runtime_commands
 from .commands import job as job_commands
 from .commands import model_catalog as model_catalog_commands
 from .commands import thread as thread_commands
+from .commands import workspace as workspace_commands
 
 _PREFIX_AGENT: ContextVar[str | None] = ContextVar(
     "toolang_cli_prefix_agent", default=None
@@ -57,6 +58,7 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "remove",
     "list",
     "info",
+    "workspace",
     "run",
     "start",
     "stop",
@@ -254,6 +256,12 @@ _registered_command(
     cls=RuntimeAgentCommand,
     rich_help_panel=AGENT_COMMAND_PANEL,
 )(agent_commands.info_agent)
+_registered_group(
+    workspace_commands.workspace_app,
+    name="workspace",
+    no_args_is_help=True,
+    rich_help_panel=AGENT_COMMAND_PANEL,
+)
 _registered_command(
     "run",
     help="Run an agent in the foreground.",

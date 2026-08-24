@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 from collections.abc import Sequence
 from typing import Literal
 
+from toolang.catalog.agent import materialize_agent_runspaces
 from toolang.common.github import (
     GitHubRef,
     github_raw_url,
@@ -305,6 +306,7 @@ def materialize_roaming_program(source_path: Path) -> AgentLayout:
         raise ValueError(f"agent program must point to a .too file: {resolved_source}")
     layout = AgentLayout.roaming(resolved_source)
     layout.home.mkdir(parents=True, exist_ok=True)
+    materialize_agent_runspaces(layout)
     _replace_relative_symlink(
         layout.program,
         resolved_source,
@@ -348,6 +350,7 @@ def materialize_visiting_program(
     agent_name = ref.default_name()
     layout = AgentLayout.visiting(source or ref.render(), agent_name)
     layout.home.mkdir(parents=True, exist_ok=True)
+    materialize_agent_runspaces(layout)
     layout.program.write_text(source_text, encoding="utf-8")
     return layout
 

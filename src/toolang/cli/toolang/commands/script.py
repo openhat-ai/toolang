@@ -28,7 +28,7 @@ from toolang.execution.executor import RunExecutor, RunHandle
 from toolang.execution.records import RunRecord
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import RunOverride, ThreadPrefix
+from toolang.execution.types import RunOverride, RunSpace, ThreadPrefix
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program
 from toolang.lang.includes import resolve_file_include
 from toolang.lang.input import NamedInputSources, RunnableInputRaw
@@ -173,6 +173,7 @@ def _runnable_command(
         allow: tuple[str, ...],
         default: tuple[str, ...],
         limit: tuple[str, ...],
+        space: RunSpace,
         save: str | None,
         quiet: bool,
     ) -> int:
@@ -190,6 +191,7 @@ def _runnable_command(
             allow_options=allow,
             default_options=default,
             limit_options=limit,
+            space=space,
             save=save,
             quiet=quiet,
         )
@@ -216,6 +218,13 @@ def _runnable_command(
             multiple=True,
             default=(),
             help="Set FIELD=VALUE. Repeat for another field.",
+        ),
+        TyperOption(
+            param_decls=["--space"],
+            type=click.Choice(("collab", "lab")),
+            default="collab",
+            show_default=True,
+            help="Select the run space.",
         ),
         TyperOption(
             param_decls=["--save"],
@@ -405,6 +414,7 @@ def _run(
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
     limit_options: tuple[str, ...],
+    space: RunSpace,
     save: str | None,
     quiet: bool,
 ) -> int:
@@ -446,6 +456,7 @@ def _run(
                 allow_options=allow_options,
                 default_options=default_options,
                 limit_options=limit_options,
+                space=space,
                 quiet=quiet,
             )
         )
@@ -496,6 +507,7 @@ async def _execute(
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
     quiet: bool,
+    space: RunSpace = "collab",
     limit_options: tuple[str, ...] = (),
 ) -> RunRecord:
     environ = load_runtime_environ(layout, base_environ=os.environ)
@@ -520,6 +532,7 @@ async def _execute(
         setup=setup,
         state=state,
         thread=_UNPERSISTED_THREAD,
+        space=space,
         default_runnable=runnable,
         surface=RunBindings(runnable=runnable),
         surface_named_sources=raw_named,

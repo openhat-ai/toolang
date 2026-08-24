@@ -28,6 +28,7 @@ from .types import (
     Local,
     ModelStepGiven,
     Occurrence,
+    RunSpace,
     RunStatus,
     StepKind,
     StepGiven,
@@ -185,6 +186,7 @@ class RunInfo:
     root_run_id: str
     runnable_kind: str
     runnable_name: str | None
+    space: RunSpace
     call_kind: str
     occurrence: Occurrence | None
     input_text: str
@@ -240,6 +242,9 @@ class RunInfo:
             root_run_id=root_run_id,
             runnable_kind=kind if separator else "",
             runnable_name=name if separator else preparation.runnable,
+            space=(
+                preparation.access.space if preparation.access is not None else "collab"
+            ),
             call_kind="top" if run.parent is None else "run",
             occurrence=run.occurrence,
             input_text=input_text,

@@ -63,5 +63,6 @@ class ToolContext:
     home: Path
     room: Path
     wd: Path
+    roots: tuple[Path, ...] = ()
     services: tuple[ToolService, ...] = ()
     placement: Literal["resident", "visiting", "roaming"] = "resident"

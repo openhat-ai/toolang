@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Literal, cast
 
 import pytest
@@ -32,6 +33,8 @@ from toolang.execution.types import (
     AgentResources,
     Local,
     Pointer,
+    RunAccess,
+    RunWorkspace,
     StepPath,
     local_from_protocol_data,
     local_to_protocol_data,
@@ -343,11 +346,25 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
         runnable="agic:worker",
         model="test/model",
         locals=(Local.typed("Part[]", (TextPart("hello"),), "_", 0),),
+        access=RunAccess(
+            space="collab",
+            working_directory=Path("/agent/collab"),
+            memo_file=Path("/agent/collab/MEMO.md"),
+            memo="notes\n",
+            memo_truncated=False,
+            workspaces=(RunWorkspace("project", Path("/workspace/project")),),
+        ),
     )
 
     assert (
         control_payload_from_data("start", control_payload_to_data(payload)) == payload
     )
+
+    legacy = control_payload_to_data(payload)
+    del legacy["access"]
+    decoded = control_payload_from_data("start", legacy)
+    assert isinstance(decoded, StartControlPayload)
+    assert decoded.access is None
 
 
 def test_preparation_payload_rejects_instead_of_dropping_invalid_locals() -> None:

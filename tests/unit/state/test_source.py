@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from toolang.state.source import Source, scan_source
+from toolang.state.source import Source, scan_home_source, scan_source
 
 
 def test_source_tree_round_trips_nested_metadata(tmp_path: Path) -> None:
@@ -66,3 +66,25 @@ def test_source_tree_follows_symbolic_linked_files(tmp_path: Path) -> None:
 
     assert before.root.children[0].name == "agent.too"
     assert after != before
+
+
+def test_home_source_excludes_runspace_notes_but_tracks_workspace_config(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "agents" / "alice"
+    memo = home / "collab" / "MEMO.md"
+    memo.parent.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (home / "config.toml").write_text("", encoding="utf-8")
+    memo.write_text("first\n", encoding="utf-8")
+    initial = scan_home_source(tmp_path, "alice")
+
+    memo.write_text("changed notes\n", encoding="utf-8")
+    after_memo = scan_home_source(tmp_path, "alice")
+    (home / "config.toml").write_text(
+        f'[workspaces]\nproject = "{tmp_path}"\n', encoding="utf-8"
+    )
+    after_config = scan_home_source(tmp_path, "alice")
+
+    assert after_memo == initial
+    assert after_config != initial

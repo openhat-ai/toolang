@@ -21,7 +21,7 @@ from toolang.common.template import render_text_template
 from toolang.common.time import elapsed_ms, utc_now
 
 from ...events import PartBegin, PartEnd, StepBegin, StepEnd
-from ...types import Local, Pointer, StepPath, ToolStepGiven, ToolStepNoted
+from ...types import Local, Pointer, RunAccess, StepPath, ToolStepGiven, ToolStepNoted
 from ..common import _StepFailed
 from ..diagnostics import log_tool_call_input, log_tool_call_output
 
@@ -109,6 +109,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             tools=prepared.tools,
             services=prepared.services,
             layout=state.layout,
+            access=run.access,
             call=call,
         )
     except asyncio.CancelledError:
@@ -321,6 +322,7 @@ async def invoke_tool_call(
     tools: Mapping[str, AgentTool],
     services: tuple[ToolService, ...],
     layout: AgentLayout,
+    access: RunAccess | None,
     call: ToolCall,
 ) -> ToolCallResult:
     """Invoke one selected tool and normalize its result or error."""
@@ -339,6 +341,7 @@ async def invoke_tool_call(
                 tool_name=name,
                 tools=tools,
                 services=services,
+                access=access,
             ),
         )
         error = None
@@ -362,6 +365,7 @@ def _tool_context(
     tool_name: str,
     tools: Mapping[str, AgentTool],
     services: tuple[ToolService, ...],
+    access: RunAccess | None,
 ) -> ToolContext:
     tool = tools.get(tool_name)
     plugin_name = getattr(tool, "plugin_name", None)
@@ -371,7 +375,8 @@ def _tool_context(
         run_id=run_id,
         home=layout.home,
         room=layout.tool_room(plugin_name),
-        wd=layout.home,
+        wd=access.working_directory if access is not None else layout.home,
+        roots=access.writable_directories if access is not None else (layout.home,),
         services=services,
         placement=layout.placement,
     )

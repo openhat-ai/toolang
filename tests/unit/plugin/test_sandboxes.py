@@ -35,6 +35,10 @@ def _request(
         working_directory=home,
         log_path=None if foreground else home / ".runtime" / "agent.log",
         envs={"EXAMPLE": "value"},
+        workspaces={
+            "project": Path("/root/.toolang/agents/alice/.runtime/workspaces/project")
+        },
+        workspace_sources={"project": root / "project"},
         mounts=(
             HostingMount(
                 local_path=root / "shared",
@@ -129,6 +133,12 @@ def test_docker_hosting_prepares_and_launches(
     assert run_call["image"] == "python:3.13-slim"
     assert run_call["published_port"] == 8123
     assert run_call["hosted_port"] == 8123
+    assert ref.meta["workspaces"] == {
+        "project": {
+            "configured_path": str(tmp_path / "project"),
+            "active_path": "/root/.toolang/agents/alice/.runtime/workspaces/project",
+        }
+    }
 
 
 def test_docker_hosting_uses_configured_default_image(tmp_path: Path) -> None:
