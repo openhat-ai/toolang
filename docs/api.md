@@ -429,8 +429,9 @@ models.dev-compatible catalog snapshot.
 
 Discovered Ollama and llama.cpp records include concise runtime metadata in
 `toolang models inspect --json`. Reported context, output limits, modalities,
-and capabilities populate the same catalog fields used by remote models, while
-local prices remain unknown.
+and capabilities populate the same catalog fields used by remote models. Their
+API token prices are explicitly zero; local compute costs are outside model
+token accounting.
 
 
 ## Plugin Commands

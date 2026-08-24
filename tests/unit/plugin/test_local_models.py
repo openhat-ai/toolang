@@ -67,7 +67,7 @@ def test_ollama_catalog_enriches_models_from_tags_and_show(
     assert model.tool_call is True
     assert model.temperature is True
     assert model.structured_output is True
-    assert model.cost is None
+    assert model.cost == {"input": 0, "output": 0}
     runtime = cast(Mapping[str, object], model.extra["runtime"])
     assert runtime["size"] == 3_338_801_804
     details = cast(Mapping[str, object], runtime["details"])
@@ -131,7 +131,7 @@ def test_llama_cpp_catalog_combines_model_meta_and_server_props(
     assert model.tool_call is True
     assert model.temperature is True
     assert model.structured_output is True
-    assert model.cost is None
+    assert model.cost == {"input": 0, "output": 0}
     runtime = cast(Mapping[str, object], model.extra["runtime"])
     meta = cast(Mapping[str, object], runtime["meta"])
     assert meta["n_params"] == 8_030_261_312
@@ -169,6 +169,7 @@ def test_local_detail_failures_keep_list_metadata(
     assert ollama_model.family == "qwen3"
     assert ollama_model.limit == {}
     assert ollama_model.tool_call is None
+    assert ollama_model.cost == {"input": 0, "output": 0}
 
     llama_cpp = _FakeClient(
         gets={
@@ -188,6 +189,7 @@ def test_local_detail_failures_keep_list_metadata(
     assert llama_model is not None
     assert llama_model.limit == {"context": 32_768}
     assert llama_model.tool_call is None
+    assert llama_model.cost == {"input": 0, "output": 0}
 
 
 class _FakeResponse:

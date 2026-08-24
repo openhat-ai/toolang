@@ -168,6 +168,7 @@ async def _ollama_model(
             "output": ("text",),
         },
         limit={"context": context} if context is not None else {},
+        cost={"input": 0, "output": 0},
         extra={"runtime": runtime},
         local=True,
     )
@@ -227,6 +228,7 @@ def _llama_cpp_model(
         temperature=True,
         modalities={"input": modalities, "output": ("text",)},
         limit={key: value for key, value in limit.items() if isinstance(value, int)},
+        cost={"input": 0, "output": 0},
         extra={"runtime": runtime},
         local=True,
     )

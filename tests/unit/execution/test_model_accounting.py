@@ -90,6 +90,20 @@ def test_provider_reported_cost_wins_but_estimate_remains_auditable() -> None:
     assert selected_usd_cost(accounting) == Decimal("0.03")
 
 
+def test_zero_prices_produce_a_complete_zero_cost() -> None:
+    accounting = build_model_accounting(
+        _target(),
+        ModelUsage(input_tokens=100, output_tokens=50),
+        _catalog({"input": 0, "output": 0}),
+    )
+
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.amount == "0"
+    assert accounting.estimate.complete is True
+    assert [line.rate for line in accounting.estimate.lines] == ["0", "0"]
+    assert selected_usd_cost(accounting) == Decimal("0")
+
+
 def test_non_usd_reported_cost_is_not_applied_to_usd_limit() -> None:
     accounting = build_model_accounting(
         _target(),
