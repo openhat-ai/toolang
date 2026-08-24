@@ -48,10 +48,9 @@ _SELECTED_LAYOUT: ContextVar[AgentLayout | None] = ContextVar(
     "toolang_cli_selected_layout", default=None
 )
 AGENT_COMMAND_PANEL = "Agent Commands"
-THREAD_COMMAND_PANEL = "Thread Commands"
-RUNTIME_COMMAND_PANEL = "Runtime Commands"
 CAPS_COMMAND_PANEL = "Cap Commands"
-_CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt", "caps")
+CONTROL_COMMAND_PANEL = "Control Commands"
+INSPECTION_COMMAND_PANEL = "Inspection Commands"
 _AGENT_PANEL_COMMAND_ORDER = (
     "new",
     "clone",
@@ -64,7 +63,8 @@ _AGENT_PANEL_COMMAND_ORDER = (
     "chore",
     "task",
 )
-_THREAD_PANEL_COMMAND_ORDER = (
+_CAPS_PANEL_COMMAND_ORDER = ("psyche", "skill", "service", "prompt")
+_CONTROL_PANEL_COMMAND_ORDER = (
     "chat",
     "steer",
     "cancel",
@@ -72,18 +72,23 @@ _THREAD_PANEL_COMMAND_ORDER = (
     "rerun",
     "rewind",
     "fork",
-    "inspect",
+)
+_INSPECTION_PANEL_COMMAND_ORDER = (
     "runs",
     "threads",
-)
-_RUNTIME_PANEL_COMMAND_ORDER = (
+    "inspect",
     "models",
     "providers",
     "adapters",
-    "model",
-    "tool",
-    "channel",
-    "sandbox",
+    "tools",
+    "sandboxes",
+    "caps",
+)
+_VISIBLE_COMMAND_ORDER = (
+    *_AGENT_PANEL_COMMAND_ORDER,
+    *_CAPS_PANEL_COMMAND_ORDER,
+    *_CONTROL_PANEL_COMMAND_ORDER,
+    *_INSPECTION_PANEL_COMMAND_ORDER,
 )
 _REGISTERED_COMMANDS: set[str] = set()
 
@@ -91,40 +96,8 @@ _REGISTERED_COMMANDS: set[str] = set()
 class _ToolangGroup(TyperGroup):
     def list_commands(self, ctx: click.Context) -> list[str]:
         names = TyperGroup.list_commands(self, ctx)
-        agent_names = [name for name in _AGENT_PANEL_COMMAND_ORDER if name in names]
-        if agent_names:
-            first_agent_index = min(names.index(name) for name in agent_names)
-            reordered = [name for name in names if name not in agent_names]
-            names = (
-                reordered[:first_agent_index]
-                + agent_names
-                + reordered[first_agent_index:]
-            )
-        thread_names = [name for name in _THREAD_PANEL_COMMAND_ORDER if name in names]
-        ordered_thread_group_names = [*thread_names]
-        if ordered_thread_group_names:
-            reordered = [
-                name for name in names if name not in ordered_thread_group_names
-            ]
-            runtime_indexes = [
-                reordered.index(name)
-                for name in _RUNTIME_PANEL_COMMAND_ORDER
-                if name in reordered
-            ]
-            insertion_index = (
-                min(runtime_indexes) if runtime_indexes else len(reordered)
-            )
-            names = (
-                reordered[:insertion_index]
-                + ordered_thread_group_names
-                + reordered[insertion_index:]
-            )
-        cap_names = [name for name in _CAPS_PANEL_COMMAND_ORDER if name in names]
-        if len(cap_names) < 2:
-            return names
-        first_cap_index = min(names.index(name) for name in cap_names)
-        reordered = [name for name in names if name not in cap_names]
-        return reordered[:first_cap_index] + cap_names + reordered[first_cap_index:]
+        visible = [name for name in _VISIBLE_COMMAND_ORDER if name in names]
+        return [*visible, *(name for name in names if name not in visible)]
 
 
 def _version_callback(value: bool) -> None:
@@ -319,109 +292,101 @@ _registered_command(
     "chat",
     help="Open or continue a terminal chat.",
     cls=RequiredPrefixAgentCommand,
-    rich_help_panel=THREAD_COMMAND_PANEL,
+    rich_help_panel=CONTROL_COMMAND_PANEL,
 )(chat_commands.chat_command)
 _registered_command(
     "threads",
     help="List threads.",
     cls=RequiredPrefixAgentCommand,
-    rich_help_panel=THREAD_COMMAND_PANEL,
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(thread_commands.threads_command)
 _registered_command(
     "runs",
     help="List runs.",
     cls=RequiredPrefixAgentCommand,
-    rich_help_panel=THREAD_COMMAND_PANEL,
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(thread_commands.runs_command)
 _registered_command(
     "inspect",
     help="Inspect a thread or run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
-    rich_help_panel=THREAD_COMMAND_PANEL,
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(thread_commands.inspect_command)
 _registered_command(
     "steer",
     help="Steer an active run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
-    rich_help_panel=THREAD_COMMAND_PANEL,
+    rich_help_panel=CONTROL_COMMAND_PANEL,
 )(thread_commands.steer_command)
 _registered_command(
     "cancel",
     help="Cancel an active run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
-    rich_help_panel=THREAD_COMMAND_PANEL,
+    rich_help_panel=CONTROL_COMMAND_PANEL,
 )(thread_commands.cancel_command)
 _registered_command(
     "retry",
     help="Retry a run from a failed step.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
-    rich_help_panel=THREAD_COMMAND_PANEL,
+    rich_help_panel=CONTROL_COMMAND_PANEL,
 )(thread_commands.retry_command)
 _registered_command(
     "rerun",
     help="Rerun a prior invocation.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
-    rich_help_panel=THREAD_COMMAND_PANEL,
+    rich_help_panel=CONTROL_COMMAND_PANEL,
 )(thread_commands.rerun_command)
 _registered_command(
     "rewind",
     help="Rewind a thread to an earlier run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
-    rich_help_panel=THREAD_COMMAND_PANEL,
+    rich_help_panel=CONTROL_COMMAND_PANEL,
 )(thread_commands.rewind_command)
 _registered_command(
     "fork",
     help="Fork a thread from an earlier run.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
-    rich_help_panel=THREAD_COMMAND_PANEL,
+    rich_help_panel=CONTROL_COMMAND_PANEL,
 )(thread_commands.fork_command)
 
 _registered_group(
     model_catalog_commands.models_app,
     name="models",
-    rich_help_panel=RUNTIME_COMMAND_PANEL,
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
 )
 _registered_command(
     "providers",
     help="Inspect model providers.",
-    rich_help_panel=RUNTIME_COMMAND_PANEL,
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(model_catalog_commands.providers_command)
 _registered_command(
     "adapters",
     help="Inspect installed model adapters.",
-    rich_help_panel=RUNTIME_COMMAND_PANEL,
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(model_catalog_commands.adapters_command)
-_registered_group(
-    plugin_commands.model_app,
-    name="model",
-    no_args_is_help=True,
-    rich_help_panel=RUNTIME_COMMAND_PANEL,
-)
-_registered_group(
-    plugin_commands.tool_app,
-    name="tool",
-    no_args_is_help=True,
-    rich_help_panel=RUNTIME_COMMAND_PANEL,
-)
 _registered_group(
     plugin_commands.channel_app,
     name="channel",
     no_args_is_help=True,
-    rich_help_panel=RUNTIME_COMMAND_PANEL,
+    hidden=True,
 )
-_registered_group(
-    plugin_commands.sandbox_app,
-    name="sandbox",
-    no_args_is_help=True,
-    rich_help_panel=RUNTIME_COMMAND_PANEL,
-)
+_registered_command(
+    "tools",
+    help="Inspect available tools.",
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
+)(plugin_commands.list_tools)
+_registered_command(
+    "sandboxes",
+    help="Inspect installed sandboxes.",
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
+)(plugin_commands.list_sandboxes)
 
 _cap_apps = cap_commands.create_cap_apps(group_cls=OptionalPrefixAgentGroup)
 _registered_group(
@@ -452,7 +417,7 @@ _registered_command(
     "caps",
     help="Inspect available caps.",
     cls=OptionalPrefixAgentListCommand,
-    rich_help_panel=CAPS_COMMAND_PANEL,
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(cap_commands.list_caps)
 
 _registered_command(

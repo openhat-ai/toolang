@@ -189,8 +189,8 @@ too providers [--filter SELECTOR] [--json]
 too adapters [--filter SELECTOR] [--json]
 ```
 
-The existing singular `too model list|providers|adapters` forms forward with a
-one-cycle migration warning.
+The singular `too model` group is removed. The public catalog commands are
+`too models`, `too providers`, and `too adapters`.
 
 ## Usage, Pricing, and Durable Accounting
 

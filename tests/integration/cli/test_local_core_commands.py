@@ -679,7 +679,7 @@ def test_thread_fork_and_rewind_use_thread_manager_semantics(
     assert [run.id for run in rewound.runs] == ["run_first"]
 
 
-def test_tool_list_uses_setup_snapshot(tmp_path: Path, monkeypatch) -> None:
+def test_tools_uses_setup_snapshot(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "toolang"
     layout = AgentLayout.resident(root, "default")
     tool = _FakeTool()
@@ -702,12 +702,27 @@ def test_tool_list_uses_setup_snapshot(tmp_path: Path, monkeypatch) -> None:
         lambda _group: {"shell": "test"},
     )
 
-    result = _invoke(root, "tool", "list")
+    result = _invoke(root, "tools")
 
     assert result.exit_code == 0
     assert "shell" in result.stdout
     assert "echo" in result.stdout
     assert "Echo text." in result.stdout
+
+
+def test_sandboxes_lists_installed_plugins(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "toolang"
+    monkeypatch.setattr(
+        plugin_commands,
+        "plugin_info_rows",
+        lambda group: [("docker", "test")] if group == "toolang.sandbox" else [],
+    )
+
+    result = _invoke(root, "sandboxes")
+
+    assert result.exit_code == 0
+    assert "docker" in result.stdout
+    assert "test" in result.stdout
 
 
 def test_agent_info_builds_state_and_setup_without_server(

@@ -91,11 +91,12 @@ toolang run <agent-or-ref>           # Run an agent in the foreground
 toolang start <agent>                # Start an agent in the background
 toolang stop <agent>                 # Stop a running agent
 
-# Runtime
+# Inspection
 toolang models                       # List model knowledge and availability
 toolang providers                    # List catalog providers
 toolang adapters                     # List installed model API adapters
-toolang tool list                    # List available tools
+toolang tools                        # List available tools
+toolang sandboxes                    # List installed sandboxes
 
 # Caps
 caps [agent] psyche add <ref>        # Add a psyche

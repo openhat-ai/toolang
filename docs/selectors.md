@@ -330,8 +330,8 @@ List filters use the same selector list grammar.
 
 | Surface | Domain | Implicit family |
 | --- | --- | --- |
-| `too model list --filter` | `model` | none |
-| `too tool list --filter` | `tool` | none |
+| `too models --filter` | `model` | none |
+| `too tools --filter` | `tool` | none |
 | `caps list --filter` | `cap` | none |
 | `caps skill list --filter` | `cap` | `skill` |
 | `caps psyche list --filter` | `cap` | `psyche` |

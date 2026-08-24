@@ -67,8 +67,8 @@ A model info may include:
 
 Toolang uses model infos for:
 
-- `too model list`
-- richer `too model providers` output
+- `too models`
+- richer `too providers` output
 - route-neutral agic ref expansion
 - selector matching inside one provider
 

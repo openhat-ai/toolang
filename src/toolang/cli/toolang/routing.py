@@ -116,13 +116,12 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             )
             for name in ("caps", *CAP_KINDS)
         ),
-        _command("model", "none"),
         _command("models", "none"),
         _command("providers", "none"),
         _command("adapters", "none"),
-        _command("tool", "none"),
+        _command("tools", "none"),
         _command("channel", "none"),
-        _command("sandbox", "none"),
+        _command("sandboxes", "none"),
         _command("hidden", "none"),
         _command("fmt", "none"),
         _command("parse", "none"),

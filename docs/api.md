@@ -114,7 +114,7 @@ toolang alice steer run_ppkp9e94 "Use the smaller patch"
 toolang alice cancel term_3nprht9x
 toolang alice rewind run_ppkp9e94
 toolang alice fork run_ppkp9e94
-toolang model list
+toolang models
 ```
 
 Top-level routing uses three command shapes:
@@ -399,26 +399,30 @@ already recorded by other local agents, instead of asking the OS for a random
 ephemeral port.
 
 
-## Model Commands
+## Model Inspection Commands
 
-- `toolang model list`
-- `toolang model providers`
-- `toolang model adapters`
+- `toolang models`
+- `toolang models inspect`
+- `toolang models update`
+- `toolang providers`
+- `toolang adapters`
 
-`toolang model list` shows selectable models, including:
+`toolang models` shows catalog knowledge and current availability, including:
 
-- canonical ref under the `MODEL` column
-- provider name
-- profile details such as streaming, tool support, context window, output limits, and price metadata
-- a summary count after the table
+- canonical provider/model identity
+- whether the model is currently available
+- profile details such as modalities, tool support, reasoning, context limits,
+  and price metadata
+- a summary count and catalog revision
 
 Pass `--filter` to preview selector filtering, for example
-`toolang model list --filter "[remote]"` or
-`toolang model list --filter "openai/*[openrouter]"`.
+`toolang models --filter "[remote]"` or
+`toolang models --filter "openai/*[openrouter]"`.
 
-`toolang model providers` shows provider and alias config health,
-including missing key environment variables and endpoints. `toolang model
-adapters` lists installed model adapter names.
+`toolang providers` shows provider knowledge and runtime availability.
+`toolang adapters` lists installed model adapter names.
+`toolang models update --root|--home` validates and activates one complete
+models.dev-compatible catalog snapshot.
 
 
 ## Plugin Commands
