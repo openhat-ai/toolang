@@ -110,7 +110,7 @@ def test_local_script_saves_only_to_an_explicit_destination(
     else:
         assert "• done" in output.err
         assert "[ run_" in output.err
-    assert "\x1b[" not in output.err
+        assert "\x1b[" not in output.err
     if save_mode == "file":
         assert destination.read_bytes() == b"done"
     else:
