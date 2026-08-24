@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelAlias, Provider
+from toolang.plugin.config import resolve_env_refs
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,24 +30,16 @@ def configure_catalog_providers(
 ) -> dict[str, Provider]:
     """Apply runtime-only provider configuration without changing catalog data."""
 
-    configured = {
-        provider_id: _configured_provider(provider, configs.get(provider_id))
-        for provider_id, provider in providers.items()
-    }
+    configured = dict(providers)
     for provider_id, config in configs.items():
         if provider_id in configured:
             continue
-        configured[provider_id] = _configured_provider(
-            Provider(
-                id=provider_id,
-                name=provider_id,
-                env=(config.key_env,) if config.key_env else (),
-                npm="@ai-sdk/openai-compatible",
-                api=config.endpoint,
-                models={},
-                local=_local_endpoint(config.endpoint),
-            ),
-            config,
+        configured[provider_id] = Provider(
+            id=provider_id,
+            name=provider_id,
+            env=(),
+            npm="@ai-sdk/openai-compatible",
+            models={},
         )
     configured.setdefault(
         "custom",
@@ -59,63 +52,6 @@ def configure_catalog_providers(
         ),
     )
     return configured
-
-
-def catalog_provider_config(provider: Provider) -> ProviderConfig | None:
-    """Return runtime configuration carried by a configured provider copy."""
-
-    payload = provider.extra.get("_toolang")
-    if not isinstance(payload, Mapping):
-        return None
-    data = cast(Mapping[str, object], payload)
-    return ProviderConfig(
-        name=provider.id,
-        endpoint=_optional_model_config_str(data.get("endpoint")),
-        key_env=_optional_model_config_str(data.get("key_env")),
-        adapter=_optional_model_config_str(data.get("adapter")),
-        scope=_optional_model_config_str(data.get("scope")),
-        options=(
-            dict(cast(Mapping[str, object], data.get("options")))
-            if isinstance(data.get("options"), Mapping)
-            else {}
-        ),
-        details=_optional_model_config_str(data.get("details")),
-    )
-
-
-def _configured_provider(
-    provider: Provider,
-    config: ProviderConfig | None,
-) -> Provider:
-    if config is None:
-        return provider
-    runtime = {
-        "endpoint": config.endpoint,
-        "key_env": config.key_env,
-        "adapter": config.adapter,
-        "scope": config.scope,
-        "options": dict(config.options),
-        "details": config.details,
-    }
-    return Provider(
-        id=provider.id,
-        name=provider.name,
-        env=provider.env,
-        npm=provider.npm,
-        api=provider.api,
-        doc=provider.doc,
-        models=provider.models,
-        extra={**provider.extra, "_toolang": runtime},
-        local=provider.local or _local_endpoint(config.endpoint),
-    )
-
-
-def _local_endpoint(endpoint: str | None) -> bool:
-    if endpoint is None:
-        return False
-    return endpoint.lower().startswith(
-        ("http://127.0.0.1", "http://localhost", "http://[::1]")
-    )
 
 
 def parse_model_aliases(
@@ -154,6 +90,47 @@ def parse_provider_configs(
                 name, cast(Mapping[str, object], value)
             )
     return configs
+
+
+def parse_catalog_configs(
+    config_layers: Sequence[Mapping[str, object]],
+    *,
+    environ: Mapping[str, str],
+) -> dict[str, dict[str, object]]:
+    """Parse enabled ``[models.catalogs.<name>]`` plugin configurations."""
+
+    configs: dict[str, dict[str, object]] = {}
+    enabled: dict[str, bool] = {}
+    for payload in config_layers:
+        raw_catalogs = _models_table(payload).get("catalogs")
+        if not isinstance(raw_catalogs, Mapping):
+            continue
+        for raw_name, raw_value in raw_catalogs.items():
+            if not isinstance(raw_name, str) or not isinstance(raw_value, Mapping):
+                continue
+            name = raw_name.strip()
+            if not name:
+                continue
+            value = cast(Mapping[str, object], raw_value)
+            if "enabled" in value:
+                raw_enabled = value["enabled"]
+                if not isinstance(raw_enabled, bool):
+                    raise ToolangError(
+                        f"model catalog {name!r} enabled must be a boolean"
+                    )
+                enabled[name] = raw_enabled
+            else:
+                enabled.setdefault(name, True)
+            current = dict(configs.get(name, {}))
+            current.update(
+                resolve_env_refs(
+                    {str(key): item for key, item in value.items() if key != "enabled"},
+                    environ,
+                    context=f"models.catalogs.{name}",
+                )
+            )
+            configs[name] = current
+    return {name: config for name, config in configs.items() if enabled.get(name, True)}
 
 
 def parse_default_models(

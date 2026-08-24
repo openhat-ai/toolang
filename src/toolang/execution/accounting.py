@@ -53,11 +53,13 @@ def build_model_accounting(
         meters=_usage_meters(usage),
         reasoning=ModelReasoningAccounting(
             requested=dict(target.reasoning) or None,
-            selected=dict(target.reasoning) or None,
+            selected=None,
         ),
         pricing=(
             ModelPricing(
-                source="models.dev",
+                source=target.catalog
+                or (model.catalog if model is not None else None)
+                or "unknown",
                 revision=target.catalog_revision
                 or (catalog.revision if catalog is not None else None),
                 plan=plan,

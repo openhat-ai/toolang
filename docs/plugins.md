@@ -85,8 +85,9 @@ configuration layers before constructing plugins. Core modules receive
 concrete plugin instances or configuration values; plugins do not read CLI
 state implicitly.
 
-Model catalog providers are resolved once after all catalog snapshots are
-merged. The resolver maps raw npm metadata to an installed adapter, resolves a
-concrete endpoint, interprets environment availability, and stores only
-non-secret runtime facts in `Provider.resolved`. See [models.md](models.md) for
-the complete boundary.
+Only configured external model catalogs are instantiated. Their factory
+configuration comes from `[models.catalogs.<entry-point-name>]`; the three
+built-in catalogs are always loaded. After snapshots are merged, the resolver
+maps raw npm metadata to installed adapters, resolves provider and model routes,
+interprets environment availability, and stores only non-secret runtime facts.
+See [models.md](models.md) for the complete boundary.

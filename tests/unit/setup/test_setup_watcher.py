@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from toolang.base.types.model import ModelCatalogSnapshot, Provider
+from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.adapters.responses import ResponsesModelAdapter
 from toolang.plugin.models.catalog import ModelsDevModels
@@ -46,7 +46,7 @@ def test_setup_watcher_loads_catalog_without_persistent_model_cache(
     assert not (tmp_path / ".setup" / "models").exists()
 
 
-def test_setup_watcher_reuses_static_parse_and_force_reprobes_local_sources(
+def test_setup_watcher_reuses_static_parse_and_reprobes_local_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -82,7 +82,61 @@ def test_setup_watcher_reuses_static_parse_and_force_reprobes_local_sources(
     assert first is second
     assert forced is not first
     assert parse_calls == 1
-    assert local_calls == 4
+    assert local_calls == 6
+
+
+def test_setup_watcher_detects_local_models_without_force(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one",))
+    calls = 0
+
+    async def changing_ollama(_self: object) -> ModelCatalogSnapshot:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return _empty_local("ollama")
+        model = Model(
+            provider_id="ollama",
+            id="new-local",
+            name="New Local",
+            local=True,
+        )
+        provider = Provider(
+            id="ollama",
+            name="Ollama",
+            env=(),
+            npm="@ai-sdk/openai-compatible",
+            api="http://127.0.0.1:11434/v1",
+            models={model.id: model},
+            local=True,
+        )
+        return ModelCatalogSnapshot(
+            providers={provider.id: provider},
+            models=(model,),
+            revision=f"runtime:ollama:{calls}",
+        )
+
+    monkeypatch.setattr(OllamaModels, "snapshot", changing_ollama)
+
+    async def empty_llama(_self: object) -> ModelCatalogSnapshot:
+        return _empty_local("llama_cpp")
+
+    monkeypatch.setattr(LlamaCppModels, "snapshot", empty_llama)
+    watcher = _watcher(
+        monkeypatch,
+        tmp_path,
+        envs={"TEST_API_KEY": "secret"},
+        patch_local=False,
+    )
+
+    first = asyncio.run(watcher.refresh())
+    second = asyncio.run(watcher.refresh())
+
+    assert first is not second
+    assert second.catalog is not None
+    assert second.catalog.find("ollama", "new-local") is not None
 
 
 def test_setup_watcher_rebuilds_when_selected_catalog_file_changes(

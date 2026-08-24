@@ -5,6 +5,7 @@ import tomllib
 import pytest
 
 from toolang.plugin.config import merge_named_configs, merge_sandbox_config
+from toolang.plugin.models.config import parse_catalog_configs
 
 
 def test_merge_named_configs_merges_root_and_agent_sections() -> None:
@@ -111,3 +112,36 @@ token_env = "SANDBOX_TOKEN"
         match="sandbox.config.token_env.*SANDBOX_TOKEN",
     ):
         merge_sandbox_config((root_config,), environ={})
+
+
+def test_parse_catalog_configs_merges_enabled_external_plugins() -> None:
+    root = tomllib.loads(
+        """
+[models.catalogs.company]
+url = "https://catalog.example/models.json"
+token_env = "CATALOG_TOKEN"
+
+[models.catalogs.disabled]
+enabled = false
+url = "https://disabled.example/models.json"
+""".strip()
+    )
+    home = tomllib.loads(
+        """
+[models.catalogs.company]
+timeout = 10
+""".strip()
+    )
+
+    configs = parse_catalog_configs(
+        (root, home),
+        environ={"CATALOG_TOKEN": "secret"},
+    )
+
+    assert configs == {
+        "company": {
+            "url": "https://catalog.example/models.json",
+            "token": "secret",
+            "timeout": 10,
+        }
+    }

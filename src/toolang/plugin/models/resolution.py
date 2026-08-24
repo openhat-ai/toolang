@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from typing import Protocol, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import Model, ModelAlias, ModelInfo, ModelTarget, Provider
-from toolang.plugin.models.config import catalog_provider_config
+from toolang.plugin.models.config import ProviderConfig
 from toolang.plugin.models.messages import (
     NO_AVAILABLE_MODELS_MESSAGE,
     NO_MATCHED_MODELS_MESSAGE,
@@ -49,7 +49,8 @@ def resolve_catalog_adapter(
 ) -> str | None:
     """Resolve a protocol adapter from explicit config and catalog signals."""
 
-    del model
+    if model is not None and model.resolved is not None:
+        return model.resolved.adapter
     if provider.resolved is None:
         raise RuntimeError(f"provider {provider.id!r} has not been resolved")
     return provider.resolved.adapter
@@ -63,7 +64,9 @@ def catalog_model_endpoint(
 ) -> str | None:
     """Resolve the configured or catalog endpoint for one model record."""
 
-    del model, envs
+    del envs
+    if model.resolved is not None:
+        return model.resolved.endpoint
     if provider.resolved is None:
         raise RuntimeError(f"provider {provider.id!r} has not been resolved")
     return provider.resolved.endpoint
@@ -97,6 +100,7 @@ class ModelTargetResolver:
     model_aliases: Mapping[str, ModelAlias]
     default_models: tuple[str, ...]
     envs: Mapping[str, str]
+    provider_configs: Mapping[str, ProviderConfig] = field(default_factory=dict)
 
     def resolve(
         self,
@@ -121,6 +125,7 @@ class ModelTargetResolver:
             models=self.models,
             aliases=self.model_aliases,
             envs=self.envs,
+            provider_configs=self.provider_configs,
             selectors=selectors,
         )
 
@@ -134,12 +139,14 @@ def resolve_model(
 ) -> ModelTarget:
     """Resolve one model selector against one uptime context."""
 
+    provider_configs = _context_provider_configs(context)
     resolved_allowed = _resolve_allowed_targets(
         allowed_selectors,
         providers=context.providers,
         models=context.models,
         aliases=context.model_aliases,
         envs=context.envs,
+        provider_configs=provider_configs,
     )
     effective_selector = _first_non_empty(
         selector,
@@ -153,6 +160,7 @@ def resolve_model(
         models=context.models,
         aliases=context.model_aliases,
         envs=context.envs,
+        provider_configs=provider_configs,
     )
     if not matches:
         raise ToolangError(
@@ -161,6 +169,7 @@ def resolve_model(
                 models=context.models,
                 aliases=context.model_aliases,
                 envs=context.envs,
+                provider_configs=provider_configs,
             )
         )
     if len(matches) > 1:
@@ -182,12 +191,14 @@ def select_model_selectors(
 ) -> tuple[str, ...]:
     """Return the effective ordered model selectors for one run."""
 
+    provider_configs = _context_provider_configs(context)
     directive_candidates = _resolve_selector_targets(
         directive_selectors,
         providers=context.providers,
         models=context.models,
         aliases=context.model_aliases,
         envs=context.envs,
+        provider_configs=provider_configs,
     )
     allowed_candidates = _resolve_selector_targets(
         allowed_selectors,
@@ -195,6 +206,7 @@ def select_model_selectors(
         models=context.models,
         aliases=context.model_aliases,
         envs=context.envs,
+        provider_configs=provider_configs,
     )
     if directive_selectors and not directive_candidates:
         raise ToolangError(
@@ -203,6 +215,7 @@ def select_model_selectors(
                 models=context.models,
                 aliases=context.model_aliases,
                 envs=context.envs,
+                provider_configs=provider_configs,
             )
         )
     if allowed_selectors and not allowed_candidates:
@@ -212,6 +225,7 @@ def select_model_selectors(
                 models=context.models,
                 aliases=context.model_aliases,
                 envs=context.envs,
+                provider_configs=provider_configs,
             )
         )
     if directive_candidates and allowed_candidates:
@@ -238,6 +252,7 @@ def select_model_selectors(
         models=context.models,
         aliases=context.model_aliases,
         envs=context.envs,
+        provider_configs=provider_configs,
     )
     defaults = (
         (default_selector,)
@@ -250,6 +265,7 @@ def select_model_selectors(
         models=context.models,
         aliases=context.model_aliases,
         envs=context.envs,
+        provider_configs=provider_configs,
     )
     ordered: list[str] = []
     seen: set[str] = set()
@@ -266,6 +282,7 @@ def select_model_selectors(
             models=context.models,
             aliases=context.model_aliases,
             envs=context.envs,
+            provider_configs=provider_configs,
         )
     )
 
@@ -276,6 +293,7 @@ def selectable_model_targets(
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
+    provider_configs: Mapping[str, ProviderConfig] | None = None,
     selectors: Sequence[str] | None = None,
 ) -> tuple[tuple[str, ModelTarget], ...]:
     """Return selectable model targets for CLI/API listing."""
@@ -289,6 +307,7 @@ def selectable_model_targets(
                 models=models,
                 aliases=aliases,
                 envs=envs,
+                provider_configs=provider_configs or {},
             )
         )
     return tuple(
@@ -298,6 +317,7 @@ def selectable_model_targets(
             models=models,
             aliases=aliases,
             envs=envs,
+            provider_configs=provider_configs or {},
         )
     )
 
@@ -309,6 +329,7 @@ def _resolve_allowed_targets(
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
+    provider_configs: Mapping[str, ProviderConfig],
 ) -> tuple[ModelTarget, ...]:
     targets: list[ModelTarget] = []
     for candidate in _resolve_selector_targets(
@@ -317,6 +338,7 @@ def _resolve_allowed_targets(
         models=models,
         aliases=aliases,
         envs=envs,
+        provider_configs=provider_configs,
     ):
         targets.append(candidate.target)
     return tuple(targets)
@@ -328,6 +350,7 @@ def _discover_available_candidates(
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
+    provider_configs: Mapping[str, ProviderConfig],
 ) -> tuple[_Candidate, ...]:
     candidates: list[_Candidate] = []
     seen: set[tuple[str, str, str, str | None]] = set()
@@ -337,6 +360,7 @@ def _discover_available_candidates(
             providers=providers,
             models=models,
             envs=envs,
+            provider_configs=provider_configs,
             strict=False,
         )
         if target is None:
@@ -357,11 +381,14 @@ def _discover_available_candidates(
         provider = providers.get(info.provider)
         if provider is None or _provider_id(provider) == CUSTOM_MODEL_PROVIDER:
             continue
-        if _missing_target_env_vars(provider, alias=None, envs=envs):
+        if not _model_info_ready(info):
             continue
-        if info.adapter == "unavailable":
-            continue
-        target = _target_from_info(provider, info, envs=envs)
+        target = _target_from_info(
+            provider,
+            info,
+            envs=envs,
+            provider_configs=provider_configs,
+        )
         identity = _target_identity(target)
         if identity in seen:
             continue
@@ -385,12 +412,14 @@ def _resolve_selector_targets(
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
+    provider_configs: Mapping[str, ProviderConfig],
 ) -> tuple[_Candidate, ...]:
     candidates = _discover_available_candidates(
         providers=providers,
         models=models,
         aliases=aliases,
         envs=envs,
+        provider_configs=provider_configs,
     )
     selected: list[_Candidate] = []
     seen: set[tuple[str, str, str, str | None]] = set()
@@ -404,6 +433,7 @@ def _resolve_selector_targets(
                 providers=providers,
                 models=models,
                 envs=envs,
+                provider_configs=provider_configs,
                 strict=True,
             )
             if target is None:
@@ -433,6 +463,7 @@ def _resolve_selector_targets(
                 models=models,
                 aliases=aliases,
                 envs=envs,
+                provider_configs=provider_configs,
             )
         for candidate in matches:
             identity = _target_identity(candidate.target)
@@ -450,6 +481,7 @@ def _resolve_exact_ref(
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
+    provider_configs: Mapping[str, ProviderConfig],
 ) -> tuple[_Candidate, ...]:
     matches: list[_Candidate] = []
     for info in models:
@@ -458,11 +490,14 @@ def _resolve_exact_ref(
         provider = providers.get(info.provider)
         if provider is None or _provider_id(provider) == CUSTOM_MODEL_PROVIDER:
             continue
-        if _missing_target_env_vars(provider, alias=None, envs=envs):
+        if not _model_info_ready(info):
             continue
-        if info.adapter == "unavailable":
-            continue
-        target = _target_from_info(provider, info, envs=envs)
+        target = _target_from_info(
+            provider,
+            info,
+            envs=envs,
+            provider_configs=provider_configs,
+        )
         matches.append(
             _Candidate(
                 selector=f"{target.ref}[{_provider_id(provider)}]",
@@ -479,6 +514,7 @@ def _resolve_exact_ref(
             providers=providers,
             models=models,
             envs=envs,
+            provider_configs=provider_configs,
             strict=False,
         )
         if target is None:
@@ -577,6 +613,11 @@ def _bool_filter_value(value: bool) -> str:
     return "true" if value else "false"
 
 
+def _model_info_ready(info: ModelInfo) -> bool:
+    value = info.metadata.get("resolved_ready")
+    return value if isinstance(value, bool) else info.adapter != "unavailable"
+
+
 def _looks_exact_ref(selector: ModelSelector) -> bool:
     pattern = selector.pattern.strip()
     return "/" in pattern and not any(char in pattern for char in "*?[")
@@ -588,6 +629,7 @@ def _target_from_alias(
     providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
     envs: Mapping[str, str],
+    provider_configs: Mapping[str, ProviderConfig],
     strict: bool,
 ) -> ModelTarget | None:
     provider = providers.get(alias.provider)
@@ -613,8 +655,19 @@ def _target_from_alias(
         models, provider=_provider_id(provider), ref=alias.ref
     )
     if info is not None:
-        return _target_from_info(provider, info, envs=envs, alias=alias)
-    return _target_from_alias_only(provider, alias, envs=envs)
+        return _target_from_info(
+            provider,
+            info,
+            envs=envs,
+            provider_configs=provider_configs,
+            alias=alias,
+        )
+    return _target_from_alias_only(
+        provider,
+        alias,
+        envs=envs,
+        provider_configs=provider_configs,
+    )
 
 
 def _find_model_info_by_ref(
@@ -634,10 +687,12 @@ def _target_from_info(
     info: ModelInfo,
     *,
     envs: Mapping[str, str],
+    provider_configs: Mapping[str, ProviderConfig],
     alias: ModelAlias | None = None,
 ) -> ModelTarget:
+    config = provider_configs.get(provider.id)
     request_options = _target_options(
-        provider, dict(alias.options) if alias is not None else {}
+        config, dict(alias.options) if alias is not None else {}
     )
     reasoning = _reasoning_options(request_options)
     mode = _mode_option(request_options)
@@ -655,9 +710,15 @@ def _target_from_info(
     endpoint = (
         alias.endpoint
         if alias is not None and alias.endpoint is not None
-        else resolved.endpoint
+        else _metadata_text(info.metadata, "resolved_endpoint")
     )
-    scope = _target_scope(provider, info=info, alias=alias, endpoint=endpoint)
+    scope = _target_scope(
+        provider,
+        info=info,
+        alias=alias,
+        endpoint=endpoint,
+        config=config,
+    )
     return ModelTarget(
         ref=info.ref,
         provider=_provider_id(provider),
@@ -686,6 +747,7 @@ def _target_from_info(
         streaming=alias.streaming
         if alias is not None and alias.streaming is not None
         else info.streaming,
+        catalog=_metadata_text(info.metadata, "catalog"),
         catalog_revision=_metadata_text(info.metadata, "catalog_revision"),
         reasoning=reasoning,
         mode=mode,
@@ -697,15 +759,17 @@ def _target_from_alias_only(
     alias: ModelAlias,
     *,
     envs: Mapping[str, str],
+    provider_configs: Mapping[str, ProviderConfig],
 ) -> ModelTarget:
     model_name = alias.model or _provider_model_name_from_ref(alias.provider, alias.ref)
     resolved = provider.resolved
     if resolved is None:
         raise RuntimeError(f"provider {provider.id!r} has not been resolved")
     endpoint = alias.endpoint or resolved.endpoint
-    scope = alias.scope or _configured_scope(provider) or _scope_from_endpoint(endpoint)
+    config = provider_configs.get(provider.id)
+    scope = alias.scope or _configured_scope(config) or _scope_from_endpoint(endpoint)
     scope = scope or _provider_scope(alias.provider)
-    request_options = _target_options(provider, dict(alias.options))
+    request_options = _target_options(config, dict(alias.options))
     reasoning = _reasoning_options(request_options)
     mode = _mode_option(request_options)
     return ModelTarget(
@@ -807,11 +871,10 @@ def _target_headers(
 
 
 def _target_options(
-    provider: Provider,
+    config: ProviderConfig | None,
     overrides: Mapping[str, object],
 ) -> dict[str, object]:
     options: dict[str, object] = {}
-    config = catalog_provider_config(provider)
     if config is not None:
         options.update(config.options)
     options.update(overrides)
@@ -864,19 +927,19 @@ def _target_scope(
     info: ModelInfo,
     alias: ModelAlias | None,
     endpoint: str | None,
+    config: ProviderConfig | None,
 ) -> str:
     return (
         alias.scope
         if alias is not None and alias.scope is not None
-        else _configured_scope(provider)
+        else _configured_scope(config)
         or _scope_from_endpoint(endpoint)
         or info.scope
         or _provider_scope(_provider_id(provider))
     )
 
 
-def _configured_scope(provider: Provider) -> str | None:
-    config = catalog_provider_config(provider)
+def _configured_scope(config: ProviderConfig | None) -> str | None:
     return config.scope if config is not None else None
 
 
@@ -1010,13 +1073,28 @@ def _empty_model_selection_message(
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
+    provider_configs: Mapping[str, ProviderConfig],
 ) -> str:
     available = _discover_available_candidates(
         providers=providers,
         models=models,
         aliases=aliases,
         envs=envs,
+        provider_configs=provider_configs,
     )
     if available:
         return NO_MATCHED_MODELS_MESSAGE
     return NO_AVAILABLE_MODELS_MESSAGE
+
+
+def _context_provider_configs(
+    context: SupportsModelSelection,
+) -> Mapping[str, ProviderConfig]:
+    value = getattr(context, "provider_configs", {})
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(name): config
+        for name, config in value.items()
+        if isinstance(config, ProviderConfig)
+    }

@@ -179,6 +179,57 @@ def test_accounting_selects_advertised_mode_price() -> None:
     assert [line.rate for line in accounting.estimate.lines] == ["3", "4"]
 
 
+def test_accounting_uses_model_catalog_provenance_without_inventing_reasoning() -> None:
+    model = Model(
+        provider_id="ollama",
+        id="local",
+        name="Local",
+        reasoning=True,
+        cost={"input": 0, "output": 0},
+        catalog="ollama",
+        catalog_revision="runtime:local",
+        local=True,
+    )
+    catalog = ModelCatalogSnapshot(
+        providers={
+            "ollama": Provider(
+                id="ollama",
+                name="Ollama",
+                env=(),
+                npm="@ai-sdk/openai-compatible",
+                models={model.id: model},
+                catalog="ollama",
+                catalog_revision="runtime:local",
+                local=True,
+            )
+        },
+        models=(model,),
+        revision="sha256:merged",
+    )
+    target = ModelTarget(
+        ref="ollama/local",
+        provider="ollama",
+        name="Local",
+        model="local",
+        adapter="chat_completions",
+        catalog="ollama",
+        catalog_revision="runtime:local",
+        reasoning={"effort": "high"},
+    )
+
+    accounting = build_model_accounting(
+        target,
+        ModelUsage(input_tokens=10, output_tokens=5),
+        catalog,
+    )
+
+    assert accounting is not None and accounting.pricing is not None
+    assert accounting.pricing.source == "ollama"
+    assert accounting.pricing.revision == "runtime:local"
+    assert accounting.reasoning.requested == {"effort": "high"}
+    assert accounting.reasoning.selected is None
+
+
 def test_audio_rates_replace_overlapping_base_token_rates() -> None:
     accounting = build_model_accounting(
         _target(),

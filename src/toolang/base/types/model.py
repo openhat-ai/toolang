@@ -40,6 +40,9 @@ class Model:
     cost: Mapping[str, object] | None = None
     extra: Mapping[str, object] = field(default_factory=dict)
     local: bool = False
+    catalog: str | None = None
+    catalog_revision: str | None = None
+    resolved: ResolvedModel | None = None
 
     def __post_init__(self) -> None:
         if not self.provider_id or not self.id or not self.name:
@@ -79,7 +82,7 @@ class Model:
     def to_data(self) -> dict[str, object]:
         """Return this model in models.dev-compatible JSON form."""
 
-        data = {key: value for key, value in self.extra.items() if key != "_toolang"}
+        data = {key: _mutable_json(value) for key, value in self.extra.items()}
         data.update(
             {
                 "id": self.id,
@@ -111,6 +114,15 @@ class Model:
         }
         data.update({key: _mutable_json(value) for key, value in optional.items()})
         return {key: value for key, value in data.items() if value is not None}
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedModel:
+    """One model's immutable load-time protocol route."""
+
+    adapter: str | None
+    endpoint: str | None
+    ready: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +163,8 @@ class Provider:
     doc: str | None = None
     extra: Mapping[str, object] = field(default_factory=dict)
     local: bool = False
+    catalog: str | None = None
+    catalog_revision: str | None = None
     resolved: ResolvedProvider | None = None
 
     def __post_init__(self) -> None:
@@ -169,7 +183,7 @@ class Provider:
     ) -> dict[str, object]:
         """Return this provider in models.dev-compatible JSON form."""
 
-        data = {key: value for key, value in self.extra.items() if key != "_toolang"}
+        data = {key: _mutable_json(value) for key, value in self.extra.items()}
         data.update(
             {
                 "id": self.id,
@@ -362,6 +376,7 @@ class ModelTarget:
     options: dict[str, Any] = field(default_factory=dict)
     tools: bool = True
     streaming: bool = True
+    catalog: str | None = None
     catalog_revision: str | None = None
     reasoning: dict[str, Any] = field(default_factory=dict)
     mode: str | None = None

@@ -22,6 +22,7 @@ from toolang.plugin.models.catalog import (
 from toolang.plugin.models.config import (
     ProviderConfig,
     configure_catalog_providers,
+    parse_catalog_configs,
     parse_provider_configs,
 )
 from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
@@ -101,15 +102,6 @@ class SetupWatcher:
             )
             identity = _catalog_file_identity(catalog_path)
             catalog_changed = identity != self._catalog_identity
-            if (
-                self._setup is not None
-                and not force
-                and not config_changed
-                and not envs_changed
-                and not catalog_changed
-            ):
-                return self._setup
-
             ceiling = resolve_agent_ceiling(
                 configs,
                 overrides=self._ceiling_overrides,
@@ -135,16 +127,30 @@ class SetupWatcher:
                 )
             ollama = provider_configs.get("ollama")
             llama_cpp = provider_configs.get("llama_cpp")
-            catalogs = load_model_catalogs(
-                {
-                    "models_dev": {"path": catalog_path},
-                    "ollama": {"environ": envs, "endpoint": _endpoint(ollama)},
-                    "llama_cpp": {
-                        "environ": envs,
-                        "endpoint": _endpoint(llama_cpp),
-                    },
-                }
-            )
+            catalog_configs = parse_catalog_configs(configs, environ=envs)
+            catalog_configs["models_dev"] = {
+                **catalog_configs.get("models_dev", {}),
+                "path": catalog_path,
+            }
+            catalog_configs["ollama"] = {
+                **catalog_configs.get("ollama", {}),
+                "environ": envs,
+                **(
+                    {"endpoint": _endpoint(ollama)}
+                    if _endpoint(ollama) is not None
+                    else {}
+                ),
+            }
+            catalog_configs["llama_cpp"] = {
+                **catalog_configs.get("llama_cpp", {}),
+                "environ": envs,
+                **(
+                    {"endpoint": _endpoint(llama_cpp)}
+                    if _endpoint(llama_cpp) is not None
+                    else {}
+                ),
+            }
+            catalogs = load_model_catalogs(catalog_configs)
             models_dev = catalogs.pop("models_dev", None)
             if models_dev is None:
                 raise RuntimeError("models_dev catalog plugin is not installed")
@@ -177,22 +183,11 @@ class SetupWatcher:
                 ),
                 adapters=self._adapters,
                 environ=envs,
+                configs=provider_configs,
             )
             providers = dict(resolved_catalog.providers)
             models = tuple(
-                model_info_from_catalog(
-                    model,
-                    adapter=(
-                        resolved.adapter
-                        if (resolved := providers[model.provider_id].resolved)
-                        is not None
-                        and resolved.ready
-                        and resolved.adapter is not None
-                        else "unavailable"
-                    ),
-                    revision=static.revision,
-                )
-                for model in resolved_catalog.models
+                model_info_from_catalog(model) for model in resolved_catalog.models
             )
             setup = AgentSetup(
                 layout=self.layout,
@@ -210,6 +205,8 @@ class SetupWatcher:
             )
             self._config = config_value
             self._catalog_identity = identity
+            if self._setup is not None and not force and setup == self._setup:
+                return self._setup
             self._setup = setup
             return setup
 

@@ -322,6 +322,24 @@ def test_providers_lists_effective_endpoint_and_model_adapters(
     assert "TEST_API_KEY, TEST_ALT_API_KEY" in row
     assert "1 provider from 1 catalog: models.dev 1" in stdout
 
+    filtered = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "--models",
+            str(catalog),
+            "models",
+            "--filter",
+            "*[adapter:messages]",
+            "--json",
+        ],
+        env={},
+    )
+    assert filtered.exit_code == 0, filtered.stderr
+    filtered_data = json.loads(filtered.stdout)
+    assert tuple(filtered_data["test"]["models"]) == ("one",)
+
     captured_rows: list[tuple[str | Text, ...]] = []
 
     def capture_table(
@@ -352,7 +370,7 @@ def test_providers_lists_effective_endpoint_and_model_adapters(
     endpoint = styled_row[4]
     env = styled_row[5]
     assert isinstance(adapters, Text)
-    assert adapters.plain == "messages"
+    assert adapters.plain == "chat_completions,messages"
     assert not _is_dim(adapters, 0)
     assert isinstance(endpoint, Text)
     assert not _is_dim(endpoint, 0)

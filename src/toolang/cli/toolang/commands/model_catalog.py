@@ -26,7 +26,7 @@ from toolang.plugin.models.catalog import (
     catalog_json_dumps,
     filter_catalog_models,
 )
-from toolang.plugin.models.config import parse_model_aliases
+from toolang.plugin.models.config import ProviderConfig, parse_model_aliases
 from toolang.plugin.models.resolution import ModelTargetResolver
 from toolang.setup import AgentSetup, SetupWatcher
 
@@ -213,6 +213,10 @@ def _available_identities(ctx: typer.Context, setup: AgentSetup) -> set[str]:
         model_aliases=parse_model_aliases(layers),
         default_models=(),
         envs=setup.envs,
+        provider_configs=cast(
+            Mapping[str, ProviderConfig],
+            setup.provider_configs,
+        ),
     ).selectable()
     candidates = {target.ref for _selector, target in targets}
     snapshot = _catalog(setup)
@@ -227,8 +231,8 @@ def _model_missing_reasons(setup: AgentSetup, model: Model) -> tuple[str, ...]:
     provider = setup.providers.get(model.provider_id)
     if provider is None or not isinstance(provider, Provider):
         return ("provider",)
-    resolved = provider.resolved
-    return () if resolved is not None and resolved.ready else ("provider",)
+    resolved = model.resolved
+    return () if resolved is not None and resolved.ready else ("route",)
 
 
 def _catalog_summary(
@@ -236,13 +240,11 @@ def _catalog_summary(
     *,
     models: Sequence[Model],
 ) -> str:
-    parts = [f"models.dev {sum(not model.local for model in models)}"]
-    for provider in snapshot.providers.values():
-        if not provider.local:
-            continue
-        parts.append(
-            f"{provider.id} {sum(model.provider_id == provider.id for model in models)}"
-        )
+    catalogs = _catalog_names(snapshot)
+    parts = [
+        f"{catalog} {sum(model.catalog == catalog for model in models)}"
+        for catalog in catalogs
+    ]
     model_noun = "model" if len(models) == 1 else "models"
     catalog_noun = "catalog" if len(parts) == 1 else "catalogs"
     return f"{len(models)} {model_noun} from {len(parts)} {catalog_noun}: " + ", ".join(
@@ -260,8 +262,14 @@ def _provider_endpoint(setup: AgentSetup, provider: Provider) -> str | None:
 
 
 def _provider_adapters(provider: Provider) -> tuple[str, ...]:
-    resolved = provider.resolved
-    return (resolved.adapter,) if resolved is not None and resolved.adapter else ()
+    adapters = {
+        model.resolved.adapter
+        for model in provider.models.values()
+        if model.resolved is not None and model.resolved.adapter
+    }
+    if not adapters and provider.resolved is not None and provider.resolved.adapter:
+        adapters.add(provider.resolved.adapter)
+    return tuple(sorted(adapters))
 
 
 def _provider_availability(provider: Provider, *, available: set[str]) -> str:
@@ -321,20 +329,28 @@ def _provider_catalog_summary(
     *,
     providers: Sequence[Provider],
 ) -> str:
-    parts = [f"models.dev {sum(not provider.local for provider in providers)}"]
-    for catalog_provider in snapshot.providers.values():
-        if not catalog_provider.local:
-            continue
-        parts.append(
-            f"{catalog_provider.id} "
-            f"{sum(provider.id == catalog_provider.id for provider in providers)}"
-        )
+    parts = [
+        f"{catalog} {sum(provider.catalog == catalog for provider in providers)}"
+        for catalog in _catalog_names(snapshot)
+    ]
     provider_noun = "provider" if len(providers) == 1 else "providers"
     catalog_noun = "catalog" if len(parts) == 1 else "catalogs"
     return (
         f"{len(providers)} {provider_noun} from {len(parts)} {catalog_noun}: "
         + ", ".join(parts)
     )
+
+
+def _catalog_names(snapshot: ModelCatalogSnapshot) -> tuple[str, ...]:
+    names = tuple(
+        dict.fromkeys(
+            provider.catalog
+            for provider in snapshot.providers.values()
+            if provider.catalog is not None
+        )
+    )
+    priority = {"models.dev": 0, "ollama": 1, "llama_cpp": 2}
+    return tuple(sorted(names, key=lambda name: (priority.get(name, 3), name)))
 
 
 def _model_table_fields(model: Model) -> tuple[str, str, str, str, str]:

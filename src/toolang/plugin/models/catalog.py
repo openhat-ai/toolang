@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from hashlib import sha256
 import json
@@ -79,7 +79,8 @@ class MergedModelCatalog(ModelCatalog):
             return ModelCatalogSnapshot(providers={}, models=(), revision="sha256:0")
         providers: dict[str, Provider] = {}
         models: dict[tuple[str, str], Model] = {}
-        for snapshot in snapshots:
+        for source, raw_snapshot in zip(self.sources, snapshots, strict=True):
+            snapshot = _with_catalog_origin(raw_snapshot, source.name)
             for provider_id, provider in snapshot.providers.items():
                 existing = providers.get(provider_id)
                 if existing is not None and not (existing.local and provider.local):
@@ -161,11 +162,14 @@ def load_model_catalog(
         for model_id in sorted(providers[provider_id].models)
         for provider in (providers[provider_id],)
     )
-    return ModelCatalogSnapshot(
-        providers=providers,
-        models=models,
-        revision=f"sha256:{sha256(payload_bytes).hexdigest()}",
-        source=resolved,
+    return _with_catalog_origin(
+        ModelCatalogSnapshot(
+            providers=providers,
+            models=models,
+            revision=f"sha256:{sha256(payload_bytes).hexdigest()}",
+            source=resolved,
+        ),
+        "models_dev",
     )
 
 
@@ -297,8 +301,8 @@ def filter_catalog_models(
 def model_info_from_catalog(
     model: Model,
     *,
-    adapter: str,
-    revision: str,
+    adapter: str | None = None,
+    revision: str | None = None,
 ) -> ModelInfo:
     """Build the one-cycle execution/listing projection for a catalog model."""
 
@@ -315,7 +319,9 @@ def model_info_from_catalog(
         name=model.name,
         model=model.id,
         selectors=tuple(dict.fromkeys(selectors)),
-        adapter=adapter,
+        adapter=adapter
+        or (model.resolved.adapter if model.resolved else None)
+        or "unknown",
         scope="local" if model.local else "remote",
         tools=model.tool_call is True,
         streaming=True,
@@ -325,7 +331,10 @@ def model_info_from_catalog(
         output_price=output_price,
         details=model.description,
         metadata={
-            "catalog_revision": revision,
+            "catalog": model.catalog,
+            "catalog_revision": model.catalog_revision or revision,
+            "resolved_endpoint": model.resolved.endpoint if model.resolved else None,
+            "resolved_ready": model.resolved.ready if model.resolved else False,
             "family": model.family,
             "reasoning": model.reasoning,
             "reasoning_options": [
@@ -343,6 +352,43 @@ def model_info_from_catalog(
             "provider": dict(model.provider) if model.provider is not None else None,
             "local": model.local,
         },
+    )
+
+
+def _with_catalog_origin(
+    snapshot: ModelCatalogSnapshot,
+    name: str,
+) -> ModelCatalogSnapshot:
+    """Attach runtime-only source provenance to every raw catalog record."""
+
+    catalog = "models.dev" if name == "models_dev" else name
+    models = {
+        (model.provider_id, model.id): replace(
+            model,
+            catalog=model.catalog or catalog,
+            catalog_revision=model.catalog_revision or snapshot.revision,
+        )
+        for model in snapshot.models
+    }
+    providers: dict[str, Provider] = {}
+    for provider_id, provider in snapshot.providers.items():
+        provider_models = {
+            model_id: models.get((provider_id, model_id), model)
+            for model_id, model in provider.models.items()
+        }
+        providers[provider_id] = replace(
+            provider,
+            models=provider_models,
+            catalog=provider.catalog or catalog,
+            catalog_revision=provider.catalog_revision or snapshot.revision,
+        )
+    return ModelCatalogSnapshot(
+        providers=providers,
+        models=tuple(
+            models[(model.provider_id, model.id)] for model in snapshot.models
+        ),
+        revision=snapshot.revision,
+        source=snapshot.source,
     )
 
 

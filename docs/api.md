@@ -442,10 +442,11 @@ models, including model-level protocol overrides; it is not a preferred-adapter
 hint. Catalog-known protocols remain visible when no implementation is
 installed, such as `messages` for Anthropic. An empty or offline local catalog
 uses the provider-level adapter signal. Unavailable field values are dimmed.
-Multiple alternative environment variables use an unstyled ` | ` separator and
+Multiple alternative environment variables use an unstyled `, ` separator and
 are all dimmed only when none is configured. An offline local provider remains
 in the table with `AVAILABLE` set to `0` and its endpoint dimmed. JSON output
-exposes the corresponding facts as `endpoint` and an `adapters` array.
+remains the original models.dev-compatible provider data and does not expose
+resolved endpoint, adapter, environment, or readiness facts.
 Anthropic uses the known default endpoint `https://api.anthropic.com` when the
 models.dev record omits `api`.
 The provider table footer mirrors the model footer, for example
@@ -456,8 +457,9 @@ The provider table footer mirrors the model footer, for example
 
 - `toolang plugin list`
 
-`toolang plugin list` shows installed plugins by family. Model provider rows also
-include richer discovery details such as:
+`toolang plugin list` shows installed plugins by family. Model catalog and
+adapter rows identify the installed runtime integrations; `toolang providers`
+owns provider readiness details such as:
 
 - readiness based on required environment variables
 - default API base URL when known

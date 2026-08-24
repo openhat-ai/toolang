@@ -122,20 +122,21 @@ for `openai`, `anthropic`, `google`, `deepseek`, and `openrouter`; it is not
 copied into root on first setup.
 
 Each setup/process holds one immutable `ModelCatalogSnapshot`, including source
-path, SHA-256 revision, file identity, providers, and models. Parsing and
-provider resolution occur once and the snapshot is reused. A new setup,
-configuration/environment change, symlink-target change, or file identity
-change builds a new snapshot. Runs retain their starting revision and never
-reprice history.
+path, SHA-256 revision, file identity, providers, and models. Static parsing is
+reused until the selected file identity changes. Dynamic catalogs are reprobed
+on setup refresh; unchanged merged results reuse the current setup. Runs retain
+their starting source revision and never reprice history.
 
 `Provider` retains the raw models.dev fields and adds one optional runtime-only
-value:
+default route:
 
 ```text
 resolved: {adapter: string?, endpoint: string?, env: (string | string[])[], ready: bool}
 ```
 
-The outer `env` list is OR; a nested list is AND. An empty list means no
+Each `Model` also receives a runtime-only `{adapter, endpoint, ready}` route so
+model-level provider overrides can select a different protocol without changing
+raw JSON. The outer `env` list is OR; a nested list is AND. An empty list means no
 environment requirement. Default inference treats names ending in `_API_KEY`,
 `_PAT`, or `_TOKEN` as alternatives and requires every other name, distributing
 the common requirements into each alternative. Small provider-specific rules

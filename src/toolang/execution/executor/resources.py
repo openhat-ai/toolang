@@ -17,7 +17,11 @@ from toolang.execution.types import (
     AgentToolResource,
 )
 from toolang.lang.ast import AgicDecl, Directive, FlowDecl
-from toolang.plugin.models.config import parse_default_models, parse_model_aliases
+from toolang.plugin.models.config import (
+    ProviderConfig,
+    parse_default_models,
+    parse_model_aliases,
+)
 from toolang.plugin.models.messages import NO_AVAILABLE_MODELS_MESSAGE
 from toolang.plugin.models.resolution import (
     resolve_model,
@@ -38,6 +42,7 @@ class _ModelSelection(Protocol):
     model_aliases: Mapping[str, ModelAlias]
     default_models: tuple[str, ...]
     envs: Mapping[str, str]
+    provider_configs: Mapping[str, ProviderConfig]
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +52,7 @@ class _SnapshotModelSelection:
     model_aliases: Mapping[str, ModelAlias]
     default_models: tuple[str, ...]
     envs: Mapping[str, str]
+    provider_configs: Mapping[str, ProviderConfig]
 
 
 def agent_model_targets(
@@ -64,6 +70,7 @@ def agent_model_targets(
             models=setup.models,
             aliases=selection.model_aliases,
             envs=setup.envs,
+            provider_configs=selection.provider_configs,
             selectors=selectors,
         )
         if selectors
@@ -373,6 +380,10 @@ def _snapshot_model_selection(
         model_aliases=parse_model_aliases(layers),
         default_models=parse_default_models(layers),
         envs=setup.envs,
+        provider_configs=cast(
+            Mapping[str, ProviderConfig],
+            setup.provider_configs,
+        ),
     )
 
 

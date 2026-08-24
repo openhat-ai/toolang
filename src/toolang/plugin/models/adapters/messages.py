@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from typing import Any, cast
 
@@ -53,7 +53,8 @@ class MessagesModelAdapter(ModelAdapter):
                 json=messages_payload(target, request, stream=False),
             )
             response.raise_for_status()
-            return parse_message_response(_json_object(response.json()))
+            result = parse_message_response(_json_object(response.json()))
+            return replace(result, state=_merge_state(request.state, result.state))
 
     async def stream(
         self,
@@ -65,6 +66,7 @@ class MessagesModelAdapter(ModelAdapter):
         payload = messages_payload(target, request, stream=True)
         text: list[str] = []
         tool_blocks: dict[int, dict[str, object]] = {}
+        thinking_blocks: dict[int, dict[str, object]] = {}
         usage: dict[str, object] = {}
         async with httpx.AsyncClient() as client:
             async with client.stream(
@@ -93,6 +95,11 @@ class MessagesModelAdapter(ModelAdapter):
                         if index is not None and block.get("type") == "tool_use":
                             tool_blocks[index] = dict(block)
                             await on_event(ModelPartStart(kind="tool_call"))
+                        elif index is not None and block.get("type") in {
+                            "thinking",
+                            "redacted_thinking",
+                        }:
+                            thinking_blocks[index] = dict(block)
                     elif event_type == "content_block_delta":
                         delta = _json_object(event.get("delta"))
                         if delta.get("type") == "text_delta":
@@ -110,6 +117,23 @@ class MessagesModelAdapter(ModelAdapter):
                                 block["partial_json"] = (
                                     _text(block.get("partial_json")) + value
                                 )
+                        elif delta.get("type") in {
+                            "thinking_delta",
+                            "signature_delta",
+                        }:
+                            index = _int(event.get("index"))
+                            if index is not None:
+                                block = thinking_blocks.setdefault(
+                                    index, {"type": "thinking"}
+                                )
+                                key = (
+                                    "thinking"
+                                    if delta.get("type") == "thinking_delta"
+                                    else "signature"
+                                )
+                                value = _text(delta.get(key))
+                                if value:
+                                    block[key] = _text(block.get(key)) + value
         calls = tuple(
             _tool_call(block, fallback=f"tool-call-{index}")
             for index, block in sorted(tool_blocks.items())
@@ -129,6 +153,13 @@ class MessagesModelAdapter(ModelAdapter):
             message=message,
             tool_calls=calls,
             usage=messages_usage(usage),
+            state=_merge_state(
+                request.state,
+                _thinking_state(
+                    thinking_blocks=thinking_blocks,
+                    tool_blocks=tool_blocks,
+                ),
+            ),
         )
 
 
@@ -148,11 +179,34 @@ def messages_payload(
     """Encode one canonical request for Anthropic Messages."""
 
     options = dict(target.options)
+    explicit_max_tokens = "max_tokens" in options
     max_tokens = options.pop("max_tokens", 4096)
+    if (
+        isinstance(max_tokens, bool)
+        or not isinstance(max_tokens, int)
+        or max_tokens <= 0
+    ):
+        raise ToolangError("Messages max_tokens must be a positive integer")
+    budget = target.reasoning.get("budget_tokens")
+    if isinstance(budget, int) and not isinstance(budget, bool):
+        if budget <= 0:
+            raise ToolangError("Messages thinking budget_tokens must be positive")
+        if budget >= max_tokens:
+            if explicit_max_tokens:
+                raise ToolangError(
+                    "Messages thinking budget_tokens must be lower than max_tokens"
+                )
+            max_tokens = budget + 1
     payload: dict[str, object] = {
         "model": target.model,
         "max_tokens": max_tokens,
-        "messages": [_encode_message(message) for message in request.messages],
+        "messages": [
+            _encode_message(
+                message,
+                thinking_blocks=_state_thinking_blocks(request.state),
+            )
+            for message in request.messages
+        ],
         "stream": stream,
     }
     if request.instructions:
@@ -176,6 +230,8 @@ def parse_message_response(payload: Mapping[str, object]) -> ModelCallResult:
 
     parts: list[TextPart | ToolCallPart] = []
     calls: list[ToolCall] = []
+    thinking: list[dict[str, object]] = []
+    call_thinking: dict[str, list[dict[str, object]]] = {}
     content = payload.get("content")
     if isinstance(content, list):
         for raw in content:
@@ -184,14 +240,20 @@ def parse_message_response(payload: Mapping[str, object]) -> ModelCallResult:
                 value = _text(block.get("text"))
                 if value:
                     parts.append(TextPart(value))
+            elif block.get("type") in {"thinking", "redacted_thinking"}:
+                thinking.append(dict(block))
             elif block.get("type") == "tool_use":
                 call = _tool_call(block, fallback=f"tool-call-{len(calls)}")
                 calls.append(call)
                 parts.append(_tool_part(call))
+                if thinking:
+                    call_thinking[call.call_id] = thinking
+                    thinking = []
     return ModelCallResult(
         message=Message(role="assistant", parts=tuple(parts)),
         tool_calls=tuple(calls),
         usage=messages_usage(_json_object(payload.get("usage"))),
+        state=({_THINKING_BLOCKS: call_thinking} if call_thinking else None),
     )
 
 
@@ -213,7 +275,71 @@ def messages_usage(value: Mapping[str, object]) -> ModelUsage | None:
     )
 
 
-def _encode_message(message: Message) -> dict[str, object]:
+_THINKING_BLOCKS = "anthropic_thinking_blocks"
+
+
+def _state_thinking_blocks(
+    state: Mapping[str, Any] | None,
+) -> dict[str, tuple[dict[str, object], ...]]:
+    if not isinstance(state, Mapping):
+        return {}
+    raw = state.get(_THINKING_BLOCKS)
+    if not isinstance(raw, Mapping):
+        return {}
+    values: dict[str, tuple[dict[str, object], ...]] = {}
+    for call_id, raw_blocks in raw.items():
+        if not isinstance(raw_blocks, list | tuple):
+            continue
+        blocks = tuple(
+            dict(cast(Mapping[str, object], block))
+            for block in raw_blocks
+            if isinstance(block, Mapping)
+            and block.get("type") in {"thinking", "redacted_thinking"}
+        )
+        if blocks:
+            values[str(call_id)] = blocks
+    return values
+
+
+def _thinking_state(
+    *,
+    thinking_blocks: Mapping[int, Mapping[str, object]],
+    tool_blocks: Mapping[int, Mapping[str, object]],
+) -> dict[str, Any] | None:
+    by_call: dict[str, list[dict[str, object]]] = {}
+    pending: list[dict[str, object]] = []
+    for index in sorted(set(thinking_blocks) | set(tool_blocks)):
+        if block := thinking_blocks.get(index):
+            pending.append(dict(block))
+        if tool := tool_blocks.get(index):
+            call_id = _text(tool.get("id")) or f"tool-call-{index}"
+            if pending:
+                by_call[call_id] = pending
+                pending = []
+    return {_THINKING_BLOCKS: by_call} if by_call else None
+
+
+def _merge_state(
+    previous: Mapping[str, Any] | None,
+    current: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    merged = dict(previous or {})
+    merged.update(dict(current or {}))
+    blocks = _state_thinking_blocks(previous)
+    blocks.update(_state_thinking_blocks(current))
+    if blocks:
+        merged[_THINKING_BLOCKS] = {
+            call_id: [dict(block) for block in values]
+            for call_id, values in blocks.items()
+        }
+    return merged or None
+
+
+def _encode_message(
+    message: Message,
+    *,
+    thinking_blocks: Mapping[str, tuple[dict[str, object], ...]],
+) -> dict[str, object]:
     role = "assistant" if message.role == "assistant" else "user"
     content: list[dict[str, object]] = []
     for part in message.parts:
@@ -238,10 +364,12 @@ def _encode_message(message: Message) -> dict[str, object]:
                 }
             )
         elif isinstance(part, ToolCallPart):
+            call_id = part.call_id or part.tool_call_id
+            content.extend(dict(block) for block in thinking_blocks.get(call_id, ()))
             content.append(
                 {
                     "type": "tool_use",
-                    "id": part.call_id or part.tool_call_id,
+                    "id": call_id,
                     "name": part.tool_name,
                     "input": dict(part.input),
                 }

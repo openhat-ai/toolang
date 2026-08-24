@@ -3,26 +3,63 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from string import Template
 from typing import cast
 
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.types.model import (
+    Model,
     ModelCatalogSnapshot,
     Provider,
     ResolvedEnv,
+    ResolvedModel,
     ResolvedProvider,
 )
-from toolang.plugin.models.config import catalog_provider_config
+from toolang.plugin.models.config import ProviderConfig
 
 _CREDENTIAL_SUFFIXES = ("_API_KEY", "_PAT", "_TOKEN")
-_NPM_ADAPTERS = {
-    "@ai-sdk/anthropic": "messages",
-    "@ai-sdk/google": "generate_content",
-    "@ai-sdk/openai": "responses",
-    "@ai-sdk/openai-compatible": "chat_completions",
-    "@openrouter/ai-sdk-provider": "chat_completions",
+
+
+@dataclass(frozen=True, slots=True)
+class _ProtocolRoute:
+    adapter: str
+    endpoint: str | None = None
+
+
+_NPM_ROUTES = {
+    "@ai-sdk/anthropic": _ProtocolRoute("messages"),
+    "@ai-sdk/cerebras": _ProtocolRoute(
+        "chat_completions", "https://api.cerebras.ai/v1"
+    ),
+    "@ai-sdk/deepinfra": _ProtocolRoute(
+        "chat_completions", "https://api.deepinfra.com/v1/openai"
+    ),
+    "@ai-sdk/gateway": _ProtocolRoute(
+        "chat_completions", "https://ai-gateway.vercel.sh/v1"
+    ),
+    "@ai-sdk/google": _ProtocolRoute("generate_content"),
+    "@ai-sdk/groq": _ProtocolRoute(
+        "chat_completions", "https://api.groq.com/openai/v1"
+    ),
+    "@ai-sdk/mistral": _ProtocolRoute("chat_completions", "https://api.mistral.ai/v1"),
+    "@ai-sdk/openai": _ProtocolRoute("responses"),
+    "@ai-sdk/openai-compatible": _ProtocolRoute("chat_completions"),
+    "@ai-sdk/perplexity": _ProtocolRoute(
+        "chat_completions", "https://api.perplexity.ai"
+    ),
+    "@ai-sdk/togetherai": _ProtocolRoute(
+        "chat_completions", "https://api.together.xyz/v1"
+    ),
+    "@ai-sdk/xai": _ProtocolRoute("chat_completions", "https://api.x.ai/v1"),
+    "@openrouter/ai-sdk-provider": _ProtocolRoute("chat_completions"),
+}
+_SHAPE_ADAPTERS = {
+    "chat_completions": "chat_completions",
+    "completions": "chat_completions",
+    "generate_content": "generate_content",
+    "messages": "messages",
+    "responses": "responses",
 }
 _ENV_OVERRIDES: Mapping[str, ResolvedEnv] = {
     "amazon-bedrock": (
@@ -37,6 +74,7 @@ def resolve_catalog_providers(
     *,
     adapters: Mapping[str, ModelAdapter],
     environ: Mapping[str, str],
+    configs: Mapping[str, ProviderConfig] | None = None,
 ) -> ModelCatalogSnapshot:
     """Resolve every provider exactly once and return one frozen snapshot."""
 
@@ -45,12 +83,15 @@ def resolve_catalog_providers(
             provider,
             adapters=adapters,
             environ=environ,
+            config=(configs or {}).get(provider_id),
         )
         for provider_id, provider in snapshot.providers.items()
     }
     return ModelCatalogSnapshot(
         providers=providers,
-        models=snapshot.models,
+        models=tuple(
+            providers[model.provider_id].models[model.id] for model in snapshot.models
+        ),
         revision=snapshot.revision,
         source=snapshot.source,
     )
@@ -61,20 +102,27 @@ def resolve_provider(
     *,
     adapters: Mapping[str, ModelAdapter],
     environ: Mapping[str, str],
+    config: ProviderConfig | None = None,
 ) -> Provider:
     """Attach one provider's adapter, endpoint, env rule, and readiness."""
 
-    config = catalog_provider_config(provider)
-    adapter_name = (
-        config.adapter
-        if config is not None and config.adapter is not None
-        else _NPM_ADAPTERS.get(provider.npm)
+    provider_route = _NPM_ROUTES.get(provider.npm)
+    adapter_name = _configured_adapter(config) or (
+        provider_route.adapter if provider_route is not None else None
     )
     adapter = adapters.get(adapter_name) if adapter_name is not None else None
     endpoint = _resolve_endpoint(
         config.endpoint if config is not None and config.endpoint else provider.api,
         environ=environ,
-        default=adapter.default_endpoint if adapter is not None else None,
+        default=(
+            provider_route.endpoint
+            if (config is None or config.adapter is None)
+            and provider_route is not None
+            and provider_route.endpoint is not None
+            else adapter.default_endpoint
+            if adapter is not None
+            else None
+        ),
     )
     env = _resolve_env(
         provider,
@@ -88,15 +136,99 @@ def resolve_provider(
         and env_is_ready(env, environ=environ)
         and not _local_provider_offline(provider)
     )
+    default = ResolvedProvider(
+        adapter=adapter_name,
+        endpoint=endpoint,
+        env=env,
+        ready=ready,
+    )
+    models = {
+        model_id: _resolve_model(
+            provider,
+            model,
+            default=default,
+            adapters=adapters,
+            environ=environ,
+            config=config,
+        )
+        for model_id, model in provider.models.items()
+    }
     return replace(
         provider,
-        resolved=ResolvedProvider(
+        models=models,
+        resolved=default,
+    )
+
+
+def _resolve_model(
+    provider: Provider,
+    model: Model,
+    *,
+    default: ResolvedProvider,
+    adapters: Mapping[str, ModelAdapter],
+    environ: Mapping[str, str],
+    config: ProviderConfig | None,
+) -> Model:
+    override = model.provider or {}
+    npm = _optional_text(override.get("npm"))
+    shape = _normalized_shape(override.get("shape"))
+    route = _NPM_ROUTES.get(npm) if npm is not None else None
+    if _configured_adapter(config) is not None:
+        adapter_name = _configured_adapter(config)
+    elif shape is not None:
+        adapter_name = _SHAPE_ADAPTERS.get(shape)
+    elif npm is not None:
+        adapter_name = route.adapter if route is not None else None
+    else:
+        adapter_name = default.adapter
+    adapter = adapters.get(adapter_name) if adapter_name is not None else None
+    configured_endpoint = config.endpoint if config is not None else None
+    endpoint_value = (
+        configured_endpoint or _optional_text(override.get("api")) or provider.api
+    )
+    route_endpoint = (
+        route.endpoint
+        if (config is None or config.adapter is None) and route is not None
+        else None
+    )
+    endpoint = _resolve_endpoint(
+        endpoint_value,
+        environ=environ,
+        default=(
+            route_endpoint
+            or (adapter.default_endpoint if adapter is not None else None)
+        ),
+    )
+    ready = (
+        adapter is not None
+        and endpoint is not None
+        and env_is_ready(default.env, environ=environ)
+        and not _local_provider_offline(provider)
+    )
+    return replace(
+        model,
+        resolved=ResolvedModel(
             adapter=adapter_name,
             endpoint=endpoint,
-            env=env,
             ready=ready,
         ),
     )
+
+
+def _configured_adapter(config: ProviderConfig | None) -> str | None:
+    return config.adapter if config is not None else None
+
+
+def _normalized_shape(value: object) -> str | None:
+    text = _optional_text(value)
+    return text.lower().replace("-", "_").replace(" ", "_") if text else None
+
+
+def _optional_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
 
 
 def env_is_ready(env: ResolvedEnv, *, environ: Mapping[str, str]) -> bool:

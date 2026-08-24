@@ -24,7 +24,11 @@ from toolang.lang.input import (
     validate_value,
 )
 from toolang.lang.types import Value
-from toolang.plugin.models.config import parse_default_models, parse_model_aliases
+from toolang.plugin.models.config import (
+    ProviderConfig,
+    parse_default_models,
+    parse_model_aliases,
+)
 from toolang.state.state import AgentState
 from toolang.setup import AgentSetup
 
@@ -907,6 +911,10 @@ class _Execution:
     @property
     def envs(self) -> Mapping[str, str]:
         return self.setup.envs
+
+    @property
+    def provider_configs(self) -> Mapping[str, ProviderConfig]:
+        return cast(Mapping[str, ProviderConfig], self.setup.provider_configs)
 
     def schedule_time_limit(
         self,

@@ -6,10 +6,10 @@ from typing import Any
 
 from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool, AgentToolSet
-from toolang.base.types.model import ModelTarget
+from toolang.base.types.model import ModelCatalogSnapshot, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.plugin.models.loading import load_model_adapters
+from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
 from toolang.plugin.tools.registry import ToolRef
 from toolang.plugin.loading import (
     PluginInfo,
@@ -259,3 +259,36 @@ def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> 
 
     assert sorted(tools) == ["alpha__alpha", "beta__beta"]
     assert "package_adapter" in adapters
+
+
+def test_model_catalog_loader_instantiates_only_configured_plugins(monkeypatch) -> None:
+    created: dict[str, dict[str, object]] = {}
+
+    @dataclass(frozen=True)
+    class Catalog:
+        name: str
+
+        async def snapshot(self) -> ModelCatalogSnapshot:
+            return ModelCatalogSnapshot(providers={}, models=(), revision="test")
+
+    def company_factory(config: Mapping[str, Any]) -> Catalog:
+        created["company"] = dict(config)
+        return Catalog("company")
+
+    def unconfigured_factory(config: Mapping[str, Any]) -> Catalog:
+        created["unconfigured"] = dict(config)
+        return Catalog("unconfigured")
+
+    entries = [
+        _FakeEntryPoint("company", company_factory),
+        _FakeEntryPoint("unconfigured", unconfigured_factory),
+    ]
+    monkeypatch.setattr(
+        "toolang.plugin.loading.entry_points",
+        lambda *, group: entries if group == "toolang.model_catalog" else [],
+    )
+
+    catalogs = load_model_catalogs({"company": {"url": "https://example.test"}})
+
+    assert tuple(catalogs) == ("company",)
+    assert created == {"company": {"url": "https://example.test"}}

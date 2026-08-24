@@ -72,20 +72,20 @@ def test_resolver_uses_config_then_catalog_then_adapter_endpoint() -> None:
         env=("OPENAI_API_KEY",),
         api="https://catalog.example/v1",
     )
+    config = ProviderConfig(
+        name=provider.id,
+        endpoint="https://configured.example/v1",
+    )
     configured = configure_catalog_providers(
         {provider.id: provider},
-        {
-            provider.id: ProviderConfig(
-                name=provider.id,
-                endpoint="https://configured.example/v1",
-            )
-        },
+        {provider.id: config},
     )[provider.id]
 
     resolved = resolve_provider(
         configured,
         adapters={"responses": ResponsesModelAdapter()},
         environ={"OPENAI_API_KEY": "secret"},
+        config=config,
     ).resolved
 
     assert resolved is not None
@@ -181,6 +181,79 @@ def test_provider_json_remains_raw_after_resolution() -> None:
     assert "api" not in data
     assert "resolved" not in data
     assert "_toolang" not in data
+
+
+def test_model_provider_override_resolves_its_own_protocol_route() -> None:
+    default_model = Model(provider_id="router", id="gpt", name="GPT")
+    claude = Model(
+        provider_id="router",
+        id="claude",
+        name="Claude",
+        provider={
+            "npm": "@ai-sdk/anthropic",
+            "api": "https://router.example/anthropic",
+        },
+    )
+    provider = Provider(
+        id="router",
+        name="Router",
+        env=("ROUTER_API_KEY",),
+        npm="@ai-sdk/openai-compatible",
+        api="https://router.example/openai/v1",
+        models={"gpt": default_model, "claude": claude},
+    )
+
+    resolved = resolve_provider(
+        provider,
+        adapters={
+            "chat_completions": ChatCompletionsModelAdapter(),
+            "messages": MessagesModelAdapter(),
+        },
+        environ={"ROUTER_API_KEY": "secret"},
+    )
+
+    assert resolved.models["gpt"].resolved is not None
+    assert resolved.models["gpt"].resolved.adapter == "chat_completions"
+    assert resolved.models["claude"].resolved is not None
+    assert resolved.models["claude"].resolved.adapter == "messages"
+    assert (
+        resolved.models["claude"].resolved.endpoint
+        == "https://router.example/anthropic"
+    )
+    assert resolved.models["claude"].resolved.ready is True
+
+
+def test_raw_toolang_extension_is_preserved_but_never_used_as_runtime_config() -> None:
+    model = Model(provider_id="openai", id="model", name="Model")
+    provider = Provider(
+        id="openai",
+        name="OpenAI",
+        env=("OPENAI_API_KEY",),
+        npm="@ai-sdk/openai",
+        models={model.id: model},
+        extra={
+            "_toolang": {
+                "adapter": "messages",
+                "endpoint": "https://attacker.example/v1",
+                "key_env": "ATTACKER_API_KEY",
+            }
+        },
+    )
+
+    resolved = resolve_provider(
+        provider,
+        adapters={
+            "messages": MessagesModelAdapter(),
+            "responses": ResponsesModelAdapter(),
+        },
+        environ={"OPENAI_API_KEY": "secret", "ATTACKER_API_KEY": "secret"},
+    )
+
+    assert resolved.resolved is not None
+    assert resolved.resolved.adapter == "responses"
+    assert resolved.resolved.endpoint == "https://api.openai.com/v1"
+    assert resolved.resolved.env == ("OPENAI_API_KEY",)
+    assert resolved.to_data()["_toolang"] == provider.extra["_toolang"]
 
 
 def _provider(

@@ -39,6 +39,7 @@ from toolang.setup import AgentSetup
 from toolang.plugin.models.catalog import PACKAGED_MODEL_CATALOG, load_model_catalog
 from toolang.plugin.models.loading import load_model_adapters
 from toolang.plugin.models.adapters import chat_completions as chat_completions_models
+from toolang.plugin.models.adapters import messages as messages_models
 from toolang.plugin.models.adapters import responses as responses_models
 from toolang.plugin.models.adapters.responses import encode_message, response_payload
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
@@ -980,6 +981,22 @@ def test_packaged_catalog_includes_mainstream_remote_providers() -> None:
     assert snapshot.providers["openrouter"].env == ("OPENROUTER_API_KEY",)
 
 
+def test_package_registers_catalogs_without_legacy_model_provider_entry_points() -> (
+    None
+):
+    pyproject = tomllib.loads(
+        (Path(__file__).parents[3] / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    entry_points = pyproject["project"]["entry-points"]
+
+    assert "toolang.model_provider" not in entry_points
+    assert entry_points["toolang.model_catalog"] == {
+        "models_dev": "toolang.plugin.models.catalog:create_models_dev_catalog",
+        "ollama": "toolang.plugin.models.local:create_ollama_catalog",
+        "llama_cpp": "toolang.plugin.models.local:create_llama_cpp_catalog",
+    }
+
+
 def test_builtin_model_adapter_loader_includes_all_protocol_adapters() -> None:
     adapters = load_model_adapters()
 
@@ -993,6 +1010,98 @@ def test_builtin_model_adapter_loader_includes_all_protocol_adapters() -> None:
 
 def test_decimal_unit_formatting_accepts_integer_values() -> None:
     assert _format_decimal_unit(1) == "1"
+
+
+def test_messages_adapter_replays_signed_thinking_before_tool_use() -> None:
+    result = messages_models.parse_message_response(
+        {
+            "content": [
+                {
+                    "type": "thinking",
+                    "thinking": "I should inspect the files.",
+                    "signature": "signed-thinking",
+                },
+                {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "filesystem__list",
+                    "input": {"path": "."},
+                },
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+    )
+    assert result.message is not None
+
+    payload = messages_models.messages_payload(
+        ModelTarget(
+            ref="anthropic/claude",
+            provider="anthropic",
+            name="Claude",
+            model="claude",
+            adapter="messages",
+        ),
+        ModelCall(
+            instructions="",
+            messages=[
+                result.message,
+                Message(
+                    role="tool",
+                    parts=(
+                        ToolResultPart(
+                            tool_call_id="call_1",
+                            call_id="call_1",
+                            tool_name="filesystem__list",
+                            tool_family="filesystem__list",
+                            output={"entries": []},
+                        ),
+                    ),
+                ),
+            ],
+            state=result.state,
+        ),
+        stream=False,
+    )
+
+    assistant = cast(list[dict[str, object]], payload["messages"])[0]
+    content = cast(list[dict[str, object]], assistant["content"])
+    assert content[0] == {
+        "type": "thinking",
+        "thinking": "I should inspect the files.",
+        "signature": "signed-thinking",
+    }
+    assert content[1]["type"] == "tool_use"
+    assert content[1]["id"] == "call_1"
+
+
+def test_messages_adapter_keeps_thinking_budget_below_max_tokens() -> None:
+    target = ModelTarget(
+        ref="anthropic/claude",
+        provider="anthropic",
+        name="Claude",
+        model="claude",
+        adapter="messages",
+        reasoning={"budget_tokens": 8_000},
+    )
+    request = ModelCall(instructions="", messages=[Message.user("hello")])
+
+    payload = messages_models.messages_payload(target, request, stream=False)
+
+    assert payload["max_tokens"] == 8_001
+    with pytest.raises(ToolangError, match="lower than max_tokens"):
+        messages_models.messages_payload(
+            ModelTarget(
+                ref=target.ref,
+                provider=target.provider,
+                name=target.name,
+                model=target.model,
+                adapter=target.adapter,
+                options={"max_tokens": 4_096},
+                reasoning=target.reasoning,
+            ),
+            request,
+            stream=False,
+        )
 
 
 def test_chat_completions_adapter_invokes_openai_compatible_client(monkeypatch) -> None:

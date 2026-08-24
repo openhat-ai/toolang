@@ -63,11 +63,25 @@ A catalog plugin receives concrete configuration from its factory call. It
 must not read global CLI state or install packages. Local catalog plugins probe
 only their configured/default endpoint, use short timeouts, and keep results in
 the current setup snapshot. There is no TTL, disk, or last-good model cache.
+The setup watcher re-probes dynamic catalogs on every refresh while reusing an
+unchanged parsed static file.
 
-## One-Time Provider Resolution
+External catalog entry points are opt-in. Configure one by its entry-point name:
+
+```toml
+[models.catalogs.company]
+url = "https://catalog.example/models.json"
+token_env = "COMPANY_CATALOG_TOKEN"
+```
+
+The resolved mapping is passed directly to the catalog factory. Setting
+`enabled = false` disables an external catalog declaration. Built-in `models_dev`,
+`ollama`, and `llama_cpp` catalogs remain enabled.
+
+## One-Time Route Resolution
 
 After catalog snapshots are merged, the setup resolver enriches every
-`Provider` once:
+`Provider` with its default route and every `Model` with its effective route:
 
 ```text
 resolved: {
@@ -78,11 +92,17 @@ resolved: {
 }
 ```
 
+The model route has `adapter`, `endpoint`, and `ready`. Model-level
+`provider.npm`, `provider.shape`, and `provider.api` override the provider's
+default protocol facts. This supports mixed-protocol routers without a provider
+plugin.
+
 The resolver applies:
 
 - explicit provider configuration before catalog `api` before the adapter's
   protocol default endpoint;
-- a small maintained `npm`-to-adapter map;
+- a small maintained `npm`-to-protocol map, including the major native packages
+  whose services expose one of the built-in wire protocols;
 - environment availability rules;
 - installed-adapter and local-probe state.
 
@@ -104,8 +124,12 @@ environment alternative is satisfied, and any local probe succeeded. Secrets
 are selected only while constructing `ModelTarget`; they are never stored in
 `Provider.resolved`, catalog JSON, hashes, or inspection output.
 
-Selection, inspection, and execution consume `resolved` directly. They do not
-repeat npm matching, endpoint fallback, or env interpretation.
+Local provider configuration is passed separately to the resolver. It is never
+inserted into raw catalog `extra` fields, so unknown catalog extensions cannot
+be interpreted as trusted endpoints or credentials. Selection, inspection, and
+execution consume resolved facts directly; they do not repeat npm matching,
+endpoint fallback, or env interpretation. `--json` therefore remains a raw
+catalog projection.
 
 ## Adapter Plugins
 
@@ -132,7 +156,9 @@ Adapters receive a concrete endpoint in `ModelTarget`. They translate canonical
 messages and tools, normalize streaming, usage, cache, reasoning, and audio
 meters, and preserve protocol state needed by later calls. For example, the
 Generate Content adapter retains Gemini thought signatures in provider state
-and restores them on subsequent tool-call turns.
+and restores them on subsequent tool-call turns. The Messages adapter likewise
+preserves signed Anthropic thinking and redacted-thinking blocks and replays
+them before the associated tool use.
 
 An external adapter should contain no provider matching table. If a new npm
 package needs to use it automatically, add that small mapping to the resolver;

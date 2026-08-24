@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 
-from toolang.plugin.loading import load_plugins
+from toolang.plugin.loading import create_plugin, load_plugins
 
 
 def load_model_adapters() -> dict[str, ModelAdapter]:
@@ -22,7 +22,19 @@ def load_model_catalogs(
 ) -> dict[str, ModelCatalog]:
     """Load installed model catalog plugins with explicit runtime inputs."""
 
-    return cast(
-        dict[str, ModelCatalog],
-        load_plugins(group="toolang.model_catalog", config=config),
-    )
+    catalogs: dict[str, ModelCatalog] = {}
+    for name, plugin_config in config.items():
+        try:
+            catalog = cast(
+                ModelCatalog,
+                create_plugin(
+                    name,
+                    group="toolang.model_catalog",
+                    config=plugin_config,
+                ),
+            )
+        except ModuleNotFoundError:
+            continue
+        catalog_name = catalog.name.strip() or name
+        catalogs.setdefault(catalog_name, catalog)
+    return catalogs

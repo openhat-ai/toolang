@@ -187,7 +187,7 @@ model snapshot, and resolved environment values:
 class AgentSetup:
     name: str
     home: Path
-    providers: Mapping[str, ModelProvider]
+    providers: Mapping[str, Provider]
     adapters: Mapping[str, ModelAdapter]
     models: tuple[ModelInfo, ...]
     tools: Mapping[str, AgentTool]
