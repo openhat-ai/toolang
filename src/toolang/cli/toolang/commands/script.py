@@ -175,7 +175,6 @@ def _runnable_command(
         limit: tuple[str, ...],
         save: str | None,
         quiet: bool,
-        verbose: int,
     ) -> int:
         commands, input, raw_named = _collect_call(
             runnable,
@@ -193,7 +192,6 @@ def _runnable_command(
             limit_options=limit,
             save=save,
             quiet=quiet,
-            verbosity=verbose,
         )
 
     help_text = runnable.doc.strip() if runnable.doc else None
@@ -230,13 +228,7 @@ def _runnable_command(
             param_decls=["--quiet", "-q"],
             is_flag=True,
             default=False,
-            help="Suppress execution progress.",
-        ),
-        TyperOption(
-            param_decls=["--verbose", "-v"],
-            count=True,
-            default=0,
-            help="Show more execution progress.",
+            help="Suppress prepare and execution progress.",
         ),
         *(_signature_argument(parameter) for parameter in runnable.params),
     ]
@@ -415,9 +407,8 @@ def _run(
     limit_options: tuple[str, ...],
     save: str | None,
     quiet: bool,
-    verbosity: int,
 ) -> int:
-    progress = make_cli_progress() if not quiet and sys.stderr.isatty() else None
+    progress = make_cli_progress() if not quiet else None
     layout: AgentLayout | None = None
     store: RunStore | None = None
     run_id: str | None = None
@@ -456,19 +447,13 @@ def _run(
                 default_options=default_options,
                 limit_options=limit_options,
                 quiet=quiet,
-                verbosity=verbosity,
             )
         )
     except KeyboardInterrupt:
         if progress is not None:
             progress.interrupt()
         interruption_reported = False
-        if (
-            store is not None
-            and run_id is not None
-            and not quiet
-            and (sys.stderr.isatty() or verbosity > 0)
-        ):
+        if store is not None and run_id is not None and not quiet:
             record = store.get_run(run_id=run_id)
             interruption_reported = record is not None and record.status == "canceled"
         if not interruption_reported:
@@ -493,7 +478,7 @@ def _run(
         store_path=layout.run_store,
         log_path=log_path,
         save=save,
-        error_reported=(not quiet and (sys.stderr.isatty() or verbosity > 0)),
+        error_reported=not quiet,
     )
 
 
@@ -511,7 +496,6 @@ async def _execute(
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
     quiet: bool,
-    verbosity: int,
     limit_options: tuple[str, ...] = (),
 ) -> RunRecord:
     environ = load_runtime_environ(layout, base_environ=os.environ)
@@ -554,7 +538,7 @@ async def _execute(
             run_id=run_id,
             max_width=resolve_progress_max_width(environ),
         )
-        if not quiet and (sys.stderr.isatty() or verbosity > 0)
+        if not quiet
         else None
     )
     handle = executor.start(

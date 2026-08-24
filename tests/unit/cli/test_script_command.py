@@ -65,7 +65,6 @@ def test_script_binds_options_arguments_and_primary_input(
             "time=60",
             "--save",
             "-",
-            "-vv",
             "count=2.5",
             "enabled=true",
             "hello",
@@ -85,7 +84,7 @@ def test_script_binds_options_arguments_and_primary_input(
         "tools=filesystem/*,shell/*",
         "caps=skill/reviewer,service/github",
     )
-    assert captured["verbosity"] == 2
+    assert "verbosity" not in captured
     assert captured["save"] == "-"
     assert captured["limit_options"] == (
         "tokens=1000",
@@ -338,7 +337,6 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
                     allow_options=(),
                     default_options=(),
                     quiet=True,
-                    verbosity=0,
                 )
             )
 
@@ -379,6 +377,8 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "--save" in stdout
     assert "Save the Run result to PATH, or use - for" in stdout
     assert "stdout." in stdout
+    assert "--verbose" not in stdout
+    assert "-v" not in stdout
     positions = tuple(
         stdout.index(option) for option in ("--allow", "--limit", "--default")
     )
@@ -525,6 +525,26 @@ def test_script_rejects_sandbox_option(
     assert "No such option: --sandbox" in strip_ansi(output.err)
 
 
+@pytest.mark.parametrize("option", ("-v", "--verbose"))
+def test_script_rejects_removed_verbose_option(
+    tmp_path: Path,
+    capsys,
+    option: str,
+) -> None:
+    source = _write_source(tmp_path)
+
+    result = script.dispatch(
+        [],
+        [str(source), "demo", "count=2", option, "hello"],
+        prog_name="toolang",
+        stdin=StringIO(),
+    )
+    output = capsys.readouterr()
+
+    assert result == 2
+    assert f"No such option: {option}" in strip_ansi(output.err)
+
+
 def test_script_rejects_stdin_marker_mixed_with_input(
     tmp_path: Path,
     capsys,
@@ -571,3 +591,26 @@ def test_script_does_not_save_an_unsuccessful_run(
     assert result == 1
     assert output.err == ""
     assert destination.read_text(encoding="utf-8") == "existing"
+
+
+def test_quiet_unsuccessful_run_reports_fallback_error(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    result = script._emit_result(
+        RunRecord(
+            id="run_failed",
+            parent=None,
+            thread="script_thread",
+            control=ControlRef("run_failed", 0),
+            output=None,
+            status="failed",
+            error="provider unavailable",
+        ),
+        store_path=tmp_path / "runs.db",
+        log_path=None,
+        error_reported=False,
+    )
+
+    assert result == 1
+    assert "provider unavailable" in capsys.readouterr().err

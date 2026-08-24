@@ -321,10 +321,13 @@ separates the divider from the result body.
 Script writes progress to stderr. It does not copy the durable root result to
 stdout by default. `--save -` writes the result to stdout and `--save PATH`
 atomically writes it to a file. Failed and canceled Runs do not write the
-selected destination. Non-TTY output contains stable newline-delimited content
-without color, cursor movement, or partial delta lines. Its semantic rows and
-block geometry match TTY output; only live replacement and ANSI emission are
-absent.
+selected destination. Progress is enabled by default for both TTY and non-TTY
+stderr; `-q` or `--quiet` suppresses prepare and execution progress, including
+the root Run footer. Actionable errors remain visible in quiet mode. Non-TTY
+output contains stable newline-delimited content without color, cursor
+movement, or partial delta lines. Its semantic rows and block geometry match
+TTY output; only live replacement, ANSI emission, and width-dependent wrapping
+differ.
 
 TTY script output uses one event-driven Rich `Live` area per root Run. Chat
 does not create a Rich `Live` because prompt_toolkit owns its terminal; it uses

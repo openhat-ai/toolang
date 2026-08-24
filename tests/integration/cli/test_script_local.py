@@ -77,15 +77,14 @@ def test_local_script_saves_only_to_an_explicit_destination(
             return setup
 
     monkeypatch.setattr(script, "SetupWatcher", _SetupWatcher)
-    monkeypatch.setattr(
-        script,
-        "prepare_agent_state",
-        lambda actual_layout, **_kwargs: (
-            harness.state
-            if actual_layout == layout
-            else pytest.fail("unexpected layout")
-        ),
-    )
+    quiet = save_mode in {"stdout", "file"}
+
+    def prepare_state(actual_layout, **kwargs):
+        assert actual_layout == layout
+        assert (kwargs["progress"] is None) is quiet
+        return harness.state
+
+    monkeypatch.setattr(script, "prepare_agent_state", prepare_state)
     monkeypatch.setattr(script, "configure_logging_plan", lambda _plan: None)
 
     args = [str(source), "echo"]
@@ -105,8 +104,13 @@ def test_local_script_saves_only_to_an_explicit_destination(
     assert output.out == expected_stdout
     if save_mode == "missing-parent":
         assert "result destination parent does not exist" in output.err
-    else:
+        assert "[ run_" in output.err
+    elif quiet:
         assert output.err == ""
+    else:
+        assert "• done" in output.err
+        assert "[ run_" in output.err
+    assert "\x1b[" not in output.err
     if save_mode == "file":
         assert destination.read_bytes() == b"done"
     else:
@@ -170,7 +174,7 @@ def test_local_script_renders_composite_flow_progress(
 
     result = script.dispatch(
         [],
-        [str(source), "research", "-v", "agent framework"],
+        [str(source), "research", "agent framework"],
         prog_name="toolang",
     )
     output = capsys.readouterr()
@@ -187,6 +191,7 @@ def test_local_script_renders_composite_flow_progress(
         assert "[ run_" in output.err
         assert "list returned" not in output.err
         assert "~~~" not in output.err
+        assert "\x1b[" not in output.err
     finally:
         asyncio.run(harness.executor.shutdown())
         harness.store.close()
