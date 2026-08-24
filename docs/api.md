@@ -218,9 +218,10 @@ Behavior:
 - default agics and generated internal agics are not exposed as script commands
 - runnable command descriptions come only from their authored `doc`
 - stdout is reserved for the final runnable result
-- progress messages are written to stderr only when stderr is a TTY
-- `-q` or `--quiet` suppresses progress messages
-- `-v` or `--verbose` shows execution boundaries even when stderr is not a TTY
+- progress messages are written to stderr by default
+- TTY progress uses color and live replacement; non-TTY progress is stable,
+  append-only, and contains no ANSI control sequences
+- `-q` or `--quiet` suppresses prepare and execution progress
 - `--default model=SELECTOR` supplies the invocation's setup model binding
 - `--limit FIELD=VALUE` overrides one run-limit field; it may be repeated
 - `--allow DOMAIN=SELECTORS` sets model, tool, cap, or cap-kind allow fields and
