@@ -8,6 +8,7 @@ from toolang.base.protocols.model import ModelProvider
 from toolang.base.types.model import Provider
 
 _DEFAULT_PROVIDER_URLS = {
+    "anthropic": "https://api.anthropic.com",
     "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
     "openai": "https://api.openai.com/v1",
 }

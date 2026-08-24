@@ -444,10 +444,12 @@ models, including model-level protocol overrides; it is not a preferred-adapter
 hint. Catalog-known protocols remain visible when no implementation is
 installed, such as `messages` for Anthropic. An empty or offline local catalog
 uses the provider-level adapter signal. Unavailable field values are red.
-Multiple alternative environment variables use an unstyled `|` separator and
+Multiple alternative environment variables use an unstyled ` | ` separator and
 are all red only when none is configured. An offline local provider remains in
 the table with `AVAILABLE` set to `0` and its endpoint shown in red. JSON output
 exposes the corresponding facts as `endpoint` and an `adapters` array.
+Anthropic uses the known default endpoint `https://api.anthropic.com` when the
+models.dev record omits `api`.
 
 
 ## Plugin Commands

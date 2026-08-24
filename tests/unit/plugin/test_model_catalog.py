@@ -23,6 +23,7 @@ from toolang.plugin.models.catalog import (
     parse_model_catalog_data,
     resolve_model_catalog_path,
 )
+from toolang.plugin.models.discovery import default_provider_base_url
 from toolang.plugin.models.resolution import (
     ModelTargetResolver,
     resolve_catalog_adapter,
@@ -185,6 +186,9 @@ def test_anthropic_catalog_signal_resolves_messages_adapter() -> None:
     )
 
     assert resolve_catalog_adapter(provider) == "messages"
+    assert (
+        default_provider_base_url(provider, environ={}) == "https://api.anthropic.com"
+    )
 
 
 def test_resolver_applies_advertised_mode_request_and_keeps_control_metadata() -> None:

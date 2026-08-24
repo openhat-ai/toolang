@@ -409,7 +409,7 @@ def _catalog_summary(
         )
     model_noun = "model" if len(models) == 1 else "models"
     catalog_noun = "catalog" if len(parts) == 1 else "catalogs"
-    return f"{len(models)} {model_noun} {len(parts)} {catalog_noun}: " + ", ".join(
+    return f"{len(models)} {model_noun} from {len(parts)} {catalog_noun}: " + ", ".join(
         parts
     )
 
@@ -479,7 +479,7 @@ def _provider_env_cell(setup: AgentSetup, provider: Provider) -> Text:
     cell = Text()
     for index, name in enumerate(provider.env):
         if index:
-            cell.append("|")
+            cell.append(" | ")
         cell.append(name, style="red" if unavailable else None)
     return cell
 

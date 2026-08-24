@@ -134,7 +134,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
         ) + len(row_value)
     assert "PROFILE" not in stdout
     assert "per 1m" not in stdout
-    assert "1 model 1 catalog: models.dev 1" in stdout
+    assert "1 model from 1 catalog: models.dev 1" in stdout
 
 
 def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> None:
@@ -254,7 +254,7 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
 
     assert result.exit_code == 0, result.stderr
     stdout = unstyle(result.stdout)
-    assert "3 models 3 catalogs: models.dev 2, ollama 1, llama_cpp 0" in stdout
+    assert "3 models from 3 catalogs: models.dev 2, ollama 1, llama_cpp 0" in stdout
 
     captured_headers: tuple[str, ...] = ()
     captured_rows: list[tuple[str | Text, ...]] = []
@@ -341,7 +341,7 @@ def test_providers_lists_effective_endpoint_and_model_adapters(
     )
     assert "https://api.test/v1" in row
     assert "chat_completions,messages" in row
-    assert "TEST_API_KEY|TEST_ALT_API_KEY" in row
+    assert "TEST_API_KEY | TEST_ALT_API_KEY" in row
 
     captured_rows: list[tuple[str | Text, ...]] = []
 
@@ -379,7 +379,7 @@ def test_providers_lists_effective_endpoint_and_model_adapters(
     assert isinstance(endpoint, Text)
     assert _color_name(endpoint, 0) is None
     assert isinstance(env, Text)
-    assert env.plain == "TEST_API_KEY|TEST_ALT_API_KEY"
+    assert env.plain == "TEST_API_KEY | TEST_ALT_API_KEY"
     assert _color_name(env, 0) == "red"
     assert _color_name(env, env.plain.index("|")) is None
     assert _color_name(env, env.plain.index("TEST_ALT_API_KEY")) == "red"

@@ -208,8 +208,9 @@ with thousands separators. Every numeric price is rounded and padded to two
 decimal places. The context, output, and price columns are right-aligned.
 
 The model-list summary names every catalog component and its displayed model
-count in the form `18 models 3 catalogs: models.dev 15, ollama 2, llama_cpp 1`.
-It does not repeat revisions, endpoints, or runtime status.
+count in the form
+`18 models from 3 catalogs: models.dev 15, ollama 2, llama_cpp 1`. It does not
+repeat revisions, endpoints, or runtime status.
 
 The provider table orders its diagnostic columns as `ADAPTERS`, `ENDPOINT`, and
 `ENV`. `ADAPTERS` is the deduplicated set resolved across the provider's catalog
@@ -217,11 +218,12 @@ models. It includes model-level protocol overrides, does not represent a
 preferred adapter, and shows catalog-known protocols such as Anthropic
 `messages` even when the implementation is not installed. An empty local
 catalog falls back to its provider-level adapter signal. Unavailable adapter and
-endpoint values are red. Alternative environment variable names use `|`;
+endpoint values are red. Alternative environment variable names use ` | `;
 when none is configured, every name is red while separators remain unstyled.
 Offline local providers remain listed with `AVAILABLE` equal to `0` and a red
 endpoint. Online providers use `n/m`. Provider JSON exposes `endpoint` and
-`adapters` without presentation styling.
+`adapters` without presentation styling. Anthropic falls back to its known
+`https://api.anthropic.com` base URL when its models.dev record omits `api`.
 
 The singular `too model` group is removed. The public catalog commands are
 `too models`, `too providers`, and `too adapters`.
