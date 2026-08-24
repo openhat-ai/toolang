@@ -24,8 +24,21 @@ def test_plural_model_commands_are_public_resources() -> None:
     assert "providers" in stdout
     assert "adapters" in stdout
     assert "--models" in stdout
-    assert "Use a specified model knowledge catalog." in stdout
+    assert "Use a specified model catalog." in stdout
+    assert "Inspect and update the model catalog." in stdout
     assert "--model-catalog" not in stdout
+
+
+def test_model_commands_use_catalog_vocabulary() -> None:
+    inspect_result = runner.invoke(cli.app, ["models", "inspect", "--help"])
+    providers_result = runner.invoke(cli.app, ["providers", "--help"])
+
+    assert inspect_result.exit_code == 0, inspect_result.stderr
+    assert providers_result.exit_code == 0, providers_result.stderr
+    assert "Inspect model catalog entries and availability." in unstyle(
+        inspect_result.stdout
+    )
+    assert "Write catalog providers as JSON." in unstyle(providers_result.stdout)
 
 
 def test_models_filter_exports_a_valid_complete_catalog(
@@ -74,6 +87,39 @@ def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> N
     assert result.exit_code != 0
     assert result.exception is not None
     assert "explicit model catalog" in str(result.exception)
+
+
+def test_models_inspect_json_labels_catalog_entries(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps(_catalog_data()), encoding="utf-8")
+    _disable_local_discovery(monkeypatch)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "--models",
+            str(catalog),
+            "models",
+            "inspect",
+            "test/one",
+            "--json",
+        ],
+        env={},
+    )
+
+    assert result.exit_code == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert tuple(data["models"][0]) == (
+        "adapter",
+        "available",
+        "catalog",
+        "identity",
+    )
 
 
 def _disable_local_discovery(monkeypatch) -> None:

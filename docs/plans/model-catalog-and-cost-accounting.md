@@ -6,10 +6,10 @@ Approved for implementation on 2026-08-23.
 
 ## Goal
 
-Make models.dev-compatible data the durable source of provider, model,
-capability, and pricing knowledge while keeping runtime availability, protocol
-execution, and cost accounting separate. Users must be able to update or
-replace the catalog without a Toolang release, inspect its provenance, and
+Make models.dev-compatible data the durable model catalog for provider and model
+metadata, capabilities, and pricing while keeping runtime availability,
+protocol execution, and cost accounting separate. Users must be able to update
+or replace the catalog without a Toolang release, inspect its provenance, and
 retain auditable usage and cost records.
 
 ## Success Criteria
@@ -93,7 +93,7 @@ and serialize as JSON numbers without passing through binary floating point.
 The importer also enforces a configurable maximum size, nested key/ID
 consistency, non-negative prices, and non-negative limits.
 
-`reasoning_options` is the model knowledge source for toggle, effort, and token
+`reasoning_options` is the model catalog field for toggle, effort, and token
 budget support. Runtime requests record the exact requested and selected values;
 they do not create variants or guess a nearest effort/default. The recognized
 effort vocabulary follows models.dev, including `none`, `minimal`, `low`,
@@ -127,7 +127,7 @@ Ollama probes its configured/default endpoint's `/api/tags`; llama.cpp probes
 timeouts, and never scans ports. Results live only in the setup snapshot. Calls
 may coalesce an in-flight probe but there is no TTL, disk cache, cross-process
 cache, last-good result, or stale fallback. A local-only model has partial
-runtime knowledge and unknown price.
+runtime metadata and unknown price.
 
 ## Catalog Update and Export
 
@@ -165,7 +165,7 @@ clear list when selected local-only models cannot satisfy the schema.
 
 ## Availability, Resolution, and Filters
 
-Static catalog knowledge remains inspectable even when unavailable. Remote
+Static model catalog entries remain inspectable even when unavailable. Remote
 providers are selectable when explicit configuration or required environment
 variables resolve an executable target; this means configured, not confirmed
 account entitlement. Local models are selectable only when their endpoint
@@ -188,6 +188,10 @@ too models update --root|--home [--url URL]
 too providers [--filter SELECTOR] [--json]
 too adapters [--filter SELECTOR] [--json]
 ```
+
+Human-readable text uses `model catalog` consistently. Toolang-owned
+`models inspect --json` objects store the raw model value under `catalog`;
+the upstream models.dev field named `knowledge` remains unchanged.
 
 The singular `too model` group is removed. The public catalog commands are
 `too models`, `too providers`, and `too adapters`.

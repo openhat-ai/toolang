@@ -92,10 +92,10 @@ toolang start <agent>                # Start an agent in the background
 toolang stop <agent>                 # Stop a running agent
 
 # Inspection
-toolang models                       # List model knowledge and availability
+toolang models                       # List model catalog entries and availability
 toolang providers                    # List catalog providers
-toolang adapters                     # List installed model API adapters
-toolang tools                        # List available tools
+toolang adapters                     # List installed model adapters
+toolang tools                        # List installed tools
 toolang sandboxes                    # List installed sandboxes
 
 # Caps
@@ -107,7 +107,7 @@ caps [agent] skill list              # List skills
 caps [agent] list                    # List all caps
 ```
 
-Model knowledge comes from a models.dev-compatible `models.json`. Toolang uses
+The model catalog comes from a models.dev-compatible `models.json`. Toolang uses
 `--models`, `TOOLANG_MODEL_CATALOG`, agent-home, root, then the packaged
 catalog in that order. Update a managed root or agent-home snapshot with:
 

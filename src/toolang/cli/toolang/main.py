@@ -145,7 +145,7 @@ def callback(
         Path | None,
         typer.Option(
             "--models",
-            help="Use a specified model knowledge catalog.",
+            help="Use a specified model catalog.",
         ),
     ] = None,
     version: Annotated[

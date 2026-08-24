@@ -106,7 +106,7 @@ class _Candidate:
 
 @dataclass(frozen=True, slots=True)
 class ModelTargetResolver:
-    """Resolve catalog knowledge and runtime configuration into model targets."""
+    """Resolve model catalog entries and runtime configuration into targets."""
 
     providers: Mapping[str, CatalogProvider]
     models: tuple[ModelInfo, ...]

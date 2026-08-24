@@ -407,7 +407,8 @@ ephemeral port.
 - `toolang providers`
 - `toolang adapters`
 
-`toolang models` shows catalog knowledge and current availability, including:
+`toolang models` shows model catalog entries and current availability,
+including:
 
 - canonical provider/model identity
 - whether the model is currently available
@@ -419,7 +420,7 @@ Pass `--filter` to preview selector filtering, for example
 `toolang models --filter "[remote]"` or
 `toolang models --filter "openai/*[openrouter]"`.
 
-`toolang providers` shows provider knowledge and runtime availability.
+`toolang providers` shows catalog providers and runtime availability.
 `toolang adapters` lists installed model adapter names.
 `toolang models update --root|--home` validates and activates one complete
 models.dev-compatible catalog snapshot.

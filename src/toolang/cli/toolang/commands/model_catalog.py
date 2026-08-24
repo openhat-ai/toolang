@@ -33,7 +33,7 @@ from toolang.plugin.models.update import DEFAULT_MODELS_DEV_URL, update_model_ca
 from toolang.setup import AgentSetup, SetupWatcher
 
 models_app = typer.Typer(
-    help="Inspect and update model knowledge.",
+    help="Inspect and update the model catalog.",
     add_completion=False,
     invoke_without_command=True,
     pretty_exceptions_enable=False,
@@ -65,7 +65,7 @@ def models_command(
         typer.Option("--force", help="Replace an existing output file."),
     ] = False,
 ) -> None:
-    """List or export model knowledge when no subcommand is given."""
+    """List or export model catalog entries when no subcommand is given."""
 
     if ctx.invoked_subcommand is not None:
         return
@@ -114,7 +114,7 @@ def models_command(
     )
 
 
-@models_app.command("inspect", help="Inspect model knowledge and availability.")
+@models_app.command("inspect", help="Inspect model catalog entries and availability.")
 def inspect_models(
     ctx: typer.Context,
     identity: Annotated[
@@ -151,7 +151,7 @@ def inspect_models(
                             "identity": model.identity,
                             "available": model.identity in available_ids,
                             "adapter": _model_adapter(setup, model),
-                            "knowledge": model.to_data(),
+                            "catalog": model.to_data(),
                         }
                         for model in selected
                     ],
@@ -212,7 +212,7 @@ def providers_command(
     ] = None,
     json_: Annotated[
         bool,
-        typer.Option("--json", help="Write provider knowledge as JSON."),
+        typer.Option("--json", help="Write catalog providers as JSON."),
     ] = False,
 ) -> None:
     """List catalog providers and runtime availability."""

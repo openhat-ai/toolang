@@ -113,7 +113,7 @@ class Model:
 
 @dataclass(frozen=True, slots=True)
 class Provider:
-    """One models.dev-compatible provider and its model knowledge."""
+    """One models.dev-compatible provider and its model catalog entries."""
 
     id: str
     name: str
@@ -163,7 +163,7 @@ class Provider:
 
 @dataclass(frozen=True, slots=True)
 class ModelCatalogSnapshot:
-    """One immutable model knowledge and availability snapshot."""
+    """One immutable model catalog and availability snapshot."""
 
     providers: Mapping[str, Provider]
     models: tuple[Model, ...]
