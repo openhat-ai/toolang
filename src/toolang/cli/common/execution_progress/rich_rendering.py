@@ -199,11 +199,7 @@ class _RunFooter:
             else f"{self.run_id} {self.status}"
         )
         status_style = terminal_status_style(self.status)
-        marker = {
-            "succeeded": "✔",
-            "failed": "✘",
-            "canceled": "⊘",
-        }.get(self.status, "•")
+        marker = "▪︎" if self.status in {"succeeded", "failed", "canceled"} else "•"
         marker_style = (
             f"bold {status_style}" if self.status == "canceled" else status_style
         )
