@@ -133,16 +133,15 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
 
     assert "Thinking..." not in output
     assert output.startswith("\n• Use a shared reducer.\n")
-    assert "• Use a shared reducer.\n\n• run_one succeeded" in output
+    assert "• Use a shared reducer.\n\n✔ run_one succeeded" in output
     assert "run_one.0" not in output
     assert "deepseek/deepseek-chat" not in output
     footer = next(
         line
         for line in output.splitlines()
-        if line.startswith("• ") and "run_one succeeded" in line
+        if line.startswith("✔ ") and "run_one succeeded" in line
     )
-    assert footer.startswith("• run_one succeeded ")
-    assert len(footer) == 42
+    assert footer.startswith("✔ run_one succeeded · 2.0s · 1 model call")
     assert "┌" not in output
     assert "└" not in output
     assert "2.0s · 1 model call · ↑3.4k ↓86 ~$0.006" in output

@@ -157,13 +157,13 @@ def run_footer_renderable(
     max_width: int,
     gap_before: bool,
 ) -> RenderableType:
-    """Render one shared root Run footer with its leading separator."""
+    """Render one shared root Run footer with optional leading spacing."""
 
     footer = _RunFooter(
         run_id=run_id,
         operation=operation,
         status=status,
-        facts=" · ".join(facts),
+        facts=tuple(facts),
         max_width=max_width,
     )
     return Group(Text(), footer) if gap_before else footer
@@ -184,7 +184,7 @@ class _RunFooter:
     run_id: str
     operation: str | None
     status: str
-    facts: str
+    facts: tuple[str, ...]
     max_width: int
 
     def __rich_console__(
@@ -193,53 +193,56 @@ class _RunFooter:
         options: ConsoleOptions,
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
-        divider_width = min(width, RUN_DIVIDER_WIDTH)
         title = (
             f"{self.run_id}: {self.operation} {self.status}"
             if self.operation is not None
             else f"{self.run_id} {self.status}"
         )
         status_style = terminal_status_style(self.status)
-        if divider_width < 5:
-            divider = Text("•", style=status_style)
-            if divider_width > 1:
-                divider.append(" ", style=status_style)
-            if divider_width > 2:
-                divider.append(
-                    truncate(title, divider_width - 2),
-                    style=status_style,
-                )
-            divider.no_wrap = True
-            yield divider
+        marker = {
+            "succeeded": "✔",
+            "failed": "✘",
+            "canceled": "⊘",
+        }.get(self.status, "•")
+        marker_style = (
+            f"bold {status_style}" if self.status == "canceled" else status_style
+        )
+        prefix_width = display_width(marker) + 1
+        if width <= prefix_width:
+            yield Text(truncate(marker, width), style=marker_style, no_wrap=True)
             return
 
-        facts_indent = 2
-        content_width = max(width - facts_indent, 1)
-        fact_lines = Text(self.facts, style="dim").wrap(
+        content_width = width - prefix_width
+        title_text = Text()
+        title_text.append(title, style=status_style)
+        content_lines = title_text.wrap(
             console,
             content_width,
             overflow="fold",
-        ) or [Text("", style="dim")]
-        for line in fact_lines:
+        ) or [Text("", style=status_style)]
+        for fact in self.facts:
+            current = content_lines[-1]
+            separator = " · " if current.plain else ""
+            if display_width(current.plain + separator + fact) <= content_width:
+                current.append(separator + fact, style="dim")
+                continue
+            fact_lines = Text(fact, style="dim").wrap(
+                console,
+                content_width,
+                overflow="fold",
+            ) or [Text("", style="dim")]
+            content_lines.extend(fact_lines)
+        for line in content_lines:
             line.rstrip()
-        title = truncate(title, max(divider_width - 4, 1))
-        title_cells = display_width(title)
-        top = Text()
-        top.append("•", style=status_style)
-        top.append(" ", style=status_style)
-        top.append(title, style=status_style)
-        top.append(" ", style=status_style)
-        top.append(
-            "─" * max(divider_width - title_cells - 3, 0),
-            style=status_style,
-        )
-        top.no_wrap = True
-        yield top
-
-        for line in fact_lines:
-            facts = Text(" " * facts_indent + line.plain, style="dim")
-            facts.no_wrap = True
-            yield facts
+        for index, content_line in enumerate(content_lines):
+            line = Text(no_wrap=True)
+            if index == 0:
+                line.append(marker, style=marker_style)
+                line.append(" ")
+            else:
+                line.append(" " * prefix_width)
+            line.append_text(content_line)
+            yield line
 
 
 @dataclass(frozen=True, slots=True)
