@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal
 from io import StringIO
 import threading
 from types import SimpleNamespace
@@ -585,8 +586,24 @@ def test_progress_marks_complete_zero_price_as_exact() -> None:
 
     assert metrics.facts(include_runs=False) == [
         "1 model call",
-        "↑3.8k ↓120 $0.000000",
+        "↑3.8k ↓120 $0",
     ]
+
+
+@pytest.mark.parametrize(
+    ("amount", "expected"),
+    [
+        ("0.030000", "$0.03"),
+        ("0.042137", "$0.042137"),
+        ("1.200000", "$1.2"),
+    ],
+)
+def test_progress_cost_omits_trailing_fractional_zeroes(
+    amount: str, expected: str
+) -> None:
+    metrics = Metrics(cost=Decimal(amount), cost_known=True)
+
+    assert metrics.facts(include_runs=False) == [expected]
 
 
 def test_chat_root_footer_uses_a_fixed_divider_width_for_short_facts() -> None:

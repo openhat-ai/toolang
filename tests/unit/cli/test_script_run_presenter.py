@@ -145,7 +145,7 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
     assert len(footer) == 42
     assert "┌" not in output
     assert "└" not in output
-    assert "2.0s · 1 model call · ↑3.4k ↓86 ~$0.006000" in output
+    assert "2.0s · 1 model call · ↑3.4k ↓86 ~$0.006" in output
 
 
 @pytest.mark.parametrize("tty", [False, True])

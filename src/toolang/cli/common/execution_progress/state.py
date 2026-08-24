@@ -263,7 +263,8 @@ class Metrics:
         if include_cost and self.cost_known:
             rounded = self.cost.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
             prefix = "~$" if self.cost_approximate else "$"
-            cost = f"{prefix}{rounded:.6f}"
+            amount = f"{rounded:f}".rstrip("0").rstrip(".") or "0"
+            cost = f"{prefix}{amount}"
         if usage or cost:
             facts.append(" ".join(value for value in (usage, cost) if value))
         return [fact for fact in facts if fact]
