@@ -412,8 +412,9 @@ including:
 
 - canonical provider/model identity
 - whether the model is currently available
-- profile details such as modalities, tool support, reasoning, context limits,
-  and price metadata
+- context and maximum output sizes
+- input modalities and a comma-separated capability list
+- base input/output prices formatted as `$input/$output` under `PRICE ($/1M)`
 - a summary count and catalog revision
 
 Pass `--filter` to preview selector filtering, for example

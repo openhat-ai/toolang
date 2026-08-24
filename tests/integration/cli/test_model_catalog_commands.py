@@ -71,6 +71,49 @@ def test_models_filter_exports_a_valid_complete_catalog(
     assert tuple(providers["test"].models) == ("two",)
 
 
+def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None:
+    data = _catalog_data()
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text(json.dumps(data), encoding="utf-8")
+    _disable_local_discovery(monkeypatch)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "--models",
+            str(catalog),
+            "models",
+            "--filter",
+            "test/one",
+        ],
+        env={},
+    )
+
+    assert result.exit_code == 0, result.stderr
+    stdout = unstyle(result.stdout)
+    header = next(line for line in stdout.splitlines() if "CONTEXT" in line)
+    row = next(line for line in stdout.splitlines() if "test/one" in line)
+    assert all(
+        label in header
+        for label in ("CONTEXT", "OUTPUT", "INPUT", "CAPS", "PRICE ($/1M)")
+    )
+    values = (
+        "test/one",
+        "1k",
+        "100",
+        "text,image",
+        "tool_call,reasoning,temperature,structured",
+        "$1/$2",
+    )
+    assert [row.index(value) for value in values] == sorted(
+        row.index(value) for value in values
+    )
+    assert "PROFILE" not in stdout
+    assert "per 1m" not in stdout
+
+
 def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> None:
     result = runner.invoke(
         cli.app,
@@ -148,7 +191,10 @@ def _catalog_data() -> dict[str, object]:
                     "temperature": True,
                     "release_date": "2026-01-01",
                     "last_updated": "2026-01-01",
-                    "modalities": {"input": ["text"], "output": ["text"]},
+                    "modalities": {
+                        "input": ["text", "image"],
+                        "output": ["text"],
+                    },
                     "open_weights": False,
                     "limit": {"context": 1000, "output": 100},
                     "cost": {"input": 1, "output": 2},

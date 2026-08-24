@@ -99,14 +99,25 @@ def models_command(
         (
             model.identity,
             "yes" if model.identity in available else "no",
-            _model_profile(model),
+            *_model_table_fields(model),
         )
         for model in selected
     ]
     if not rows:
         typer.echo("No matched models.")
         return
-    echo_table(("MODEL", "AVAILABLE", "PROFILE"), rows)
+    echo_table(
+        (
+            "MODEL",
+            "AVAILABLE",
+            "CONTEXT",
+            "OUTPUT",
+            "INPUT",
+            "CAPS",
+            "PRICE ($/1M)",
+        ),
+        rows,
+    )
     typer.echo()
     typer.echo(
         f" {len(rows)} {'model' if len(rows) == 1 else 'models'}, "
@@ -166,7 +177,7 @@ def inspect_models(
             _model_adapter(setup, model),
             "yes" if model.identity in available_ids else "no",
             model.last_updated or "-",
-            _model_profile(model),
+            *_model_table_fields(model),
         )
         for model in selected
     ]
@@ -175,7 +186,20 @@ def inspect_models(
         return
     typer.echo(f"Source: {snapshot.source or 'runtime'}")
     typer.echo(f"Revision: {snapshot.revision}")
-    echo_table(("MODEL", "ADAPTER", "AVAILABLE", "UPDATED", "PROFILE"), rows)
+    echo_table(
+        (
+            "MODEL",
+            "ADAPTER",
+            "AVAILABLE",
+            "UPDATED",
+            "CONTEXT",
+            "OUTPUT",
+            "INPUT",
+            "CAPS",
+            "PRICE ($/1M)",
+        ),
+        rows,
+    )
 
 
 @models_app.command("update", help="Download and activate a complete models.json.")
@@ -349,29 +373,39 @@ def _provider_adapter(setup: AgentSetup, provider: Provider) -> str:
     return "+".join(adapters) or "-"
 
 
-def _model_profile(model: Model) -> str:
-    parts: list[str] = []
-    if context := model.limit.get("context"):
-        parts.append(f"ctx={_compact(context)}")
+def _model_table_fields(model: Model) -> tuple[str, str, str, str, str]:
     capabilities = [
         name
         for name, value in (
-            ("tools", model.tool_call),
+            ("tool_call", model.tool_call),
             ("reasoning", model.reasoning),
             ("temperature", model.temperature),
             ("structured", model.structured_output),
         )
         if value is True
     ]
-    if capabilities:
-        parts.append("+".join(capabilities))
-    if model.cost:
-        input_rate = model.cost.get("input", "-")
-        output_rate = model.cost.get("output", "-")
-        parts.append(f"${input_rate}/${output_rate} per 1m")
-    if model.local:
-        parts.append("local")
-    return ", ".join(parts) or "-"
+    return (
+        _compact_limit(model, "context"),
+        _compact_limit(model, "output"),
+        ",".join(model.modalities.get("input", ())) or "-",
+        ",".join(capabilities) or "-",
+        _price_pair(model),
+    )
+
+
+def _compact_limit(model: Model, name: str) -> str:
+    value = model.limit.get(name)
+    return _compact(value) if value is not None else "-"
+
+
+def _price_pair(model: Model) -> str:
+    if not model.cost:
+        return "-"
+    return "/".join(_price_rate(model.cost.get(name)) for name in ("input", "output"))
+
+
+def _price_rate(value: object | None) -> str:
+    return "-" if value is None else f"${value}"
 
 
 def _compact(value: int) -> str:
