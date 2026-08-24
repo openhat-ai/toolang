@@ -9,20 +9,20 @@ Give every agent two durable run spaces:
 
 - `collab/` is for collaboration with humans or other agents;
 - `lab/` is for exploration, including autonomous experiments; and
-- each space has a `MEMORY.md` loaded into runs for that space.
+- each space has a `MEMO.md` for agent-maintained notes loaded into its runs.
 
 `collab` is the formal filesystem and enum spelling of collaboration. This
 feature introduces no `work/` directory or `work` compatibility alias.
 
 The feature succeeds when:
 
-- every materialized agent home contains `collab/MEMORY.md` and
-  `lab/MEMORY.md` without overwriting existing content;
+- every materialized agent home contains `collab/MEMO.md` and `lab/MEMO.md`
+  without overwriting existing content;
 - every root run explicitly selects `collab` or `lab`, and the choice survives
   child runs, retry, rerun, persistence, and inspection;
 - model instructions identify the selected working directory and writable
   directories;
-- the selected memory is always supplied as context data; and
+- the selected notes are always supplied as context data; and
 - human-granted external workspaces are readable and writable in collab runs,
   but never grant access to lab runs.
 
@@ -30,7 +30,7 @@ The feature succeeds when:
 ## Current Behavior
 
 `AgentLayout` has no collab/lab paths, `RunSpec` carries no run-space purpose,
-and prompts load no agent-owned memory. Built-in filesystem and shell tools use
+and prompts load no agent-owned notes. Built-in filesystem and shell tools use
 the complete agent home as cwd/root, while Docker has no external workspace
 mount contract.
 
@@ -41,14 +41,14 @@ In scope:
 
 - run-space layout and compatible materialization;
 - explicit run-space selection and durable access snapshots;
-- bounded `MEMORY.md` loading;
+- bounded `MEMO.md` loading;
 - resident-agent workspace grants and CLI management;
 - filesystem/shell working roots and Docker workspace mounts;
 - migrations, documentation, and offline tests.
 
 Out of scope:
 
-- the future `memory/` directory and memory plugin;
+- the future plugin-maintained `memory/` directory and memory plugin;
 - memory search, summarization, retention, or promotion between spaces;
 - deciding which future autonomous jobs are exploration;
 - natural-language or model-callable workspace authorization;
@@ -63,28 +63,28 @@ agents/<agent>/
   agent.too
   config.toml
   collab/
-    MEMORY.md
+    MEMO.md
   lab/
-    MEMORY.md
+    MEMO.md
   .runtime/
   ...
 ```
 
-`AgentLayout` exposes `collab`, `collab_memory`, `lab`, and `lab_memory`.
+`AgentLayout` exposes `collab`, `collab_memo`, `lab`, and `lab_memo`.
 These directories are durable agent data and are excluded from prepared-state
 source scanning.
 
 One idempotent catalog helper creates missing directories and initializes each
-missing memory file with one newline. It preserves existing bytes and rejects a
-conflicting file at `collab/` or `lab/`, or a directory at either memory path.
+missing memo file with one newline. It preserves existing bytes and rejects a
+conflicting file at `collab/` or `lab/`, or a directory at either memo path.
 
 New resident, visiting, and roaming agents call the helper. Startup and
 one-shot execution call it before state preparation so existing homes upgrade
 lazily. Local clones preserve their current copied collab and lab content; remote
-clones start with empty memory files.
+clones start with empty memo files.
 
 
-## Run Space and Memory
+## Run Space and Notes
 
 `RunSpace` is `collab | lab`. `RunSpec` has no core default; public callers
 resolve one explicitly:
@@ -97,32 +97,34 @@ resolve one explicitly:
 | Future autonomous exploration | must pass `lab` |
 
 Before accepting a root run, the executor captures one immutable `RunAccess`
-containing the space, working directory, memory path and text, truncation flag,
+containing the space, working directory, memo path and text, truncation flag,
 and active workspace names and paths. Preparation controls persist it; child
 runs inherit it.
 
 Lifecycle rules:
 
-- start captures current memory and workspace grants;
+- start captures current notes and workspace grants;
 - retry reuses the exact access snapshot;
-- rerun keeps the space but captures current memory and grants;
+- rerun keeps the space but captures current notes and grants;
 - edits or revocations do not change an active run; and
 - historical controls without access data migrate as collab runs.
 
-Toolang reads at most 32,000 Unicode characters from the selected `MEMORY.md`.
+Toolang reads at most 32,000 Unicode characters from the selected `MEMO.md`.
 Invalid UTF-8 rejects preparation; truncated content receives a generated
-marker. Changes made inside a run become visible through memory only to the
+marker. Changes made inside a run become visible through notes only to the
 next root run.
 
 Mandatory runtime instructions always identify `space`, `working_directory`,
-`memory_file`, and ordered `writable_directories`. For collab runs, each active
-workspace is listed by name and environment-visible path. The memory body is an
+`memo_file`, and ordered `writable_directories`. For collab runs, each active
+workspace is listed by name and environment-visible path. The memo body is an
 escaped, bounded context block and cannot change access. `instruct: none`
 removes optional agent guidance, not runtime access instructions;
-`context: none` removes optional authored context, not memory.
+`context: none` removes optional authored context, not notes.
 
-Collab runs load only `collab/MEMORY.md`. Lab runs load only `lab/MEMORY.md`
-and receive no external workspaces.
+Collab runs load only the collaboration notes in `collab/MEMO.md`. Lab runs
+load only the exploration notes in `lab/MEMO.md` and receive no external
+workspaces. These agent-maintained notes are distinct from future memory, which
+the memory plugin owns under `memory/`.
 
 
 ## Workspace Grants
@@ -148,10 +150,10 @@ too <agent> workspace remove NAME
 ```
 
 Commands preserve unrelated TOML. No workspace metadata is written to
-`collab/MEMORY.md`: `config.toml` is the only authority, and the mandatory
+`collab/MEMO.md`: `config.toml` is the only authority, and the mandatory
 runtime prompt is the only run-facing projection. It lists the exact active
 workspace names and paths captured in `RunAccess`; configured but inactive
-Docker workspaces are omitted until restart. Memory text never widens
+Docker workspaces are omitted until restart. Memo text never widens
 filesystem access.
 
 Natural-language chat content does not authorize a host path. A future
@@ -195,7 +197,7 @@ but restart is still required to remove the mount.
 - Execution types, executor preparation, records, store, and schemas:
   `RunSpace`, `RunAccess`, inheritance, migration, and inspection.
 - API, chat, script, scheduler, and inbox call sites: concrete space selection.
-- Executor prompt assembly: mandatory access instructions and memory context.
+- Executor prompt assembly: mandatory access instructions and notes context.
 - `base/types/tool.py`, tool-step invocation, filesystem, and shell: allowed
   roots and selected cwd.
 - Setup and hosting types, orchestration, mounts, and sandbox plugins: active
@@ -213,14 +215,14 @@ but restart is still required to remove the mount.
 - Start, child, retry, rerun, control codecs, SQLite, inspection, and legacy
   records follow the access lifecycle.
 - Default/custom/none instruct and context combinations always contain the
-  correct access instructions and selected bounded memory.
+  correct access instructions and selected bounded notes.
 - Workspace add/list/remove preserves unrelated config and validates paths and
   names; collab prompts list the exact active mapping and lab prompts list none.
 - Filesystem and shell cwd cover collab/lab separation, workspaces, traversal,
   symlinks, root removal, revocation, and local/Docker path translation.
 - Hosting covers deterministic mounts, published mappings, missing mounts,
   restart reporting, and no implicit restart.
-- Memory edits neither rebuild prepared state nor change workspace grants;
+- Memo edits neither rebuild prepared state nor change workspace grants;
   workspace config changes do.
 - The default repository verification passes without live-provider tests.
 
@@ -230,8 +232,8 @@ but restart is still required to remove the mount.
 - Mandatory runtime prompt separation changes the practical meaning of
   `instruct: none` and `context: none`; focused tests must protect other prompt
   behavior.
-- Memory and workspace paths become durable local run/prompt data; users must
-  not place secrets in memory or grant sensitive directories casually.
+- Memo and workspace paths become durable local run/prompt data; users must not
+  place secrets in notes or grant sensitive directories casually.
 - Docker mounts are fixed at launch, so restart reporting must distinguish
   configured from active workspaces.
 - Path-aware tools enforce roots, but arbitrary shell commands are not hard
