@@ -6,7 +6,10 @@ from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
 
 from toolang.base.types.message import Part
-from toolang.execution.accounting import selected_usd_cost
+from toolang.execution.accounting import (
+    selected_cost_is_approximate,
+    selected_usd_cost,
+)
 from toolang.execution.events import RunBegin, RunEnd, StepBegin, StepEnd
 from toolang.execution.types import ModelStepNoted, RunStatus, StepKind, StepPath
 from toolang.lang.ast import FlowStmt
@@ -214,8 +217,8 @@ class Metrics:
                 if selected is not None:
                     self.cost += selected
                     self.cost_known = True
-                self.cost_approximate = self.cost_approximate or (
-                    accounting.selected != "reported"
+                self.cost_approximate = (
+                    self.cost_approximate or selected_cost_is_approximate(accounting)
                 )
             elif noted is not None:
                 if noted.tokens:

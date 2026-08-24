@@ -62,6 +62,9 @@ from toolang.execution.events import (
 from toolang.execution.types import (
     ControlRef,
     Local,
+    ModelAccounting,
+    ModelCost,
+    ModelCostLine,
     ModelStepGiven,
     ModelStepNoted,
     ModelTokenCount,
@@ -538,6 +541,52 @@ def test_chat_root_footer_omits_zero_child_runs() -> None:
     rendered = _render_text(block.render())
 
     assert "0 runs" not in rendered
+
+
+def test_progress_marks_complete_zero_price_as_exact() -> None:
+    metrics = Metrics()
+    metrics.record_step(
+        StepEnd(
+            step=StepPath.parse("run_1.0"),
+            kind="model",
+            status="succeeded",
+            noted=ModelStepNoted(
+                accounting=ModelAccounting(
+                    input_tokens=3800,
+                    output_tokens=120,
+                    estimate=ModelCost(
+                        amount="0",
+                        currency="USD",
+                        complete=True,
+                        lines=(
+                            ModelCostLine(
+                                meter="input",
+                                quantity="3800",
+                                unit="token",
+                                rate="0",
+                                per="1000000",
+                                amount="0",
+                            ),
+                            ModelCostLine(
+                                meter="output",
+                                quantity="120",
+                                unit="token",
+                                rate="0",
+                                per="1000000",
+                                amount="0",
+                            ),
+                        ),
+                    ),
+                    selected="estimated",
+                )
+            ),
+        )
+    )
+
+    assert metrics.facts(include_runs=False) == [
+        "1 model call",
+        "↑3.8k ↓120 $0.000000",
+    ]
 
 
 def test_chat_root_footer_uses_a_fixed_divider_width_for_short_facts() -> None:

@@ -91,8 +91,20 @@ def selected_usd_cost(accounting: ModelAccounting | None) -> Decimal | None:
     return Decimal(selected.amount)
 
 
-def selected_cost_is_estimated(accounting: ModelAccounting | None) -> bool:
-    return accounting is not None and accounting.selected == "estimated"
+def selected_cost_is_approximate(accounting: ModelAccounting | None) -> bool:
+    """Return whether the selected cost needs an approximation marker."""
+
+    if accounting is None or accounting.selected == "reported":
+        return False
+    estimate = accounting.estimate
+    if accounting.selected != "estimated" or estimate is None:
+        return True
+    exact_zero = (
+        estimate.complete
+        and bool(estimate.lines)
+        and all(Decimal(line.rate) == 0 for line in estimate.lines)
+    )
+    return not exact_zero
 
 
 def cache_hit_ratio(accounting: ModelAccounting | None) -> Decimal | None:
