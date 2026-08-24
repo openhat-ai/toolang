@@ -114,7 +114,7 @@ def models_command(
             "CONTEXT",
             "OUTPUT",
             "INPUT",
-            "CAPS",
+            "CAPABILITY",
             "PRICE ($/1M)",
         ),
         rows,
@@ -197,7 +197,7 @@ def inspect_models(
             "CONTEXT",
             "OUTPUT",
             "INPUT",
-            "CAPS",
+            "CAPABILITY",
             "PRICE ($/1M)",
         ),
         rows,
@@ -414,15 +414,13 @@ def _format_limit(model: Model, name: str) -> str:
 def _price_pair(model: Model) -> str:
     if not model.cost:
         return "-"
-    return "/".join(_price_rate(model.cost.get(name)) for name in ("input", "output"))
+    return " / ".join(_price_rate(model.cost.get(name)) for name in ("input", "output"))
 
 
 def _price_rate(value: object | None) -> str:
     if value is None:
         return "-"
-    if isinstance(value, int) and not isinstance(value, bool):
-        return f"${value}"
-    if isinstance(value, Decimal | float):
+    if isinstance(value, Decimal | int | float) and not isinstance(value, bool):
         return f"${value:.2f}"
     return f"${value}"
 

@@ -193,13 +193,12 @@ Human-readable text uses `model catalog` consistently. Toolang-owned
 `models inspect --json` objects store the raw model value under `catalog`;
 the upstream models.dev field named `knowledge` remains unchanged.
 The human-readable `models` and `models inspect` tables split model details into
-`CONTEXT`, `OUTPUT`, `INPUT`, `CAPS`, and `PRICE ($/1M)`. Modalities and
+`CONTEXT`, `OUTPUT`, `INPUT`, `CAPABILITY`, and `PRICE ($/1M)`. Modalities and
 capabilities are comma-separated and use models.dev field names such as
-`tool_call`; price cells contain only `$input/$output` base rates because the
+`tool_call`; price cells contain only `$input / $output` base rates because the
 header owns the per-million unit. Context and output sizes use full integers
-with thousands separators. Integer prices remain compact, while non-integer
-prices are rounded and padded to two decimal places. The context, output, and
-price columns are right-aligned.
+with thousands separators. Every numeric price is rounded and padded to two
+decimal places. The context, output, and price columns are right-aligned.
 
 The singular `too model` group is removed. The public catalog commands are
 `too models`, `too providers`, and `too adapters`.

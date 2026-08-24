@@ -98,7 +98,13 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     row = next(line for line in stdout.splitlines() if "test/one" in line)
     assert all(
         label in header
-        for label in ("CONTEXT", "OUTPUT", "INPUT", "CAPS", "PRICE ($/1M)")
+        for label in (
+            "CONTEXT",
+            "OUTPUT",
+            "INPUT",
+            "CAPABILITY",
+            "PRICE ($/1M)",
+        )
     )
     values = (
         "test/one",
@@ -106,7 +112,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
         "100,000",
         "text,image",
         "tool_call,reasoning,temperature,structured",
-        "$1.26/$2",
+        "$1.26 / $0.00",
     )
     assert [row.index(value) for value in values] == sorted(
         row.index(value) for value in values
@@ -114,7 +120,7 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     for header_value, row_value in (
         ("CONTEXT", "1,000,000"),
         ("OUTPUT", "100,000"),
-        ("PRICE ($/1M)", "$1.26/$2"),
+        ("PRICE ($/1M)", "$1.26 / $0.00"),
     ):
         assert header.index(header_value) + len(header_value) == row.index(
             row_value
@@ -206,7 +212,7 @@ def _catalog_data() -> dict[str, object]:
                     },
                     "open_weights": False,
                     "limit": {"context": 1_000_000, "output": 100_000},
-                    "cost": {"input": 1.256, "output": 2},
+                    "cost": {"input": 1.256, "output": 0},
                 }
                 for model_id, reasoning in (("one", True), ("two", False))
             },
