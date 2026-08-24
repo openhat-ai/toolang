@@ -279,24 +279,23 @@ root-owned error row. There is no separate diagnostic marker.
 Script and Chat end a root Run with the same footer:
 
 ```text
-• run_nrqpt0mf succeeded ─────────────────
-  1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
+[ run_nrqpt0mf succeeded · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01 ]
+[ run_nrqpt0mf failed · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01 ]
+[ run_nrqpt0mf canceled · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01 ]
 ```
 
 A CLI retry or rerun identifies the operation in the same footer instead of
 appending a separate result line:
 
 ```text
-• run_zvczap2h: retry succeeded ──────────
+[ run_zvczap2h: retry succeeded · 2.0s · 1 model call ]
 ```
 
-The divider is 42 cells wide: the Step-compatible `•` marker and its following
-space
-occupy two cells, and the caption plus trailing rule fill the remaining 40.
-Narrow terminals shorten the divider without wrapping it. The marker, caption,
-and rule share the terminal status style: dim for success, red for failure, and
-yellow for cancellation. Facts remain dim and use the available terminal width
-independently, so they may extend beyond the divider.
+Square brackets frame the complete footer. Successful footers are dim without
+a color. Failed and canceled footers use normal intensity across the entire
+line, with red for failure and yellow for cancellation. Narrow terminals wrap
+the caption and facts with a two-cell hanging indent and place the closing
+bracket on the final line.
 
 The footer owns total duration and whole-tree Run facts. Script does not append
 a separate `Run: RUN_ID` line. Errors before `RunBegin` are reported outside
@@ -313,9 +312,9 @@ The Chat TUI `:show` command introduces a durable result with a quiet divider:
 ```
 
 The `•` marker, caption, and rule are dim, while the result body retains
-normal intensity. The divider follows the same fixed 42-cell width as the root
-Run footer and shortens only when the available width requires caption
-truncation. Exactly one blank line separates the divider from the result body.
+normal intensity. The divider uses a fixed 42-cell width and shortens only when
+the available width requires caption truncation. Exactly one blank line
+separates the divider from the result body.
 
 ## Surface Behavior
 

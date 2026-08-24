@@ -157,13 +157,13 @@ def run_footer_renderable(
     max_width: int,
     gap_before: bool,
 ) -> RenderableType:
-    """Render one shared root Run footer with its leading separator."""
+    """Render one shared root Run footer with optional leading spacing."""
 
     footer = _RunFooter(
         run_id=run_id,
         operation=operation,
         status=status,
-        facts=" · ".join(facts),
+        facts=tuple(facts),
         max_width=max_width,
     )
     return Group(Text(), footer) if gap_before else footer
@@ -172,11 +172,39 @@ def run_footer_renderable(
 def terminal_status_style(status: str) -> str:
     """Return the shared terminal style for one completed execution status."""
 
+    return _terminal_status_color(status) or "dim"
+
+
+def _terminal_status_color(status: str) -> str | None:
     return {
-        "succeeded": "dim",
         "failed": "red",
         "canceled": "yellow",
-    }.get(status, "dim")
+    }.get(status)
+
+
+def _run_footer_style(status: str) -> str:
+    return "dim" if status == "succeeded" else _terminal_status_color(status) or "none"
+
+
+def _wrap_run_footer_content(
+    *,
+    title: str,
+    facts: tuple[str, ...],
+    console: Console,
+    width: int,
+) -> list[Text]:
+    lines = list(Text(title).wrap(console, width, overflow="fold")) or [Text()]
+    for fact in facts:
+        current = lines[-1]
+        separator = " · " if current.plain else ""
+        if display_width(current.plain + separator + fact) <= width:
+            current.append(separator + fact)
+            continue
+        fact_lines = list(Text(fact).wrap(console, width, overflow="fold")) or [Text()]
+        lines.extend(fact_lines)
+    for line in lines:
+        line.rstrip()
+    return lines
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,7 +212,7 @@ class _RunFooter:
     run_id: str
     operation: str | None
     status: str
-    facts: str
+    facts: tuple[str, ...]
     max_width: int
 
     def __rich_console__(
@@ -193,53 +221,40 @@ class _RunFooter:
         options: ConsoleOptions,
     ) -> RenderResult:
         width = max(1, min(options.max_width, self.max_width))
-        divider_width = min(width, RUN_DIVIDER_WIDTH)
         title = (
             f"{self.run_id}: {self.operation} {self.status}"
             if self.operation is not None
             else f"{self.run_id} {self.status}"
         )
-        status_style = terminal_status_style(self.status)
-        if divider_width < 5:
-            divider = Text("•", style=status_style)
-            if divider_width > 1:
-                divider.append(" ", style=status_style)
-            if divider_width > 2:
-                divider.append(
-                    truncate(title, divider_width - 2),
-                    style=status_style,
-                )
-            divider.no_wrap = True
-            yield divider
+        footer_style = _run_footer_style(self.status)
+        prefix = "[ "
+        suffix = " ]"
+        framing_width = display_width(prefix + suffix)
+        if width <= framing_width:
+            yield Text(
+                truncate(f"{prefix}{title}{suffix}", width),
+                style=footer_style,
+                no_wrap=True,
+            )
             return
 
-        facts_indent = 2
-        content_width = max(width - facts_indent, 1)
-        fact_lines = Text(self.facts, style="dim").wrap(
-            console,
-            content_width,
-            overflow="fold",
-        ) or [Text("", style="dim")]
-        for line in fact_lines:
-            line.rstrip()
-        title = truncate(title, max(divider_width - 4, 1))
-        title_cells = display_width(title)
-        top = Text()
-        top.append("•", style=status_style)
-        top.append(" ", style=status_style)
-        top.append(title, style=status_style)
-        top.append(" ", style=status_style)
-        top.append(
-            "─" * max(divider_width - title_cells - 3, 0),
-            style=status_style,
+        content_lines = _wrap_run_footer_content(
+            title=title,
+            facts=self.facts,
+            console=console,
+            width=width - framing_width,
         )
-        top.no_wrap = True
-        yield top
-
-        for line in fact_lines:
-            facts = Text(" " * facts_indent + line.plain, style="dim")
-            facts.no_wrap = True
-            yield facts
+        continuation = " " * display_width(prefix)
+        for index, content_line in enumerate(content_lines):
+            line = Text(
+                prefix if index == 0 else continuation,
+                style=footer_style,
+                no_wrap=True,
+            )
+            line.append_text(content_line)
+            if index + 1 == len(content_lines):
+                line.append(suffix)
+            yield line
 
 
 @dataclass(frozen=True, slots=True)

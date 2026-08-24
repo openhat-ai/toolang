@@ -218,7 +218,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
         "RunStopBlock",
     ]
     transcript = "".join(_render_text(block.render()) for block in app.finalized)
-    assert "• drafting\n\n• run_1 succeeded" in transcript
+    assert "• drafting\n\n[ run_1 succeeded" in transcript
 
 
 def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None:
@@ -282,8 +282,8 @@ def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
     assert "[1] Run summarize for each item, up to 2 at once\n\n• Mapped" in (
         transcript
     )
-    assert "items in parallel\n\n• run_1 succeeded" in transcript
-    assert "items in parallel\n\n\n• run_1 succeeded" not in transcript
+    assert "items in parallel\n\n[ run_1 succeeded" in transcript
+    assert "items in parallel\n\n\n[ run_1 succeeded" not in transcript
 
 
 def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() -> None:
@@ -503,9 +503,8 @@ def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
     rendered = _render_text(app.finalized[0].render())
     lines = rendered.splitlines()
     assert lines[0] == ""
-    assert lines[1].startswith("• run_1 canceled ")
-    assert lines[2].startswith("  3.0s")
-    assert lines[3] == ""
+    assert lines[1] == "[ run_1 canceled · 3.0s ]"
+    assert lines[2] == ""
 
 
 def test_chat_root_footer_counts_child_runs_for_any_runnable_kind() -> None:
@@ -528,10 +527,11 @@ def test_chat_root_footer_counts_child_runs_for_any_runnable_kind() -> None:
     assert "6 runs" in rendered
     assert "8 model calls" in rendered
     assert "2 tool calls" in rendered
-    assert len(lines[0]) == 42
-    assert len(lines[1]) > len(lines[0])
-    assert lines[0].index("run_1") == 2
-    assert lines[1].index("3.0s") == 2
+    assert all(rendering.display_len(line) <= 72 for line in lines)
+    assert all(not line.endswith("·") for line in lines)
+    assert lines[0].startswith("[ run_1")
+    assert lines[-1].endswith(" ]")
+    assert all(line.startswith("  ") for line in lines[1:])
 
 
 def test_chat_root_footer_omits_zero_child_runs() -> None:
@@ -606,14 +606,12 @@ def test_progress_cost_omits_trailing_fractional_zeroes(
     assert metrics.facts(include_runs=False) == [expected]
 
 
-def test_chat_root_footer_uses_a_fixed_divider_width_for_short_facts() -> None:
+def test_chat_root_footer_keeps_short_facts_inline() -> None:
     block = blocks.RunStopBlock.create(_run_begin(run_id="run_pmqv7gfc"))
     block.update(_run_end(run_id="run_pmqv7gfc", status="succeeded"))
 
     lines = [line for line in _render_text(block.render()).splitlines() if line]
-    prefix = "• run_pmqv7gfc succeeded "
-
-    assert lines[0] == prefix + "─" * (42 - len(prefix))
+    assert lines == ["[ run_pmqv7gfc succeeded · 3.0s ]"]
 
 
 def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> None:
@@ -633,10 +631,11 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
         line for line in _render_text(block.render(), width=160).splitlines() if line
     ]
 
-    assert len(lines[0]) == 32
-    assert lines[0].startswith("• run_1 failed ")
+    assert all(len(line) <= 32 for line in lines)
+    assert lines[0].startswith("[ run_1 failed · ")
+    assert lines[-1].endswith(" ]")
     assert all(line.startswith("  ") for line in lines[1:])
-    assert all(not line.startswith(("│", "└")) for line in lines[1:])
+    assert all("─" not in line for line in lines)
 
 
 def test_chat_tool_step_dims_running_row_and_renders_terminal_surfaces() -> None:
@@ -1042,7 +1041,7 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
         ("canceled", "yellow", False),
     ],
 )
-def test_chat_run_footer_styles_marker_caption_rule_and_facts(
+def test_chat_run_footer_uses_status_intensity_and_color(
     status: Literal["succeeded", "failed", "canceled"],
     color: str | None,
     dim: bool,
@@ -1055,33 +1054,17 @@ def test_chat_run_footer_styles_marker_caption_rule_and_facts(
         if segment.text.strip()
     ]
 
-    def assert_status_style(segment: Any) -> None:
+    assert _render_text(root_summary.render()).strip().startswith("[ ")
+    assert _render_text(root_summary.render()).strip().endswith(" ]")
+    for segment in segments:
         assert segment.style is not None
         assert bool(segment.style.dim) is dim
+        assert not segment.style.bold
         if color is None:
             assert segment.style.color is None
         else:
             assert segment.style.color is not None
             assert segment.style.color.name == color
-
-    marker = next(segment for segment in segments if segment.text == "•")
-    assert_status_style(marker)
-    rule = [segment for segment in segments if "─" in segment.text]
-    assert rule
-    for segment in rule:
-        assert_status_style(segment)
-    caption = next(segment for segment in segments if "run_1" in segment.text)
-    assert_status_style(caption)
-    facts = [
-        segment
-        for segment in segments
-        if segment not in (marker, caption) and segment not in rule
-    ]
-    assert facts
-    assert all(
-        segment.style is not None and segment.style.color is None and segment.style.dim
-        for segment in facts
-    )
 
 
 def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
