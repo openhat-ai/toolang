@@ -6,7 +6,6 @@ import json
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
 from toolang.base.errors import ToolangError
@@ -36,6 +35,8 @@ from toolang.base.types.run import (
     ToolCall,
 )
 from toolang.base.types.tool import ToolDefinition
+
+from ._usage import billing_value, optional_int, reported_cost
 
 _ADAPTER_LOGGER = logging.getLogger(__name__)
 _LOG_PREVIEW_LIMIT = 4_000
@@ -407,49 +408,37 @@ def chat_usage(response: Any) -> ModelUsage | None:
         return None
     input_details = getattr(usage, "prompt_tokens_details", None)
     output_details = getattr(usage, "completion_tokens_details", None)
-    cached = _usage_int(input_details, "cached_tokens")
-    reasoning = _usage_int(output_details, "reasoning_tokens")
-    reported_cost = _usage_decimal(usage, "cost")
+    cached = optional_int(usage, "prompt_cache_hit_tokens")
+    if cached is None:
+        cached = optional_int(input_details, "cached_tokens")
+    cache_write = optional_int(input_details, "cache_write_tokens")
+    if cache_write is None:
+        cache_write = optional_int(input_details, "cache_creation_input_tokens")
+    cache_miss = optional_int(usage, "prompt_cache_miss_tokens")
+    uncached = cache_miss
+    if uncached is None and (cached is not None or cache_write is not None):
+        uncached = input_tokens - (cached or 0) - (cache_write or 0)
+    reasoning = optional_int(output_details, "reasoning_tokens")
+    cost, currency = reported_cost(usage)
+    service_tier = billing_value(response, "service_tier") or billing_value(
+        usage, "service_tier"
+    )
     return ModelUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
-        input_uncached_tokens=(input_tokens - cached if cached is not None else None),
+        input_uncached_tokens=uncached,
         input_cache_read_tokens=cached,
-        input_audio_tokens=_usage_int(input_details, "audio_tokens"),
+        input_cache_write_tokens=cache_write,
+        input_audio_tokens=optional_int(input_details, "audio_tokens"),
         output_visible_tokens=(
             output_tokens - reasoning if reasoning is not None else None
         ),
         output_reasoning_tokens=reasoning,
-        output_audio_tokens=_usage_int(output_details, "audio_tokens"),
-        reported_cost=reported_cost,
-        reported_currency="USD" if reported_cost is not None else None,
+        output_audio_tokens=optional_int(output_details, "audio_tokens"),
+        reported_cost=cost,
+        reported_currency=currency,
+        billing={"service_tier": service_tier} if service_tier is not None else {},
     )
-
-
-def _usage_int(value: object, name: str) -> int | None:
-    raw = (
-        cast(Mapping[str, object], value).get(name)
-        if isinstance(value, Mapping)
-        else getattr(value, name, None)
-    )
-    return (
-        raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0 else None
-    )
-
-
-def _usage_decimal(value: object, name: str) -> Decimal | None:
-    raw = (
-        cast(Mapping[str, object], value).get(name)
-        if isinstance(value, Mapping)
-        else getattr(value, name, None)
-    )
-    if raw is None or isinstance(raw, bool):
-        return None
-    try:
-        parsed = Decimal(str(raw))
-    except (InvalidOperation, ValueError):
-        return None
-    return parsed if parsed.is_finite() and parsed >= 0 else None
 
 
 def parse_tool_arguments(raw: object) -> dict[str, Any]:

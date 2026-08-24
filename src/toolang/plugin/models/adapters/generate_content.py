@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from decimal import Decimal
 import json
 from typing import Any, cast
 from urllib.parse import quote
@@ -31,8 +32,11 @@ from toolang.base.types.run import (
     ModelPartStart,
     ModelStreamHandler,
     ModelUsage,
+    ModelUsageMeter,
     ToolCall,
 )
+
+from ._usage import billing_value, reported_cost
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,15 +203,106 @@ def generate_content_usage(value: Mapping[str, object]) -> ModelUsage | None:
     visible = _int(value.get("candidatesTokenCount"))
     if prompt is None or visible is None:
         return None
-    cached = _int(value.get("cachedContentTokenCount")) or 0
-    thoughts = _int(value.get("thoughtsTokenCount")) or 0
+    cached = _int(value.get("cachedContentTokenCount"))
+    thoughts = _int(value.get("thoughtsTokenCount"))
+    tool_prompt = _int(value.get("toolUsePromptTokenCount"))
+    input_tokens = prompt + (tool_prompt or 0)
+    output_tokens = visible + (thoughts or 0)
+    total = _int(value.get("totalTokenCount"))
+    if total is not None and total >= input_tokens + visible:
+        output_tokens = total - input_tokens
+    input_audio = _modality_tokens(
+        value,
+        fields=("promptTokensDetails", "toolUsePromptTokensDetails"),
+        modality="audio",
+    )
+    output_audio = _modality_tokens(
+        value,
+        fields=("candidatesTokensDetails",),
+        modality="audio",
+    )
+    meters: list[ModelUsageMeter] = []
+    if tool_prompt is not None and tool_prompt > 0:
+        meters.append(
+            ModelUsageMeter(
+                name="google.tool_use_prompt",
+                quantity=Decimal(tool_prompt),
+                unit="token",
+            )
+        )
+    meters.extend(_modality_meters(value))
+    billing = {
+        name: item
+        for name, item in (
+            ("service_tier", billing_value(value, "serviceTier")),
+            ("traffic_type", billing_value(value, "trafficType")),
+        )
+        if item is not None
+    }
+    cost, currency = reported_cost(value)
     return ModelUsage(
-        input_tokens=prompt,
-        output_tokens=visible + thoughts,
-        input_uncached_tokens=prompt - cached,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        input_uncached_tokens=(input_tokens - cached if cached is not None else None),
         input_cache_read_tokens=cached,
+        input_audio_tokens=input_audio,
         output_visible_tokens=visible,
         output_reasoning_tokens=thoughts,
+        output_audio_tokens=output_audio,
+        meters=tuple(meters),
+        reported_cost=cost,
+        reported_currency=currency,
+        billing=billing,
+    )
+
+
+def _modality_tokens(
+    value: Mapping[str, object],
+    *,
+    fields: tuple[str, ...],
+    modality: str,
+) -> int | None:
+    seen = False
+    total = 0
+    for field in fields:
+        details = value.get(field)
+        if not isinstance(details, list):
+            continue
+        seen = True
+        for raw in details:
+            item = _json_object(raw)
+            if _text(item.get("modality")).lower() != modality:
+                continue
+            count = _int(item.get("tokenCount"))
+            if count is not None:
+                total += count
+    return total if seen else None
+
+
+def _modality_meters(
+    value: Mapping[str, object],
+) -> tuple[ModelUsageMeter, ...]:
+    quantities: dict[str, int] = {}
+    for field, direction in (
+        ("promptTokensDetails", "input"),
+        ("toolUsePromptTokensDetails", "input"),
+        ("candidatesTokensDetails", "output"),
+    ):
+        details = value.get(field)
+        if not isinstance(details, list):
+            continue
+        for raw in details:
+            item = _json_object(raw)
+            modality = _text(item.get("modality")).lower()
+            count = _int(item.get("tokenCount"))
+            if not modality or modality in {"text", "audio"} or count is None:
+                continue
+            name = f"google.{direction}.{modality}"
+            quantities[name] = quantities.get(name, 0) + count
+    return tuple(
+        ModelUsageMeter(name=name, quantity=Decimal(quantity), unit="token")
+        for name, quantity in sorted(quantities.items())
+        if quantity > 0
     )
 
 

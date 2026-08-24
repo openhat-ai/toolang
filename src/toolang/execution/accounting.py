@@ -32,7 +32,15 @@ def build_model_accounting(
         return None
     model = catalog.find(target.provider, target.model) if catalog is not None else None
     rates, plan, match = _selected_rates(model, target=target, usage=usage)
-    estimate = _estimate_cost(usage, rates) if rates is not None else None
+    estimate = (
+        _estimate_cost(
+            usage,
+            rates,
+            force_partial=_has_unsupported_billing(usage.billing),
+        )
+        if rates is not None
+        else None
+    )
     reported = (
         ModelCost(
             amount=_decimal_text(usage.reported_cost),
@@ -65,7 +73,7 @@ def build_model_accounting(
                 plan=plan,
                 match=match,
             )
-            if rates is not None
+            if rates is not None or usage.billing
             else None
         ),
         reported=reported,
@@ -127,11 +135,13 @@ def _selected_rates(
     target: ModelTarget,
     usage: ModelUsage,
 ) -> tuple[Mapping[str, object] | None, str, dict[str, object]]:
+    match: dict[str, object] = {}
+    if usage.billing:
+        match["billing"] = dict(sorted(usage.billing.items()))
     if model is None or model.cost is None:
-        return None, "standard", {}
+        return None, "standard", match
     rates: Mapping[str, object] = model.cost
     plan = "standard"
-    match: dict[str, object] = {}
     requested_mode = target.mode
     if isinstance(requested_mode, str) and model.experimental is not None:
         modes = model.experimental.get("modes")
@@ -176,9 +186,11 @@ def _selected_rates(
 def _estimate_cost(
     usage: ModelUsage,
     rates: Mapping[str, object],
+    *,
+    force_partial: bool = False,
 ) -> ModelCost | None:
     lines: list[ModelCostLine] = []
-    complete = True
+    complete = not force_partial
 
     cache_read = usage.input_cache_read_tokens
     cache_write = usage.input_cache_write_tokens
@@ -271,6 +283,16 @@ def _estimate_cost(
         currency="USD",
         complete=complete,
         lines=tuple(lines),
+    )
+
+
+def _has_unsupported_billing(billing: Mapping[str, str]) -> bool:
+    supported = {
+        "service_tier": {"default", "standard"},
+        "traffic_type": {"on_demand"},
+    }
+    return any(
+        value not in supported.get(name, set()) for name, value in billing.items()
     )
 
 

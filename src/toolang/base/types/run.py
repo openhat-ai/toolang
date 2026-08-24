@@ -64,6 +64,7 @@ class ModelUsage:
     meters: tuple[ModelUsageMeter, ...] = field(default_factory=tuple)
     reported_cost: Decimal | None = None
     reported_currency: str | None = None
+    billing: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         values = (
@@ -77,6 +78,8 @@ class ModelUsage:
             self.output_reasoning_tokens,
             self.output_audio_tokens,
         )
+        if not isinstance(self.billing, dict):
+            raise TypeError("model billing context must be an object")
         if any(
             value is not None
             and (isinstance(value, bool) or not isinstance(value, int) or value < 0)
@@ -124,6 +127,14 @@ class ModelUsage:
             raise ValueError("reported model cost requires a currency")
         if self.reported_currency is not None and not self.reported_currency.strip():
             raise ValueError("reported model cost currency must be non-empty")
+        if any(
+            not isinstance(key, str)
+            or not key.strip()
+            or not isinstance(value, str)
+            or not value.strip()
+            for key, value in self.billing.items()
+        ):
+            raise ValueError("model billing context requires non-empty text values")
 
 
 @dataclass(frozen=True, slots=True)

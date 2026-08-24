@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from decimal import Decimal
 import json
 from typing import Any, cast
 
@@ -29,8 +30,11 @@ from toolang.base.types.run import (
     ModelPartStart,
     ModelStreamHandler,
     ModelUsage,
+    ModelUsageMeter,
     ToolCall,
 )
+
+from ._usage import billing_value, reported_cost
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,14 +268,52 @@ def messages_usage(value: Mapping[str, object]) -> ModelUsage | None:
     output = _int(value.get("output_tokens"))
     if uncached is None or output is None:
         return None
-    cache_read = _int(value.get("cache_read_input_tokens")) or 0
-    cache_write = _int(value.get("cache_creation_input_tokens")) or 0
+    cache_read = _int(value.get("cache_read_input_tokens"))
+    cache_write = _int(value.get("cache_creation_input_tokens"))
+    output_details = _json_object(value.get("output_tokens_details"))
+    thinking = _int(output_details.get("thinking_tokens"))
+    meters: list[ModelUsageMeter] = []
+    cache_creation = _json_object(value.get("cache_creation"))
+    for field, name in (
+        ("ephemeral_5m_input_tokens", "anthropic.cache_write.5m"),
+        ("ephemeral_1h_input_tokens", "anthropic.cache_write.1h"),
+    ):
+        quantity = _int(cache_creation.get(field))
+        if quantity is not None and quantity > 0:
+            meters.append(
+                ModelUsageMeter(name=name, quantity=Decimal(quantity), unit="token")
+            )
+    server_tools = _json_object(value.get("server_tool_use"))
+    for field, name in (
+        ("web_search_requests", "anthropic.server_tool.web_search"),
+        ("web_fetch_requests", "anthropic.server_tool.web_fetch"),
+    ):
+        quantity = _int(server_tools.get(field))
+        if quantity is not None and quantity > 0:
+            meters.append(
+                ModelUsageMeter(name=name, quantity=Decimal(quantity), unit="request")
+            )
+    billing = {
+        name: item
+        for name, item in (
+            ("service_tier", billing_value(value, "service_tier")),
+            ("inference_geo", billing_value(value, "inference_geo")),
+        )
+        if item is not None
+    }
+    cost, currency = reported_cost(value)
     return ModelUsage(
-        input_tokens=uncached + cache_read + cache_write,
+        input_tokens=uncached + (cache_read or 0) + (cache_write or 0),
         output_tokens=output,
         input_uncached_tokens=uncached,
         input_cache_read_tokens=cache_read,
         input_cache_write_tokens=cache_write,
+        output_visible_tokens=(output - thinking if thinking is not None else None),
+        output_reasoning_tokens=thinking,
+        meters=tuple(meters),
+        reported_cost=cost,
+        reported_currency=currency,
+        billing=billing,
     )
 
 

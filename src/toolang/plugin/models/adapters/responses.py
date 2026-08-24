@@ -36,6 +36,8 @@ from toolang.base.types.run import (
 )
 from toolang.base.types.tool import ToolDefinition
 
+from ._usage import billing_value, optional_int, reported_cost
+
 _ADAPTER_LOGGER = logging.getLogger(__name__)
 _LOG_PREVIEW_LIMIT = 4_000
 _STATEFUL_PROVIDERS = frozenset({"openai"})
@@ -581,28 +583,31 @@ def response_usage(response: Any) -> ModelUsage | None:
         return None
     input_details = getattr(usage, "input_tokens_details", None)
     output_details = getattr(usage, "output_tokens_details", None)
-    cached = _usage_detail(input_details, "cached_tokens")
-    reasoning = _usage_detail(output_details, "reasoning_tokens")
+    cached = optional_int(input_details, "cached_tokens")
+    cache_write = optional_int(input_details, "cache_write_tokens")
+    uncached = None
+    if cached is not None or cache_write is not None:
+        uncached = input_tokens - (cached or 0) - (cache_write or 0)
+    reasoning = optional_int(output_details, "reasoning_tokens")
+    cost, currency = reported_cost(usage)
+    service_tier = billing_value(response, "service_tier") or billing_value(
+        usage, "service_tier"
+    )
     return ModelUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
-        input_uncached_tokens=(input_tokens - cached if cached is not None else None),
+        input_uncached_tokens=uncached,
         input_cache_read_tokens=cached,
+        input_cache_write_tokens=cache_write,
+        input_audio_tokens=optional_int(input_details, "audio_tokens"),
         output_visible_tokens=(
             output_tokens - reasoning if reasoning is not None else None
         ),
         output_reasoning_tokens=reasoning,
-    )
-
-
-def _usage_detail(value: object, name: str) -> int | None:
-    raw = (
-        cast(Mapping[str, object], value).get(name)
-        if isinstance(value, Mapping)
-        else getattr(value, name, None)
-    )
-    return (
-        raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0 else None
+        output_audio_tokens=optional_int(output_details, "audio_tokens"),
+        reported_cost=cost,
+        reported_currency=currency,
+        billing={"service_tier": service_tier} if service_tier is not None else {},
     )
 
 

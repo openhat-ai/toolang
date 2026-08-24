@@ -46,6 +46,38 @@ def test_accounting_prices_cache_and_reasoning_without_double_counting() -> None
     assert cache_hit_ratio(accounting) == Decimal("0.65")
 
 
+def test_accounting_prices_cache_writes_as_a_distinct_input_meter() -> None:
+    accounting = build_model_accounting(
+        _target(),
+        ModelUsage(
+            input_tokens=100,
+            output_tokens=20,
+            input_uncached_tokens=30,
+            input_cache_read_tokens=60,
+            input_cache_write_tokens=10,
+        ),
+        _catalog(
+            {
+                "input": Decimal("2"),
+                "output": Decimal("10"),
+                "cache_read": Decimal("0.2"),
+                "cache_write": Decimal("2.5"),
+            }
+        ),
+    )
+
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.complete is True
+    assert [
+        (line.meter, line.quantity, line.rate) for line in accounting.estimate.lines
+    ] == [
+        ("input.cache_read", "60", "0.2"),
+        ("input.cache_write", "10", "2.5"),
+        ("input.uncached", "30", "2"),
+        ("output", "20", "10"),
+    ]
+
+
 def test_accounting_selects_context_tier_and_records_match() -> None:
     accounting = build_model_accounting(
         _target(),
@@ -177,6 +209,63 @@ def test_accounting_selects_advertised_mode_price() -> None:
     assert accounting.pricing.match == {"mode": "fast"}
     assert accounting.estimate is not None
     assert [line.rate for line in accounting.estimate.lines] == ["3", "4"]
+
+
+def test_accounting_records_unsupported_billing_context_as_partial() -> None:
+    accounting = build_model_accounting(
+        _target(),
+        ModelUsage(
+            input_tokens=100,
+            output_tokens=20,
+            billing={"service_tier": "priority", "inference_geo": "us"},
+        ),
+        _catalog({"input": 1, "output": 2}),
+    )
+
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.complete is False
+    assert accounting.pricing is not None
+    assert accounting.pricing.match == {
+        "billing": {"inference_geo": "us", "service_tier": "priority"}
+    }
+    assert accounting.reasoning.requested == {"effort": "high"}
+    assert accounting.reasoning.selected is None
+
+
+def test_accounting_accepts_standard_billing_context() -> None:
+    accounting = build_model_accounting(
+        _target(),
+        ModelUsage(
+            input_tokens=100,
+            output_tokens=20,
+            billing={"service_tier": "standard", "traffic_type": "on_demand"},
+        ),
+        _catalog({"input": 1, "output": 2}),
+    )
+
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.complete is True
+
+
+def test_accounting_preserves_billing_context_without_catalog_price() -> None:
+    accounting = build_model_accounting(
+        _target(),
+        ModelUsage(
+            input_tokens=100,
+            output_tokens=20,
+            reported_cost=Decimal("0.03"),
+            reported_currency="USD",
+            billing={"service_tier": "priority"},
+        ),
+        None,
+    )
+
+    assert accounting is not None and accounting.pricing is not None
+    assert accounting.pricing.source == "unknown"
+    assert accounting.pricing.revision == "sha256:catalog"
+    assert accounting.pricing.match == {"billing": {"service_tier": "priority"}}
+    assert accounting.reported is not None
+    assert accounting.estimate is None
 
 
 def test_accounting_uses_model_catalog_provenance_without_inventing_reasoning() -> None:
