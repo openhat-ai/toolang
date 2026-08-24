@@ -36,6 +36,8 @@ from toolang.base.types.run import (
 )
 from toolang.base.types.tool import ToolDefinition
 
+from ._usage import billing_value, optional_int, reported_cost
+
 _ADAPTER_LOGGER = logging.getLogger(__name__)
 _LOG_PREVIEW_LIMIT = 4_000
 
@@ -46,6 +48,7 @@ class ChatCompletionsModelAdapter(ModelAdapter):
 
     name: str = "chat_completions"
     description: str | None = "Use the OpenAI Chat Completions-compatible API shape."
+    default_api: str | None = None
 
     async def invoke(
         self,
@@ -78,17 +81,18 @@ def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
 def create_client(target: ModelTarget) -> Any:
     """Create one OpenAI-compatible client for a resolved model target."""
 
+    if target.base_url is None:
+        raise ToolangError("Chat Completions adapter requires a resolved API")
     try:
         from openai import AsyncOpenAI
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise ToolangError(
             "The 'openai' package is not installed. Reinstall toolang with its runtime dependencies to enable runtime execution."
         ) from exc
-    kwargs: dict[str, Any] = {}
-    if target.base_url:
-        kwargs["base_url"] = target.base_url
-    if target.api_key is not None:
-        kwargs["api_key"] = target.api_key
+    kwargs: dict[str, Any] = {
+        "base_url": target.base_url,
+        "api_key": target.api_key or "toolang",
+    }
     if target.headers:
         kwargs["default_headers"] = dict(target.headers)
     return AsyncOpenAI(**kwargs)
@@ -251,10 +255,77 @@ def chat_completion_payload(
     options = dict(target.options)
     if options:
         payload.update(options)
+    _apply_reasoning(payload, target)
     payload["stream"] = stream
-    if stream and target.provider == "deepseek" and "stream_options" not in payload:
+    if stream and "stream_options" not in payload:
         payload["stream_options"] = {"include_usage": True}
     return payload
+
+
+def _apply_reasoning(payload: dict[str, Any], target: ModelTarget) -> None:
+    reasoning = target.reasoning
+    if not reasoning:
+        return
+    unknown = set(reasoning) - {"enabled", "effort", "budget_tokens"}
+    if unknown:
+        joined = ", ".join(sorted(unknown))
+        raise ToolangError(f"unknown Chat Completions reasoning controls: {joined}")
+    enabled = reasoning.get("enabled")
+    effort = reasoning.get("effort")
+    budget = reasoning.get("budget_tokens")
+    _validate_reasoning_combination(enabled=enabled, effort=effort, budget=budget)
+    provider = target.provider.lower()
+    if provider == "openrouter":
+        if budget is not None and effort is not None:
+            raise ToolangError(
+                "OpenRouter accepts either reasoning effort or budget_tokens"
+            )
+        wire: dict[str, object] = {}
+        if isinstance(enabled, bool):
+            wire["enabled"] = enabled
+        if isinstance(effort, str):
+            wire["effort"] = effort
+        if isinstance(budget, int) and not isinstance(budget, bool):
+            wire["max_tokens"] = budget
+        if wire:
+            payload["reasoning"] = wire
+        return
+    if provider == "deepseek":
+        if budget is not None:
+            raise ToolangError(
+                "DeepSeek Chat Completions does not support token budgets"
+            )
+        if enabled is False or effort == "none":
+            payload["thinking"] = {"type": "disabled"}
+        elif enabled is True:
+            payload["thinking"] = {"type": "enabled"}
+        if isinstance(effort, str) and effort != "none":
+            payload["reasoning_effort"] = effort
+        return
+    if budget is not None:
+        raise ToolangError(
+            f"{target.provider} Chat Completions does not support token budgets"
+        )
+    if provider == "xai" and (enabled is False or effort == "none"):
+        raise ToolangError("xAI Chat Completions reasoning cannot be disabled")
+    if enabled is False or effort == "none":
+        payload["reasoning_effort"] = "none"
+    elif isinstance(effort, str):
+        payload["reasoning_effort"] = effort
+
+
+def _validate_reasoning_combination(
+    *,
+    enabled: object,
+    effort: object,
+    budget: object,
+) -> None:
+    if enabled is False and effort not in (None, "none"):
+        raise ToolangError("disabled reasoning conflicts with a reasoning effort")
+    if effort == "none" and enabled is True:
+        raise ToolangError("enabled reasoning conflicts with effort 'none'")
+    if (enabled is False or effort == "none") and budget is not None:
+        raise ToolangError("disabled reasoning conflicts with a token budget")
 
 
 def chat_messages(
@@ -400,7 +471,39 @@ def chat_usage(response: Any) -> ModelUsage | None:
     output_tokens = getattr(usage, "completion_tokens", None)
     if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
         return None
-    return ModelUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+    input_details = getattr(usage, "prompt_tokens_details", None)
+    output_details = getattr(usage, "completion_tokens_details", None)
+    cached = optional_int(usage, "prompt_cache_hit_tokens")
+    if cached is None:
+        cached = optional_int(input_details, "cached_tokens")
+    cache_write = optional_int(input_details, "cache_write_tokens")
+    if cache_write is None:
+        cache_write = optional_int(input_details, "cache_creation_input_tokens")
+    cache_miss = optional_int(usage, "prompt_cache_miss_tokens")
+    uncached = cache_miss
+    if uncached is None and (cached is not None or cache_write is not None):
+        uncached = input_tokens - (cached or 0) - (cache_write or 0)
+    reasoning = optional_int(output_details, "reasoning_tokens")
+    cost, currency = reported_cost(usage)
+    service_tier = billing_value(response, "service_tier") or billing_value(
+        usage, "service_tier"
+    )
+    return ModelUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        input_uncached_tokens=uncached,
+        input_cache_read_tokens=cached,
+        input_cache_write_tokens=cache_write,
+        input_audio_tokens=optional_int(input_details, "audio_tokens"),
+        output_visible_tokens=(
+            output_tokens - reasoning if reasoning is not None else None
+        ),
+        output_reasoning_tokens=reasoning,
+        output_audio_tokens=optional_int(output_details, "audio_tokens"),
+        reported_cost=cost,
+        reported_currency=currency,
+        billing={"service_tier": service_tier} if service_tier is not None else {},
+    )
 
 
 def parse_tool_arguments(raw: object) -> dict[str, Any]:

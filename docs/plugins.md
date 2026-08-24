@@ -1,41 +1,23 @@
 # Plugin Model
 
-Toolang uses a small shared plugin boundary for runtime integrations.
-
-Shared contracts and canonical value types live in:
-
-- `toolang.base`
-
-Plugins should raise `toolang.base.errors.ToolangError` for invalid Toolang
-configuration, input, or runtime behavior that should be presented to users.
-
+Toolang uses small entry-point contracts for runtime integrations. Shared
+protocols and canonical value types live in `toolang.base`. Plugins should
+raise `toolang.base.errors.ToolangError` for user-facing configuration, input,
+or runtime failures.
 
 ## Plugin Families
 
-Current plugin families are:
+The public plugin families are:
 
-- `tool`
-- `channel`
-- `sandbox`
-- `model_provider`
-- `model_adapter`
+- `tool`;
+- `channel`;
+- `sandbox`;
+- `model_catalog`;
+- `model_adapter`.
 
-
-## Responsibility Boundary
-
-Toolang core owns:
-
-- runtime lifecycle
-- queueing and scheduling
-- durable records
-- trace events
-- HTTP API
-- response projection
-
-Plugins own only domain-specific behavior inside their family.
-
-Plugins do not mutate durable runtime truth directly.
-
+Toolang core owns runtime lifecycle, scheduling, durable records, trace events,
+HTTP APIs, and response projection. Plugins own only their family-specific
+integration behavior and do not mutate durable runtime truth directly.
 
 ## Family Roles
 
@@ -50,57 +32,62 @@ Channel plugins ingest or deliver external messages.
 
 ### Sandbox
 
-Sandbox plugins provide the runtime execution environment.
+Sandbox plugins provide runtime execution environments.
 
-### Model Provider
+### Model Catalog
 
-Model provider plugins expose model discovery, default endpoint metadata, and
-provider-specific target preparation.
+Model catalog plugins return immutable provider/model snapshots. Static and
+local discovery use the same models.dev-compatible `Provider` and `Model`
+types. Catalog plugins do not execute model calls or install packages named by
+catalog metadata.
 
 ### Model Adapter
 
-Model adapter plugins execute one model turn for a resolved target and return
-`ModelCallResult`. Both non-streaming and streaming adapter calls are
+Model adapter plugins execute one model turn for a concrete `ModelTarget` and
+return `ModelCallResult`. Both non-streaming and streaming calls are
 asynchronous, and streaming adapters await their model-part handler.
 
+Adapters own one protocol shape and its optional default endpoint. They do not
+discover models, match providers, calculate availability, or own pricing.
 
 ## Loading
 
 Toolang loads plugins from Python entry points:
 
-- `toolang.tool`
-- `toolang.channel`
-- `toolang.sandbox`
-- `toolang.model_provider`
-- `toolang.model_adapter`
+- `toolang.tool`;
+- `toolang.channel`;
+- `toolang.sandbox`;
+- `toolang.model_catalog`;
+- `toolang.model_adapter`.
 
-Toolang uses the same generic entry point loader for built-in and externally
-installed plugins. Built-in implementations are registered through project
-entry points and are not imported directly by family-specific loaders.
+Built-in implementations are registered through the same entry-point mechanism
+as external packages. The implementation packages are:
 
-The built-in plugin packages are:
-
-- `toolang.plugin.tools.*`
-- `toolang.plugin.channels.*`
-- `toolang.plugin.sandboxes.*`
-- `toolang.plugin.models.providers.*`
-- `toolang.plugin.models.adapters.*`
+- `toolang.plugin.tools.*`;
+- `toolang.plugin.channels.*`;
+- `toolang.plugin.sandboxes.*`;
+- `toolang.plugin.models` catalog implementations;
+- `toolang.plugin.models.adapters.*`.
 
 Each entry point names one factory such as `create_tool_set`, `create_channel`,
-`create_sandbox`, `create_model_provider`, or
-`create_model_adapter`. A single Python distribution or package may define
-multiple Toolang plugin entry points, including multiple entry points in the
-same family.
+`create_sandbox`, `create_models_dev_catalog`, `create_ollama_catalog`, or
+`create_model_adapter`. A distribution may register multiple entries in one or
+more families.
 
-`toolang.plugin.loading` owns generic entry point discovery. Family loading
-modules apply runtime-specific binding such as tool name encoding, model
-provider configuration, channel bindings, or sandbox selection.
-
+`toolang.plugin.loading` owns generic entry-point discovery. Family-specific
+loaders pass explicit configuration into factories and validate the returned
+protocol.
 
 ## Configuration Rule
 
-The call site resolves environment variables and configuration values before
-constructing plugin instances.
+CLI and setup call sites resolve paths, environment values, endpoints, and
+configuration layers before constructing plugins. Core modules receive
+concrete plugin instances or configuration values; plugins do not read CLI
+state implicitly.
 
-Core modules receive explicit plugin instances or explicit config objects. They
-do not read environment variables on their own.
+Only configured external model catalogs are instantiated. Their factory
+configuration comes from `[models.catalogs.<entry-point-name>]`; the three
+built-in catalogs are always loaded. After snapshots are merged, the resolver
+maps raw npm metadata to installed adapters, resolves provider and model routes,
+interprets environment availability, and stores only non-secret runtime facts.
+See [models.md](models.md) for the complete boundary.

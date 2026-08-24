@@ -22,6 +22,7 @@ from toolang.state.prepare import prepare_agent_state
 from toolang.state.state import AgentState, PreparedCap
 from ...common.context import (
     cli_context,
+    context_model_catalog,
     context_root,
     require_runtime_agent,
     ui_base_url,
@@ -155,7 +156,13 @@ def info_agent(
         raise click.ClickException(f"Agent {agent_name} not found")
     runtime_state = process.state() or {}
     state = _prepare_state(layout)
-    setup = asyncio.run(SetupWatcher(layout).refresh())
+    model_catalog = context_model_catalog(ctx)
+    watcher = (
+        SetupWatcher(layout, model_catalog=model_catalog)
+        if model_catalog is not None
+        else SetupWatcher(layout)
+    )
+    setup = asyncio.run(watcher.refresh())
     created_at = created_time(layout.home)
     started_at = runtime_value(runtime_state.get("started_at"))
     updated_at = runtime_value(runtime_state.get("updated_at"))

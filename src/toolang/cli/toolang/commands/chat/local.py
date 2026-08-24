@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 import threading
 from typing import Any
 from uuid import uuid4
@@ -50,6 +51,7 @@ class LocalChatSession:
         self,
         layout: AgentLayout,
         *,
+        model_catalog: Path | None = None,
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         binding_overrides: Mapping[str, str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
@@ -61,6 +63,7 @@ class LocalChatSession:
         self.executor = RunExecutor(self.store, self.ids)
         self.setup_watcher = SetupWatcher(
             layout,
+            model_catalog=model_catalog,
             ceiling_overrides=ceiling_overrides,
             binding_overrides=binding_overrides,
             limit_overrides=limit_overrides,

@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 import json
 import os
+from pathlib import Path
 import sys
 from typing import Annotated, Any, Literal, cast
 
@@ -29,7 +30,12 @@ from toolang.execution.types import Local, RunStatus, StepPath, local_to_protoco
 from toolang.setup import SetupWatcher
 from toolang.state.watcher import StateWatcher
 
-from ...common.context import context_layout, load_runtime_environ, user_call
+from ...common.context import (
+    context_layout,
+    context_model_catalog,
+    load_runtime_environ,
+    user_call,
+)
 from ...common.execution import ExecutionResources, open_execution
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.output import echo_table, executable_label, parse_utc_timestamp
@@ -254,6 +260,7 @@ def retry_command(
                 default_options=defaults,
                 limit_options=limit,
                 show_progress=show_progress,
+                model_catalog=context_model_catalog(ctx),
             ),
         )
     status = _display_status(result.status)
@@ -304,6 +311,7 @@ def rerun_command(
                 default_options=defaults,
                 limit_options=limit,
                 show_progress=show_progress,
+                model_catalog=context_model_catalog(ctx),
             ),
         )
     status = _display_status(result.status)
@@ -716,6 +724,7 @@ async def _restart_run(
     default_options: list[str] | None,
     limit_options: list[str] | None,
     show_progress: bool,
+    model_catalog: Path | None = None,
 ) -> RunRecord:
     environ = load_runtime_environ(layout, base_environ=os.environ)
     cli_bindings = resolve_binding_overrides({}, default_options)
@@ -727,6 +736,7 @@ async def _restart_run(
     }
     setup = await SetupWatcher(
         layout,
+        model_catalog=model_catalog,
         ceiling_overrides=resolve_ceiling_overrides(environ, allow_options or ()),
         binding_overrides=binding_overrides,
         limit_overrides=resolve_limit_overrides(environ, limit_options or ()),

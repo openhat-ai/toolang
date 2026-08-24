@@ -1,296 +1,246 @@
-# Model Integrations
+# Model Catalog and Runtime Integration
 
-This document defines model identity, providers, routes, and execution
-selection.
-
+Toolang separates model knowledge, runtime readiness, and protocol execution.
+The catalog describes what exists; adapters describe how to call one protocol;
+the setup resolver joins those facts once for the current process.
 
 ## Core Terms
 
-Toolang separates model identity, discovery, and execution:
-
 | Term | Meaning |
 | --- | --- |
-| `selector` | One operational input string such as `gpt-5`, `openai/gpt-5`, `openai/gpt-5@openai`, or `gateway` |
-| `ref` | One route-neutral canonical identity such as `openai/gpt-5` |
-| `provider` | One execution backend such as `openai` or `ollama` |
-| `adapter` | One model adapter plugin such as `responses` |
-| `model info` | One provider-scoped model entry used for discovery, selector matching, and capability display |
-| `model route` | One local named route that binds one `ref` to one provider and optional execution overrides |
-| `model target` | One fully resolved execution target used for one runtime call |
+| `Provider` | One models.dev-compatible provider record |
+| `Model` | One models.dev-compatible model record nested under a provider |
+| `ModelCatalog` | A plugin that returns an immutable provider/model snapshot |
+| `ModelAdapter` | A plugin that invokes one wire protocol |
+| `ModelInfo` | The runtime selection projection of one catalog model |
+| `ModelTarget` | One fully resolved call target with concrete execution values |
 
+There is no model-provider plugin layer. A provider does not execute calls, and
+an adapter does not discover models, match providers, own prices, or determine
+availability.
 
-## Canonical Model Ref
+## Static Catalog
 
-Toolang identifies models by canonical refs such as:
+The static catalog is one complete models.dev-compatible `models.json`. Toolang
+selects it in this order:
 
-- `openai/gpt-5`
-- `qwen/qwen3`
+1. global `--models PATH`;
+2. `TOOLANG_MODEL_CATALOG`;
+3. the active agent home `models.json`;
+4. `${TOOLANG_ROOT}/models.json`;
+5. the lightweight catalog packaged with Toolang.
 
-A canonical ref identifies the model family and name, not a provider route.
+A higher-priority file fully replaces lower-priority files. Toolang does not
+merge multiple static files and does not download catalog data during startup.
+Users can replace a root or home file with any externally downloaded complete
+snapshot.
 
+The importer keeps models.dev provider and model fields at the top level,
+preserves unknown additive fields, parses prices as decimal values, and rejects
+an invalid complete snapshot. `Provider.to_data()` and `Model.to_data()` emit
+only raw catalog data.
 
-## Selectors
+## Catalog Plugins
 
-Operational surfaces may accept:
+Catalog plugins use the `toolang.model_catalog` entry-point group and implement:
 
-- one route name
-- one canonical ref
-- one shorthand selector
-- one provider-qualified selector
+```python
+class ModelCatalog(Protocol):
+    name: str
 
-Examples:
+    async def snapshot(self) -> ModelCatalogSnapshot: ...
+```
 
-- `gateway`
-- `openai/gpt-5`
-- `gpt-5`
-- `qwen/qwen3`
-- `qwen3`
-- `openai/gpt-5@openai`
-- `qwen/qwen3@ollama`
+Built-in implementations are:
 
+- `ModelsDevModels`, for the selected static file;
+- `OllamaModels`, for the configured Ollama endpoint;
+- `LlamaCppModels`, for the configured llama.cpp endpoint;
+- `MergedModelCatalog`, which combines ordered snapshots and rejects identity
+  conflicts.
 
-## Model Info
+A catalog plugin receives concrete configuration from its factory call. It
+must not read global CLI state or install packages. Local catalog plugins probe
+only their configured/default endpoint, use short timeouts, and keep results in
+the current setup snapshot. There is no TTL, disk, or last-good model cache.
+The setup watcher re-probes dynamic catalogs on every refresh while reusing an
+unchanged parsed static file.
 
-Each provider exposes zero or more model infos.
+External catalog entry points are opt-in. Configure one by its entry-point name:
 
-A model info may include:
+```toml
+[models.catalogs.company]
+url = "https://catalog.example/models.json"
+token_env = "COMPANY_CATALOG_TOKEN"
+```
 
-- `ref`
-- `name`
-- `model`
-- accepted selectors
-- `adapter`
-- tool-calling support
-- streaming support
-- optional context window
-- optional pricing metadata
+The resolved mapping is passed directly to the catalog factory. Setting
+`enabled = false` disables an external catalog declaration. Built-in `models_dev`,
+`ollama`, and `llama_cpp` catalogs remain enabled.
 
-Toolang uses model infos for:
+## One-Time Route Resolution
 
-- `too model list`
-- richer `too model providers` output
-- route-neutral agic ref expansion
-- selector matching inside one provider
+After catalog snapshots are merged, the setup resolver enriches every
+`Provider` with its default route and every `Model` with its effective route:
 
-`toolang.setup` discovers model infos before accepting a run. The resulting
-`AgentSetup.models` tuple is an immutable availability snapshot; model
-selection during execution never calls a provider or reads a cache.
+```text
+resolved: {
+  adapter: string?,
+  api: string?,
+  env: (string | string[])[],
+  ready: bool
+}
+```
 
-Provider lists are cached under `${TOOLANG_ROOT}/.setup/models/`. Cache
-entries are keyed by provider configuration and a non-reversible digest of
-required environment values. Writes use provider-specific inter-process locks
-and atomic replacement. A successful refresh advances the entry generation.
-Remote providers may fall back to the last good list when refresh fails; local
-providers do not report a stale list as current availability. This cache is a
-`toolang.setup` implementation detail. `SetupWatcher` owns setup loading and
-constructs snapshots only through `refresh()`; callers consume the resulting
-`AgentSetup.models` instead of constructing or querying the cache directly.
+The model route has `adapter`, `api`, and `ready`. Model-level
+`provider.npm`, `provider.shape`, and `provider.api` override the provider's
+default protocol facts. This supports mixed-protocol routers without a provider
+plugin.
 
-`SetupWatcher(layout)` receives the process-owned immutable `AgentLayout`. It
-reads provider and tool configuration from the root `config.toml`, overlays
-the process environment on the root `.env`, loads the installed providers,
-adapters, and tools, and periodically rebuilds the snapshot. The resulting
-`AgentSetup` retains the same layout object. Agent-home setup overrides are deferred.
-Environment changes, local provider availability, and cache generations written
-by another process become visible to newly accepted runs. Existing runs retain
-the setup snapshot they started with.
+`Provider.api` is the raw catalog value. `Provider.resolved.api` is the
+effective API base after configuration, catalog, and adapter-default
+precedence. It becomes `ModelTarget.base_url` only at the call boundary, where
+`base_url` is the client SDK term.
 
+The resolver applies:
 
-## Model Config
+- explicit provider configuration before catalog `api` before the adapter's
+  protocol default API;
+- a small maintained `npm`-to-protocol map, including the major native packages
+  whose services expose one of the built-in wire protocols;
+- environment availability rules;
+- installed-adapter and local-probe state.
 
-Root config may define model defaults, provider config, and named aliases under
-`[models]`.
+The outer `env` list is OR. A nested list is AND. An empty list means that no
+environment value is required. During default inference, names ending in
+`_API_KEY`, `_PAT`, or `_TOKEN` are credential alternatives; other names are
+common requirements included in every alternative. Provider-specific rules
+cover schemes that cannot be inferred, such as Amazon Bedrock:
 
-An alias binds:
+```text
+[
+  [AWS_BEARER_TOKEN_BEDROCK, AWS_REGION],
+  [AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION]
+]
+```
 
-- `ref`
-- `provider`
-- optional `model`
-- optional `adapter`
-- optional `endpoint`
-- optional `key_env`
-- optional `scope`
-- optional `tags`
-- optional `headers`
-- optional `options`
+`ready` is true only when an adapter is installed, an API base is concrete, one
+environment alternative is satisfied, and any local probe succeeded. Secrets
+are selected only while constructing `ModelTarget`; they are never stored in
+`Provider.resolved`, catalog JSON, hashes, or inspection output.
 
-Example:
+Local provider configuration is passed separately to the resolver. It is never
+inserted into raw catalog `extra` fields, so unknown catalog extensions cannot
+be interpreted as trusted API routes or credentials. Selection, inspection, and
+execution consume resolved facts directly; they do not repeat npm matching,
+API fallback, or env interpretation. `--json` therefore remains a raw
+catalog projection.
+
+## Adapter Plugins
+
+Adapter plugins use the `toolang.model_adapter` entry-point group and implement:
+
+```python
+class ModelAdapter(Protocol):
+    name: str
+    description: str | None
+    default_api: str | None
+
+    async def invoke(self, target, request) -> ModelCallResult: ...
+    async def stream(self, target, request, *, on_event) -> ModelCallResult: ...
+```
+
+Built-in adapters are:
+
+- `chat_completions`;
+- `responses`;
+- `messages`;
+- `generate_content`.
+
+Adapters receive a concrete API base URL in `ModelTarget`. They translate
+canonical messages and tools, normalize streaming, usage, cache, reasoning,
+and audio meters, and preserve protocol state needed by later calls. For
+example, the Generate Content adapter retains Gemini thought signatures in
+provider state and restores them on subsequent tool-call turns. The Messages
+adapter likewise preserves signed Anthropic thinking and redacted-thinking
+blocks and replays them before the associated tool use.
+
+Canonical reasoning controls use `enabled`, `effort`, and `budget_tokens`.
+Adapters translate those names to their wire protocol and reject unsupported or
+conflicting combinations. The Chat Completions adapter includes only small,
+explicit dialect mappings for well-known compatible providers; unknown provider
+extensions are not inferred.
+
+An external adapter should contain no provider matching table. If a new npm
+package needs to use it automatically, add that small mapping to the resolver;
+users can also select the adapter explicitly in provider configuration.
+
+## Local Providers
+
+Ollama and llama.cpp are catalog plugins using the same `Provider` and `Model`
+types as the static source. Their endpoint is both the discovery endpoint and
+an important availability fact. An offline local provider remains visible in
+`too providers` with availability `0`, while its models are omitted from the
+normal model table. Online local models have explicit zero API token prices;
+host compute cost is outside model token accounting.
+
+## Inspection and Export
+
+The public resources are:
+
+```text
+too models [--filter SELECTOR] [--json]
+too providers [--filter GLOB] [--json]
+too adapters [--filter GLOB] [--json]
+```
+
+`too models` shows catalog knowledge plus a simple `AVAILABLE` yes/no column.
+`too providers` owns readiness diagnostics and shows `ADAPTERS`, `API`,
+and `ENV` from `Provider.resolved`. Comma separates OR environment alternatives;
+` + ` separates simultaneous requirements.
+
+`too models --filter ... --json` emits another complete, deterministic,
+models.dev-compatible catalog containing only selected models. Local-only
+models cannot be exported. Provider and model JSON never includes `resolved`.
+
+Selectors use `PATTERN[field:value,...]`. Exact identity is
+`provider/model_id`; model IDs may contain additional `/` characters. Catalog
+filters expose models.dev fields such as `family`, `reasoning`, `tool_call`,
+`temperature`, `structured_output`, `modalities.input`, and `status`. Runtime
+views additionally expose `provider`, `adapter`, `scope`, and `available`.
+
+## Local Configuration and Aliases
+
+Root configuration may override provider runtime values and define named model
+aliases:
 
 ```toml
 [models]
 default = ["gateway", "openai/gpt-5[openai]"]
 
-[models.aliases.gateway]
-ref = "openai/gpt-5"
-provider = "openai"
+[models.providers.gateway]
 adapter = "responses"
 endpoint = "https://gateway.example.com/v1"
 key_env = "GATEWAY_API_KEY"
-headers = { "X-Team" = "infra" }
+
+[models.aliases.gateway]
+ref = "openai/gpt-5"
+provider = "gateway"
+headers = { X-Team = "infra" }
 ```
 
-The `default` list is ordered. The first entry is the default model selector,
-and the full list defines the default allowed set.
+Provider configuration participates in the one-time provider resolution.
+Aliases are explicit routes and may override call target fields such as model,
+adapter, endpoint, key environment, headers, options, and scope.
 
-Provider-backed aliases may omit `endpoint`, `adapter`, `key_env`, and `model`
-when the provider supplies defaults. `provider = "custom"` is reserved for
-alias-only OpenAI-compatible endpoints and requires an `endpoint`.
+## Runtime Calls and Accounting
 
-Selectors use `namespace/name[filters]`. The pattern may be omitted, so
-`[remote]` means every remote model. Single-word filters map as follows:
-`local` and `remote` mean `scope:local` and `scope:remote`; other words mean
-`provider:<word>`. Explicit filters use `key:value`, for example
-`openai/*[provider:openrouter]` or `*[remote,adapter:responses]`.
+`ModelCall` contains provider-neutral instructions, messages, tools, and
+optional opaque protocol state. `ModelCallResult` contains the assistant
+message, tool calls, normalized usage, and next protocol state. Streaming emits
+ordered `ModelPartStart`, `ModelPartDelta`, and `ModelPartEnd` updates.
 
-
-## Runtime Model Call
-
-Toolang uses these shared run-side types:
-
-| Type | Fields |
-| --- | --- |
-| `ModelCall` | `instructions`, `messages`, `tools`, optional `state` |
-| `ModelCallResult` | `message`, `tool_calls`, optional `usage`, optional `state` |
-
-Streaming providers report these model-part updates through `ModelStreamHandler`:
-
-- `ModelPartStart`
-- `ModelPartDelta`
-- `ModelPartEnd`
-
-`ModelAdapter.invoke()` and `ModelAdapter.stream()` are asynchronous.
-Streaming adapters await `ModelStreamHandler` for every update so execution
-observes provider parts in order.
-
-
-## Canonical Multimodal Mapping
-
-`ModelCall` contains provider-neutral `Message` values. One `Percept` is an
-ordered sequence of `TextPart`, `ImagePart`, `AudioPart`, and `DocumentPart`
-values. Model/tool protocol messages may additionally use `ToolCallPart` and
-`ToolResultPart`. Adapters translate these typed values to provider payloads
-and reject unsupported combinations before sending a request. They never
-flatten a non-text part into prompt text.
-
-The built-in OpenAI adapters map multimodal input as follows:
-
-| PerceptPart | Chat Completions | Responses |
-| --- | --- | --- |
-| `TextPart` | text content | `input_text` |
-| `ImagePart` | image content | `input_image` |
-| `AudioPart` | input audio | `input_audio` |
-| `DocumentPart` with data or file id | file content | `input_file` |
-| `DocumentPart` with only a document URL | reject | `input_file` |
-
-Chat Completions callers must resolve a document URL to document data or a
-provider file id before invocation. Actual support still depends on the
-selected model and provider route.
-
-When a provider returns audio with a transcript, the adapter produces one
-`AudioPart` carrying both the audio and transcript. It does not synthesize a
-second `TextPart`, because doing so would duplicate one provider output in
-canonical history.
-
-
-## Built-In Model Providers
-
-Current built-in model providers are:
-
-- `deepseek`
-- `google`
-- `openai`
-- `openrouter`
-- `ollama`
-
-### DeepSeek
-
-Built-in DeepSeek resolution supports:
-
-- canonical selectors such as `deepseek/deepseek-v4-flash`
-- shorthand selectors such as `deepseek-v4-flash` and `deepseek-v4-pro`
-- compatibility selectors such as `deepseek-chat` and `deepseek-reasoner`
-- explicit provider-qualified selectors such as `deepseek/deepseek-v4-pro@deepseek`
-
-The DeepSeek provider uses:
-
-- `https://api.deepseek.com`
-- `DEEPSEEK_API_KEY`
-- one stateless chat-completions adapter for execution
-- tools are disabled for `deepseek-reasoner`; use `deepseek-v4-flash` or
-  `deepseek-v4-pro` for runs that need function calling
-- thinking-mode tool calls preserve DeepSeek `reasoning_content` internally and
-  replay it on later Chat Completions requests, as required by the DeepSeek API
-
-### Google Gemini
-
-Built-in Google Gemini resolution supports:
-
-- canonical selectors such as `google/gemini-3.5-flash`
-- shorthand selectors such as `gemini-3.5-flash` and `gemini-2.5-flash`
-- explicit provider-qualified selectors such as
-  `google/gemini-3.5-flash@google`
-
-The Google Gemini provider uses:
-
-- `https://generativelanguage.googleapis.com/v1beta/openai/`
-- `GEMINI_API_KEY`
-- one stateless chat-completions adapter for execution through the Gemini
-  OpenAI-compatible API
-
-### OpenAI
-
-Built-in OpenAI resolution supports:
-
-- canonical selectors such as `openai/gpt-5`
-- shorthand selectors beginning with `gpt-` or `o`
-- explicit provider-qualified selectors such as `openai/gpt-5@openai`
-
-### OpenRouter
-
-Built-in OpenRouter resolution supports:
-
-- canonical selectors such as `openai/gpt-5`
-- shorthand selectors based on the model slug such as `gpt-5`
-- explicit provider-qualified selectors such as `openai/gpt-5@openrouter`
-
-The OpenRouter provider uses:
-
-- `https://openrouter.ai/api/v1`
-- `OPENROUTER_API_KEY`
-- `GET /api/v1/models` for discovery
-- one stateless chat-completions adapter for execution by default
-- default OpenRouter app attribution headers so requests appear as `Toolang`
-  in OpenRouter analytics and rankings
-
-### Ollama
-
-Built-in Ollama resolution supports:
-
-- canonical selectors such as `qwen/qwen3`
-- shorthand selectors such as `qwen3`, `llama3`, `deepseek-r1`
-- explicit provider-qualified selectors such as `qwen/qwen3@ollama`
-
-The Ollama provider uses the local Ollama HTTP API and defaults to:
-
-- `http://127.0.0.1:11434/v1`
-- It also discovers installed local models from Ollama's `/api/tags` endpoint.
-
-
-## Resolution Rule
-
-One agic run resolves exactly one model target before execution starts.
-
-Resolution proceeds in this order:
-
-1. explicit run or session policy model binding
-2. captured `AgentSetup.bindings.model`, from `[default]`, environment, or CLI
-3. default model route or selector from root config
-4. built-in default selector
-
-Every candidate must be inside the current private `AgentResources`.
-`--allow models=SELECTORS` contributes a selector list to
-`AgentSetup.ceiling`; it does not select one model and does not alter the
-complete model list cached by `SetupWatcher`. At start, the executor resolves
-the setup ceiling, applies any request ceilings, and produces `AgentResources`.
-Agic `models` directives further intersect the nearest flow resources. A
-nested flow starts again from the tree-level agent resources.
+The runtime records inclusive token totals plus cache read/write, visible,
+reasoning, audio, and provider-specific meters. Reported provider cost is kept
+separately from catalog-derived estimates so historical calls retain their
+original pricing revision and coverage.

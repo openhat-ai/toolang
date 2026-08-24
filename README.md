@@ -91,9 +91,12 @@ toolang run <agent-or-ref>           # Run an agent in the foreground
 toolang start <agent>                # Start an agent in the background
 toolang stop <agent>                 # Stop a running agent
 
-# Runtime
-toolang model list                   # List available models
-toolang tool list                    # List available tools
+# Inspection
+toolang models                       # List model catalog entries and availability
+toolang providers                    # List catalog providers
+toolang adapters                     # List installed model adapters
+toolang tools                        # List installed tools
+toolang sandboxes                    # List installed sandboxes
 
 # Caps
 caps [agent] psyche add <ref>        # Add a psyche
@@ -103,6 +106,12 @@ caps [agent] prompt add <ref>        # Add a slash command
 caps [agent] skill list              # List skills
 caps [agent] list                    # List all caps
 ```
+
+The model catalog comes from a models.dev-compatible `models.json`. Toolang uses
+`--models`, `TOOLANG_MODEL_CATALOG`, agent-home, root, then the packaged catalog
+in that order. To update it, replace the selected root or agent-home file with a
+complete downloaded snapshot. `toolang models` is inspection-only and never
+downloads during startup.
 
 ## Links
 

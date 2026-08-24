@@ -92,9 +92,13 @@ def _profile_metrics(core: AgentCore) -> dict[str, object]:
             step_total += 1
             if step.kind == "model":
                 model_total += 1
-                if isinstance(step.noted, ModelStepNoted) and step.noted.tokens:
-                    input_tokens += step.noted.tokens.input
-                    output_tokens += step.noted.tokens.output
+                if isinstance(step.noted, ModelStepNoted):
+                    if step.noted.accounting is not None:
+                        input_tokens += step.noted.accounting.input_tokens
+                        output_tokens += step.noted.accounting.output_tokens
+                    elif step.noted.tokens:
+                        input_tokens += step.noted.tokens.input
+                        output_tokens += step.noted.tokens.output
             elif step.kind == "tool":
                 tool_total += 1
             else:

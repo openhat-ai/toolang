@@ -114,7 +114,7 @@ toolang alice steer run_ppkp9e94 "Use the smaller patch"
 toolang alice cancel term_3nprht9x
 toolang alice rewind run_ppkp9e94
 toolang alice fork run_ppkp9e94
-toolang model list
+toolang models
 ```
 
 Top-level routing uses three command shapes:
@@ -399,34 +399,67 @@ already recorded by other local agents, instead of asking the OS for a random
 ephemeral port.
 
 
-## Model Commands
+## Model Catalog Commands
 
-- `toolang model list`
-- `toolang model providers`
-- `toolang model adapters`
+- `toolang models`
+- `toolang providers`
+- `toolang adapters`
 
-`toolang model list` shows selectable models, including:
+`toolang models` shows model catalog entries and current availability,
+including:
 
-- canonical ref under the `MODEL` column
-- provider name
-- profile details such as streaming, tool support, context window, output limits, and price metadata
-- a summary count after the table
+- canonical provider/model identity
+- current `AVAILABLE` value as `yes` or `no`
+- right-aligned context and maximum output sizes with underscore digit grouping
+  for copyable numeric literals
+- input modalities and a comma-separated `CAPABILITY` list
+- right-aligned base input/output prices formatted as `$input / $output` under
+  `PRICE ($/1M)`, with every numeric rate shown to two decimal places
+- a compact total and per-catalog model counts
 
 Pass `--filter` to preview selector filtering, for example
-`toolang model list --filter "[remote]"` or
-`toolang model list --filter "openai/*[openrouter]"`.
+`toolang models --filter "[remote]"` or
+`toolang models --filter "openai/*[openrouter]"`.
 
-`toolang model providers` shows provider and alias config health,
-including missing key environment variables and endpoints. `toolang model
-adapters` lists installed model adapter names.
+`toolang providers` shows catalog providers and runtime availability.
+`toolang adapters` lists installed model adapter names.
+`toolang models` is a leaf command with `--filter` and `--json`; it has no
+`inspect` or `update` subcommands and no `--output` or `--force` options.
+
+Discovered Ollama and llama.cpp records use reported context, output limits,
+modalities, and capabilities to populate the same table fields used by remote
+models. Their API token prices are explicitly zero; local compute costs are
+outside model token accounting.
+
+`yes` means the API is resolved, a required key is present, and the adapter
+is installed. Remote API reachability, credentials, and account entitlement
+are not probed by this listing. Local endpoints are probed for discovery;
+unavailable local models are omitted from the model table.
+
+`toolang providers` shows `ADAPTERS`, `API`, and `ENV` in that order.
+`ADAPTERS` is the deduplicated set resolved across the provider's catalog
+models, including model-level protocol overrides; it is not a preferred-adapter
+hint. Catalog-known protocols remain visible when no implementation is
+installed, such as `messages` for Anthropic. An empty or offline local catalog
+uses the provider-level adapter signal. Unavailable field values are dimmed.
+Multiple alternative environment variables use an unstyled `, ` separator and
+are all dimmed only when none is configured. An offline local provider remains
+in the table with `AVAILABLE` set to `0` and its API dimmed. JSON output
+remains the original models.dev-compatible provider data and does not expose
+resolved API, adapter, environment, or readiness facts.
+Anthropic uses the known default endpoint `https://api.anthropic.com` when the
+models.dev record omits `api`.
+The provider table footer mirrors the model footer, for example
+`7 providers from 3 catalogs: models.dev 5, ollama 1, llama_cpp 1`.
 
 
 ## Plugin Commands
 
 - `toolang plugin list`
 
-`toolang plugin list` shows installed plugins by family. Model provider rows also
-include richer discovery details such as:
+`toolang plugin list` shows installed plugins by family. Model catalog and
+adapter rows identify the installed runtime integrations; `toolang providers`
+owns provider readiness details such as:
 
 - readiness based on required environment variables
 - default API base URL when known

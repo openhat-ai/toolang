@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import platform
 from types import MappingProxyType
 
-from toolang.base.protocols.model import ModelAdapter, ModelProvider
+from toolang.base.protocols.model import ModelAdapter
 from toolang.base.protocols.tool import AgentTool
-from toolang.base.types.model import ModelInfo
+from toolang.base.types.model import ModelCatalogSnapshot, ModelInfo, Provider
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.layout import AgentLayout
 
@@ -55,11 +55,13 @@ class AgentSetup:
     """Effective immutable runtime setup fixed for one root run."""
 
     layout: AgentLayout
-    providers: Mapping[str, ModelProvider]
+    providers: Mapping[str, Provider]
     adapters: Mapping[str, ModelAdapter]
     models: tuple[ModelInfo, ...]
     tools: Mapping[str, AgentTool]
     envs: Mapping[str, str]
+    catalog: ModelCatalogSnapshot | None = None
+    provider_configs: Mapping[str, object] = field(default_factory=dict)
     environment: AgentEnvironment | None = None
     ceiling: AgentCeiling = AgentCeiling()
     bindings: RunBindings = RunBindings()
@@ -76,9 +78,10 @@ class AgentSetup:
         if not isinstance(self.limits, RunLimits):
             raise TypeError("setup limits must be RunLimits")
         for key, provider in providers.items():
-            if key != provider.name:
+            identity = provider.id
+            if key != identity:
                 raise ValueError(
-                    f"provider mapping key {key!r} does not match {provider.name!r}"
+                    f"provider mapping key {key!r} does not match {identity!r}"
                 )
         identities = [(model.provider, model.ref) for model in models]
         if len(identities) != len(set(identities)):
@@ -96,3 +99,8 @@ class AgentSetup:
         object.__setattr__(self, "models", models)
         object.__setattr__(self, "tools", MappingProxyType(dict(self.tools)))
         object.__setattr__(self, "envs", MappingProxyType(dict(self.envs)))
+        object.__setattr__(
+            self,
+            "provider_configs",
+            MappingProxyType(dict(self.provider_configs)),
+        )

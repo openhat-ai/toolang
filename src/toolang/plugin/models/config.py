@@ -7,11 +7,12 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from toolang.base.errors import ToolangError
-from toolang.base.types.model import ModelAlias
+from toolang.base.types.model import ModelAlias, Provider
+from toolang.plugin.config import resolve_env_refs
 
 
 @dataclass(frozen=True, slots=True)
-class ModelProviderConfig:
+class ProviderConfig:
     """Local configuration overrides for one model provider."""
 
     name: str
@@ -21,6 +22,36 @@ class ModelProviderConfig:
     scope: str | None = None
     options: dict[str, Any] = field(default_factory=dict)
     details: str | None = None
+
+
+def configure_catalog_providers(
+    providers: Mapping[str, Provider],
+    configs: Mapping[str, ProviderConfig],
+) -> dict[str, Provider]:
+    """Apply runtime-only provider configuration without changing catalog data."""
+
+    configured = dict(providers)
+    for provider_id, config in configs.items():
+        if provider_id in configured:
+            continue
+        configured[provider_id] = Provider(
+            id=provider_id,
+            name=provider_id,
+            env=(),
+            npm="@ai-sdk/openai-compatible",
+            models={},
+        )
+    configured.setdefault(
+        "custom",
+        Provider(
+            id="custom",
+            name="Custom",
+            env=(),
+            npm="@ai-sdk/openai-compatible",
+            models={},
+        ),
+    )
+    return configured
 
 
 def parse_model_aliases(
@@ -41,12 +72,12 @@ def parse_model_aliases(
     return aliases
 
 
-def parse_model_provider_configs(
+def parse_provider_configs(
     config_layers: Sequence[Mapping[str, object]],
-) -> dict[str, ModelProviderConfig]:
+) -> dict[str, ProviderConfig]:
     """Parse model provider configuration overrides."""
 
-    configs: dict[str, ModelProviderConfig] = {}
+    configs: dict[str, ProviderConfig] = {}
     for payload in config_layers:
         models_table = _models_table(payload)
         raw_providers = models_table.get("providers")
@@ -55,10 +86,51 @@ def parse_model_provider_configs(
         for name, value in raw_providers.items():
             if not isinstance(name, str) or not isinstance(value, Mapping):
                 continue
-            configs[name] = parse_model_provider_config(
+            configs[name] = parse_provider_config(
                 name, cast(Mapping[str, object], value)
             )
     return configs
+
+
+def parse_catalog_configs(
+    config_layers: Sequence[Mapping[str, object]],
+    *,
+    environ: Mapping[str, str],
+) -> dict[str, dict[str, object]]:
+    """Parse enabled ``[models.catalogs.<name>]`` plugin configurations."""
+
+    configs: dict[str, dict[str, object]] = {}
+    enabled: dict[str, bool] = {}
+    for payload in config_layers:
+        raw_catalogs = _models_table(payload).get("catalogs")
+        if not isinstance(raw_catalogs, Mapping):
+            continue
+        for raw_name, raw_value in raw_catalogs.items():
+            if not isinstance(raw_name, str) or not isinstance(raw_value, Mapping):
+                continue
+            name = raw_name.strip()
+            if not name:
+                continue
+            value = cast(Mapping[str, object], raw_value)
+            if "enabled" in value:
+                raw_enabled = value["enabled"]
+                if not isinstance(raw_enabled, bool):
+                    raise ToolangError(
+                        f"model catalog {name!r} enabled must be a boolean"
+                    )
+                enabled[name] = raw_enabled
+            else:
+                enabled.setdefault(name, True)
+            current = dict(configs.get(name, {}))
+            current.update(
+                resolve_env_refs(
+                    {str(key): item for key, item in value.items() if key != "enabled"},
+                    environ,
+                    context=f"models.catalogs.{name}",
+                )
+            )
+            configs[name] = current
+    return {name: config for name, config in configs.items() if enabled.get(name, True)}
 
 
 def parse_default_models(
@@ -123,9 +195,7 @@ def parse_model_alias(name: str, payload: Mapping[str, object]) -> ModelAlias:
     )
 
 
-def parse_model_provider_config(
-    name: str, payload: Mapping[str, object]
-) -> ModelProviderConfig:
+def parse_provider_config(name: str, payload: Mapping[str, object]) -> ProviderConfig:
     """Parse one `[models.providers.<name>]` table."""
 
     options = (
@@ -133,7 +203,7 @@ def parse_model_provider_config(
         if isinstance(payload.get("options"), Mapping)
         else {}
     )
-    return ModelProviderConfig(
+    return ProviderConfig(
         name=name,
         endpoint=_optional_model_config_str(payload.get("endpoint")),
         key_env=_optional_model_config_str(payload.get("key_env")),

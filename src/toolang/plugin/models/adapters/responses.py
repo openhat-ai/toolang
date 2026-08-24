@@ -36,6 +36,8 @@ from toolang.base.types.run import (
 )
 from toolang.base.types.tool import ToolDefinition
 
+from ._usage import billing_value, optional_int, reported_cost
+
 _ADAPTER_LOGGER = logging.getLogger(__name__)
 _LOG_PREVIEW_LIMIT = 4_000
 _STATEFUL_PROVIDERS = frozenset({"openai"})
@@ -52,6 +54,7 @@ class ResponsesModelAdapter(ModelAdapter):
 
     name: str = "responses"
     description: str | None = "Use the OpenAI Responses-compatible API shape."
+    default_api: str | None = "https://api.openai.com/v1"
 
     async def invoke(
         self,
@@ -137,17 +140,18 @@ def _request_has_audio_input(request: ModelCall) -> bool:
 def create_client(target: ModelTarget) -> Any:
     """Create one OpenAI-compatible client for a resolved model target."""
 
+    if target.base_url is None:
+        raise ToolangError("Responses adapter requires a resolved API")
     try:
         from openai import AsyncOpenAI
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise ToolangError(
             "The 'openai' package is not installed. Reinstall toolang with its runtime dependencies to enable runtime execution."
         ) from exc
-    kwargs: dict[str, Any] = {}
-    if target.base_url:
-        kwargs["base_url"] = target.base_url
-    if target.api_key is not None:
-        kwargs["api_key"] = target.api_key
+    kwargs: dict[str, Any] = {
+        "base_url": target.base_url,
+        "api_key": target.api_key or "toolang",
+    }
     if target.headers:
         kwargs["default_headers"] = dict(target.headers)
     return AsyncOpenAI(**kwargs)
@@ -308,7 +312,37 @@ def response_payload(
     options = dict(target.options)
     if options:
         payload.update(options)
+    _apply_reasoning(payload, target.reasoning)
     return payload
+
+
+def _apply_reasoning(
+    payload: dict[str, Any],
+    reasoning: Mapping[str, object],
+) -> None:
+    if not reasoning:
+        return
+    unknown = set(reasoning) - {"enabled", "effort", "budget_tokens"}
+    if unknown:
+        joined = ", ".join(sorted(unknown))
+        raise ToolangError(f"unknown Responses reasoning controls: {joined}")
+    enabled = reasoning.get("enabled")
+    effort = reasoning.get("effort")
+    budget = reasoning.get("budget_tokens")
+    if budget is not None:
+        raise ToolangError("Responses does not support reasoning token budgets")
+    if enabled is False and effort not in (None, "none"):
+        raise ToolangError("disabled Responses reasoning conflicts with an effort")
+    if enabled is True and effort == "none":
+        raise ToolangError("enabled Responses reasoning conflicts with effort 'none'")
+    wire: dict[str, object] = {}
+    if enabled is False:
+        wire["effort"] = "none"
+    elif isinstance(effort, str):
+        wire["effort"] = effort
+    payload.pop("reasoning", None)
+    if wire:
+        payload["reasoning"] = wire
 
 
 def parse_response(
@@ -575,7 +609,34 @@ def response_usage(response: Any) -> ModelUsage | None:
     output_tokens = getattr(usage, "output_tokens", None)
     if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
         return None
-    return ModelUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+    input_details = getattr(usage, "input_tokens_details", None)
+    output_details = getattr(usage, "output_tokens_details", None)
+    cached = optional_int(input_details, "cached_tokens")
+    cache_write = optional_int(input_details, "cache_write_tokens")
+    uncached = None
+    if cached is not None or cache_write is not None:
+        uncached = input_tokens - (cached or 0) - (cache_write or 0)
+    reasoning = optional_int(output_details, "reasoning_tokens")
+    cost, currency = reported_cost(usage)
+    service_tier = billing_value(response, "service_tier") or billing_value(
+        usage, "service_tier"
+    )
+    return ModelUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        input_uncached_tokens=uncached,
+        input_cache_read_tokens=cached,
+        input_cache_write_tokens=cache_write,
+        input_audio_tokens=optional_int(input_details, "audio_tokens"),
+        output_visible_tokens=(
+            output_tokens - reasoning if reasoning is not None else None
+        ),
+        output_reasoning_tokens=reasoning,
+        output_audio_tokens=optional_int(output_details, "audio_tokens"),
+        reported_cost=cost,
+        reported_currency=currency,
+        billing={"service_tier": service_tier} if service_tier is not None else {},
+    )
 
 
 def parse_tool_arguments(raw: object) -> dict[str, Any]:

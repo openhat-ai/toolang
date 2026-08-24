@@ -50,13 +50,13 @@ class _LiveExecution:
     threads: ThreadManager
 
     @classmethod
-    def create(
+    async def create(
         cls,
         root: Path,
         *,
         model: str,
     ) -> _LiveExecution:
-        setup, state = create_live_agent(root, model=model)
+        setup, state = await create_live_agent(root, model=model)
         runtime = setup.layout.runtime
         store = RunStore(runtime / "runs.db")
         ids = IdIssuer(runtime / "ids.json")
@@ -117,7 +117,8 @@ def test_real_provider_executes_agic(
     live_model: str,
 ) -> None:
     async def scenario() -> None:
-        async with _LiveExecution.create(tmp_path, model=live_model) as runtime:
+        created = await _LiveExecution.create(tmp_path, model=live_model)
+        async with created as runtime:
             run_id, output = await runtime.run("smoke", "TOOLANG_AGIC_SMOKE")
             assert "TOOLANG_AGIC_SMOKE" in output
             assert [step.kind for step in runtime.store.list_steps(run_id=run_id)] == [
@@ -132,7 +133,8 @@ def test_real_provider_executes_flow_with_nested_agic(
     live_model: str,
 ) -> None:
     async def scenario() -> None:
-        async with _LiveExecution.create(tmp_path, model=live_model) as runtime:
+        created = await _LiveExecution.create(tmp_path, model=live_model)
+        async with created as runtime:
             run_id, output = await runtime.run("relay", "TOOLANG_FLOW_SMOKE")
             assert "TOOLANG_FLOW_SMOKE" in output
             assert [step.kind for step in runtime.store.list_steps(run_id=run_id)] == [

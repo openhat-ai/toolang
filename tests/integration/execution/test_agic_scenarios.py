@@ -1163,9 +1163,11 @@ agic reply(_: Text) -> Text:
                 for step in harness.store.list_steps(run_id=record.id)
             ] == [("model", "succeeded")]
             model_step = harness.store.list_steps(run_id=record.id)[0]
-            assert model_step.noted == ModelStepNoted(
-                tokens=ModelTokenCount(input=6, output=5)
-            )
+            assert isinstance(model_step.noted, ModelStepNoted)
+            assert model_step.noted.tokens == ModelTokenCount(input=6, output=5)
+            assert model_step.noted.accounting is not None
+            assert model_step.noted.accounting.input_tokens == 6
+            assert model_step.noted.accounting.output_tokens == 5
 
     asyncio.run(scenario())
 
@@ -1226,16 +1228,18 @@ agic reply(_: Text) -> Text:
             assert record.status == status
             assert record.error == error
             model_step = harness.store.list_steps(run_id=record.id)[0]
-            assert model_step.noted == ModelStepNoted(
-                tokens=ModelTokenCount(input=1, output=1),
-                price=ModelTokenPrice(input="0.01", output="0.02"),
-                cost="0.03",
+            assert isinstance(model_step.noted, ModelStepNoted)
+            assert model_step.noted.tokens == ModelTokenCount(input=1, output=1)
+            assert model_step.noted.price == ModelTokenPrice(
+                input="0.01", output="0.02"
             )
+            assert model_step.noted.cost == "0.03"
+            assert model_step.noted.accounting is not None
 
     asyncio.run(scenario())
 
 
-def test_run_cost_limit_rejects_unknown_pricing_before_model_call(
+def test_run_cost_limit_allows_unknown_pricing_as_partial_coverage(
     tmp_path: Path,
 ) -> None:
     harness = ExecutionHarness.create(
@@ -1262,11 +1266,9 @@ agic reply(_: Text) -> Text:
                 ),
             )
 
-            assert record.status == "failed"
-            assert record.error == (
-                "Model pricing is required by the run cost limit: test/scripted"
-            )
-            assert harness.adapter.invocations == []
+            assert record.status == "succeeded"
+            assert record.error is None
+            assert len(harness.adapter.invocations) == 1
 
     asyncio.run(scenario())
 

@@ -127,8 +127,17 @@ def compact_count(value: int) -> str:
     return str(value)
 
 
-def token_fact(input_tokens: int, output_tokens: int) -> str:
-    return f"↑{compact_count(input_tokens)} ↓{compact_count(output_tokens)}"
+def token_fact(
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    cache_read_tokens: int | None = None,
+) -> str:
+    cache = ""
+    if cache_read_tokens is not None and input_tokens > 0:
+        ratio = cache_read_tokens / input_tokens * 100
+        cache = f"({ratio:.1f}%)"
+    return f"↑{compact_count(input_tokens)}{cache} ↓{compact_count(output_tokens)}"
 
 
 def tool_label(given: StepGiven) -> str:

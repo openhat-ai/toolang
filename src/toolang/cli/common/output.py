@@ -22,6 +22,7 @@ from typer import rich_utils
 from toolang.up import process as agents
 
 TableJustify = Literal["default", "left", "center", "right", "full"]
+TableCell = str | Text
 
 _TABLE_CONSOLE = Console(highlight=False, width=4096)
 _INFO_CONSOLE = Console(highlight=False)
@@ -146,7 +147,7 @@ def echo_error(error: str | click.ClickException) -> None:
 
 def echo_table(
     headers: Sequence[str],
-    rows: Sequence[Sequence[str]],
+    rows: Sequence[Sequence[TableCell]],
     *,
     justify: Sequence[TableJustify | None] | None = None,
 ) -> None:
@@ -236,7 +237,7 @@ def active_agent_error(status: agents.AgentStatus) -> str:
 
 def _make_table(
     headers: Sequence[str],
-    rows: Sequence[Sequence[str]],
+    rows: Sequence[Sequence[TableCell]],
     *,
     justify: Sequence[TableJustify | None] | None,
 ) -> Table:
@@ -257,7 +258,9 @@ def _make_table(
     return table
 
 
-def _table_cell_text(cell: str) -> Text:
+def _table_cell_text(cell: TableCell) -> Text:
+    if isinstance(cell, Text):
+        return cell
     text = Text(cell)
     for marker, style in (
         ("(missing)", "bold red"),

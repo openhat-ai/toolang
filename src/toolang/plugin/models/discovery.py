@@ -4,25 +4,40 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from toolang.base.protocols.model import ModelProvider
+from toolang.base.types.model import Provider
+from toolang.plugin.models.provider_resolver import env_is_ready
 
 
-def required_provider_env_vars(provider: ModelProvider) -> tuple[str, ...]:
+def required_provider_env_vars(provider: Provider) -> tuple[str, ...]:
     """Return required environment variables for one provider."""
 
-    try:
-        return tuple(var for var in provider.required_env_vars() if str(var).strip())
-    except Exception:
-        return ()
+    resolved = provider.resolved
+    if resolved is None:
+        return provider.env
+    return tuple(
+        dict.fromkeys(
+            name
+            for alternative in resolved.env
+            for name in (
+                (alternative,) if isinstance(alternative, str) else alternative
+            )
+        )
+    )
 
 
 def missing_provider_env_vars(
-    provider: ModelProvider,
+    provider: Provider,
     *,
     environ: Mapping[str, str],
 ) -> tuple[str, ...]:
     """Return missing required environment variables for one provider."""
 
+    if provider.resolved is not None:
+        return (
+            ()
+            if env_is_ready(provider.resolved.env, environ=environ)
+            else required_provider_env_vars(provider)
+        )
     return tuple(
         name
         for name in required_provider_env_vars(provider)
@@ -31,30 +46,19 @@ def missing_provider_env_vars(
 
 
 def default_provider_base_url(
-    provider: ModelProvider,
+    provider: Provider,
     *,
     environ: Mapping[str, str],
 ) -> str | None:
     """Return the default API base URL for one provider when known."""
 
-    try:
-        value = provider.default_base_url(environ=environ)
-    except Exception:
-        return None
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
+    del environ
+    if provider.resolved is None:
+        raise RuntimeError(f"provider {provider.id!r} has not been resolved")
+    return provider.resolved.api
 
 
-def default_provider_api_key_env(provider: ModelProvider) -> str | None:
+def default_provider_api_key_env(provider: Provider) -> str | None:
     """Return the default API key environment variable for one provider."""
 
-    try:
-        value = provider.default_api_key_env()
-    except Exception:
-        return None
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
+    return provider.env[0] if provider.env else None

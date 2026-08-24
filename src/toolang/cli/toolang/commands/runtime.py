@@ -12,6 +12,7 @@ import click
 import typer
 
 from toolang.common.layout import AgentLayout
+from toolang.plugin.models.catalog import MODEL_CATALOG_ENV
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
     resolve_ceiling_overrides,
@@ -25,6 +26,7 @@ from ....up.logging import (
 )
 from ...common.context import (
     cli_context,
+    context_model_catalog,
     context_root,
     require_runtime_agent,
     load_runtime_environ,
@@ -511,6 +513,8 @@ def serve(
     layout = AgentLayout.resident(context_root(ctx), agent)
     environ = load_runtime_environ(layout, base_environ=os.environ)
     environ["TOOLANG_ROOT"] = str(layout.root)
+    if model_catalog := context_model_catalog(ctx):
+        environ[MODEL_CATALOG_ENV] = str(model_catalog)
     spec = user_call(
         resolve_serve,
         layout=layout,
@@ -553,6 +557,8 @@ def resolve_startup(
         raise click.ClickException(active_agent_error(existing))
     environ = load_runtime_environ(target, base_environ=os.environ)
     environ["TOOLANG_ROOT"] = str(root)
+    if model_catalog := context_model_catalog(ctx):
+        environ[MODEL_CATALOG_ENV] = str(model_catalog)
     log_plan = resolve_agent_logging(
         mode="start" if background else "run",
         environ=environ,

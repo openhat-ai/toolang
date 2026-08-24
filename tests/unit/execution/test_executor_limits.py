@@ -5,7 +5,10 @@ from decimal import Decimal
 
 import pytest
 
+from toolang.base.types.model import Model, ModelCatalogSnapshot, ModelTarget, Provider
+from toolang.base.types.run import ModelUsage
 from toolang.execution.executor import RunLimits
+from toolang.execution.executor.limits import _model_accounting
 from toolang.execution.records import run_limits_to_data
 
 
@@ -56,3 +59,47 @@ def test_run_limits_reject_invalid_values(
 ) -> None:
     with pytest.raises(error):
         RunLimits(**{field: value})  # type: ignore[arg-type]
+
+
+def test_cost_limit_accounting_uses_estimate_for_non_usd_report() -> None:
+    model = Model(
+        provider_id="test",
+        id="model",
+        name="Model",
+        cost={"input": 1, "output": 2},
+    )
+    provider = Provider(
+        id="test",
+        name="Test",
+        env=(),
+        npm="@ai-sdk/openai-compatible",
+        models={model.id: model},
+    )
+    catalog = ModelCatalogSnapshot(
+        providers={provider.id: provider},
+        models=(model,),
+        revision="sha256:test",
+    )
+    target = ModelTarget(
+        ref="test/model",
+        provider="test",
+        name="Model",
+        model="model",
+        adapter="chat_completions",
+    )
+
+    accounting = _model_accounting(
+        target,
+        (),
+        ModelUsage(
+            input_tokens=10,
+            output_tokens=5,
+            reported_cost=Decimal("2"),
+            reported_currency="EUR",
+        ),
+        catalog=catalog,
+    )
+
+    assert accounting.cost == Decimal("0.00002")
+    assert accounting.accounting is not None
+    assert accounting.accounting.selected == "estimated"

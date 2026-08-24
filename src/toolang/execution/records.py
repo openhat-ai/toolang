@@ -32,10 +32,16 @@ from .types import (
     Local,
     ExecutionError,
     LoopStepNoted,
+    ModelAccounting,
+    ModelCost,
+    ModelCostLine,
+    ModelPricing,
+    ModelReasoningAccounting,
     ModelStepGiven,
     ModelStepNoted,
     ModelTokenCount,
     ModelTokenPrice,
+    ModelUsageMeter,
     Occurrence,
     OccurrencePosition,
     IterationOccurrence,
@@ -1011,11 +1017,16 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
         )
     if kind != "model":
         raise ValueError(f"{kind} Step noted must be null")
-    payload = _canonical_object(
-        data,
-        fields={"tokens", "price", "cost", "state"},
-        label="model noted",
-    )
+    if not isinstance(data, Mapping) or set(data) not in {
+        frozenset({"tokens", "price", "cost", "state"}),
+        frozenset({"tokens", "price", "cost", "accounting", "state"}),
+    }:
+        raise ValueError(
+            "model noted requires exactly: accounting, cost, price, state, tokens"
+        )
+    legacy = "accounting" not in data
+    payload = dict(cast(Mapping[str, object], data))
+    payload.setdefault("accounting", None)
     raw_tokens = payload["tokens"]
     tokens = None
     if raw_tokens is not None:
@@ -1043,15 +1054,39 @@ def step_noted_from_data(kind: StepKind, data: object) -> StepNoted:
     raw_state = payload["state"]
     if raw_state is not None and not isinstance(raw_state, Mapping):
         raise ValueError("model noted state must be an object or null")
+    cost = _optional_text(payload["cost"], label="model cost")
+    accounting = _model_accounting_from_data(payload["accounting"])
+    if legacy:
+        accounting = _legacy_model_accounting(tokens=tokens, cost=cost)
     return ModelStepNoted(
         tokens=tokens,
         price=price,
-        cost=_optional_text(payload["cost"], label="model cost"),
+        cost=cost,
+        accounting=accounting,
         state=(
             dict(cast(Mapping[str, Any], raw_state))
             if isinstance(raw_state, Mapping)
             else None
         ),
+    )
+
+
+def _legacy_model_accounting(
+    *,
+    tokens: ModelTokenCount | None,
+    cost: str | None,
+) -> ModelAccounting:
+    estimate = (
+        ModelCost(amount=cost, currency="USD", complete=False)
+        if cost is not None
+        else None
+    )
+    return ModelAccounting(
+        input_tokens=tokens.input if tokens is not None else 0,
+        output_tokens=tokens.output if tokens is not None else 0,
+        estimate=estimate,
+        selected="estimated" if estimate is not None else "none",
+        version=0,
     )
 
 
@@ -1088,7 +1123,187 @@ def step_noted_to_data(kind: StepKind, noted: StepNoted) -> dict[str, object] | 
             else None
         ),
         "cost": noted.cost,
+        "accounting": _model_accounting_to_data(noted.accounting),
         "state": dict(noted.state) if noted.state is not None else None,
+    }
+
+
+def _model_accounting_from_data(value: object) -> ModelAccounting | None:
+    if value is None:
+        return None
+    payload = _canonical_object(
+        value,
+        fields={"version", "usage", "reasoning", "pricing", "cost"},
+        label="model accounting",
+    )
+    version = _required_int(payload["version"], label="model accounting version")
+    usage = _canonical_object(
+        payload["usage"],
+        fields={"input", "output", "meters"},
+        label="model accounting usage",
+    )
+    raw_meters = usage["meters"]
+    if not isinstance(raw_meters, list):
+        raise ValueError("model accounting meters must be an array")
+    meters: list[ModelUsageMeter] = []
+    for raw_meter in raw_meters:
+        meter = _canonical_object(
+            raw_meter,
+            fields={"name", "quantity", "unit"},
+            label="model accounting meter",
+        )
+        meters.append(
+            ModelUsageMeter(
+                name=_required_text(meter["name"], label="model meter name"),
+                quantity=_required_text(
+                    meter["quantity"], label="model meter quantity"
+                ),
+                unit=_required_text(meter["unit"], label="model meter unit"),
+            )
+        )
+    reasoning_data = _canonical_object(
+        payload["reasoning"],
+        fields={"requested", "selected", "reported"},
+        label="model accounting reasoning",
+    )
+    reasoning = ModelReasoningAccounting(
+        requested=_optional_dict(
+            reasoning_data["requested"], label="requested reasoning"
+        ),
+        selected=_optional_dict(reasoning_data["selected"], label="selected reasoning"),
+        reported=_optional_dict(reasoning_data["reported"], label="reported reasoning"),
+    )
+    pricing = None
+    if payload["pricing"] is not None:
+        pricing_data = _canonical_object(
+            payload["pricing"],
+            fields={"source", "revision", "plan", "match"},
+            label="model accounting pricing",
+        )
+        pricing = ModelPricing(
+            source=_required_text(pricing_data["source"], label="pricing source"),
+            revision=_optional_text(pricing_data["revision"], label="pricing revision"),
+            plan=_required_text(pricing_data["plan"], label="pricing plan"),
+            match=_required_dict(pricing_data["match"], label="pricing match"),
+        )
+    cost_data = _canonical_object(
+        payload["cost"],
+        fields={"selected", "reported", "estimate"},
+        label="model accounting cost",
+    )
+    selected = _required_text(cost_data["selected"], label="selected cost source")
+    if selected not in {"reported", "estimated", "none"}:
+        raise ValueError("selected cost source is invalid")
+    return ModelAccounting(
+        input_tokens=_required_int(usage["input"], label="accounting input tokens"),
+        output_tokens=_required_int(usage["output"], label="accounting output tokens"),
+        meters=tuple(meters),
+        reasoning=reasoning,
+        pricing=pricing,
+        reported=_model_cost_from_data(cost_data["reported"]),
+        estimate=_model_cost_from_data(cost_data["estimate"]),
+        selected=cast(Literal["reported", "estimated", "none"], selected),
+        version=version,
+    )
+
+
+def _model_cost_from_data(value: object) -> ModelCost | None:
+    if value is None:
+        return None
+    payload = _canonical_object(
+        value,
+        fields={"amount", "currency", "complete", "lines"},
+        label="model cost",
+    )
+    raw_lines = payload["lines"]
+    if not isinstance(raw_lines, list):
+        raise ValueError("model cost lines must be an array")
+    lines: list[ModelCostLine] = []
+    for raw_line in raw_lines:
+        line = _canonical_object(
+            raw_line,
+            fields={"meter", "quantity", "unit", "rate", "per", "amount", "condition"},
+            label="model cost line",
+        )
+        lines.append(
+            ModelCostLine(
+                meter=_required_text(line["meter"], label="cost line meter"),
+                quantity=_required_text(line["quantity"], label="cost line quantity"),
+                unit=_required_text(line["unit"], label="cost line unit"),
+                rate=_required_text(line["rate"], label="cost line rate"),
+                per=_required_text(line["per"], label="cost line per"),
+                amount=_required_text(line["amount"], label="cost line amount"),
+                condition=_optional_dict(
+                    line["condition"], label="cost line condition"
+                ),
+            )
+        )
+    complete = payload["complete"]
+    if not isinstance(complete, bool):
+        raise ValueError("model cost complete must be a boolean")
+    return ModelCost(
+        amount=_required_text(payload["amount"], label="model cost amount"),
+        currency=_required_text(payload["currency"], label="model cost currency"),
+        complete=complete,
+        lines=tuple(lines),
+    )
+
+
+def _model_accounting_to_data(value: ModelAccounting | None) -> object:
+    if value is None:
+        return None
+    return {
+        "version": value.version,
+        "usage": {
+            "input": value.input_tokens,
+            "output": value.output_tokens,
+            "meters": [
+                {"name": meter.name, "quantity": meter.quantity, "unit": meter.unit}
+                for meter in value.meters
+            ],
+        },
+        "reasoning": {
+            "requested": value.reasoning.requested,
+            "selected": value.reasoning.selected,
+            "reported": value.reasoning.reported,
+        },
+        "pricing": (
+            {
+                "source": value.pricing.source,
+                "revision": value.pricing.revision,
+                "plan": value.pricing.plan,
+                "match": dict(value.pricing.match),
+            }
+            if value.pricing is not None
+            else None
+        ),
+        "cost": {
+            "selected": value.selected,
+            "reported": _model_cost_to_data(value.reported),
+            "estimate": _model_cost_to_data(value.estimate),
+        },
+    }
+
+
+def _model_cost_to_data(value: ModelCost | None) -> object:
+    if value is None:
+        return None
+    return {
+        "amount": value.amount,
+        "currency": value.currency,
+        "complete": value.complete,
+        "lines": [
+            {
+                "meter": line.meter,
+                "quantity": line.quantity,
+                "unit": line.unit,
+                "rate": line.rate,
+                "per": line.per,
+                "amount": line.amount,
+                "condition": line.condition,
+            }
+            for line in value.lines
+        ],
     }
 
 
@@ -1122,6 +1337,25 @@ def _optional_text(value: object, *, label: str) -> str | None:
     if not isinstance(value, str):
         raise ValueError(f"{label} must be text or null")
     return value
+
+
+def _required_text(value: object, *, label: str) -> str:
+    result = _optional_text(value, label=label)
+    if result is None or not result:
+        raise ValueError(f"{label} must be non-empty text")
+    return result
+
+
+def _optional_dict(value: object, *, label: str) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return _required_dict(value, label=label)
+
+
+def _required_dict(value: object, *, label: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} must be an object")
+    return {str(key): item for key, item in value.items()}
 
 
 def model_call_from_data(data: object) -> ModelCall:

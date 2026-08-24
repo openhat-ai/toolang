@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from toolang.base.protocols.model import ModelProvider
-from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget
+from toolang.base.types.model import ModelAlias, ModelInfo, ModelTarget, Provider
 from toolang.plugin.models.discovery import (
     default_provider_api_key_env,
     default_provider_base_url,
@@ -17,7 +16,7 @@ from toolang.plugin.models.resolution import selectable_model_targets
 
 def model_list_rows(
     *,
-    providers: Mapping[str, ModelProvider],
+    providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     envs: Mapping[str, str],
@@ -48,7 +47,7 @@ def model_list_rows(
 
 def model_provider_rows(
     *,
-    providers: Mapping[str, ModelProvider],
+    providers: Mapping[str, Provider],
     models: Sequence[ModelInfo],
     aliases: Mapping[str, ModelAlias],
     provider_configs: Mapping[str, object],
@@ -63,9 +62,7 @@ def model_provider_rows(
     for name, provider in sorted(providers.items()):
         if name == "custom":
             continue
-        provider_models = tuple(
-            model for model in models if model.provider == provider.name
-        )
+        provider_models = tuple(model for model in models if model.provider == name)
         adapter = model_provider_adapter_summary(provider_models)
         model_count = _model_provider_model_count(
             models=provider_models,
@@ -133,7 +130,7 @@ def model_target_profile(
 def model_alias_status(
     alias: ModelAlias,
     *,
-    providers: Mapping[str, ModelProvider],
+    providers: Mapping[str, Provider],
     environ: Mapping[str, str],
 ) -> tuple[str, str]:
     """Return adapter and config status for one alias."""
@@ -158,7 +155,7 @@ def model_alias_status(
 
 
 def model_provider_config(
-    provider: ModelProvider,
+    provider: Provider,
     *,
     environ: Mapping[str, str],
     adapter: str,
@@ -225,12 +222,13 @@ def _env_status(required: tuple[str, ...], missing: tuple[str, ...]) -> str:
 
 
 def _provider_url_offline(
-    provider: ModelProvider,
+    provider: Provider,
     *,
     model_count: int | None,
     available_count: int | None,
 ) -> bool:
-    if provider.name != "ollama":
+    provider_id = getattr(provider, "id", getattr(provider, "name", ""))
+    if provider_id != "ollama":
         return False
     if model_count != 0 or available_count != 0:
         return False
@@ -240,7 +238,7 @@ def _provider_url_offline(
 def _model_alias_missing_env(
     alias: ModelAlias,
     *,
-    provider: ModelProvider,
+    provider: Provider,
     environ: Mapping[str, str],
 ) -> tuple[str, ...]:
     required = list(required_provider_env_vars(provider))
@@ -265,7 +263,7 @@ def _model_alias_missing_env(
 def _model_alias_details(
     alias: ModelAlias,
     *,
-    provider: ModelProvider,
+    provider: Provider,
     environ: Mapping[str, str],
 ) -> str:
     endpoint = alias.endpoint or default_provider_base_url(provider, environ=environ)

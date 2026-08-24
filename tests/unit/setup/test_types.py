@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
 import toolang.setup as setup_package
-from toolang.base.types.model import ModelInfo
+from toolang.base.types.model import ModelInfo, Provider
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.common.layout import AgentLayout
 from toolang.setup import AgentEnvironment, AgentSetup
@@ -25,7 +24,15 @@ def test_setup_facade_exposes_snapshots_without_cache_details() -> None:
 
 def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:
     tools = {"shell": cast(Any, object())}
-    providers = {"openai": cast(Any, SimpleNamespace(name="openai"))}
+    providers = {
+        "openai": Provider(
+            id="openai",
+            name="OpenAI",
+            env=(),
+            npm="@ai-sdk/openai",
+            models={},
+        )
+    }
     adapters = {"responses": cast(Any, object())}
     environ = {"OPENAI_API_KEY": "secret"}
 
@@ -98,7 +105,13 @@ def test_agent_setup_rejects_mismatched_provider_mapping_key() -> None:
         AgentSetup(
             layout=AgentLayout.resident(Path("/toolang"), "alice"),
             providers={
-                "alias": cast(Any, SimpleNamespace(name="actual")),
+                "alias": Provider(
+                    id="actual",
+                    name="Actual",
+                    env=(),
+                    npm="@ai-sdk/openai-compatible",
+                    models={},
+                ),
             },
             adapters={},
             models=(),
@@ -119,7 +132,13 @@ def test_agent_setup_rejects_duplicate_model_identity() -> None:
         AgentSetup(
             layout=AgentLayout.resident(Path("/toolang"), "alice"),
             providers={
-                "openai": cast(Any, SimpleNamespace(name="openai")),
+                "openai": Provider(
+                    id="openai",
+                    name="OpenAI",
+                    env=(),
+                    npm="@ai-sdk/openai",
+                    models={},
+                ),
             },
             adapters={},
             models=(model, model),

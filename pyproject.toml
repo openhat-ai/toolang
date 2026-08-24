@@ -68,17 +68,16 @@ shell = "toolang.plugin.tools.shell:create_tool_set"
 web_search = "toolang.plugin.tools.web_search:create_tool_set"
 agent_state = "toolang.execution.tools.agent_state:create_tool_set"
 
-[project.entry-points."toolang.model_provider"]
-custom = "toolang.plugin.models.providers.custom:create_model_provider"
-deepseek = "toolang.plugin.models.providers.deepseek:create_model_provider"
-google = "toolang.plugin.models.providers.google:create_model_provider"
-openai = "toolang.plugin.models.providers.openai:create_model_provider"
-openrouter = "toolang.plugin.models.providers.openrouter:create_model_provider"
-ollama = "toolang.plugin.models.providers.ollama:create_model_provider"
-
 [project.entry-points."toolang.model_adapter"]
 chat_completions = "toolang.plugin.models.adapters.chat_completions:create_model_adapter"
+generate_content = "toolang.plugin.models.adapters.generate_content:create_model_adapter"
+messages = "toolang.plugin.models.adapters.messages:create_model_adapter"
 responses = "toolang.plugin.models.adapters.responses:create_model_adapter"
+
+[project.entry-points."toolang.model_catalog"]
+models_dev = "toolang.plugin.models.catalog:create_models_dev_catalog"
+ollama = "toolang.plugin.models.local:create_ollama_catalog"
+llama_cpp = "toolang.plugin.models.local:create_llama_cpp_catalog"
 
 [project.entry-points."toolang.channel"]
 telegram = "toolang.plugin.channels.telegram:create_channel"

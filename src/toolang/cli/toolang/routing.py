@@ -43,6 +43,11 @@ class TargetHelp:
 
 _ALL_PLACEMENTS = frozenset[AgentPlacement]({"resident", "visiting", "roaming"})
 _RESIDENT = frozenset[AgentPlacement]({"resident"})
+_GLOBAL_VALUE_OPTIONS = ("--models",)
+
+
+def _extract_global_args(argv: list[str]) -> tuple[list[str], list[str]]:
+    return extract_root_args(argv, extra_value_options=_GLOBAL_VALUE_OPTIONS)
 
 
 def _command(
@@ -116,10 +121,12 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             )
             for name in ("caps", *CAP_KINDS)
         ),
-        _command("model", "none"),
-        _command("tool", "none"),
+        _command("models", "none"),
+        _command("providers", "none"),
+        _command("adapters", "none"),
+        _command("tools", "none"),
         _command("channel", "none"),
-        _command("sandbox", "none"),
+        _command("sandboxes", "none"),
         _command("hidden", "none"),
         _command("fmt", "none"),
         _command("parse", "none"),
@@ -160,7 +167,7 @@ def select_target_help(
 ) -> TargetHelp | None:
     """Select one unambiguous target that has no command yet."""
 
-    _global_args, body = extract_root_args(argv)
+    _global_args, body = _extract_global_args(argv)
     if not body or len(body) > 2:
         return None
     if len(body) == 2 and body[1] not in {"--help", "-h"}:
@@ -188,7 +195,7 @@ def dispatch_roaming(
 ) -> int | None:
     """Route a local source target or fall through to runnable invocation."""
 
-    global_args, body = extract_root_args(argv)
+    global_args, body = _extract_global_args(argv)
     selected = _selected_roaming(body)
     if selected is None:
         return None
@@ -222,7 +229,7 @@ def dispatch_visiting(
 ) -> int | None:
     """Route a supported remote-selector command through a visiting layout."""
 
-    global_args, body = extract_root_args(argv)
+    global_args, body = _extract_global_args(argv)
     selected = _selected_visiting(body)
     if selected is None:
         return None
@@ -263,7 +270,7 @@ def dispatch_visiting(
 def normalize(argv: list[str]) -> tuple[list[str], str | None]:
     """Normalize resident target-first syntax after non-resident routing."""
 
-    global_args, body = extract_root_args(argv)
+    global_args, body = _extract_global_args(argv)
     try:
         rewritten_body, agent = _rewrite_resident(body)
     except RoutingError:

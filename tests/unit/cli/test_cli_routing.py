@@ -81,6 +81,15 @@ def test_cli_normalize_routes_resident_target_before_command() -> None:
     assert agent == "alice"
 
 
+def test_cli_normalize_preserves_the_models_catalog_override() -> None:
+    args, agent = normalize(
+        ["--models", "/tmp/models.json", "alice", "retry", "run_1"],
+    )
+
+    assert args == ["--models", "/tmp/models.json", "retry", "run_1"]
+    assert agent == "alice"
+
+
 def test_cli_normalize_allows_both_orders_for_agent_self_commands() -> None:
     prefix_args, prefix_agent = normalize(["alice", "info"])
     postfix_args, postfix_agent = normalize(["info", "alice"])
@@ -129,19 +138,16 @@ def test_cli_no_args_still_shows_root_help(
     assert output.err == ""
 
 
-def test_cli_thread_commands_have_consistent_order_and_descriptions() -> None:
+def test_cli_control_commands_have_consistent_order_and_descriptions() -> None:
     group = typer.main.get_command(cli.app)
     expected = {
-        "chat": "Open or continue a terminal chat.",
+        "chat": "Start a run in a terminal chat.",
         "steer": "Steer an active run.",
         "cancel": "Cancel an active run.",
         "retry": "Retry a run from a failed step.",
-        "rerun": "Rerun a prior invocation.",
+        "rerun": "Start a new run from a prior invocation.",
         "rewind": "Rewind a thread to an earlier run.",
         "fork": "Fork a thread from an earlier run.",
-        "inspect": "Inspect a thread or run.",
-        "runs": "List runs.",
-        "threads": "List threads.",
     }
 
     assert isinstance(group, click.Group)
@@ -150,6 +156,70 @@ def test_cli_thread_commands_have_consistent_order_and_descriptions() -> None:
 
     assert order == tuple(expected)
     assert {name: group.commands[name].help for name in expected} == expected
+
+
+def test_cli_visible_commands_follow_the_public_panel_order() -> None:
+    group = typer.main.get_command(cli.app)
+    expected = {
+        "Agent Commands": (
+            "new",
+            "clone",
+            "remove",
+            "list",
+            "info",
+            "run",
+            "start",
+            "stop",
+            "chore",
+            "task",
+        ),
+        "Cap Commands": ("psyche", "skill", "service", "prompt"),
+        "Control Commands": (
+            "chat",
+            "steer",
+            "cancel",
+            "retry",
+            "rerun",
+            "rewind",
+            "fork",
+        ),
+        "Inspection Commands": (
+            "threads",
+            "runs",
+            "inspect",
+            "caps",
+            "models",
+            "providers",
+            "adapters",
+            "tools",
+            "sandboxes",
+        ),
+    }
+
+    assert isinstance(group, click.Group)
+    context = click.Context(group)
+    visible = tuple(
+        name for name in group.list_commands(context) if not group.commands[name].hidden
+    )
+
+    assert visible == tuple(name for names in expected.values() for name in names)
+    for panel, names in expected.items():
+        assert {
+            getattr(group.commands[name], "rich_help_panel", None) for name in names
+        } == {panel}
+
+
+def test_cli_removes_singular_resources_and_hides_channels() -> None:
+    group = typer.main.get_command(cli.app)
+
+    assert isinstance(group, click.Group)
+    assert {"model", "tool", "sandbox"}.isdisjoint(group.commands)
+    assert {"models", "tools", "sandboxes", "caps"} <= set(group.commands)
+    assert group.commands["models"].help == "Inspect models."
+    assert group.commands["caps"].help == "Inspect caps."
+    assert group.commands["tools"].help == "Inspect installed tools."
+    assert group.commands["sandboxes"].help == "Inspect installed sandboxes."
+    assert group.commands["channel"].hidden
 
 
 @pytest.mark.parametrize(
@@ -346,10 +416,21 @@ def test_cli_bare_resident_target_shows_its_command_help(
 
     result = _call_main(["--root", str(tmp_path), "alice"])
     output = capsys.readouterr()
+    stdout = click.unstyle(output.out)
+    panels = (
+        "Agent Commands",
+        "Cap Commands",
+        "Control Commands",
+        "Inspection Commands",
+    )
 
     assert result == 0
-    assert "Commands for resident agent alice." in output.out
-    assert "steer" in output.out
+    assert "Commands for resident agent alice." in stdout
+    assert "steer" in stdout
+    assert tuple(stdout.index(panel) for panel in panels) == tuple(
+        sorted(stdout.index(panel) for panel in panels)
+    )
+    assert "channel" not in stdout
     assert "No such command" not in output.err
 
 

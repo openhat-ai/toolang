@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
 import math
@@ -941,12 +941,130 @@ class ModelTokenPrice:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelUsageMeter:
+    """One auditable quantity within model-call accounting."""
+
+    name: str
+    quantity: str
+    unit: str = "token"
+
+    def __post_init__(self) -> None:
+        if not self.name or not self.unit:
+            raise ValueError("model usage meter name and unit are required")
+        _validate_decimal_text(self.quantity, label="model usage meter quantity")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCostLine:
+    """One applied quantity and rate contributing to a model cost."""
+
+    meter: str
+    quantity: str
+    unit: str
+    rate: str
+    per: str
+    amount: str
+    condition: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.meter or not self.unit:
+            raise ValueError("model cost line meter and unit are required")
+        for label, value in (
+            ("quantity", self.quantity),
+            ("rate", self.rate),
+            ("per", self.per),
+            ("amount", self.amount),
+        ):
+            _validate_decimal_text(value, label=f"model cost line {label}")
+        if self.condition is not None and not isinstance(self.condition, dict):
+            raise TypeError("model cost line condition must be an object")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCost:
+    """One provider-reported or catalog-estimated monetary amount."""
+
+    amount: str
+    currency: str
+    complete: bool
+    lines: tuple[ModelCostLine, ...] = ()
+
+    def __post_init__(self) -> None:
+        _validate_decimal_text(self.amount, label="model cost amount")
+        if not self.currency:
+            raise ValueError("model cost currency is required")
+        if not isinstance(self.complete, bool):
+            raise TypeError("model cost completeness must be a boolean")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelPricing:
+    """Catalog pricing provenance captured for one completed call."""
+
+    source: str
+    revision: str | None = None
+    plan: str = "standard"
+    match: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.source or not self.plan:
+            raise ValueError("model pricing source and plan are required")
+        if not isinstance(self.match, dict):
+            raise TypeError("model pricing match must be an object")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelReasoningAccounting:
+    """Requested, selected, and provider-reported reasoning controls."""
+
+    requested: dict[str, Any] | None = None
+    selected: dict[str, Any] | None = None
+    reported: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        for value in (self.requested, self.selected, self.reported):
+            if value is not None and not isinstance(value, dict):
+                raise TypeError("model reasoning accounting values must be objects")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelAccounting:
+    """Versioned durable accounting for one completed model call."""
+
+    input_tokens: int
+    output_tokens: int
+    meters: tuple[ModelUsageMeter, ...] = ()
+    reasoning: ModelReasoningAccounting = ModelReasoningAccounting()
+    pricing: ModelPricing | None = None
+    reported: ModelCost | None = None
+    estimate: ModelCost | None = None
+    selected: Literal["reported", "estimated", "none"] = "none"
+    version: int = 1
+
+    def __post_init__(self) -> None:
+        if self.version not in {0, 1}:
+            raise ValueError(f"unsupported model accounting version: {self.version}")
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in (self.input_tokens, self.output_tokens)
+        ):
+            raise ValueError("model accounting totals must be non-negative integers")
+        if self.selected not in {"reported", "estimated", "none"}:
+            raise ValueError("invalid selected model cost source")
+        if self.selected == "reported" and self.reported is None:
+            raise ValueError("reported model cost selection requires reported cost")
+        if self.selected == "estimated" and self.estimate is None:
+            raise ValueError("estimated model cost selection requires an estimate")
+
+
+@dataclass(frozen=True, slots=True)
 class ModelStepNoted:
     """Accounting and continuation state learned when a model Step ends."""
 
     tokens: ModelTokenCount | None = None
     price: ModelTokenPrice | None = None
     cost: str | None = None
+    accounting: ModelAccounting | None = None
     state: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -955,6 +1073,10 @@ class ModelStepNoted:
         if self.price is not None and not isinstance(self.price, ModelTokenPrice):
             raise TypeError("model Step price requires ModelTokenPrice")
         _validate_decimal_text(self.cost, label="model cost")
+        if self.accounting is not None and not isinstance(
+            self.accounting, ModelAccounting
+        ):
+            raise TypeError("model Step accounting requires ModelAccounting")
         if self.state is not None and not isinstance(self.state, dict):
             raise TypeError("model Step state must be an object")
 
@@ -1215,9 +1337,11 @@ def _validate_decimal_text(value: str | None, *, label: str) -> None:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{label} must be non-empty decimal text")
     try:
-        Decimal(value)
+        parsed = Decimal(value)
     except Exception as exc:
         raise ValueError(f"{label} must be decimal text") from exc
+    if not parsed.is_finite() or parsed < 0:
+        raise ValueError(f"{label} must be finite and non-negative")
 
 
 ControlTiming = Literal["immediate", "next_step", "next_call"]

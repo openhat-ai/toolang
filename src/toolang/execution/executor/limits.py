@@ -5,10 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from toolang.base.types.model import ModelInfo, ModelTarget
+from toolang.base.types.model import ModelCatalogSnapshot, ModelInfo, ModelTarget
 from toolang.base.types.policy import RunLimits
 from toolang.base.types.run import ModelUsage
 from toolang.common.errors import ToolangError
+from toolang.execution.accounting import build_model_accounting, selected_usd_cost
+from toolang.execution.types import ModelAccounting
 
 
 class _RunLimitExceeded(ToolangError):
@@ -30,6 +32,7 @@ class _ModelAccounting:
     usage: ModelUsage | None
     price: _TokenPrice | None = None
     cost: Decimal | None = None
+    accounting: ModelAccounting | None = None
 
 
 @dataclass(slots=True)
@@ -58,10 +61,8 @@ class _RunLimitState:
             self.input_tokens += input_tokens
             self.output_tokens += output_tokens
         if self.limits.cost is not None:
-            if cost is None:
-                self.error = "Model pricing is required by the run cost limit"
-                return
-            self.cost += cost
+            if cost is not None:
+                self.cost += cost
 
     def check_restored(self) -> None:
         """Validate restored effective totals before resumed execution."""
@@ -85,13 +86,7 @@ class _RunLimitState:
     ) -> None:
         """Reject a priced run before invoking a model with unknown prices."""
 
-        if self.limits.cost is None:
-            return
-        price = _model_price(target, models)
-        if price is None or price.input is None or price.output is None:
-            raise ToolangError(
-                f"Model pricing is required by the run cost limit: {target.ref}"
-            )
+        del target, models
 
     def record_model(
         self,
@@ -103,12 +98,13 @@ class _RunLimitState:
         if self.limits.tokens is None and self.limits.cost is None:
             return
         usage = accounting.usage
-        if usage is None:
+        if usage is None and self.limits.tokens is not None:
             raise ToolangError(
                 f"Model usage is required by run token or cost limits: {target.ref}"
             )
-        self.input_tokens += usage.input_tokens
-        self.output_tokens += usage.output_tokens
+        if usage is not None:
+            self.input_tokens += usage.input_tokens
+            self.output_tokens += usage.output_tokens
         tokens = self.input_tokens + self.output_tokens
         if self.limits.tokens is not None and tokens > self.limits.tokens:
             raise _RunLimitExceeded(
@@ -117,9 +113,7 @@ class _RunLimitState:
         if self.limits.cost is None:
             return
         if accounting.cost is None:
-            raise ToolangError(
-                f"Model pricing is required by the run cost limit: {target.ref}"
-            )
+            return
         self.cost += accounting.cost
         if self.cost > self.limits.cost:
             raise _RunLimitExceeded(
@@ -153,13 +147,34 @@ def _model_accounting(
     target: ModelTarget,
     models: tuple[ModelInfo, ...],
     usage: ModelUsage | None,
+    *,
+    catalog: ModelCatalogSnapshot | None = None,
 ) -> _ModelAccounting:
-    price = _model_price(target, models)
+    durable = build_model_accounting(target, usage, catalog)
+    price = _accounting_price(durable) or _model_price(target, models)
+    selected_cost = selected_usd_cost(durable)
     return _ModelAccounting(
         usage=usage,
         price=price,
-        cost=_model_cost(usage, price),
+        cost=(selected_cost if catalog is not None else _model_cost(usage, price)),
+        accounting=durable,
     )
+
+
+def _accounting_price(accounting: ModelAccounting | None) -> _TokenPrice | None:
+    if accounting is None or accounting.estimate is None:
+        return None
+    input_rate: Decimal | None = None
+    output_rate: Decimal | None = None
+    for line in accounting.estimate.lines:
+        rate = Decimal(line.rate) / Decimal(line.per)
+        if line.meter in {"input", "input.uncached"}:
+            input_rate = rate
+        if line.meter in {"output", "output.visible"}:
+            output_rate = rate
+    if input_rate is None and output_rate is None:
+        return None
+    return _TokenPrice(input=input_rate, output=output_rate)
 
 
 def _model_price(
