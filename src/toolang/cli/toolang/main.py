@@ -78,11 +78,11 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "threads",
     "inspect",
     "models",
+    "tools",
+    "caps",
     "providers",
     "adapters",
-    "tools",
     "sandboxes",
-    "caps",
 )
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
@@ -290,7 +290,7 @@ _registered_group(
 
 _registered_command(
     "chat",
-    help="Open or continue a terminal chat.",
+    help="Start a run in a terminal chat.",
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )(chat_commands.chat_command)
@@ -336,7 +336,7 @@ _registered_command(
 )(thread_commands.retry_command)
 _registered_command(
     "rerun",
-    help="Rerun a prior invocation.",
+    help="Start a new run from a prior invocation.",
     no_args_is_help=True,
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=CONTROL_COMMAND_PANEL,

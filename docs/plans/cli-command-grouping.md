@@ -34,12 +34,15 @@ runs
 threads
 inspect
 models
+tools
+caps
 providers
 adapters
-tools
 sandboxes
-caps
 ```
+
+The order keeps common execution and resource inspection first, followed by
+provider, adapter, and sandbox plugin details.
 
 Rename public `tool` to `tools` and `sandbox` to `sandboxes`. They directly list
 their resources without a `list` subcommand. Keep `too caps` and move it into
