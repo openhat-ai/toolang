@@ -122,12 +122,15 @@ once and the snapshot is reused. A new setup, explicit update, symlink-target
 change, or file identity change builds a new snapshot. Runs retain their
 starting revision and never reprice history.
 
-Ollama probes its configured/default endpoint's `/api/tags`; llama.cpp probes
-`/v1/models`. Toolang probes only declared/default endpoints, uses short
-timeouts, and never scans ports. Results live only in the setup snapshot. Calls
-may coalesce an in-flight probe but there is no TTL, disk cache, cross-process
-cache, last-good result, or stale fallback. A local-only model has partial
-runtime metadata and unknown price.
+Ollama probes its configured/default endpoint's `/api/tags` and enriches each
+listed model through `/api/show`. llama.cpp combines `/v1/models` metadata with
+`/props` for the single active model. Toolang maps reported context, output,
+modalities, capabilities, family, and concise runtime details without inferring
+missing model behavior from its name. It probes only declared/default endpoints,
+uses short timeouts, and never scans ports. Results live only in the setup
+snapshot. Calls may coalesce an in-flight probe but there is no TTL, disk cache,
+cross-process cache, last-good result, or stale fallback. Local-only models have
+unknown prices.
 
 ## Catalog Update and Export
 
@@ -286,7 +289,7 @@ reported and estimated amounts, differences, and coverage.
    naming, failure recovery, lock behavior, and root/home isolation.
 4. Prove exact provider/model identity, nested model IDs, adapter selection,
    missing-adapter failure, secret redaction, and no npm auto-loading.
-5. Prove configured remote availability and Ollama/llama.cpp discovery,
+5. Prove configured remote availability and enriched Ollama/llama.cpp discovery,
    endpoint failure, no port scan, no stale result, and unpriced local-only models.
 6. Round-trip filtered output through the importer and cover OR filters,
    nested fields, unknown booleans, deterministic output, overwrite protection,

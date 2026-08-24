@@ -427,6 +427,11 @@ Pass `--filter` to preview selector filtering, for example
 `toolang models update --root|--home` validates and activates one complete
 models.dev-compatible catalog snapshot.
 
+Discovered Ollama and llama.cpp records include concise runtime metadata in
+`toolang models inspect --json`. Reported context, output limits, modalities,
+and capabilities populate the same catalog fields used by remote models, while
+local prices remain unknown.
+
 
 ## Plugin Commands
 
