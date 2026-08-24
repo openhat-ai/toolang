@@ -308,6 +308,8 @@ def providers_command(
         ("PROVIDER", "NAME", "AVAILABLE", "ADAPTERS", "ENDPOINT", "ENV"),
         rows,
     )
+    typer.echo()
+    typer.echo(f" {_provider_catalog_summary(snapshot, providers=providers)}")
 
 
 def adapters_command(
@@ -489,6 +491,27 @@ def _provider_offline(provider: Provider) -> bool:
     return (
         isinstance(runtime, Mapping)
         and cast(Mapping[str, object], runtime).get("status") == "offline"
+    )
+
+
+def _provider_catalog_summary(
+    snapshot: ModelCatalogSnapshot,
+    *,
+    providers: Sequence[Provider],
+) -> str:
+    parts = [f"models.dev {sum(not provider.local for provider in providers)}"]
+    for catalog_provider in snapshot.providers.values():
+        if not catalog_provider.local:
+            continue
+        parts.append(
+            f"{catalog_provider.id} "
+            f"{sum(provider.id == catalog_provider.id for provider in providers)}"
+        )
+    provider_noun = "provider" if len(providers) == 1 else "providers"
+    catalog_noun = "catalog" if len(parts) == 1 else "catalogs"
+    return (
+        f"{len(providers)} {provider_noun} from {len(parts)} {catalog_noun}: "
+        + ", ".join(parts)
     )
 
 

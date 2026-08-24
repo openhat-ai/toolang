@@ -450,6 +450,8 @@ the table with `AVAILABLE` set to `0` and its endpoint shown in red. JSON output
 exposes the corresponding facts as `endpoint` and an `adapters` array.
 Anthropic uses the known default endpoint `https://api.anthropic.com` when the
 models.dev record omits `api`.
+The provider table footer mirrors the model footer, for example
+`7 providers from 3 catalogs: models.dev 5, ollama 1, llama_cpp 1`.
 
 
 ## Plugin Commands

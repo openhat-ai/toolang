@@ -284,6 +284,10 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
     )
 
     assert providers_result.exit_code == 0, providers_result.stderr
+    assert (
+        "3 providers from 3 catalogs: models.dev 1, ollama 1, llama_cpp 1"
+        in providers_result.stdout
+    )
     assert captured_headers == (
         "PROVIDER",
         "NAME",
@@ -342,6 +346,7 @@ def test_providers_lists_effective_endpoint_and_model_adapters(
     assert "https://api.test/v1" in row
     assert "chat_completions,messages" in row
     assert "TEST_API_KEY | TEST_ALT_API_KEY" in row
+    assert "1 provider from 1 catalog: models.dev 1" in stdout
 
     captured_rows: list[tuple[str | Text, ...]] = []
 

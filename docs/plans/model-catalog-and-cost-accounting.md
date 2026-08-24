@@ -224,6 +224,8 @@ Offline local providers remain listed with `AVAILABLE` equal to `0` and a red
 endpoint. Online providers use `n/m`. Provider JSON exposes `endpoint` and
 `adapters` without presentation styling. Anthropic falls back to its known
 `https://api.anthropic.com` base URL when its models.dev record omits `api`.
+The provider footer uses the same source-count form as the model footer, for
+example `7 providers from 3 catalogs: models.dev 5, ollama 1, llama_cpp 1`.
 
 The singular `too model` group is removed. The public catalog commands are
 `too models`, `too providers`, and `too adapters`.
