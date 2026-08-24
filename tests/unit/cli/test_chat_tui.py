@@ -1041,7 +1041,7 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
         ("canceled", "yellow"),
     ],
 )
-def test_chat_run_footer_dims_and_colors_the_entire_line(
+def test_chat_run_footer_colors_the_entire_line_without_dimming(
     status: Literal["succeeded", "failed", "canceled"],
     color: str | None,
 ) -> None:
@@ -1057,7 +1057,7 @@ def test_chat_run_footer_dims_and_colors_the_entire_line(
     assert _render_text(root_summary.render()).strip().endswith(" ]")
     for segment in segments:
         assert segment.style is not None
-        assert segment.style.dim
+        assert not segment.style.dim
         assert not segment.style.bold
         if color is None:
             assert segment.style.color is None

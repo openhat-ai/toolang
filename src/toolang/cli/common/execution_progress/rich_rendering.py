@@ -183,8 +183,7 @@ def _terminal_status_color(status: str) -> str | None:
 
 
 def _run_footer_style(status: str) -> str:
-    color = _terminal_status_color(status)
-    return f"dim {color}" if color is not None else "dim"
+    return _terminal_status_color(status) or "none"
 
 
 def _wrap_run_footer_content(

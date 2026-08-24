@@ -291,10 +291,10 @@ appending a separate result line:
 [ run_zvczap2h: retry succeeded · 2.0s · 1 model call ]
 ```
 
-Square brackets frame the complete footer. The entire footer is dim and uses
-the terminal status color: no color for success, red for failure, and yellow
-for cancellation. Narrow terminals wrap the caption and facts with a two-cell
-hanging indent and place the closing bracket on the final line.
+Square brackets frame the complete footer. The entire footer uses normal
+intensity and the terminal status color: no color for success, red for failure,
+and yellow for cancellation. Narrow terminals wrap the caption and facts with a
+two-cell hanging indent and place the closing bracket on the final line.
 
 The footer owns total duration and whole-tree Run facts. Script does not append
 a separate `Run: RUN_ID` line. Errors before `RunBegin` are reported outside
