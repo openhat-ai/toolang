@@ -118,6 +118,7 @@ def models_command(
             "PRICE ($/1M)",
         ),
         rows,
+        justify=(None, None, "right", "right", None, None, "right"),
     )
     typer.echo()
     typer.echo(
@@ -200,6 +201,17 @@ def inspect_models(
             "PRICE ($/1M)",
         ),
         rows,
+        justify=(
+            None,
+            None,
+            None,
+            None,
+            "right",
+            "right",
+            None,
+            None,
+            "right",
+        ),
     )
 
 

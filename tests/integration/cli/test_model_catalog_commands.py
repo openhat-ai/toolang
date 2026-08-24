@@ -111,6 +111,14 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     assert [row.index(value) for value in values] == sorted(
         row.index(value) for value in values
     )
+    for header_value, row_value in (
+        ("CONTEXT", "1,000,000"),
+        ("OUTPUT", "100,000"),
+        ("PRICE ($/1M)", "$1.26/$2"),
+    ):
+        assert header.index(header_value) + len(header_value) == row.index(
+            row_value
+        ) + len(row_value)
     assert "PROFILE" not in stdout
     assert "per 1m" not in stdout
 
