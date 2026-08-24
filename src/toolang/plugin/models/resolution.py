@@ -69,6 +69,8 @@ def resolve_catalog_adapter(
             return "chat_completions"
         if provider.id == "openai" or npm == "@ai-sdk/openai":
             return "responses"
+        if provider.id == "anthropic" or npm == "@ai-sdk/anthropic":
+            return "messages"
         if provider.id in {
             "custom",
             "deepseek",

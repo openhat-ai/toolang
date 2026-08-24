@@ -175,6 +175,18 @@ def test_model_provider_signal_can_override_provider_adapter_shape() -> None:
     assert resolve_catalog_adapter(provider, model=model) == "chat_completions"
 
 
+def test_anthropic_catalog_signal_resolves_messages_adapter() -> None:
+    provider = Provider(
+        id="anthropic",
+        name="Anthropic",
+        env=("ANTHROPIC_API_KEY",),
+        npm="@ai-sdk/anthropic",
+        models={},
+    )
+
+    assert resolve_catalog_adapter(provider) == "messages"
+
+
 def test_resolver_applies_advertised_mode_request_and_keeps_control_metadata() -> None:
     model = Model(
         provider_id="test",

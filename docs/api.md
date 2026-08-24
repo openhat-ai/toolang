@@ -411,14 +411,12 @@ ephemeral port.
 including:
 
 - canonical provider/model identity
-- configuration status: `ready` or concise missing endpoint, key, and adapter
-  reasons
+- current `AVAILABLE` value as `yes` or `no`
 - right-aligned context and maximum output sizes with thousands separators
 - input modalities and a comma-separated `CAPABILITY` list
 - right-aligned base input/output prices formatted as `$input / $output` under
   `PRICE ($/1M)`, with every numeric rate shown to two decimal places
-- a summary count plus models.dev and local catalog model counts, revisions,
-  endpoints, and local offline status
+- a compact total and per-catalog model counts
 
 Pass `--filter` to preview selector filtering, for example
 `toolang models --filter "[remote]"` or
@@ -435,17 +433,21 @@ and capabilities populate the same catalog fields used by remote models. Their
 API token prices are explicitly zero; local compute costs are outside model
 token accounting.
 
-`ready` means the endpoint is resolved, a required key is present, and the
-adapter is installed. Remote endpoint reachability, credentials, and account
-entitlement are not probed by this listing. Local endpoints are probed for model
-discovery, so an unreachable Ollama or llama.cpp catalog is shown as `offline`
-with its endpoint in the summary.
+`yes` means the endpoint is resolved, a required key is present, and the adapter
+is installed. Remote endpoint reachability, credentials, and account entitlement
+are not probed by this listing. Local endpoints are probed for discovery;
+unavailable local models are omitted from the model table.
 
-`toolang providers` shows each provider's effective default `ENDPOINT` and an
-`ADAPTERS` column. `ADAPTERS` is the deduplicated set of effective adapters
-resolved across that provider's catalog models, including model-level protocol
-overrides; it is not a preferred-adapter hint. JSON output exposes the same
-facts as `endpoint` and an `adapters` array.
+`toolang providers` shows `ADAPTERS`, `ENDPOINT`, and `ENV` in that order.
+`ADAPTERS` is the deduplicated set resolved across the provider's catalog
+models, including model-level protocol overrides; it is not a preferred-adapter
+hint. Catalog-known protocols remain visible when no implementation is
+installed, such as `messages` for Anthropic. An empty or offline local catalog
+uses the provider-level adapter signal. Unavailable field values are red.
+Multiple alternative environment variables use an unstyled `|` separator and
+are all red only when none is configured. An offline local provider remains in
+the table with `AVAILABLE` set to `0` and its endpoint shown in red. JSON output
+exposes the corresponding facts as `endpoint` and an `adapters` array.
 
 
 ## Plugin Commands

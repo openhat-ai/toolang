@@ -6,11 +6,13 @@ import tempfile
 
 import pytest
 from rich.console import Console
+from rich.text import Text
 
 from toolang.cli.common import output
 from toolang.cli.common.output import (
     agent_avatar,
     echo_pairs_table,
+    echo_table,
     info_avatar_text,
     shorten_home_path,
     toolang_logo_text,
@@ -21,6 +23,26 @@ EXPECTED_INFO_AVATAR = """\
 ████           ██
  ██   ⬤   ⬤    ██
  ██          ████"""
+
+
+def test_table_preserves_explicit_cell_styles(monkeypatch) -> None:
+    rendered = StringIO()
+    monkeypatch.setattr(
+        output,
+        "_TABLE_CONSOLE",
+        Console(
+            file=rendered,
+            force_terminal=True,
+            color_system="standard",
+            no_color=False,
+            width=80,
+            _environ={},
+        ),
+    )
+
+    echo_table(("VALUE",), ((Text("unavailable", style="red"),),))
+
+    assert "\x1b[31munavailable\x1b[0m" in rendered.getvalue()
 
 
 def test_info_avatar_uses_compact_logo(monkeypatch) -> None:

@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Annotated, cast
 
+from rich.text import Text
 import typer
 
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
@@ -104,13 +105,16 @@ def models_command(
         if json_:
             typer.echo(content, nl=False)
         return
+    displayed = tuple(
+        model for model in selected if not model.local or model.identity in available
+    )
     rows = [
         (
             model.identity,
-            _model_status(setup, model, available=available),
+            "yes" if model.identity in available else "no",
             *_model_table_fields(model),
         )
-        for model in selected
+        for model in displayed
     ]
     if not rows:
         typer.echo("No matched models.")
@@ -118,7 +122,7 @@ def models_command(
     echo_table(
         (
             "MODEL",
-            "STATUS",
+            "AVAILABLE",
             "CONTEXT",
             "OUTPUT",
             "INPUT",
@@ -129,7 +133,7 @@ def models_command(
         justify=(None, None, "right", "right", None, None, "right"),
     )
     typer.echo()
-    typer.echo(f" {_catalog_summary(snapshot, shown=len(rows))}")
+    typer.echo(f" {_catalog_summary(snapshot, models=displayed)}")
 
 
 @models_app.command("inspect", help="Inspect model catalog entries and availability.")
@@ -182,7 +186,7 @@ def inspect_models(
         (
             model.identity,
             _model_adapter(setup, model),
-            _model_status(setup, model, available=available_ids),
+            "yes" if model.identity in available_ids else "no",
             model.last_updated or "-",
             *_model_table_fields(model),
         )
@@ -197,7 +201,7 @@ def inspect_models(
         (
             "MODEL",
             "ADAPTER",
-            "STATUS",
+            "AVAILABLE",
             "UPDATED",
             "CONTEXT",
             "OUTPUT",
@@ -293,15 +297,15 @@ def providers_command(
         (
             provider.id,
             provider.name,
-            f"{sum(f'{provider.id}/{model_id}' in available for model_id in provider.models)}/{len(provider.models)}",
-            _provider_endpoint(setup, provider) or "-",
-            ",".join(_provider_adapters(provider)) or "-",
-            "+".join(provider.env) or "-",
+            _provider_availability(provider, available=available),
+            _provider_adapters_cell(setup, provider),
+            _provider_endpoint_cell(setup, provider),
+            _provider_env_cell(setup, provider),
         )
         for provider in providers
     ]
     echo_table(
-        ("PROVIDER", "NAME", "AVAILABLE", "ENDPOINT", "ADAPTERS", "ENV"),
+        ("PROVIDER", "NAME", "AVAILABLE", "ADAPTERS", "ENDPOINT", "ENV"),
         rows,
     )
 
@@ -376,18 +380,6 @@ def _available_identities(ctx: typer.Context, setup: AgentSetup) -> set[str]:
     }
 
 
-def _model_status(
-    setup: AgentSetup,
-    model: Model,
-    *,
-    available: set[str],
-) -> str:
-    reasons = _model_missing_reasons(setup, model)
-    if reasons:
-        return f"missing {'+'.join(reasons)}"
-    return "ready" if model.identity in available else "unavailable"
-
-
 def _model_missing_reasons(setup: AgentSetup, model: Model) -> tuple[str, ...]:
     provider = setup.providers.get(model.provider_id)
     if provider is None:
@@ -403,22 +395,23 @@ def _model_missing_reasons(setup: AgentSetup, model: Model) -> tuple[str, ...]:
     return tuple(reasons)
 
 
-def _catalog_summary(snapshot: ModelCatalogSnapshot, *, shown: int) -> str:
-    static_count = sum(not model.local for model in snapshot.models)
-    parts = [f"models.dev {static_count} @ {snapshot.revision[:19]}"]
+def _catalog_summary(
+    snapshot: ModelCatalogSnapshot,
+    *,
+    models: Sequence[Model],
+) -> str:
+    parts = [f"models.dev {sum(not model.local for model in models)}"]
     for provider in snapshot.providers.values():
         if not provider.local:
             continue
-        runtime = provider.extra.get("runtime")
-        status = (
-            cast(Mapping[str, object], runtime).get("status")
-            if isinstance(runtime, Mapping)
-            else None
+        parts.append(
+            f"{provider.id} {sum(model.provider_id == provider.id for model in models)}"
         )
-        label = "offline" if status == "offline" else str(len(provider.models))
-        parts.append(f"{provider.id} {label} @ {provider.api or '-'}")
-    noun = "model" if shown == 1 else "models"
-    return f"{shown} {noun} · " + " · ".join(parts)
+    model_noun = "model" if len(models) == 1 else "models"
+    catalog_noun = "catalog" if len(parts) == 1 else "catalogs"
+    return f"{len(models)} {model_noun} {len(parts)} {catalog_noun}: " + ", ".join(
+        parts
+    )
 
 
 def _model_adapter(setup: AgentSetup, model: Model) -> str:
@@ -441,15 +434,61 @@ def _provider_endpoint(setup: AgentSetup, provider: Provider) -> str | None:
 
 
 def _provider_adapters(provider: Provider) -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            {
-                adapter
-                for model in provider.models.values()
-                if (adapter := resolve_catalog_adapter(provider, model=model))
-                is not None
-            }
-        )
+    adapters = {
+        adapter
+        for model in provider.models.values()
+        if (adapter := resolve_catalog_adapter(provider, model=model)) is not None
+    }
+    default = resolve_catalog_adapter(provider)
+    if not adapters and default is not None:
+        adapters.add(default)
+    return tuple(sorted(adapters))
+
+
+def _provider_availability(provider: Provider, *, available: set[str]) -> str:
+    count = sum(
+        f"{provider.id}/{model_id}" in available for model_id in provider.models
+    )
+    if provider.local and _provider_offline(provider):
+        return "0"
+    return f"{count}/{len(provider.models)}"
+
+
+def _provider_adapters_cell(setup: AgentSetup, provider: Provider) -> Text:
+    adapters = _provider_adapters(provider)
+    if not adapters:
+        return Text("-", style="red")
+    cell = Text()
+    for index, adapter in enumerate(adapters):
+        if index:
+            cell.append(",")
+        cell.append(adapter, style="red" if adapter not in setup.adapters else None)
+    return cell
+
+
+def _provider_endpoint_cell(setup: AgentSetup, provider: Provider) -> Text:
+    endpoint = _provider_endpoint(setup, provider)
+    unavailable = endpoint is None or (provider.local and _provider_offline(provider))
+    return Text(endpoint or "-", style="red" if unavailable else "")
+
+
+def _provider_env_cell(setup: AgentSetup, provider: Provider) -> Text:
+    if not provider.env:
+        return Text("-")
+    unavailable = bool(missing_provider_env_vars(provider, environ=setup.envs))
+    cell = Text()
+    for index, name in enumerate(provider.env):
+        if index:
+            cell.append("|")
+        cell.append(name, style="red" if unavailable else None)
+    return cell
+
+
+def _provider_offline(provider: Provider) -> bool:
+    runtime = provider.extra.get("runtime")
+    return (
+        isinstance(runtime, Mapping)
+        and cast(Mapping[str, object], runtime).get("status") == "offline"
     )
 
 
