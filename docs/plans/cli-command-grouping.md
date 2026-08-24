@@ -34,15 +34,15 @@ threads
 runs
 inspect
 caps
-tools
-sandboxes
 models
 providers
 adapters
+tools
+sandboxes
 ```
 
-The order keeps thread and run inspection first, then cap, tool, and sandbox
-resources, followed by the model catalog stack.
+The order keeps thread and run inspection first, followed by caps and the model
+catalog stack. Installed tool and sandbox plugins remain adjacent at the end.
 
 Rename public `tool` to `tools` and `sandbox` to `sandboxes`. They directly list
 their resources without a `list` subcommand. Keep `too caps` and move it into

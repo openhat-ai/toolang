@@ -78,11 +78,11 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "runs",
     "inspect",
     "caps",
-    "tools",
-    "sandboxes",
     "models",
     "providers",
     "adapters",
+    "tools",
+    "sandboxes",
 )
 _VISIBLE_COMMAND_ORDER = (
     *_AGENT_PANEL_COMMAND_ORDER,
@@ -379,7 +379,7 @@ _registered_group(
 )
 _registered_command(
     "tools",
-    help="Inspect available tools.",
+    help="Inspect installed tools.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(plugin_commands.list_tools)
 _registered_command(
