@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 import json
-from pathlib import Path
 from typing import Annotated, cast
 
 from rich.text import Text
@@ -17,11 +16,9 @@ from toolang.cli.common.context import (
     context_agent,
     context_model_catalog,
     context_root,
-    user_call,
 )
 from toolang.cli.common.output import echo_table
 from toolang.cli.config import load_config_layers
-from toolang.common.files import atomic_write_text
 from toolang.common.layout import AgentLayout
 from toolang.common.selectors import split_selector_list
 from toolang.plugin.loading import list_plugin_infos
@@ -39,19 +36,9 @@ from toolang.plugin.models.resolution import (
     catalog_model_endpoint,
     resolve_catalog_adapter,
 )
-from toolang.plugin.models.update import DEFAULT_MODELS_DEV_URL, update_model_catalog
 from toolang.setup import AgentSetup, SetupWatcher
 
-models_app = typer.Typer(
-    help="Inspect models.",
-    add_completion=False,
-    invoke_without_command=True,
-    pretty_exceptions_enable=False,
-    pretty_exceptions_show_locals=False,
-)
 
-
-@models_app.callback()
 def models_command(
     ctx: typer.Context,
     filter_: Annotated[
@@ -66,19 +53,9 @@ def models_command(
         bool,
         typer.Option("--json", help="Write a valid filtered models.json to stdout."),
     ] = False,
-    output: Annotated[
-        Path | None,
-        typer.Option("--output", "-o", help="Write a valid filtered models.json."),
-    ] = None,
-    force: Annotated[
-        bool,
-        typer.Option("--force", help="Replace an existing output file."),
-    ] = False,
 ) -> None:
-    """List or export model catalog entries when no subcommand is given."""
+    """List or export model catalog entries."""
 
-    if ctx.invoked_subcommand is not None:
-        return
     setup = _setup(ctx)
     snapshot = _catalog(setup)
     selectors = _selectors(filter_)
@@ -90,7 +67,7 @@ def models_command(
         available=available,
         adapters=adapters,
     )
-    if output is not None or json_:
+    if json_:
         exportable = tuple(model for model in selected if not model.local)
         if len(exportable) != len(selected):
             local = ", ".join(model.identity for model in selected if model.local)
@@ -99,11 +76,7 @@ def models_command(
                 param_hint="--filter",
             )
         content = catalog_json_dumps(snapshot.to_data(models=exportable))
-        if output is not None:
-            user_call(_write_output, output, content, force=force)
-            typer.echo(str(output.expanduser().resolve(strict=False)))
-        if json_:
-            typer.echo(content, nl=False)
+        typer.echo(content, nl=False)
         return
     displayed = tuple(
         model for model in selected if not model.local or model.identity in available
@@ -134,120 +107,6 @@ def models_command(
     )
     typer.echo()
     typer.echo(f" {_catalog_summary(snapshot, models=displayed)}")
-
-
-@models_app.command("inspect", help="Inspect model catalog entries and availability.")
-def inspect_models(
-    ctx: typer.Context,
-    identity: Annotated[
-        str | None, typer.Argument(help="Model identity or pattern.")
-    ] = None,
-    available: Annotated[
-        bool,
-        typer.Option("--available", help="Show only currently selectable models."),
-    ] = False,
-    json_: Annotated[
-        bool,
-        typer.Option("--json", help="Write structured inspection JSON."),
-    ] = False,
-) -> None:
-    setup = _setup(ctx)
-    snapshot = _catalog(setup)
-    available_ids = _available_identities(ctx, setup)
-    selected = filter_catalog_models(
-        snapshot,
-        (identity,) if identity else (),
-        available=available_ids,
-        adapters=_adapter_by_identity(setup),
-    )
-    if available:
-        selected = tuple(model for model in selected if model.identity in available_ids)
-    if json_:
-        typer.echo(
-            catalog_json_dumps(
-                {
-                    "source": str(snapshot.source) if snapshot.source else None,
-                    "revision": snapshot.revision,
-                    "models": [
-                        {
-                            "identity": model.identity,
-                            "available": model.identity in available_ids,
-                            "adapter": _model_adapter(setup, model),
-                            "catalog": model.to_data(),
-                        }
-                        for model in selected
-                    ],
-                }
-            ),
-            nl=False,
-        )
-        return
-    rows = [
-        (
-            model.identity,
-            _model_adapter(setup, model),
-            "yes" if model.identity in available_ids else "no",
-            model.last_updated or "-",
-            *_model_table_fields(model),
-        )
-        for model in selected
-    ]
-    if not rows:
-        typer.echo("No matched models.")
-        return
-    typer.echo(f"Source: {snapshot.source or 'runtime'}")
-    typer.echo(f"Revision: {snapshot.revision}")
-    echo_table(
-        (
-            "MODEL",
-            "ADAPTER",
-            "AVAILABLE",
-            "UPDATED",
-            "CONTEXT",
-            "OUTPUT",
-            "INPUT",
-            "CAPABILITY",
-            "PRICE ($/1M)",
-        ),
-        rows,
-        justify=(
-            None,
-            None,
-            None,
-            None,
-            "right",
-            "right",
-            None,
-            None,
-            "right",
-        ),
-    )
-
-
-@models_app.command("update", help="Download and activate a complete models.json.")
-def update_models(
-    ctx: typer.Context,
-    root: Annotated[
-        bool,
-        typer.Option("--root", help="Update the Toolang root catalog."),
-    ] = False,
-    home: Annotated[
-        bool,
-        typer.Option("--home", help="Update the active agent-home catalog."),
-    ] = False,
-    url: Annotated[
-        str,
-        typer.Option("--url", help="Complete models.dev-compatible catalog URL."),
-    ] = DEFAULT_MODELS_DEV_URL,
-) -> None:
-    if root == home:
-        raise typer.BadParameter("choose exactly one of --root or --home")
-    layout = _layout(ctx)
-    directory = layout.root if root else layout.home
-    result = user_call(update_model_catalog, directory, url=url)
-    action = "Updated" if result.changed else "Already current"
-    typer.echo(f"{action}: {result.active}")
-    typer.echo(f"Revision: {result.revision}")
 
 
 def providers_command(
@@ -416,17 +275,6 @@ def _catalog_summary(
     )
 
 
-def _model_adapter(setup: AgentSetup, model: Model) -> str:
-    return next(
-        (
-            info.adapter
-            for info in setup.models
-            if info.provider == model.provider_id and info.model == model.id
-        ),
-        "unavailable",
-    )
-
-
 def _adapter_by_identity(setup: AgentSetup) -> dict[str, str]:
     return {info.ref: info.adapter for info in setup.models}
 
@@ -556,10 +404,3 @@ def _price_rate(value: object | None) -> str:
 
 def _selectors(values: Sequence[str] | None) -> tuple[str, ...]:
     return split_selector_list(values)
-
-
-def _write_output(path: Path, content: str, *, force: bool) -> None:
-    path = path.expanduser().resolve(strict=False)
-    if path.exists() and not force:
-        raise FileExistsError(f"output already exists: {path}")
-    atomic_write_text(path, content)

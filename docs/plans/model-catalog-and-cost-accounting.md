@@ -8,16 +8,16 @@ Approved for implementation on 2026-08-23.
 
 Make models.dev-compatible data the durable model catalog for provider and model
 metadata, capabilities, and pricing while keeping runtime availability,
-protocol execution, and cost accounting separate. Users must be able to update
-or replace the catalog without a Toolang release, inspect its provenance, and
-retain auditable usage and cost records.
+protocol execution, and cost accounting separate. Users must be able to replace
+the catalog without a Toolang release and retain auditable usage and cost
+records.
 
 ## Success Criteria
 
 - Toolang loads one complete models.dev-compatible `models.json` snapshot from
   an explicit, agent-home, root, or packaged source.
-- `too models update` validates and atomically activates immutable catalog
-  versions without changing the active file on failure.
+- Explicit, agent-home, and root catalog files allow replacement without a
+  Toolang release.
 - `ModelCatalog` exposes raw-schema `Provider` and `Model` values; adapters do
   not own model discovery, matching, availability, or pricing.
 - Ollama and llama.cpp add currently discovered local models without writing
@@ -32,8 +32,8 @@ retain auditable usage and cost records.
 
 In scope:
 
-- catalog schemas, loading, validation, provenance, source precedence, update,
-  filtering, export, inspection, and an in-process immutable snapshot;
+- catalog schemas, loading, validation, provenance, source precedence,
+  filtering, JSON export, table display, and an in-process immutable snapshot;
 - exact provider/model identity and centralized target resolution;
 - plural model/provider/adapter CLI resources;
 - configured remote availability and explicit local endpoint discovery;
@@ -118,9 +118,9 @@ copied into root on first setup.
 
 Each setup/process holds one immutable `ModelCatalogSnapshot`, including source
 path, SHA-256 revision, file identity, providers, and models. Parsing occurs
-once and the snapshot is reused. A new setup, explicit update, symlink-target
-change, or file identity change builds a new snapshot. Runs retain their
-starting revision and never reprice history.
+once and the snapshot is reused. A new setup, symlink-target change, or file
+identity change builds a new snapshot. Runs retain their starting revision and
+never reprice history.
 
 Ollama probes its configured/default endpoint's `/api/tags` and enriches each
 listed model through `/api/show`. llama.cpp combines `/v1/models` metadata with
@@ -133,18 +133,13 @@ cross-process cache, last-good result, or stale fallback. Local-only models have
 explicit zero API token prices; host compute costs remain outside model token
 accounting.
 
-## Catalog Update and Export
+## Catalog Replacement and Export
 
-Canonical update commands are:
-
-```text
-too models update --root [--url URL]
-too models update --home [--url URL]
-```
-
-The default URL is `https://models.dev/api.json`. Exactly one destination is
-required. Update downloads to a temporary file, validates the entire snapshot,
-computes SHA-256, takes a destination lock, and then writes:
+There is no catalog update CLI command. Users replace an explicit, agent-home,
+or root `models.json` through their preferred external download or file
+management workflow. The internal catalog update utility remains available to
+library callers. It validates the entire snapshot, computes SHA-256, takes a
+destination lock, and writes:
 
 ```text
 models/models-YYYYMMDDTHHMMSSZ-<sha12>.json
@@ -159,13 +154,13 @@ managed relative link. A failure never changes the active catalog. Platforms
 without symlink support fall back to an atomic regular-file replacement while
 retaining the immutable version file.
 
-`too models --filter SELECTOR --output PATH` and `--json` produce a complete,
-valid catalog document: full provider fields, only selected nested models, and
-no empty providers. Runtime-only adapter, availability, scope, and source facts
-are excluded. Repeated filters are ORed; conditions within one selector retain
-normal selector semantics. Output is deterministic, revalidated, atomically
-written, and requires `--force` to replace a file. Strict export fails with a
-clear list when selected local-only models cannot satisfy the schema.
+`too models --filter SELECTOR --json` writes a complete, valid catalog document
+to stdout: full provider fields, only selected nested models, and no empty
+providers. Runtime-only adapter, availability, scope, and source facts are
+excluded. Repeated filters are ORed; conditions within one selector retain
+normal selector semantics. Output is deterministic. Strict export fails with a
+clear list when selected local-only models cannot satisfy the schema. There are
+no `--output` or `--force` options.
 
 ## Availability, Resolution, and Filters
 
@@ -189,18 +184,15 @@ one-cycle alias for `tool_call`.
 Public commands are:
 
 ```text
-too models [--filter SELECTOR] [--json] [--output PATH]
-too models inspect [IDENTITY] [--available] [--json]
-too models update --root|--home [--url URL]
+too models [--filter SELECTOR] [--json]
 too providers [--filter SELECTOR] [--json]
 too adapters [--filter SELECTOR] [--json]
 ```
 
-Human-readable text uses `model catalog` consistently. Toolang-owned
-`models inspect --json` objects store the raw model value under `catalog`;
-the upstream models.dev field named `knowledge` remains unchanged.
-The human-readable `models` and `models inspect` tables split model details into
-`CONTEXT`, `OUTPUT`, `INPUT`, `CAPABILITY`, and `PRICE ($/1M)`. Modalities and
+`too models` is a leaf command and accepts no subcommands. Human-readable text
+uses `model catalog` consistently. The human-readable `models` table splits
+model details into `CONTEXT`, `OUTPUT`, `INPUT`, `CAPABILITY`, and
+`PRICE ($/1M)`. Modalities and
 capabilities are comma-separated and use models.dev field names such as
 `tool_call`; price cells contain only `$input / $output` base rates because the
 header owns the per-million unit. Context and output sizes use full integers
@@ -273,9 +265,9 @@ Compact progress uses:
 
 The percentage is shown only for a complete positive cache-read ratio. `$`
 means every selected amount is provider-reported USD; `~$` means at least one
-selected amount is estimated. Unknown cost is omitted. Model and run inspection
-show exact meters, reasoning controls, pricing revision, matched tier/rates,
-reported and estimated amounts, differences, and coverage.
+selected amount is estimated. Unknown cost is omitted. Run inspection shows
+exact meters, reasoning controls, pricing revision, matched tier/rates, reported
+and estimated amounts, differences, and coverage.
 
 ## Compatibility and Migration
 
@@ -317,16 +309,16 @@ reported and estimated amounts, differences, and coverage.
 5. Prove configured remote availability and enriched Ollama/llama.cpp discovery,
    endpoint failure, no port scan, no stale result, and zero-priced local-only
    models.
-6. Round-trip filtered output through the importer and cover OR filters,
-   nested fields, unknown booleans, deterministic output, overwrite protection,
-   and local-only export failure.
+6. Round-trip filtered JSON output through the importer and cover OR filters,
+   nested fields, unknown booleans, deterministic output, and local-only export
+   failure.
 7. Normalize cached input, cache writes, visible output, reasoning/thinking,
    audio, inclusive provider totals, and streaming without double counting.
 8. Estimate flat and tiered models.dev prices, prefer reported USD, preserve
    partial/unknown cost, retain historical applied rates, and enforce the
    best-effort completed-call limit.
 9. Render cache ratio, reported/estimated marker, and unknown cost exactly;
-   expose full details through model and run inspection.
+   expose full details through run inspection.
 10. Keep compatibility decoders and CLI aliases working for one cycle and keep
     all default tests offline and deterministic.
 11. Pass `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`,

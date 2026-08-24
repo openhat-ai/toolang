@@ -35,16 +35,23 @@ def test_plural_model_commands_are_public_resources() -> None:
     assert "--model-catalog" not in stdout
 
 
-def test_model_commands_use_catalog_vocabulary() -> None:
-    inspect_result = runner.invoke(cli.app, ["models", "inspect", "--help"])
+def test_models_is_a_leaf_command_without_file_output_options() -> None:
+    models_result = runner.invoke(cli.app, ["models", "--help"])
     providers_result = runner.invoke(cli.app, ["providers", "--help"])
 
-    assert inspect_result.exit_code == 0, inspect_result.stderr
+    assert models_result.exit_code == 0, models_result.stderr
     assert providers_result.exit_code == 0, providers_result.stderr
-    assert "Inspect model catalog entries and availability." in unstyle(
-        inspect_result.stdout
-    )
+    models_help = unstyle(models_result.stdout)
+    assert "--filter" in models_help
+    assert "--json" in models_help
+    assert "--output" not in models_help
+    assert "--force" not in models_help
     assert "Write catalog providers as JSON." in unstyle(providers_result.stdout)
+
+    for subcommand in ("inspect", "update"):
+        result = runner.invoke(cli.app, ["models", subcommand])
+        assert result.exit_code != 0
+        assert "unexpected extra argument" in unstyle(result.stderr).lower()
 
 
 def test_models_filter_exports_a_valid_complete_catalog(
@@ -153,39 +160,6 @@ def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> N
     assert result.exit_code != 0
     assert result.exception is not None
     assert "explicit model catalog" in str(result.exception)
-
-
-def test_models_inspect_json_labels_catalog_entries(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    catalog = tmp_path / "catalog.json"
-    catalog.write_text(json.dumps(_catalog_data()), encoding="utf-8")
-    _disable_local_discovery(monkeypatch)
-
-    result = runner.invoke(
-        cli.app,
-        [
-            "--root",
-            str(tmp_path / "root"),
-            "--models",
-            str(catalog),
-            "models",
-            "inspect",
-            "test/one",
-            "--json",
-        ],
-        env={},
-    )
-
-    assert result.exit_code == 0, result.stderr
-    data = json.loads(result.stdout)
-    assert tuple(data["models"][0]) == (
-        "adapter",
-        "available",
-        "catalog",
-        "identity",
-    )
 
 
 def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(

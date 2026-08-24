@@ -356,11 +356,11 @@ _registered_command(
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )(thread_commands.fork_command)
 
-_registered_group(
-    model_catalog_commands.models_app,
-    name="models",
+_registered_command(
+    "models",
+    help="Inspect models.",
     rich_help_panel=INSPECTION_COMMAND_PANEL,
-)
+)(model_catalog_commands.models_command)
 _registered_command(
     "providers",
     help="Inspect model providers.",

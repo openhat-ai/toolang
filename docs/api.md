@@ -399,11 +399,9 @@ already recorded by other local agents, instead of asking the OS for a random
 ephemeral port.
 
 
-## Model Inspection Commands
+## Model Catalog Commands
 
 - `toolang models`
-- `toolang models inspect`
-- `toolang models update`
 - `toolang providers`
 - `toolang adapters`
 
@@ -425,14 +423,13 @@ Pass `--filter` to preview selector filtering, for example
 
 `toolang providers` shows catalog providers and runtime availability.
 `toolang adapters` lists installed model adapter names.
-`toolang models update --root|--home` validates and activates one complete
-models.dev-compatible catalog snapshot.
+`toolang models` is a leaf command with `--filter` and `--json`; it has no
+`inspect` or `update` subcommands and no `--output` or `--force` options.
 
-Discovered Ollama and llama.cpp records include concise runtime metadata in
-`toolang models inspect --json`. Reported context, output limits, modalities,
-and capabilities populate the same catalog fields used by remote models. Their
-API token prices are explicitly zero; local compute costs are outside model
-token accounting.
+Discovered Ollama and llama.cpp records use reported context, output limits,
+modalities, and capabilities to populate the same table fields used by remote
+models. Their API token prices are explicitly zero; local compute costs are
+outside model token accounting.
 
 `yes` means the endpoint is resolved, a required key is present, and the adapter
 is installed. Remote endpoint reachability, credentials, and account entitlement
