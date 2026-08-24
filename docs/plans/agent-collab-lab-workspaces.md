@@ -115,7 +115,8 @@ marker. Changes made inside a run become visible through memory only to the
 next root run.
 
 Mandatory runtime instructions always identify `space`, `working_directory`,
-`memory_file`, and ordered `writable_directories`. The memory body is an
+`memory_file`, and ordered `writable_directories`. For collab runs, each active
+workspace is listed by name and environment-visible path. The memory body is an
 escaped, bounded context block and cannot change access. `instruct: none`
 removes optional agent guidance, not runtime access instructions;
 `context: none` removes optional authored context, not memory.
@@ -146,21 +147,12 @@ too <agent> workspace list
 too <agent> workspace remove NAME
 ```
 
-Commands preserve unrelated TOML and maintain this delimited projection in
-`collab/MEMORY.md`:
-
-```markdown
-<!-- toolang:workspaces:start -->
-## Workspaces
-
-- `toolang`: `/Users/alice/src/toolang`
-<!-- toolang:workspaces:end -->
-```
-
-Only the managed region is replaced. Unmatched or duplicate markers are an
-error. Config remains authoritative if the editable projection drifts; CLI and
-startup reconciliation repair it under one workspace lock. Memory text never
-widens filesystem access.
+Commands preserve unrelated TOML. No workspace metadata is written to
+`collab/MEMORY.md`: `config.toml` is the only authority, and the mandatory
+runtime prompt is the only run-facing projection. It lists the exact active
+workspace names and paths captured in `RunAccess`; configured but inactive
+Docker workspaces are omitted until restart. Memory text never widens
+filesystem access.
 
 Natural-language chat content does not authorize a host path. A future
 model-callable request must have a separate human-approval design.
@@ -199,7 +191,7 @@ but restart is still required to remove the mount.
 - `common/layout.py`, `catalog/agent.py`, `up/process.py`: paths and
   materialization.
 - New `catalog/workspace.py` and CLI workspace commands: grants, config edits,
-  locking, projection, and restart reporting.
+  validation, and restart reporting.
 - Execution types, executor preparation, records, store, and schemas:
   `RunSpace`, `RunAccess`, inheritance, migration, and inspection.
 - API, chat, script, scheduler, and inbox call sites: concrete space selection.
@@ -222,13 +214,14 @@ but restart is still required to remove the mount.
   records follow the access lifecycle.
 - Default/custom/none instruct and context combinations always contain the
   correct access instructions and selected bounded memory.
-- Workspace add/list/remove preserves unrelated config and memory, validates
-  paths and names, repairs projection drift, and never trusts memory as a grant.
+- Workspace add/list/remove preserves unrelated config and validates paths and
+  names; collab prompts list the exact active mapping and lab prompts list none.
 - Filesystem and shell cwd cover collab/lab separation, workspaces, traversal,
   symlinks, root removal, revocation, and local/Docker path translation.
 - Hosting covers deterministic mounts, published mappings, missing mounts,
   restart reporting, and no implicit restart.
-- Memory edits do not rebuild prepared state; workspace config changes do.
+- Memory edits neither rebuild prepared state nor change workspace grants;
+  workspace config changes do.
 - The default repository verification passes without live-provider tests.
 
 
@@ -239,8 +232,6 @@ but restart is still required to remove the mount.
   behavior.
 - Memory and workspace paths become durable local run/prompt data; users must
   not place secrets in memory or grant sensitive directories casually.
-- Config and memory projection cannot be replaced in one filesystem
-  transaction; deterministic reconciliation repairs crash-time drift.
 - Docker mounts are fixed at launch, so restart reporting must distinguish
   configured from active workspaces.
 - Path-aware tools enforce roots, but arbitrary shell commands are not hard
