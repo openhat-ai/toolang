@@ -1034,16 +1034,17 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
 
 
 @pytest.mark.parametrize(
-    ("status", "color"),
+    ("status", "color", "dim"),
     [
-        ("succeeded", None),
-        ("failed", "red"),
-        ("canceled", "yellow"),
+        ("succeeded", None, True),
+        ("failed", "red", False),
+        ("canceled", "yellow", False),
     ],
 )
-def test_chat_run_footer_colors_the_entire_line_without_dimming(
+def test_chat_run_footer_uses_status_intensity_and_color(
     status: Literal["succeeded", "failed", "canceled"],
     color: str | None,
+    dim: bool,
 ) -> None:
     root_summary = blocks.RunStopBlock.create(_run_begin())
     root_summary.update(_run_end(status=status))
@@ -1057,7 +1058,7 @@ def test_chat_run_footer_colors_the_entire_line_without_dimming(
     assert _render_text(root_summary.render()).strip().endswith(" ]")
     for segment in segments:
         assert segment.style is not None
-        assert not segment.style.dim
+        assert bool(segment.style.dim) is dim
         assert not segment.style.bold
         if color is None:
             assert segment.style.color is None
