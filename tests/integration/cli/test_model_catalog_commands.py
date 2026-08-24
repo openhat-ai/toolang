@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 import json
 from pathlib import Path
 
@@ -65,7 +66,7 @@ def test_models_filter_exports_a_valid_complete_catalog(
     )
 
     assert result.exit_code == 0, result.stderr
-    data = json.loads(result.stdout)
+    data = json.loads(result.stdout, parse_float=Decimal)
     providers = parse_model_catalog_data(data)
     assert tuple(providers) == ("test",)
     assert tuple(providers["test"].models) == ("two",)
@@ -101,11 +102,11 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     )
     values = (
         "test/one",
-        "1k",
-        "100",
+        "1,000,000",
+        "100,000",
         "text,image",
         "tool_call,reasoning,temperature,structured",
-        "$1/$2",
+        "$1.26/$2",
     )
     assert [row.index(value) for value in values] == sorted(
         row.index(value) for value in values
@@ -196,8 +197,8 @@ def _catalog_data() -> dict[str, object]:
                         "output": ["text"],
                     },
                     "open_weights": False,
-                    "limit": {"context": 1000, "output": 100},
-                    "cost": {"input": 1, "output": 2},
+                    "limit": {"context": 1_000_000, "output": 100_000},
+                    "cost": {"input": 1.256, "output": 2},
                 }
                 for model_id, reasoning in (("one", True), ("two", False))
             },

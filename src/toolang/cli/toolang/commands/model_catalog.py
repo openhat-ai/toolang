@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Annotated
@@ -385,17 +386,17 @@ def _model_table_fields(model: Model) -> tuple[str, str, str, str, str]:
         if value is True
     ]
     return (
-        _compact_limit(model, "context"),
-        _compact_limit(model, "output"),
+        _format_limit(model, "context"),
+        _format_limit(model, "output"),
         ",".join(model.modalities.get("input", ())) or "-",
         ",".join(capabilities) or "-",
         _price_pair(model),
     )
 
 
-def _compact_limit(model: Model, name: str) -> str:
+def _format_limit(model: Model, name: str) -> str:
     value = model.limit.get(name)
-    return _compact(value) if value is not None else "-"
+    return f"{value:,}" if value is not None else "-"
 
 
 def _price_pair(model: Model) -> str:
@@ -405,15 +406,13 @@ def _price_pair(model: Model) -> str:
 
 
 def _price_rate(value: object | None) -> str:
-    return "-" if value is None else f"${value}"
-
-
-def _compact(value: int) -> str:
-    if value >= 1_000_000:
-        return f"{value / 1_000_000:g}m"
-    if value >= 1_000:
-        return f"{value / 1_000:g}k"
-    return str(value)
+    if value is None:
+        return "-"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return f"${value}"
+    if isinstance(value, Decimal | float):
+        return f"${value:.2f}"
+    return f"${value}"
 
 
 def _selectors(values: Sequence[str] | None) -> tuple[str, ...]:
