@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from copy import copy
 from pathlib import Path
 from typing import Literal, cast
@@ -15,9 +15,15 @@ from typer.core import TyperArgument, TyperCommand, TyperGroup
 from .context import CliContext
 
 
-def extract_root_args(argv: Sequence[str]) -> tuple[list[str], list[str]]:
+def extract_root_args(
+    argv: Sequence[str],
+    *,
+    extra_value_options: Collection[str] = (),
+) -> tuple[list[str], list[str]]:
     """Separate root options from command arguments without crossing `--`."""
 
+    value_options = {"--root", "-r", *extra_value_options}
+    long_value_options = {option for option in value_options if option.startswith("--")}
     root_args: list[str] = []
     body: list[str] = []
     index = 0
@@ -26,17 +32,22 @@ def extract_root_args(argv: Sequence[str]) -> tuple[list[str], list[str]]:
         if token == "--":
             body.extend(argv[index:])
             break
-        if token in {"--root", "-r"}:
+        if token in value_options:
             step = 2 if index + 1 < len(argv) else 1
             root_args.extend(argv[index : index + step])
             index += step
             continue
-        if token.startswith("--root="):
-            root_args.extend(("--root", token.removeprefix("--root=")))
+        for option in long_value_options:
+            prefix = f"{option}="
+            if token.startswith(prefix):
+                root_args.extend((option, token.removeprefix(prefix)))
+                index += 1
+                break
+        else:
+            body.append(token)
             index += 1
             continue
-        body.append(token)
-        index += 1
+        continue
     return root_args, body
 
 

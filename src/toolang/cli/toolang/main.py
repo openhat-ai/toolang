@@ -144,8 +144,8 @@ def callback(
     model_catalog: Annotated[
         Path | None,
         typer.Option(
-            "--model-catalog",
-            help="Use one complete models.dev-compatible catalog file.",
+            "--models",
+            help="Use a specified model knowledge catalog.",
         ),
     ] = None,
     version: Annotated[

@@ -108,7 +108,7 @@ caps [agent] list                    # List all caps
 ```
 
 Model knowledge comes from a models.dev-compatible `models.json`. Toolang uses
-`--model-catalog`, `TOOLANG_MODEL_CATALOG`, agent-home, root, then the packaged
+`--models`, `TOOLANG_MODEL_CATALOG`, agent-home, root, then the packaged
 catalog in that order. Update a managed root or agent-home snapshot with:
 
 ```bash

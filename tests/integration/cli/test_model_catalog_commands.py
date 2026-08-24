@@ -21,6 +21,9 @@ def test_plural_model_commands_are_public_resources() -> None:
     assert "models" in result.stdout
     assert "providers" in result.stdout
     assert "adapters" in result.stdout
+    assert "--models" in result.stdout
+    assert "Use a specified model knowledge catalog." in result.stdout
+    assert "--model-catalog" not in result.stdout
 
 
 def test_models_filter_exports_a_valid_complete_catalog(
@@ -36,7 +39,7 @@ def test_models_filter_exports_a_valid_complete_catalog(
         [
             "--root",
             str(tmp_path / "root"),
-            "--model-catalog",
+            "--models",
             str(catalog),
             "models",
             "--filter",
@@ -59,7 +62,7 @@ def test_models_explicit_missing_catalog_does_not_fall_back(tmp_path: Path) -> N
         [
             "--root",
             str(tmp_path / "root"),
-            "--model-catalog",
+            "--models",
             str(tmp_path / "missing.json"),
             "models",
         ],

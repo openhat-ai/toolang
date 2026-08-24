@@ -103,7 +103,7 @@ effort vocabulary follows models.dev, including `none`, `minimal`, `low`,
 
 Resolve one complete static catalog in this order:
 
-1. global `--model-catalog PATH`;
+1. global `--models PATH`;
 2. `TOOLANG_MODEL_CATALOG`;
 3. the active agent home `models.json`;
 4. `${TOOLANG_ROOT}/models.json`;
