@@ -218,9 +218,9 @@ models. It includes model-level protocol overrides, does not represent a
 preferred adapter, and shows catalog-known protocols such as Anthropic
 `messages` even when the implementation is not installed. An empty local
 catalog falls back to its provider-level adapter signal. Unavailable adapter and
-endpoint values are red. Alternative environment variable names use ` | `;
-when none is configured, every name is red while separators remain unstyled.
-Offline local providers remain listed with `AVAILABLE` equal to `0` and a red
+endpoint values are dimmed. Alternative environment variable names use ` | `;
+when none is configured, every name is dimmed while separators remain unstyled.
+Offline local providers remain listed with `AVAILABLE` equal to `0` and a dimmed
 endpoint. Online providers use `n/m`. Provider JSON exposes `endpoint` and
 `adapters` without presentation styling. Anthropic falls back to its known
 `https://api.anthropic.com` base URL when its models.dev record omits `api`.

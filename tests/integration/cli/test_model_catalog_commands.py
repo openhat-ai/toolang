@@ -302,11 +302,11 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
     llama_adapters = by_provider["llama_cpp"][3]
     assert isinstance(llama_adapters, Text)
     assert llama_adapters.plain == "chat_completions"
-    assert _color_name(llama_adapters, 0) is None
+    assert not _is_dim(llama_adapters, 0)
     llama_endpoint = by_provider["llama_cpp"][4]
     assert isinstance(llama_endpoint, Text)
     assert llama_endpoint.plain == "http://llama.test/v1"
-    assert _color_name(llama_endpoint, 0) == "red"
+    assert _is_dim(llama_endpoint, 0)
 
 
 def test_providers_lists_effective_endpoint_and_model_adapters(
@@ -379,15 +379,15 @@ def test_providers_lists_effective_endpoint_and_model_adapters(
     env = styled_row[5]
     assert isinstance(adapters, Text)
     assert adapters.plain == "chat_completions,messages"
-    assert _color_name(adapters, adapters.plain.index(",")) is None
-    assert _color_name(adapters, adapters.plain.index("messages")) == "red"
+    assert not _is_dim(adapters, adapters.plain.index(","))
+    assert _is_dim(adapters, adapters.plain.index("messages"))
     assert isinstance(endpoint, Text)
-    assert _color_name(endpoint, 0) is None
+    assert not _is_dim(endpoint, 0)
     assert isinstance(env, Text)
     assert env.plain == "TEST_API_KEY | TEST_ALT_API_KEY"
-    assert _color_name(env, 0) == "red"
-    assert _color_name(env, env.plain.index("|")) is None
-    assert _color_name(env, env.plain.index("TEST_ALT_API_KEY")) == "red"
+    assert _is_dim(env, 0)
+    assert not _is_dim(env, env.plain.index("|"))
+    assert _is_dim(env, env.plain.index("TEST_ALT_API_KEY"))
 
     json_result = runner.invoke(
         cli.app,
@@ -417,9 +417,8 @@ def _disable_local_discovery(monkeypatch) -> None:
     monkeypatch.setattr(LlamaCppModels, "snapshot", empty_snapshot)
 
 
-def _color_name(text: Text, offset: int) -> str | None:
-    color = text.get_style_at_offset(Console(color_system="standard"), offset).color
-    return color.name if color is not None else None
+def _is_dim(text: Text, offset: int) -> bool:
+    return bool(text.get_style_at_offset(Console(color_system="standard"), offset).dim)
 
 
 def _catalog_data() -> dict[str, object]:

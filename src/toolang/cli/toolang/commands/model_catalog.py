@@ -459,19 +459,19 @@ def _provider_availability(provider: Provider, *, available: set[str]) -> str:
 def _provider_adapters_cell(setup: AgentSetup, provider: Provider) -> Text:
     adapters = _provider_adapters(provider)
     if not adapters:
-        return Text("-", style="red")
+        return Text("-", style="dim")
     cell = Text()
     for index, adapter in enumerate(adapters):
         if index:
             cell.append(",")
-        cell.append(adapter, style="red" if adapter not in setup.adapters else None)
+        cell.append(adapter, style="dim" if adapter not in setup.adapters else None)
     return cell
 
 
 def _provider_endpoint_cell(setup: AgentSetup, provider: Provider) -> Text:
     endpoint = _provider_endpoint(setup, provider)
     unavailable = endpoint is None or (provider.local and _provider_offline(provider))
-    return Text(endpoint or "-", style="red" if unavailable else "")
+    return Text(endpoint or "-", style="dim" if unavailable else "")
 
 
 def _provider_env_cell(setup: AgentSetup, provider: Provider) -> Text:
@@ -482,7 +482,7 @@ def _provider_env_cell(setup: AgentSetup, provider: Provider) -> Text:
     for index, name in enumerate(provider.env):
         if index:
             cell.append(" | ")
-        cell.append(name, style="red" if unavailable else None)
+        cell.append(name, style="dim" if unavailable else None)
     return cell
 
 
