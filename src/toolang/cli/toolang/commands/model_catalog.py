@@ -537,7 +537,7 @@ def _model_table_fields(model: Model) -> tuple[str, str, str, str, str]:
 
 def _format_limit(model: Model, name: str) -> str:
     value = model.limit.get(name)
-    return f"{value:,}" if value is not None else "-"
+    return f"{value:_}" if value is not None else "-"
 
 
 def _price_pair(model: Model) -> str:

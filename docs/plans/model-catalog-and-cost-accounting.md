@@ -204,7 +204,8 @@ The human-readable `models` and `models inspect` tables split model details into
 capabilities are comma-separated and use models.dev field names such as
 `tool_call`; price cells contain only `$input / $output` base rates because the
 header owns the per-million unit. Context and output sizes use full integers
-with thousands separators. Every numeric price is rounded and padded to two
+with underscore digit grouping, such as `1_048_576`, so displayed values remain
+copyable numeric literals. Every numeric price is rounded and padded to two
 decimal places. The context, output, and price columns are right-aligned.
 
 The model-list summary names every catalog component and its displayed model

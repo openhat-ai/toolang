@@ -115,8 +115,8 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
     values = (
         "test/one",
         "no",
-        "1,000,000",
-        "100,000",
+        "1_000_000",
+        "100_000",
         "text,image",
         "tool_call,reasoning,temperature,structured",
         "$1.26 / $0.00",
@@ -125,8 +125,8 @@ def test_models_table_splits_profile_fields(tmp_path: Path, monkeypatch) -> None
         row.index(value) for value in values
     )
     for header_value, row_value in (
-        ("CONTEXT", "1,000,000"),
-        ("OUTPUT", "100,000"),
+        ("CONTEXT", "1_000_000"),
+        ("OUTPUT", "100_000"),
         ("PRICE ($/1M)", "$1.26 / $0.00"),
     ):
         assert header.index(header_value) + len(header_value) == row.index(

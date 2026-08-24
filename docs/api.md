@@ -412,7 +412,8 @@ including:
 
 - canonical provider/model identity
 - current `AVAILABLE` value as `yes` or `no`
-- right-aligned context and maximum output sizes with thousands separators
+- right-aligned context and maximum output sizes with underscore digit grouping
+  for copyable numeric literals
 - input modalities and a comma-separated `CAPABILITY` list
 - right-aligned base input/output prices formatted as `$input / $output` under
   `PRICE ($/1M)`, with every numeric rate shown to two decimal places
