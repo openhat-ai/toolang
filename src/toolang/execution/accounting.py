@@ -19,6 +19,15 @@ from .types import (
 )
 
 _PER_MILLION = Decimal(1_000_000)
+_LOCAL_API_TOKEN_RATE_NAMES = (
+    "input",
+    "output",
+    "cache_read",
+    "cache_write",
+    "reasoning",
+    "input_audio",
+    "output_audio",
+)
 
 
 def build_model_accounting(
@@ -192,6 +201,11 @@ def _selected_rates(
         rates = {**rates, **selected_tier}
         rates = {key: value for key, value in rates.items() if key != "tier"}
         match["tier"] = dict(cast(Mapping[str, object], selected_tier["tier"]))
+    if model.local:
+        rates = {
+            **{name: 0 for name in _LOCAL_API_TOKEN_RATE_NAMES},
+            **rates,
+        }
     return rates, plan, match
 
 

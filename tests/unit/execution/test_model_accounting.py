@@ -137,6 +137,53 @@ def test_zero_prices_produce_a_complete_zero_cost() -> None:
     assert selected_usd_cost(accounting) == Decimal("0")
 
 
+def test_local_zero_price_remains_exact_when_cache_usage_is_reported() -> None:
+    model = Model(
+        provider_id="llama_cpp",
+        id="local",
+        name="Local",
+        cost={"input": 0, "output": 0},
+        local=True,
+    )
+    catalog = ModelCatalogSnapshot(
+        providers={
+            "llama_cpp": Provider(
+                id="llama_cpp",
+                name="llama.cpp",
+                env=(),
+                npm="@ai-sdk/openai-compatible",
+                models={model.id: model},
+                local=True,
+            )
+        },
+        models=(model,),
+        revision="runtime:local",
+    )
+    accounting = build_model_accounting(
+        ModelTarget(
+            ref="llama_cpp/local",
+            provider="llama_cpp",
+            name="Local",
+            model="local",
+            adapter="chat_completions",
+            catalog="llama_cpp",
+            catalog_revision="runtime:local",
+        ),
+        ModelUsage(
+            input_tokens=4100,
+            output_tokens=15,
+            input_uncached_tokens=123,
+            input_cache_read_tokens=3977,
+        ),
+        catalog,
+    )
+
+    assert accounting is not None and accounting.estimate is not None
+    assert accounting.estimate.amount == "0"
+    assert accounting.estimate.complete is True
+    assert selected_cost_is_approximate(accounting) is False
+
+
 def test_non_usd_reported_cost_falls_back_to_catalog_usd_estimate() -> None:
     accounting = build_model_accounting(
         _target(),
