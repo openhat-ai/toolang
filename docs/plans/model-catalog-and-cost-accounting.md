@@ -211,6 +211,11 @@ count, the models.dev-compatible file model count and short revision, plus each
 local provider's total model count and endpoint. An unreachable local catalog is
 shown as `offline @ endpoint` rather than disappearing from the summary.
 
+The provider table shows the effective default endpoint and `ADAPTERS`, the
+deduplicated set of effective adapters resolved across the provider's catalog
+models. The set includes model-level protocol overrides and does not represent a
+preferred adapter. Provider JSON exposes these as `endpoint` and `adapters`.
+
 The singular `too model` group is removed. The public catalog commands are
 `too models`, `too providers`, and `too adapters`.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 import json
 from pathlib import Path
+from typing import cast
 
 from click import unstyle
 from typer.testing import CliRunner
@@ -252,6 +253,59 @@ def test_models_summary_lists_local_catalog_endpoints(
     assert "3 models · models.dev 2 @ sha256:" in stdout
     assert "ollama 1 @ http://ollama.test/v1" in stdout
     assert "llama_cpp offline @ http://llama.test/v1" in stdout
+
+
+def test_providers_lists_effective_endpoint_and_model_adapters(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    catalog = tmp_path / "catalog.json"
+    data = _catalog_data()
+    provider_data = cast(dict[str, object], data["test"])
+    models = cast(dict[str, object], provider_data["models"])
+    model = cast(dict[str, object], models["two"])
+    model["provider"] = {"npm": "@ai-sdk/openai"}
+    catalog.write_text(json.dumps(data), encoding="utf-8")
+    _disable_local_discovery(monkeypatch)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "--models",
+            str(catalog),
+            "providers",
+        ],
+        env={},
+    )
+
+    assert result.exit_code == 0, result.stderr
+    stdout = unstyle(result.stdout)
+    header = next(line for line in stdout.splitlines() if "ENDPOINT" in line)
+    row = next(line for line in stdout.splitlines() if "https://api.test/v1" in line)
+    assert "ADAPTERS" in header
+    assert "https://api.test/v1" in row
+    assert "chat_completions,responses" in row
+
+    json_result = runner.invoke(
+        cli.app,
+        [
+            "--root",
+            str(tmp_path / "root"),
+            "--models",
+            str(catalog),
+            "providers",
+            "--json",
+        ],
+        env={},
+    )
+
+    assert json_result.exit_code == 0, json_result.stderr
+    provider = json.loads(json_result.stdout)["test"]
+    assert provider["endpoint"] == "https://api.test/v1"
+    assert provider["adapters"] == ["chat_completions", "responses"]
+    assert "adapter" not in provider
 
 
 def _disable_local_discovery(monkeypatch) -> None:

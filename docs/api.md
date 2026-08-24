@@ -441,6 +441,12 @@ entitlement are not probed by this listing. Local endpoints are probed for model
 discovery, so an unreachable Ollama or llama.cpp catalog is shown as `offline`
 with its endpoint in the summary.
 
+`toolang providers` shows each provider's effective default `ENDPOINT` and an
+`ADAPTERS` column. `ADAPTERS` is the deduplicated set of effective adapters
+resolved across that provider's catalog models, including model-level protocol
+overrides; it is not a preferred-adapter hint. JSON output exposes the same
+facts as `endpoint` and an `adapters` array.
+
 
 ## Plugin Commands
 

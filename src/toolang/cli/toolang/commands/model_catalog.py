@@ -29,7 +29,10 @@ from toolang.plugin.models.catalog import (
     filter_catalog_models,
 )
 from toolang.plugin.models.config import parse_model_aliases
-from toolang.plugin.models.discovery import missing_provider_env_vars
+from toolang.plugin.models.discovery import (
+    default_provider_base_url,
+    missing_provider_env_vars,
+)
 from toolang.plugin.models.resolution import (
     ModelTargetResolver,
     catalog_model_endpoint,
@@ -277,7 +280,8 @@ def providers_command(
                             f"{provider.id}/{model_id}" in available
                             for model_id in provider.models
                         ),
-                        "adapter": _provider_adapter(setup, provider),
+                        "endpoint": _provider_endpoint(setup, provider),
+                        "adapters": list(_provider_adapters(provider)),
                     }
                     for provider in providers
                 }
@@ -290,12 +294,16 @@ def providers_command(
             provider.id,
             provider.name,
             f"{sum(f'{provider.id}/{model_id}' in available for model_id in provider.models)}/{len(provider.models)}",
-            _provider_adapter(setup, provider),
+            _provider_endpoint(setup, provider) or "-",
+            ",".join(_provider_adapters(provider)) or "-",
             "+".join(provider.env) or "-",
         )
         for provider in providers
     ]
-    echo_table(("PROVIDER", "NAME", "AVAILABLE", "ADAPTER", "ENV"), rows)
+    echo_table(
+        ("PROVIDER", "NAME", "AVAILABLE", "ENDPOINT", "ADAPTERS", "ENV"),
+        rows,
+    )
 
 
 def adapters_command(
@@ -428,15 +436,21 @@ def _adapter_by_identity(setup: AgentSetup) -> dict[str, str]:
     return {info.ref: info.adapter for info in setup.models}
 
 
-def _provider_adapter(setup: AgentSetup, provider: Provider) -> str:
-    adapters = sorted(
-        {
-            info.adapter
-            for info in setup.models
-            if info.provider == provider.id and info.adapter != "unavailable"
-        }
+def _provider_endpoint(setup: AgentSetup, provider: Provider) -> str | None:
+    return default_provider_base_url(provider, environ=setup.envs)
+
+
+def _provider_adapters(provider: Provider) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                adapter
+                for model in provider.models.values()
+                if (adapter := resolve_catalog_adapter(provider, model=model))
+                is not None
+            }
+        )
     )
-    return "+".join(adapters) or "-"
 
 
 def _model_table_fields(model: Model) -> tuple[str, str, str, str, str]:
