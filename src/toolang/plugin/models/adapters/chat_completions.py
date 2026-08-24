@@ -257,7 +257,7 @@ def chat_completion_payload(
     if target.reasoning:
         payload["reasoning"] = dict(target.reasoning)
     payload["stream"] = stream
-    if stream and target.provider == "deepseek" and "stream_options" not in payload:
+    if stream and "stream_options" not in payload:
         payload["stream_options"] = {"include_usage": True}
     return payload
 

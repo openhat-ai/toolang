@@ -1340,7 +1340,8 @@ def test_chat_completions_stream_rejects_tool_deltas_without_names(monkeypatch) 
         )
 
 
-def test_chat_completions_stream_collects_deepseek_usage(monkeypatch) -> None:
+@pytest.mark.parametrize("provider", ["deepseek", "ollama", "llama_cpp"])
+def test_chat_completions_stream_collects_usage(monkeypatch, provider: str) -> None:
     captured: dict[str, object] = {}
     events: list[str] = []
 
@@ -1398,10 +1399,10 @@ def test_chat_completions_stream_collects_deepseek_usage(monkeypatch) -> None:
     result = asyncio.run(
         adapter.stream(
             ModelTarget(
-                ref="deepseek/deepseek-v4-flash",
-                provider="deepseek",
-                name="deepseek-v4-flash",
-                model="deepseek-v4-flash",
+                ref=f"{provider}/test-model",
+                provider=provider,
+                name="test-model",
+                model="test-model",
                 adapter="chat_completions",
             ),
             ModelCall(instructions="", messages=[Message.user("hello")]),
