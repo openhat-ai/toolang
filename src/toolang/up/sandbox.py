@@ -7,7 +7,6 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from decimal import Decimal
-import json
 from pathlib import Path
 import threading
 import time
@@ -15,9 +14,10 @@ from urllib.error import URLError
 from urllib.request import urlopen
 from weakref import WeakKeyDictionary
 
+from toolang.base.errors import SandboxLaunchError
 from toolang.base.protocols.sandbox import Sandbox
-from toolang.base.types.sandbox import SandboxRef, SandboxRequest
-from toolang.common.files import atomic_write_text, file_write_lock
+from toolang.base.types.sandbox import SandboxOutput, SandboxRef, SandboxRequest
+from toolang.common.files import file_write_lock
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import (
     merge_plugin_configs,
@@ -32,6 +32,7 @@ from toolang.setup.config import (
 from toolang.state.state import AgentState
 from toolang.state.watcher import StateWatcher
 from toolang.up.mounts import prepare_root_mounts
+from toolang.up.records import SandboxState
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
 
 SANDBOX_READY_TIMEOUT_SEC = 30.0
@@ -42,51 +43,6 @@ _TASK_LOCKS_MUTEX = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
-class SandboxState:
-    """Persisted control-side reference to one sandboxed AgentServer workload."""
-
-    sandbox: str
-    ref: SandboxRef
-
-    def __post_init__(self) -> None:
-        sandbox = self.sandbox.strip()
-        if not sandbox:
-            raise ValueError("sandbox state requires sandbox")
-        object.__setattr__(self, "sandbox", sandbox)
-
-    def save(self, path: Path) -> None:
-        payload = {
-            "sandbox": self.sandbox,
-            "ref": self.ref.to_data(),
-        }
-        with file_write_lock(path.with_suffix(".lock")):
-            atomic_write_text(
-                path,
-                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
-                + "\n",
-            )
-
-    @classmethod
-    def load(cls, path: Path) -> SandboxState | None:
-        with file_write_lock(path.with_suffix(".lock")):
-            if not path.is_file():
-                return None
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise ValueError(f"invalid sandbox state: {path}") from exc
-        if not isinstance(payload, dict):
-            raise ValueError(f"invalid sandbox state: {path}")
-        sandbox = payload.get("sandbox")
-        if not isinstance(sandbox, str) or not sandbox.strip():
-            raise ValueError(f"sandbox state is missing sandbox: {path}")
-        return cls(
-            sandbox=sandbox.strip(),
-            ref=SandboxRef.from_data(payload.get("ref")),
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class LaunchSpec:
     """Resolved inputs for running one AgentServer in a sandbox."""
 
@@ -94,6 +50,7 @@ class LaunchSpec:
     sandbox: str
     config: dict[str, object]
     environ: dict[str, str]
+    output: SandboxOutput = "inherit"
     log_path: Path | None = None
     dev_artifact: Path | None = None
     dotenv_envs: dict[str, str] = field(default_factory=dict)
@@ -121,6 +78,7 @@ async def resolve_launch(
     file_inboxes: Sequence[Path] | None = None,
     dev: Path | None = None,
     log_spec: str | None = None,
+    output: SandboxOutput = "inherit",
     log_path: Path | None = None,
     temporary_port: bool = False,
 ) -> LaunchSpec:
@@ -150,6 +108,7 @@ async def resolve_launch(
         sandbox=selected,
         config=config,
         environ=dict(environ),
+        output=output,
         dotenv_envs=load_setup_dotenvs(layout),
         log_path=log_path,
         dev_artifact=artifact,
@@ -166,6 +125,7 @@ async def launch(spec: LaunchSpec) -> SandboxHandle:
 
 
 async def _launch_locked(spec: LaunchSpec) -> SandboxHandle:
+    _reject_legacy_state(spec.serve.layout)
     current = SandboxState.load(spec.serve.layout.sandbox_state)
     if current is not None:
         implementation = load_state_sandbox(
@@ -175,15 +135,19 @@ async def _launch_locked(spec: LaunchSpec) -> SandboxHandle:
         if await implementation.running(current.ref):
             raise ValueError(f"agent is already running: {spec.serve.layout.name}")
         await implementation.release(current.ref)
+        _reject_unreferenced_staging(spec.serve.layout)
         _clear_state(spec.serve.layout, expected=current)
+    else:
+        _reject_unreferenced_staging(spec.serve.layout)
 
     name, raw_spec = _split_sandbox(spec.sandbox)
     implementation = create_sandbox(name, config=spec.config)
-    hosted_root = _hosted_root(
-        name,
-        local_root=spec.serve.layout.root,
-        config=spec.config,
-    )
+    hosted_root = implementation.runtime_root(spec.serve.layout.root)
+    if implementation.location not in {"host", "guest"}:
+        raise ValueError(
+            f"sandbox {name} returned invalid location: {implementation.location}"
+        )
+    on_host = implementation.location == "host"
     hosted_home = hosted_root / "agents" / spec.serve.layout.name
     request = SandboxRequest(
         local_root=spec.serve.layout.root,
@@ -200,10 +164,11 @@ async def _launch_locked(spec: LaunchSpec) -> SandboxHandle:
             *build_serve_argv(
                 spec.serve,
                 root=hosted_root,
-                host="0.0.0.0" if name != "host" else spec.serve.host,
+                host=spec.serve.host if on_host else "0.0.0.0",
             ),
         ),
-        working_directory=(spec.serve.layout.home if name == "host" else hosted_home),
+        working_directory=spec.serve.layout.home if on_host else hosted_home,
+        output=spec.output,
         log_path=spec.log_path,
         envs={
             **spec.environ,
@@ -212,9 +177,7 @@ async def _launch_locked(spec: LaunchSpec) -> SandboxHandle:
         },
         dotenv_envs=spec.dotenv_envs,
         mounts=(
-            ()
-            if name == "host"
-            else prepare_root_mounts(spec.serve.layout.root, hosted_root)
+            () if on_host else prepare_root_mounts(spec.serve.layout.root, hosted_root)
         ),
         local_dev_artifact=spec.dev_artifact,
     )
@@ -222,9 +185,16 @@ async def _launch_locked(spec: LaunchSpec) -> SandboxHandle:
     ref: SandboxRef | None = None
     state: SandboxState | None = None
     try:
-        ref = await implementation.launch(plan)
+        try:
+            ref = await implementation.launch(plan)
+        except SandboxLaunchError as exc:
+            ref = exc.ref
+            state = SandboxState(sandbox=plan.sandbox, ref=ref)
+            state.save(spec.serve.layout.sandbox_state)
+            raise
         state = SandboxState(sandbox=plan.sandbox, ref=ref)
         state.save(spec.serve.layout.sandbox_state)
+        await implementation.attach(plan, ref)
         await _wait_ready(
             implementation,
             ref,
@@ -232,18 +202,14 @@ async def _launch_locked(spec: LaunchSpec) -> SandboxHandle:
         )
         return SandboxHandle(implementation, state)
     except BaseException:
-        released = False
-        if ref is not None:
-            with suppress(BaseException):
-                await asyncio.shield(implementation.stop(ref, force=True))
-            try:
-                await asyncio.shield(implementation.release(ref))
-            except BaseException:
-                pass
-            else:
-                released = True
-        if state is not None and released:
-            _clear_state(spec.serve.layout, expected=state)
+        await asyncio.shield(
+            _recover_failed_launch(
+                spec.serve.layout,
+                implementation,
+                ref=ref,
+                state=state,
+            )
+        )
         raise
 
 
@@ -255,9 +221,9 @@ async def run(
     """Launch, follow, and release one foreground AgentServer."""
 
     handle = await launch(spec)
-    if on_ready is not None:
-        on_ready(handle.state)
     try:
+        if on_ready is not None:
+            on_ready(handle.state)
         exit_code = await handle.implementation.wait(handle.state.ref)
     except asyncio.CancelledError:
         await asyncio.shield(
@@ -291,6 +257,26 @@ async def _stop_and_release(
     await _release(layout, handle)
 
 
+async def _recover_failed_launch(
+    layout: AgentLayout,
+    implementation: Sandbox,
+    *,
+    ref: SandboxRef | None,
+    state: SandboxState | None,
+) -> None:
+    if ref is None:
+        return
+    with suppress(BaseException):
+        await implementation.stop(ref, force=True)
+    try:
+        await implementation.release(ref)
+    except BaseException:
+        return
+    if state is not None:
+        with suppress(BaseException):
+            _clear_state(layout, expected=state)
+
+
 async def _release(layout: AgentLayout, handle: SandboxHandle) -> None:
     await handle.implementation.release(handle.state.ref)
     _clear_state(layout, expected=handle.state)
@@ -302,6 +288,7 @@ async def stop(layout: AgentLayout, *, force: bool = False) -> bool:
     lock_path = layout.sandbox_state.with_suffix(".lock")
     async with _task_lock(lock_path):
         with file_write_lock(lock_path):
+            _reject_legacy_state(layout)
             state = SandboxState.load(layout.sandbox_state)
             if state is None:
                 return False
@@ -315,6 +302,7 @@ async def stop(layout: AgentLayout, *, force: bool = False) -> bool:
 async def running(layout: AgentLayout) -> bool:
     """Return whether the currently referenced hosted workload is running."""
 
+    _reject_legacy_state(layout)
     state = SandboxState.load(layout.sandbox_state)
     if state is None:
         return False
@@ -389,20 +377,6 @@ def _is_toolang_wheel(path: Path) -> bool:
     return path.name.casefold().startswith("toolang-")
 
 
-def _hosted_root(
-    name: str,
-    *,
-    local_root: Path,
-    config: Mapping[str, object],
-) -> Path:
-    if name == "host":
-        return local_root
-    configured = config.get("root")
-    if isinstance(configured, str) and configured.strip():
-        return Path(configured.strip())
-    return Path("/root/.toolang")
-
-
 def load_state_sandbox(
     layout: AgentLayout,
     state: SandboxState,
@@ -448,6 +422,46 @@ def _clear_state(layout: AgentLayout, *, expected: SandboxState) -> None:
         current = SandboxState.load(path)
         if current == expected:
             path.unlink(missing_ok=True)
+
+
+async def release_for_removal(layout: AgentLayout) -> None:
+    """Release stopped sandbox resources before removing an agent home."""
+
+    lock_path = layout.sandbox_state.with_suffix(".lock")
+    async with _task_lock(lock_path):
+        with file_write_lock(lock_path):
+            _reject_legacy_state(layout)
+            state = SandboxState.load(layout.sandbox_state)
+            if state is None:
+                _reject_unreferenced_staging(layout)
+                return
+            implementation = load_state_sandbox(layout, state)
+            if await implementation.running(state.ref):
+                raise ValueError(f"agent is already running: {layout.name}")
+            await implementation.release(state.ref)
+            _reject_unreferenced_staging(layout)
+            _clear_state(layout, expected=state)
+
+
+def _reject_legacy_state(layout: AgentLayout) -> None:
+    path = layout.legacy_sandbox_state
+    if not path.is_file():
+        return
+    raise ValueError(
+        "legacy guest-writable sandbox state requires manual cleanup before "
+        f"continuing: {path}; stop it with the previous Toolang version or "
+        "remove the workload manually, then delete this file"
+    )
+
+
+def _reject_unreferenced_staging(layout: AgentLayout) -> None:
+    path = layout.sandbox_stage
+    if not path.is_dir() or not any(path.iterdir()):
+        return
+    raise ValueError(
+        "unreferenced sandbox staging requires manual cleanup before continuing: "
+        f"{path}; remove any associated workload before deleting these files"
+    )
 
 
 def _task_lock(path: Path) -> asyncio.Lock:

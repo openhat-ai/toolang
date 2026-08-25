@@ -4,10 +4,11 @@ import asyncio
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
+from toolang.base.errors import SandboxLaunchError
 from toolang.base.types.sandbox import (
     SandboxPlan,
     SandboxRef,
@@ -22,12 +23,18 @@ from toolang.up.server import ServeSpec
 
 class FakeSandbox:
     name = "fake"
+    location = "guest"
 
     def __init__(self) -> None:
         self.calls: list[object] = []
         self.alive = True
         self.stop_error: Exception | None = None
         self.release_error: Exception | None = None
+        self.attach_error: Exception | None = None
+
+    def runtime_root(self, local_root: Path) -> Path:
+        del local_root
+        return Path("/runtime")
 
     def prepare(
         self,
@@ -39,6 +46,7 @@ class FakeSandbox:
             sandbox=f"fake:{spec}",
             command=request.command,
             working_directory=request.working_directory,
+            output=request.output,
             log_path=request.log_path,
             endpoint=request.endpoint,
         )
@@ -46,6 +54,11 @@ class FakeSandbox:
     async def launch(self, plan: SandboxPlan) -> SandboxRef:
         self.calls.append(("launch", plan))
         return SandboxRef("workload-1", plan.endpoint)
+
+    async def attach(self, plan: SandboxPlan, ref: SandboxRef) -> None:
+        self.calls.append(("attach", plan, ref))
+        if self.attach_error is not None:
+            raise self.attach_error
 
     async def running(self, ref: SandboxRef) -> bool:
         self.calls.append(("running", ref))
@@ -96,6 +109,13 @@ class FailingWaitSandbox(FakeSandbox):
         raise RuntimeError("follow failed")
 
 
+class RecoverableLaunchSandbox(FakeSandbox):
+    async def launch(self, plan: SandboxPlan) -> SandboxRef:
+        ref = SandboxRef("recoverable-workload", plan.endpoint)
+        self.calls.append(("launch", plan))
+        raise SandboxLaunchError("launch cleanup failed", ref=ref)
+
+
 def _launch_spec(tmp_path: Path) -> sandbox.LaunchSpec:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
@@ -126,6 +146,7 @@ def test_sandbox_state_round_trips(tmp_path: Path) -> None:
     state.save(path)
 
     assert sandbox.SandboxState.load(path) == state
+    assert '"version": 1' in path.read_text(encoding="utf-8")
 
 
 def test_sandbox_state_rejects_corrupted_data(tmp_path: Path) -> None:
@@ -136,21 +157,49 @@ def test_sandbox_state_rejects_corrupted_data(tmp_path: Path) -> None:
         sandbox.SandboxState.load(path)
 
 
-def test_remove_sandbox_data_removes_control_state_and_launches(
+def test_sandbox_state_rejects_an_unversioned_payload(tmp_path: Path) -> None:
+    path = tmp_path / "sandbox.json"
+    path.write_text(
+        '{"sandbox":"host","ref":{"runtime_id":"1","endpoint":"http://x"}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unsupported sandbox state version"):
+        sandbox.SandboxState.load(path)
+
+
+def test_sandbox_ref_rejects_non_json_recovery_metadata(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="JSON-compatible"):
+        SandboxRef(
+            "workload",
+            "http://localhost:1",
+            meta=cast(Any, {"path": tmp_path}),
+        )
+
+
+def test_agent_removal_releases_control_state_through_the_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    implementation = FakeSandbox()
+    implementation.alive = False
+    monkeypatch.setattr(
+        sandbox,
+        "load_state_sandbox",
+        lambda _layout, _state: implementation,
+    )
     layout = AgentLayout.resident(tmp_path, "alice")
     sandbox.SandboxState(
         sandbox="docker:python:3.13-slim",
         ref=SandboxRef("toolang-alice-test", "http://localhost:8123"),
     ).save(layout.sandbox_state)
-    launch_dir = layout.sandbox_stage / "test"
-    launch_dir.mkdir(parents=True)
-    (launch_dir / "guest.env").write_text("SECRET=value\n", encoding="utf-8")
 
-    process_runtime.remove_sandbox_data(layout)
+    asyncio.run(sandbox.release_for_removal(layout))
 
-    assert not layout.sandbox_home.exists()
+    assert ("release", SandboxRef("toolang-alice-test", "http://localhost:8123")) in (
+        implementation.calls
+    )
+    assert sandbox.SandboxState.load(layout.sandbox_state) is None
 
 
 def test_sandbox_status_treats_plugin_recovery_failure_as_not_running(
@@ -200,6 +249,9 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     prepare = implementation.calls[0]
     assert isinstance(prepare, tuple)
     assert prepare[:2] == ("prepare", "value:with:colons")
+    request = cast(SandboxRequest, prepare[2])
+    assert request.hosted_root == Path("/runtime")
+    assert request.hosted_home == Path("/runtime/agents/alice")
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) == handle.state
 
     assert asyncio.run(sandbox.stop(spec.serve.layout, force=True)) is True
@@ -279,6 +331,41 @@ def test_readiness_cleanup_failure_preserves_sandbox_state(
     assert state.ref == SandboxRef("workload-1", spec.serve.endpoint)
 
 
+def test_attach_cleanup_failure_preserves_sandbox_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = FakeSandbox()
+    implementation.attach_error = RuntimeError("could not attach output")
+    implementation.release_error = RuntimeError("release failed")
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
+    spec = _launch_spec(tmp_path)
+
+    with pytest.raises(RuntimeError, match="could not attach output"):
+        asyncio.run(sandbox.launch(spec))
+
+    state = sandbox.SandboxState.load(spec.serve.layout.sandbox_state)
+    assert state is not None
+    assert state.ref == SandboxRef("workload-1", spec.serve.endpoint)
+
+
+def test_recoverable_launch_failure_persists_state_when_release_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = RecoverableLaunchSandbox()
+    implementation.release_error = RuntimeError("release failed")
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
+    spec = _launch_spec(tmp_path)
+
+    with pytest.raises(SandboxLaunchError, match="launch cleanup failed"):
+        asyncio.run(sandbox.launch(spec))
+
+    state = sandbox.SandboxState.load(spec.serve.layout.sandbox_state)
+    assert state is not None
+    assert state.ref.runtime_id == "recoverable-workload"
+
+
 def test_foreground_run_waits_then_releases_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -323,6 +410,75 @@ def test_foreground_wait_failure_stops_releases_and_clears_state(
     assert ("stop", ref, True) in implementation.calls
     assert ("release", ref) in implementation.calls
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
+
+
+def test_foreground_ready_failure_stops_releases_and_clears_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = FakeSandbox()
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
+
+    async def ready(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    spec = _launch_spec(tmp_path)
+
+    def fail_ready(_state: sandbox.SandboxState) -> None:
+        raise RuntimeError("ready output failed")
+
+    with pytest.raises(RuntimeError, match="ready output failed"):
+        asyncio.run(sandbox.run(spec, on_ready=fail_ready))
+
+    ref = SandboxRef("workload-1", spec.serve.endpoint)
+    assert ("stop", ref, True) in implementation.calls
+    assert ("release", ref) in implementation.calls
+    assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
+
+
+def test_legacy_guest_state_blocks_launch_stop_and_removal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = FakeSandbox()
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
+    spec = _launch_spec(tmp_path)
+    spec.serve.layout.legacy_sandbox_state.parent.mkdir(parents=True, exist_ok=True)
+    spec.serve.layout.legacy_sandbox_state.write_text("{}\n", encoding="utf-8")
+
+    for operation in (
+        lambda: sandbox.launch(spec),
+        lambda: sandbox.stop(spec.serve.layout),
+        lambda: sandbox.release_for_removal(spec.serve.layout),
+    ):
+        with pytest.raises(ValueError, match="legacy guest-writable sandbox state"):
+            asyncio.run(operation())
+
+    status = process_runtime.AgentProcess(spec.serve.layout).status(ui_base_url="")
+    assert status is not None
+    assert status.status == "failed"
+
+
+def test_unreferenced_staging_blocks_launch_and_removal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = FakeSandbox()
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
+    spec = _launch_spec(tmp_path)
+    stage = spec.serve.layout.sandbox_stage / "orphaned"
+    stage.mkdir(parents=True)
+    (stage / "guest.env").write_text("SECRET=value\n", encoding="utf-8")
+
+    for operation in (
+        lambda: sandbox.launch(spec),
+        lambda: sandbox.release_for_removal(spec.serve.layout),
+    ):
+        with pytest.raises(ValueError, match="unreferenced sandbox staging"):
+            asyncio.run(operation())
+
+    assert stage.is_dir()
 
 
 def test_concurrent_launch_accepts_only_one_workload(
@@ -537,3 +693,6 @@ def test_select_sandbox_keeps_selection_separate_from_plugin_config() -> None:
     assert config == {"image": "agent-image"}
     assert explicit == "host"
     assert host_config == {"mode": "local"}
+
+    def runtime_root(self, local_root: Path) -> Path:
+        return Path("/runtime")

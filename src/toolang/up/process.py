@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 import shlex
-import shutil
 import subprocess
 import time
 from urllib.error import HTTPError, URLError
@@ -256,6 +255,8 @@ class AgentProcess:
             pid_alive=process_alive,
             sandbox_alive=_sandbox_running(self.layout),
         )
+        if self.layout.legacy_sandbox_state.is_file():
+            status = "failed"
         active = status in {"running", "preparing", "starting"}
         return AgentStatus(
             name=self.layout.name,
@@ -286,13 +287,6 @@ class AgentProcess:
 
 
 VISITING_PROGRAM_CACHE_TTL_SEC = 3600
-
-
-def remove_sandbox_data(layout: AgentLayout) -> None:
-    """Remove one agent's host-owned sandbox control and staging data."""
-
-    if layout.sandbox_home.exists():
-        shutil.rmtree(layout.sandbox_home)
 
 
 def materialize_roaming_program(source_path: Path) -> AgentLayout:

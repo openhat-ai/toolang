@@ -118,6 +118,12 @@ class AgentLayout:
         return self.sandbox_home / "state.json"
 
     @property
+    def legacy_sandbox_state(self) -> Path:
+        """Return the former guest-writable sandbox control-state path."""
+
+        return self.runtime / "sandbox.json"
+
+    @property
     def run_store(self) -> Path:
         return self.runtime / "runs.db"
 

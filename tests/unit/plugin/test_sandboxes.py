@@ -7,15 +7,19 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import threading
+from types import SimpleNamespace
 from typing import Any, cast
 
 from dotenv import dotenv_values
 import pytest
 
-from toolang.base.errors import ToolangError
+from toolang.base.errors import SandboxLaunchError, ToolangError
 from toolang.base.protocols.sandbox import Sandbox
 from toolang.base.types.sandbox import SandboxMount, SandboxRequest
 from toolang.common.layout import AgentLayout
+from toolang.plugin.sandboxes import _docker_cli as docker_cli
+from toolang.plugin.sandboxes import _docker_guest as docker_guest
 from toolang.plugin.sandboxes import docker as docker_sandbox
 from toolang.plugin.sandboxes import host as host_sandbox
 from toolang.plugin.sandboxes.loading import create_sandbox
@@ -41,6 +45,7 @@ def _request(
         endpoint="http://localhost:8123",
         command=("too", "serve", "alice", "--port", "8123"),
         working_directory=home,
+        output="inherit" if foreground else "file",
         log_path=None if foreground else home / ".runtime" / "agent.log",
         envs={
             "COMPLEX": "line one\nline \"two\" 'three'\r\\tail${HOME}",
@@ -109,6 +114,47 @@ def test_host_foreground_sandbox_inherits_console_streams(
     assert "stderr" not in captured
 
 
+def test_host_launch_cancellation_waits_for_creation_and_stops_the_process(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    started = threading.Event()
+    finish = threading.Event()
+    stopped: list[int] = []
+    process = SimpleNamespace(pid=12345)
+
+    def launch(_plan: object) -> object:
+        started.set()
+        finish.wait(timeout=5)
+        return process
+
+    monkeypatch.setattr(host_sandbox, "_launch", launch)
+    monkeypatch.setattr(host_sandbox, "_process_identity", lambda _pid: "identity")
+    monkeypatch.setattr(
+        host_sandbox,
+        "_stop_process",
+        lambda item, *, force: stopped.append(item.pid) or force,
+    )
+    sandbox = create_sandbox("host", config={})
+    plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
+
+    async def cancel_launch() -> BaseException | None:
+        task = asyncio.create_task(sandbox.launch(plan))
+        await asyncio.to_thread(started.wait, 5)
+        task.cancel()
+        finish.set()
+        try:
+            await task
+        except BaseException as exc:
+            return exc
+        return None
+
+    error = asyncio.run(cancel_launch())
+
+    assert isinstance(error, asyncio.CancelledError)
+    assert stopped == [process.pid]
+
+
 def test_docker_sandbox_prepares_and_launches(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -125,7 +171,7 @@ def test_docker_sandbox_prepares_and_launches(
     )
     monkeypatch.setattr(
         "toolang.plugin.sandboxes.docker.docker_container_running",
-        lambda name: name.startswith("toolang-alice-"),
+        lambda name: name == "container-123",
     )
     dev = tmp_path / "dist" / "toolang-1.2.3-py3-none-any.whl"
     dev.parent.mkdir(parents=True)
@@ -216,7 +262,8 @@ def test_docker_sandbox_prepares_and_launches(
 
     ref = asyncio.run(sandbox.launch(plan))
 
-    assert ref.runtime_id == container_name
+    assert ref.runtime_id == "container-123"
+    assert ref.meta["container_name"] == container_name
     assert ref.endpoint == "http://localhost:8123"
     assert asyncio.run(sandbox.running(ref)) is True
     run_call = cast(dict[str, Any], calls["run"])
@@ -309,7 +356,7 @@ def test_docker_sandbox_requires_a_concrete_dev_wheel(tmp_path: Path) -> None:
 def test_docker_agent_script_quotes_a_dev_wheel_path(tmp_path: Path) -> None:
     script = tmp_path / "agent.sh"
 
-    docker_sandbox._write_agent_script(
+    docker_guest.write_agent_script(
         script,
         command=("too", "serve", "alice"),
         hosted_dev_artifact=Path("/runtime/dev wheels/toolang.whl"),
@@ -327,6 +374,12 @@ def test_docker_sandbox_uses_configured_default_image(tmp_path: Path) -> None:
     plan = sandbox.prepare(None, _request(tmp_path))
 
     assert plan.sandbox == "docker:python:3.14"
+
+
+def test_docker_sandbox_owns_its_guest_root_configuration(tmp_path: Path) -> None:
+    sandbox = create_sandbox("docker", config={"root": "/workspace/toolang"})
+
+    assert sandbox.runtime_root(tmp_path) == Path("/workspace/toolang")
 
 
 def test_docker_sandbox_uses_a_configured_environment_allow_pattern(
@@ -372,6 +425,7 @@ def test_docker_launch_failure_removes_the_staged_guest_environment(
         raise RuntimeError("docker failed")
 
     monkeypatch.setattr(docker_sandbox, "docker_run_detached", fail_run)
+    monkeypatch.setattr(docker_sandbox, "docker_remove_container", lambda _name: None)
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path))
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
@@ -380,6 +434,30 @@ def test_docker_launch_failure_removes_the_staged_guest_environment(
         asyncio.run(sandbox.launch(plan))
 
     assert not stage_dir.exists()
+
+
+def test_docker_launch_cleanup_failure_returns_a_recovery_reference(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    async def fail_run(**_kwargs: object) -> str:
+        raise RuntimeError("docker failed")
+
+    def fail_remove(_name: str) -> None:
+        raise RuntimeError("daemon unavailable")
+
+    monkeypatch.setattr(docker_sandbox, "docker_run_detached", fail_run)
+    monkeypatch.setattr(docker_sandbox, "docker_remove_container", fail_remove)
+    sandbox = create_sandbox("docker", config={})
+    plan = sandbox.prepare(None, _request(tmp_path))
+    stage_dir = Path(cast(str, plan.meta["stage_dir"]))
+
+    with pytest.raises(SandboxLaunchError, match="could not remove") as captured:
+        asyncio.run(sandbox.launch(plan))
+
+    assert captured.value.ref.runtime_id == plan.meta["container_name"]
+    assert captured.value.ref.meta["stage_dir"] == str(stage_dir)
+    assert stage_dir.is_dir()
 
 
 def test_docker_launch_cancellation_terminates_cli_and_removes_container(
@@ -418,7 +496,7 @@ def test_docker_launch_cancellation_terminates_cli_and_removes_container(
         return process
 
     monkeypatch.setattr(
-        docker_sandbox.asyncio,
+        docker_cli.asyncio,
         "create_subprocess_exec",
         create_subprocess_exec,
     )
@@ -477,6 +555,42 @@ def test_docker_release_preserves_container_diagnostics_before_removal(
     assert cast(Path, plan.log_path).is_file()
 
 
+def test_docker_release_removes_the_container_when_diagnostics_fail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        docker_sandbox,
+        "docker_run_detached",
+        _async_value("container-123"),
+    )
+
+    def fail_diagnostics(name: str, _path: Path) -> None:
+        calls.append(("logs", name))
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        docker_sandbox,
+        "docker_append_container_logs",
+        fail_diagnostics,
+    )
+    monkeypatch.setattr(
+        docker_sandbox,
+        "docker_remove_container",
+        lambda name: calls.append(("remove", name)),
+    )
+    sandbox = create_sandbox("docker", config={})
+    plan = sandbox.prepare(None, _request(tmp_path))
+    stage_dir = Path(cast(str, plan.meta["stage_dir"]))
+    ref = asyncio.run(sandbox.launch(plan))
+
+    asyncio.run(sandbox.release(ref))
+
+    assert calls == [("logs", ref.runtime_id), ("remove", ref.runtime_id)]
+    assert not stage_dir.exists()
+
+
 def test_docker_run_adds_the_canonical_host_gateway(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -494,13 +608,13 @@ def test_docker_run_adds_the_canonical_host_gateway(
         return Process()
 
     monkeypatch.setattr(
-        docker_sandbox.asyncio,
+        docker_cli.asyncio,
         "create_subprocess_exec",
         create_subprocess_exec,
     )
 
     container_id = asyncio.run(
-        docker_sandbox.docker_run_detached(
+        docker_cli.docker_run_detached(
             image="python:3.13-slim",
             container_name="toolang-alice-test",
             workdir="/root/.toolang/agents/alice",
@@ -539,10 +653,10 @@ def test_docker_diagnostics_are_bounded_and_streamed_to_a_private_log(
             "",
         )
 
-    monkeypatch.setattr(docker_sandbox.subprocess, "run", run)
+    monkeypatch.setattr(docker_cli.subprocess, "run", run)
     log_path = tmp_path / "agent.log"
 
-    docker_sandbox.docker_append_container_logs("toolang-alice-test", log_path)
+    docker_cli.docker_append_container_logs("toolang-alice-test", log_path)
 
     assert captured["args"] == (
         "docker",
@@ -592,6 +706,8 @@ def test_docker_foreground_sandbox_follows_container_logs(
     plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
 
     ref = asyncio.run(sandbox.launch(plan))
+    assert calls == []
+    asyncio.run(sandbox.attach(plan, ref))
     assert calls == [("logs", ref.runtime_id)]
     result = asyncio.run(sandbox.wait(ref))
 
