@@ -19,7 +19,7 @@ from toolang.api.schemas import (
 )
 from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
-from toolang.execution.executor import RunHandle, RunSpec
+from toolang.execution.executor import LocalRunHandle, RunSpec
 from toolang.execution.records import RunControlRecord, RunRecord
 from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
@@ -28,7 +28,7 @@ from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
-_StartedRunStream = tuple[RunHandle, EventSubscription]
+_StartedRunStream = tuple[LocalRunHandle, EventSubscription]
 
 
 async def _start_run_stream(

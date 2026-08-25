@@ -24,7 +24,7 @@ from toolang.cli.common.policy import (
     resolve_limit_overrides,
 )
 from toolang.execution.calls import parse_call, resolve_spec
-from toolang.execution.executor import RunExecutor, RunHandle
+from toolang.execution.executor import LocalRunHandle, RunExecutor
 from toolang.execution.records import RunRecord
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
@@ -556,7 +556,7 @@ async def _execute(
                 tracer.close()
 
 
-async def _await_script_run(handle: RunHandle) -> RunRecord:
+async def _await_script_run(handle: LocalRunHandle) -> RunRecord:
     """Stop an owned one-shot run when its script caller is interrupted."""
 
     try:

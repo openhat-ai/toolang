@@ -13,7 +13,8 @@ client or change the agent API.
 - `RunExecutor` combines run acceptance, local task ownership, durable store
   mutation, control observation, recursive execution, and shutdown.
 - `RunSpec` contains process-local `AgentSetup` and `AgentState` snapshots.
-- `RunHandle` contains a local `asyncio.Task` and returns a local `RunRecord`.
+- `LocalRunHandle` contains a local `asyncio.Task` and returns a local
+  `RunRecord`.
 - `LocalChatSession` constructs `RunStore`, `IdIssuer`, `RunExecutor`, setup and
   state watchers, and its own event-loop thread. It calls the executor directly
   for start, stop, steer, and shutdown.
@@ -42,8 +43,8 @@ replacement abstraction for every `RunExecutor` caller.
   order, controls, errors, results, and shutdown behavior.
 - The client contract contains no `RunStore`, `IdIssuer`, `AgentSetup`,
   `AgentState`, `asyncio.Task`, `RunRecord`, or HTTP types.
-- Existing Script, Scheduler, Inbox, API, and `AgentCore` execution paths remain
-  unchanged.
+- Existing Script, Scheduler, Inbox, API, and `AgentCore` execution behavior
+  remains unchanged; their executor handle imports use the explicit local name.
 - No HTTP endpoint, schema, runtime-selection rule, or Chat presentation changes.
 
 ## Scope
@@ -51,6 +52,8 @@ replacement abstraction for every `RunExecutor` caller.
 In scope:
 
 - caller-facing request, handle, and client protocol types;
+- renaming the executor-owned `RunHandle` to `LocalRunHandle` so the
+  transport-neutral boundary owns the unqualified name;
 - a local adapter over `RunExecutor`;
 - migration of `LocalChatSession` to that adapter;
 - focused unit, integration, and existing Chat regression coverage;
@@ -64,7 +67,8 @@ Out of scope:
 - retry, rerun, validation, pending-control cancellation, inspection, thread
   management, model/runnable listing, or result lookup in `RunClient`;
 - migrating Script, Scheduler, Inbox, API routers, or `AgentCore`;
-- changing `RunExecutor`, `RunSpec`, or `RunHandle` public behavior;
+- changing `RunExecutor`, `RunSpec`, or `LocalRunHandle` behavior beyond the
+  approved type rename;
 - changing terminal Chat commands, policy, rendering, or error text.
 
 ## Boundary Design
@@ -111,7 +115,7 @@ Place this caller-facing value with the execution protocol schemas. It may
 depend on language and execution value types, but not on stores, watchers,
 runtime services, API schemas, or event emitters.
 
-### `RunClientHandle`
+### `RunHandle`
 
 Define a handle protocol with:
 
@@ -119,9 +123,9 @@ Define a handle protocol with:
 - `wait()`, which completes when the accepted root run becomes terminal and
   returns caller-facing `RunDetail`.
 
-Do not make the client handle wrap or expose the local `RunHandle`. Stop and
-steer remain client methods so the handle has no back-reference to a concrete
-implementation.
+Do not expose `LocalRunHandle` through the client contract. Stop and steer
+remain client methods so the protocol handle has no back-reference to a
+concrete implementation.
 
 ### `RunClient`
 
@@ -134,7 +138,7 @@ class RunClient(Protocol):
         request: RunRequest,
         *,
         tracer: RunTracer | None = None,
-    ) -> RunClientHandle: ...
+    ) -> RunHandle: ...
 
     async def stop(
         self,
@@ -218,7 +222,7 @@ synchronous callback surface continues to bridge to the owned event-loop thread.
 ## Design Touchpoints
 
 - `src/toolang/execution/schemas.py`: immutable `RunRequest`.
-- `src/toolang/execution/client.py` (new): `RunClient`, `RunClientHandle`, local
+- `src/toolang/execution/client.py` (new): `RunClient`, `RunHandle`, local
   adapter, and private local handle implementation.
 - `src/toolang/cli/toolang/commands/chat/local.py`: construct and use the client
   while retaining Chat-owned inspection and watcher behavior.

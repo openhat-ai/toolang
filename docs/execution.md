@@ -75,10 +75,10 @@ execution of a run tree.
 
 `RunClient` is the transport-neutral caller boundary used by Terminal Chat. It
 accepts unresolved `RunRequest` values, exposes asynchronous start, stop, steer,
-and close operations, and returns caller-facing `RunDetail` and `ControlInfo`
-values. The boundary deliberately excludes stores, setup and state snapshots,
-local tasks, and durable records so a later remote implementation can preserve
-the same interaction shape.
+and close operations, and returns a transport-neutral `RunHandle` plus
+caller-facing `RunDetail` and `ControlInfo` values. The boundary deliberately
+excludes stores, setup and state snapshots, local tasks, and durable records so
+a later remote implementation can preserve the same interaction shape.
 
 `LocalRunClient` implements that boundary over an owned `RunExecutor`. It reads
 the current setup and state once for each start, selects the first explicit
@@ -93,7 +93,7 @@ The process-local executor remains the execution engine:
 `RunExecutor` is the public run entry point:
 
 ```text
-start(RunSpec, run_id?, request_id?, tracer?)          -> RunHandle
+start(RunSpec, run_id?, request_id?, tracer?)          -> LocalRunHandle
 stop(run_id, timing, request_id?, reason?)     -> RunControlRecord
 steer(run_id, message, timing, request_id?)    -> RunControlRecord
 cancel_control(run_id, index)                  -> RunControlRecord
@@ -101,7 +101,7 @@ shutdown()                                     -> None
 ```
 
 `start()` accepts durable truth, creates the owner task, and immediately
-returns an awaitable `RunHandle`. Awaiting the handle returns the terminal
+returns an awaitable `LocalRunHandle`. Awaiting the handle returns the terminal
 `RunRecord`; canceling one waiter does not cancel execution. The handle also
 provides same-process `stop()`, `steer()`, and `cancel_control()` conveniences.
 Cross-process callers address the run by ID through their local `RunExecutor`.

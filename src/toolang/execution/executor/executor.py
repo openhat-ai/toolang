@@ -119,7 +119,7 @@ class RunSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class RunHandle(Awaitable[RunRecord]):
+class LocalRunHandle(Awaitable[RunRecord]):
     """One locally started run that can be controlled and awaited."""
 
     run_id: str
@@ -199,7 +199,7 @@ class RunExecutor:
         run_id: str | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
-    ) -> RunHandle:
+    ) -> LocalRunHandle:
         """Accept one top-level run and immediately return its local handle."""
 
         self._require_available()
@@ -243,7 +243,7 @@ class RunExecutor:
         run_id: str | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
-    ) -> RunHandle:
+    ) -> LocalRunHandle:
         """Start a new root run from one visible source run's invocation."""
 
         self._require_available()
@@ -295,7 +295,7 @@ class RunExecutor:
         limits: RunLimits | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
-    ) -> RunHandle:
+    ) -> LocalRunHandle:
         """Reopen one terminal root run from a durable step boundary."""
 
         self._require_available()
@@ -422,7 +422,7 @@ class RunExecutor:
         loop: asyncio.AbstractEventLoop,
         tracer: RunTracer | None,
         retry: RunControlRecord | None = None,
-    ) -> RunHandle:
+    ) -> LocalRunHandle:
         task = asyncio.create_task(
             self._execute_owned(bound, executable, tracer=tracer, retry=retry),
             name=f"toolang-run-{bound.run_id}",
@@ -433,7 +433,7 @@ class RunExecutor:
         self._tasks[task] = (bound.run_id, active)
         task.add_done_callback(self._task_done)
         self._ensure_monitor(bound.setup.layout.name)
-        return RunHandle(bound.run_id, self, task)
+        return LocalRunHandle(bound.run_id, self, task)
 
     def validate(self, spec: RunSpec) -> None:
         """Validate one immutable run spec without accepting a run."""

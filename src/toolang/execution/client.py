@@ -9,7 +9,7 @@ from typing import Protocol
 from toolang.base.types.message import Message
 from toolang.execution.calls import IncludeResolver, resolve_spec
 from toolang.execution.events import RunTracer
-from toolang.execution.executor import RunExecutor, RunHandle
+from toolang.execution.executor import LocalRunHandle, RunExecutor
 from toolang.execution.history import RunHistory
 from toolang.execution.records import RunControlRecord
 from toolang.execution.runnables import parse_runnable_ref
@@ -19,7 +19,7 @@ from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 
 
-class RunClientHandle(Protocol):
+class RunHandle(Protocol):
     """One accepted root run that can be awaited through a client."""
 
     @property
@@ -38,7 +38,7 @@ class RunClient(Protocol):
         request: RunRequest,
         *,
         tracer: RunTracer | None = None,
-    ) -> RunClientHandle: ...
+    ) -> RunHandle: ...
 
     async def stop(
         self,
@@ -69,7 +69,7 @@ IncludeSource = Callable[[AgentSetup], IncludeResolver]
 @dataclass(frozen=True, slots=True)
 class _LocalRunClientHandle:
     run_id: str
-    _handle: RunHandle = field(repr=False)
+    _handle: LocalRunHandle = field(repr=False)
     _history: RunHistory = field(repr=False)
 
     async def wait(self) -> RunDetail:
@@ -103,7 +103,7 @@ class LocalRunClient:
         request: RunRequest,
         *,
         tracer: RunTracer | None = None,
-    ) -> RunClientHandle:
+    ) -> RunHandle:
         self._require_open()
         setup = self._setup()
         state = self._state()

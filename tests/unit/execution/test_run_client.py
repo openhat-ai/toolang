@@ -17,7 +17,8 @@ from tests.support.execution_harness import (
 from toolang.base.errors import ToolangError
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
-from toolang.execution.client import LocalRunClient, RunClient
+from toolang.execution.client import LocalRunClient, RunClient, RunHandle
+from toolang.execution.executor import LocalRunHandle
 from toolang.execution.records import SteerControlPayload, StopControlPayload
 from toolang.execution.schemas import RunRequest
 from toolang.execution.types import RunOverride, ThreadPrefix
@@ -169,6 +170,7 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
             ),
             tracer=tracer,
         )
+        client_handle: RunHandle = fallback_handle
         fallback = await fallback_handle.wait()
         session_handle = await client.start(
             _request(
@@ -188,7 +190,8 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
         )
         selected = await selected_handle.wait()
 
-        assert fallback_handle.run_id == fallback.id
+        assert client_handle.run_id == fallback.id
+        assert not isinstance(client_handle, LocalRunHandle)
         assert (
             fallback.runnable_name,
             session.runnable_name,

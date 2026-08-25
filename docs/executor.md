@@ -17,7 +17,7 @@ class RunExecutor:
         run_id: str | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
-    ) -> RunHandle: ...
+    ) -> LocalRunHandle: ...
 
     def rerun(
         self,
@@ -31,7 +31,7 @@ class RunExecutor:
         run_id: str | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
-    ) -> RunHandle: ...
+    ) -> LocalRunHandle: ...
 
     def retry(
         self,
@@ -45,7 +45,7 @@ class RunExecutor:
         limits: RunLimits | None = None,
         request_id: str | None = None,
         tracer: RunTracer | None = None,
-    ) -> RunHandle: ...
+    ) -> LocalRunHandle: ...
 
     def stop(
         self,
@@ -117,7 +117,7 @@ produces the effective `RunSpec.limits` before `start()`. Config, CLI, chat, and
 HTTP parsing remain caller concerns and are not part of the executor contract.
 
 There is no `run()`, `execute()`, or `spawn()` variant. `start()`, `rerun()`,
-and `retry()` create an owner task and return an awaitable `RunHandle`.
+and `retry()` create an owner task and return an awaitable `LocalRunHandle`.
 `rerun()` loads the source invocation from durable truth and starts a new root
 against the supplied current setup and state. `retry()` keeps the root ID,
 reopens a terminal run, and resumes after its effective committed prefix. An

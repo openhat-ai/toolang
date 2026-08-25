@@ -528,7 +528,7 @@ concerns such as authentication or common validation. FastAPI lifespan owns
 required startup and shutdown; module globals and `ContextVar` do not carry
 application state.
 
-`RunExecutor.start()` returns a `RunHandle`; the application retains handles
+`RunExecutor.start()` returns a `LocalRunHandle`; the application retains handles
 only when its own protocol needs additional lifecycle bookkeeping.
 
 Core endpoints are grouped as:
