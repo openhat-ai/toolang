@@ -668,19 +668,22 @@ agent's authored caps. Read payloads expose runtime `form`, `scope`, and
 ## Chat Client Orchestration
 
 The HTTP API has no endpoint that accepts terminal `ChatInput` text. A chat
-client creates a thread when needed, resolves interaction input on the client,
-and starts each turn through the canonical run stream:
+client creates a thread when needed, converts the interaction to the shared
+`RunRequest` boundary, and starts each turn through the authored run stream:
 
 1. `POST /api/v1/threads` with the client and optional peer descriptor.
-2. `POST /api/v1/runs/stream` with the returned thread id, runnable, input,
-   optional model, and optional runnable arguments.
+2. `POST /api/v1/runs/authored/stream` with the returned thread id, request id,
+   authored input, run/session overrides, and ordered runnable fallbacks.
 
-An existing chat thread can be passed directly to `POST /api/v1/runs/stream`;
-the client does not create another thread for every turn. The client selects
-the chat/default runnable explicitly rather than relying on a chat-only API
-default.
+An existing chat thread can be passed directly to the authored endpoint; the
+client does not create another thread for every turn. The server resolves the
+request against its current setup and prepared state, including fallback
+selection, policy precedence, prompts, named input, and server-relative file
+includes. This keeps the Chat TUI and a future WebUI on the same run protocol
+without adding a chat-specific server vocabulary.
 
-Run `input` accepts canonical percept parts such as:
+The separate non-interactive `POST /api/v1/runs/stream` endpoint continues to
+accept a selected runnable and canonical percept parts such as:
 
 - `text`
 - `image`
@@ -703,18 +706,19 @@ For multipart payload details:
   be a full `data:...;base64,...` URL
 - `file_id` references a document already uploaded to the selected provider
 
-`POST /api/v1/runs/stream` returns the canonical `RunEvent` SSE protocol. A
-WebUI that needs another protocol adapts these events client-side; the API does
-not maintain a second chat event vocabulary.
+Both run-start endpoints return the canonical `RunEvent` SSE protocol. A WebUI
+that needs another presentation shape adapts these events client-side; the API
+does not maintain a second chat event vocabulary.
 
 The CLI command for interactive chat is `toolang <agent> chat [thread]
 [--sandbox <selector>] [--allow DOMAIN=SELECTORS] [--limit FIELD=VALUE]
 [--default FIELD=VALUE]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
 a thread id, it continues that thread. The TUI runs in its own process, assembles
-the same core objects, calls `RunExecutor` directly, and observes native
-`RunEvent` values through a `RunTracer`. It does not depend on the HTTP run
-stream. Starting an agent HTTP server remains a separate CLI operation.
+the same core objects, uses `LocalRunClient`, and observes native `RunEvent`
+values through a `RunTracer`. It does not depend on the HTTP run stream.
+Selecting `RemoteRunClient` in Terminal Chat remains separate client composition
+work. Starting an agent HTTP server remains a separate CLI operation.
 Direct chat currently accepts only the `host` sandbox selector; placing the TUI
 process inside another sandbox is a separate follow-up.
 Job thread ids are inspectable and controllable through thread and run commands,
@@ -860,6 +864,7 @@ Delete is destructive and is available only through archived routes.
 ## Run And Thread Endpoints
 
 - `POST /api/v1/runs/stream`
+- `POST /api/v1/runs/authored/stream`
 - `GET /api/v1/runs`
 - `GET /api/v1/runs/{run_id}`
 - `GET /api/v1/runs/{run_id}/stream`
@@ -884,7 +889,8 @@ no separate `RunSummary` response type.
 run's durable output edge. It is `null` until the run has an output edge and
 may be an empty array when the resolved runnable result is empty.
 
-`steer` and `cancel` operate on running runs. `retry` and `rerun` accept a
+`steer` and `cancel` operate on active (`pending` or `running`) runs. Steer
+accepts a user message whose parts may be empty. `retry` and `rerun` accept a
 terminal root run. Retry reopens that run from an optional canonical step-path
 `anchor`; omitting it selects the latest retryable step. Rerun starts a new root
 run from the source invocation and replaces the source in the visible thread
@@ -914,6 +920,42 @@ these thread operations starts a follow-up run.
 HTTP limit fields are `agic_model_calls`, `agic_tool_calls`, `tokens`, `cost`,
 and `time`. Omitted fields inherit the latest valid setup snapshot; an explicit
 JSON `null` disables that field for the run.
+
+`POST /api/v1/runs/authored/stream` accepts the unresolved `RunRequest` wire
+shape:
+
+```json
+{
+  "thread": "term_example",
+  "request_id": "term_request",
+  "commands": [
+    {"group": "limit", "field": "tokens", "value": 4000}
+  ],
+  "input": {
+    "primary": "Summarize\n@notes.md",
+    "named": [{"name": "audience", "source": "maintainers"}]
+  },
+  "session_commands": [
+    {"group": "default", "field": "model", "value": "openai/gpt-5"}
+  ],
+  "runnable_fallbacks": ["agic:chat", "default"]
+}
+```
+
+The server reads setup and state once, selects the first available fallback,
+and resolves policy, input, prompts, named sources, and file includes before
+accepting the run. Command arrays preserve order. Allow values are selector
+arrays or `null`; default values are strings or `null`; integer limits are
+non-negative integers or `null`; and cost is canonical non-negative decimal
+text or `null`. Named input names and runnable fallbacks must be unique. Unknown
+fields and invalid combinations return `422`; a missing thread returns `404`.
+
+An accepted response exposes `X-Toolang-Run-ID` and subscribes to the live root
+run before execution can publish its first event. CORS exposes the header to
+allowed browser origins. The first event is the matching root `run_begin`, the
+stream ends at its `run_end`, and disconnecting only removes the subscription;
+it does not cancel the run. Clients must not retry an ambiguous start or
+reconnect an incomplete stream because events have no replay cursor.
 
 Clients create a thread explicitly with `POST /api/v1/threads` before the first
 run. The thread request accepts `web`, `term`, `tui`, `chat`, or `script` as its

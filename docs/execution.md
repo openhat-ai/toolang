@@ -78,7 +78,7 @@ accepts unresolved `RunRequest` values, exposes asynchronous start, stop, steer,
 and close operations, and returns a transport-neutral `RunHandle` plus
 caller-facing `RunDetail` and `ControlInfo` values. The boundary deliberately
 excludes stores, setup and state snapshots, local tasks, and durable records so
-a later remote implementation can preserve the same interaction shape.
+local and remote execution preserve the same interaction shape.
 
 `LocalRunClient` implements that boundary over an owned `RunExecutor`. It reads
 the current setup and state once for each start, selects the first explicit
@@ -87,6 +87,17 @@ and converts terminal and control records through the existing caller-facing
 schemas. Terminal Chat still owns its watchers, store, thread manager, result
 inspection, and event-loop thread. Other local execution owners continue to use
 `RunExecutor` directly.
+
+`RemoteRunClient` implements the same boundary over an agent runtime's absolute
+HTTP origin. It sends unresolved requests to
+`POST /api/v1/runs/authored/stream`, consumes canonical `RunEvent` values from
+the accepted run's SSE response, and uses the existing run detail, cancel, and
+steer endpoints. The server owns setup/state snapshots, fallback selection,
+policy and authored-input resolution, and file includes. The client never
+retries a start or reconnects an incomplete stream because the live event
+protocol has no replay cursor. Closing the client detaches its readers and
+owned HTTP resources without canceling server runs or managing the server
+process.
 
 The process-local executor remains the execution engine:
 

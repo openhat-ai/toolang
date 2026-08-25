@@ -3,13 +3,18 @@
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 
 from toolang.api.app import AgentCoreDep, LiveEventRelayDep
-from toolang.api.common import EventSubscription, sse_stream
-from toolang.api.conversion import parse_parts, parse_user_message
+from toolang.api.common import RUN_ID_HEADER, EventSubscription, sse_stream
+from toolang.api.conversion import (
+    parse_authored_run,
+    parse_parts,
+    parse_user_message,
+)
 from toolang.api.schemas import (
+    AuthoredRunRequest,
     RunCancelRequest,
     RunCommandResult,
     RunCreateRequest,
@@ -19,12 +24,14 @@ from toolang.api.schemas import (
 )
 from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
+from toolang.execution.calls import resolve_run_request
 from toolang.execution.executor import LocalRunHandle, RunSpec
 from toolang.execution.records import RunControlRecord, RunRecord
 from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
 from toolang.lang.input import resolve_runnable_input
 from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
+from toolang.lang.includes import resolve_file_include
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -36,7 +43,7 @@ async def _start_run_stream(
     live: LiveEventRelayDep,
     payload: RunCreateRequest,
 ) -> AsyncIterator[_StartedRunStream]:
-    thread_id = _run_thread(core, payload)
+    thread_id = _run_thread(core, payload.thread)
     setup = core.setup.current()
     limits = (
         payload.limits.to_limits(setup.limits)
@@ -78,6 +85,46 @@ async def _start_run_stream(
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     subscription = live.subscribe_run(handle.run_id)
+    try:
+        yield handle, subscription
+    finally:
+        subscription.close()
+
+
+async def _start_authored_run_stream(
+    core: AgentCoreDep,
+    live: LiveEventRelayDep,
+    response: Response,
+    payload: AuthoredRunRequest,
+) -> AsyncIterator[_StartedRunStream]:
+    thread_id = _run_thread(core, payload.thread)
+    run_request = parse_authored_run(payload)
+    setup = core.setup.current()
+    state = core.state.current()
+    include_base = (
+        setup.environment.working_directory
+        if setup.environment is not None
+        else core.layout.home
+    )
+    try:
+        spec = resolve_run_request(
+            run_request,
+            setup=setup,
+            state=state,
+            include=lambda reference: resolve_file_include(
+                reference,
+                base=include_base,
+            ),
+        )
+        handle = core.executor.start(
+            spec,
+            request_id=run_request.request_id,
+            tracer=live.trace(thread_id=thread_id),
+        )
+    except (OSError, ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    subscription = live.subscribe_run(handle.run_id)
+    response.headers[RUN_ID_HEADER] = handle.run_id
     try:
         yield handle, subscription
     finally:
@@ -139,6 +186,26 @@ async def execute_run_stream(
         yield event
 
 
+@router.post(
+    "/authored/stream",
+    summary="Execute Authored Run Stream",
+    response_class=EventSourceResponse,
+)
+async def execute_authored_run_stream(
+    core: AgentCoreDep,
+    request: Request,
+    started: Annotated[_StartedRunStream, Depends(_start_authored_run_stream)],
+) -> AsyncIterator[ServerSentEvent]:
+    handle, subscription = started
+    async for event in sse_stream(
+        request,
+        subscription,
+        terminal_run_id=handle.run_id,
+        stopped=lambda: _run_terminal(core, handle.run_id),
+    ):
+        yield event
+
+
 @router.get("/{run_id}", summary="Get Run", response_model=RunDetail)
 def run_detail(core: AgentCoreDep, run_id: str) -> RunDetail:
     detail = core.history.get_run(run_id)
@@ -177,13 +244,16 @@ def cancel_run(
     run_id: str,
     payload: RunCancelRequest | None = None,
 ) -> RunCommandResult:
-    run = _running_run_or_409(core, run_id)
-    control = core.executor.stop(
-        run_id=run.id,
-        timing=payload.mode if payload else "immediate",
-        request_id=payload.request_id if payload else None,
-        reason=payload.reason if payload else None,
-    )
+    run = _active_run_or_409(core, run_id)
+    try:
+        control = core.executor.stop(
+            run_id=run.id,
+            timing=payload.mode if payload else "immediate",
+            request_id=payload.request_id if payload else None,
+            reason=payload.reason if payload else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _control_result(core, run.id, control)
 
 
@@ -198,13 +268,16 @@ def steer_run(
     run_id: str,
     payload: RunSteerRequest,
 ) -> RunCommandResult:
-    run = _running_run_or_409(core, run_id)
-    control = core.executor.steer(
-        run_id=run.id,
-        timing=payload.mode,
-        request_id=payload.request_id,
-        message=parse_user_message(payload.message),
-    )
+    run = _active_run_or_409(core, run_id)
+    try:
+        control = core.executor.steer(
+            run_id=run.id,
+            timing=payload.mode,
+            request_id=payload.request_id,
+            message=parse_user_message(payload.message),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _control_result(core, run.id, control)
 
 
@@ -292,10 +365,10 @@ def _run_or_404(core: AgentCore, run_id: str) -> RunRecord:
     return run
 
 
-def _running_run_or_409(core: AgentCore, run_id: str) -> RunRecord:
+def _active_run_or_409(core: AgentCore, run_id: str) -> RunRecord:
     run = _run_or_404(core, run_id)
-    if run.status != "running":
-        raise HTTPException(status_code=409, detail=f"run is not running: {run_id}")
+    if run.status not in {"pending", "running"}:
+        raise HTTPException(status_code=409, detail=f"run is not active: {run_id}")
     return run
 
 
@@ -326,13 +399,13 @@ def _control_result(
     )
 
 
-def _run_thread(core: AgentCore, payload: RunCreateRequest) -> str:
-    if core.store.get_thread(thread_id=payload.thread) is None:
+def _run_thread(core: AgentCore, thread_id: str) -> str:
+    if core.store.get_thread(thread_id=thread_id) is None:
         raise HTTPException(
             status_code=404,
-            detail=f"thread not found: {payload.thread}",
+            detail=f"thread not found: {thread_id}",
         )
-    return payload.thread
+    return thread_id
 
 
 def _run_terminal(core: AgentCore, run_id: str) -> bool:

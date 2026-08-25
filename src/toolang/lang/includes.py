@@ -50,7 +50,10 @@ _DOCUMENT_EXTENSIONS = frozenset(
 def resolve_file_include(reference: str, *, base: Path) -> Part:
     """Resolve one local Content reference relative to an explicit base."""
 
-    path = Path(reference).expanduser()
+    try:
+        path = Path(reference).expanduser()
+    except RuntimeError as exc:
+        raise ToolangError(f"included file not found: {reference}") from exc
     if not path.is_absolute():
         path = base / path
     path = path.resolve()

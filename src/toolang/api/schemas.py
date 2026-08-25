@@ -19,6 +19,8 @@ from toolang.execution.types import StepPath
 
 
 NonNegativeInt = Annotated[int, Field(strict=True, ge=0)]
+StrictInt = Annotated[int, Field(strict=True)]
+StrictText = Annotated[str, Field(strict=True)]
 
 
 class ApiRequest(BaseModel):
@@ -97,7 +99,7 @@ class InputMessagePayload(ApiRequest):
     """One user-authored input message."""
 
     role: Literal["user"] = "user"
-    parts: list[InputPart] = Field(min_length=1)
+    parts: list[InputPart]
 
 
 class ThreadPeerPayload(ApiRequest):
@@ -195,6 +197,39 @@ class RunCreateRequest(ApiRequest):
     model: str | None = None
     args: dict[str, object] | None = None
     limits: RunLimitsPayload | None = None
+
+
+class RunOverridePayload(ApiRequest):
+    """One unresolved run policy override."""
+
+    group: Literal["allow", "default", "limit"]
+    field: StrictText
+    value: list[StrictText] | StrictText | StrictInt | None
+
+
+class NamedInputSourcePayload(ApiRequest):
+    """One named authored input source."""
+
+    name: StrictText
+    source: StrictText
+
+
+class RunnableInputRawPayload(ApiRequest):
+    """Authored primary and named input awaiting server resolution."""
+
+    primary: StrictText | None = None
+    named: list[NamedInputSourcePayload] = Field(default_factory=list)
+
+
+class AuthoredRunRequest(ApiRequest):
+    """One unresolved run request for server-owned resolution."""
+
+    thread: StrictText
+    request_id: StrictText
+    commands: list[RunOverridePayload] = Field(default_factory=list)
+    input: RunnableInputRawPayload
+    session_commands: list[RunOverridePayload] = Field(default_factory=list)
+    runnable_fallbacks: list[StrictText] = Field(min_length=1)
 
 
 class RunRerunRequest(ApiRequest):

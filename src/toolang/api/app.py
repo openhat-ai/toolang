@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from toolang.api.common import LiveEventRelay
+from toolang.api.common import RUN_ID_HEADER, LiveEventRelay
 from toolang.catalog import CapsManager, JobsManager
 from toolang.catalog.errors import CatalogConflictError, CatalogNotFoundError
 from toolang.up import AgentCore
@@ -111,6 +111,7 @@ def create_app(
             allow_origins=origins,
             allow_methods=["*"],
             allow_headers=["*"],
+            expose_headers=[RUN_ID_HEADER],
             allow_private_network=True,
         )
 
