@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
 from typing import TypeAlias
 
 from toolang.execution.types import StepPath
 
-_AGIC_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+_MODEL_CALL_TARGET = "model_call"
 _MODEL_CALL_PREFIX = "model_call@"
 
 
@@ -42,9 +41,7 @@ class HistoricalModelCallOwner:
 
 @dataclass(frozen=True, slots=True)
 class ProspectiveModelCallOwner:
-    """The first model call prepared for one authored agic."""
-
-    agic_name: str
+    """The first model call prepared for the configured runnable."""
 
 
 ModelCallOwner: TypeAlias = HistoricalModelCallOwner | ProspectiveModelCallOwner
@@ -68,6 +65,8 @@ def parse_inspect_target(target: str) -> InspectTarget:
     value = target.strip()
     if not value:
         raise ValueError("inspect target is required")
+    if value == _MODEL_CALL_TARGET:
+        return ModelCallInspectTarget(ProspectiveModelCallOwner())
     if value.startswith(_MODEL_CALL_PREFIX):
         return ModelCallInspectTarget(_parse_model_call_owner(value))
     if ":" in value or "/" in value:
@@ -96,14 +95,9 @@ def inspect_target_requires_program(target: InspectTarget) -> bool:
 def _parse_model_call_owner(value: str) -> ModelCallOwner:
     owner = value.removeprefix(_MODEL_CALL_PREFIX)
     if not owner:
-        raise ValueError("model_call target requires an owner")
-    if owner.startswith("agic:"):
-        name = owner.removeprefix("agic:")
-        if not _AGIC_NAME_RE.fullmatch(name):
-            raise ValueError(f"invalid model_call owner: {owner}")
-        return ProspectiveModelCallOwner(name)
+        raise ValueError("historical model_call target requires a StepPath")
     if not owner.startswith("run_") or "." not in owner:
-        raise ValueError(f"model_call owner must be a StepPath or agic:NAME: {owner}")
+        raise ValueError(f"model_call owner must be a StepPath: {owner}")
     try:
         return HistoricalModelCallOwner(StepPath.parse(owner))
     except ValueError as exc:

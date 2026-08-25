@@ -9,21 +9,22 @@ either:
 - the normalized first `ModelCall` that an `agic` would produce from the
   current program and supplied inputs.
 
-The same target can be paired with an explicit model ID to display the actual
-provider request that the model's adapter would build. This feature is
-read-only; sending the projected request is deferred.
+The same target can use `--request` with an exact model ID supplied through
+`--default model=...` to display the actual provider request that the model's
+adapter would build. This feature is read-only; sending the projected request
+is deferred.
 
 ## Success Criteria
 
 - `too alice inspect model_call@run_id.0.1` displays the persisted model call
   for that historical model step.
-- `too alice inspect model_call@agic:review` prepares and displays the
-  structured first model call without executing the `agic`.
+- `too alice inspect model_call --default runnable=agic:review` prepares and
+  displays the structured first model call without executing the `agic`.
 - With no view option, both target forms display a complete structured
   `ModelCall`, not a summary.
-- `--request MODEL_ID` writes the sanitized provider-native JSON request body
-  produced for that exact model without sending it.
-- `--request` without a model ID is rejected.
+- `--request` writes the sanitized provider-native JSON request body produced
+  for the exact `--default model=PROVIDER/MODEL_ID` without sending it.
+- `--request` without an exact default model binding is rejected.
 - `--send` is not added in this scope; all supported forms remain read-only.
 - Inspection never exposes API keys, authorization values, or other adapter
   secrets.
@@ -81,9 +82,7 @@ thread, run, and step forms:
 
 ```text
 INSPECT_TARGET     := THREAD_ID | RUN_ID | STEP_PATH | MODEL_CALL_TARGET | ...
-MODEL_CALL_TARGET := "model_call@" MODEL_CALL_OWNER
-MODEL_CALL_OWNER  := STEP_PATH | AGIC_REF
-AGIC_REF          := "agic:" AGIC_NAME
+MODEL_CALL_TARGET := "model_call" | "model_call@" STEP_PATH
 ```
 
 The ellipsis represents the control and value targets defined by inspect
@@ -95,19 +94,20 @@ Examples:
 ```sh
 too alice inspect model_call@run_ab12.0
 too alice inspect model_call@run_ab12.0.1
-too alice inspect model_call@agic:review
-too alice inspect model_call@agic:default
+too alice inspect model_call --default runnable=agic:review
+too alice inspect model_call --default runnable=agic:default
 ```
 
 `STEP_PATH` uses the existing run-step path syntax. The selected historical
-step must be a model step. `AGIC_NAME` uses normal authored-name resolution.
+step must be a model step. The bare `model_call` target is prospective and
+resolves its agic from the normal `--default runnable=...` binding.
 
 The `model_call@` prefix is intentional: the inspected concept is a model call,
-while the suffix identifies the call's historical or prospective owner.
+while the suffix identifies the historical step that owns it.
 Because `@` is also used by control paths, the parser recognizes reserved typed
 prefixes such as `model_call@` before applying the generic owner-control grammar.
-`:` remains invalid in ordinary thread, run, and step paths and is accepted only
-inside the `agic:` owner of a model-call target.
+`:` remains invalid in inspect target paths; runnable syntax belongs to the
+default binding parser.
 
 ## Unified Parsing And Dispatch
 
@@ -124,7 +124,7 @@ InspectTarget :=
   | existing control and value target variants
 
 ModelCallOwner := HistoricalModelCallOwner(step_path)
-                | ProspectiveModelCallOwner(agic_name)
+                | ProspectiveModelCallOwner()
 ```
 
 The parser validates the complete outer grammar before any store or authored
@@ -162,7 +162,8 @@ Historical form:
 
 ```text
 too TARGET inspect model_call@STEP_PATH
-    [--full | --json | --request MODEL_ID]
+    [--full | --json]
+    [--request --default model=MODEL_ID]
 
 MODEL_ID := PROVIDER_ID "/" PROVIDER_MODEL_ID
 ```
@@ -170,8 +171,10 @@ MODEL_ID := PROVIDER_ID "/" PROVIDER_MODEL_ID
 Prospective form:
 
 ```text
-too TARGET inspect model_call@agic:NAME
-    [--full | --json | --request MODEL_ID]
+too TARGET inspect model_call
+    --default runnable=AGIC_REF
+    [--default model=MODEL_ID]
+    [--full | --json | --request]
     [--input CONTENT]
     [--arg NAME=CONTENT]...
     [--thread]
@@ -184,26 +187,29 @@ The view and action matrix is:
 | --- | --- | --- |
 | none | structured persisted `ModelCall` | structured prepared `ModelCall` |
 | `--json` | persisted `ModelCall` JSON | prepared `ModelCall` JSON |
-| `--request MODEL_ID` | project the persisted call for that model as a provider-native JSON body | project the prepared call for that model as a provider-native JSON body; no send |
-| `--request` | error; model ID required | error; model ID required |
+| `--request --default model=MODEL_ID` | project the persisted call for that model as a provider-native JSON body | project the prepared call for that model as a provider-native JSON body; no send |
+| `--request` without an exact default model | error | error |
 
 `--full`, `--json`, and `--request` are mutually exclusive view selectors.
 `--request` already implies JSON because it emits the concrete JSON request
 body; combining it with `--json` is rejected as redundant.
 
-`MODEL_ID` is one exact model ID accepted by the runtime model catalog. It is
+`--request` is a parameterless view selector. `MODEL_ID` is supplied through
+the normal `--default model=MODEL_ID` binding and is one exact model ID accepted
+by the runtime model catalog. It is
 the canonical `provider/model_id` identity, where the first slash separates the
 provider and the remaining model ID may contain more slashes. It is not an
 alias, wildcard, selector expression, or optional override. Resolving the model
-ID yields the concrete model target and adapter used for request projection or
-sending. Unknown or unavailable model IDs fail before payload construction and
-before any durable or network action.
+ID yields the concrete model target and adapter used for request projection.
+Unknown or unavailable model IDs fail before payload construction and before
+any durable or network action.
 
 Examples:
 
 ```sh
-too alice inspect model_call@run_ab12.0 --request openai/gpt-5
-too alice inspect model_call@agic:review --request openai/gpt-5
+too alice inspect model_call@run_ab12.0 --default model=openai/gpt-5 --request
+too alice inspect model_call --default runnable=agic:review \
+  --default model=openai/gpt-5 --request
 ```
 
 Historical request inspection is a projection through the model ID supplied
@@ -231,9 +237,9 @@ coercion:
 Examples:
 
 ```sh
-too alice inspect model_call@agic:review --input draft.md
-too alice inspect model_call@agic:review --arg draft=draft.md
-too alice inspect model_call@agic:review --input -
+too alice inspect model_call --default runnable=agic:review --input draft.md
+too alice inspect model_call --default runnable=agic:review --arg draft=draft.md
+too alice inspect model_call --default runnable=agic:review --input -
 ```
 
 `--thread` includes the target's current inspectable thread history using normal
@@ -286,11 +292,12 @@ about a later run.
 
 ## Provider Request JSON
 
-`--request MODEL_ID` resolves that exact model target and follows it to the
-concrete adapter. It uses the same provider-payload builder as transport
-execution. The result is the sanitized provider-specific JSON body after model
-and adapter option merging. Transport-only fields such as the endpoint,
-credentials, and headers are not part of this output.
+`--request` resolves the exact model target from
+`--default model=MODEL_ID` and follows it to the concrete adapter. It uses the
+same provider-payload builder as transport execution. The result is the
+sanitized provider-specific JSON body after model and adapter option merging.
+Transport-only fields such as the endpoint, credentials, and headers are not
+part of this output.
 
 The CLI writes only the complete sanitized provider-native JSON body to stdout.
 It does not wrap the body in a Toolang envelope, add headings, or interleave
@@ -310,7 +317,7 @@ I/O.
 All bundled model adapters implement the capability through their existing
 payload builders, including response, chat-completion, messages, and
 generate-content payloads. A third-party adapter that does not implement it
-continues to execute normally, but `--request MODEL_ID` reports the capability
+continues to execute normally, but `--request` reports the capability
 as unsupported.
 
 ### Sanitization
@@ -328,7 +335,7 @@ Sanitization occurs before presentation:
 No presentation option can reveal excluded values. `--full` and `--json` cannot
 be combined with `--request`.
 
-Read-only `--request MODEL_ID` performs exact model and adapter resolution and
+Read-only `--request` performs exact model and adapter resolution and
 payload projection but does not call the provider, create a run, append to a
 thread, write execution records, or update accounting.
 
@@ -339,7 +346,7 @@ thread, write execution records, or update accounting.
 ```json
 {
   "kind": "model_call",
-  "target": "model_call@agic:review",
+  "target": "model_call",
   "state": "prospective",
   "call": {},
   "basis": {},
@@ -347,7 +354,7 @@ thread, write execution records, or update accounting.
 }
 ```
 
-`--request MODEL_ID` does not use an envelope. Its entire stdout document is
+`--request` does not use an envelope. Its entire stdout document is
 the provider-native JSON request body. For example, an OpenAI Responses adapter
 can emit a body shaped like:
 
@@ -380,9 +387,9 @@ The unified dispatcher derives routing from the parsed target and options:
 | Target and view | Store | Program/input preparation | Model resolution | Writable | Network |
 | --- | --- | --- | --- | --- | --- |
 | thread, run, step, or historical call | read | no | no | no | no |
-| historical call `--request MODEL_ID` | read | no | exact model and adapter | no | no |
+| historical call `--request` | read | no | exact default model and adapter | no | no |
 | prospective call | only for `--thread` | yes | no provider adapter | no | no |
-| prospective call `--request MODEL_ID` | only for `--thread` | yes | exact model and request projection | no | no |
+| prospective call `--request` | only for `--thread` | yes | exact default model and request projection | no | no |
 
 Roaming or visiting prospective inspection may use normal dependency
 materialization. Historical normalized-call inspection remains layout-only and
@@ -457,16 +464,17 @@ preserve unrelated worktree changes.
 - Dispatch every parsed variant through the same public dispatcher.
 - Assert the CLI contains no model-call-specific bypass around dispatch.
 - Parse historical nested paths such as `model_call@run_id.0.1`.
-- Parse prospective selectors such as `model_call@agic:review`.
+- Parse the prospective `model_call` selector.
 - Distinguish `model_call@...` from existing control targets before applying the
   generic `@` grammar.
 - Reject a historical non-model step with a model-step-specific error.
 - Reject unknown `agic` names, malformed selectors, and ambiguous thread use.
-- Require exactly one model ID after `--request`.
+- Parse `--request` as a parameterless flag and require exactly one model
+  binding through `--default model=MODEL_ID`.
 - Reject aliases, wildcards, filters, malformed exact identities, unknown
   models, and unavailable models.
 - Reject `--send` as an unsupported inspect option.
-- Reject `--request MODEL_ID --json` and `--request MODEL_ID --full` as
+- Reject `--request --json` and `--request --full` as
   conflicting view selectors.
 - Reject any send form for a historical selector.
 - Reject prospective-only input, thread, or allow options on historical
@@ -489,7 +497,7 @@ preserve unrelated worktree changes.
 
 ### Provider Requests
 
-- `--request MODEL_ID` writes exactly one provider-native JSON body to stdout
+- `--request` writes exactly one provider-native JSON body to stdout
   and performs no network I/O.
 - Request stdout has no Toolang envelope, headings, or diagnostics and parses
   as one JSON document.
@@ -541,4 +549,5 @@ preserve unrelated worktree changes.
 ## Open Questions
 
 None. This definition chooses a structured normalized-call default view,
-`--request MODEL_ID` as a read-only provider-native JSON body, and no send mode.
+parameterless `--request` as a read-only provider-native JSON body using the
+default model binding, and no send mode.

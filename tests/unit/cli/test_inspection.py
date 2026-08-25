@@ -24,14 +24,14 @@ def test_parse_inspect_target_returns_distinct_typed_variants() -> None:
     assert parse_inspect_target("model_call@run_one.0.2") == ModelCallInspectTarget(
         HistoricalModelCallOwner(StepPath("run_one", (0, 2)))
     )
-    assert parse_inspect_target("model_call@agic:review") == ModelCallInspectTarget(
-        ProspectiveModelCallOwner("review")
+    assert parse_inspect_target("model_call") == ModelCallInspectTarget(
+        ProspectiveModelCallOwner()
     )
 
 
 def test_only_prospective_model_call_requires_program_materialization() -> None:
     historical = parse_inspect_target("model_call@run_one.0")
-    prospective = parse_inspect_target("model_call@agic:review")
+    prospective = parse_inspect_target("model_call")
 
     assert inspect_target_requires_program(historical) is False
     assert inspect_target_requires_program(prospective) is True
@@ -43,7 +43,7 @@ def test_only_prospective_model_call_requires_program_materialization() -> None:
         "model_call@",
         "model_call@run_one",
         "model_call@agic:",
-        "model_call@agic:review.extra",
+        "model_call@agic:review",
         "model_call@run_one.01",
     ),
 )

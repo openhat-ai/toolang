@@ -345,6 +345,37 @@ def test_inspect_reads_historical_model_call_as_a_direct_target(
         "diagnostics": [],
     }
 
+    catalog = tmp_path / "models.json"
+    catalog.write_text(json.dumps(_inspect_model_catalog()), encoding="utf-8")
+    request_result = _invoke(
+        root,
+        "--models",
+        str(catalog),
+        "alice",
+        "inspect",
+        "model_call@run_model_call.0",
+        "--default",
+        "model=test/model",
+        "--request",
+        env={"TEST_API_KEY": "top-secret"},
+    )
+    assert request_result.exit_code == 0, request_result.stderr
+    request = json.loads(request_result.stdout)
+    assert request["model"] == "model"
+    assert "Historical instructions" in request_result.stdout
+    assert "top-secret" not in request_result.stdout
+
+    unused_model = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "model_call@run_model_call.0",
+        "--default",
+        "model=test/model",
+    )
+    assert unused_model.exit_code == 1
+    assert "--default model requires --request" in unused_model.stderr
+
 
 def test_inspect_prepares_prospective_model_call_and_provider_json(
     tmp_path: Path,
@@ -375,7 +406,11 @@ agic review(_: Text, focus: Text):
         str(catalog),
         "alice",
         "inspect",
-        "model_call@agic:review",
+        "model_call",
+        "--default",
+        "runnable=agic:review",
+        "--default",
+        "model=test/model",
         "--input",
         "draft",
         "--arg",
@@ -389,7 +424,6 @@ agic review(_: Text, focus: Text):
         root,
         *common,
         "--request",
-        "test/model",
         env=env,
     )
     stdin_result = _invoke(
@@ -398,7 +432,11 @@ agic review(_: Text, focus: Text):
         str(catalog),
         "alice",
         "inspect",
-        "model_call@agic:review",
+        "model_call",
+        "--default",
+        "runnable=agic:review",
+        "--default",
+        "model=test/model",
         "--input",
         "-",
         "--arg",
@@ -416,6 +454,7 @@ agic review(_: Text, focus: Text):
     assert call_result.exit_code == 0, call_result.stderr
     call_document = json.loads(call_result.stdout)
     assert call_document["kind"] == "model_call"
+    assert call_document["target"] == "model_call"
     assert call_document["state"] == "prospective"
     assert call_document["model"] == "test/model"
     assert call_document["basis"]["preview"] is True
@@ -491,7 +530,11 @@ def test_inspect_can_include_one_unambiguous_thread_history(tmp_path: Path) -> N
         str(catalog),
         "alice",
         "inspect",
-        "model_call@agic:review",
+        "model_call",
+        "--default",
+        "runnable=agic:review",
+        "--default",
+        "model=test/model",
         "--input",
         "next question",
         "--thread",
@@ -524,7 +567,11 @@ def test_inspect_can_include_one_unambiguous_thread_history(tmp_path: Path) -> N
         str(catalog),
         "alice",
         "inspect",
-        "model_call@agic:review",
+        "model_call",
+        "--default",
+        "runnable=agic:review",
+        "--default",
+        "model=test/model",
         "--input",
         "next question",
         "--thread",
@@ -537,9 +584,34 @@ def test_inspect_can_include_one_unambiguous_thread_history(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     ("options", "message"),
     (
-        (("--request",), "Option '--request' requires an argument"),
-        (("--request", "test/model", "--json"), "cannot be combined"),
-        (("--request", "test/model", "--full"), "cannot be combined"),
+        ((), "prospective model_call requires --default runnable=agic:NAME"),
+        (
+            ("--request", "--default", "runnable=agic:default"),
+            "--request requires --default model=PROVIDER/MODEL_ID",
+        ),
+        (("--request", "test/model"), "unexpected extra argument"),
+        (
+            (
+                "--request",
+                "--default",
+                "runnable=agic:default",
+                "--default",
+                "model=test/model",
+                "--json",
+            ),
+            "cannot be combined",
+        ),
+        (
+            (
+                "--request",
+                "--default",
+                "runnable=agic:default",
+                "--default",
+                "model=test/model",
+                "--full",
+            ),
+            "cannot be combined",
+        ),
         (("--send",), "No such option: --send"),
     ),
 )
@@ -555,7 +627,7 @@ def test_inspect_rejects_invalid_model_call_view_options(
         root,
         "alice",
         "inspect",
-        "model_call@agic:default",
+        "model_call",
         *options,
     )
 

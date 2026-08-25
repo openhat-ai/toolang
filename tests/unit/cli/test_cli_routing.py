@@ -716,7 +716,7 @@ def test_cli_materializes_visiting_prospective_model_call_inspection(
     monkeypatch.setattr(agents, "resolve_visiting_layout", resolve)
 
     result = dispatch_visiting(
-        [selector, "inspect", "model_call@agic:review"],
+        [selector, "inspect", "model_call", "--default", "runnable=agic:review"],
         run_app=lambda args, selected: (
             captured.update(args=args, layout=selected) or 14
         ),
@@ -724,7 +724,12 @@ def test_cli_materializes_visiting_prospective_model_call_inspection(
 
     assert result == 14
     assert captured["source"] == selector
-    assert captured["args"] == ["inspect", "model_call@agic:review"]
+    assert captured["args"] == [
+        "inspect",
+        "model_call",
+        "--default",
+        "runnable=agic:review",
+    ]
     assert captured["layout"] == layout
     assert captured["progress"] is not None
 

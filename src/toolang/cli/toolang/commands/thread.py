@@ -16,7 +16,6 @@ import click
 import typer
 
 from toolang.base.types.message import Message
-from toolang.base.types.policy import RunBindings
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
     resolve_ceiling_overrides,
@@ -78,11 +77,12 @@ class InspectOptions:
     limit: int
     json_view: bool = False
     full: bool = False
-    request_model: str | None = None
+    request_view: bool = False
     input_source: str | None = None
     arguments: tuple[str, ...] = ()
     include_thread: bool = False
     allows: tuple[str, ...] = ()
+    defaults: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,7 +187,10 @@ def runs_command(
 def inspect_command(
     ctx: typer.Context,
     target: Annotated[
-        str, typer.Argument(help="Thread id, run id, or run step path to inspect.")
+        str,
+        typer.Argument(
+            help="Thread id, run id, step path, or model_call target to inspect."
+        ),
     ],
     limit: Annotated[
         int, typer.Option("--limit", help="Maximum thread runs to read.")
@@ -198,14 +201,13 @@ def inspect_command(
     full: Annotated[
         bool, typer.Option("--full", help="Do not truncate a model call view.")
     ] = False,
-    request_model: Annotated[
-        str | None,
+    request_view: Annotated[
+        bool,
         typer.Option(
             "--request",
-            metavar="MODEL_ID",
-            help="Render the provider JSON body for one exact model id.",
+            help="Render provider JSON for the --default model binding.",
         ),
-    ] = None,
+    ] = False,
     input_source: Annotated[
         str | None,
         typer.Option(
@@ -237,6 +239,14 @@ def inspect_command(
             help="Set a prospective capability ceiling. Repeat by domain.",
         ),
     ] = None,
+    defaults: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--default",
+            metavar="FIELD=VALUE",
+            help="Set runnable or model for model-call inspection. Repeat by field.",
+        ),
+    ] = None,
 ) -> None:
     """Inspect one execution path or historical/prospective model call."""
 
@@ -247,11 +257,12 @@ def inspect_command(
         limit=limit,
         json_view=json_view,
         full=full,
-        request_model=request_model,
+        request_view=request_view,
         input_source=input_source,
         arguments=tuple(arguments or ()),
         include_thread=include_thread,
         allows=tuple(allows or ()),
+        defaults=tuple(defaults or ()),
     )
     requirements = _INSPECT_DISPATCHER.requirements(parsed, options)
     execution = (
@@ -515,7 +526,7 @@ class InspectDispatcher:
         if isinstance(target.owner, HistoricalModelCallOwner):
             return InspectRequirements(
                 execution="required",
-                setup=options.request_model is not None,
+                setup=options.request_view,
             )
         return InspectRequirements(
             execution="required" if options.include_thread else "none",
@@ -539,15 +550,21 @@ class InspectDispatcher:
                 limit=options.limit,
             )
         setup = (
-            await _inspect_setup(ctx, allows=options.allows)
+            await _inspect_setup(
+                ctx,
+                allows=options.allows,
+                defaults=options.defaults,
+            )
             if requirements.setup
             else None
         )
+        if options.request_view and setup is not None:
+            _request_model_id(setup)
         if isinstance(target.owner, HistoricalModelCallOwner):
             return _inspect_historical_model_call(
                 _require_execution(resources),
                 target,
-                request_model=options.request_model,
+                request_view=options.request_view,
                 setup=setup,
             )
         state = await StateWatcher(context_layout(ctx)).refresh()
@@ -569,32 +586,45 @@ class InspectDispatcher:
         model_call = isinstance(target, ModelCallInspectTarget)
         if not model_call and (
             options.full
-            or options.request_model is not None
+            or options.request_view
             or options.input_source is not None
             or options.arguments
             or options.include_thread
             or options.allows
+            or options.defaults
         ):
-            raise click.ClickException(
-                "model call options require a model_call@... target"
-            )
+            raise click.ClickException("model call options require a model_call target")
         if options.full and options.json_view:
             raise click.ClickException("--full and --json cannot be combined")
-        if options.request_model is not None and (options.full or options.json_view):
+        if options.request_view and (options.full or options.json_view):
             raise click.ClickException(
                 "--request cannot be combined with --full or --json"
             )
         if not isinstance(target, ModelCallInspectTarget):
             return
+        try:
+            default_overrides = resolve_binding_overrides({}, options.defaults)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
         prospective = isinstance(target.owner, ProspectiveModelCallOwner)
         if not prospective and (
             options.input_source is not None
             or options.arguments
             or options.include_thread
             or options.allows
+            or "runnable" in default_overrides
         ):
             raise click.ClickException(
-                "--input, --arg, --thread, and --allow require model_call@agic:NAME"
+                "--input, --arg, --thread, --allow, and --default runnable "
+                "require the model_call target"
+            )
+        if (
+            not prospective
+            and "model" in default_overrides
+            and not options.request_view
+        ):
+            raise click.ClickException(
+                "--default model requires --request for a historical model call"
             )
 
 
@@ -605,6 +635,7 @@ async def _inspect_setup(
     ctx: typer.Context,
     *,
     allows: Sequence[str],
+    defaults: Sequence[str],
 ) -> AgentSetup:
     layout = context_layout(ctx)
     environ = load_runtime_environ(layout, base_environ=os.environ)
@@ -612,7 +643,7 @@ async def _inspect_setup(
         layout,
         model_catalog=context_model_catalog(ctx),
         ceiling_overrides=resolve_ceiling_overrides(environ, allows),
-        binding_overrides=resolve_binding_overrides(environ),
+        binding_overrides=resolve_binding_overrides(environ, defaults),
     ).refresh()
 
 
@@ -620,7 +651,7 @@ def _inspect_historical_model_call(
     resources: ExecutionResources,
     target: ModelCallInspectTarget,
     *,
-    request_model: str | None,
+    request_view: bool,
     setup: AgentSetup | None,
 ) -> InspectDocument:
     owner = target.owner
@@ -636,12 +667,12 @@ def _inspect_historical_model_call(
     if not isinstance(step.given, ModelStepGiven):
         raise click.ClickException(f"step is not a model call: {path}")
     selector = f"model_call@{path}"
-    if request_model is not None:
+    if request_view:
         if setup is None:  # pragma: no cover - requirements prepare setup
             raise RuntimeError("request inspection setup was not prepared")
         projection = project_model_request(
             setup,
-            model_id=request_model,
+            model_id=_request_model_id(setup),
             call=step.given.call,
         )
         return {
@@ -680,7 +711,11 @@ def _inspect_prospective_model_call(
         include=options.include_thread,
     )
     raw_input = _preview_input(options)
-    runnable = f"agic:{owner.agic_name}"
+    runnable = setup.bindings.runnable
+    if runnable is None:
+        raise click.ClickException(
+            "prospective model_call requires --default runnable=agic:NAME"
+        )
     spec = resolve_spec(
         (),
         raw_input,
@@ -688,10 +723,6 @@ def _inspect_prospective_model_call(
         state=state,
         thread=thread_id,
         default_runnable=runnable,
-        surface=RunBindings(
-            runnable=runnable,
-            model=options.request_model,
-        ),
         include=lambda reference: resolve_file_include(
             reference,
             base=Path.cwd(),
@@ -702,11 +733,11 @@ def _inspect_prospective_model_call(
         run_id=_PREVIEW_RUN_ID,
         history=history,
     )
-    selector = f"model_call@agic:{owner.agic_name}"
-    if options.request_model is not None:
+    selector = "model_call"
+    if options.request_view:
         projection = project_model_request(
             setup,
-            model_id=options.request_model,
+            model_id=_request_model_id(setup),
             call=preview.call,
         )
         return {
@@ -726,10 +757,20 @@ def _inspect_prospective_model_call(
             "thread_id": preview.thread_id,
             "step_path": f"{preview.run_id}.0",
             "created_at": preview.created_at,
+            "runnable": runnable,
             "prompt_context": preview.prompt_context,
             "preview": True,
         },
     )
+
+
+def _request_model_id(setup: AgentSetup) -> str:
+    model_id = setup.bindings.model
+    if model_id is None:
+        raise click.ClickException(
+            "--request requires --default model=PROVIDER/MODEL_ID"
+        )
+    return model_id
 
 
 def _preview_input(options: InspectOptions) -> RunnableInputRaw:

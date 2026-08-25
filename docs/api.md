@@ -152,12 +152,14 @@ the following visible suffix.
 
 ## Model Call Inspection
 
-`inspect` accepts a persisted model step or an authored `agic` as a direct
-model-call target:
+`inspect` accepts a persisted model step as a historical target or the bare
+`model_call` target for a configured runnable:
 
 ```bash
 toolang alice inspect model_call@run_ppkp9e94.0
-toolang alice inspect model_call@agic:review --input "Review this draft"
+toolang alice inspect model_call \
+  --default runnable=agic:review \
+  --input "Review this draft"
 ```
 
 The historical form displays the normalized `ModelCall` stored for that step.
@@ -172,13 +174,16 @@ document, and `--full` disables human-view truncation. To inspect the exact JSON
 body a bundled adapter would send for a concrete catalog model, use:
 
 ```bash
-toolang alice inspect model_call@agic:review \
+toolang alice inspect model_call \
+  --default runnable=agic:review \
+  --default model=openai/gpt-5 \
   --input "Review this draft" \
-  --request openai/gpt-5
+  --request
 ```
 
-`--request` requires an exact `provider/model_id`, implies JSON output, and does
-not send the request. Model-call inspection is read-only; `--send` is not a
+`--request` is a parameterless flag. It requires an exact
+`--default model=provider/model_id` binding, implies JSON output, and does not
+send the request. Model-call inspection is read-only; `--send` is not a
 supported option.
 
 
