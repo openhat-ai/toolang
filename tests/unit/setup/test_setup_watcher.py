@@ -201,15 +201,15 @@ def test_setup_watcher_routes_only_each_plugins_canonical_config(
     _write_catalog(tmp_path / "models.json", ("one",))
     root_config = {
         "plugin": {
-            "toolset": {"filesystem": {"root": "/shared"}},
-            "model_adapter": {"responses": {"token_env": "ADAPTER_TOKEN"}},
+            "toolset": {"filesystem": {"max_chars": 1000}},
+            "model_adapter": {"responses": {"credential_env": "ADAPTER_TOKEN"}},
             "model_catalog": {"ollama": {"timeout": 3}},
         }
     }
     agent_config = {
         "plugin": {
-            "toolset": {"filesystem": {"root": "/agent"}},
-            "model_adapter": {"responses": {"mode": "strict"}},
+            "toolset": {"filesystem": {"max_chars": 2000}},
+            "model_adapter": {"responses": {"profile": "agent"}},
         }
     }
     adapter_calls: list[dict[str, dict[str, object]]] = []
@@ -232,7 +232,6 @@ def test_setup_watcher_routes_only_each_plugins_canonical_config(
         "load_setup_envs",
         lambda _layout: {
             "TEST_API_KEY": "secret",
-            "ADAPTER_TOKEN": "adapter-secret",
         },
     )
 
@@ -263,12 +262,12 @@ def test_setup_watcher_routes_only_each_plugins_canonical_config(
     assert adapter_calls == [
         {
             "responses": {
-                "token": "adapter-secret",
-                "mode": "strict",
+                "credential_env": "ADAPTER_TOKEN",
+                "profile": "agent",
             }
         }
     ]
-    assert toolset_calls == [{"filesystem": {"root": "/agent"}}]
+    assert toolset_calls == [{"filesystem": {"max_chars": 2000}}]
     assert catalog_calls[0]["ollama"]["timeout"] == 3
     assert "root" not in catalog_calls[0]["ollama"]
     assert "mode" not in catalog_calls[0]["ollama"]

@@ -8,7 +8,6 @@ from typing import Any, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelAlias, Provider
-from toolang.plugin.config import validate_plugin_config
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +60,6 @@ def parse_model_aliases(
 
     aliases: dict[str, ModelAlias] = {}
     for payload in config_layers:
-        validate_plugin_config(payload)
         models_table = _models_table(payload)
         raw_aliases = models_table.get("aliases")
         if not isinstance(raw_aliases, Mapping):
@@ -80,7 +78,6 @@ def parse_provider_configs(
 
     configs: dict[str, ProviderConfig] = {}
     for payload in config_layers:
-        validate_plugin_config(payload)
         models_table = _models_table(payload)
         raw_providers = models_table.get("providers")
         if not isinstance(raw_providers, Mapping):
@@ -101,7 +98,6 @@ def parse_default_models(
 
     defaults: tuple[str, ...] = ()
     for payload in config_layers:
-        validate_plugin_config(payload)
         models_table = _models_table(payload)
         raw_default = models_table.get("default")
         if isinstance(raw_default, str):
@@ -180,7 +176,10 @@ def _models_table(payload: Mapping[str, object]) -> Mapping[str, object]:
     raw_models = payload.get("models")
     if not isinstance(raw_models, Mapping):
         return {}
-    return cast(Mapping[str, object], raw_models)
+    models = cast(Mapping[str, object], raw_models)
+    if "catalogs" in models:
+        raise ValueError("unknown models config field: catalogs")
+    return models
 
 
 def _required_model_config_str(

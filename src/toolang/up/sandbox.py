@@ -27,7 +27,6 @@ from toolang.plugin.sandboxes.loading import create_sandbox
 from toolang.setup.config import (
     load_agent_config,
     load_setup_config,
-    load_setup_envs,
 )
 from toolang.state.state import AgentState
 from toolang.state.watcher import StateWatcher
@@ -130,7 +129,6 @@ async def resolve_launch(
     selected, config = _select_sandbox(
         state,
         explicit=sandbox,
-        environ=environ,
     )
     serve = resolve_serve(
         layout=layout,
@@ -172,7 +170,6 @@ async def _launch_locked(spec: LaunchSpec) -> SandboxHandle:
         implementation = load_state_sandbox(
             spec.serve.layout,
             current,
-            environ=spec.environ,
         )
         if await implementation.running(current.ref):
             raise ValueError(f"agent is already running: {spec.serve.layout.name}")
@@ -294,12 +291,10 @@ def _select_sandbox(
     state: AgentState,
     *,
     explicit: str | None,
-    environ: Mapping[str, str],
 ) -> tuple[str, dict[str, object]]:
     configs = merge_plugin_configs(
         (state.root_config, state.home_config),
         family="sandbox",
-        environ=environ,
     )
     binding = resolve_sandbox_binding((state.root_config, state.home_config))
     if explicit is not None:
@@ -341,17 +336,13 @@ def _hosted_root(
 def load_state_sandbox(
     layout: AgentLayout,
     state: SandboxState,
-    *,
-    environ: Mapping[str, str] | None = None,
 ) -> Sandbox:
     """Recreate a state sandbox with its current plugin-owned configuration."""
 
     name, _ = _split_sandbox(state.sandbox)
-    envs = dict(environ) if environ is not None else load_setup_envs(layout)
     configs = merge_plugin_configs(
         (load_setup_config(layout), load_agent_config(layout)),
         family="sandbox",
-        environ=envs,
     )
     return create_sandbox(name, config=configs.get(name, {}))
 

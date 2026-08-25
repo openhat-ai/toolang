@@ -71,10 +71,11 @@ External catalog entry points are opt-in. Configure one by its entry-point name:
 ```toml
 [plugin.model_catalog.company]
 url = "https://catalog.example/models.json"
-token_env = "COMPANY_CATALOG_TOKEN"
+credential_env = "COMPANY_CATALOG_TOKEN"
 ```
 
-The resolved mapping is passed directly to the catalog factory. Built-in
+The merged mapping is passed unchanged to the catalog factory; the plugin owns
+resolution of `credential_env` when it needs the credential. Built-in
 `models_dev`, `ollama`, and `llama_cpp` catalogs remain enabled. Core provider
 routes and aliases remain under `[models.providers.<name>]` and
 `[models.aliases.<name>]`; they are not plugin factory configuration.
@@ -162,10 +163,11 @@ Adapter factory configuration uses the same plugin grammar:
 
 ```toml
 [plugin.model_adapter.responses]
-mode = "strict"
 ```
 
-Only this resolved table is passed to the `responses` factory.
+Only this merged table is passed to the `responses` factory. The built-in
+adapters currently define no authored plugin options; external adapters may
+define their own non-sensitive values and secret-reference fields.
 
 Adapters receive a concrete API base URL in `ModelTarget`. They translate
 canonical messages and tools, normalize streaming, usage, cache, reasoning,

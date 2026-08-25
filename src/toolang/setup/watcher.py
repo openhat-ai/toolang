@@ -116,17 +116,14 @@ class SetupWatcher:
             adapter_configs = merge_plugin_configs(
                 configs,
                 family="model_adapter",
-                environ=envs,
             )
             toolset_configs = merge_plugin_configs(
                 configs,
                 family="toolset",
-                environ=envs,
             )
             catalog_configs = merge_plugin_configs(
                 configs,
                 family="model_catalog",
-                environ=envs,
             )
             if config_changed or envs_changed or not self._adapters:
                 self._adapters = load_model_adapters(adapter_configs)

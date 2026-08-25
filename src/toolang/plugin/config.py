@@ -18,16 +18,7 @@ PLUGIN_FAMILIES: frozenset[str] = frozenset(
     {"toolset", "channel", "sandbox", "model_catalog", "model_adapter"}
 )
 _LEGACY_PLUGIN_SECTIONS = frozenset({"tools", "channels", "plugins"})
-_MODEL_FIELDS = frozenset({"default", "providers", "aliases"})
 _SANDBOX_FIELDS = frozenset({"driver", "target"})
-
-
-@dataclass(frozen=True, slots=True)
-class ChannelBinding:
-    """One configured channel plugin binding."""
-
-    name: str
-    config: dict[str, object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +33,6 @@ def merge_plugin_configs(
     config_layers: Sequence[Mapping[str, object]],
     *,
     family: PluginFamily,
-    environ: Mapping[str, str],
 ) -> dict[str, dict[str, object]]:
     """Merge one canonical plugin family from root and agent config layers."""
 
@@ -61,15 +51,7 @@ def merge_plugin_configs(
             name = str(raw_name).strip()
             value = cast(Mapping[str, object], raw_value)
             merged[name] = _merge_mappings(merged.get(name, {}), value)
-
-    return {
-        name: resolve_env_refs(
-            config,
-            environ,
-            context=f"plugin.{family}.{name}",
-        )
-        for name, config in merged.items()
-    }
+    return merged
 
 
 def validate_plugin_config(payload: Mapping[str, object]) -> None:
@@ -80,11 +62,6 @@ def validate_plugin_config(payload: Mapping[str, object]) -> None:
     )
     if legacy:
         raise ValueError(f"unsupported plugin config section: {', '.join(legacy)}")
-
-    raw_models = payload.get("models")
-    if raw_models is not None:
-        models = _require_table(raw_models, context="models")
-        _reject_unknown(models, _MODEL_FIELDS, context="models")
 
     raw_sandbox = payload.get("sandbox")
     if raw_sandbox is not None:
@@ -107,53 +84,6 @@ def validate_plugin_config(payload: Mapping[str, object]) -> None:
             if not name:
                 raise ValueError(f"plugin.{family} names must not be empty")
             _require_table(raw_config, context=f"plugin.{family}.{name}")
-
-
-def resolve_env_refs(
-    payload: Mapping[str, object],
-    environ: Mapping[str, str],
-    *,
-    context: str,
-) -> dict[str, object]:
-    """Recursively resolve explicit ``_env`` references in one plugin mapping."""
-
-    resolved: dict[str, object] = {}
-    for raw_key, value in payload.items():
-        key = str(raw_key)
-        if key.endswith("_env"):
-            target_key = key[:-4]
-            if target_key in payload:
-                continue
-            if not isinstance(value, str):
-                raise TypeError(f"{context}.{key} must name an environment variable")
-            env_name = value.strip()
-            if not env_name:
-                continue
-            env_value = environ.get(env_name)
-            if env_value is None:
-                raise ValueError(
-                    f"missing environment variable {env_name} for {context}.{key}; "
-                    f"set {env_name} or provide {context}.{target_key} directly"
-                )
-            resolved[target_key] = env_value
-            continue
-        resolved[key] = _resolve_env_value(
-            value,
-            environ,
-            context=f"{context}.{key}",
-        )
-    return resolved
-
-
-def parse_channel_bindings(
-    configs: Mapping[str, Mapping[str, object]],
-) -> dict[str, ChannelBinding]:
-    """Parse channel configs whose names directly select their entry points."""
-
-    return {
-        name: ChannelBinding(name=name, config=dict(payload))
-        for name, payload in configs.items()
-    }
 
 
 def resolve_sandbox_binding(
@@ -184,26 +114,6 @@ def resolve_sandbox_binding(
     if driver is None:
         return None
     return SandboxBinding(name=driver, spec=target)
-
-
-def _resolve_env_value(
-    value: object,
-    environ: Mapping[str, str],
-    *,
-    context: str,
-) -> object:
-    if isinstance(value, Mapping):
-        return resolve_env_refs(
-            {str(key): item for key, item in value.items()},
-            environ,
-            context=context,
-        )
-    if isinstance(value, list):
-        return [
-            _resolve_env_value(item, environ, context=f"{context}[{index}]")
-            for index, item in enumerate(value)
-        ]
-    return value
 
 
 def _merge_mappings(

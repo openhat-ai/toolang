@@ -8,6 +8,7 @@ from toolang.plugin.config import (
     merge_plugin_configs,
     resolve_sandbox_binding,
 )
+from toolang.plugin.models.config import parse_provider_configs
 
 
 def test_merge_plugin_configs_deeply_merges_root_and_agent_layers() -> None:
@@ -19,10 +20,6 @@ root = "/global"
 [plugin.toolset.filesystem.options]
 hidden = false
 limit = 10
-
-[plugin.channel.telegram]
-token_env = "TELEGRAM_BOT_TOKEN"
-owner_chat_id = "100"
 """.strip()
     )
     agent_config = tomllib.loads(
@@ -32,21 +29,12 @@ root = "/agent"
 
 [plugin.toolset.filesystem.options]
 limit = 20
-
-[plugin.channel.telegram]
-owner_chat_id = "123"
 """.strip()
     )
 
     toolsets = merge_plugin_configs(
         (root_config, agent_config),
         family="toolset",
-        environ={},
-    )
-    channels = merge_plugin_configs(
-        (root_config, agent_config),
-        family="channel",
-        environ={"TELEGRAM_BOT_TOKEN": "secret"},
     )
 
     assert toolsets == {
@@ -55,55 +43,19 @@ owner_chat_id = "123"
             "options": {"hidden": False, "limit": 20},
         }
     }
-    assert channels == {"telegram": {"token": "secret", "owner_chat_id": "123"}}
 
 
-def test_merge_plugin_configs_resolves_nested_environment_references() -> None:
+def test_merge_plugin_configs_passes_environment_variable_names_unchanged() -> None:
     config = tomllib.loads(
         """
-[plugin.model_adapter.responses]
-
-[plugin.model_adapter.responses.headers]
-authorization_env = "MODEL_TOKEN"
+[plugin.model_catalog.company]
+credential_env = "COMPANY_CATALOG_TOKEN"
 """.strip()
     )
 
-    adapters = merge_plugin_configs(
-        (config,),
-        family="model_adapter",
-        environ={"MODEL_TOKEN": "secret"},
-    )
+    catalogs = merge_plugin_configs((config,), family="model_catalog")
 
-    assert adapters == {"responses": {"headers": {"authorization": "secret"}}}
-
-
-def test_direct_plugin_value_takes_precedence_over_environment_reference() -> None:
-    config = tomllib.loads(
-        """
-[plugin.channel.telegram]
-token = "configured"
-token_env = "MISSING_TOKEN"
-""".strip()
-    )
-
-    channels = merge_plugin_configs((config,), family="channel", environ={})
-
-    assert channels == {"telegram": {"token": "configured"}}
-
-
-def test_merge_plugin_configs_reports_missing_environment_reference() -> None:
-    config = tomllib.loads(
-        """
-[plugin.channel.telegram]
-token_env = "TELEGRAM_BOT_TOKEN"
-""".strip()
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=(r"plugin\.channel\.telegram\.token_env.*TELEGRAM_BOT_TOKEN"),
-    ):
-        merge_plugin_configs((config,), family="channel", environ={})
+    assert catalogs == {"company": {"credential_env": "COMPANY_CATALOG_TOKEN"}}
 
 
 @pytest.mark.parametrize(
@@ -114,10 +66,6 @@ token_env = "TELEGRAM_BOT_TOKEN"
         (
             "[sandbox]\ndriver = 'docker'\n[sandbox.config]",
             "unknown sandbox config field: config",
-        ),
-        (
-            "[models.catalogs.company]",
-            "unknown models config field: catalogs",
         ),
         (
             "[plugin.toolsets.filesystem]",
@@ -132,7 +80,14 @@ def test_removed_and_unknown_plugin_config_shapes_fail(
     config = tomllib.loads(source)
 
     with pytest.raises(ValueError, match=message):
-        merge_plugin_configs((config,), family="toolset", environ={})
+        merge_plugin_configs((config,), family="toolset")
+
+
+def test_removed_model_catalog_config_fails_in_model_config_parser() -> None:
+    config = tomllib.loads("[models.catalogs.company]")
+
+    with pytest.raises(ValueError, match="unknown models config field: catalogs"):
+        parse_provider_configs((config,))
 
 
 def test_resolve_sandbox_binding_layers_driver_and_target() -> None:

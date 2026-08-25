@@ -325,7 +325,6 @@ def test_select_sandbox_keeps_selection_separate_from_plugin_config() -> None:
                     "sandbox": {
                         "docker": {
                             "image": "python:3.13-slim",
-                            "token_env": "SANDBOX_TOKEN",
                         },
                         "host": {"mode": "local"},
                     },
@@ -338,15 +337,13 @@ def test_select_sandbox_keeps_selection_separate_from_plugin_config() -> None:
     selected, config = sandbox._select_sandbox(
         state,
         explicit=None,
-        environ={"SANDBOX_TOKEN": "secret"},
     )
     explicit, host_config = sandbox._select_sandbox(
         state,
         explicit="host",
-        environ={"SANDBOX_TOKEN": "secret"},
     )
 
     assert selected == "docker:python:3.13"
-    assert config == {"image": "agent-image", "token": "secret"}
+    assert config == {"image": "agent-image"}
     assert explicit == "host"
     assert host_config == {"mode": "local"}
