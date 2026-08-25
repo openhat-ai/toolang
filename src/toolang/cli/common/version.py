@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import subprocess
 import tomllib
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
 
@@ -137,6 +137,6 @@ def _local_file_url(value: str) -> Path | None:
     ):
         return None
     try:
-        return Path(url2pathname(unquote(parsed.path))).resolve()
+        return Path(url2pathname(parsed.path)).resolve()
     except OSError:
         return None

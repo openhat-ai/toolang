@@ -100,6 +100,12 @@ def test_development_source_keeps_editable_signal_without_safe_local_path(
     assert version.development_source() == (True, None)
 
 
+def test_local_file_url_preserves_literal_percent_escape(tmp_path: Path) -> None:
+    source = tmp_path / "toolang%2Fsource"
+
+    assert version._local_file_url(source.as_uri()) == source
+
+
 def test_development_source_falls_back_to_source_project(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
