@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
-from .events import ProgressEvent, ProgressStatus
-
-ProgressSink = Callable[[ProgressEvent], None]
+from toolang.base.types.progress import ProgressEvent, ProgressSink, ProgressStatus
 
 
 def emit_progress(
@@ -31,3 +27,6 @@ def emit_progress(
             detail=detail,
         )
     )
+
+
+__all__ = ["ProgressSink", "emit_progress"]

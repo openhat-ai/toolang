@@ -119,7 +119,7 @@ class CliProgress:
         if event.phase.startswith("cap."):
             self._record_cap(event)
             return
-        if event.phase.startswith("prepare.") or event.phase.startswith("startup."):
+        if event.phase.startswith("prepare."):
             self._record_prepare(event)
 
     def _record_prepare(self, event: ProgressEvent) -> None:
