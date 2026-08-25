@@ -21,8 +21,8 @@ execution-topology system.
   actionable diagnostic when a loopback-only model listener is unreachable.
 - Native Windows paths and Linux guest paths are serialized independently, and
   Windows container mode fails before an image is pulled.
-- Exact provider or catalog endpoints remain authoritative and are never
-  rewritten.
+- Plugins receive one generic host-gateway marker and own any Docker-specific
+  configuration, defaults, and endpoint selection.
 - The default suite remains offline and deterministic; Docker and real-provider
   checks are opt-in.
 
@@ -53,8 +53,8 @@ In scope:
 - Linux guests launched by the built-in Docker sandbox;
 - Docker Desktop on macOS and Windows, native Docker Engine on Linux, OrbStack,
   and compatible local Docker API implementations that pass the same preflight;
-- Docker launch preflight, host-route arguments, guest endpoint selection,
-  cross-platform bind mounts, diagnostics, and acceptance coverage;
+- Docker launch preflight, host-route arguments, cross-platform bind mounts,
+  diagnostics, and acceptance coverage;
 - `ollama` and `llama_cpp` local catalog defaults plus their existing exact
   endpoint escape hatches.
 
@@ -132,45 +132,55 @@ TOOLANG_HOST_GATEWAY=host.docker.internal
 This value is non-secret, scoped to the launched process, and describes only
 the route established by this Docker launch. Direct host execution does not set
 it. It is not persisted in authored configuration or runtime state and is not a
-security boundary.
+security boundary. The Docker sandbox does not translate provider endpoints or
+interpret plugin configuration. Any plugin may use or ignore the marker.
 
-## Local Model Endpoint Selection
+## Plugin-Owned Docker Behavior
 
-Keep Docker knowledge out of the generic Chat Completions adapter. The built-in
-Ollama and llama.cpp catalogs own local endpoint selection and receive the
-guest route through their existing environment view.
+Each plugin owns its Docker behavior. Toolang core and the Docker sandbox only
+establish the route and add `TOOLANG_HOST_GATEWAY`; they do not define a shared
+model-location schema, rewrite URLs, or add Docker branches to executors or
+protocol adapters.
 
-Add one optional shared setting:
+Plugin configuration may contain an optional plugin-owned `docker` table. The
+built-in local model catalogs support:
 
 ```toml
-[models.local]
-location = "auto" # auto | agent | host
+[models.catalogs.ollama.docker]
+endpoint = "http://host.docker.internal:11434"
+
+[models.catalogs.llama_cpp.docker]
+endpoint = "http://host.docker.internal:8080/v1"
 ```
 
-The default is `auto`:
+These values are examples, not required common-case configuration. The catalog
+plugin ignores its `docker` table when `TOOLANG_HOST_GATEWAY` is absent. When
+the marker is present, each built-in catalog resolves its endpoint in this
+order:
 
-- without `TOOLANG_HOST_GATEWAY`, use agent loopback;
-- with `TOOLANG_HOST_GATEWAY`, use that host for local model defaults;
-- `agent` always uses loopback, including when a model service intentionally
-  runs inside the guest;
-- `host` uses `TOOLANG_HOST_GATEWAY` when present and host loopback otherwise.
+1. its configured `docker.endpoint`, used exactly;
+2. its configured top-level catalog `endpoint`, used exactly;
+3. a non-loopback `OLLAMA_HOST` or `LLAMA_CPP_HOST`, used exactly;
+4. a loopback, localhost, or wildcard provider environment value with only its
+   hostname replaced by `TOOLANG_HOST_GATEWAY`;
+5. its Docker built-in default.
 
-An exact `[models.providers.<name>].endpoint` or
-`[models.catalogs.<name>].endpoint` always wins and is never rewritten. A
-non-loopback `OLLAMA_HOST` or `LLAMA_CPP_HOST` remains exact. For an unspecified,
-loopback, wildcard, or localhost environment value, retain its scheme, port,
-path, query, and fragment while the selected location supplies the hostname.
-Default ports remain 11434 for Ollama and 8080 for llama.cpp.
+Without the marker, each plugin keeps its existing host resolution order:
+top-level catalog endpoint, provider environment value, then host built-in
+default. An exact `[models.providers.<name>].endpoint` remains the final call
+override in the provider resolver and is never rewritten.
 
-This produces the following defaults without a process-global topology cache:
+The two plugin-owned built-in defaults are:
 
-| Invocation | Marker | `auto` endpoint host |
+| Plugin | Host default | Docker guest default |
 | --- | --- | --- |
-| Host AgentServer | absent | `127.0.0.1` |
-| Toolang-managed Docker guest | `host.docker.internal` | `host.docker.internal` |
+| Ollama | `http://127.0.0.1:11434` | `http://host.docker.internal:11434` |
+| llama.cpp | `http://127.0.0.1:8080/v1` | `http://host.docker.internal:8080/v1` |
 
-Host and Docker AgentServers can therefore run sequentially or concurrently
-from the same Toolang root without sharing a rewritten endpoint.
+The Docker endpoint is resolved inside each AgentServer process and is never
+written back to authored configuration or shared process state. Host and Docker
+AgentServers can therefore run sequentially or concurrently from the same
+Toolang root. Generic Chat Completions behavior remains unchanged.
 
 ## Platform Behavior
 
@@ -220,16 +230,15 @@ escape hatch when RootlessKit cannot expose the selected route.
 
 ## Configuration and Errors
 
-The common path requires no new CLI flag or configuration. The shared
-`models.local.location` setting handles the only routing choice, and existing
-exact provider or catalog endpoints handle custom networks and non-default
-addresses.
+The common path requires no new CLI flag or configuration. A plugin-specific
+`docker` table handles Docker-only overrides, while existing exact provider or
+catalog endpoints continue to handle endpoints shared by host and guest.
 
 Docker command absence, an unreadable active context, a remote endpoint,
 unsupported server version or server OS, rejected host-gateway mapping, mount
 sharing denial, and container startup failure are launch errors that retain the
 underlying Docker detail. An unavailable local model keeps the catalog offline
-and adds its selected location and concrete endpoint to provider diagnostics.
+and adds its selected concrete endpoint to provider diagnostics.
 Selecting a model absent from the guest catalog fails normally rather than
 falling back to a remote model.
 
@@ -238,12 +247,12 @@ falling back to a remote model.
 - `src/toolang/plugin/sandboxes/docker.py`: inspect the effective local Docker
   environment, resolve concrete launch arguments, add the host marker, serialize
   cross-platform mounts, and write LF scripts.
-- `src/toolang/plugin/models/config.py`, `src/toolang/plugin/models/local.py`,
-  and `src/toolang/setup/watcher.py`: parse the shared location and resolve one
-  concrete discovery/call endpoint inside each AgentServer process.
+- `src/toolang/plugin/models/local.py`: let the Ollama and llama.cpp catalog
+  plugins parse their own optional `docker` table and select their host or guest
+  default from the marker.
 - `src/toolang/plugin/models/views.py` and `docs/models.md`: report and document
-  the concrete endpoint, Linux listener requirement, and exact endpoint escape
-  hatch.
+  the concrete endpoint, plugin-owned Docker override, Linux listener
+  requirement, and exact endpoint behavior.
 - Existing sandbox and local-model unit tests plus one opt-in Docker integration
   module cover the behavior.
 
@@ -263,28 +272,30 @@ tool context, channel context, or persisted environment schema are added.
    performs no environment, context, platform, or vendor inspection.
 5. A Docker guest receives `TOOLANG_HOST_GATEWAY=host.docker.internal`; direct
    host execution does not synthesize the marker.
-6. `auto`, `agent`, and `host` select the documented endpoint hosts. Exact
-   provider/catalog endpoints remain byte-for-byte unchanged, and provider
-   environment endpoints preserve all URL components while only eligible host
-   names are translated.
-7. Ollama discovery, Ollama calls, llama.cpp discovery, and llama.cpp calls use
+6. Each local catalog ignores its Docker config without the marker and follows
+   the documented Docker precedence with the marker. Docker, catalog, and
+   provider exact endpoints remain byte-for-byte unchanged.
+7. Loopback, localhost, and wildcard provider environment values preserve all
+   URL components except the translated hostname. Non-loopback values remain
+   unchanged.
+8. Ollama discovery, Ollama calls, llama.cpp discovery, and llama.cpp calls use
    the same resolved endpoint. Generic protocol adapters contain no Docker
    branch.
-8. Windows host mount sources retain drive letters and backslashes while all
+9. Windows host mount sources retain drive letters and backslashes while all
    guest paths are POSIX. Sources containing spaces remain one CLI argument,
    and staged scripts contain LF without CRLF.
-9. Linux loopback-only provider failure reports the concrete guest endpoint and
+10. Linux loopback-only provider failure reports the concrete guest endpoint and
    the listener-bind remedy without changing the host process.
-10. An opt-in offline Docker integration test starts deterministic fake Ollama
+11. An opt-in offline Docker integration test starts deterministic fake Ollama
     and llama.cpp endpoints on the host, starts a sandbox AgentServer, discovers
     and calls each endpoint, and cleans up the container.
-11. Opt-in `live_provider` checks discover and call one real Ollama and one real
+12. Opt-in `live_provider` checks discover and call one real Ollama and one real
     llama.cpp model without hard-coded model IDs.
-12. Manual platform checks cover macOS Docker Desktop or OrbStack, Windows
+13. Manual platform checks cover macOS Docker Desktop or OrbStack, Windows
     Docker Desktop in Linux-container mode, and native Linux Docker before
     implementation is declared supported. Colima is claimed only after the same
     check passes.
-13. The default verification suite passes without Docker or a local model
+14. The default verification suite passes without Docker or a local model
     runtime and remains offline.
 
 ## Risks
