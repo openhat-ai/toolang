@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import stat
 import subprocess
@@ -304,7 +305,8 @@ def test_docker_background_sandbox_keeps_errors_and_quiets_success_output(
     assert "/root/.toolang/agents/alice/.runtime/agent.log" in start_script
     assert "2>&1" in start_script
     agent_script = (stage_dir / "agent.sh").read_text(encoding="utf-8")
-    assert "ensurepip --upgrade >/dev/null 2>&1" in agent_script
+    assert "TOOLANG_UV_ENSUREPIP_DIAGNOSTIC=" in agent_script
+    assert "ensurepip --upgrade 2>&1" in agent_script
     assert "--root-user-action=ignore --quiet" in agent_script
     assert "uv tool install --quiet --no-progress" in agent_script
     assert docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR in agent_script
@@ -420,6 +422,139 @@ def test_docker_agent_script_reports_quiet_install_and_server_stages(
         "validate.running",
         "validate.ok",
         "server.running",
+    ]
+
+
+def test_docker_agent_script_ignores_unwritable_startup_event_target(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "agent.sh"
+    events = tmp_path / "startup.events"
+    events.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(bin_dir / "uv", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        bin_dir / "too",
+        "#!/bin/sh\n"
+        'if [ "$2" = "--help" ]; then exit 0; fi\n'
+        'printf "server command\\n"\n',
+    )
+    docker_guest.write_agent_script(
+        script,
+        command=("too", "serve", "alice"),
+        hosted_dev_artifact=None,
+        startup_events_path=events,
+        validation_error_to_stderr=False,
+    )
+
+    completed = subprocess.run(
+        ("/bin/sh", str(script)),
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"HOME": str(tmp_path / "home"), "PATH": str(bin_dir)},
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == "server command\n"
+    assert completed.stderr == ""
+
+
+def test_docker_agent_script_discards_successful_uv_fallback_output(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "agent.sh"
+    events = tmp_path / "startup.events"
+    events.touch()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(
+        bin_dir / "python",
+        "#!/bin/sh\n"
+        'if [ "$2" = "ensurepip" ]; then\n'
+        '  echo "ensurepip intermediate failure" >&2\n'
+        "  exit 1\n"
+        "fi\n"
+        "printf '#!/bin/sh\\nexit 0\\n' >\"$TOOLANG_TEST_UV_PATH\"\n"
+        '/bin/chmod 755 "$TOOLANG_TEST_UV_PATH"\n'
+        'echo "pip noisy success" >&2\n',
+    )
+    _write_executable(
+        bin_dir / "too",
+        "#!/bin/sh\n"
+        'if [ "$2" = "--help" ]; then exit 0; fi\n'
+        'printf "server command\\n"\n',
+    )
+    docker_guest.write_agent_script(
+        script,
+        command=("too", "serve", "alice"),
+        hosted_dev_artifact=None,
+        startup_events_path=events,
+        validation_error_to_stderr=False,
+    )
+
+    completed = subprocess.run(
+        ("/bin/sh", str(script)),
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            "HOME": str(tmp_path / "home"),
+            "PATH": str(bin_dir),
+            "TOOLANG_TEST_UV_PATH": str(bin_dir / "uv"),
+        },
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == "server command\n"
+    assert completed.stderr == ""
+
+
+def test_docker_agent_script_reports_all_uv_fallback_failures(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "agent.sh"
+    events = tmp_path / "startup.events"
+    events.touch()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(
+        bin_dir / "python",
+        "#!/bin/sh\n"
+        'if [ "$2" = "ensurepip" ]; then\n'
+        '  echo "ensurepip failed" >&2\n'
+        "else\n"
+        '  echo "pip failed" >&2\n'
+        "fi\n"
+        "exit 1\n",
+    )
+    docker_guest.write_agent_script(
+        script,
+        command=("too", "serve", "alice"),
+        hosted_dev_artifact=None,
+        startup_events_path=events,
+        validation_error_to_stderr=False,
+    )
+
+    completed = subprocess.run(
+        ("/bin/sh", str(script)),
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"HOME": str(tmp_path / "home"), "PATH": str(bin_dir)},
+    )
+
+    assert completed.returncode == 127
+    assert completed.stdout == ""
+    assert completed.stderr.splitlines() == [
+        "ensurepip failed",
+        "pip failed",
+        "uv not available",
+    ]
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "install.running",
+        "install.failed",
     ]
 
 
@@ -565,6 +700,36 @@ def test_docker_startup_observer_reads_final_token_after_container_exit(
         "startup.validate",
         "failed",
     )
+
+
+def test_docker_startup_event_reader_rejects_untrusted_file_shapes(
+    tmp_path: Path,
+) -> None:
+    regular = tmp_path / "regular.events"
+    regular.write_text("install.running\n", encoding="utf-8")
+    assert docker_sandbox._read_startup_events(regular) == "install.running\n"
+
+    oversized = tmp_path / "oversized.events"
+    oversized.write_bytes(b"x" * (docker_sandbox._STARTUP_EVENT_MAX_BYTES + 1))
+    assert docker_sandbox._read_startup_events(oversized) == ""
+
+    invalid = tmp_path / "invalid.events"
+    invalid.write_bytes(b"\xff")
+    assert docker_sandbox._read_startup_events(invalid) == ""
+
+    symlink = tmp_path / "symlink.events"
+    symlink.symlink_to(regular)
+    assert docker_sandbox._read_startup_events(symlink) == ""
+
+    directory = tmp_path / "directory.events"
+    directory.mkdir()
+    assert docker_sandbox._read_startup_events(directory) == ""
+
+    mkfifo = getattr(os, "mkfifo", None)
+    if mkfifo is not None:
+        fifo = tmp_path / "fifo.events"
+        mkfifo(fifo)
+        assert docker_sandbox._read_startup_events(fifo) == ""
 
 
 def test_docker_sandbox_uses_configured_default_image(tmp_path: Path) -> None:

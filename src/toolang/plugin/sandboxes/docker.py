@@ -7,9 +7,11 @@ from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
 import re
 import shutil
+import stat
 from typing import Any
 from uuid import uuid4
 
@@ -72,6 +74,7 @@ _CONTROL_ENV_NAMES = frozenset(
     }
 )
 _STARTUP_EVENT_INTERVAL_SEC = 0.05
+_STARTUP_EVENT_MAX_BYTES = 1024
 _STARTUP_EVENT_MAP: dict[str, tuple[str, str, ProgressStatus]] = {
     "install.running": ("install", "Installing Toolang", "running"),
     "install.ok": ("install", "Installing Toolang", "ok"),
@@ -457,10 +460,7 @@ async def _observe_startup_events(
     previous: str | None = None
     stopped_observed = False
     while True:
-        try:
-            content = await asyncio.to_thread(path.read_text, encoding="utf-8")
-        except OSError:
-            content = ""
+        content = await asyncio.to_thread(_read_startup_events, path)
         lines = content.splitlines()
         complete_count = (
             len(lines) if content.endswith("\n") else max(len(lines) - 1, 0)
@@ -517,6 +517,44 @@ async def _observe_startup_events_safely(
             package_source=package_source,
             runtime_id=runtime_id,
         )
+
+
+def _read_startup_events(path: Path) -> str:
+    try:
+        expected = os.lstat(path)
+    except OSError:
+        return ""
+    if not stat.S_ISREG(expected.st_mode):
+        return ""
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return ""
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or (
+            expected.st_dev,
+            expected.st_ino,
+        ) != (opened.st_dev, opened.st_ino):
+            return ""
+        content = os.read(descriptor, _STARTUP_EVENT_MAX_BYTES + 1)
+    except OSError:
+        return ""
+    finally:
+        with suppress(OSError):
+            os.close(descriptor)
+    if len(content) > _STARTUP_EVENT_MAX_BYTES:
+        return ""
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        return ""
 
 
 def _startup_event_detail(token: str, *, package_source: str) -> str | None:
