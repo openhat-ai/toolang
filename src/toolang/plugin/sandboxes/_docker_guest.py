@@ -33,22 +33,34 @@ def write_agent_script(
         "set -eu",
         'export PATH="$HOME/.local/bin:$PATH"',
         'export TOOLANG_SANDBOX_INSTANCE="${HOSTNAME:?docker sandbox hostname is unavailable}"',
-        "startup_event() { printf '%s\\n' \"$1\" >>"
+        "startup_event() { { printf '%s\\n' \"$1\" >>"
         + shlex.quote(str(startup_events_path))
-        + "; }",
+        + "; } 2>/dev/null || :; }",
         'have() { command -v "$1" >/dev/null 2>&1; }',
         'PYTHON_BIN=""',
         'if have python; then PYTHON_BIN="python"; elif have python3; then PYTHON_BIN="python3"; fi',
         "ensure_uv() {",
         "  have uv && return 0",
         '  [ -n "$PYTHON_BIN" ] || { echo "python not available" >&2; return 127; }',
-        '  "$PYTHON_BIN" -m ensurepip --upgrade >/dev/null 2>&1 || true',
-        '  "$PYTHON_BIN" -m pip install --disable-pip-version-check '
-        "--root-user-action=ignore --quiet --user -U uv || true",
+        '  TOOLANG_UV_ENSUREPIP_DIAGNOSTIC=$("$PYTHON_BIN" -m ensurepip '
+        "--upgrade 2>&1) || true",
+        '  TOOLANG_UV_PIP_DIAGNOSTIC=$("$PYTHON_BIN" -m pip install '
+        "--disable-pip-version-check --root-user-action=ignore --quiet "
+        "--user -U uv 2>&1) || true",
         "  have uv && return 0",
-        "  if have curl; then curl -LsSf https://astral.sh/uv/install.sh | sh "
-        ">/dev/null; fi",
-        "  have uv || { echo 'uv not available' >&2; return 127; }",
+        '  TOOLANG_UV_CURL_DIAGNOSTIC=""',
+        "  if have curl; then",
+        "    TOOLANG_UV_CURL_DIAGNOSTIC=$({ curl -LsSf "
+        "https://astral.sh/uv/install.sh | sh; } 2>&1) || true",
+        "  fi",
+        "  have uv && return 0",
+        '  for TOOLANG_UV_DIAGNOSTIC in "$TOOLANG_UV_ENSUREPIP_DIAGNOSTIC" '
+        '"$TOOLANG_UV_PIP_DIAGNOSTIC" "$TOOLANG_UV_CURL_DIAGNOSTIC"; do',
+        "    [ -z \"$TOOLANG_UV_DIAGNOSTIC\" ] || printf '%s\\n' "
+        '"$TOOLANG_UV_DIAGNOSTIC" >&2',
+        "  done",
+        "  echo 'uv not available' >&2",
+        "  return 127",
         "}",
         "startup_event install.running",
         "if ! ensure_uv; then",

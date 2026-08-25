@@ -508,9 +508,10 @@ startup error; background output also retains it in `agent_log`.
 Guest stage observation uses a unique mode-`0600`, append-only token file under
 the agent runtime directory. Tokens are a closed vocabulary for install,
 validation, and server-start transitions; they contain no commands, logs, or
-environment values. The file is presentation-only: unknown, duplicate,
-out-of-order, or stale values cannot affect readiness, recovery, or cleanup.
-The referenced file is removed with the sandbox resources.
+environment values. Guest writes are best-effort, and the host reads only a
+bounded, regular, non-symlink file. The file is presentation-only: unknown,
+duplicate, out-of-order, or stale values cannot affect readiness, recovery, or
+cleanup. The referenced file is removed with the sandbox resources.
 
 An active `toolang info` uses the sandbox reference's structured workload
 identity. Host workloads show `PID`; Docker workloads show `Container` with the
