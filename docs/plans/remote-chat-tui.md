@@ -21,8 +21,9 @@ The change succeeds when:
 - other supported targets retain the current `LocalChatSession` behavior;
 - remote model/runnable inspection, thread creation, settings validation, run
   results, controls, and native-event presentation match local Chat behavior;
-- the existing banner identifies the executor as `at <endpoint>` and shows the
-  executor sandbox as a separate text value;
+- the existing banner distinguishes the Chat process version from a compact
+  executor value containing its runtime version, optional sandbox instance, and
+  port in that order;
 - stream loss never retries a submission, falls back to local execution, or
   releases the next queued call while the accepted remote run may still be
   active; and
@@ -57,8 +58,8 @@ Out of scope:
 1. Roaming and visiting layouts always use `LocalChatSession`.
 2. A resident with no active runtime uses `LocalChatSession`.
 3. A resident reported as `running` with an endpoint performs a three-second
-   `GET /healthz` check, reads its existing `GET /api/v1/profile` environment,
-   and then uses `RemoteChatSession`.
+   `GET /healthz` check, reads runtime identity from `GET /api/v1/profile`, and
+   then uses `RemoteChatSession`.
 4. `preparing`, `starting`, running without an endpoint, or failed health checks
    fail before the TUI opens. They never fall back to an embedded executor.
 
@@ -75,18 +76,39 @@ restrict the server ceiling. An explicit `--sandbox` must match the running
 runtime; omitting it attaches to the runtime's current sandbox. Local option
 behavior remains unchanged.
 
-`ChatClient` exposes immutable `executor_label` and `sandbox_label` values. The
-local session reports `embedded` and `host`. The remote session reports
-`at <normalized endpoint>` and the sandbox label from the server profile. An
-invalid or missing remote sandbox value fails selection rather than displaying
-stale local process metadata. `RemoteRunClient` exposes its already-validated
-normalized endpoint as a read-only property so presentation does not duplicate
-URL parsing.
+Keep the existing three-row banner and give each value one unambiguous owner:
 
-The banner adds a separate `sandbox <label>` row below `executor`; it never
-relies on color and participates in the existing responsive width/folding
-calculation. The home value, status bar, and scripted successful output
-otherwise stay unchanged.
+```text
+Toolang   v0.4.0
+home      ~/.toolang/agents/eve
+executor  embedded
+```
+
+`Toolang` is the version of the current Chat TUI process. `home` is always the
+host-side agent path resolved by that process. Embedded execution needs no
+second version or `host` suffix because it is the same process.
+
+A remote host executor is compactly rendered as `v<version>, :<port>`. A
+sandboxed executor inserts its driver and short runtime instance ID before the
+port:
+
+```text
+executor  v0.3.9, :7001
+executor  v0.3.9, docker(a1b2c3d4e5f6), :7001
+```
+
+The remote version is reported by the server process, not copied from the TUI.
+The Docker instance is the conventional 12-character container ID; other
+non-host drivers use their stable short runtime ID. The `host` sandbox label is
+omitted. Missing or invalid remote version, port, driver, or non-host instance
+metadata fails selection instead of displaying guessed local values.
+
+`ChatClient.executor_label` remains the only presentation property; do not add
+separate version, endpoint, home, or sandbox rows to the protocol. The remote
+session formats the value from strict profile metadata and the normalized
+endpoint. `RemoteRunClient` exposes its normalized endpoint as a read-only
+property so URL validation is not duplicated. Existing responsive folding,
+status bar, and scripted successful output remain unchanged.
 
 ## Composition
 
@@ -113,7 +135,7 @@ decoder.
 
 | `ChatClient` operation | Remote behavior |
 | --- | --- |
-| executor / sandbox identity | normalized endpoint plus existing agent profile |
+| executor identity | normalized endpoint plus runtime profile metadata |
 | models | existing `GET /api/v1/models` |
 | agics / flows | existing `GET /api/v1/agics` and `/api/v1/flows` |
 | runnables | combine the two server responses and their exclusive defaults |
@@ -132,6 +154,16 @@ never expose response bodies, request source, policy values, or tracebacks.
 ## Minimal API Additions
 
 Add only the non-run behavior that existing endpoints cannot express.
+
+### `GET /api/v1/profile` Runtime Identity
+
+Extend the existing profile response additively with strict runtime metadata:
+the server process's Toolang package version and a sandbox projection containing
+the driver plus an optional stable instance ID. Host has no instance ID. Docker
+uses the first 12 characters of its container ID; other drivers expose a short
+stable runtime ID. Keep the existing environment fields unchanged. This is
+runtime truth returned by the executor process, not data copied from the host
+CLI status file.
 
 ### `POST /api/v1/runs/authored/validate`
 
@@ -192,13 +224,14 @@ remain available. Closing stops polling and leaves remote work running.
 - `execution/calls.py` and `history.py`: shared settings validation and latest
   thread-result lookup.
 - `execution/remote.py`: normalized endpoint property only; no new run behavior.
-- `api/schemas.py`, `conversion.py`, and the run/thread routers: strict
-  validation request and latest-result endpoint.
+- `api/schemas.py`, `conversion.py`, `routers/agent.py`, and the run/thread
+  routers: strict runtime identity, validation request, and latest-result
+  endpoint.
 - `chat/remote.py` (new): remote session, HTTP projections, run composition,
   and recovery polling.
-- `chat/base.py`, `events.py`, `main.py`, `tui.py`, `presenter.py`, and
-  `blocks.py`: executor/sandbox identity, run-state updates, selection, blocked
-  queue state, recovered presentation, and responsive banner layout.
+- `chat/base.py`, `events.py`, `main.py`, `tui.py`, and `presenter.py`: compact
+  executor identity, run-state updates, selection, blocked queue state, and
+  recovered presentation.
 - focused execution/API/Chat unit tests, resident CLI integration tests, and
   local/remote PTY tests.
 - `docs/api.md`, `docs/chat.md`, and `docs/execution.md`.
@@ -215,8 +248,9 @@ CLI composition root.
    server-owned environment, settings validation, decimal/null/list values, and
    rejected widening or invalid selectors.
 3. Cover remote lists, combined runnable defaults, lazy thread creation,
-   explicit/latest results, and separate executor/sandbox banner identity in
-   wide and narrow layouts without color.
+   explicit/latest results, local/remote version differences, host and Docker
+   executor labels in version/sandbox/port order, short instance IDs, and
+   unchanged wide/narrow banner layout.
 4. Run a remote plain/named/include request and assert accepted ID, native event
    order, terminal detail, controls, queued setting capture, and scripted output.
 5. Drop the stream after acceptance and assert one submission, addressable
