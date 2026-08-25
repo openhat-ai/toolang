@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from toolang.plugin.models import local as local_models
-from toolang.plugin.models.local import LlamaCppModels, OllamaModels
+from toolang.plugin.models.local import LlamaCppModelCatalog, OllamaModelCatalog
 
 
 def test_ollama_catalog_enriches_models_from_tags_and_show(
@@ -51,7 +51,9 @@ def test_ollama_catalog_enriches_models_from_tags_and_show(
     )
     monkeypatch.setattr(local_models.httpx, "AsyncClient", client.factory)
 
-    snapshot = asyncio.run(OllamaModels({}, endpoint="http://ollama.test").snapshot())
+    snapshot = asyncio.run(
+        OllamaModelCatalog({}, endpoint="http://ollama.test").snapshot()
+    )
     model = snapshot.find("ollama", "gemma3:4b")
 
     assert model is not None
@@ -123,7 +125,7 @@ def test_llama_cpp_catalog_combines_model_meta_and_server_props(
     monkeypatch.setattr(local_models.httpx, "AsyncClient", client.factory)
 
     snapshot = asyncio.run(
-        LlamaCppModels({}, endpoint="http://llama.test/v1").snapshot()
+        LlamaCppModelCatalog({}, endpoint="http://llama.test/v1").snapshot()
     )
     model = snapshot.find("llama_cpp", "llama-3.1-8b")
 
@@ -169,7 +171,7 @@ def test_local_detail_failures_keep_list_metadata(
     monkeypatch.setattr(local_models.httpx, "AsyncClient", ollama.factory)
 
     ollama_snapshot = asyncio.run(
-        OllamaModels({}, endpoint="http://ollama.test").snapshot()
+        OllamaModelCatalog({}, endpoint="http://ollama.test").snapshot()
     )
     ollama_model = ollama_snapshot.find("ollama", "qwen3:8b")
 
@@ -190,7 +192,7 @@ def test_local_detail_failures_keep_list_metadata(
     monkeypatch.setattr(local_models.httpx, "AsyncClient", llama_cpp.factory)
 
     llama_snapshot = asyncio.run(
-        LlamaCppModels({}, endpoint="http://llama.test").snapshot()
+        LlamaCppModelCatalog({}, endpoint="http://llama.test").snapshot()
     )
     llama_model = llama_snapshot.find("llama_cpp", "local")
 
@@ -208,7 +210,9 @@ def test_local_list_failure_marks_provider_offline(
     )
     monkeypatch.setattr(local_models.httpx, "AsyncClient", client.factory)
 
-    snapshot = asyncio.run(OllamaModels({}, endpoint="http://ollama.test").snapshot())
+    snapshot = asyncio.run(
+        OllamaModelCatalog({}, endpoint="http://ollama.test").snapshot()
+    )
 
     runtime = cast(Mapping[str, object], snapshot.providers["ollama"].extra["runtime"])
     assert snapshot.models == ()

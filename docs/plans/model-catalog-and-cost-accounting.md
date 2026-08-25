@@ -64,7 +64,7 @@ Out of scope:
   there is no `capabilities` object and no Toolang `variants` abstraction.
 - `ModelCatalog` is the catalog plugin protocol that provides providers and
   models. Implementations are
-  `ModelsDevModels`, `OllamaModels`, `LlamaCppModels`, and
+  `ModelsDevModelCatalog`, `OllamaModelCatalog`, `LlamaCppModelCatalog`, and
   `MergedModelCatalog`.
 - A thin loader-owned resolver maps catalog `npm`, `api`, and `env` plus
   explicit Toolang configuration to `Provider.resolved` exactly once. External

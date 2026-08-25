@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from toolang.base.protocols.tool import AgentTool
-from toolang.plugin.tools.registry import (
+from toolang.plugin.toolsets.registry import (
     ToolRef,
     tool_ref_for_model_tool,
     tool_ref_matches,

@@ -36,7 +36,10 @@ from toolang.plugin.models.discovery import missing_provider_env_vars
 from toolang.plugin.models.resolution import resolve_model, select_model_selectors
 from toolang.plugin.models.views import _format_decimal_unit
 from toolang.setup import AgentSetup
-from toolang.plugin.models.catalog import PACKAGED_MODEL_CATALOG, load_model_catalog
+from toolang.plugin.models.catalog import (
+    PACKAGED_MODEL_CATALOG,
+    read_model_catalog_snapshot,
+)
 from toolang.plugin.models.loading import load_model_adapters
 from toolang.plugin.models.adapters import chat_completions as chat_completions_models
 from toolang.plugin.models.adapters import messages as messages_models
@@ -57,7 +60,7 @@ def load_config_layers(root: Path, agent_name: str) -> tuple[dict[str, object], 
 
 class _FakeTool(AgentTool):
     name = "shell__execute"
-    plugin_name = "shell"
+    toolset_name = "shell"
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -971,7 +974,7 @@ def test_model_alias_reports_missing_key_env(tmp_path: Path) -> None:
 
 
 def test_packaged_catalog_includes_mainstream_remote_providers() -> None:
-    snapshot = load_model_catalog(PACKAGED_MODEL_CATALOG)
+    snapshot = read_model_catalog_snapshot(PACKAGED_MODEL_CATALOG)
 
     assert {"anthropic", "deepseek", "google", "openai", "openrouter"} <= set(
         snapshot.providers
@@ -991,9 +994,9 @@ def test_package_registers_catalogs_without_legacy_model_provider_entry_points()
 
     assert "toolang.model_provider" not in entry_points
     assert entry_points["toolang.model_catalog"] == {
-        "models_dev": "toolang.plugin.models.catalog:create_models_dev_catalog",
-        "ollama": "toolang.plugin.models.local:create_ollama_catalog",
-        "llama_cpp": "toolang.plugin.models.local:create_llama_cpp_catalog",
+        "models_dev": "toolang.plugin.models.catalog:create_models_dev_model_catalog",
+        "ollama": "toolang.plugin.models.local:create_ollama_model_catalog",
+        "llama_cpp": "toolang.plugin.models.local:create_llama_cpp_model_catalog",
     }
 
 

@@ -8,10 +8,10 @@ import sys
 from urllib.request import urlopen
 
 from toolang.common.layout import AgentLayout
-from toolang.up.hosting import HostingState
+from toolang.up.sandbox import SandboxState
 
 
-def test_none_hosting_start_health_and_stop(tmp_path: Path) -> None:
+def test_host_sandbox_start_health_and_stop(tmp_path: Path) -> None:
     root = tmp_path / "toolang"
     layout = AgentLayout.resident(root, "alice")
     layout.home.mkdir(parents=True)
@@ -28,7 +28,7 @@ def test_none_hosting_start_health_and_stop(tmp_path: Path) -> None:
 
     try:
         started = subprocess.run(
-            (*base, "start", "alice", "--sandbox", "none", "--port", str(port)),
+            (*base, "start", "alice", "--sandbox", "host", "--port", str(port)),
             check=False,
             capture_output=True,
             text=True,
@@ -36,9 +36,9 @@ def test_none_hosting_start_health_and_stop(tmp_path: Path) -> None:
             timeout=40,
         )
         assert started.returncode == 0, started.stderr
-        state = HostingState.load(layout.hosting_state)
+        state = SandboxState.load(layout.sandbox_state)
         assert state is not None
-        assert state.sandbox == "none"
+        assert state.sandbox == "host"
         with urlopen(f"http://localhost:{port}/healthz", timeout=2) as response:
             assert response.status == 200
 
@@ -51,9 +51,9 @@ def test_none_hosting_start_health_and_stop(tmp_path: Path) -> None:
             timeout=10,
         )
         assert stopped.returncode == 0, stopped.stderr
-        assert HostingState.load(layout.hosting_state) is None
+        assert SandboxState.load(layout.sandbox_state) is None
     finally:
-        state = HostingState.load(layout.hosting_state)
+        state = SandboxState.load(layout.sandbox_state)
         if state is not None:
             subprocess.run(
                 (*base, "stop", "alice", "--force"),

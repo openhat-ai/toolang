@@ -53,9 +53,9 @@ class ModelCatalog(Protocol):
 
 Built-in implementations are:
 
-- `ModelsDevModels`, for the selected static file;
-- `OllamaModels`, for the configured Ollama endpoint;
-- `LlamaCppModels`, for the configured llama.cpp endpoint;
+- `ModelsDevModelCatalog`, for the selected static file;
+- `OllamaModelCatalog`, for the configured Ollama endpoint;
+- `LlamaCppModelCatalog`, for the configured llama.cpp endpoint;
 - `MergedModelCatalog`, which combines ordered snapshots and rejects identity
   conflicts.
 

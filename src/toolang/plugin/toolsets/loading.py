@@ -1,4 +1,4 @@
-"""Tool plugin loading and runtime selection."""
+"""Toolset plugin loading and leaf-tool selection."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
-from toolang.base.protocols.tool import AgentTool, AgentToolSet
+from toolang.base.protocols.tool import AgentTool, Toolset
 from toolang.base.types.tool import ToolContext, ToolDefinition
 
 from toolang.plugin.loading import load_plugins
@@ -20,9 +20,9 @@ from .registry import (
 
 @dataclass(frozen=True, slots=True)
 class LoadedTool(AgentTool):
-    """One model-facing tool loaded from a named plugin."""
+    """One model-facing tool loaded from a named toolset."""
 
-    plugin_name: str
+    toolset_name: str
     ref: ToolRef
     leaf_tool: AgentTool
 
@@ -54,35 +54,42 @@ class LoadedTool(AgentTool):
         return await self.leaf_tool.invoke(arguments, context)
 
 
-def load_tool_plugins(
+def load_toolsets(
     *,
     config: Mapping[str, Mapping[str, Any]] | None = None,
-) -> dict[str, AgentTool]:
-    tools: dict[str, AgentTool] = {}
-    plugins = cast(
-        dict[str, AgentToolSet],
-        load_plugins(group="toolang.tool", config=config),
+) -> dict[str, Toolset]:
+    """Load all installed toolsets with their plugin-owned configuration."""
+
+    return cast(
+        dict[str, Toolset],
+        load_plugins(group="toolang.toolset", config=config),
     )
-    for plugin in plugins.values():
-        for leaf_name, leaf_tool in plugin.tools().items():
-            ref = parse_tool_registration_key(plugin.name, leaf_name, leaf_tool.name)
+
+
+def load_tools(
+    *,
+    toolset_config: Mapping[str, Mapping[str, Any]] | None = None,
+    selectors: Sequence[str] | None = None,
+) -> dict[str, AgentTool]:
+    """Load leaf tools from installed toolsets and apply selectors."""
+
+    tools: dict[str, AgentTool] = {}
+    toolsets = load_toolsets(config=toolset_config)
+    for toolset in toolsets.values():
+        for leaf_name, leaf_tool in toolset.tools().items():
+            ref = parse_tool_registration_key(
+                toolset.name,
+                leaf_name,
+                leaf_tool.name,
+            )
             loaded = LoadedTool(
-                plugin_name=plugin.name,
+                toolset_name=toolset.name,
                 ref=ref,
                 leaf_tool=leaf_tool,
             )
             if loaded.name in tools:
                 raise ValueError(f"duplicate tool name: {loaded.public_name}")
             tools[loaded.name] = loaded
-    return tools
-
-
-def load_runtime_tools(
-    *,
-    plugin_config: Mapping[str, Mapping[str, Any]],
-    selectors: Sequence[str] | None = None,
-) -> dict[str, AgentTool]:
-    tools = load_tool_plugins(config=plugin_config)
     return select_tools(tools, selectors)
 
 

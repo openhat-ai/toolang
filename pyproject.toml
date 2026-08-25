@@ -61,12 +61,12 @@ toolang = "toolang.cli.toolang.main:main"
 too = "toolang.cli.toolang.main:main"
 caps = "toolang.cli.caps.main:main"
 
-[project.entry-points."toolang.tool"]
-filesystem = "toolang.plugin.tools.filesystem:create_tool_set"
-service_use = "toolang.plugin.tools.service_use:create_tool_set"
-shell = "toolang.plugin.tools.shell:create_tool_set"
-web_search = "toolang.plugin.tools.web_search:create_tool_set"
-agent_state = "toolang.execution.tools.agent_state:create_tool_set"
+[project.entry-points."toolang.toolset"]
+filesystem = "toolang.plugin.toolsets.filesystem:create_toolset"
+service_use = "toolang.plugin.toolsets.service_use:create_toolset"
+shell = "toolang.plugin.toolsets.shell:create_toolset"
+web_search = "toolang.plugin.toolsets.web_search:create_toolset"
+agent_state = "toolang.execution.tools.agent_state:create_toolset"
 
 [project.entry-points."toolang.model_adapter"]
 chat_completions = "toolang.plugin.models.adapters.chat_completions:create_model_adapter"
@@ -75,16 +75,16 @@ messages = "toolang.plugin.models.adapters.messages:create_model_adapter"
 responses = "toolang.plugin.models.adapters.responses:create_model_adapter"
 
 [project.entry-points."toolang.model_catalog"]
-models_dev = "toolang.plugin.models.catalog:create_models_dev_catalog"
-ollama = "toolang.plugin.models.local:create_ollama_catalog"
-llama_cpp = "toolang.plugin.models.local:create_llama_cpp_catalog"
+models_dev = "toolang.plugin.models.catalog:create_models_dev_model_catalog"
+ollama = "toolang.plugin.models.local:create_ollama_model_catalog"
+llama_cpp = "toolang.plugin.models.local:create_llama_cpp_model_catalog"
 
 [project.entry-points."toolang.channel"]
 telegram = "toolang.plugin.channels.telegram:create_channel"
 
 [project.entry-points."toolang.sandbox"]
-none = "toolang.plugin.sandboxes.none:create_hosting"
-docker = "toolang.plugin.sandboxes.docker:create_hosting"
+host = "toolang.plugin.sandboxes.host:create_sandbox"
+docker = "toolang.plugin.sandboxes.docker:create_sandbox"
 
 [dependency-groups]
 dev = [

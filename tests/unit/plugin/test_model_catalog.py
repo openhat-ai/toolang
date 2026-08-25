@@ -18,7 +18,7 @@ from toolang.plugin.models.catalog import (
     PACKAGED_MODEL_CATALOG,
     catalog_json_dumps,
     filter_catalog_models,
-    load_model_catalog,
+    read_model_catalog_snapshot,
     model_info_from_catalog,
     parse_model_catalog_data,
     resolve_model_catalog_path,
@@ -36,7 +36,7 @@ from toolang.plugin.models.resolution import (
 
 
 def test_packaged_catalog_is_small_valid_and_covers_mainstream_providers() -> None:
-    snapshot = load_model_catalog(PACKAGED_MODEL_CATALOG)
+    snapshot = read_model_catalog_snapshot(PACKAGED_MODEL_CATALOG)
 
     assert set(snapshot.providers) == {
         "anthropic",
@@ -58,7 +58,7 @@ def test_catalog_import_preserves_unknown_fields_and_decimal_prices(
     payload["test"]["models"]["one"]["future_model_field"] = ["value"]
     path.write_text(json.dumps(payload), encoding="utf-8")
 
-    snapshot = load_model_catalog(path)
+    snapshot = read_model_catalog_snapshot(path)
     model = snapshot.find("test", "one")
 
     assert model is not None
@@ -77,7 +77,7 @@ def test_catalog_values_are_deeply_immutable(tmp_path: Path) -> None:
     ]
     path.write_text(json.dumps(payload), encoding="utf-8")
 
-    model = load_model_catalog(path).find("test", "one")
+    model = read_model_catalog_snapshot(path).find("test", "one")
 
     assert model is not None and model.cost is not None
     tiers = cast(tuple[object, ...], model.cost["tiers"])
@@ -87,7 +87,7 @@ def test_catalog_values_are_deeply_immutable(tmp_path: Path) -> None:
         tier["input"] = 999
     with pytest.raises(TypeError):
         nested["size"] = 999
-    exported = cast(dict[str, Any], load_model_catalog(path).to_data())
+    exported = cast(dict[str, Any], read_model_catalog_snapshot(path).to_data())
     assert exported["test"]["models"]["one"]["cost"]["tiers"] == [
         {"input": 3, "tier": {"type": "context", "size": 200}}
     ]

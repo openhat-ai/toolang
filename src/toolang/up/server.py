@@ -220,7 +220,7 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
                 started_at=started_at,
                 pid=os.getpid(),
                 models=ceiling.models or (),
-                sandbox=environ.get("TOOLANG_SANDBOX", "none"),
+                sandbox=environ.get("TOOLANG_SANDBOX", "host"),
             )
             scheduler = JobScheduler(
                 layout=spec.layout,

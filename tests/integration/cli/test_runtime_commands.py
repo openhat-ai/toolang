@@ -9,10 +9,10 @@ import pytest
 from click.utils import strip_ansi
 from typer.testing import CliRunner
 
-from toolang.base.types.hosting import HostingRef
+from toolang.base.types.sandbox import SandboxRef
 import toolang.cli.toolang.main as cli
 from toolang.common.layout import AgentLayout
-from toolang.up import hosting
+from toolang.up import sandbox as sandbox_runtime
 from toolang.up.server import ServeSpec
 
 
@@ -67,8 +67,8 @@ def _launch_spec(
     log_path: Path | None,
     environ: Mapping[str, str],
     **_kwargs: object,
-) -> hosting.LaunchSpec:
-    return hosting.LaunchSpec(
+) -> sandbox_runtime.LaunchSpec:
+    return sandbox_runtime.LaunchSpec(
         serve=ServeSpec(
             layout=layout,
             host=host,
@@ -81,7 +81,7 @@ def _launch_spec(
             file_inboxes=tuple(file_inboxes or ()),
             log_spec=log_spec,
         ),
-        sandbox=sandbox or "none",
+        sandbox=sandbox or "host",
         config={},
         environ=dict(environ),
         log_path=log_path,
@@ -89,7 +89,7 @@ def _launch_spec(
     )
 
 
-def test_run_resolves_hosting_inputs_and_runs_in_foreground(
+def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -105,20 +105,20 @@ def test_run_resolves_hosting_inputs_and_runs_in_foreground(
     )
     captured: dict[str, Any] = {}
 
-    async def resolve_launch(**kwargs: Any) -> hosting.LaunchSpec:
+    async def resolve_launch(**kwargs: Any) -> sandbox_runtime.LaunchSpec:
         captured["resolve"] = kwargs
         return _launch_spec(**kwargs)
 
     async def run(
-        spec: hosting.LaunchSpec,
+        spec: sandbox_runtime.LaunchSpec,
         *,
         on_ready: Any,
     ) -> int:
         captured["run"] = spec
         on_ready(
-            hosting.HostingState(
+            sandbox_runtime.SandboxState(
                 sandbox=spec.sandbox,
-                ref=HostingRef(
+                ref=SandboxRef(
                     runtime_id="workload-1",
                     endpoint=spec.serve.endpoint,
                 ),
@@ -126,8 +126,8 @@ def test_run_resolves_hosting_inputs_and_runs_in_foreground(
         )
         return 0
 
-    monkeypatch.setattr(hosting, "resolve_launch", resolve_launch)
-    monkeypatch.setattr(hosting, "run", run)
+    monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
+    monkeypatch.setattr(sandbox_runtime, "run", run)
 
     result = runner.invoke(
         cli.app,
@@ -193,18 +193,18 @@ def test_start_launches_in_background_and_reports_endpoint(
     _create_agent(root)
     captured: dict[str, Any] = {}
 
-    async def resolve_launch(**kwargs: Any) -> hosting.LaunchSpec:
+    async def resolve_launch(**kwargs: Any) -> sandbox_runtime.LaunchSpec:
         captured["resolve"] = kwargs
         return _launch_spec(**kwargs)
 
-    async def launch(spec: hosting.LaunchSpec) -> object:
+    async def launch(spec: sandbox_runtime.LaunchSpec) -> object:
         return type(
             "Handle",
             (),
             {
-                "state": hosting.HostingState(
+                "state": sandbox_runtime.SandboxState(
                     sandbox=spec.sandbox,
-                    ref=HostingRef(
+                    ref=SandboxRef(
                         runtime_id="workload-1",
                         endpoint=spec.serve.endpoint,
                     ),
@@ -212,8 +212,8 @@ def test_start_launches_in_background_and_reports_endpoint(
             },
         )()
 
-    monkeypatch.setattr(hosting, "resolve_launch", resolve_launch)
-    monkeypatch.setattr(hosting, "launch", launch)
+    monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
+    monkeypatch.setattr(sandbox_runtime, "launch", launch)
 
     result = runner.invoke(
         cli.app,
@@ -234,7 +234,7 @@ def test_start_launches_in_background_and_reports_endpoint(
     assert resolved["log_path"] == root / "agents" / "alice" / ".runtime" / "agent.log"
 
 
-def test_stop_forwards_force_to_hosting(
+def test_stop_forwards_force_to_sandbox(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -246,7 +246,7 @@ def test_stop_forwards_force_to_hosting(
         captured.update(target=target, force=force)
         return True
 
-    monkeypatch.setattr(hosting, "stop", stop)
+    monkeypatch.setattr(sandbox_runtime, "stop", stop)
 
     result = runner.invoke(
         cli.app,
@@ -258,7 +258,7 @@ def test_stop_forwards_force_to_hosting(
     assert captured == {"target": layout, "force": True}
 
 
-def test_stop_rejects_agent_without_hosting_state(
+def test_stop_rejects_agent_without_sandbox_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -269,7 +269,7 @@ def test_stop_rejects_agent_without_hosting_state(
         del force
         return False
 
-    monkeypatch.setattr(hosting, "stop", stop)
+    monkeypatch.setattr(sandbox_runtime, "stop", stop)
 
     result = runner.invoke(
         cli.app,

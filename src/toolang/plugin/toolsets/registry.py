@@ -41,7 +41,7 @@ def split_tool_selectors(items: list[str] | tuple[str, ...] | None) -> tuple[str
 
 
 def parse_tool_registration_key(
-    plugin_name: str,
+    toolset_name: str,
     key: str,
     leaf_tool_name: str,
 ) -> ToolRef:
@@ -49,20 +49,22 @@ def parse_tool_registration_key(
 
     text = str(key).strip()
     if not text:
-        raise ToolangError(f"tool plugin {plugin_name!r} returned an empty tool key")
+        raise ToolangError(
+            f"toolset plugin {toolset_name!r} returned an empty tool key"
+        )
     namespace, separator, name = text.partition("/")
     if separator:
         namespace = namespace.strip()
         name = name.strip()
     else:
-        namespace = plugin_name
+        namespace = toolset_name
         name = text
     if name != leaf_tool_name:
         raise ToolangError(
-            f"tool plugin {plugin_name!r} returned mismatched leaf tool name: "
+            f"toolset plugin {toolset_name!r} returned mismatched leaf tool name: "
             f"{text!r} != {leaf_tool_name!r}"
         )
-    return ToolRef(plugin=plugin_name, namespace=namespace, name=name)
+    return ToolRef(plugin=toolset_name, namespace=namespace, name=name)
 
 
 def tool_ref_for_model_tool(model_name: str, tool: AgentTool) -> ToolRef:
@@ -71,11 +73,11 @@ def tool_ref_for_model_tool(model_name: str, tool: AgentTool) -> ToolRef:
     ref = getattr(tool, "ref", None)
     if isinstance(ref, ToolRef):
         return ref
-    plugin = getattr(tool, "plugin_name", None)
-    plugin_name = plugin if isinstance(plugin, str) and plugin else "-"
+    toolset = getattr(tool, "toolset_name", None)
+    toolset_name = toolset if isinstance(toolset, str) and toolset else "-"
     namespace = getattr(tool, "namespace", None)
     namespace_name = (
-        namespace if isinstance(namespace, str) and namespace else plugin_name
+        namespace if isinstance(namespace, str) and namespace else toolset_name
     )
     leaf = _tool_leaf_name(tool)
     if namespace_name == "-" and "/" in model_name:
@@ -84,7 +86,7 @@ def tool_ref_for_model_tool(model_name: str, tool: AgentTool) -> ToolRef:
         namespace_name, _separator, leaf = model_name.partition("__")
     elif namespace_name == "-" and "_" in model_name:
         namespace_name, _separator, leaf = model_name.partition("_")
-    return ToolRef(plugin=plugin_name, namespace=namespace_name, name=leaf)
+    return ToolRef(plugin=toolset_name, namespace=namespace_name, name=leaf)
 
 
 def tool_ref_matches(ref: ToolRef, selector: str) -> bool:

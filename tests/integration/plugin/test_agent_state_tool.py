@@ -11,7 +11,7 @@ from toolang.base.types.tool import ToolContext
 from toolang.catalog import cap as caps
 from toolang.catalog.job import AuthoredJobs
 from toolang.execution.tools.agent_state import (
-    create_tool_set as create_agent_state_tool,
+    create_toolset as create_agent_state_tool,
 )
 
 

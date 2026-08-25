@@ -10,7 +10,7 @@ from toolang.base.types.channel import (
     ReplyTarget,
 )
 from toolang.plugin.config import parse_channel_bindings
-from toolang.plugin.channels.loading import create_channel_plugin
+from toolang.plugin.channels.loading import create_channel
 
 
 def _channel_context(home: Path, binding_name: str) -> ChannelContext:
@@ -21,7 +21,7 @@ def _channel_context(home: Path, binding_name: str) -> ChannelContext:
 
 
 def test_create_experiments_telegram_channel_plugin() -> None:
-    plugin = create_channel_plugin(
+    plugin = create_channel(
         "telegram",
         config={"token": "secret", "owner_chat_id": "123"},
     )
@@ -64,7 +64,7 @@ def test_telegram_channel_polls_and_delivers(monkeypatch) -> None:
         return FakeResponse({"ok": True, "result": {"message_id": 88}})
 
     monkeypatch.setattr("toolang.plugin.channels.telegram.httpx.post", fake_post)
-    plugin = create_channel_plugin(
+    plugin = create_channel(
         "telegram",
         config={"token": "secret", "owner_chat_id": "123"},
     )
@@ -113,7 +113,7 @@ def test_telegram_channel_typing_and_edit(monkeypatch) -> None:
         return FakeResponse({"ok": True, "result": {"message_id": 88}})
 
     monkeypatch.setattr("toolang.plugin.channels.telegram.httpx.post", fake_post)
-    plugin = create_channel_plugin(
+    plugin = create_channel(
         "telegram",
         config={"token": "secret", "owner_chat_id": "123"},
     )

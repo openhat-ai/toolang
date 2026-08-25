@@ -31,7 +31,7 @@ class _Tool:
     def __init__(self, namespace: str, name: str) -> None:
         self.namespace = namespace
         self.name = f"{namespace}__{name}"
-        self.plugin_name = namespace
+        self.toolset_name = namespace
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(

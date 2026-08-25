@@ -16,7 +16,7 @@ from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 
 
 @dataclass(frozen=True, slots=True)
-class OllamaModels(ModelCatalog):
+class OllamaModelCatalog(ModelCatalog):
     """Models and metadata currently reported by one Ollama endpoint."""
 
     environ: Mapping[str, str]
@@ -64,7 +64,7 @@ class OllamaModels(ModelCatalog):
 
 
 @dataclass(frozen=True, slots=True)
-class LlamaCppModels(ModelCatalog):
+class LlamaCppModelCatalog(ModelCatalog):
     """Models and metadata currently reported by one llama.cpp endpoint."""
 
     environ: Mapping[str, str]
@@ -255,20 +255,20 @@ async def _optional_json(client: httpx.AsyncClient, url: str) -> dict[str, objec
     return payload if isinstance(payload, dict) else {}
 
 
-def create_ollama_catalog(config: Mapping[str, object]) -> ModelCatalog:
+def create_ollama_model_catalog(config: Mapping[str, object]) -> ModelCatalog:
     """Create the built-in Ollama catalog plugin."""
 
-    return OllamaModels(
+    return OllamaModelCatalog(
         _config_environ(config),
         endpoint=_optional_string(config.get("endpoint")),
         timeout=_config_timeout(config),
     )
 
 
-def create_llama_cpp_catalog(config: Mapping[str, object]) -> ModelCatalog:
+def create_llama_cpp_model_catalog(config: Mapping[str, object]) -> ModelCatalog:
     """Create the built-in llama.cpp catalog plugin."""
 
-    return LlamaCppModels(
+    return LlamaCppModelCatalog(
         _config_environ(config),
         endpoint=_optional_string(config.get("endpoint")),
         timeout=_config_timeout(config),

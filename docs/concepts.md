@@ -72,17 +72,17 @@ Placement determines which root, home, source, and config files participate in
 runtime assembly. It does not define the semantic shape of one run.
 
 
-## Agent Hosting
+## Agent Sandbox
 
-Agent hosting describes where and how the agent API process is launched after
+Agent sandboxing describes where and how the agent API process is launched after
 an agent target has been materialized. It is separate from source placement.
 
 The public CLI calls these choices sandboxes. Internally, each sandbox plugin
-implements the `Hosting` lifecycle. Current implementations are:
+implements the `Sandbox` lifecycle. Current implementations are:
 
 | Driver | Meaning |
 | --- | --- |
-| `none` | Launch `too serve` as a local child process |
+| `host` | Launch `too serve` as a local child process |
 | `docker` | Launch a container whose primary workload is `too serve` |
 
 Selectors use `name[:spec]`. Generic orchestration selects the plugin by name
@@ -90,7 +90,7 @@ and passes the remaining spec unchanged to that implementation. Future drivers
 may use a cloud host. `RunExecutor` receives an `AgentSetup` and an immutable
 `AgentState` and does not know where its process is hosted.
 
-`HostingState` persists only the control-side workload reference required by a
+`SandboxState` persists only the control-side workload reference required by a
 later `stop` command. AgentServer status and execution data remain separate.
 The materialized root and home remain authoritative in every environment.
 

@@ -262,7 +262,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
 
     with chat._chat_runtime(
         object(),  # type: ignore[arg-type]
-        sandbox="none",
+        sandbox="host",
         allow_options=[
             "models=test/model",
             "tools=shell/*",
@@ -308,7 +308,7 @@ def test_chat_ui_paths_follow_the_selected_layout(
 def test_chat_runtime_rejects_hosted_sandboxes() -> None:
     with pytest.raises(
         click.ClickException,
-        match="supports only the none sandbox",
+        match="supports only the host sandbox",
     ):
         with chat._chat_runtime(
             object(),  # type: ignore[arg-type]

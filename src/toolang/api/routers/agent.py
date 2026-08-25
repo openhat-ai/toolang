@@ -149,7 +149,7 @@ def _runtime_sandbox_spec(runtime_state: dict[str, object]) -> str:
     sandbox = runtime_state.get("sandbox")
     if isinstance(sandbox, str) and sandbox.strip():
         return sandbox.strip()
-    return "none"
+    return "host"
 
 
 def _model_item(*, selector: str, target: Any) -> dict[str, object]:

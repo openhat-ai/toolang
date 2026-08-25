@@ -1,4 +1,4 @@
-"""Hosting inside Docker."""
+"""Sandbox inside Docker."""
 
 from __future__ import annotations
 
@@ -14,20 +14,20 @@ from typing import Any
 from uuid import uuid4
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.hosting import Hosting
-from toolang.base.types.hosting import (
-    HostingMount,
-    HostingPlan,
-    HostingPort,
-    HostingRef,
-    HostingRequest,
+from toolang.base.protocols.sandbox import Sandbox
+from toolang.base.types.sandbox import (
+    SandboxMount,
+    SandboxPlan,
+    SandboxPort,
+    SandboxRef,
+    SandboxRequest,
 )
 
 DEFAULT_IMAGE = "python:3.13-slim"
 
 
 @dataclass(slots=True)
-class DockerHosting:
+class DockerSandbox:
     """Stage and run the AgentServer as a Docker container's main workload."""
 
     config: dict[str, Any]
@@ -38,14 +38,14 @@ class DockerHosting:
         image = str(self.config.get("image", "")).strip()
         self._default_image = image or None
 
-    def prepare(self, spec: str | None, request: HostingRequest) -> HostingPlan:
+    def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         image = _image(spec, self._default_image)
         stage_dir = request.local_root / ".sandbox" / request.agent_name
         runtime_dir = request.hosted_home / ".runtime" / "sandbox"
         stage_dir.mkdir(parents=True, exist_ok=True)
 
         hosted_dev_artifact: Path | None = None
-        extra_mounts: list[HostingMount] = []
+        extra_mounts: list[SandboxMount] = []
         if request.local_dev_artifact is not None:
             artifact = request.local_dev_artifact
             if artifact.is_file():
@@ -62,7 +62,7 @@ class DockerHosting:
             else:
                 hosted_dev_artifact = runtime_dir / "dev"
                 extra_mounts.append(
-                    HostingMount(
+                    SandboxMount(
                         local_path=artifact,
                         hosted_path=hosted_dev_artifact,
                         read_only=True,
@@ -96,14 +96,14 @@ class DockerHosting:
 
         mounts = [
             *request.mounts,
-            HostingMount(request.local_home, request.hosted_home),
-            HostingMount(stage_dir, runtime_dir),
+            SandboxMount(request.local_home, request.hosted_home),
+            SandboxMount(stage_dir, runtime_dir),
             *extra_mounts,
         ]
         container_name = (
             f"toolang-{_container_label(request.agent_name)}-{uuid4().hex[:8]}"
         )
-        return HostingPlan(
+        return SandboxPlan(
             sandbox=f"{self.name}:{image}",
             command=("/bin/sh", str(runtime_dir / "start.sh")),
             working_directory=request.hosted_home,
@@ -116,7 +116,7 @@ class DockerHosting:
             },
             mounts=tuple(mounts),
             ports=(
-                HostingPort(
+                SandboxPort(
                     bind_host=request.bind_host,
                     local_port=request.port,
                     hosted_port=request.port,
@@ -129,11 +129,11 @@ class DockerHosting:
             },
         )
 
-    async def launch(self, plan: HostingPlan) -> HostingRef:
+    async def launch(self, plan: SandboxPlan) -> SandboxRef:
         container_name = _plan_text(plan, "container_name")
         image = _plan_text(plan, "image")
         if len(plan.ports) != 1:
-            raise ValueError("docker hosting requires exactly one published port")
+            raise ValueError("docker sandbox requires exactly one published port")
         port = plan.ports[0]
         try:
             container_id = await asyncio.to_thread(
@@ -150,7 +150,7 @@ class DockerHosting:
             )
         except RuntimeError as exc:
             raise ToolangError(f"Could not start docker sandbox: {exc}") from exc
-        return HostingRef(
+        return SandboxRef(
             runtime_id=container_name,
             endpoint=plan.endpoint,
             meta={
@@ -161,32 +161,32 @@ class DockerHosting:
             },
         )
 
-    async def running(self, ref: HostingRef) -> bool:
+    async def running(self, ref: SandboxRef) -> bool:
         return await asyncio.to_thread(docker_container_running, ref.runtime_id)
 
-    async def wait(self, ref: HostingRef) -> int:
+    async def wait(self, ref: SandboxRef) -> int:
         if ref.meta.get("follow_logs") is True:
             await asyncio.to_thread(docker_follow_container_logs, ref.runtime_id)
         return await asyncio.to_thread(docker_wait_container, ref.runtime_id)
 
-    async def stop(self, ref: HostingRef, *, force: bool = False) -> None:
+    async def stop(self, ref: SandboxRef, *, force: bool = False) -> None:
         await asyncio.to_thread(
             docker_stop_container,
             ref.runtime_id,
             force=force,
         )
 
-    async def release(self, ref: HostingRef) -> None:
+    async def release(self, ref: SandboxRef) -> None:
         await asyncio.to_thread(docker_remove_container, ref.runtime_id)
         stage_dir = ref.meta.get("stage_dir")
         if isinstance(stage_dir, str) and stage_dir:
             await asyncio.to_thread(shutil.rmtree, stage_dir, True)
 
 
-def create_hosting(config: Mapping[str, Any]) -> Hosting:
-    """Create built-in Docker hosting."""
+def create_sandbox(config: Mapping[str, Any]) -> Sandbox:
+    """Create built-in Docker sandbox."""
 
-    return DockerHosting(dict(config))
+    return DockerSandbox(dict(config))
 
 
 def _image(spec: str | None, configured: str | None) -> str:
@@ -205,10 +205,10 @@ def _container_label(value: str) -> str:
     return label or "agent"
 
 
-def _plan_text(plan: HostingPlan, key: str) -> str:
+def _plan_text(plan: SandboxPlan, key: str) -> str:
     value = plan.meta.get(key)
     if not isinstance(value, str) or not value:
-        raise ValueError(f"docker hosting plan is missing {key}")
+        raise ValueError(f"docker sandbox plan is missing {key}")
     return value
 
 
@@ -219,7 +219,7 @@ def _write_start_script(
     hosted_dev_artifact: Path | None,
 ) -> None:
     if not command:
-        raise ValueError("docker hosting requires a command")
+        raise ValueError("docker sandbox requires a command")
     source = str(hosted_dev_artifact) if hosted_dev_artifact is not None else "toolang"
     tool_command = command if command[0] in {"too", "toolang"} else ("too", *command)
     lines = [
@@ -320,7 +320,7 @@ def docker_run_detached(
     container_name: str,
     workdir: str,
     command: list[str],
-    mounts: tuple[HostingMount, ...],
+    mounts: tuple[SandboxMount, ...],
     bind_host: str,
     published_port: int,
     hosted_port: int,

@@ -27,7 +27,7 @@ from toolang.plugin.models.config import (
 )
 from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
 from toolang.plugin.models.provider_resolver import resolve_catalog_providers
-from toolang.plugin.tools.loading import load_runtime_tools
+from toolang.plugin.toolsets.loading import load_tools
 
 from .config import (
     load_agent_config,
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class _SnapshotModels(ModelCatalog):
+class _SnapshotModelCatalog(ModelCatalog):
     value: ModelCatalogSnapshot
     name: str = "models_dev"
 
@@ -118,8 +118,8 @@ class SetupWatcher:
             if config_changed or not self._adapters:
                 self._adapters = load_model_adapters()
             if config_changed or envs_changed or not self._tools:
-                self._tools = load_runtime_tools(
-                    plugin_config=merge_named_configs(
+                self._tools = load_tools(
+                    toolset_config=merge_named_configs(
                         configs,
                         section="tools",
                         environ=envs,
@@ -166,7 +166,7 @@ class SetupWatcher:
             ) + tuple(catalogs[name] for name in sorted(catalogs))
             merged = await MergedModelCatalog(
                 (
-                    _SnapshotModels(static),
+                    _SnapshotModelCatalog(static),
                     *ordered_catalogs,
                 )
             ).snapshot()

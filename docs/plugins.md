@@ -9,7 +9,7 @@ or runtime failures.
 
 The public plugin families are:
 
-- `tool`;
+- `toolset`;
 - `channel`;
 - `sandbox`;
 - `model_catalog`;
@@ -21,9 +21,9 @@ integration behavior and do not mutate durable runtime truth directly.
 
 ## Family Roles
 
-### Tool
+### Toolset
 
-Tool plugins expose one `AgentToolSet`, which may return one or more
+Toolset plugins expose one `Toolset`, which may return one or more
 model-facing `AgentTool` values. `AgentTool.invoke()` is asynchronous.
 
 ### Channel
@@ -54,7 +54,7 @@ discover models, match providers, calculate availability, or own pricing.
 
 Toolang loads plugins from Python entry points:
 
-- `toolang.tool`;
+- `toolang.toolset`;
 - `toolang.channel`;
 - `toolang.sandbox`;
 - `toolang.model_catalog`;
@@ -63,20 +63,25 @@ Toolang loads plugins from Python entry points:
 Built-in implementations are registered through the same entry-point mechanism
 as external packages. The implementation packages are:
 
-- `toolang.plugin.tools.*`;
+- `toolang.plugin.toolsets.*`;
 - `toolang.plugin.channels.*`;
 - `toolang.plugin.sandboxes.*`;
 - `toolang.plugin.models` catalog implementations;
 - `toolang.plugin.models.adapters.*`.
 
-Each entry point names one factory such as `create_tool_set`, `create_channel`,
-`create_sandbox`, `create_models_dev_catalog`, `create_ollama_catalog`, or
-`create_model_adapter`. A distribution may register multiple entries in one or
-more families.
+Each entry point names one factory such as `create_toolset`, `create_channel`,
+`create_sandbox`, `create_models_dev_model_catalog`,
+`create_ollama_model_catalog`, or `create_model_adapter`. A distribution may
+register multiple entries in one or more families.
 
 `toolang.plugin.loading` owns generic entry-point discovery. Family-specific
 loaders pass explicit configuration into factories and validate the returned
 protocol.
+
+Naming reflects cardinality: `create_<singular>` returns one selected plugin,
+`load_<plural>` returns a collection, and `list_<plural>` discovers installed
+entry points. File parsing uses `read_*`, such as
+`read_model_catalog_snapshot`, rather than a plugin loader name.
 
 ## Configuration Rule
 

@@ -26,8 +26,8 @@ class AgentTool(Protocol):
 
 
 @runtime_checkable
-class AgentToolSet(Protocol):
-    """Minimal tool plugin contract."""
+class Toolset(Protocol):
+    """Minimal toolset plugin contract."""
 
     name: str
     description: str | None

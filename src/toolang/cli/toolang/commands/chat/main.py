@@ -108,9 +108,9 @@ def _chat_runtime(
 ) -> Iterator[ChatClient]:
     """Own one process-local execution session for this chat command."""
 
-    if sandbox is not None and sandbox.partition(":")[0].strip() != "none":
+    if sandbox is not None and sandbox.partition(":")[0].strip() != "host":
         raise click.ClickException(
-            "direct chat execution currently supports only the none sandbox"
+            "direct chat execution currently supports only the host sandbox"
         )
     layout = context_layout(ctx)
     environ = load_runtime_environ(layout, base_environ=os.environ)

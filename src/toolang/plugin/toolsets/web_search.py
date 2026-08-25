@@ -1,4 +1,4 @@
-"""Web-search tool plugin."""
+"""Web-search toolset plugin."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from anyio import to_process
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool, AgentToolSet
+from toolang.base.protocols.tool import AgentTool, Toolset
 from toolang.base.utils.function_tools import create_function_tool, tool
 
 DEFAULT_TOP_K = 5
@@ -19,7 +19,7 @@ DEFAULT_TIMEOUT = 15
 
 
 @dataclass(slots=True)
-class WebSearchPlugin:
+class WebSearchToolset:
     """Public-web search tools."""
 
     config: dict[str, Any]
@@ -89,10 +89,10 @@ class WebSearchPlugin:
         return {"search": create_function_tool(search)}
 
 
-def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
-    """Create the web_search tool plugin."""
+def create_toolset(config: Mapping[str, Any]) -> Toolset:
+    """Create the web_search toolset plugin."""
 
-    return WebSearchPlugin(config=dict(config))
+    return WebSearchToolset(config=dict(config))
 
 
 async def _run_search(

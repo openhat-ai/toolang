@@ -48,7 +48,7 @@ toolang/
 ├── cli/                    # CLI entry points and user interfaces
 ├── common/                 # small package-neutral primitives
 ├── execution/              # requests, records, events, stores, and executor
-├── up/                     # runtime setup, agent targets, processes, hosting, API assembly
+├── up/                     # runtime setup, agent targets, processes, sandboxes, API assembly
 ├── lang/                   # .too AST, parsing, lowering, validation, formatting
 ├── plugin/                 # plugin loading, config, and built-in implementations
 ├── state/                  # durable/prepared files and immutable agent state
@@ -387,10 +387,10 @@ objects. It may construct watchers, setup, stores, executor, scheduler, and API
 state, but it must not wrap them in an `AgentRuntime` aggregate.
 
 The CLI is the only public process origin. It first resolves one materialized
-agent target, then selects hosting from `--sandbox` or explicit config. Hosting
+agent target, then selects a sandbox from `--sandbox` or explicit config. Sandbox
 decides whether the API process runs on the host, in Docker, or in a future
 remote or hybrid environment. The server core and `RunExecutor` do not inspect
-that hosting decision.
+that sandbox decision.
 
 `toolang.api.app` owns `ApiContext`, its `app.state` registration and request
 dependency, and FastAPI application assembly. `toolang.api.router` mounts
@@ -403,7 +403,7 @@ projections belong to the core package that owns the inspected state rather
 than to an API-wide view module. Process-level routes such as `/healthz` remain
 on the application itself.
 
-Scripts with `sandbox=none` may assemble an executor for one-shot invocation.
+Scripts with `sandbox=host` may assemble an executor for one-shot invocation.
 Managed-sandbox script runs transport native run events through their
 process/channel orchestration rather than an HTTP streaming endpoint. The chat
 TUI runs in its own process, assembles the core objects and `RunExecutor`

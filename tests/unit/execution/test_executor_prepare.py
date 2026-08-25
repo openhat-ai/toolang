@@ -51,7 +51,7 @@ from toolang.execution.types import (
 )
 from toolang.lang.ast import AgicDecl, Message as AstMessage, Parameter, Program, Span
 from toolang.lang.input import resolve_runnable_input
-from toolang.plugin.tools.registry import tool_ref_for_model_tool
+from toolang.plugin.toolsets.registry import tool_ref_for_model_tool
 from toolang.setup import AgentEnvironment, AgentSetup
 
 
@@ -94,7 +94,7 @@ class _Adapter:
 
 class _Tool(AgentTool):
     name = "shell__execute"
-    plugin_name = "shell"
+    toolset_name = "shell"
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(name=self.name, description="Run a command.")

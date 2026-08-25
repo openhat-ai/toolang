@@ -6,11 +6,11 @@ from typing import Any, cast
 
 import pytest
 
-from toolang.base.protocols.hosting import Hosting
-from toolang.base.types.hosting import HostingMount, HostingRequest
+from toolang.base.protocols.sandbox import Sandbox
+from toolang.base.types.sandbox import SandboxMount, SandboxRequest
 from toolang.plugin.config import parse_sandbox_binding
-from toolang.plugin.sandboxes import none as none_sandbox
-from toolang.plugin.sandboxes.loading import load_hosting
+from toolang.plugin.sandboxes import host as host_sandbox
+from toolang.plugin.sandboxes.loading import create_sandbox
 
 
 def _request(
@@ -18,10 +18,10 @@ def _request(
     *,
     dev: Path | None = None,
     foreground: bool = False,
-) -> HostingRequest:
+) -> SandboxRequest:
     home = root / "agents" / "alice"
     home.mkdir(parents=True, exist_ok=True)
-    return HostingRequest(
+    return SandboxRequest(
         local_root=root,
         local_home=home,
         hosted_root=Path("/root/.toolang"),
@@ -36,7 +36,7 @@ def _request(
         log_path=None if foreground else home / ".runtime" / "agent.log",
         envs={"EXAMPLE": "value"},
         mounts=(
-            HostingMount(
+            SandboxMount(
                 local_path=root / "shared",
                 hosted_path=Path("/root/.toolang/shared"),
             ),
@@ -45,22 +45,27 @@ def _request(
     )
 
 
-def test_none_hosting_parses_own_spec_and_prepares_local_process(
+def test_host_sandbox_parses_own_spec_and_prepares_local_process(
     tmp_path: Path,
 ) -> None:
-    hosting = load_hosting("none", config={})
+    sandbox = create_sandbox("host", config={})
 
-    assert isinstance(hosting, Hosting)
-    plan = hosting.prepare(None, _request(tmp_path))
+    assert isinstance(sandbox, Sandbox)
+    plan = sandbox.prepare(None, _request(tmp_path))
 
-    assert plan.sandbox == "none"
+    assert plan.sandbox == "host"
     assert plan.command[-4:] == ("serve", "alice", "--port", "8123")
     assert plan.working_directory == tmp_path / "agents" / "alice"
     with pytest.raises(ValueError, match="does not accept"):
-        hosting.prepare("", _request(tmp_path))
+        sandbox.prepare("", _request(tmp_path))
 
 
-def test_none_foreground_hosting_inherits_console_streams(
+def test_none_sandbox_selector_is_not_supported() -> None:
+    with pytest.raises(ValueError, match="unknown toolang.sandbox plugin: none"):
+        create_sandbox("none", config={})
+
+
+def test_host_foreground_sandbox_inherits_console_streams(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -71,16 +76,16 @@ def test_none_foreground_hosting_inherits_console_streams(
         captured.update(command=command, **kwargs)
         return process
 
-    monkeypatch.setattr(none_sandbox.subprocess, "Popen", popen)
-    hosting = load_hosting("none", config={})
-    plan = hosting.prepare(None, _request(tmp_path, foreground=True))
+    monkeypatch.setattr(host_sandbox.subprocess, "Popen", popen)
+    sandbox = create_sandbox("host", config={})
+    plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
 
-    assert none_sandbox._launch(plan) is process
+    assert host_sandbox._launch(plan) is process
     assert "stdout" not in captured
     assert "stderr" not in captured
 
 
-def test_docker_hosting_prepares_and_launches(
+def test_docker_sandbox_prepares_and_launches(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -102,9 +107,9 @@ def test_docker_hosting_prepares_and_launches(
     dev.parent.mkdir(parents=True)
     dev.write_bytes(b"wheel")
     (tmp_path / "shared").mkdir()
-    hosting = load_hosting("docker", config={})
+    sandbox = create_sandbox("docker", config={})
 
-    plan = hosting.prepare("python:3.13-slim", _request(tmp_path, dev=dev))
+    plan = sandbox.prepare("python:3.13-slim", _request(tmp_path, dev=dev))
 
     assert plan.sandbox == "docker:python:3.13-slim"
     assert plan.working_directory == Path("/root/.toolang/agents/alice")
@@ -120,26 +125,26 @@ def test_docker_hosting_prepares_and_launches(
     assert script.is_file()
     assert " too serve alice --port 8123" in script.read_text(encoding="utf-8")
 
-    ref = asyncio.run(hosting.launch(plan))
+    ref = asyncio.run(sandbox.launch(plan))
 
     assert ref.runtime_id == container_name
     assert ref.endpoint == "http://localhost:8123"
-    assert asyncio.run(hosting.running(ref)) is True
+    assert asyncio.run(sandbox.running(ref)) is True
     run_call = cast(dict[str, Any], calls["run"])
     assert run_call["image"] == "python:3.13-slim"
     assert run_call["published_port"] == 8123
     assert run_call["hosted_port"] == 8123
 
 
-def test_docker_hosting_uses_configured_default_image(tmp_path: Path) -> None:
-    hosting = load_hosting("docker", config={"image": "python:3.14"})
+def test_docker_sandbox_uses_configured_default_image(tmp_path: Path) -> None:
+    sandbox = create_sandbox("docker", config={"image": "python:3.14"})
 
-    plan = hosting.prepare(None, _request(tmp_path))
+    plan = sandbox.prepare(None, _request(tmp_path))
 
     assert plan.sandbox == "docker:python:3.14"
 
 
-def test_docker_foreground_hosting_follows_container_logs(
+def test_docker_foreground_sandbox_follows_container_logs(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -156,11 +161,11 @@ def test_docker_foreground_hosting_follows_container_logs(
         "toolang.plugin.sandboxes.docker.docker_wait_container",
         lambda name: calls.append(("wait", name)) or 0,
     )
-    hosting = load_hosting("docker", config={})
-    plan = hosting.prepare(None, _request(tmp_path, foreground=True))
+    sandbox = create_sandbox("docker", config={})
+    plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
 
-    ref = asyncio.run(hosting.launch(plan))
-    result = asyncio.run(hosting.wait(ref))
+    ref = asyncio.run(sandbox.launch(plan))
+    result = asyncio.run(sandbox.wait(ref))
 
     assert result == 0
     assert calls == [("logs", ref.runtime_id), ("wait", ref.runtime_id)]

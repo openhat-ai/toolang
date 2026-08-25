@@ -36,7 +36,7 @@ def list_tools(
         ),
     ] = None,
 ) -> None:
-    from toolang.plugin.tools.registry import split_tool_selectors
+    from toolang.plugin.toolsets.registry import split_tool_selectors
 
     setup = _setup(_layout(ctx))
     selectors = split_tool_selectors(tuple(filter_ or ()))
@@ -99,11 +99,11 @@ def tool_rows(
     *,
     tool_selectors: Sequence[str] = (),
 ) -> list[tuple[str, str, str]]:
-    from toolang.plugin.tools.views import tool_list_rows
+    from toolang.plugin.toolsets.views import tool_list_rows
 
     return tool_list_rows(
         tools=setup.tools,
-        plugin_sources=plugin_sources("toolang.tool"),
+        plugin_sources=plugin_sources("toolang.toolset"),
         selectors=tool_selectors,
     )
 

@@ -17,10 +17,10 @@ def encode_tool_name(namespace: str, tool_name: str) -> str:
     return f"{namespace}__{tool_name}"
 
 
-def join_tool_name(plugin_name: str, tool_name: str) -> str:
-    """Return one model-facing tool name for one plugin leaf tool."""
+def join_tool_name(toolset_name: str, tool_name: str) -> str:
+    """Return one model-facing tool name for one toolset leaf tool."""
 
-    return encode_tool_name(plugin_name, tool_name)
+    return encode_tool_name(toolset_name, tool_name)
 
 
 def _require_tool_name_part(value: str, *, kind: str) -> None:

@@ -9,8 +9,8 @@ import pytest
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.adapters.responses import ResponsesModelAdapter
-from toolang.plugin.models.catalog import ModelsDevModels
-from toolang.plugin.models.local import LlamaCppModels, OllamaModels
+from toolang.plugin.models.catalog import ModelsDevModelCatalog
+from toolang.plugin.models.local import LlamaCppModelCatalog, OllamaModelCatalog
 from toolang.setup import SetupWatcher
 from toolang.setup import watcher as watcher_module
 
@@ -53,9 +53,9 @@ def test_setup_watcher_reuses_static_parse_and_reprobes_local_sources(
     _write_catalog(tmp_path / "models.json", ("one",))
     parse_calls = 0
     local_calls = 0
-    original = ModelsDevModels.snapshot
+    original = ModelsDevModelCatalog.snapshot
 
-    async def count_parse(self: ModelsDevModels) -> ModelCatalogSnapshot:
+    async def count_parse(self: ModelsDevModelCatalog) -> ModelCatalogSnapshot:
         nonlocal parse_calls
         parse_calls += 1
         return await original(self)
@@ -64,13 +64,13 @@ def test_setup_watcher_reuses_static_parse_and_reprobes_local_sources(
         nonlocal local_calls
         local_calls += 1
         provider_id = (
-            "ollama" if self.__class__.__name__ == "OllamaModels" else "llama_cpp"
+            "ollama" if self.__class__.__name__ == "OllamaModelCatalog" else "llama_cpp"
         )
         return _empty_local(provider_id)
 
-    monkeypatch.setattr(ModelsDevModels, "snapshot", count_parse)
-    monkeypatch.setattr(OllamaModels, "snapshot", count_local)
-    monkeypatch.setattr(LlamaCppModels, "snapshot", count_local)
+    monkeypatch.setattr(ModelsDevModelCatalog, "snapshot", count_parse)
+    monkeypatch.setattr(OllamaModelCatalog, "snapshot", count_local)
+    monkeypatch.setattr(LlamaCppModelCatalog, "snapshot", count_local)
     watcher = _watcher(
         monkeypatch, tmp_path, envs={"TEST_API_KEY": "secret"}, patch_local=False
     )
@@ -118,12 +118,12 @@ def test_setup_watcher_detects_local_models_without_force(
             revision=f"runtime:ollama:{calls}",
         )
 
-    monkeypatch.setattr(OllamaModels, "snapshot", changing_ollama)
+    monkeypatch.setattr(OllamaModelCatalog, "snapshot", changing_ollama)
 
     async def empty_llama(_self: object) -> ModelCatalogSnapshot:
         return _empty_local("llama_cpp")
 
-    monkeypatch.setattr(LlamaCppModels, "snapshot", empty_llama)
+    monkeypatch.setattr(LlamaCppModelCatalog, "snapshot", empty_llama)
     watcher = _watcher(
         monkeypatch,
         tmp_path,
@@ -208,7 +208,7 @@ def _watcher(
         "load_model_adapters",
         lambda: {"responses": ResponsesModelAdapter()},
     )
-    monkeypatch.setattr(watcher_module, "load_runtime_tools", lambda **_kwargs: {})
+    monkeypatch.setattr(watcher_module, "load_tools", lambda **_kwargs: {})
     if patch_local:
 
         async def empty_ollama(_self: object) -> ModelCatalogSnapshot:
@@ -217,8 +217,8 @@ def _watcher(
         async def empty_llama(_self: object) -> ModelCatalogSnapshot:
             return _empty_local("llama_cpp")
 
-        monkeypatch.setattr(OllamaModels, "snapshot", empty_ollama)
-        monkeypatch.setattr(LlamaCppModels, "snapshot", empty_llama)
+        monkeypatch.setattr(OllamaModelCatalog, "snapshot", empty_ollama)
+        monkeypatch.setattr(LlamaCppModelCatalog, "snapshot", empty_llama)
     return SetupWatcher(AgentLayout.resident(root, "alice"))
 
 
