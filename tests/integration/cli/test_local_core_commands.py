@@ -494,7 +494,9 @@ def test_inspect_focuses_historical_model_and_tool_calls(tmp_path: Path) -> None
     step_validator.validate(json.loads(model_record.stdout))
     step_validator.validate(json.loads(tool_record.stdout))
     assert field_focus.exit_code == 2
-    assert "--focus requires a complete record Pointer" in field_focus.stderr
+    assert "--focus requires a complete record Pointer" in strip_ansi(
+        field_focus.stderr
+    )
 
 
 def test_inspect_projects_a_historical_provider_request(
