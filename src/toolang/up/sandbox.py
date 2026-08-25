@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -27,6 +27,7 @@ from toolang.plugin.sandboxes.loading import create_sandbox
 from toolang.setup.config import (
     load_agent_config,
     load_setup_config,
+    load_setup_dotenvs,
 )
 from toolang.state.state import AgentState
 from toolang.state.watcher import StateWatcher
@@ -95,6 +96,7 @@ class LaunchSpec:
     environ: dict[str, str]
     log_path: Path | None = None
     dev_artifact: Path | None = None
+    dotenv_envs: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -150,6 +152,7 @@ async def resolve_launch(
         sandbox=selected,
         config=config,
         environ=dict(environ),
+        dotenv_envs=load_setup_dotenvs(layout),
         log_path=log_path,
         dev_artifact=artifact,
     )
@@ -209,6 +212,7 @@ async def _launch_locked(spec: LaunchSpec) -> SandboxHandle:
             "TOOLANG_ROOT": str(hosted_root),
             "TOOLANG_SANDBOX": spec.sandbox,
         },
+        dotenv_envs=spec.dotenv_envs,
         mounts=(
             ()
             if name == "host"

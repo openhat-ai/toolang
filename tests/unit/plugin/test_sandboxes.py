@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+import json
 from pathlib import Path
 import stat
+import subprocess
+import sys
 from typing import Any, cast
 
 from dotenv import dotenv_values
@@ -38,11 +42,21 @@ def _request(
         working_directory=home,
         log_path=None if foreground else home / ".runtime" / "agent.log",
         envs={
-            "COMPLEX": "line one\nline 'two'\\tail",
+            "COMPLEX": "line one\nline \"two\" 'three'\r\\tail${HOME}",
             "EXAMPLE": "value",
+            "HTTP_PROXY": "http://proxy.test:8080",
+            "LITERAL": "${HOME}/literal",
+            "OPENAI_API_KEY": "provider-secret",
+            "UNRELATED_HOST_SECRET": "must-not-be-exposed",
             "TOOLANG_HOST_GATEWAY": "wrong-gateway",
             "TOOLANG_ROOT": str(root),
             "TOOLANG_SANDBOX": "host",
+        },
+        dotenv_envs={
+            "COMPLEX": "line one\nline \"two\" 'three'\r\\tail${HOME}",
+            "EXAMPLE": "value",
+            "LITERAL": "${HOME}/literal",
+            "OPENAI_API_KEY": "dotenv-secret",
         },
         mounts=(
             SandboxMount(
@@ -136,14 +150,53 @@ def test_docker_sandbox_prepares_and_launches(
         if item.hosted_path == Path("/root/.toolang/agents/alice/.env")
     )
     assert guest_env_mount.read_only is True
-    assert dotenv_values(guest_env_mount.local_path) == {
-        "COMPLEX": "line one\nline 'two'\\tail",
+    assert dotenv_values(guest_env_mount.local_path, interpolate=False) == {
+        "COMPLEX": "line one\nline \"two\" 'three'\r\\tail${HOME}",
         "EXAMPLE": "value",
+        "HTTP_PROXY": "http://proxy.test:8080",
+        "LITERAL": "${HOME}/literal",
+        "OPENAI_API_KEY": "provider-secret",
     }
+    guest_env_source = guest_env_mount.local_path.read_text(encoding="utf-8")
+    assert guest_env_source.startswith("# Root and agent dotenv values\n")
+    assert "\n# Filtered host process values\n" in guest_env_source
+    assert guest_env_source.count("OPENAI_API_KEY=") == 2
+    assert "UNRELATED_HOST_SECRET" not in guest_env_source
     assert stat.S_IMODE(guest_env_mount.local_path.stat().st_mode) == 0o600
-    script = tmp_path / ".sandbox" / "alice" / "start.sh"
-    assert script.is_file()
-    assert " too serve alice --port 8123" in script.read_text(encoding="utf-8")
+    stage_dir = tmp_path / ".sandbox" / "alice"
+    stage_mount = next(
+        item
+        for item in plan.mounts
+        if item.hosted_path == Path("/root/.toolang/agents/alice/.runtime/sandbox")
+    )
+    assert stage_mount.read_only is True
+    assert "bootstrap.py" in (stage_dir / "start.sh").read_text(encoding="utf-8")
+    assert " too serve alice --port 8123" in (stage_dir / "agent.sh").read_text(
+        encoding="utf-8"
+    )
+    assert not (stage_dir / "environment.json").exists()
+    bootstrap = subprocess.run(
+        (
+            sys.executable,
+            str(stage_dir / "bootstrap.py"),
+            str(guest_env_mount.local_path),
+            sys.executable,
+            "-c",
+            "import json, os; print(json.dumps({"
+            "'COMPLEX': os.environ['COMPLEX'], "
+            "'LITERAL': os.environ['LITERAL'], "
+            "'OPENAI_API_KEY': os.environ['OPENAI_API_KEY']}))",
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+        env={"HOME": "/outside"},
+    )
+    assert json.loads(bootstrap.stdout) == {
+        "COMPLEX": "line one\nline \"two\" 'three'\r\\tail${HOME}",
+        "LITERAL": "${HOME}/literal",
+        "OPENAI_API_KEY": "provider-secret",
+    }
 
     ref = asyncio.run(sandbox.launch(plan))
 
@@ -167,6 +220,41 @@ def test_docker_sandbox_uses_configured_default_image(tmp_path: Path) -> None:
     plan = sandbox.prepare(None, _request(tmp_path))
 
     assert plan.sandbox == "docker:python:3.14"
+
+
+def test_docker_sandbox_uses_a_configured_environment_allow_pattern(
+    tmp_path: Path,
+) -> None:
+    sandbox = create_sandbox(
+        "docker",
+        config={"environment_allow_pattern": r"^CUSTOM_[A-Z]+$"},
+    )
+    request = replace(
+        _request(tmp_path),
+        envs={
+            "CUSTOM_TOKEN": "custom",
+            "DOTENV_TOKEN": "dotenv",
+            "OPENAI_API_KEY": "not-allowed-by-override",
+        },
+        dotenv_envs={"DOTENV_TOKEN": "dotenv"},
+    )
+
+    plan = sandbox.prepare(None, request)
+
+    guest_env_mount = next(
+        item
+        for item in plan.mounts
+        if item.hosted_path == Path("/root/.toolang/agents/alice/.env")
+    )
+    assert dotenv_values(guest_env_mount.local_path, interpolate=False) == {
+        "CUSTOM_TOKEN": "custom",
+        "DOTENV_TOKEN": "dotenv",
+    }
+
+
+def test_docker_sandbox_rejects_an_invalid_environment_allow_pattern() -> None:
+    with pytest.raises(ValueError, match="environment_allow_pattern"):
+        create_sandbox("docker", config={"environment_allow_pattern": "["})
 
 
 def test_docker_launch_failure_removes_the_staged_guest_environment(

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 from typing import cast
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -454,15 +455,47 @@ def _llama_cpp_description(meta: Mapping[str, object]) -> str:
 
 
 def _ollama_host(endpoint: str | None, environ: Mapping[str, str]) -> str:
-    value = endpoint or environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
+    value = endpoint or environ.get("OLLAMA_HOST")
+    if value is None:
+        host = environ.get("TOOLANG_HOST_GATEWAY", "127.0.0.1")
+        value = f"http://{host}:11434"
+    elif endpoint is None:
+        value = _replace_guest_loopback(value, environ)
     value = value.rstrip("/")
     return value.removesuffix("/v1")
 
 
 def _llama_cpp_endpoint(endpoint: str | None, environ: Mapping[str, str]) -> str:
-    value = endpoint or environ.get("LLAMA_CPP_HOST") or "http://127.0.0.1:8080"
+    value = endpoint or environ.get("LLAMA_CPP_HOST")
+    if value is None:
+        host = environ.get("TOOLANG_HOST_GATEWAY", "127.0.0.1")
+        value = f"http://{host}:8080"
+    elif endpoint is None:
+        value = _replace_guest_loopback(value, environ)
     value = value.rstrip("/")
     return value if value.endswith("/v1") else f"{value}/v1"
+
+
+def _replace_guest_loopback(value: str, environ: Mapping[str, str]) -> str:
+    gateway = environ.get("TOOLANG_HOST_GATEWAY")
+    if not gateway:
+        return value
+    try:
+        parsed = urlsplit(value)
+        if parsed.hostname not in {
+            "0.0.0.0",
+            "127.0.0.1",
+            "localhost",
+            "::",
+            "::1",
+        }:
+            return value
+        port = parsed.port
+    except ValueError:
+        return value
+    gateway_host = f"[{gateway}]" if ":" in gateway else gateway
+    netloc = f"{gateway_host}:{port}" if port is not None else gateway_host
+    return urlunsplit(parsed._replace(netloc=netloc))
 
 
 def _llama_cpp_host(endpoint: str) -> str:

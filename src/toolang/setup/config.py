@@ -50,9 +50,16 @@ def load_agent_config(layout: AgentLayout) -> dict[str, object]:
 def load_setup_envs(layout: AgentLayout) -> dict[str, str]:
     """Load root and agent dotenv defaults below the process environment."""
 
+    envs = load_setup_dotenvs(layout)
+    envs.update(os.environ)
+    return envs
+
+
+def load_setup_dotenvs(layout: AgentLayout) -> dict[str, str]:
+    """Load the merged root and agent dotenv values without process values."""
+
     envs = _load_dotenv(layout.root_env)
     envs.update(_load_dotenv(layout.env))
-    envs.update(os.environ)
     return envs
 
 
@@ -220,7 +227,7 @@ def _load_dotenv(path: Path) -> dict[str, str]:
         return {}
     return {
         key: value
-        for key, value in dotenv_values(path).items()
+        for key, value in dotenv_values(path, interpolate=False).items()
         if isinstance(key, str) and isinstance(value, str)
     }
 

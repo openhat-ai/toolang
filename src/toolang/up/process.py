@@ -799,10 +799,10 @@ def _sandbox_running(layout: AgentLayout) -> bool:
         return False
     if state is None:
         return False
-    implementation = load_state_sandbox(layout, state)
     try:
+        implementation = load_state_sandbox(layout, state)
         return asyncio.run(implementation.running(state.ref))
-    except (OSError, RuntimeError, TypeError, ValueError):
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
         return False
 
 

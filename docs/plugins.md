@@ -97,6 +97,7 @@ max_chars = 20000
 
 [plugin.sandbox.docker]
 root = "/root/.toolang"
+environment_allow_pattern = '^(?:COMPANY_CATALOG_TOKEN|HTTPS?_PROXY)$'
 
 [plugin.model_catalog.ollama]
 timeout = 3
@@ -132,6 +133,13 @@ implementations must validate their own sensitive fields because a generic
 mapping loader cannot infer whether an arbitrary string is sensitive.
 Sandbox-specific dotenv materialization is runtime transport and does not
 change or resolve a plugin's configuration mapping.
+
+The Docker sandbox exposes all names explicitly authored in the root or agent
+`.env`. Host-process-only names must match `environment_allow_pattern`, which is
+a configurable full-match regular expression with a built-in allowlist for
+Toolang, bootstrap, proxy, certificate, and common model-provider variables.
+The concrete plugin still resolves any exposed secret-reference name from its
+guest process environment.
 
 Only configured external model catalogs are instantiated; the three built-in
 catalogs are always loaded. After snapshots are merged, the resolver maps raw

@@ -396,15 +396,35 @@ configuration; `SandboxState` stores only the sandbox selector and runtime
 reference.
 
 The host fixes the workload's runtime environment before sandbox preparation.
-Docker writes that explicit mapping to a mode-`0600` staged dotenv file and
-bind-mounts it read-only over the guest agent's `.env`. The root `.env` is not
+Docker includes every name authored in the root or agent `.env`, then includes
+host-process names that match its default environment allow pattern.
+That pattern covers Toolang controls, proxy and certificate settings, Python
+bootstrap settings, and common model-provider variables. Override it with a
+full-match regular expression when another process variable is required:
+
+```toml
+[plugin.sandbox.docker]
+environment_allow_pattern = '^(?:COMPANY_CATALOG_TOKEN|HTTPS?_PROXY)$'
+```
+
+The configured pattern replaces the default and is compiled as written. Root
+dotenv values are overlaid by agent dotenv values without applying the pattern.
+A host-process value overrides those layers only when its name matches the
+pattern.
+
+Docker writes the selected mapping to one mode-`0600` staged dotenv file. Its
+comments separate merged root/agent dotenv values from filtered host-process
+values, with the process section last to preserve precedence. The file is
+bind-mounted read-only over the guest agent's `.env`; the root `.env` is not
 mounted, and the original agent `.env` remains hidden behind the nested file
-mount. The guest then applies the normal root dotenv, agent dotenv, and process
-environment precedence without exposing secret values as Docker command-line
-environment arguments. The container process receives only
-`TOOLANG_HOST_GATEWAY`, `TOOLANG_ROOT`, and `TOOLANG_SANDBOX`; Docker also maps
-`host.docker.internal` through the engine's `host-gateway`. Staged environment
-files are removed on release and after a failed Docker launch.
+mount. A small bootstrap reads this same generated dotenv into the guest process
+before package installation or plugin loading. Dotenv values are literal on
+both host and guest, so `${NAME}` is not expanded during either load.
+Toolang passes only `TOOLANG_HOST_GATEWAY`, `TOOLANG_ROOT`, and
+`TOOLANG_SANDBOX` through Docker's environment arguments; Docker also maps
+`host.docker.internal` through the engine's `host-gateway`. The complete staging
+mount is read-only in the guest. Staged files are removed on release and after
+any failed Docker launch.
 
 For every sandbox implementation, AgentServer is the environment's primary
 foreground workload. `run` waits for that workload and releases it on exit,

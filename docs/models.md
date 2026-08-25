@@ -207,8 +207,12 @@ endpoint = "http://127.0.0.1:8080/v1"
 ```
 
 When omitted, the built-ins use `OLLAMA_HOST`, `LLAMA_CPP_HOST`, and then their
-loopback defaults. `[models.providers.<name>]` remains core route configuration
-and is not passed into either catalog factory.
+loopback defaults. In a Toolang Docker guest, the defaults use
+`TOOLANG_HOST_GATEWAY`; loopback values from those two environment variables are
+rewritten to the gateway as well. An authored plugin `endpoint` is exact and is
+never rewritten, so it can deliberately select a service running inside the
+guest. `[models.providers.<name>]` remains core route configuration and is not
+passed into either catalog factory.
 
 ## Inspection and Export
 

@@ -67,6 +67,20 @@ def test_setup_envs_overlay_root_agent_and_process_values(
     assert envs["PROCESS_ONLY"] == "from-process"
 
 
+def test_setup_envs_treat_dotenv_values_as_literals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.env.write_text("LITERAL='${HOME}/agent'\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", "/host/home")
+
+    envs = load_setup_envs(layout)
+
+    assert envs["LITERAL"] == "${HOME}/agent"
+
+
 def test_setup_policy_overlays_root_agent_and_frozen_overrides() -> None:
     root = {
         "allow": {

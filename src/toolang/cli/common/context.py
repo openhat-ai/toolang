@@ -116,7 +116,7 @@ def _load_dotenv(path: Path) -> dict[str, str]:
         return {}
     return {
         key: value
-        for key, value in dotenv_values(path).items()
+        for key, value in dotenv_values(path, interpolate=False).items()
         if isinstance(key, str) and isinstance(value, str)
     }
 

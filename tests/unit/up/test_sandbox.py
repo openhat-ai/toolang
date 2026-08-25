@@ -15,6 +15,7 @@ from toolang.base.types.sandbox import (
 from toolang.common.layout import AgentLayout
 from toolang.state.state import AgentState
 from toolang.up import sandbox
+from toolang.up import process as process_runtime
 from toolang.up.server import ServeSpec
 
 
@@ -123,6 +124,25 @@ def test_sandbox_state_rejects_corrupted_data(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="invalid sandbox state"):
         sandbox.SandboxState.load(path)
+
+
+def test_sandbox_status_treats_plugin_recovery_failure_as_not_running(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    sandbox.SandboxState(
+        sandbox="missing",
+        ref=SandboxRef("workload-1", "http://localhost:8123"),
+    ).save(layout.sandbox_state)
+
+    def fail_recovery(*_args: object) -> object:
+        raise ValueError("plugin is unavailable")
+
+    monkeypatch.setattr(sandbox, "load_state_sandbox", fail_recovery)
+
+    assert process_runtime._sandbox_running(layout) is False
 
 
 def test_launch_delegates_complete_spec_and_stop_releases_state(
