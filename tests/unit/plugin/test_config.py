@@ -4,144 +4,109 @@ import tomllib
 
 import pytest
 
-from toolang.plugin.config import merge_named_configs, merge_sandbox_config
-from toolang.plugin.models.config import parse_catalog_configs
+from toolang.plugin.config import (
+    merge_plugin_configs,
+    resolve_sandbox_binding,
+)
+from toolang.plugin.models.config import parse_provider_configs
 
 
-def test_merge_named_configs_merges_root_and_agent_sections() -> None:
+def test_merge_plugin_configs_deeply_merges_root_and_agent_layers() -> None:
     root_config = tomllib.loads(
         """
-[tools.working_tree]
+[plugin.toolset.filesystem]
 root = "/global"
 
-[channels.telegram]
-plugin = "telegram"
-token_env = "TELEGRAM_BOT_TOKEN"
-owner_chat_id = "100"
+[plugin.toolset.filesystem.options]
+hidden = false
+limit = 10
 """.strip()
     )
-    home_config = tomllib.loads(
+    agent_config = tomllib.loads(
         """
-[tools.working_tree]
+[plugin.toolset.filesystem]
 root = "/agent"
 
-[channels.telegram]
-owner_chat_id = "123"
+[plugin.toolset.filesystem.options]
+limit = 20
 """.strip()
     )
 
-    tools = merge_named_configs((root_config, home_config), section="tools", environ={})
-    channels = merge_named_configs(
-        (root_config, home_config),
-        section="channels",
-        environ={"TELEGRAM_BOT_TOKEN": "secret"},
+    toolsets = merge_plugin_configs(
+        (root_config, agent_config),
+        family="toolset",
     )
 
-    assert tools == {"working_tree": {"root": "/agent"}}
-    assert channels == {
-        "telegram": {
-            "plugin": "telegram",
-            "token": "secret",
-            "owner_chat_id": "123",
+    assert toolsets == {
+        "filesystem": {
+            "root": "/agent",
+            "options": {"hidden": False, "limit": 20},
         }
     }
 
 
-def test_merge_named_configs_reports_missing_environment_reference() -> None:
-    root_config = tomllib.loads(
+def test_merge_plugin_configs_passes_environment_variable_names_unchanged() -> None:
+    config = tomllib.loads(
         """
-[channels.telegram]
-plugin = "telegram"
-token_env = "TELEGRAM_BOT_TOKEN"
+[plugin.model_catalog.company]
+credential_env = "COMPANY_CATALOG_TOKEN"
 """.strip()
     )
 
-    with pytest.raises(
-        ValueError,
-        match="channels.telegram.token_env.*TELEGRAM_BOT_TOKEN",
-    ):
-        merge_named_configs((root_config,), section="channels", environ={})
+    catalogs = merge_plugin_configs((config,), family="model_catalog")
+
+    assert catalogs == {"company": {"credential_env": "COMPANY_CATALOG_TOKEN"}}
 
 
-def test_merge_sandbox_config_merges_root_and_agent_sections() -> None:
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        ("[tools.filesystem]", "unsupported plugin config section: tools"),
+        ("[channels.telegram]", "unsupported plugin config section: channels"),
+        (
+            "[sandbox]\ndriver = 'docker'\n[sandbox.config]",
+            "unknown sandbox config field: config",
+        ),
+        (
+            "[plugin.toolsets.filesystem]",
+            "unknown plugin config field: toolsets",
+        ),
+    ],
+)
+def test_removed_and_unknown_plugin_config_shapes_fail(
+    source: str,
+    message: str,
+) -> None:
+    config = tomllib.loads(source)
+
+    with pytest.raises(ValueError, match=message):
+        merge_plugin_configs((config,), family="toolset")
+
+
+def test_removed_model_catalog_config_fails_in_model_config_parser() -> None:
+    config = tomllib.loads("[models.catalogs.company]")
+
+    with pytest.raises(ValueError, match="unknown models config field: catalogs"):
+        parse_provider_configs((config,))
+
+
+def test_resolve_sandbox_binding_layers_driver_and_target() -> None:
     root_config = tomllib.loads(
         """
 [sandbox]
 driver = "docker"
 target = "python:3.13"
-
-[sandbox.config]
-token_env = "SANDBOX_TOKEN"
 """.strip()
     )
-    home_config = tomllib.loads(
-        """
-[sandbox.config]
-image = "python:3.13-slim"
-""".strip()
-    )
-
-    config = merge_sandbox_config(
-        (root_config, home_config),
-        environ={"SANDBOX_TOKEN": "secret"},
-    )
-
-    assert config == {
-        "driver": "docker",
-        "target": "python:3.13",
-        "config": {
-            "image": "python:3.13-slim",
-            "token": "secret",
-        },
-    }
-
-
-def test_merge_sandbox_config_reports_missing_environment_reference() -> None:
-    root_config = tomllib.loads(
+    agent_config = tomllib.loads(
         """
 [sandbox]
-driver = "docker"
-
-[sandbox.config]
-token_env = "SANDBOX_TOKEN"
+target = "python:3.13-slim"
 """.strip()
     )
 
-    with pytest.raises(
-        ValueError,
-        match="sandbox.config.token_env.*SANDBOX_TOKEN",
-    ):
-        merge_sandbox_config((root_config,), environ={})
+    binding = resolve_sandbox_binding((root_config, agent_config))
 
-
-def test_parse_catalog_configs_merges_enabled_external_plugins() -> None:
-    root = tomllib.loads(
-        """
-[models.catalogs.company]
-url = "https://catalog.example/models.json"
-token_env = "CATALOG_TOKEN"
-
-[models.catalogs.disabled]
-enabled = false
-url = "https://disabled.example/models.json"
-""".strip()
-    )
-    home = tomllib.loads(
-        """
-[models.catalogs.company]
-timeout = 10
-""".strip()
-    )
-
-    configs = parse_catalog_configs(
-        (root, home),
-        environ={"CATALOG_TOKEN": "secret"},
-    )
-
-    assert configs == {
-        "company": {
-            "url": "https://catalog.example/models.json",
-            "token": "secret",
-            "timeout": 10,
-        }
-    }
+    assert binding is not None
+    assert binding.name == "docker"
+    assert binding.spec == "python:3.13-slim"

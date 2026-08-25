@@ -791,8 +791,7 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _sandbox_running(layout: AgentLayout) -> bool:
-    from toolang.up.sandbox import SandboxState
-    from toolang.plugin.sandboxes.loading import create_sandbox
+    from toolang.up.sandbox import SandboxState, load_state_sandbox
 
     try:
         state = SandboxState.load(layout.sandbox_state)
@@ -800,10 +799,10 @@ def _sandbox_running(layout: AgentLayout) -> bool:
         return False
     if state is None:
         return False
-    name, _, _ = state.sandbox.partition(":")
     try:
-        return asyncio.run(create_sandbox(name, config={}).running(state.ref))
-    except (OSError, RuntimeError, ValueError):
+        implementation = load_state_sandbox(layout, state)
+        return asyncio.run(implementation.running(state.ref))
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
         return False
 
 

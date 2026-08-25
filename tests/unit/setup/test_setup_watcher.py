@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from toolang.base.protocols.model import ModelCatalog
 from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 from toolang.common.layout import AgentLayout
 from toolang.plugin.models.adapters.responses import ResponsesModelAdapter
@@ -193,6 +194,85 @@ def test_setup_watcher_failed_refresh_keeps_last_snapshot(
     assert watcher.current() is expected
 
 
+def test_setup_watcher_routes_only_each_plugins_canonical_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one",))
+    root_config = {
+        "plugin": {
+            "toolset": {"filesystem": {"max_chars": 1000}},
+            "model_adapter": {"responses": {"credential_env": "ADAPTER_TOKEN"}},
+            "model_catalog": {"ollama": {"timeout": 3}},
+        }
+    }
+    agent_config = {
+        "plugin": {
+            "toolset": {"filesystem": {"max_chars": 2000}},
+            "model_adapter": {"responses": {"profile": "agent"}},
+        }
+    }
+    adapter_calls: list[dict[str, dict[str, object]]] = []
+    toolset_calls: list[dict[str, dict[str, object]]] = []
+    catalog_calls: list[dict[str, dict[str, object]]] = []
+    original_catalog_loader = watcher_module.load_model_catalogs
+
+    monkeypatch.setattr(
+        watcher_module,
+        "load_setup_config",
+        lambda _layout: root_config,
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "load_agent_config",
+        lambda _layout: agent_config,
+    )
+    monkeypatch.setattr(
+        watcher_module,
+        "load_setup_envs",
+        lambda _layout: {
+            "TEST_API_KEY": "secret",
+        },
+    )
+
+    def load_adapters(
+        config: dict[str, dict[str, object]],
+    ) -> dict[str, ResponsesModelAdapter]:
+        adapter_calls.append(config)
+        return {"responses": ResponsesModelAdapter()}
+
+    def load_tools(
+        *, toolset_config: dict[str, dict[str, object]]
+    ) -> dict[str, object]:
+        toolset_calls.append(toolset_config)
+        return {}
+
+    def load_catalogs(
+        config: dict[str, dict[str, object]],
+    ) -> dict[str, ModelCatalog]:
+        catalog_calls.append(config)
+        return original_catalog_loader(config)
+
+    monkeypatch.setattr(watcher_module, "load_model_adapters", load_adapters)
+    monkeypatch.setattr(watcher_module, "load_tools", load_tools)
+    monkeypatch.setattr(watcher_module, "load_model_catalogs", load_catalogs)
+
+    asyncio.run(SetupWatcher(AgentLayout.resident(tmp_path, "alice")).refresh())
+
+    assert adapter_calls == [
+        {
+            "responses": {
+                "credential_env": "ADAPTER_TOKEN",
+                "profile": "agent",
+            }
+        }
+    ]
+    assert toolset_calls == [{"filesystem": {"max_chars": 2000}}]
+    assert catalog_calls[0]["ollama"]["timeout"] == 3
+    assert "root" not in catalog_calls[0]["ollama"]
+    assert "mode" not in catalog_calls[0]["ollama"]
+
+
 def _watcher(
     monkeypatch: pytest.MonkeyPatch,
     root: Path,
@@ -206,7 +286,7 @@ def _watcher(
     monkeypatch.setattr(
         watcher_module,
         "load_model_adapters",
-        lambda: {"responses": ResponsesModelAdapter()},
+        lambda _config: {"responses": ResponsesModelAdapter()},
     )
     monkeypatch.setattr(watcher_module, "load_tools", lambda **_kwargs: {})
     if patch_local:

@@ -44,6 +44,7 @@ class SandboxRequest:
     envs: dict[str, str] = field(default_factory=dict)
     mounts: tuple[SandboxMount, ...] = ()
     local_dev_artifact: Path | None = None
+    dotenv_envs: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

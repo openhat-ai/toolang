@@ -8,7 +8,6 @@ from typing import Any, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelAlias, Provider
-from toolang.plugin.config import resolve_env_refs
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,47 +89,6 @@ def parse_provider_configs(
                 name, cast(Mapping[str, object], value)
             )
     return configs
-
-
-def parse_catalog_configs(
-    config_layers: Sequence[Mapping[str, object]],
-    *,
-    environ: Mapping[str, str],
-) -> dict[str, dict[str, object]]:
-    """Parse enabled ``[models.catalogs.<name>]`` plugin configurations."""
-
-    configs: dict[str, dict[str, object]] = {}
-    enabled: dict[str, bool] = {}
-    for payload in config_layers:
-        raw_catalogs = _models_table(payload).get("catalogs")
-        if not isinstance(raw_catalogs, Mapping):
-            continue
-        for raw_name, raw_value in raw_catalogs.items():
-            if not isinstance(raw_name, str) or not isinstance(raw_value, Mapping):
-                continue
-            name = raw_name.strip()
-            if not name:
-                continue
-            value = cast(Mapping[str, object], raw_value)
-            if "enabled" in value:
-                raw_enabled = value["enabled"]
-                if not isinstance(raw_enabled, bool):
-                    raise ToolangError(
-                        f"model catalog {name!r} enabled must be a boolean"
-                    )
-                enabled[name] = raw_enabled
-            else:
-                enabled.setdefault(name, True)
-            current = dict(configs.get(name, {}))
-            current.update(
-                resolve_env_refs(
-                    {str(key): item for key, item in value.items() if key != "enabled"},
-                    environ,
-                    context=f"models.catalogs.{name}",
-                )
-            )
-            configs[name] = current
-    return {name: config for name, config in configs.items() if enabled.get(name, True)}
 
 
 def parse_default_models(
@@ -218,7 +176,10 @@ def _models_table(payload: Mapping[str, object]) -> Mapping[str, object]:
     raw_models = payload.get("models")
     if not isinstance(raw_models, Mapping):
         return {}
-    return cast(Mapping[str, object], raw_models)
+    models = cast(Mapping[str, object], raw_models)
+    if "catalogs" in models:
+        raise ValueError("unknown models config field: catalogs")
+    return models
 
 
 def _required_model_config_str(

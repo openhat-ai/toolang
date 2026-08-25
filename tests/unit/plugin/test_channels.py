@@ -9,7 +9,6 @@ from toolang.base.types.channel import (
     OutboundMessage,
     ReplyTarget,
 )
-from toolang.plugin.config import parse_channel_bindings
 from toolang.plugin.channels.loading import create_channel
 
 
@@ -142,21 +141,3 @@ def test_telegram_channel_typing_and_edit(monkeypatch) -> None:
     assert calls[2][0].endswith("/editMessageText")
     assert calls[2][1]["message_id"] == 88
     assert calls[2][1]["text"] == "hello world"
-
-
-def test_parse_channel_bindings_builds_plugin_specific_config() -> None:
-    bindings = parse_channel_bindings(
-        {
-            "telegram": {
-                "plugin": "telegram",
-                "token": "secret",
-                "owner_chat_id": "123",
-            }
-        }
-    )
-
-    assert bindings["telegram"].plugin == "telegram"
-    assert bindings["telegram"].config == {
-        "token": "secret",
-        "owner_chat_id": "123",
-    }

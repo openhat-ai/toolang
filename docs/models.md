@@ -69,14 +69,16 @@ unchanged parsed static file.
 External catalog entry points are opt-in. Configure one by its entry-point name:
 
 ```toml
-[models.catalogs.company]
+[plugin.model_catalog.company]
 url = "https://catalog.example/models.json"
-token_env = "COMPANY_CATALOG_TOKEN"
+credential_env = "COMPANY_CATALOG_TOKEN"
 ```
 
-The resolved mapping is passed directly to the catalog factory. Setting
-`enabled = false` disables an external catalog declaration. Built-in `models_dev`,
-`ollama`, and `llama_cpp` catalogs remain enabled.
+The merged mapping is passed unchanged to the catalog factory; the plugin owns
+resolution of `credential_env` when it needs the credential. Built-in
+`models_dev`, `ollama`, and `llama_cpp` catalogs remain enabled. Core provider
+routes and aliases remain under `[models.providers.<name>]` and
+`[models.aliases.<name>]`; they are not plugin factory configuration.
 
 ## One-Time Route Resolution
 
@@ -157,6 +159,16 @@ Built-in adapters are:
 - `messages`;
 - `generate_content`.
 
+Adapter factory configuration uses the same plugin grammar:
+
+```toml
+[plugin.model_adapter.responses]
+```
+
+Only this merged table is passed to the `responses` factory. The built-in
+adapters currently define no authored plugin options; external adapters may
+define their own non-sensitive values and secret-reference fields.
+
 Adapters receive a concrete API base URL in `ModelTarget`. They translate
 canonical messages and tools, normalize streaming, usage, cache, reasoning,
 and audio meters, and preserve protocol state needed by later calls. For
@@ -183,6 +195,24 @@ an important availability fact. An offline local provider remains visible in
 `too providers` with availability `0`, while its models are omitted from the
 normal model table. Online local models have explicit zero API token prices;
 host compute cost is outside model token accounting.
+
+Configure discovery independently from the resolved provider call route:
+
+```toml
+[plugin.model_catalog.ollama]
+endpoint = "http://127.0.0.1:11434"
+
+[plugin.model_catalog.llama_cpp]
+endpoint = "http://127.0.0.1:8080/v1"
+```
+
+When omitted, the built-ins use `OLLAMA_HOST`, `LLAMA_CPP_HOST`, and then their
+loopback defaults. In a Toolang Docker guest, the defaults use
+`TOOLANG_HOST_GATEWAY`; loopback values from those two environment variables are
+rewritten to the gateway as well. An authored plugin `endpoint` is exact and is
+never rewritten, so it can deliberately select a service running inside the
+guest. `[models.providers.<name>]` remains core route configuration and is not
+passed into either catalog factory.
 
 ## Inspection and Export
 

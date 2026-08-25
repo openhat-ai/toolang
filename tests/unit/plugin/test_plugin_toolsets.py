@@ -182,6 +182,8 @@ def test_load_tools_accepts_namespaced_toolset_keys(monkeypatch) -> None:
 
 
 def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> None:
+    adapter_configs: list[dict[str, Any]] = []
+
     @tool(name="alpha", description="Alpha.")
     def alpha() -> dict[str, object]:
         return {}
@@ -228,7 +230,7 @@ def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> 
             return await self.invoke(target, request)
 
     def create_model_adapter(config: Mapping[str, Any]) -> ModelAdapter:
-        del config
+        adapter_configs.append(dict(config))
         return Adapter()
 
     entry_points_by_group = {
@@ -256,11 +258,44 @@ def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> 
     )
     toolsets = load_toolsets()
     tools = load_tools()
-    adapters = load_model_adapters()
+    adapters = load_model_adapters(
+        {"package_adapter": {"endpoint": "https://example.test/v1"}}
+    )
 
     assert sorted(toolsets) == ["alpha", "beta"]
     assert sorted(tools) == ["alpha__alpha", "beta__beta"]
     assert "package_adapter" in adapters
+    assert adapter_configs == [{"endpoint": "https://example.test/v1"}]
+
+
+def test_plugin_factories_receive_fresh_nested_config_mappings(monkeypatch) -> None:
+    @dataclass(frozen=True, slots=True)
+    class EmptyToolset(Toolset):
+        name: str = "mutable"
+        description: str | None = None
+
+        def tools(self) -> Mapping[str, AgentTool]:
+            return {}
+
+    def create_toolset(config: Mapping[str, Any]) -> Toolset:
+        nested = config["nested"]
+        assert isinstance(nested, dict)
+        nested["changed"] = True
+        return EmptyToolset()
+
+    monkeypatch.setattr(
+        "toolang.plugin.loading.entry_points",
+        lambda *, group: (
+            [_FakeEntryPoint("mutable", create_toolset)]
+            if group == "toolang.toolset"
+            else []
+        ),
+    )
+    source = {"mutable": {"nested": {"changed": False}}}
+
+    load_toolsets(config=source)
+
+    assert source == {"mutable": {"nested": {"changed": False}}}
 
 
 def test_model_catalog_loader_instantiates_only_configured_plugins(monkeypatch) -> None:

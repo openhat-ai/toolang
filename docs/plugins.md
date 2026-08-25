@@ -85,14 +85,64 @@ entry points. File parsing uses `read_*`, such as
 
 ## Configuration Rule
 
-CLI and setup call sites resolve paths, environment values, endpoints, and
-configuration layers before constructing plugins. Core modules receive
-concrete plugin instances or configuration values; plugins do not read CLI
-state implicitly.
+CLI and setup call sites resolve paths, endpoints, and configuration layers
+before constructing plugins. Core modules receive concrete plugin instances or
+configuration values; plugins do not read CLI state implicitly.
 
-Only configured external model catalogs are instantiated. Their factory
-configuration comes from `[models.catalogs.<entry-point-name>]`; the three
-built-in catalogs are always loaded. After snapshots are merged, the resolver
-maps raw npm metadata to installed adapters, resolves provider and model routes,
+Every plugin uses the same canonical TOML shape:
+
+```toml
+[plugin.toolset.filesystem]
+max_chars = 20000
+
+[plugin.sandbox.docker]
+root = "/root/.toolang"
+environment_allow_pattern = '^(?:COMPANY_CATALOG_TOKEN|HTTPS?_PROXY)$'
+
+[plugin.model_catalog.ollama]
+timeout = 3
+
+[plugin.model_adapter.responses]
+```
+
+The grammar is `[plugin.<family>.<entry-point-name>]`. Root configuration is
+merged with agent configuration, with the agent winning at each key and nested
+tables preserved. Plugin configuration is passed through unchanged: the
+configuration layer never dereferences environment-variable names or resolves
+secrets. A concrete implementation owns those semantics at its runtime
+boundary.
+
+Each factory receives a fresh mapping whose authored values come only from its
+own merged table. Core may add concrete runtime inputs owned by that plugin,
+such as the selected static catalog path or process environment, but it does
+not expose peer plugins, other families, the full `[plugin]` table, or other
+core configuration. Installed collection plugins receive an empty mapping when
+they have no table. Removed shapes such as `[tools]`, `[channels]`,
+`[sandbox.config]`, and `[models.catalogs]` are invalid; there is no legacy
+fallback or merge path.
+
+Core selection remains separate from plugin-owned configuration. For example,
+`[sandbox]` selects `driver` and optional `target`, while
+`[plugin.sandbox.<driver>]` configures the selected implementation. Sandbox
+lifecycle recovery re-reads the current root and agent plugin tables instead
+of persisting plugin configuration or secrets in runtime state.
+
+Authored plugin configuration is intended for non-sensitive values and secret
+references such as environment-variable names, never secret values. Concrete
+implementations must validate their own sensitive fields because a generic
+mapping loader cannot infer whether an arbitrary string is sensitive.
+Sandbox-specific dotenv materialization is runtime transport and does not
+change or resolve a plugin's configuration mapping.
+
+The Docker sandbox exposes all names explicitly authored in the root or agent
+`.env`. Host-process-only names must match `environment_allow_pattern`, which is
+a configurable full-match regular expression with a built-in allowlist for
+Toolang, bootstrap, proxy, certificate, and common model-provider variables.
+The concrete plugin still resolves any exposed secret-reference name from its
+guest process environment.
+
+Only configured external model catalogs are instantiated; the three built-in
+catalogs are always loaded. After snapshots are merged, the resolver maps raw
+npm metadata to installed adapters, resolves provider and model routes,
 interprets environment availability, and stores only non-secret runtime facts.
 See [models.md](models.md) for the complete boundary.

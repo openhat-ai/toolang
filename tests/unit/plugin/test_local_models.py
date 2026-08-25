@@ -219,6 +219,46 @@ def test_local_list_failure_marks_provider_offline(
     assert runtime["status"] == "offline"
 
 
+def test_local_catalog_endpoints_use_the_docker_host_gateway() -> None:
+    environ = {"TOOLANG_HOST_GATEWAY": "host.docker.internal"}
+
+    assert local_models._ollama_host(None, environ) == (
+        "http://host.docker.internal:11434"
+    )
+    assert local_models._llama_cpp_endpoint(None, environ) == (
+        "http://host.docker.internal:8080/v1"
+    )
+    assert (
+        local_models._ollama_host(
+            None,
+            {**environ, "OLLAMA_HOST": "http://localhost:1234"},
+        )
+        == "http://host.docker.internal:1234"
+    )
+    assert (
+        local_models._llama_cpp_endpoint(
+            None,
+            {**environ, "LLAMA_CPP_HOST": "http://127.0.0.1:4321"},
+        )
+        == "http://host.docker.internal:4321/v1"
+    )
+
+
+def test_explicit_local_catalog_endpoints_are_not_rewritten() -> None:
+    environ = {"TOOLANG_HOST_GATEWAY": "host.docker.internal"}
+
+    assert local_models._ollama_host("http://127.0.0.1:11434", environ) == (
+        "http://127.0.0.1:11434"
+    )
+    assert (
+        local_models._llama_cpp_endpoint(
+            "http://localhost:8080",
+            environ,
+        )
+        == "http://localhost:8080/v1"
+    )
+
+
 class _FakeResponse:
     def __init__(self, payload: object) -> None:
         self.payload = payload

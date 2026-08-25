@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from importlib.metadata import entry_points
 from typing import Any, Literal, TypeVar, cast
@@ -60,7 +61,7 @@ def create_plugin(
     factory = cast(
         Callable[[Mapping[str, Any]], object], load_plugin_factory(name, group=group)
     )
-    return factory(dict(config or {}))
+    return factory(_fresh_config(config))
 
 
 def load_plugins(
@@ -77,7 +78,7 @@ def load_plugins(
             factory = cast(Callable[[Mapping[str, Any]], object], entry_point.load())
         except ModuleNotFoundError:
             continue
-        plugin = factory(dict(plugin_config.get(entry_point.name, {})))
+        plugin = factory(_fresh_config(plugin_config.get(entry_point.name)))
         plugin_name = _plugin_name(plugin, fallback=entry_point.name)
         if plugin_name in plugins:
             continue
@@ -91,6 +92,12 @@ def _plugin_name(plugin: object, *, fallback: str) -> str:
         return fallback
     text = name.strip()
     return text or fallback
+
+
+def _fresh_config(config: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Return one factory-owned copy of a plugin configuration mapping."""
+
+    return deepcopy(dict(config or {}))
 
 
 def _entry_point_plugin_source(entry_point: object) -> PluginSource:

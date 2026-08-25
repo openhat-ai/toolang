@@ -40,14 +40,19 @@ def test_setup_config_reads_only_the_toolang_root(tmp_path: Path) -> None:
     }
 
 
-def test_setup_envs_overlay_process_values_on_root_dotenv(
+def test_setup_envs_overlay_root_agent_and_process_values(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = tmp_path / "toolang"
-    root.mkdir()
+    home = root / "agents" / "alice"
+    home.mkdir(parents=True)
     (root / ".env").write_text(
-        "ROOT_ONLY=from-root\nOVERRIDDEN=from-root\n",
+        "ROOT_ONLY=from-root\nLAYERED=from-root\nOVERRIDDEN=from-root\n",
+        encoding="utf-8",
+    )
+    (home / ".env").write_text(
+        "AGENT_ONLY=from-agent\nLAYERED=from-agent\nOVERRIDDEN=from-agent\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("OVERRIDDEN", "from-process")
@@ -56,8 +61,24 @@ def test_setup_envs_overlay_process_values_on_root_dotenv(
     envs = load_setup_envs(AgentLayout.resident(root, "alice"))
 
     assert envs["ROOT_ONLY"] == "from-root"
+    assert envs["AGENT_ONLY"] == "from-agent"
+    assert envs["LAYERED"] == "from-agent"
     assert envs["OVERRIDDEN"] == "from-process"
     assert envs["PROCESS_ONLY"] == "from-process"
+
+
+def test_setup_envs_treat_dotenv_values_as_literals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    layout.env.write_text("LITERAL='${HOME}/agent'\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", "/host/home")
+
+    envs = load_setup_envs(layout)
+
+    assert envs["LITERAL"] == "${HOME}/agent"
 
 
 def test_setup_policy_overlays_root_agent_and_frozen_overrides() -> None:

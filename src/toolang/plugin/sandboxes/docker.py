@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -22,8 +23,24 @@ from toolang.base.types.sandbox import (
     SandboxRef,
     SandboxRequest,
 )
+from toolang.common.files import atomic_write_text
 
 DEFAULT_IMAGE = "python:3.13-slim"
+DEFAULT_HOST_GATEWAY = "host.docker.internal"
+DEFAULT_ENVIRONMENT_ALLOW_PATTERN = (
+    r"(?i)^(?:"
+    r"TOOLANG_[A-Z0-9_]+|PY_LOG|"
+    r"(?:HTTP|HTTPS|ALL|NO)_PROXY|"
+    r"SSL_CERT_FILE|SSL_CERT_DIR|REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE|"
+    r"(?:PIP|UV)_[A-Z0-9_]+|"
+    r"(?:OPENAI|ANTHROPIC|GOOGLE|GEMINI|MISTRAL|GROQ|COHERE|XAI|"
+    r"DEEPSEEK|OPENROUTER|TOGETHER|FIREWORKS|PERPLEXITY|AZURE|AWS|"
+    r"BEDROCK|VERTEX|HF|HUGGING_FACE|OLLAMA|LLAMA_CPP)_[A-Z0-9_]+"
+    r")$"
+)
+_CONTROL_ENV_NAMES = frozenset(
+    {"TOOLANG_HOST_GATEWAY", "TOOLANG_ROOT", "TOOLANG_SANDBOX"}
+)
 
 
 @dataclass(slots=True)
@@ -33,15 +50,39 @@ class DockerSandbox:
     config: dict[str, Any]
     name: str = "docker"
     _default_image: str | None = field(init=False, repr=False, default=None)
+    _environment_allow_pattern: re.Pattern[str] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         image = str(self.config.get("image", "")).strip()
         self._default_image = image or None
+        raw_pattern = self.config.get(
+            "environment_allow_pattern",
+            DEFAULT_ENVIRONMENT_ALLOW_PATTERN,
+        )
+        if not isinstance(raw_pattern, str):
+            raise TypeError("docker environment_allow_pattern must be a string")
+        try:
+            self._environment_allow_pattern = re.compile(raw_pattern)
+        except re.error as exc:
+            raise ValueError(
+                f"invalid docker environment_allow_pattern: {exc}"
+            ) from exc
 
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
+        stage_dir = request.local_root / ".sandbox" / request.agent_name
+        try:
+            return self._prepare(spec, request)
+        except BaseException:
+            shutil.rmtree(stage_dir, ignore_errors=True)
+            raise
+
+    def _prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         image = _image(spec, self._default_image)
         stage_dir = request.local_root / ".sandbox" / request.agent_name
         runtime_dir = request.hosted_home / ".runtime" / "sandbox"
+        dotenv_envs, process_envs = self._guest_environment_sections(request)
+        _validate_guest_environment(dotenv_envs)
+        _validate_guest_environment(process_envs)
         stage_dir.mkdir(parents=True, exist_ok=True)
 
         hosted_dev_artifact: Path | None = None
@@ -69,11 +110,25 @@ class DockerSandbox:
                     )
                 )
 
+        agent_script_path = stage_dir / "agent.sh"
+        _write_agent_script(
+            agent_script_path,
+            command=request.command,
+            hosted_dev_artifact=hosted_dev_artifact,
+        )
+        bootstrap_path = stage_dir / "bootstrap.py"
+        _write_bootstrap(bootstrap_path)
         script_path = stage_dir / "start.sh"
         _write_start_script(
             script_path,
-            command=request.command,
-            hosted_dev_artifact=hosted_dev_artifact,
+            runtime_dir=runtime_dir,
+            guest_env_path=request.hosted_home / ".env",
+        )
+        guest_env_path = stage_dir / "guest.env"
+        _write_guest_env(
+            guest_env_path,
+            dotenv_envs=dotenv_envs,
+            process_envs=process_envs,
         )
         (stage_dir / "start.json").write_text(
             json.dumps(
@@ -97,7 +152,12 @@ class DockerSandbox:
         mounts = [
             *request.mounts,
             SandboxMount(request.local_home, request.hosted_home),
-            SandboxMount(stage_dir, runtime_dir),
+            SandboxMount(
+                guest_env_path,
+                request.hosted_home / ".env",
+                read_only=True,
+            ),
+            SandboxMount(stage_dir, runtime_dir, read_only=True),
             *extra_mounts,
         ]
         container_name = (
@@ -110,7 +170,7 @@ class DockerSandbox:
             log_path=request.log_path,
             endpoint=request.endpoint,
             envs={
-                **request.envs,
+                "TOOLANG_HOST_GATEWAY": DEFAULT_HOST_GATEWAY,
                 "TOOLANG_ROOT": str(request.hosted_root),
                 "TOOLANG_SANDBOX": f"{self.name}:{image}",
             },
@@ -128,6 +188,24 @@ class DockerSandbox:
                 "stage_dir": str(stage_dir),
             },
         )
+
+    def _guest_environment_sections(
+        self,
+        request: SandboxRequest,
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        dotenv_envs = {
+            name: value
+            for name, value in request.dotenv_envs.items()
+            if name not in _CONTROL_ENV_NAMES
+        }
+        process_envs = {
+            name: value
+            for name, value in request.envs.items()
+            if name not in _CONTROL_ENV_NAMES
+            and self._environment_allow_pattern.fullmatch(name) is not None
+            and dotenv_envs.get(name) != value
+        }
+        return dotenv_envs, process_envs
 
     async def launch(self, plan: SandboxPlan) -> SandboxRef:
         container_name = _plan_text(plan, "container_name")
@@ -148,8 +226,15 @@ class DockerSandbox:
                 hosted_port=port.hosted_port,
                 env_values=plan.envs,
             )
-        except RuntimeError as exc:
-            raise ToolangError(f"Could not start docker sandbox: {exc}") from exc
+        except BaseException as exc:
+            await asyncio.to_thread(
+                shutil.rmtree,
+                _plan_text(plan, "stage_dir"),
+                True,
+            )
+            if isinstance(exc, (OSError, RuntimeError)):
+                raise ToolangError(f"Could not start docker sandbox: {exc}") from exc
+            raise
         return SandboxRef(
             runtime_id=container_name,
             endpoint=plan.endpoint,
@@ -212,7 +297,7 @@ def _plan_text(plan: SandboxPlan, key: str) -> str:
     return value
 
 
-def _write_start_script(
+def _write_agent_script(
     path: Path,
     *,
     command: tuple[str, ...],
@@ -246,6 +331,129 @@ def _write_start_script(
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     path.chmod(0o755)
+
+
+def _write_start_script(
+    path: Path,
+    *,
+    runtime_dir: Path,
+    guest_env_path: Path,
+) -> None:
+    bootstrap = runtime_dir / "bootstrap.py"
+    agent_script = runtime_dir / "agent.sh"
+    lines = [
+        "#!/bin/sh",
+        "set -eu",
+        'PYTHON_BIN=""',
+        'if command -v python >/dev/null 2>&1; then PYTHON_BIN="python"; '
+        'elif command -v python3 >/dev/null 2>&1; then PYTHON_BIN="python3"; fi',
+        '[ -n "$PYTHON_BIN" ] || { echo "python not available" >&2; exit 127; }',
+        'exec "$PYTHON_BIN" '
+        + shlex.join(
+            (str(bootstrap), str(guest_env_path), "/bin/sh", str(agent_script))
+        ),
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    path.chmod(0o755)
+
+
+def _write_bootstrap(path: Path) -> None:
+    path.write_text(
+        """from __future__ import annotations
+
+import os
+from pathlib import Path
+import sys
+
+
+def load_generated_dotenv(path: Path) -> dict[str, str]:
+    text = path.read_text(encoding=\"utf-8\")
+    values: dict[str, str] = {}
+    index = 0
+    while index < len(text):
+        if text[index] in \" \\t\\n\":
+            index += 1
+            continue
+        if text[index] == \"#\":
+            newline = text.find(\"\\n\", index)
+            index = len(text) if newline < 0 else newline + 1
+            continue
+        separator = text.find('=\"', index)
+        if separator < 0:
+            raise ValueError(\"invalid staged guest environment\")
+        name = text[index:separator]
+        index = separator + 2
+        value: list[str] = []
+        while index < len(text):
+            char = text[index]
+            index += 1
+            if char == \"\\\\\":
+                if index >= len(text):
+                    raise ValueError(\"invalid staged guest environment\")
+                escaped = text[index]
+                index += 1
+                value.append(\"\\r\" if escaped == \"r\" else escaped)
+            elif char == '\"':
+                break
+            else:
+                value.append(char)
+        else:
+            raise ValueError(\"invalid staged guest environment\")
+        if not name or any(char.isspace() or char in \"=#\\x00\" for char in name):
+            raise ValueError(\"invalid staged guest environment\")
+        values[name] = \"\".join(value)
+    return values
+
+
+def main() -> None:
+    environ = dict(os.environ)
+    environ.update(load_generated_dotenv(Path(sys.argv[1])))
+    os.execvpe(sys.argv[2], sys.argv[2:], environ)
+
+
+if __name__ == \"__main__\":
+    main()
+""",
+        encoding="utf-8",
+    )
+
+
+def _write_guest_env(
+    path: Path,
+    *,
+    dotenv_envs: Mapping[str, str],
+    process_envs: Mapping[str, str],
+) -> None:
+    content = _dotenv_section("Root and agent dotenv values", dotenv_envs)
+    content += "\n"
+    content += _dotenv_section("Filtered host process values", process_envs)
+    atomic_write_text(path, content)
+    path.chmod(0o600)
+
+
+def _dotenv_section(title: str, environ: Mapping[str, str]) -> str:
+    return f"# {title}\n" + "".join(
+        f'{_dotenv_name(name)}="{_dotenv_value(value)}"\n'
+        for name, value in sorted(environ.items())
+    )
+
+
+def _validate_guest_environment(environ: Mapping[str, str]) -> None:
+    for name, value in environ.items():
+        _dotenv_name(name)
+        _dotenv_value(value)
+
+
+def _dotenv_name(name: str) -> str:
+    if not name or any(char.isspace() or char in "=#\x00" for char in name):
+        raise ValueError(f"invalid guest environment variable name: {name!r}")
+    return name
+
+
+def _dotenv_value(value: str) -> str:
+    if "\x00" in value:
+        raise ValueError("guest environment variable values must not contain NUL")
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "\\r")
 
 
 def _path_is_within(path: Path, root: Path) -> bool:
@@ -336,6 +544,8 @@ def docker_run_detached(
         workdir,
         "--publish",
         f"{bind_host}:{published_port}:{hosted_port}",
+        "--add-host",
+        f"{DEFAULT_HOST_GATEWAY}:host-gateway",
     ]
     for mount in mounts:
         suffix = ":ro" if mount.read_only else ""
