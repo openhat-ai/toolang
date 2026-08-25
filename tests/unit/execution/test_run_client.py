@@ -54,6 +54,7 @@ def _request(
     commands: tuple[RunOverride, ...] = (),
     session_commands: tuple[RunOverride, ...] = (),
     input: RunnableInputRaw = RunnableInputRaw(primary="hello"),
+    runnable_fallbacks: tuple[str, ...] = ("missing", "chat", "default"),
     request_id: str = "request_1",
 ) -> RunRequest:
     return RunRequest(
@@ -61,7 +62,7 @@ def _request(
         commands=commands,
         input=input,
         session_commands=session_commands,
-        runnable_fallbacks=("missing", "chat", "default"),
+        runnable_fallbacks=runnable_fallbacks,
         request_id=request_id,
     )
 
@@ -253,6 +254,50 @@ def test_local_client_rejects_preparation_without_persisting_a_run(
             await client.start(request)
 
         assert harness.store.list_runs(thread_id=thread, limit=None) == []
+        await client.close()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        harness.store.close()
+
+
+def test_local_client_qualified_agic_fallback_skips_same_named_flow(
+    tmp_path: Path,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="""
+agic relay(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+
+flow chat(_: Part[]) -> Part[]:
+  run relay
+""",
+        responses=[ModelCallResult(message=Message.assistant("default reply"))],
+    )
+    client = LocalRunClient(
+        harness.executor,
+        setup=lambda: harness.setup,
+        state=lambda: harness.state,
+        include=lambda _setup: lambda _reference: TextPart("unused"),
+    )
+
+    async def scenario() -> None:
+        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        handle = await client.start(
+            _request(
+                thread,
+                runnable_fallbacks=("agic:chat", "default"),
+            )
+        )
+        detail = await handle.wait()
+
+        assert (detail.runnable_kind, detail.runnable_name) == ("agic", "default")
+        assert len(harness.store.list_runs(thread_id=thread, limit=None)) == 1
         await client.close()
 
     try:

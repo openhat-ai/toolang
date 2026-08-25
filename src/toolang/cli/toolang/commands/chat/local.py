@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass
 from decimal import Decimal
@@ -212,15 +212,13 @@ class LocalChatSession:
         run_id: str,
         on_error: Callable[[str], None],
     ) -> None:
-        try:
-            self._submit(
-                self.run_client.stop(
-                    run_id,
-                    request_id=f"term_{uuid4().hex}",
-                )
-            ).result()
-        except Exception as exc:
-            on_error(_error_message(exc))
+        self._submit_control(
+            self.run_client.stop(
+                run_id,
+                request_id=f"term_{uuid4().hex}",
+            ),
+            on_error,
+        )
 
     def steer_run(
         self,
@@ -228,17 +226,15 @@ class LocalChatSession:
         message: str,
         on_error: Callable[[str], None],
     ) -> None:
-        try:
-            self._submit(
-                self.run_client.steer(
-                    run_id,
-                    Message.user(message),
-                    timing="next_step",
-                    request_id=f"term_{uuid4().hex}",
-                )
-            ).result()
-        except Exception as exc:
-            on_error(_error_message(exc))
+        self._submit_control(
+            self.run_client.steer(
+                run_id,
+                Message.user(message),
+                timing="next_step",
+                request_id=f"term_{uuid4().hex}",
+            ),
+            on_error,
+        )
 
     def close(self) -> None:
         if self._closed:
@@ -280,7 +276,7 @@ class LocalChatSession:
             commands=commands,
             input=input,
             session_commands=commands_from_selects(selects),
-            runnable_fallbacks=("chat", "default"),
+            runnable_fallbacks=("agic:chat", "default"),
             request_id=f"term_{uuid4().hex}",
         )
         handle = await self.run_client.start(
@@ -307,8 +303,31 @@ class LocalChatSession:
         )
         return lambda reference: resolve_file_include(reference, base=base)
 
-    def _submit(self, coroutine: Any, *, allow_closed: bool = False) -> Future[Any]:
+    def _submit_control(
+        self,
+        coroutine: Coroutine[Any, Any, Any],
+        on_error: Callable[[str], None],
+    ) -> None:
+        try:
+            future = self._submit(coroutine)
+        except Exception as exc:
+            on_error(_error_message(exc))
+            return
+        if threading.current_thread() is self._thread:
+            future.add_done_callback(
+                lambda completed: _finish_control(completed, on_error)
+            )
+            return
+        _finish_control(future, on_error)
+
+    def _submit(
+        self,
+        coroutine: Coroutine[Any, Any, Any],
+        *,
+        allow_closed: bool = False,
+    ) -> Future[Any]:
         if self._closed and not allow_closed:
+            coroutine.close()
             raise RuntimeError("local chat session is closed")
         return asyncio.run_coroutine_threadsafe(coroutine, self._loop)
 
@@ -343,3 +362,13 @@ def _default_runnable(state: AgentState) -> str:
 def _error_message(exc: Exception) -> str:
     cause = exc.__cause__
     return str(cause or exc) or type(cause or exc).__name__
+
+
+def _finish_control(
+    future: Future[Any],
+    on_error: Callable[[str], None],
+) -> None:
+    try:
+        future.result()
+    except Exception as exc:
+        on_error(_error_message(exc))

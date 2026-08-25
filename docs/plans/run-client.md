@@ -102,11 +102,12 @@ Add an immutable caller request containing:
 - `input`: parsed `RunnableInputRaw`;
 - `session_commands`: captured session `RunOverride` values;
 - `runnable_fallbacks`: ordered, explicit call-site candidates;
-- `request_id`: caller-issued idempotency identifier.
+- `request_id`: caller-issued globally unique request identifier.
 
 The request stays above execution resolution. It contains authored input and
 policy, but no setup/state snapshots, include callback, resolved resources, or
-transport representation. Terminal Chat passes `("chat", "default")`; the
+transport representation. Terminal Chat passes `("agic:chat", "default")` so
+a same-named flow does not change its established agic fallback behavior. The
 client selects the first candidate present in the same state snapshot used for
 resolution. This expresses call-site policy without reading state twice or
 asking the execution layer to invent a default.
