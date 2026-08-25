@@ -1,6 +1,6 @@
 # Sandbox Startup UX
 
-Status: Proposed for approval.
+Status: Approved for implementation on 2026-08-25.
 
 ## Work Type
 
