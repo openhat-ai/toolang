@@ -148,14 +148,13 @@ def test_parse_channel_bindings_builds_plugin_specific_config() -> None:
     bindings = parse_channel_bindings(
         {
             "telegram": {
-                "plugin": "telegram",
                 "token": "secret",
                 "owner_chat_id": "123",
             }
         }
     )
 
-    assert bindings["telegram"].plugin == "telegram"
+    assert bindings["telegram"].name == "telegram"
     assert bindings["telegram"].config == {
         "token": "secret",
         "owner_chat_id": "123",

@@ -10,10 +10,14 @@ from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.plugin.loading import create_plugin, load_plugins
 
 
-def load_model_adapters() -> dict[str, ModelAdapter]:
+def load_model_adapters(
+    config: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, ModelAdapter]:
+    """Load installed model adapters with their plugin-owned configuration."""
+
     return cast(
         dict[str, ModelAdapter],
-        load_plugins(group="toolang.model_adapter"),
+        load_plugins(group="toolang.model_adapter", config=config),
     )
 
 

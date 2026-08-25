@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from toolang.base.errors import ToolangError
 from toolang.base.types.model import ModelAlias, Provider
-from toolang.plugin.config import resolve_env_refs
+from toolang.plugin.config import validate_plugin_config
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +61,7 @@ def parse_model_aliases(
 
     aliases: dict[str, ModelAlias] = {}
     for payload in config_layers:
+        validate_plugin_config(payload)
         models_table = _models_table(payload)
         raw_aliases = models_table.get("aliases")
         if not isinstance(raw_aliases, Mapping):
@@ -79,6 +80,7 @@ def parse_provider_configs(
 
     configs: dict[str, ProviderConfig] = {}
     for payload in config_layers:
+        validate_plugin_config(payload)
         models_table = _models_table(payload)
         raw_providers = models_table.get("providers")
         if not isinstance(raw_providers, Mapping):
@@ -92,47 +94,6 @@ def parse_provider_configs(
     return configs
 
 
-def parse_catalog_configs(
-    config_layers: Sequence[Mapping[str, object]],
-    *,
-    environ: Mapping[str, str],
-) -> dict[str, dict[str, object]]:
-    """Parse enabled ``[models.catalogs.<name>]`` plugin configurations."""
-
-    configs: dict[str, dict[str, object]] = {}
-    enabled: dict[str, bool] = {}
-    for payload in config_layers:
-        raw_catalogs = _models_table(payload).get("catalogs")
-        if not isinstance(raw_catalogs, Mapping):
-            continue
-        for raw_name, raw_value in raw_catalogs.items():
-            if not isinstance(raw_name, str) or not isinstance(raw_value, Mapping):
-                continue
-            name = raw_name.strip()
-            if not name:
-                continue
-            value = cast(Mapping[str, object], raw_value)
-            if "enabled" in value:
-                raw_enabled = value["enabled"]
-                if not isinstance(raw_enabled, bool):
-                    raise ToolangError(
-                        f"model catalog {name!r} enabled must be a boolean"
-                    )
-                enabled[name] = raw_enabled
-            else:
-                enabled.setdefault(name, True)
-            current = dict(configs.get(name, {}))
-            current.update(
-                resolve_env_refs(
-                    {str(key): item for key, item in value.items() if key != "enabled"},
-                    environ,
-                    context=f"models.catalogs.{name}",
-                )
-            )
-            configs[name] = current
-    return {name: config for name, config in configs.items() if enabled.get(name, True)}
-
-
 def parse_default_models(
     config_layers: Sequence[Mapping[str, object]],
 ) -> tuple[str, ...]:
@@ -140,6 +101,7 @@ def parse_default_models(
 
     defaults: tuple[str, ...] = ()
     for payload in config_layers:
+        validate_plugin_config(payload)
         models_table = _models_table(payload)
         raw_default = models_table.get("default")
         if isinstance(raw_default, str):

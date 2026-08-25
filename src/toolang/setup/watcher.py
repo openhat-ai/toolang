@@ -13,16 +13,14 @@ from toolang.base.protocols.model import ModelAdapter, ModelCatalog
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.model import ModelCatalogSnapshot
 from toolang.common.layout import AgentLayout
-from toolang.plugin.config import merge_named_configs
+from toolang.plugin.config import merge_plugin_configs
 from toolang.plugin.models.catalog import (
     MergedModelCatalog,
     model_info_from_catalog,
     resolve_model_catalog_path,
 )
 from toolang.plugin.models.config import (
-    ProviderConfig,
     configure_catalog_providers,
-    parse_catalog_configs,
     parse_provider_configs,
 )
 from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
@@ -115,19 +113,27 @@ class SetupWatcher:
                 overrides=self._limit_overrides,
             )
             provider_configs = parse_provider_configs(configs)
-            if config_changed or not self._adapters:
-                self._adapters = load_model_adapters()
+            adapter_configs = merge_plugin_configs(
+                configs,
+                family="model_adapter",
+                environ=envs,
+            )
+            toolset_configs = merge_plugin_configs(
+                configs,
+                family="toolset",
+                environ=envs,
+            )
+            catalog_configs = merge_plugin_configs(
+                configs,
+                family="model_catalog",
+                environ=envs,
+            )
+            if config_changed or envs_changed or not self._adapters:
+                self._adapters = load_model_adapters(adapter_configs)
             if config_changed or envs_changed or not self._tools:
                 self._tools = load_tools(
-                    toolset_config=merge_named_configs(
-                        configs,
-                        section="tools",
-                        environ=envs,
-                    )
+                    toolset_config=toolset_configs,
                 )
-            ollama = provider_configs.get("ollama")
-            llama_cpp = provider_configs.get("llama_cpp")
-            catalog_configs = parse_catalog_configs(configs, environ=envs)
             catalog_configs["models_dev"] = {
                 **catalog_configs.get("models_dev", {}),
                 "path": catalog_path,
@@ -135,20 +141,10 @@ class SetupWatcher:
             catalog_configs["ollama"] = {
                 **catalog_configs.get("ollama", {}),
                 "environ": envs,
-                **(
-                    {"endpoint": _endpoint(ollama)}
-                    if _endpoint(ollama) is not None
-                    else {}
-                ),
             }
             catalog_configs["llama_cpp"] = {
                 **catalog_configs.get("llama_cpp", {}),
                 "environ": envs,
-                **(
-                    {"endpoint": _endpoint(llama_cpp)}
-                    if _endpoint(llama_cpp) is not None
-                    else {}
-                ),
             }
             catalogs = load_model_catalogs(catalog_configs)
             models_dev = catalogs.pop("models_dev", None)
@@ -250,10 +246,6 @@ class SetupWatcher:
             interval_ms=interval_ms,
         ):
             pass
-
-
-def _endpoint(config: ProviderConfig | None) -> str | None:
-    return config.endpoint if config is not None else None
 
 
 def _catalog_file_identity(path: Path) -> tuple[Path, int, int, int, int]:

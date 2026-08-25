@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -11,6 +13,7 @@ from toolang.base.types.sandbox import (
     SandboxRequest,
 )
 from toolang.common.layout import AgentLayout
+from toolang.state.state import AgentState
 from toolang.up import sandbox
 from toolang.up.server import ServeSpec
 
@@ -127,13 +130,23 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     tmp_path: Path,
 ) -> None:
     implementation = FakeSandbox()
-    monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
+    configs: list[dict[str, object]] = []
+
+    def create_sandbox(_name: str, config: dict[str, object]) -> FakeSandbox:
+        configs.append(dict(config))
+        return implementation
+
+    monkeypatch.setattr(sandbox, "create_sandbox", create_sandbox)
 
     async def ready(*_args, **_kwargs) -> None:
         return None
 
     monkeypatch.setattr(sandbox, "_wait_ready", ready)
     spec = _launch_spec(tmp_path)
+    spec.serve.layout.root_config.write_text(
+        "[plugin.sandbox.fake]\ncurrent = true\n",
+        encoding="utf-8",
+    )
 
     handle = asyncio.run(sandbox.launch(spec))
 
@@ -146,6 +159,7 @@ def test_launch_delegates_complete_spec_and_stop_releases_state(
     assert ("stop", handle.state.ref, True) in implementation.calls
     assert ("release", handle.state.ref) in implementation.calls
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
+    assert configs == [{}, {"current": True}]
 
 
 def test_stop_failure_preserves_sandbox_state(
@@ -299,3 +313,40 @@ def test_readiness_fails_when_workload_exits() -> None:
                 timeout_sec=0.1,
             )
         )
+
+
+def test_select_sandbox_keeps_selection_separate_from_plugin_config() -> None:
+    state = cast(
+        AgentState,
+        SimpleNamespace(
+            root_config={
+                "sandbox": {"driver": "docker", "target": "python:3.13"},
+                "plugin": {
+                    "sandbox": {
+                        "docker": {
+                            "image": "python:3.13-slim",
+                            "token_env": "SANDBOX_TOKEN",
+                        },
+                        "host": {"mode": "local"},
+                    },
+                },
+            },
+            home_config={"plugin": {"sandbox": {"docker": {"image": "agent-image"}}}},
+        ),
+    )
+
+    selected, config = sandbox._select_sandbox(
+        state,
+        explicit=None,
+        environ={"SANDBOX_TOKEN": "secret"},
+    )
+    explicit, host_config = sandbox._select_sandbox(
+        state,
+        explicit="host",
+        environ={"SANDBOX_TOKEN": "secret"},
+    )
+
+    assert selected == "docker:python:3.13"
+    assert config == {"image": "agent-image", "token": "secret"}
+    assert explicit == "host"
+    assert host_config == {"mode": "local"}

@@ -379,6 +379,22 @@ When `--sandbox` is omitted, resident run/start commands use the effective
 root/home `[sandbox]` binding, falling back to `host` when no binding exists.
 An explicit selector, including `--sandbox host`, overrides that binding.
 
+Sandbox selection and implementation configuration are separate:
+
+```toml
+[sandbox]
+driver = "docker"
+target = "python:3.13-slim"
+
+[plugin.sandbox.docker]
+root = "/root/.toolang"
+```
+
+Root and agent plugin tables are merged before the selected sandbox factory is
+created. Status, stop, and interrupted-launch recovery re-read this current
+configuration; `SandboxState` stores only the sandbox selector and runtime
+reference.
+
 For every sandbox implementation, AgentServer is the environment's primary
 foreground workload. `run` waits for that workload and releases it on exit,
 while `start` returns after the health endpoint is ready. `stop` reloads the

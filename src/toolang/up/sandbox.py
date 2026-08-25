@@ -20,10 +20,15 @@ from toolang.base.types.sandbox import SandboxRef, SandboxRequest
 from toolang.common.files import atomic_write_text, file_write_lock
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import (
-    merge_sandbox_config,
-    parse_sandbox_binding,
+    merge_plugin_configs,
+    resolve_sandbox_binding,
 )
 from toolang.plugin.sandboxes.loading import create_sandbox
+from toolang.setup.config import (
+    load_agent_config,
+    load_setup_config,
+    load_setup_envs,
+)
 from toolang.state.state import AgentState
 from toolang.state.watcher import StateWatcher
 from toolang.up.mounts import prepare_root_mounts
@@ -164,7 +169,11 @@ async def launch(spec: LaunchSpec) -> SandboxHandle:
 async def _launch_locked(spec: LaunchSpec) -> SandboxHandle:
     current = SandboxState.load(spec.serve.layout.sandbox_state)
     if current is not None:
-        implementation = _create_state_sandbox(current)
+        implementation = load_state_sandbox(
+            spec.serve.layout,
+            current,
+            environ=spec.environ,
+        )
         if await implementation.running(current.ref):
             raise ValueError(f"agent is already running: {spec.serve.layout.name}")
         await implementation.release(current.ref)
@@ -265,7 +274,7 @@ async def stop(layout: AgentLayout, *, force: bool = False) -> bool:
             state = SandboxState.load(layout.sandbox_state)
             if state is None:
                 return False
-            implementation = _create_state_sandbox(state)
+            implementation = load_state_sandbox(layout, state)
             await implementation.stop(state.ref, force=force)
             await implementation.release(state.ref)
             _clear_state(layout, expected=state)
@@ -278,7 +287,7 @@ async def running(layout: AgentLayout) -> bool:
     state = SandboxState.load(layout.sandbox_state)
     if state is None:
         return False
-    return await _create_state_sandbox(state).running(state.ref)
+    return await load_state_sandbox(layout, state).running(state.ref)
 
 
 def _select_sandbox(
@@ -287,27 +296,24 @@ def _select_sandbox(
     explicit: str | None,
     environ: Mapping[str, str],
 ) -> tuple[str, dict[str, object]]:
-    binding = parse_sandbox_binding(
-        merge_sandbox_config(
-            (state.root_config, state.home_config),
-            environ=environ,
-        )
+    configs = merge_plugin_configs(
+        (state.root_config, state.home_config),
+        family="sandbox",
+        environ=environ,
     )
+    binding = resolve_sandbox_binding((state.root_config, state.home_config))
     if explicit is not None:
         selected = explicit.strip()
         if not selected:
             raise ValueError("sandbox selector cannot be empty")
         name, _ = _split_sandbox(selected)
-        config = (
-            dict(binding.config) if binding is not None and binding.name == name else {}
-        )
-        return selected, config
+        return selected, dict(configs.get(name, {}))
     if binding is None:
-        return "host", {}
+        return "host", dict(configs.get("host", {}))
     selected = binding.name
     if binding.spec is not None:
         selected = f"{selected}:{binding.spec}"
-    return selected, dict(binding.config)
+    return selected, dict(configs.get(binding.name, {}))
 
 
 def _split_sandbox(selector: str) -> tuple[str, str | None]:
@@ -332,9 +338,22 @@ def _hosted_root(
     return Path("/root/.toolang")
 
 
-def _create_state_sandbox(state: SandboxState) -> Sandbox:
+def load_state_sandbox(
+    layout: AgentLayout,
+    state: SandboxState,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> Sandbox:
+    """Recreate a state sandbox with its current plugin-owned configuration."""
+
     name, _ = _split_sandbox(state.sandbox)
-    return create_sandbox(name, config={})
+    envs = dict(environ) if environ is not None else load_setup_envs(layout)
+    configs = merge_plugin_configs(
+        (load_setup_config(layout), load_agent_config(layout)),
+        family="sandbox",
+        environ=envs,
+    )
+    return create_sandbox(name, config=configs.get(name, {}))
 
 
 async def _wait_ready(

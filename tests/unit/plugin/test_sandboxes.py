@@ -8,7 +8,6 @@ import pytest
 
 from toolang.base.protocols.sandbox import Sandbox
 from toolang.base.types.sandbox import SandboxMount, SandboxRequest
-from toolang.plugin.config import parse_sandbox_binding
 from toolang.plugin.sandboxes import host as host_sandbox
 from toolang.plugin.sandboxes.loading import create_sandbox
 
@@ -169,24 +168,3 @@ def test_docker_foreground_sandbox_follows_container_logs(
 
     assert result == 0
     assert calls == [("logs", ref.runtime_id), ("wait", ref.runtime_id)]
-
-
-def test_parse_sandbox_binding_keeps_plugin_owned_spec() -> None:
-    binding = parse_sandbox_binding(
-        {
-            "driver": "docker",
-            "target": "python:3.13",
-            "config": {
-                "image": "python:3.13-slim",
-                "token": "secret",
-            },
-        }
-    )
-
-    assert binding is not None
-    assert binding.name == "docker"
-    assert binding.spec == "python:3.13"
-    assert binding.config == {
-        "image": "python:3.13-slim",
-        "token": "secret",
-    }
