@@ -16,8 +16,10 @@ from weakref import WeakKeyDictionary
 
 from toolang.base.errors import SandboxLaunchError
 from toolang.base.protocols.sandbox import Sandbox
+from toolang.base.types.progress import ProgressSink, ProgressStatus
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef, SandboxRequest
 from toolang.common.files import file_write_lock
+from toolang.common.progress import emit_progress
 from toolang.common.layout import AgentLayout
 from toolang.plugin.config import (
     merge_plugin_configs,
@@ -36,6 +38,7 @@ from toolang.up.records import SandboxState
 from toolang.up.server import ServeSpec, build_serve_argv, resolve_serve
 
 SANDBOX_READY_TIMEOUT_SEC = 30.0
+SANDBOX_ATTACH_GRACE_SEC = 0.2
 _TASK_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[Path, asyncio.Lock]] = (
     WeakKeyDictionary()
 )
@@ -115,75 +118,122 @@ async def resolve_launch(
     )
 
 
-async def launch(spec: LaunchSpec) -> SandboxHandle:
+async def launch(
+    spec: LaunchSpec,
+    *,
+    progress: ProgressSink | None = None,
+) -> SandboxHandle:
     """Launch an AgentServer and return after it becomes ready."""
 
     lock_path = spec.serve.layout.sandbox_state.with_suffix(".lock")
     async with _task_lock(lock_path):
         with file_write_lock(lock_path):
-            return await _launch_locked(spec)
+            return await _launch_locked(spec, progress=progress)
 
 
-async def _launch_locked(spec: LaunchSpec) -> SandboxHandle:
-    _reject_legacy_state(spec.serve.layout)
-    current = SandboxState.load(spec.serve.layout.sandbox_state)
-    if current is not None:
-        implementation = load_state_sandbox(
-            spec.serve.layout,
-            current,
-        )
-        if await implementation.running(current.ref):
-            raise ValueError(f"agent is already running: {spec.serve.layout.name}")
-        await implementation.release(current.ref)
-        _reject_unreferenced_staging(spec.serve.layout)
-        _clear_state(spec.serve.layout, expected=current)
-    else:
-        _reject_unreferenced_staging(spec.serve.layout)
-
-    name, raw_spec = _split_sandbox(spec.sandbox)
-    implementation = create_sandbox(name, config=spec.config)
-    hosted_root = implementation.runtime_root(spec.serve.layout.root)
-    if implementation.location not in {"host", "guest"}:
-        raise ValueError(
-            f"sandbox {name} returned invalid location: {implementation.location}"
-        )
-    on_host = implementation.location == "host"
-    hosted_home = hosted_root / "agents" / spec.serve.layout.name
-    request = SandboxRequest(
-        local_root=spec.serve.layout.root,
-        local_home=spec.serve.layout.home,
-        hosted_root=hosted_root,
-        hosted_home=hosted_home,
-        agent_name=spec.serve.layout.name,
-        bind_host=spec.serve.host,
-        endpoint_host=spec.serve.endpoint_host,
-        port=spec.serve.port,
-        endpoint=spec.serve.endpoint,
-        command=(
-            "too",
-            *build_serve_argv(
-                spec.serve,
-                root=hosted_root,
-                host=spec.serve.host if on_host else "0.0.0.0",
-            ),
-        ),
-        working_directory=spec.serve.layout.home if on_host else hosted_home,
-        output=spec.output,
-        log_path=spec.log_path,
-        envs={
-            **spec.environ,
-            "TOOLANG_ROOT": str(hosted_root),
-            "TOOLANG_SANDBOX": spec.sandbox,
-        },
-        dotenv_envs=spec.dotenv_envs,
-        mounts=(
-            () if on_host else prepare_root_mounts(spec.serve.layout.root, hosted_root)
-        ),
-        local_dev_artifact=spec.dev_artifact,
+async def _launch_locked(
+    spec: LaunchSpec,
+    *,
+    progress: ProgressSink | None,
+) -> SandboxHandle:
+    _startup_progress(
+        progress,
+        spec,
+        phase="prepare",
+        label="Preparing sandbox",
+        status="running",
+        detail=spec.sandbox,
     )
-    plan = implementation.prepare(raw_spec, request)
+    try:
+        _reject_legacy_state(spec.serve.layout)
+        current = SandboxState.load(spec.serve.layout.sandbox_state)
+        if current is not None:
+            implementation = load_state_sandbox(
+                spec.serve.layout,
+                current,
+            )
+            if await implementation.running(current.ref):
+                raise ValueError(f"agent is already running: {spec.serve.layout.name}")
+            await implementation.release(current.ref)
+            _reject_unreferenced_staging(spec.serve.layout)
+            _clear_state(spec.serve.layout, expected=current)
+        else:
+            _reject_unreferenced_staging(spec.serve.layout)
+
+        name, raw_spec = _split_sandbox(spec.sandbox)
+        implementation = create_sandbox(name, config=spec.config)
+        hosted_root = implementation.runtime_root(spec.serve.layout.root)
+        if implementation.location not in {"host", "guest"}:
+            raise ValueError(
+                f"sandbox {name} returned invalid location: {implementation.location}"
+            )
+        on_host = implementation.location == "host"
+        hosted_home = hosted_root / "agents" / spec.serve.layout.name
+        request = SandboxRequest(
+            local_root=spec.serve.layout.root,
+            local_home=spec.serve.layout.home,
+            hosted_root=hosted_root,
+            hosted_home=hosted_home,
+            agent_name=spec.serve.layout.name,
+            bind_host=spec.serve.host,
+            endpoint_host=spec.serve.endpoint_host,
+            port=spec.serve.port,
+            endpoint=spec.serve.endpoint,
+            command=(
+                "too",
+                *build_serve_argv(
+                    spec.serve,
+                    root=hosted_root,
+                    host=spec.serve.host if on_host else "0.0.0.0",
+                ),
+            ),
+            working_directory=spec.serve.layout.home if on_host else hosted_home,
+            output=spec.output,
+            log_path=spec.log_path,
+            envs={
+                **spec.environ,
+                "TOOLANG_ROOT": str(hosted_root),
+                "TOOLANG_SANDBOX": spec.sandbox,
+            },
+            dotenv_envs=spec.dotenv_envs,
+            mounts=(
+                ()
+                if on_host
+                else prepare_root_mounts(spec.serve.layout.root, hosted_root)
+            ),
+            local_dev_artifact=spec.dev_artifact,
+        )
+        plan = implementation.prepare(raw_spec, request)
+    except BaseException as exc:
+        _startup_progress(
+            progress,
+            spec,
+            phase="prepare",
+            label="Preparing sandbox",
+            status="failed",
+            detail=str(exc),
+        )
+        raise
+    _startup_progress(
+        progress,
+        spec,
+        phase="prepare",
+        label="Preparing sandbox",
+        status="ok",
+        detail=plan.sandbox,
+    )
+    _startup_progress(
+        progress,
+        spec,
+        phase="launch",
+        label="Starting workload",
+        status="running",
+        detail=plan.sandbox,
+    )
     ref: SandboxRef | None = None
     state: SandboxState | None = None
+    active_phase = "launch"
+    active_label = "Starting workload"
     try:
         try:
             ref = await implementation.launch(plan)
@@ -194,14 +244,81 @@ async def _launch_locked(spec: LaunchSpec) -> SandboxHandle:
             raise
         state = SandboxState(sandbox=plan.sandbox, ref=ref)
         state.save(spec.serve.layout.sandbox_state)
-        await implementation.attach(plan, ref)
-        await _wait_ready(
-            implementation,
-            ref,
-            timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
+        attach_task = asyncio.create_task(
+            implementation.attach(plan, ref, progress=progress)
+        )
+        ready_task = asyncio.create_task(
+            _wait_ready(
+                implementation,
+                ref,
+                timeout_sec=SANDBOX_READY_TIMEOUT_SEC,
+            )
+        )
+        try:
+            done, _pending = await asyncio.wait(
+                (attach_task, ready_task),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if attach_task in done:
+                await attach_task
+            else:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(attach_task),
+                        timeout=SANDBOX_ATTACH_GRACE_SEC,
+                    )
+                except TimeoutError:
+                    attach_task.cancel()
+                    await asyncio.gather(attach_task, return_exceptions=True)
+            if (
+                ready_task.done()
+                and not ready_task.cancelled()
+                and ready_task.exception() is not None
+            ):
+                await ready_task
+        except BaseException:
+            for task in (attach_task, ready_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(attach_task, ready_task, return_exceptions=True)
+            raise
+        _startup_progress(
+            progress,
+            spec,
+            phase="launch",
+            label="Starting workload",
+            status="ok",
+            detail=ref.runtime_id,
+        )
+        active_phase = "ready"
+        active_label = "Waiting for agent API"
+        _startup_progress(
+            progress,
+            spec,
+            phase="ready",
+            label="Waiting for agent API",
+            status="running",
+            detail=ref.endpoint,
+        )
+        await ready_task
+        _startup_progress(
+            progress,
+            spec,
+            phase="ready",
+            label="Waiting for agent API",
+            status="ok",
+            detail=ref.endpoint,
         )
         return SandboxHandle(implementation, state)
-    except BaseException:
+    except BaseException as exc:
+        _startup_progress(
+            progress,
+            spec,
+            phase=active_phase,
+            label=active_label,
+            status="failed",
+            detail=str(exc),
+        )
         await asyncio.shield(
             _recover_failed_launch(
                 spec.serve.layout,
@@ -217,10 +334,11 @@ async def run(
     spec: LaunchSpec,
     *,
     on_ready: Callable[[SandboxState], None] | None = None,
+    progress: ProgressSink | None = None,
 ) -> int:
     """Launch, follow, and release one foreground AgentServer."""
 
-    handle = await launch(spec)
+    handle = await launch(spec, progress=progress)
     try:
         if on_ready is not None:
             on_ready(handle.state)
@@ -389,6 +507,26 @@ def load_state_sandbox(
         family="sandbox",
     )
     return create_sandbox(name, config=configs.get(name, {}))
+
+
+def _startup_progress(
+    progress: ProgressSink | None,
+    spec: LaunchSpec,
+    *,
+    phase: str,
+    label: str,
+    status: ProgressStatus,
+    detail: str | None = None,
+) -> None:
+    with suppress(Exception):
+        emit_progress(
+            progress,
+            id=f"startup:{spec.serve.layout.name}:{phase}",
+            phase=f"startup.{phase}",
+            label=label,
+            status=status,
+            detail=detail,
+        )
 
 
 async def _wait_ready(

@@ -11,11 +11,18 @@ from toolang.base.types.sandbox import SandboxRequest
 from toolang.common.files import atomic_write_text
 
 
+DOCKER_TOOLANG_COMPATIBILITY_ERROR = (
+    "Installed Toolang does not provide the required `too serve` entrypoint."
+)
+
+
 def write_agent_script(
     path: Path,
     *,
     command: tuple[str, ...],
     hosted_dev_artifact: Path | None,
+    startup_events_path: Path,
+    validation_error_to_stderr: bool,
 ) -> None:
     if not command:
         raise ValueError("docker sandbox requires a command")
@@ -26,23 +33,48 @@ def write_agent_script(
         "set -eu",
         'export PATH="$HOME/.local/bin:$PATH"',
         'export TOOLANG_SANDBOX_INSTANCE="${HOSTNAME:?docker sandbox hostname is unavailable}"',
+        "startup_event() { printf '%s\\n' \"$1\" >>"
+        + shlex.quote(str(startup_events_path))
+        + "; }",
         'have() { command -v "$1" >/dev/null 2>&1; }',
         'PYTHON_BIN=""',
         'if have python; then PYTHON_BIN="python"; elif have python3; then PYTHON_BIN="python3"; fi',
         "ensure_uv() {",
         "  have uv && return 0",
-        '  [ -n "$PYTHON_BIN" ] || { echo "python not available" >&2; exit 127; }',
-        '  "$PYTHON_BIN" -m ensurepip --upgrade || true',
-        '  "$PYTHON_BIN" -m pip install --disable-pip-version-check --user -U uv || true',
+        '  [ -n "$PYTHON_BIN" ] || { echo "python not available" >&2; return 127; }',
+        '  "$PYTHON_BIN" -m ensurepip --upgrade >/dev/null 2>&1 || true',
+        '  "$PYTHON_BIN" -m pip install --disable-pip-version-check '
+        "--root-user-action=ignore --quiet --user -U uv || true",
         "  have uv && return 0",
-        "  if have curl; then curl -LsSf https://astral.sh/uv/install.sh | sh; fi",
-        "  have uv || { echo 'uv not available' >&2; exit 127; }",
+        "  if have curl; then curl -LsSf https://astral.sh/uv/install.sh | sh "
+        ">/dev/null; fi",
+        "  have uv || { echo 'uv not available' >&2; return 127; }",
         "}",
-        "ensure_uv",
-        "exec uv tool run --from "
+        "startup_event install.running",
+        "if ! ensure_uv; then",
+        "  startup_event install.failed",
+        "  exit 127",
+        "fi",
+        "if ! uv tool install --quiet --no-progress --force "
         + shlex.quote(source)
-        + " "
-        + shlex.join(tool_command),
+        + "; then",
+        "  startup_event install.failed",
+        "  exit 1",
+        "fi",
+        "startup_event install.ok",
+        "startup_event validate.running",
+        "if ! " + shlex.quote(tool_command[0]) + " serve --help >/dev/null 2>&1; then",
+        "  startup_event validate.failed",
+        *(
+            ["  echo " + shlex.quote(DOCKER_TOOLANG_COMPATIBILITY_ERROR) + " >&2"]
+            if validation_error_to_stderr
+            else []
+        ),
+        "  exit 64",
+        "fi",
+        "startup_event validate.ok",
+        "startup_event server.running",
+        "exec " + shlex.join(tool_command),
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     path.chmod(0o755)
@@ -161,6 +193,20 @@ def validate_guest_environment(environ: Mapping[str, str]) -> None:
 def prepare_stage_directory(stage_dir: Path) -> None:
     stage_dir.parent.mkdir(parents=True, exist_ok=True)
     stage_dir.mkdir()
+
+
+def prepare_startup_events(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, "")
+    path.chmod(0o600)
+
+
+def remove_startup_events(path: str | Path, *, ignore_errors: bool = False) -> None:
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError:
+        if not ignore_errors:
+            raise
 
 
 def remove_stage_directory(

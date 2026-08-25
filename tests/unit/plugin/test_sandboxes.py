@@ -16,6 +16,7 @@ import pytest
 
 from toolang.base.errors import SandboxLaunchError, ToolangError
 from toolang.base.protocols.sandbox import Sandbox
+from toolang.base.types.progress import ProgressEvent
 from toolang.base.types.sandbox import SandboxMount, SandboxRequest
 from toolang.common.layout import AgentLayout
 from toolang.plugin.sandboxes import _docker_cli as docker_cli
@@ -216,6 +217,7 @@ def test_docker_sandbox_prepares_and_launches(
     assert "UNRELATED_HOST_SECRET" not in guest_env_source
     assert stat.S_IMODE(guest_env_mount.local_path.stat().st_mode) == 0o600
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
+    startup_events_path = Path(cast(str, plan.meta["startup_events_path"]))
     stage_mount = next(
         item
         for item in plan.mounts
@@ -229,14 +231,17 @@ def test_docker_sandbox_prepares_and_launches(
     )
     assert control_lock.read_text(encoding="utf-8") == "host control\n"
     assert stage_dir.is_relative_to(control_lock.parent / "launches")
+    assert startup_events_path.is_file()
+    assert stat.S_IMODE(startup_events_path.stat().st_mode) == 0o600
     assert "bootstrap.py" in (stage_dir / "start.sh").read_text(encoding="utf-8")
     agent_script = (stage_dir / "agent.sh").read_text(encoding="utf-8")
     assert 'export TOOLANG_SANDBOX_INSTANCE="${HOSTNAME:?' in agent_script
     assert (
-        "exec uv tool run --from "
+        "uv tool install --quiet --no-progress --force "
         "/root/.toolang/agents/alice/.runtime/sandbox/"
-        "toolang-1.2.3-py3-none-any.whl too serve alice --port 8123"
+        "toolang-1.2.3-py3-none-any.whl"
     ) in agent_script
+    assert "exec too serve alice --port 8123" in agent_script
     assert not (stage_dir / "environment.json").exists()
     bootstrap = subprocess.run(
         (
@@ -264,7 +269,9 @@ def test_docker_sandbox_prepares_and_launches(
     ref = asyncio.run(sandbox.launch(plan))
 
     assert ref.runtime_id == "container-123"
-    assert ref.meta["container_name"] == container_name
+    assert ref.runtime_kind == "container"
+    assert ref.runtime_name == container_name
+    assert ref.meta["startup_events_path"] == str(startup_events_path)
     assert ref.endpoint == "http://localhost:8123"
     assert asyncio.run(sandbox.running(ref)) is True
     run_call = cast(dict[str, Any], calls["run"])
@@ -281,7 +288,7 @@ def test_docker_sandbox_prepares_and_launches(
     )
 
 
-def test_docker_background_sandbox_persists_bootstrap_output(
+def test_docker_background_sandbox_keeps_errors_and_quiets_success_output(
     tmp_path: Path,
 ) -> None:
     request = _request(tmp_path)
@@ -297,10 +304,10 @@ def test_docker_background_sandbox_persists_bootstrap_output(
     assert "/root/.toolang/agents/alice/.runtime/agent.log" in start_script
     assert "2>&1" in start_script
     agent_script = (stage_dir / "agent.sh").read_text(encoding="utf-8")
-    assert "ensurepip --upgrade >/dev/null" not in agent_script
-    assert "pip install --disable-pip-version-check --user -U uv >/dev/null" not in (
-        agent_script
-    )
+    assert "ensurepip --upgrade >/dev/null 2>&1" in agent_script
+    assert "--root-user-action=ignore --quiet" in agent_script
+    assert "uv tool install --quiet --no-progress" in agent_script
+    assert docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR in agent_script
 
 
 def test_docker_background_log_must_be_inside_the_agent_home(
@@ -361,11 +368,202 @@ def test_docker_agent_script_quotes_a_dev_wheel_path(tmp_path: Path) -> None:
         script,
         command=("too", "serve", "alice"),
         hosted_dev_artifact=Path("/runtime/dev wheels/toolang.whl"),
+        startup_events_path=Path("/runtime/startup events"),
+        validation_error_to_stderr=False,
     )
 
+    source = script.read_text(encoding="utf-8")
     assert (
-        "exec uv tool run --from '/runtime/dev wheels/toolang.whl' too serve alice"
-        in script.read_text(encoding="utf-8")
+        "uv tool install --quiet --no-progress --force "
+        "'/runtime/dev wheels/toolang.whl'" in source
+    )
+    assert ">>'/runtime/startup events'" in source
+    assert "exec too serve alice" in source
+
+
+def test_docker_agent_script_reports_quiet_install_and_server_stages(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "agent.sh"
+    events = tmp_path / "startup.events"
+    events.touch()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(bin_dir / "uv", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        bin_dir / "too",
+        "#!/bin/sh\n"
+        'if [ "$2" = "--help" ]; then exit 0; fi\n'
+        'printf "server command\\n"\n',
+    )
+    docker_guest.write_agent_script(
+        script,
+        command=("too", "serve", "alice"),
+        hosted_dev_artifact=None,
+        startup_events_path=events,
+        validation_error_to_stderr=False,
+    )
+
+    completed = subprocess.run(
+        ("/bin/sh", str(script)),
+        check=True,
+        capture_output=True,
+        text=True,
+        env={"HOME": str(tmp_path / "home"), "PATH": str(bin_dir)},
+    )
+
+    assert completed.stdout == "server command\n"
+    assert completed.stderr == ""
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "install.running",
+        "install.ok",
+        "validate.running",
+        "validate.ok",
+        "server.running",
+    ]
+
+
+def test_docker_agent_script_reports_curated_compatibility_failure(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "agent.sh"
+    events = tmp_path / "startup.events"
+    events.touch()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(bin_dir / "uv", "#!/bin/sh\nexit 0\n")
+    _write_executable(bin_dir / "too", "#!/bin/sh\nexit 2\n")
+    docker_guest.write_agent_script(
+        script,
+        command=("too", "serve", "alice"),
+        hosted_dev_artifact=None,
+        startup_events_path=events,
+        validation_error_to_stderr=True,
+    )
+
+    completed = subprocess.run(
+        ("/bin/sh", str(script)),
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"HOME": str(tmp_path / "home"), "PATH": str(bin_dir)},
+    )
+
+    assert completed.returncode == 64
+    assert completed.stdout == ""
+    assert completed.stderr.strip() == (docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR)
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "install.running",
+        "install.ok",
+        "validate.running",
+        "validate.failed",
+    ]
+
+
+def test_docker_agent_script_reports_uv_bootstrap_as_install_failure(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "agent.sh"
+    events = tmp_path / "startup.events"
+    events.touch()
+    empty_bin = tmp_path / "bin"
+    empty_bin.mkdir()
+    docker_guest.write_agent_script(
+        script,
+        command=("too", "serve", "alice"),
+        hosted_dev_artifact=None,
+        startup_events_path=events,
+        validation_error_to_stderr=False,
+    )
+
+    completed = subprocess.run(
+        ("/bin/sh", str(script)),
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"HOME": str(tmp_path / "home"), "PATH": str(empty_bin)},
+    )
+
+    assert completed.returncode == 127
+    assert completed.stdout == ""
+    assert completed.stderr.strip() == "python not available"
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "install.running",
+        "install.failed",
+    ]
+
+
+def test_docker_startup_observer_preserves_order_and_curated_failure(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "startup.events"
+    path.write_text(
+        "validate.running\n"
+        "install.running\n"
+        "install.running\n"
+        "unknown\n"
+        "install.ok\n"
+        "validate.running\n"
+        "validate.failed\n",
+        encoding="utf-8",
+    )
+    events: list[ProgressEvent] = []
+
+    asyncio.run(
+        docker_sandbox._observe_startup_events(
+            path,
+            progress=events.append,
+            event_prefix="startup:container",
+            package_source="toolang.whl",
+        )
+    )
+
+    assert [(event.phase, event.status, event.detail) for event in events] == [
+        ("startup.install", "running", "toolang.whl"),
+        ("startup.install", "ok", None),
+        ("startup.validate", "running", None),
+        (
+            "startup.validate",
+            "failed",
+            docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR,
+        ),
+    ]
+
+
+def test_docker_startup_observer_reads_final_token_after_container_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "startup.events"
+    path.write_text(
+        "install.running\ninstall.ok\nvalidate.running\n",
+        encoding="utf-8",
+    )
+    events: list[ProgressEvent] = []
+    monkeypatch.setattr(docker_sandbox, "docker_container_running", lambda _id: False)
+
+    async def append_failure() -> None:
+        await asyncio.sleep(0.01)
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write("validate.failed\n")
+
+    async def observe() -> None:
+        await asyncio.gather(
+            docker_sandbox._observe_startup_events(
+                path,
+                progress=events.append,
+                event_prefix="startup:container",
+                package_source="toolang.whl",
+                runtime_id="container",
+            ),
+            append_failure(),
+        )
+
+    asyncio.run(observe())
+
+    assert [(event.phase, event.status) for event in events][-1] == (
+        "startup.validate",
+        "failed",
     )
 
 
@@ -430,11 +628,13 @@ def test_docker_launch_failure_removes_the_staged_guest_environment(
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path))
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
+    startup_events_path = Path(cast(str, plan.meta["startup_events_path"]))
 
     with pytest.raises(ToolangError, match="Could not start docker sandbox"):
         asyncio.run(sandbox.launch(plan))
 
     assert not stage_dir.exists()
+    assert not startup_events_path.exists()
 
 
 def test_docker_launch_cleanup_failure_returns_a_recovery_reference(
@@ -452,6 +652,7 @@ def test_docker_launch_cleanup_failure_returns_a_recovery_reference(
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path))
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
+    startup_events_path = Path(cast(str, plan.meta["startup_events_path"]))
 
     with pytest.raises(SandboxLaunchError, match="could not remove") as captured:
         asyncio.run(sandbox.launch(plan))
@@ -459,6 +660,7 @@ def test_docker_launch_cleanup_failure_returns_a_recovery_reference(
     assert captured.value.ref.runtime_id == plan.meta["container_name"]
     assert captured.value.ref.meta["stage_dir"] == str(stage_dir)
     assert stage_dir.is_dir()
+    assert startup_events_path.is_file()
 
 
 def test_docker_launch_cancellation_terminates_cli_and_removes_container(
@@ -510,6 +712,7 @@ def test_docker_launch_cancellation_terminates_cli_and_removes_container(
     plan = sandbox.prepare(None, _request(tmp_path))
     container_name = cast(str, plan.meta["container_name"])
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
+    startup_events_path = Path(cast(str, plan.meta["startup_events_path"]))
 
     async def cancel_launch() -> None:
         task = asyncio.create_task(sandbox.launch(plan))
@@ -523,6 +726,7 @@ def test_docker_launch_cancellation_terminates_cli_and_removes_container(
     assert process.terminated is True
     assert removed == [container_name]
     assert not stage_dir.exists()
+    assert not startup_events_path.exists()
     assert cast(Path, plan.log_path).is_file()
 
 
@@ -548,12 +752,14 @@ def test_docker_release_preserves_container_diagnostics_before_removal(
     )
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path))
+    startup_events_path = Path(cast(str, plan.meta["startup_events_path"]))
     ref = asyncio.run(sandbox.launch(plan))
 
     asyncio.run(sandbox.release(ref))
 
     assert calls == [("logs", ref.runtime_id), ("remove", ref.runtime_id)]
     assert cast(Path, plan.log_path).is_file()
+    assert not startup_events_path.exists()
 
 
 def test_docker_release_removes_the_container_when_diagnostics_fail(
@@ -705,6 +911,10 @@ def test_docker_foreground_sandbox_follows_container_logs(
     )
     sandbox = create_sandbox("docker", config={})
     plan = sandbox.prepare(None, _request(tmp_path, foreground=True))
+    stage_dir = Path(cast(str, plan.meta["stage_dir"]))
+    assert docker_guest.DOCKER_TOOLANG_COMPATIBILITY_ERROR not in (
+        stage_dir / "agent.sh"
+    ).read_text(encoding="utf-8")
 
     ref = asyncio.run(sandbox.launch(plan))
     assert calls == []
@@ -725,3 +935,8 @@ def _async_value(value: str) -> Any:
         return value
 
     return resolve
+
+
+def _write_executable(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)

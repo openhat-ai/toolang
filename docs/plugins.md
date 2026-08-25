@@ -34,6 +34,17 @@ Channel plugins ingest or deliver external messages.
 
 Sandbox plugins provide runtime execution environments.
 
+`SandboxRef.runtime_id` is the immutable identifier used for lifecycle control.
+Plugins also return a structured `runtime_kind` and optional `runtime_name` for
+human inspection; they do not preformat CLI labels. The built-in host sandbox
+uses `process`, Docker uses `container`, and the default is `workload`.
+
+Core persists the reference before calling
+`attach(plan, ref, progress=...)`. `attach` may start process-local observers
+and emit semantic `startup.*` progress, but progress is presentation-only and
+must not decide readiness or lifecycle state. Callbacks are never stored in a
+plan, request, reference, or persisted state.
+
 ### Model Catalog
 
 Model catalog plugins return immutable provider/model snapshots. Static and

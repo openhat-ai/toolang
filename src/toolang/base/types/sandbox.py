@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 from pathlib import Path
+import re
 from typing import Any, Literal, TypeAlias
 
 
@@ -13,6 +14,7 @@ SandboxOutput: TypeAlias = Literal["inherit", "file"]
 JsonValue: TypeAlias = (
     str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 )
+_RUNTIME_KIND_PATTERN = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,23 +92,37 @@ class SandboxRef:
     runtime_id: str
     endpoint: str
     meta: dict[str, JsonValue] = field(default_factory=dict)
+    runtime_kind: str = "workload"
+    runtime_name: str | None = None
 
     def __post_init__(self) -> None:
         runtime_id = self.runtime_id.strip()
         endpoint = self.endpoint.strip()
+        runtime_kind = self.runtime_kind.strip()
+        runtime_name = (
+            self.runtime_name.strip() if self.runtime_name is not None else None
+        )
         if not runtime_id:
             raise ValueError("sandbox reference requires runtime_id")
         if not endpoint:
             raise ValueError("sandbox reference requires endpoint")
+        if _RUNTIME_KIND_PATTERN.fullmatch(runtime_kind) is None:
+            raise ValueError("sandbox reference has invalid runtime_kind")
+        if runtime_name == "":
+            raise ValueError("sandbox reference runtime_name must not be empty")
         object.__setattr__(self, "runtime_id", runtime_id)
         object.__setattr__(self, "endpoint", endpoint)
         object.__setattr__(self, "meta", _json_object(self.meta))
+        object.__setattr__(self, "runtime_kind", runtime_kind)
+        object.__setattr__(self, "runtime_name", runtime_name)
 
     def to_data(self) -> dict[str, JsonValue]:
         return {
             "runtime_id": self.runtime_id,
             "endpoint": self.endpoint,
             "meta": dict(self.meta),
+            "runtime_kind": self.runtime_kind,
+            "runtime_name": self.runtime_name,
         }
 
     @classmethod
@@ -117,6 +133,8 @@ class SandboxRef:
         runtime_id = data.get("runtime_id")
         endpoint = data.get("endpoint")
         meta = data.get("meta")
+        runtime_kind = data.get("runtime_kind", "workload")
+        runtime_name = data.get("runtime_name")
         if not isinstance(runtime_id, str) or not runtime_id.strip():
             raise ValueError("sandbox reference is missing runtime_id")
         if not isinstance(endpoint, str) or not endpoint.strip():
@@ -127,10 +145,16 @@ class SandboxRef:
             normalized_meta = _json_object(meta)
         else:
             raise ValueError("sandbox reference meta must be a mapping")
+        if not isinstance(runtime_kind, str):
+            raise ValueError("sandbox reference runtime_kind must be a string")
+        if runtime_name is not None and not isinstance(runtime_name, str):
+            raise ValueError("sandbox reference runtime_name must be a string")
         return cls(
             runtime_id=runtime_id.strip(),
             endpoint=endpoint.strip(),
             meta=normalized_meta,
+            runtime_kind=runtime_kind,
+            runtime_name=runtime_name,
         )
 
 
