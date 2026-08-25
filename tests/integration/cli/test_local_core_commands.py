@@ -275,7 +275,9 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
         "model_call@run_inspect.0",
     )
     assert model_call_result.exit_code == 1
-    assert "step is not a model call: run_inspect.0" in model_call_result.stderr
+    assert "step is not a model call: run_inspect.0" in strip_ansi(
+        model_call_result.stderr
+    )
 
 
 def test_inspect_reads_historical_model_call_as_a_direct_target(
@@ -374,7 +376,7 @@ def test_inspect_reads_historical_model_call_as_a_direct_target(
         "model=test/model",
     )
     assert unused_model.exit_code == 1
-    assert "--default model requires --request" in unused_model.stderr
+    assert "--default model requires --request" in strip_ansi(unused_model.stderr)
 
 
 def test_inspect_prepares_prospective_model_call_and_provider_json(
@@ -578,7 +580,9 @@ def test_inspect_can_include_one_unambiguous_thread_history(tmp_path: Path) -> N
         env={"TEST_API_KEY": "top-secret"},
     )
     assert ambiguous.exit_code == 1
-    assert "--thread is ambiguous: multiple threads exist" in ambiguous.stderr
+    assert "--thread is ambiguous: multiple threads exist" in strip_ansi(
+        ambiguous.stderr
+    )
 
 
 @pytest.mark.parametrize(
@@ -632,7 +636,7 @@ def test_inspect_rejects_invalid_model_call_view_options(
     )
 
     assert result.exit_code != 0
-    assert message in result.stderr
+    assert message in strip_ansi(result.stderr)
 
 
 def test_inspect_step_path_does_not_cross_run_boundaries(tmp_path: Path) -> None:
