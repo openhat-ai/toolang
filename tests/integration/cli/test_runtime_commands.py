@@ -414,9 +414,9 @@ def test_start_reports_guest_failure_stage_reason_hint_and_log(
         "entrypoint." in normalized
     )
     assert "Hint: Build a wheel" in normalized
-    assert "Log:" in normalized
-    assert "toolang/agents/alice/.runtime/agent." in normalized
-    assert "log" in normalized
+    compact = "".join(stderr.replace("│", "").split())
+    assert "Log:" in compact
+    assert "toolang/agents/alice/.runtime/agent.log" in compact
 
 
 def test_start_interruption_during_sandbox_launch_exits_130(
