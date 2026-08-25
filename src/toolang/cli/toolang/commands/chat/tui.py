@@ -43,7 +43,12 @@ from . import widgets
 from .base import (
     AppContext,
     ChatClient,
+    ChatRunState,
     QueuedCall,
+    RunAccepted,
+    RunBlocked,
+    RunDisconnected,
+    RunRecovered,
     as_text,
     friendly_error,
 )
@@ -70,6 +75,20 @@ _RUN_EVENT_TYPES = (
 _STATUS_ACTIVITY_TICK = 0.3
 _STATUS_SPINNER_FRAME_DURATION = 0.3
 _MIN_STATUS_ACTIVITY_DURATION = 0.6
+_BLOCKED_READ_ONLY_COMMANDS = frozenset(
+    {
+        "help",
+        "?",
+        "model",
+        "models",
+        "agic",
+        "flow",
+        "runnable",
+        "show",
+        "exit",
+        "quit",
+    }
+)
 
 
 def _status_spinner_index(elapsed: float) -> int:
@@ -206,6 +225,8 @@ class ChatTuiApp:
         self.queue: list[QueuedCall] = []
         self.active_run_id: str | None = None
         self.cancel_sent_run_id: str | None = None
+        self.submission_blocked: str | None = None
+        self.transport_notice: str | None = None
         self.interrupt_exit_pending = False
         self.unfinalized_blocks: list[blocks.MutableBlock] = []
         self._pending_scrollback: list[RenderableType | None] = []
@@ -354,6 +375,9 @@ class ChatTuiApp:
 
     def _clear_status_error(self) -> None:
         self.interrupt_exit_pending = False
+        if self.transport_notice is not None:
+            self.status_bar.set_error(self.transport_notice)
+            return
         if self.status_bar.error_message:
             self.status_bar.clear_error()
             self._invalidate_ui()
@@ -478,6 +502,8 @@ class ChatTuiApp:
             self.handle_run_event(event.value)
         elif kind == "run_error":
             self._handle_run_error(str(event.value or "run failed"))
+        elif kind == "run_state" and _is_run_state(event.value):
+            self._handle_run_state(event.value)
         elif kind == "cancel_error":
             self._handle_cancel_error(str(event.value or "cancel request failed"))
         elif kind == "steer_error":
@@ -542,6 +568,7 @@ class ChatTuiApp:
         self.cancel_sent_run_id = None
         self.unfinalized_blocks.clear()
         self.run_in_flight.clear()
+        self.transport_notice = None
         self._set_status_running(False)
         self.status_bar.clear_error()
         if self.queue:
@@ -549,12 +576,18 @@ class ChatTuiApp:
 
     def handle_submit(self, message: str) -> None:
         self.interrupt_exit_pending = False
-        self.status_bar.clear_error()
+        if self.transport_notice is None:
+            self.status_bar.clear_error()
         source = normalize_chat_input(message)
         try:
             chat_input = parse_chat_input(source)
         except ValueError as exc:
             self.status_bar.set_error(friendly_error(str(exc)))
+            return
+        if self.submission_blocked is not None and not _blocked_input_allowed(
+            chat_input
+        ):
+            self.status_bar.set_error(self.submission_blocked)
             return
         if isinstance(chat_input, QuickCommand):
             slash_result = slashes.handle(self.app_context, chat_input)
@@ -612,6 +645,9 @@ class ChatTuiApp:
         self.status_bar.set_error(f"steer failed: {friendly_error(message)}")
 
     def _request_run_stop(self) -> None:
+        if self.submission_blocked is not None:
+            self.status_bar.set_error(self.submission_blocked)
+            return
         if self.active_run_id is None:
             return
         self.status_bar.clear_error()
@@ -635,6 +671,9 @@ class ChatTuiApp:
         threading.Thread(target=consume, daemon=True).start()
 
     def _request_run_steer(self, message: str) -> None:
+        if self.submission_blocked is not None:
+            self.status_bar.set_error(self.submission_blocked)
+            return
         if self.active_run_id is None:
             self.status_bar.set_error("No active run to steer.")
             return
@@ -664,6 +703,32 @@ class ChatTuiApp:
             self.status_bar.set_active_runnable(event.runnable)
         events.handle_run_event(event, self.app_context)
 
+    def _handle_run_state(self, state: ChatRunState) -> None:
+        if isinstance(state, RunAccepted):
+            if self.active_run_id not in {None, state.run_id}:
+                self.submission_blocked = (
+                    "Remote run identity changed. Restart Chat before submitting again."
+                )
+                self.status_bar.set_error(self.submission_blocked)
+                return
+            self.active_run_id = state.run_id
+            return
+        if isinstance(state, RunDisconnected):
+            self.active_run_id = state.run_id
+            self.transport_notice = state.message
+            self.status_bar.set_error(state.message)
+            return
+        if isinstance(state, RunBlocked):
+            if state.run_id is not None:
+                self.active_run_id = state.run_id
+            self.submission_blocked = state.message
+            self.transport_notice = state.message
+            self.status_bar.set_error(state.message)
+            return
+        if isinstance(state, RunRecovered):
+            self.transport_notice = None
+            events.handle_run_state(state, self.app_context)
+
     def start_run(self, call: QueuedCall) -> None:
         self.status_bar.set_active_runnable(self._runnable_label(call.selects))
         self.unfinalized_blocks.append(blocks.RunStartBlock.create(call.source))
@@ -688,6 +753,9 @@ class ChatTuiApp:
                 lambda error: self._enqueue_ui_event_from_thread(
                     ChatUIEvent("run_error", error)
                 ),
+                lambda state: self._enqueue_ui_event_from_thread(
+                    ChatUIEvent("run_state", state)
+                ),
             )
 
         self.run_in_flight.set()
@@ -697,3 +765,18 @@ class ChatTuiApp:
 
 def _is_run_event(value: object) -> TypeGuard[RunEvent]:
     return isinstance(value, _RUN_EVENT_TYPES)
+
+
+def _is_run_state(value: object) -> TypeGuard[ChatRunState]:
+    return isinstance(
+        value,
+        (RunAccepted, RunDisconnected, RunRecovered, RunBlocked),
+    )
+
+
+def _blocked_input_allowed(value: object) -> bool:
+    if not isinstance(value, QuickCommand):
+        return False
+    if value.name == "queue":
+        return not (value.tail or "").strip()
+    return value.name in _BLOCKED_READ_ONLY_COMMANDS

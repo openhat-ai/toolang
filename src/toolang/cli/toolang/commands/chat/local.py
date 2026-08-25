@@ -15,10 +15,15 @@ from uuid import uuid4
 from toolang.base.types.message import Message
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.execution.calls import IncludeResolver, parse_call, validate_commands
+from toolang.execution.calls import (
+    IncludeResolver,
+    parse_call,
+    validate_session_commands,
+)
 from toolang.execution.client import LocalRunClient, RunClient
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.executor import RunExecutor
+from toolang.execution.history import RunHistory
 from toolang.execution.runnables import runnable_binding_defaults
 from toolang.execution.executor.resources import (
     agent_model_targets,
@@ -30,9 +35,9 @@ from toolang.execution.schemas import RunRequest
 from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.includes import resolve_file_include
 from toolang.setup import AgentSetup, SetupWatcher
-from toolang.state.state import AgentState
 from toolang.state.watcher import StateWatcher
-from .base import ChatResult
+from toolang.execution.values import parts_from_local
+from .base import ChatResult, ChatRunState, RunAccepted
 from .policy import apply_session_commands, commands_from_selects
 
 
@@ -60,6 +65,7 @@ class LocalChatSession:
     ) -> None:
         self.layout = layout
         self.store = RunStore(layout.run_store)
+        self.history = RunHistory(self.store)
         self.ids = IdIssuer(layout.id_state)
         self.threads = ThreadManager(self.store, self.ids)
         self.setup_watcher = SetupWatcher(
@@ -153,11 +159,11 @@ class LocalChatSession:
         candidate = apply_session_commands(selects, commands)
         state = self.state_watcher.current()
         setup = self.setup_watcher.current()
-        validate_commands(
+        validate_session_commands(
             commands_from_selects(candidate),
             setup=setup,
             state=state,
-            default_runnable=_default_runnable(state),
+            runnable_fallbacks=("agic:chat", "default"),
         )
         return candidate
 
@@ -167,29 +173,20 @@ class LocalChatSession:
         *,
         thread_id: str | None,
     ) -> ChatResult:
-        run = self.store.get_run(run_id=run_id) if run_id is not None else None
-        if run_id is None:
-            if thread_id is None:
-                raise ValueError("No run result is available in this chat.")
-            run = next(
-                (
-                    candidate
-                    for candidate in reversed(
-                        self.store.list_thread_history_chronological(
-                            thread_id=thread_id
-                        )
-                    )
-                    if candidate.parent is None
-                    and candidate.status == "succeeded"
-                    and candidate.output is not None
-                ),
-                None,
-            )
+        if run_id is not None:
+            run = self.history.get_run_result(run_id)
+        elif thread_id is None:
+            raise ValueError("No run result is available in this chat.")
+        else:
+            try:
+                run = self.history.latest_thread_result(thread_id)
+            except KeyError:
+                run = None
         if run is None:
             if run_id is not None:
                 raise ValueError(f"Run not found: {run_id}")
             raise ValueError("No run result is available in this chat.")
-        output = self.store.run_output(run_id=run.id)
+        output = parts_from_local(run.output) if run.output is not None else ()
         if not output:
             raise ValueError(f"Run has no result: {run.id}")
         return ChatResult(run_id=run.id, output=output)
@@ -201,9 +198,12 @@ class LocalChatSession:
         selects: Mapping[str, object],
         on_event: Callable[[RunEvent], None],
         on_error: Callable[[str], None],
+        on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None:
         try:
-            self._submit(self._run(thread_id, message, selects, on_event)).result()
+            self._submit(
+                self._run(thread_id, message, selects, on_event, on_state)
+            ).result()
         except Exception as exc:
             on_error(_error_message(exc))
 
@@ -269,6 +269,7 @@ class LocalChatSession:
         message: str,
         selects: Mapping[str, object],
         on_event: Callable[[RunEvent], None],
+        on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None:
         commands, input = parse_call(message)
         request = RunRequest(
@@ -283,6 +284,8 @@ class LocalChatSession:
             request,
             tracer=_CallbackTracer(on_event),
         )
+        if on_state is not None:
+            on_state(RunAccepted(handle.run_id))
         await handle.wait()
 
     async def _close(self) -> None:
@@ -353,10 +356,6 @@ def _close_event_loop(loop: asyncio.AbstractEventLoop) -> None:
     loop.run_until_complete(loop.shutdown_asyncgens())
     loop.run_until_complete(loop.shutdown_default_executor())
     loop.close()
-
-
-def _default_runnable(state: AgentState) -> str:
-    return "chat" if state.program.find_agic("chat") is not None else "default"
 
 
 def _error_message(exc: Exception) -> str:

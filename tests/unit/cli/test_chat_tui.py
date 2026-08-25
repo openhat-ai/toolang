@@ -39,9 +39,19 @@ from toolang.cli.toolang.commands.chat import (
     tui,
     widgets,
 )
+from toolang.cli.toolang.commands.chat.remote import RemoteChatError
 from toolang.cli.toolang.commands.chat.policy import apply_session_commands
 from toolang.cli.toolang.commands.chat.events import ChatUIEvent
-from toolang.cli.toolang.commands.chat.base import ChatClient, ChatResult, QueuedCall
+from toolang.cli.toolang.commands.chat.base import (
+    ChatClient,
+    ChatResult,
+    ChatRunState,
+    QueuedCall,
+    RunAccepted,
+    RunBlocked,
+    RunDisconnected,
+    RunRecovered,
+)
 from toolang.cli.toolang.commands.chat.presenter import ChatRunPresenter
 from toolang.cli.common.execution_progress import (
     ProgressBlock,
@@ -60,6 +70,7 @@ from toolang.execution.events import (
     StepBegin,
     StepEnd,
 )
+from toolang.execution.schemas import RunControlRefData, RunDetail
 from toolang.execution.types import (
     ControlRef,
     Local,
@@ -1597,7 +1608,7 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
             home="/tmp/toolang/agents/alice-with-a-long-home",
-            executor_label="at https://executor.example.com/v1/chat",
+            executor_label="v0.3.9, :7001, docker(a1b2c3)",
             version_label="0.1.0",
         ).render(),
         width=40,
@@ -1612,17 +1623,17 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     assert len({len(line) for line in bordered_lines}) == 1
     unwrapped = rendered.replace("\n", "").replace("│", "").replace(" ", "")
     assert "alice-with-a-long-home" in unwrapped
-    assert "executorathttps://executor.example.com/v1/chat" in unwrapped
+    assert "executorv0.3.9,:7001,docker(a1b2c3)" in unwrapped
 
 
 @pytest.mark.parametrize(
     "executor_label",
     (
-        "at http://localhost:7001",
-        "at https://executor.example.com",
+        "v0.3.9, :7001",
+        "v0.3.9, :7001, docker(a1b2c3)",
     ),
 )
-def test_chat_header_supports_http_executor_locations(executor_label: str) -> None:
+def test_chat_header_supports_remote_executor_identity(executor_label: str) -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
             home="~/.toolang/agents/alice",
@@ -2380,6 +2391,149 @@ def test_chat_queue_captures_settings_at_submission_time() -> None:
     assert [item.selects["model"] for item in app.queue] == ["first", "second"]
 
 
+def test_chat_tui_keeps_the_queue_paused_while_remote_stream_is_disconnected() -> None:
+    app = tui.ChatTuiApp(
+        thread_id="term_remote",
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    app.run_in_flight.set()
+
+    app.handle_ui_event(ChatUIEvent("run_state", RunAccepted("run_remote")))
+    app.handle_ui_event(
+        ChatUIEvent(
+            "run_state",
+            RunDisconnected("run_remote", "waiting for durable state"),
+        )
+    )
+    app.handle_submit("queued call")
+
+    assert app.active_run_id == "run_remote"
+    assert app.run_in_flight.is_set()
+    assert [item.source for item in app.queue] == ["queued call"]
+    assert app.status_bar.error_message == "waiting for durable state"
+
+
+def test_chat_tui_recovers_from_durable_terminal_truth(
+    monkeypatch: Any,
+) -> None:
+    rendered: list[str] = []
+    monkeypatch.setattr(
+        tui.rendering,
+        "write_renderable",
+        lambda value: rendered.append(_render_text(value)),
+    )
+    app = tui.ChatTuiApp(
+        thread_id="term_remote",
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    app.run_in_flight.set()
+    app.unfinalized_blocks.append(blocks.RunStartBlock.create("hello"))
+    begin = _run_begin(run_id="run_remote")
+    app.handle_ui_event(ChatUIEvent("run_state", RunAccepted("run_remote")))
+    app.handle_run_event(begin)
+    app.handle_ui_event(
+        ChatUIEvent(
+            "run_state",
+            RunDisconnected("run_remote", "waiting for durable state"),
+        )
+    )
+    detail = RunDetail(
+        id="run_remote",
+        parent=None,
+        thread_id="term_remote",
+        root_run_id="run_remote",
+        runnable_kind="agic",
+        runnable_name="chat",
+        call_kind="top",
+        occurrence=None,
+        input_text="hello",
+        summary="done",
+        status="succeeded",
+        error=None,
+        ejected=None,
+        created_at="2026-08-25T00:00:00Z",
+        started_at="2026-08-25T00:00:00Z",
+        finished_at="2026-08-25T00:00:01Z",
+        updated_at="2026-08-25T00:00:01Z",
+        control=RunControlRefData(run="run_remote", index=0),
+        output=None,
+        controls=[],
+        steps=[],
+    )
+
+    app.handle_ui_event(ChatUIEvent("run_state", RunRecovered(detail)))
+
+    output = "\n".join(rendered)
+    assert "inspect the durable result" in output
+    assert "with :show run_remote" in output
+    assert "run_remote" in output
+    assert not app.run_in_flight.is_set()
+    assert app.active_run_id is None
+    assert app.unfinalized_blocks == []
+    assert app.status_bar.error_message == ""
+
+
+def test_chat_tui_blocks_mutating_input_after_ambiguous_acceptance(
+    monkeypatch: Any,
+) -> None:
+    rendered: list[str] = []
+    monkeypatch.setattr(
+        tui.rendering,
+        "write_renderables",
+        lambda values, **_kwargs: rendered.extend(
+            _render_text(value) for value in values
+        ),
+    )
+    app = tui.ChatTuiApp(
+        thread_id="term_remote",
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FakeClient(),
+    )
+    app.run_in_flight.set()
+    app.queue.append(QueuedCall("already queued", {}))
+    message = "Restart Chat before submitting again."
+
+    app.handle_ui_event(ChatUIEvent("run_state", RunBlocked(None, message)))
+    app.handle_submit("new call")
+    app.handle_submit(":model test/model")
+    app.handle_submit(":queue")
+    app.handle_submit(":show run_remote")
+
+    assert app.submission_blocked == message
+    assert [item.source for item in app.queue] == ["already queued"]
+    assert app.selects == {}
+    assert app.run_in_flight.is_set()
+    assert app.status_bar.error_message == message
+    assert any("Queue Commands" in value for value in rendered)
+    assert any("durable result" in value for value in rendered)
+
+
+def test_chat_tui_reports_remote_read_failure_without_exiting() -> None:
+    class FailingRemoteClient(FakeClient):
+        def list_models(self) -> dict[str, object]:
+            raise RemoteChatError("remote chat models transport failed")
+
+    app = tui.ChatTuiApp(
+        thread_id="term_remote",
+        selects={},
+        home="/tmp/agent",
+        input_history=None,
+        client=FailingRemoteClient(),
+    )
+
+    app.handle_submit(":models")
+
+    assert app.status_bar.error_message == "remote chat models transport failed"
+
+
 def test_chat_tui_uses_queued_runnable_snapshot_for_the_next_active_status() -> None:
     app = tui.ChatTuiApp(
         thread_id="term_busy",
@@ -2966,8 +3120,9 @@ class FakeClient(ChatClient):
         selects: Mapping[str, object],
         on_event: Callable[[RunEvent], None],
         on_error: Callable[[str], None],
+        on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None:
-        del thread_id, message, selects, on_event, on_error
+        del thread_id, message, selects, on_event, on_error, on_state
 
     def stop_run(
         self,

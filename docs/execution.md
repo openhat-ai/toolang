@@ -20,8 +20,9 @@ It does not own API streaming protocols, CLI rendering, agent events, event
 hubs, or exact historical event replay.
 
 `RunHistory` is the read-only caller-facing entry point over durable execution
-truth. Its public surface is limited to `list_threads()`, `get_thread()`,
-`list_runs()`, and `get_run()`. It remains independent from `RunExecutor` and
+truth. In addition to thread and run listing/detail, `get_run_result()` resolves
+one output edge and `latest_thread_result()` selects the newest succeeded root
+run with a nonempty output. It remains independent from `RunExecutor` and
 `ThreadManager`, so callers can inspect `runs.db` while no agent process is
 running. `RunStore` performs raw and batched record reads; execution schemas
 perform the final pure record-to-schema conversion.
@@ -98,6 +99,12 @@ retries a start or reconnects an incomplete stream because the live event
 protocol has no replay cursor. Closing the client detaches its readers and
 owned HTTP resources without canceling server runs or managing the server
 process.
+
+Terminal Chat composes `RemoteRunClient` only after a running resident endpoint
+passes health and profile checks. Non-run HTTP operations remain in the Chat
+client: runtime/model/runnable inspection, thread creation, session validation,
+and result reads. A stream failure after acceptance is recovered from durable
+run detail without retrying the start or synthesizing missing `RunEvent` values.
 
 The process-local executor remains the execution engine:
 

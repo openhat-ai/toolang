@@ -20,19 +20,27 @@ from toolang.common.errors import ToolangError
 from toolang.execution.events import PartDelta, RunBegin, RunEnd, RunEvent, StepEnd
 from toolang.execution.history import RunHistory
 from toolang.execution.records import execution_error_message
-from toolang.execution.types import StepPath
+from toolang.execution.types import RunOverride, StepPath
 from toolang.lang.types import Array
 from toolang.cli.common.context import (
     context_layout,
     context_model_catalog,
     load_runtime_environ,
+    ui_base_url,
     user_call,
 )
 from toolang.cli.common.execution import open_execution
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
 from toolang.cli.common.output import shorten_home_path
 from . import slashes as chat_slashes
-from .base import ChatClient, chat_status_label, friendly_error as chat_friendly_error
+from .base import (
+    ChatClient,
+    ChatRunState,
+    RunBlocked,
+    RunRecovered,
+    chat_status_label,
+    friendly_error as chat_friendly_error,
+)
 from .history import ChatInputHistoryStore
 from .input import (
     QuickCommand,
@@ -42,7 +50,9 @@ from .input import (
     parse_chat_input,
 )
 from .local import LocalChatSession
+from .remote import RemoteChatError, RemoteChatSession
 from .tui import ChatTuiApp
+from toolang.up import process as agents
 
 
 def chat_command(
@@ -77,6 +87,7 @@ def _chat_interactive(
     selectors = dict(selector_payload or {})
     with _chat_runtime(
         ctx,
+        selector_payload=selectors,
         sandbox=sandbox,
         allow_options=allow_options,
         default_options=default_options,
@@ -101,18 +112,66 @@ def _chat_interactive(
 def _chat_runtime(
     ctx: typer.Context,
     *,
+    selector_payload: dict[str, object] | None = None,
     sandbox: str | None,
     allow_options: list[str] | None = None,
     default_options: list[str] | None = None,
     limit_options: list[str] | None = None,
 ) -> Iterator[ChatClient]:
-    """Own one process-local execution session for this chat command."""
+    """Own one local or resident-remote execution session for Chat."""
+
+    layout = context_layout(ctx)
+    if layout.placement == "resident":
+        status = agents.AgentProcess(layout).status(ui_base_url=ui_base_url())
+        if status is not None and status.status in {"preparing", "starting"}:
+            raise click.ClickException(
+                f"agent {layout.name} is {status.status}; wait for it to become ready"
+            )
+        if status is not None and status.status == "running":
+            if status.endpoint is None or status.sandbox is None:
+                raise click.ClickException(
+                    f"running agent {layout.name} has incomplete runtime status"
+                )
+            if sandbox is not None and not _sandbox_matches(
+                sandbox,
+                status.sandbox,
+            ):
+                raise click.ClickException(
+                    f"--sandbox {sandbox} does not match running sandbox "
+                    f"{status.sandbox}"
+                )
+            remote: RemoteChatSession | None = None
+            try:
+                remote = RemoteChatSession(
+                    status.endpoint,
+                    expected_sandbox=status.sandbox,
+                )
+                current = dict(selector_payload or {})
+                updated = remote.apply_settings(
+                    _remote_session_commands(
+                        allow_options=allow_options,
+                        default_options=default_options,
+                        limit_options=limit_options,
+                    ),
+                    current,
+                )
+                if selector_payload is not None:
+                    selector_payload.clear()
+                    selector_payload.update(updated)
+            except (RemoteChatError, ValueError) as exc:
+                if remote is not None:
+                    remote.close()
+                raise click.ClickException(str(exc)) from exc
+            try:
+                yield remote
+            finally:
+                remote.close()
+            return
 
     if sandbox is not None and sandbox.partition(":")[0].strip() != "host":
         raise click.ClickException(
-            "direct chat execution currently supports only the host sandbox"
+            "embedded chat execution currently supports only the host sandbox"
         )
-    layout = context_layout(ctx)
     environ = load_runtime_environ(layout, base_environ=os.environ)
     model_catalog = (
         context_model_catalog(ctx) if isinstance(ctx, typer.Context) else None
@@ -140,6 +199,30 @@ def _chat_runtime(
         yield local
     finally:
         local.close()
+
+
+def _remote_session_commands(
+    *,
+    allow_options: list[str] | None,
+    default_options: list[str] | None,
+    limit_options: list[str] | None,
+) -> tuple[RunOverride, ...]:
+    ceilings = user_call(resolve_ceiling_overrides, {}, allow_options)
+    bindings = user_call(resolve_binding_overrides, {}, default_options)
+    limits = user_call(resolve_limit_overrides, {}, limit_options)
+    return (
+        *(RunOverride("allow", field, value) for field, value in ceilings.items()),
+        *(RunOverride("default", field, value) for field, value in bindings.items()),
+        *(RunOverride("limit", field, value) for field, value in limits.items()),
+    )
+
+
+def _sandbox_matches(requested: str, running: str) -> bool:
+    requested_name, separator, _requested_spec = requested.partition(":")
+    running_name = running.partition(":")[0]
+    if requested_name.strip() != running_name.strip():
+        return False
+    return not separator or requested.strip() == running.strip()
 
 
 def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | None:
@@ -221,6 +304,7 @@ def _chat_interactive_scripted_local(
             selectors,
             renderer.render,
             errors.append,
+            renderer.handle_state,
         )
         failure = errors[-1] if errors else renderer.failure
         if failure:
@@ -317,9 +401,12 @@ class _ScriptedRunRenderer:
         self._assistant_open = False
         self._text_delta_steps: set[StepPath] = set()
         self._terminal: RunEnd | None = None
+        self._state_failure: str | None = None
 
     @property
     def failure(self) -> str | None:
+        if self._state_failure is not None:
+            return self._state_failure
         terminal = self._terminal
         if terminal is None or terminal.status == "succeeded":
             return None
@@ -329,6 +416,7 @@ class _ScriptedRunRenderer:
         self._close()
         self._text_delta_steps.clear()
         self._terminal = None
+        self._state_failure = None
 
     def render(self, event: RunEvent) -> None:
         if isinstance(event, RunBegin):
@@ -355,6 +443,20 @@ class _ScriptedRunRenderer:
         if isinstance(event, RunEnd):
             self._terminal = event
             self._close()
+
+    def handle_state(self, state: ChatRunState) -> None:
+        if isinstance(state, RunBlocked):
+            self._state_failure = state.message
+            self._close()
+            return
+        if not isinstance(state, RunRecovered):
+            return
+        detail = state.detail
+        if detail.status != "succeeded":
+            self._state_failure = (
+                execution_error_message(detail.error) or f"run {detail.status}"
+            )
+        self._close()
 
     def _write(self, text: str) -> None:
         if not self._assistant_open:

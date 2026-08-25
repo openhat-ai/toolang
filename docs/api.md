@@ -607,6 +607,10 @@ script runs and TUI execution do not consume this endpoint.
 `/api/v1/profile` returns:
 
 - profile metadata
+- runtime identity:
+  - the server process's Toolang package `version`
+  - `sandbox.driver`
+  - a six-character `sandbox.instance` for non-host runtimes
 - environment summary
 - overview metrics:
 
@@ -764,13 +768,18 @@ The CLI command for interactive chat is `toolang <agent> chat [thread]
 [--sandbox <selector>] [--allow DOMAIN=SELECTORS] [--limit FIELD=VALUE]
 [--default FIELD=VALUE]`.
 Without a thread id, the TUI creates a terminal chat thread on first input. With
-a thread id, it continues that thread. The TUI runs in its own process, assembles
-the same core objects, uses `LocalRunClient`, and observes native `RunEvent`
-values through a `RunTracer`. It does not depend on the HTTP run stream.
-Selecting `RemoteRunClient` in Terminal Chat remains separate client composition
-work. Starting an agent HTTP server remains a separate CLI operation.
-Direct chat currently accepts only the `host` sandbox selector; placing the TUI
-process inside another sandbox is a separate follow-up.
+a thread id, it continues that thread. A stopped resident, roaming agent, or
+visiting agent uses embedded execution through `LocalRunClient`. A healthy
+running resident uses its recorded endpoint through `RemoteRunClient`; an
+unready or unhealthy resident fails without starting a competing embedded
+executor. Explicit Chat policy options become remotely validated session
+commands, while the server keeps ownership of setup, environment, providers,
+working directory, and sandbox.
+
+The banner always shows the TUI process version and host-side agent home. Its
+executor value is `embedded` locally. Remote values use
+`v<version>, :<port>` and append `<sandbox>(<six-character-instance>)` for a
+non-host runtime, for example `v0.3.9, :7001, docker(a1b2c3)`.
 Job thread ids are inspectable and controllable through thread and run commands,
 but `chat` does not implicitly reopen tasks or create manual chore runs.
 
@@ -915,6 +924,7 @@ Delete is destructive and is available only through archived routes.
 
 - `POST /api/v1/runs/stream`
 - `POST /api/v1/runs/authored/stream`
+- `POST /api/v1/runs/authored/validate`
 - `GET /api/v1/runs`
 - `GET /api/v1/runs/{run_id}`
 - `GET /api/v1/runs/{run_id}/stream`
@@ -925,6 +935,7 @@ Delete is destructive and is available only through archived routes.
 - `POST /api/v1/threads`
 - `GET /api/v1/threads`
 - `GET /api/v1/threads/{thread_id}`
+- `GET /api/v1/threads/{thread_id}/result`
 - `POST /api/v1/threads/{thread_id}/rewind`
 - `POST /api/v1/threads/{thread_id}/fork`
 - `GET /api/v1/threads/{thread_id}/stream`
@@ -999,6 +1010,15 @@ arrays or `null`; default values are strings or `null`; integer limits are
 non-negative integers or `null`; and cost is canonical non-negative decimal
 text or `null`. Named input names and runnable fallbacks must be unique. Unknown
 fields and invalid combinations return `422`; a missing thread returns `404`.
+
+`POST /api/v1/runs/authored/validate` accepts the complete ordered
+`session_commands` and `runnable_fallbacks` fields from that shape. It validates
+them against one current setup/state snapshot without creating a thread or run
+and returns `204` on success or `422` on invalid policy or fallback selection.
+
+`GET /api/v1/threads/{thread_id}/result` returns the newest succeeded root
+`RunDetail` with a nonempty resolved output. An unknown thread and a known
+thread without a result return distinct `404` details.
 
 An accepted response exposes `X-Toolang-Run-ID` and subscribes to the live root
 run before execution can publish its first event. CORS exposes the header to

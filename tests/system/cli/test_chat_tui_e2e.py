@@ -52,6 +52,36 @@ def test_chat_tui_runs_one_local_exchange_in_a_pseudo_terminal(
         session.close()
 
 
+def test_chat_tui_runs_one_remote_exchange_in_a_pseudo_terminal(
+    tmp_path: Path,
+) -> None:
+    session = ChatTuiPtySession.start("tests.support.chat_tui_remote_e2e", tmp_path)
+    try:
+        banner = session.wait_for(
+            "Toolang",
+            "executor",
+            ":7001",
+            "Ask or describe a task",
+            "■ agic:chat",
+            "test/scripted",
+        )
+        assert "embedded" not in banner
+
+        session.send(b"hello remote\r")
+        output = session.wait_for(
+            "hello remote",
+            "hello from remote e2e",
+            "succeeded",
+        )
+        assert "run_" in output
+        assert "Traceback" not in output
+
+        session.send(b"\x04")
+        assert session.wait_for_exit() == 0, session.output
+    finally:
+        session.close()
+
+
 def test_chat_tui_preserves_long_final_output_in_a_small_terminal(
     tmp_path: Path,
 ) -> None:

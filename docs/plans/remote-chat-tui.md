@@ -1,6 +1,6 @@
 # Remote Chat TUI Integration
 
-Status: Proposed
+Status: Implemented
 
 This definition supersedes the `HttpChatClient` design proposed in #267. The
 merged `RunClient` and `RemoteRunClient` now own authored run submission,
@@ -22,8 +22,8 @@ The change succeeds when:
 - remote model/runnable inspection, thread creation, settings validation, run
   results, controls, and native-event presentation match local Chat behavior;
 - the existing banner distinguishes the Chat process version from a compact
-  executor value containing its runtime version, optional sandbox instance, and
-  port in that order;
+  executor value containing its runtime version, port, and optional sandbox
+  instance in that order;
 - stream loss never retries a submission, falls back to local execution, or
   releases the next queued call while the accepted remote run may still be
   active; and
@@ -89,19 +89,19 @@ host-side agent path resolved by that process. Embedded execution needs no
 second version or `host` suffix because it is the same process.
 
 A remote host executor is compactly rendered as `v<version>, :<port>`. A
-sandboxed executor inserts its driver and short runtime instance ID before the
-port:
+sandboxed executor appends its driver and short runtime instance ID:
 
 ```text
 executor  v0.3.9, :7001
-executor  v0.3.9, docker(a1b2c3d4e5f6), :7001
+executor  v0.3.9, :7001, docker(a1b2c3)
 ```
 
 The remote version is reported by the server process, not copied from the TUI.
-The Docker instance is the conventional 12-character container ID; other
-non-host drivers use their stable short runtime ID. The `host` sandbox label is
-omitted. Missing or invalid remote version, port, driver, or non-host instance
-metadata fails selection instead of displaying guessed local values.
+The Docker instance is the first six characters of the container ID; other
+non-host drivers use the first six characters of their stable runtime ID. The
+`host` sandbox label is omitted. Missing or invalid remote version, port,
+driver, or non-host instance metadata fails selection instead of displaying
+guessed local values.
 
 `ChatClient.executor_label` remains the only presentation property; do not add
 separate version, endpoint, home, or sandbox rows to the protocol. The remote
@@ -160,10 +160,10 @@ Add only the non-run behavior that existing endpoints cannot express.
 Extend the existing profile response additively with strict runtime metadata:
 the server process's Toolang package version and a sandbox projection containing
 the driver plus an optional stable instance ID. Host has no instance ID. Docker
-uses the first 12 characters of its container ID; other drivers expose a short
-stable runtime ID. Keep the existing environment fields unchanged. This is
-runtime truth returned by the executor process, not data copied from the host
-CLI status file.
+uses the first six characters of its container ID; other drivers expose the
+first six characters of a stable runtime ID. Keep the existing environment
+fields unchanged. This is runtime truth returned by the executor process, not
+data copied from the host CLI status file.
 
 ### `POST /api/v1/runs/authored/validate`
 
@@ -249,8 +249,8 @@ CLI composition root.
    rejected widening or invalid selectors.
 3. Cover remote lists, combined runnable defaults, lazy thread creation,
    explicit/latest results, local/remote version differences, host and Docker
-   executor labels in version/sandbox/port order, short instance IDs, and
-   unchanged wide/narrow banner layout.
+   executor labels in version/port/sandbox order, six-character instance IDs,
+   and unchanged wide/narrow banner layout.
 4. Run a remote plain/named/include request and assert accepted ID, native event
    order, terminal detail, controls, queued setting capture, and scripted output.
 5. Drop the stream after acceptance and assert one submission, addressable

@@ -178,8 +178,8 @@ does not expose a separate `/chat` resource.
 A client starts a new conversation by calling:
 
 1. `POST /api/v1/threads` with `client` and an optional peer.
-2. `POST /api/v1/runs/stream` with the returned thread id, runnable, percept
-   input, optional model, and optional runnable arguments.
+2. `POST /api/v1/runs/authored/stream` with the returned thread id, authored
+   input, session commands, and ordered runnable fallbacks.
 
 Subsequent turns reuse the same thread id. The client explicitly selects the
 chat/default runnable. Persisted state is read through the normal thread and run
@@ -198,8 +198,20 @@ Runtime surfaces should treat the canonical thread and root-run event streams
 as the source of progress truth. A web client adapts native `RunEvent` values
 into any UI-specific protocol locally.
 
-The TUI does not consume the HTTP API. Its process calls `RunExecutor` directly
-and renders native `RunEvent` values received through a `RunTracer`.
+The TUI selects execution from the resident runtime state. A healthy running
+resident uses `RemoteRunClient` and the agent HTTP API. Stopped residents,
+roaming agents, and visiting agents call the process-local executor through
+`LocalRunClient`. Both paths render the same native `RunEvent` values.
+
+Remote acceptance records the root run id before the first event so stop and
+steer remain addressable. If an accepted stream disconnects, the TUI keeps the
+queue paused and polls durable run detail after 500 ms, 1 s, 2 s, and then every
+5 s. Terminal durable truth finalizes the run without inventing missed events
+and directs the user to `:show RUN_ID` for the complete output. An ambiguous
+pre-acceptance failure, missing accepted run, or invalid recovery identity
+blocks further submissions until Chat restarts; read-only commands and exit
+remain available. Chat never retries a submission or falls back to embedded
+execution after selecting the remote runtime.
 
 The chat TUI keeps only live mutable blocks in its live area. Stable blocks
 move into terminal scrollback progressively instead of waiting for the whole

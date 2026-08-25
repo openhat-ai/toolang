@@ -10,6 +10,7 @@ from toolang.execution.types import RunOverride
 from toolang.lang.input import parse_input
 from .schemas import (
     AuthoredRunRequest,
+    AuthoredRunValidationRequest,
     InputMessagePayload,
     InputPart,
     RunOverridePayload,
@@ -33,6 +34,27 @@ def parse_authored_run(payload: AuthoredRunRequest) -> RunRequest:
             runnable_fallbacks=tuple(payload.runnable_fallbacks),
             request_id=payload.request_id,
         )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def parse_authored_run_validation(
+    payload: AuthoredRunValidationRequest,
+) -> tuple[tuple[RunOverride, ...], tuple[str, ...]]:
+    """Reconstruct one strict authored-run session validation request."""
+
+    try:
+        commands = tuple(_parse_run_override(item) for item in payload.session_commands)
+        fallbacks = tuple(payload.runnable_fallbacks)
+        RunRequest(
+            thread="term_validation",
+            commands=(),
+            input=parse_input(None),
+            session_commands=commands,
+            runnable_fallbacks=fallbacks,
+            request_id="term_validation",
+        )
+        return commands, fallbacks
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
