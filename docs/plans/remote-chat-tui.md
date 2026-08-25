@@ -21,7 +21,8 @@ The change succeeds when:
 - other supported targets retain the current `LocalChatSession` behavior;
 - remote model/runnable inspection, thread creation, settings validation, run
   results, controls, and native-event presentation match local Chat behavior;
-- the existing banner identifies the executor as `at <endpoint>`;
+- the existing banner identifies the executor as `at <endpoint>` and shows the
+  executor sandbox as a separate text value;
 - stream loss never retries a submission, falls back to local execution, or
   releases the next queued call while the accepted remote run may still be
   active; and
@@ -56,7 +57,8 @@ Out of scope:
 1. Roaming and visiting layouts always use `LocalChatSession`.
 2. A resident with no active runtime uses `LocalChatSession`.
 3. A resident reported as `running` with an endpoint performs a three-second
-   `GET /healthz` check and then uses `RemoteChatSession`.
+   `GET /healthz` check, reads its existing `GET /api/v1/profile` environment,
+   and then uses `RemoteChatSession`.
 4. `preparing`, `starting`, running without an endpoint, or failed health checks
    fail before the TUI opens. They never fall back to an embedded executor.
 
@@ -73,11 +75,18 @@ restrict the server ceiling. An explicit `--sandbox` must match the running
 runtime; omitting it attaches to the runtime's current sandbox. Local option
 behavior remains unchanged.
 
-The remote session exposes `executor_label == "at <normalized endpoint>"`.
-`RemoteRunClient` exposes its already-validated normalized endpoint as a
-read-only property so presentation does not duplicate URL parsing. The banner,
-home value, status bar, and scripted successful output otherwise stay
-unchanged.
+`ChatClient` exposes immutable `executor_label` and `sandbox_label` values. The
+local session reports `embedded` and `host`. The remote session reports
+`at <normalized endpoint>` and the sandbox label from the server profile. An
+invalid or missing remote sandbox value fails selection rather than displaying
+stale local process metadata. `RemoteRunClient` exposes its already-validated
+normalized endpoint as a read-only property so presentation does not duplicate
+URL parsing.
+
+The banner adds a separate `sandbox <label>` row below `executor`; it never
+relies on color and participates in the existing responsive width/folding
+calculation. The home value, status bar, and scripted successful output
+otherwise stay unchanged.
 
 ## Composition
 
@@ -104,6 +113,7 @@ decoder.
 
 | `ChatClient` operation | Remote behavior |
 | --- | --- |
+| executor / sandbox identity | normalized endpoint plus existing agent profile |
 | models | existing `GET /api/v1/models` |
 | agics / flows | existing `GET /api/v1/agics` and `/api/v1/flows` |
 | runnables | combine the two server responses and their exclusive defaults |
@@ -186,8 +196,9 @@ remain available. Closing stops polling and leaves remote work running.
   validation request and latest-result endpoint.
 - `chat/remote.py` (new): remote session, HTTP projections, run composition,
   and recovery polling.
-- `chat/base.py`, `events.py`, `main.py`, `tui.py`, and `presenter.py`: run-state
-  updates, selection, blocked queue state, and recovered presentation.
+- `chat/base.py`, `events.py`, `main.py`, `tui.py`, `presenter.py`, and
+  `blocks.py`: executor/sandbox identity, run-state updates, selection, blocked
+  queue state, recovered presentation, and responsive banner layout.
 - focused execution/API/Chat unit tests, resident CLI integration tests, and
   local/remote PTY tests.
 - `docs/api.md`, `docs/chat.md`, and `docs/execution.md`.
@@ -204,7 +215,8 @@ CLI composition root.
    server-owned environment, settings validation, decimal/null/list values, and
    rejected widening or invalid selectors.
 3. Cover remote lists, combined runnable defaults, lazy thread creation,
-   explicit/latest results, and `at <endpoint>` banner identity.
+   explicit/latest results, and separate executor/sandbox banner identity in
+   wide and narrow layouts without color.
 4. Run a remote plain/named/include request and assert accepted ID, native event
    order, terminal detail, controls, queued setting capture, and scripted output.
 5. Drop the stream after acceptance and assert one submission, addressable
