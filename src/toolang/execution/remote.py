@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from decimal import Decimal
+from ipaddress import ip_address
 import json
 import logging
 from typing import Any, cast
@@ -278,11 +279,19 @@ class RemoteRunClient:
         )
         payload = _response_json(response, operation="wait")
         try:
-            return _RUN_DETAIL_ADAPTER.validate_python(payload)
+            detail = _RUN_DETAIL_ADAPTER.validate_python(payload)
         except ValidationError as exc:
             raise RemoteRunClientError(
                 "remote run wait returned invalid run detail"
             ) from exc
+        if (
+            detail.id != run_id
+            or detail.root_run_id != run_id
+            or detail.parent is not None
+            or detail.status not in {"succeeded", "failed", "canceled"}
+        ):
+            raise RemoteRunClientError("remote run wait returned invalid run detail")
+        return detail
 
     async def _post_control(
         self,
@@ -304,11 +313,17 @@ class RemoteRunClient:
             )
         control_body = cast(dict[str, object], body)
         try:
-            return _CONTROL_INFO_ADAPTER.validate_python(control_body["command"])
+            control = _CONTROL_INFO_ADAPTER.validate_python(control_body["command"])
         except ValidationError as exc:
             raise RemoteRunClientError(
                 f"remote run {action} returned invalid control data"
             ) from exc
+        expected_kind = "stop" if action == "cancel" else "steer"
+        if control.run_id != run_id or control.kind != expected_kind:
+            raise RemoteRunClientError(
+                f"remote run {action} returned invalid control data"
+            )
+        return control
 
     async def _request(
         self,
@@ -348,7 +363,9 @@ def _normalize_endpoint(endpoint: str) -> str:
     if (
         not endpoint
         or endpoint != endpoint.strip()
-        or any(character.isspace() for character in endpoint)
+        or any(
+            character.isspace() or not character.isprintable() for character in endpoint
+        )
         or "?" in endpoint
         or "#" in endpoint
     ):
@@ -367,9 +384,37 @@ def _normalize_endpoint(endpoint: str) -> str:
         or parsed.query
         or parsed.fragment
         or parsed.netloc.endswith(":")
+        or not _valid_endpoint_host(parsed.hostname)
     ):
         raise ValueError("remote run endpoint must be an absolute HTTP origin")
     return urlunsplit((parsed.scheme.lower(), parsed.netloc, "", "", ""))
+
+
+def _valid_endpoint_host(host: str) -> bool:
+    if ":" in host:
+        try:
+            ip_address(host)
+        except ValueError:
+            return False
+        return True
+    try:
+        ascii_host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return False
+    if ascii_host.endswith("."):
+        ascii_host = ascii_host[:-1]
+    labels = ascii_host.split(".")
+    return (
+        bool(ascii_host)
+        and len(ascii_host) <= 253
+        and all(
+            0 < len(label) <= 63
+            and label[0].isalnum()
+            and label[-1].isalnum()
+            and all(character.isalnum() or character == "-" for character in label)
+            for label in labels
+        )
+    )
 
 
 def _run_request_data(request: RunRequest) -> dict[str, object]:

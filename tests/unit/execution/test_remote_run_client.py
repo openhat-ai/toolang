@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 import json
 
@@ -28,7 +28,7 @@ from toolang.execution.schemas import (
     RunDetail,
     RunRequest,
 )
-from toolang.execution.types import ControlRef, Local, RunOverride
+from toolang.execution.types import ControlRef, Local, RunOverride, StepPath
 from toolang.lang.input import RunnableInputRaw
 
 
@@ -320,6 +320,10 @@ def test_remote_client_maps_stop_and_empty_steer_controls() -> None:
         "http://runtime.test?debug=1",
         "http://runtime.test#",
         "http://runtime.test#fragment",
+        "http://runtime.test\x00",
+        "http://runtime.test\\evil",
+        "http://runtime.test|evil",
+        "http://runtime.test%zz",
     ],
 )
 def test_remote_client_rejects_invalid_endpoints(endpoint: str) -> None:
@@ -482,6 +486,46 @@ def test_remote_client_preserves_http_error_detail() -> None:
     [
         (httpx.Response(200, content=b"{"), "wait returned invalid JSON"),
         (httpx.Response(200, json={"id": "run_remote"}), "invalid run detail"),
+        (
+            httpx.Response(
+                200,
+                json=_DETAIL_ADAPTER.dump_python(
+                    _detail("run_other"),
+                    mode="json",
+                ),
+            ),
+            "invalid run detail",
+        ),
+        (
+            httpx.Response(
+                200,
+                json=_DETAIL_ADAPTER.dump_python(
+                    replace(_detail(), root_run_id="run_other"),
+                    mode="json",
+                ),
+            ),
+            "invalid run detail",
+        ),
+        (
+            httpx.Response(
+                200,
+                json=_DETAIL_ADAPTER.dump_python(
+                    replace(_detail(), parent=StepPath("run_parent", (0,))),
+                    mode="json",
+                ),
+            ),
+            "invalid run detail",
+        ),
+        (
+            httpx.Response(
+                200,
+                json=_DETAIL_ADAPTER.dump_python(
+                    replace(_detail(), status="running", finished_at=None),
+                    mode="json",
+                ),
+            ),
+            "invalid run detail",
+        ),
     ],
 )
 def test_remote_client_rejects_invalid_run_detail(
@@ -512,6 +556,24 @@ def test_remote_client_rejects_invalid_run_detail(
     [
         httpx.Response(200, json={}),
         httpx.Response(200, json={"command": {"kind": "stop"}}),
+        httpx.Response(
+            200,
+            json={
+                "command": _CONTROL_ADAPTER.dump_python(
+                    _control("cancel", "run_other"),
+                    mode="json",
+                )
+            },
+        ),
+        httpx.Response(
+            200,
+            json={
+                "command": _CONTROL_ADAPTER.dump_python(
+                    _control("steer"),
+                    mode="json",
+                )
+            },
+        ),
     ],
 )
 def test_remote_client_rejects_invalid_control_data(response: httpx.Response) -> None:
