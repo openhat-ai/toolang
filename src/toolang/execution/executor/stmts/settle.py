@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from toolang.lang.ast import SettleStmt
 from toolang.base.types.message import TextPart
 
-from ...records import RunControlRecord, StepPath
+from ...records import ControlRecord, StepPath
 from ...types import IterationOccurrence, Occurrence, OccurrencePosition
 from ..common import BoundRun
 from ..common import Local, require_list
@@ -24,7 +24,7 @@ async def execute(
     locals: Mapping[str, Local],
     path: StepPath,
     statement: SettleStmt,
-    controls: Sequence[RunControlRecord],
+    controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,
 ) -> Local:
     progress = loop_step.LoopProgress()
@@ -41,7 +41,11 @@ async def execute(
             child_locals["item"] = Local(
                 item,
                 "item",
-                ref=source.ref.select(index) if source.ref is not None else None,
+                ref=(
+                    execution.item_pointer(source, index)
+                    if source.ref is not None
+                    else None
+                ),
                 type_name=item_type,
             )
             accumulator = await execution.execute_child(

@@ -1115,7 +1115,7 @@ def test_flow_pointer_backed_output_is_not_displayed() -> None:
                 "Text",
                 TypedPointer(
                     "Text",
-                    Pointer.step(StepPath.parse("run_source.0")),
+                    Pointer.step(StepPath.parse("run_source.0"), "output", "value"),
                 ),
                 "topic",
                 0,
@@ -1334,7 +1334,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
         RunEnd(
             run="run_child_0",
             status="failed",
-            error=Pointer.step(StepPath.parse("run_child_0.0")),
+            error=Pointer.step(StepPath.parse("run_child_0.0"), "error"),
         )
     )
     assert _rows(child_failed.live) == [
@@ -1412,7 +1412,7 @@ def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible()
         RunEnd(
             run="run_root",
             status="failed",
-            error=Pointer.step(StepPath.parse("run_root.0")),
+            error=Pointer.step(StepPath.parse("run_root.0"), "error"),
         )
     )
     assert root.committed == ()
@@ -1650,7 +1650,7 @@ def test_cyclic_error_pointer_becomes_one_terminal_diagnostic() -> None:
             step=StepPath.parse("run_root.0"),
             kind="model",
             status="failed",
-            error=Pointer.step(StepPath.parse("run_root.1")),
+            error=Pointer.step(StepPath.parse("run_root.1"), "error"),
         )
     )
     reducer.handle(
@@ -1658,7 +1658,7 @@ def test_cyclic_error_pointer_becomes_one_terminal_diagnostic() -> None:
             step=StepPath.parse("run_root.1"),
             kind="model",
             status="failed",
-            error=Pointer.step(StepPath.parse("run_root.0")),
+            error=Pointer.step(StepPath.parse("run_root.0"), "error"),
         )
     )
 
@@ -1666,12 +1666,12 @@ def test_cyclic_error_pointer_becomes_one_terminal_diagnostic() -> None:
         RunEnd(
             run="run_root",
             status="failed",
-            error=Pointer.step(StepPath.parse("run_root.0")),
+            error=Pointer.step(StepPath.parse("run_root.0"), "error"),
         )
     )
 
     assert _rows(update.committed) == [
-        ["• could not resolve execution error run_root.0"]
+        ["• could not resolve execution error run_root.0/error"]
     ]
 
 
@@ -1962,7 +1962,7 @@ def test_loop_terminal_uses_typed_termination(
                 total=3,
             ),
             error=(
-                Pointer.step(StepPath.parse("run_child.0"))
+                Pointer.step(StepPath.parse("run_child.0"), "error")
                 if status == "failed"
                 else None
             ),
@@ -2105,7 +2105,7 @@ def test_parallel_terminal_retains_each_independent_failed_lane() -> None:
             RunEnd(
                 run=run_id,
                 status="failed",
-                error=Pointer.step(step),
+                error=Pointer.step(step, "error"),
             )
         )
 
@@ -2173,7 +2173,7 @@ def test_nested_parallel_direct_error_is_preserved_by_the_outer_lane() -> None:
         RunEnd(
             run="run_child",
             status="failed",
-            error=Pointer.step(inner),
+            error=Pointer.step(inner, "error"),
         )
     )
 
@@ -2261,7 +2261,7 @@ def test_nested_parallel_boundary_error_does_not_replace_the_leaf_error() -> Non
         RunEnd(
             run="run_leaf",
             status="failed",
-            error=Pointer.step(leaf),
+            error=Pointer.step(leaf, "error"),
         )
     )
     projector.handle(
@@ -2276,7 +2276,7 @@ def test_nested_parallel_boundary_error_does_not_replace_the_leaf_error() -> Non
         RunEnd(
             run="run_child",
             status="failed",
-            error=Pointer.step(inner),
+            error=Pointer.step(inner, "error"),
         )
     )
 

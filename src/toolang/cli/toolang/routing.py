@@ -10,6 +10,7 @@ from typing import Literal
 from toolang.common.layout import AgentLayout, AgentPlacement
 from toolang.up import process as agents
 from ..caps.commands import CAP_KINDS
+from ..common.inspection import inspect_args_require_program
 from ..common.output import echo_error
 from ..common.progress import as_progress_sink, make_cli_progress
 from ..common.routing import explicit_agent, extract_root_args
@@ -122,6 +123,7 @@ COMMAND_SPECS: Mapping[str, CommandSpec] = {
             for name in ("caps", *CAP_KINDS)
         ),
         _command("models", "none"),
+        _command("records", "none"),
         _command("providers", "none"),
         _command("adapters", "none"),
         _command("tools", "none"),
@@ -207,7 +209,10 @@ def dispatch_roaming(
         if not spec.accepts(position, "roaming"):
             return _unsupported_target(command, "roaming", position)
         try:
-            layout = _roaming_layout(source, spec.prepare)
+            layout = _roaming_layout(
+                source,
+                _selected_preparation(spec, body, position),
+            )
         except (FileExistsError, FileNotFoundError, ValueError) as exc:
             echo_error(str(exc))
             return 1
@@ -237,14 +242,15 @@ def dispatch_visiting(
     spec = command_spec(command)
     if not spec.accepts(position, "visiting"):
         return _unsupported_target(command, "visiting", position)
-    progress = make_cli_progress() if spec.prepare == "program" else None
+    preparation = _selected_preparation(spec, body, position)
+    progress = make_cli_progress() if preparation == "program" else None
     try:
         layout = (
             agents.resolve_visiting_layout(
                 selector,
                 progress=as_progress_sink(progress),
             )
-            if spec.prepare == "program"
+            if preparation == "program"
             else agents.visiting_layout(selector)
         )
     except KeyboardInterrupt:
@@ -357,6 +363,17 @@ def _selected_command_args(
     if "after" in command_spec(command).targets:
         return [command, target, *rest]
     return [command, *rest]
+
+
+def _selected_preparation(
+    spec: CommandSpec,
+    body: list[str],
+    position: TargetPosition,
+) -> Preparation | None:
+    if spec.name != "inspect":
+        return spec.prepare
+    arguments = body[2:] if position in {"before", "after"} else body[1:]
+    return "program" if inspect_args_require_program(arguments) else spec.prepare
 
 
 def _roaming_layout(source: Path, prepare: Preparation | None) -> AgentLayout:

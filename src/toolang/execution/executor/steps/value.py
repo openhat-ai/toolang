@@ -6,9 +6,9 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 from toolang.lang.ast import FlowStmt
 
-from ...records import RunControlRecord, StepPath
+from ...records import ControlRecord, StepPath
 from ...types import Occurrence
-from ..common import BoundRun, EventEmitter, Local, execute_step
+from ..common import BoundRun, EventEmitter, ItemPointer, Local, execute_step
 
 
 async def execute(
@@ -18,9 +18,10 @@ async def execute(
     path: StepPath,
     statement: FlowStmt,
     locals: Mapping[str, Local],
-    controls: Sequence[RunControlRecord],
+    controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,
     evaluate: Callable[[], Awaitable[Local]],
+    item_pointer: ItemPointer | None = None,
 ) -> Local:
     """Produce one local value and emit its step events."""
 
@@ -34,4 +35,5 @@ async def execute(
         controls=controls,
         occurrence=occurrence,
         evaluate=evaluate,
+        item_pointer=item_pointer,
     )

@@ -2010,6 +2010,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "jsonschema" },
     { name = "pdoc" },
     { name = "pytest" },
     { name = "ruff" },
@@ -2047,6 +2048,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "jsonschema", specifier = ">=4.26,<5" },
     { name = "pdoc", specifier = ">=15,<16" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "ruff", specifier = ">=0.15.6,<0.16" },

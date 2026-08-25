@@ -88,6 +88,7 @@ docker = "toolang.plugin.sandboxes.docker:create_hosting"
 
 [dependency-groups]
 dev = [
+  "jsonschema>=4.26,<5",
   "pdoc>=15,<16",
   "pytest>=8.3.5",
   "ruff>=0.15.6,<0.16",

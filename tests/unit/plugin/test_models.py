@@ -30,7 +30,7 @@ from toolang.execution.events import RunEvent, StepEnd
 from toolang.execution.executor.common import BoundRun
 from toolang.execution.executor.prepare import _AgicFrame
 from toolang.execution.executor.runs.agic import _AgicState, _execute
-from toolang.execution.records import RunControlRecord, SteerControlPayload
+from toolang.execution.records import ControlRecord, SteerControlPayload
 from toolang.execution.types import Local
 from toolang.plugin.models.discovery import missing_provider_env_vars
 from toolang.plugin.models.resolution import resolve_model, select_model_selectors
@@ -1926,13 +1926,13 @@ def test_agic_logs_model_and_tool_io_at_debug(caplog) -> None:
         )
 
     assert result == Message.assistant("done")
-    assert "model.request thread=thread-1 run=run-1 step=0 instructions=" in caplog.text
+    assert "model.request thread=thread-1 run=run_1 step=0 instructions=" in caplog.text
     assert '"command": "pwd"' in caplog.text
-    assert "model.result thread=thread-1 run=run-1 step=0 message=" in caplog.text
+    assert "model.result thread=thread-1 run=run_1 step=0 message=" in caplog.text
     assert '"output_tokens": 7' in caplog.text
-    assert "tool.request thread=thread-1 run=run-1 step=1 plugin=" in caplog.text
+    assert "tool.request thread=thread-1 run=run_1 step=1 plugin=" in caplog.text
     assert "tool=shell__execute" in caplog.text
-    assert "tool.result thread=thread-1 run=run-1 step=1 plugin=" in caplog.text
+    assert "tool.result thread=thread-1 run=run_1 step=1 plugin=" in caplog.text
     assert '"stdout": "ran:pwd"' in caplog.text
 
 
@@ -2335,8 +2335,8 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
         ),
     )
     pending = [
-        RunControlRecord(
-            target="run-1",
+        ControlRecord(
+            target="run_1",
             index=1,
             kind="steer",
             timing="next_call",
@@ -2350,7 +2350,7 @@ def test_agic_preserves_multimodal_steer_and_model_output() -> None:
     async def emit(event: RunEvent) -> None:
         events.append(event)
 
-    def pending_inputs() -> tuple[RunControlRecord, ...]:
+    def pending_inputs() -> tuple[ControlRecord, ...]:
         current = tuple(pending)
         pending.clear()
         return current
@@ -2398,8 +2398,8 @@ def test_agic_commits_steer_messages_after_step_begin() -> None:
             adapter="chat_completions",
         ),
     )
-    control = RunControlRecord(
-        target="run-1",
+    control = ControlRecord(
+        target="run_1",
         index=1,
         kind="steer",
         timing="next_call",
@@ -2720,8 +2720,8 @@ def _prepared_agic(
     )
     return _AgicFrame(
         run=BoundRun(
-            run_id="run-1",
-            root_run_id="run-1",
+            run_id="run_1",
+            root_run_id="run_1",
             thread="thread-1",
             bindings=RunBindings(runnable="agic:main"),
             input=RunnableInput(),

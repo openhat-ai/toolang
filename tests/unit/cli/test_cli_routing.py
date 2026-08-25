@@ -189,6 +189,7 @@ def test_cli_visible_commands_follow_the_public_panel_order() -> None:
             "inspect",
             "caps",
             "models",
+            "records",
             "providers",
             "adapters",
             "tools",
@@ -214,8 +215,9 @@ def test_cli_removes_singular_resources_and_hides_channels() -> None:
 
     assert isinstance(group, click.Group)
     assert {"model", "tool", "sandbox"}.isdisjoint(group.commands)
-    assert {"models", "tools", "sandboxes", "caps"} <= set(group.commands)
+    assert {"models", "records", "tools", "sandboxes", "caps"} <= set(group.commands)
     assert group.commands["models"].help == "Inspect models."
+    assert group.commands["records"].help == "Inspect durable record schemas."
     assert group.commands["caps"].help == "Inspect caps."
     assert group.commands["tools"].help == "Inspect installed tools."
     assert group.commands["sandboxes"].help == "Inspect installed sandboxes."
@@ -687,6 +689,51 @@ def test_cli_routes_visiting_inspect_without_materialization(
         "args": ["inspect", "run_1"],
         "layout": layout,
     }
+
+
+def test_cli_materializes_visiting_program_for_prospective_model_focus(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selector = "brice/researcher"
+    layout = AgentLayout(
+        root=tmp_path / "visiting",
+        name="researcher",
+        placement="visiting",
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        agents,
+        "visiting_layout",
+        lambda *_args, **_kwargs: pytest.fail("prospective focus needs the program"),
+    )
+    monkeypatch.setattr(
+        agents,
+        "resolve_visiting_layout",
+        lambda source, *, progress: (
+            captured.update(source=source, progress=progress) or layout
+        ),
+    )
+
+    arguments = [
+        "inspect",
+        "--focus",
+        "model_call",
+        "--default",
+        "runnable=agic:review",
+    ]
+    result = dispatch_visiting(
+        [selector, *arguments],
+        run_app=lambda args, selected: (
+            captured.update(args=args, layout=selected) or 15
+        ),
+    )
+
+    assert result == 15
+    assert captured["source"] == selector
+    assert captured["args"] == arguments
+    assert captured["layout"] == layout
 
 
 def test_cli_routes_command_before_visiting_info_through_materialization(

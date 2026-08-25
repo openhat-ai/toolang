@@ -36,7 +36,7 @@ from ..accounting import selected_usd_cost
 from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin
 from ..records import (
     PreparationControlPayload,
-    RunControlRecord,
+    ControlRecord,
     RunRecord,
     StepRecord,
 )
@@ -87,7 +87,7 @@ _CONTROL_POLL_INTERVAL = 0.05
 
 
 class _RunStopped(asyncio.CancelledError):
-    def __init__(self, control: RunControlRecord) -> None:
+    def __init__(self, control: ControlRecord) -> None:
         super().__init__(control_text(control) or "canceled")
         self.control = control
 
@@ -97,7 +97,7 @@ class _ActiveRun:
     task: asyncio.Task[RunRecord]
     tracer: RunTracer | None
     loop: asyncio.AbstractEventLoop = field(repr=False)
-    controls: dict[str, dict[int, RunControlRecord]] = field(
+    controls: dict[str, dict[int, ControlRecord]] = field(
         default_factory=dict,
         repr=False,
     )
@@ -132,7 +132,7 @@ class RunHandle(Awaitable[RunRecord]):
         timing: ControlTiming = "immediate",
         request_id: str | None = None,
         reason: str | None = None,
-    ) -> RunControlRecord:
+    ) -> ControlRecord:
         """Persist a stop control for this run."""
 
         return self.executor.stop(
@@ -148,7 +148,7 @@ class RunHandle(Awaitable[RunRecord]):
         *,
         timing: ControlTiming = "next_step",
         request_id: str | None = None,
-    ) -> RunControlRecord:
+    ) -> ControlRecord:
         """Persist a steer control for this run."""
 
         return self.executor.steer(
@@ -158,7 +158,7 @@ class RunHandle(Awaitable[RunRecord]):
             request_id=request_id,
         )
 
-    def cancel_control(self, index: int) -> RunControlRecord:
+    def cancel_control(self, index: int) -> ControlRecord:
         """Cancel one pending steer or stop control for this run."""
 
         return self.executor.cancel_control(run_id=self.run_id, index=index)
@@ -421,7 +421,7 @@ class RunExecutor:
         *,
         loop: asyncio.AbstractEventLoop,
         tracer: RunTracer | None,
-        retry: RunControlRecord | None = None,
+        retry: ControlRecord | None = None,
     ) -> RunHandle:
         task = asyncio.create_task(
             self._execute_owned(bound, executable, tracer=tracer, retry=retry),
@@ -446,7 +446,7 @@ class RunExecutor:
         executable: AgicDecl | FlowDecl,
         *,
         tracer: RunTracer | None,
-        retry: RunControlRecord | None = None,
+        retry: ControlRecord | None = None,
     ) -> RunRecord:
         task = asyncio.current_task()
         if task is None:
@@ -504,7 +504,7 @@ class RunExecutor:
         timing: ControlTiming = "immediate",
         request_id: str | None = None,
         reason: str | None = None,
-    ) -> RunControlRecord:
+    ) -> ControlRecord:
         """Persist one stop control for the process that owns the run."""
 
         self._require_available()
@@ -528,7 +528,7 @@ class RunExecutor:
         message: Message,
         timing: ControlTiming,
         request_id: str | None = None,
-    ) -> RunControlRecord:
+    ) -> ControlRecord:
         """Persist one steer control for the process that owns the run."""
 
         self._require_available()
@@ -546,7 +546,7 @@ class RunExecutor:
         self._observe_control(control)
         return control
 
-    def cancel_control(self, *, run_id: str, index: int) -> RunControlRecord:
+    def cancel_control(self, *, run_id: str, index: int) -> ControlRecord:
         """Cancel one pending steer or stop control from any local process."""
 
         self._require_available()
@@ -676,16 +676,16 @@ class RunExecutor:
                 raise RuntimeError(f"root run ownership missing: {root_run_id}")
             self._active[run_id] = active
 
-    def _observe_control(self, control: RunControlRecord) -> None:
+    def _observe_control(self, control: ControlRecord) -> None:
         if control.kind == "start":
             return
         cancel: asyncio.Task[RunRecord] | None = None
         loop: asyncio.AbstractEventLoop | None = None
         with self._active_lock:
-            active = self._active.get(control.run)
+            active = self._active.get(control.target)
             if active is None:
                 return
-            controls = active.controls.setdefault(control.run, {})
+            controls = active.controls.setdefault(control.target, {})
             if control.status == "pending":
                 observed = control.index in controls
                 controls[control.index] = control
@@ -699,11 +699,11 @@ class RunExecutor:
             else:
                 controls.pop(control.index, None)
                 if not controls:
-                    active.controls.pop(control.run, None)
+                    active.controls.pop(control.target, None)
         if cancel is not None and loop is not None and not cancel.done():
             if control.kind == "stop":
                 claimed = self.store.claim_run_controls(
-                    run_id=control.run,
+                    run_id=control.target,
                     indexes=(control.index,),
                 )
                 if control.index not in claimed:
@@ -715,7 +715,7 @@ class RunExecutor:
         *,
         run_id: str,
         kind: ControlKind,
-    ) -> tuple[RunControlRecord, ...]:
+    ) -> tuple[ControlRecord, ...]:
         self._refresh_controls()
         with self._active_lock:
             active = self._active.get(run_id)
@@ -732,8 +732,8 @@ class RunExecutor:
         self,
         *,
         run_id: str,
-        controls: Sequence[RunControlRecord],
-    ) -> tuple[RunControlRecord, ...]:
+        controls: Sequence[ControlRecord],
+    ) -> tuple[ControlRecord, ...]:
         if not controls:
             return ()
         claimed = self.store.claim_run_controls(
@@ -824,7 +824,7 @@ class _Execution:
         *,
         root: BoundRun,
         emit: EventEmitter,
-        retry: RunControlRecord | None = None,
+        retry: ControlRecord | None = None,
     ) -> None:
         self.executor = executor
         self.setup = root.setup
@@ -995,7 +995,7 @@ class _Execution:
         try:
             if (
                 self._retry is not None
-                and binding.run_id == self._retry.run
+                and binding.run_id == self._retry.target
                 and isinstance(executable, FlowDecl)
             ):
                 current, statement_start = self._resume_flow(
@@ -1003,7 +1003,7 @@ class _Execution:
                     executable,
                     current,
                 )
-            if self._retry is not None and binding.run_id == self._retry.run:
+            if self._retry is not None and binding.run_id == self._retry.target:
                 self._limits.check_restored()
             if isinstance(executable, AgicDecl):
                 result = await agic_run.execute(self, binding, executable, current)
@@ -1128,7 +1128,10 @@ class _Execution:
             local = _step_local(step, self.store)
             current[statement.binding] = local
             if statement.binding == "_":
-                self.record_output(binding.run_id, local.ref or Pointer.step(step.path))
+                self.record_output(
+                    binding.run_id,
+                    local.ref or Pointer.step(step.path, "output", "value"),
+                )
         return current, len(committed)
 
     def _restore_step_local(
@@ -1144,7 +1147,10 @@ class _Execution:
         local = _step_local(step, self.store)
         current[step.output.name] = local
         if step.output.name == "_":
-            self.record_output(run_id, local.ref or Pointer.step(step.path))
+            self.record_output(
+                run_id,
+                local.ref or Pointer.step(step.path, "output", "value"),
+            )
 
     async def execute_child(
         self,
@@ -1194,8 +1200,8 @@ class _Execution:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            raise _ExecutionFailed(Pointer.run(binding.run_id), exc) from exc
-        pointer = Pointer.run(binding.run_id)
+            raise _ExecutionFailed(Pointer.run(binding.run_id, "error"), exc) from exc
+        pointer = Pointer.run(binding.run_id, "output", "value")
         item_type = result.type_name or "Json"
         return replace(
             result,
@@ -1237,7 +1243,7 @@ class _Execution:
                     "item",
                     ref=(
                         (
-                            source_local.ref.select(index)
+                            self.item_pointer(source_local, index)
                             if select_source
                             else source_local.ref
                         )
@@ -1292,6 +1298,16 @@ class _Execution:
             ),
         )
 
+    def item_pointer(self, local: Local, index: int) -> Pointer:
+        """Address one item in the field that directly stores a local value."""
+
+        if local.ref is None:
+            raise ValueError("local has no durable value pointer")
+        if local.shape != "list":
+            raise ValueError("item pointer requires a list local")
+        type_name = f"{local.type_name or 'Json'}[]"
+        return self.store.dereference_value_pointer(local.ref, type_name).select(index)
+
     async def execute_statements(
         self,
         binding: BoundRun,
@@ -1318,13 +1334,13 @@ class _Execution:
 
     def pending_controls(
         self, run_id: str, kind: ControlKind
-    ) -> tuple[RunControlRecord, ...]:
+    ) -> tuple[ControlRecord, ...]:
         return self.executor._pending_controls(run_id=run_id, kind=kind)
 
     def steer_controls_for_call(
         self,
         run_id: str,
-    ) -> tuple[RunControlRecord, ...]:
+    ) -> tuple[ControlRecord, ...]:
         return self.executor._claim_controls(
             run_id=run_id,
             controls=self.pending_controls(run_id, "steer"),
@@ -1372,7 +1388,8 @@ class _Execution:
             (
                 item
                 for item in reversed(self.store.list_steps(run_id=run_id))
-                if Pointer.step(item.path) == ref and item.output is not None
+                if Pointer.step(item.path, "output", "value") == ref
+                and item.output is not None
             ),
             None,
         )
@@ -1532,7 +1549,7 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
     return Local(
         value=store.resolve_value(step.output.value),
         shape="list" if step.output.dim == 1 else "item",
-        ref=Pointer.step(step.path),
+        ref=Pointer.step(step.path, "output", "value"),
         type_name=step.output.item_type,
     )
 
@@ -1804,10 +1821,10 @@ def _control_indexes(
 ) -> tuple[int, ...]:
     indexes: list[int] = []
     for pointer in pointers:
-        anchor = pointer.anchor
-        if "^" not in anchor:
+        record_ref = pointer.record_ref
+        if pointer.record_kind != "control":
             continue
-        target, raw_index = anchor.split("^", 1)
+        target, raw_index = record_ref.split("^", 1)
         if target == run_id:
             indexes.append(int(raw_index))
     return tuple(dict.fromkeys(indexes))

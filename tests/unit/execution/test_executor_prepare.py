@@ -571,7 +571,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         )
         assert detail.output == RecordLocal.typed(
             "Part[]",
-            Pointer.step(steps[0].path),
+            Pointer.step(steps[0].path, "output", "value"),
             "_",
         )
         assert detail.steps[0].given == begin.given

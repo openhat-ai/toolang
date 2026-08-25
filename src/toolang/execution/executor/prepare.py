@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import json
 import logging
@@ -18,6 +18,7 @@ from toolang.base.types.message import (
     message_text,
 )
 from toolang.base.types.model import ModelTarget
+from toolang.base.types.run import ModelCall
 from toolang.base.types.tool import ToolService
 from toolang.common.errors import ToolangError
 from toolang.common.immutable import mutable_data
@@ -68,6 +69,7 @@ def prepare_agic(
     agic: AgicDecl,
     *,
     variables: Mapping[str, object],
+    history: Sequence[Message] | None = None,
 ) -> _AgicFrame:
     """Resolve runtime resources and render the complete model input."""
 
@@ -116,19 +118,23 @@ def prepare_agic(
         prompt_context=prompt_context,
         primary=_primary_parts(agic, variables),
     )
-    history = (
-        tuple(
-            context.store.recent_conversation_messages(
-                thread_id=run.thread,
-                limit=_TEXT_HISTORY_MESSAGE_LIMIT,
-                exclude_run_id=run.run_id,
+    resolved_history = (
+        (
+            tuple(history)
+            if history is not None
+            else tuple(
+                context.store.recent_conversation_messages(
+                    thread_id=run.thread,
+                    limit=_TEXT_HISTORY_MESSAGE_LIMIT,
+                    exclude_run_id=run.run_id,
+                )
             )
         )
         if _recalls_history(agic)
         else ()
     )
     messages = (
-        *history,
+        *resolved_history,
         *_authored_messages(
             rendered=rendered,
             prompt_context=prompt_context,
@@ -152,6 +158,33 @@ def prepare_agic(
     )
     _log_prepared(prepared)
     return prepared
+
+
+def build_model_call(
+    prepared: _AgicFrame,
+    *,
+    messages: Sequence[Message] | None = None,
+    state: dict[str, object] | None = None,
+    include_tools: bool = True,
+) -> ModelCall:
+    """Build one normalized call from a prepared agic frame."""
+
+    return ModelCall(
+        instructions=prepared.instructions,
+        messages=list(prepared.messages if messages is None else messages),
+        tools=(
+            tuple(
+                tool.definition()
+                for tool in sorted(
+                    prepared.tools.values(),
+                    key=lambda item: item.name,
+                )
+            )
+            if prepared.model.tools and include_tools
+            else ()
+        ),
+        state=state,
+    )
 
 
 def _directives(agic: AgicDecl, name: str) -> tuple[Directive, ...]:

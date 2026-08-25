@@ -4,30 +4,44 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, fields, is_dataclass
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
 import sys
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Literal, cast
 
 import click
+from pydantic import TypeAdapter
 import typer
 
 from toolang.base.types.message import Message
+from toolang.base.types.run import ModelCall, ToolCall
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
     resolve_ceiling_overrides,
     resolve_limit_overrides,
 )
 from toolang.common.layout import AgentLayout
-from toolang.execution.executor import RunExecutor
+from toolang.execution.calls import resolve_spec
+from toolang.execution.executor import RunExecutor, prepare_model_call
 from toolang.execution.history import RunHistory
-from toolang.execution.records import RunRecord
-from toolang.execution.schemas import RunDetail, StepData
+from toolang.execution.model_requests import ModelRequest, build_model_request
+from toolang.execution.records import (
+    ControlRecord,
+    RunRecord,
+    StepRecord,
+    ThreadRecord,
+    ToolStepGiven,
+    model_call_to_data,
+)
+from toolang.execution.schemas import Record, record_to_data
 from toolang.execution.threads import ThreadManager
-from toolang.execution.types import Local, RunStatus, StepPath, local_to_protocol_data
-from toolang.setup import SetupWatcher
+from toolang.execution.types import Pointer, RunStatus, StepPath
+from toolang.lang.includes import resolve_file_include
+from toolang.lang.input import RunnableInputRaw
+from toolang.setup import AgentSetup, SetupWatcher
+from toolang.state.state import AgentState
 from toolang.state.watcher import StateWatcher
 
 from ...common.context import (
@@ -38,27 +52,15 @@ from ...common.context import (
 )
 from ...common.execution import ExecutionResources, open_execution
 from ...common.execution_progress.config import resolve_progress_max_width
-from ...common.output import echo_table, executable_label, parse_utc_timestamp
+from ...common.output import echo_table
 from ...common.script_progress import ScriptRunPresenter
 
 
-InspectDocument = dict[str, Any]
-
-
-@dataclass(frozen=True, slots=True)
-class InspectTarget:
-    """One parsed thread, run, or step inspection target."""
-
-    kind: Literal["thread", "run"]
-    identifier: str
-    path: tuple[int, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class _StepNode:
-    run_id: str
-    step: StepData
-    children: tuple[_StepNode, ...] = ()
+_PREVIEW_RUN_ID = "run_inspect_preview"
+_PREVIEW_THREAD_ID = "term_inspect_preview"
+_MODEL_HISTORY_LIMIT = 32
+_HUMAN_TEXT_LIMIT = 12_000
+_TOOL_CALL_ADAPTER = TypeAdapter(ToolCall)
 
 
 def threads_command(
@@ -147,28 +149,109 @@ def runs_command(
 def inspect_command(
     ctx: typer.Context,
     target: Annotated[
-        str, typer.Argument(help="Thread id, run id, or run step path to inspect.")
-    ],
-    limit: Annotated[
-        int, typer.Option("--limit", help="Maximum thread runs to read.")
-    ] = 100,
+        str | None,
+        typer.Argument(help="Pointer to a record or field."),
+    ] = None,
+    focus: Annotated[
+        str | None,
+        typer.Option(
+            "--focus",
+            help="Focus on model_call, model_request, or tool_call.",
+        ),
+    ] = None,
     json_view: Annotated[
         bool, typer.Option("--json", help="Render inspection data as JSON.")
     ] = False,
+    full: Annotated[
+        bool, typer.Option("--full", help="Do not truncate human text output.")
+    ] = False,
+    input_source: Annotated[
+        str | None,
+        typer.Option(
+            "--input",
+            metavar="CONTENT",
+            help="Set prospective primary input; use - for stdin.",
+        ),
+    ] = None,
+    arguments: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--arg",
+            metavar="NAME=CONTENT",
+            help="Set a prospective named input. Repeat for another input.",
+        ),
+    ] = None,
+    include_thread: Annotated[
+        bool,
+        typer.Option(
+            "--thread",
+            help="Include history when exactly one current thread exists.",
+        ),
+    ] = False,
+    allows: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--allow",
+            metavar="DOMAIN=SELECTORS",
+            help="Set a prospective capability ceiling. Repeat by domain.",
+        ),
+    ] = None,
+    defaults: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--default",
+            metavar="FIELD=VALUE",
+            help="Set runnable or model for focused inspection. Repeat by field.",
+        ),
+    ] = None,
 ) -> None:
-    """Inspect one thread, run, or run step path."""
+    """Inspect a durable record, field, model call, or provider request.
 
-    if limit < 1:
-        raise click.ClickException("--limit must be at least 1")
-    parsed = parse_inspect_target(target)
-    with open_execution(ctx, required=True) as resources:
-        if resources is None:  # pragma: no cover - required=True guarantees this
-            raise RuntimeError("execution resources were not opened")
-        document = _inspect(resources, parsed, limit=limit)
-    if json_view:
-        typer.echo(json.dumps(document, ensure_ascii=False, indent=2))
+    A Pointer is RECORD_REF[/FIELD...]. Run ids select runs, dotted run paths
+    select steps, ids with ^INDEX select controls, and other ids select threads.
+    Field refs use RFC 6901 escaping. Use `too records` for complete schemas.
+    """
+
+    pointer = parse_inspect_target(target) if target is not None else None
+    selected_focus = _inspect_focus(focus)
+    if pointer is None and selected_focus is None:
+        typer.echo(ctx.get_help())
         return
-    _render_inspect(document)
+    _validate_inspect_options(
+        pointer,
+        focus=selected_focus,
+        json_view=json_view,
+        full=full,
+        input_source=input_source,
+        arguments=arguments or (),
+        include_thread=include_thread,
+        allows=allows or (),
+        defaults=defaults or (),
+    )
+    execution = (
+        open_execution(ctx, required=True)
+        if pointer is not None or include_thread
+        else nullcontext(None)
+    )
+    with execution as resources:
+        inspected = user_call(
+            asyncio.run,
+            _inspect_value(
+                ctx,
+                pointer,
+                focus=selected_focus,
+                resources=resources,
+                input_source=input_source,
+                arguments=tuple(arguments or ()),
+                include_thread=include_thread,
+                allows=tuple(allows or ()),
+                defaults=tuple(defaults or ()),
+            ),
+        )
+    if json_view:
+        typer.echo(json.dumps(_focused_data(inspected), ensure_ascii=False, indent=2))
+        return
+    _render_inspected(inspected, pointer=pointer, full=full)
 
 
 def steer_command(
@@ -378,303 +461,348 @@ def fork_command(
         _open_chat(ctx, forked_id)
 
 
-def parse_inspect_target(target: str) -> InspectTarget:
-    """Parse a CLI inspection target."""
+def parse_inspect_target(target: str) -> Pointer:
+    """Parse one inspect Pointer without reading external state."""
 
-    value = target.strip()
-    if not value:
-        raise click.ClickException("inspect target is required")
-    if ":" in value or "/" in value:
-        raise click.ClickException(f"invalid inspect path: {value}")
-    if "." in value:
-        if not value.startswith("run_"):
-            raise click.ClickException(f"invalid inspect path: {value}")
-        try:
-            step = StepPath.parse(value)
-        except ValueError as exc:
-            raise click.ClickException(f"invalid inspect path: {value}") from exc
-        return InspectTarget(kind="run", identifier=step.run, path=step.indices)
-    return InspectTarget(
-        kind="run" if value.startswith("run_") else "thread",
-        identifier=value,
-    )
+    try:
+        return Pointer(target.strip())
+    except (TypeError, ValueError) as exc:
+        raise click.UsageError(f"invalid Pointer: {target}") from exc
 
 
-def _inspect(
-    resources: ExecutionResources,
-    target: InspectTarget,
-    *,
-    limit: int,
-) -> InspectDocument:
-    history = RunHistory(resources.store)
-    if target.kind == "thread":
-        thread = history.get_thread(target.identifier, run_limit=limit)
-        if thread is None:
-            raise click.ClickException(f"thread not found: {target.identifier}")
-        return {
-            "kind": "thread",
-            "target": target.identifier,
-            "thread": _inspect_data(thread),
-        }
-
-    run = history.get_run(target.identifier)
-    if run is None:
-        raise click.ClickException(f"run not found: {target.identifier}")
-    thread = history.get_thread(run.thread_id, run_limit=None)
-    runs = thread.runs if thread is not None else [run]
-    run_by_id = {item.id: item for item in runs}
-    display_run = run_by_id.get(run.id, run)
-    nodes = _run_nodes(display_run, run_by_id=run_by_id)
-    if target.path:
-        step_path = StepPath(target.identifier, target.path)
-        node = _find_step_node(nodes, step_path)
-        if node is None:
-            raise click.ClickException(f"step not found: {step_path}")
-        return {
-            "kind": "step",
-            "target": str(step_path),
-            "run": _run_data(display_run, include_steps=False),
-            "step": _node_data(node),
-        }
-    return {
-        "kind": "run",
-        "target": target.identifier,
-        "run": _run_data(display_run, include_steps=False),
-        "steps": [_node_data(node) for node in nodes],
-    }
-
-
-def _run_nodes(
-    run: RunDetail,
-    *,
-    run_by_id: Mapping[str, RunDetail],
-    parent: StepPath | None = None,
-    visited_runs: frozenset[str] = frozenset(),
-) -> tuple[_StepNode, ...]:
-    if run.id in visited_runs:
-        return ()
-    visited = visited_runs | {run.id}
-    nodes: list[_StepNode] = []
-    for step in run.steps:
-        if step.path.parent != parent:
-            continue
-        step_path = step.path
-        children = list(
-            _run_nodes(
-                run,
-                run_by_id=run_by_id,
-                parent=step_path,
-                visited_runs=visited_runs,
-            )
-        )
-        for child_run in run_by_id.values():
-            if child_run.parent != step_path:
-                continue
-            children.extend(
-                _run_nodes(
-                    child_run,
-                    run_by_id=run_by_id,
-                    visited_runs=visited,
-                )
-            )
-        nodes.append(
-            _StepNode(
-                run_id=run.id,
-                step=step,
-                children=tuple(children),
-            )
-        )
-    return tuple(nodes)
-
-
-def _find_step_node(nodes: Sequence[_StepNode], path: StepPath) -> _StepNode | None:
-    for node in nodes:
-        if node.step.path == path:
-            return node
-        found = _find_step_node(node.children, path)
-        if found is not None:
-            return found
-    return None
-
-
-def _node_data(node: _StepNode) -> dict[str, Any]:
-    return _inspect_data(
-        {
-            "run_id": node.run_id,
-            **_record_data(node.step),
-            "children": [_node_data(child) for child in node.children],
-        }
-    )
-
-
-def _run_data(run: RunDetail, *, include_steps: bool) -> dict[str, Any]:
-    data = _record_data(run)
-    if not include_steps:
-        data.pop("steps", None)
-    return data
-
-
-def _inspect_data(value: Any) -> Any:
-    if isinstance(value, StepPath):
-        return str(value)
-    if isinstance(value, Local):
-        return local_to_protocol_data(value)
-    if is_dataclass(value) and not isinstance(value, type):
-        return _record_data(value)
-    if isinstance(value, dict):
-        return {key: _inspect_data(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_inspect_data(item) for item in value]
+def _inspect_focus(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if value not in {"model_call", "model_request", "tool_call"}:
+        raise click.UsageError(f"unknown inspect focus: {value}")
     return value
 
 
-def _record_data(value: Any) -> dict[str, Any]:
-    return {
-        field.name: _inspect_data(getattr(value, field.name)) for field in fields(value)
-    }
-
-
-def _render_inspect(document: Mapping[str, Any]) -> None:
-    kind = document.get("kind")
-    if kind == "thread":
-        _render_thread(_mapping(document.get("thread")))
-        return
-    if kind == "step":
-        _render_step(_mapping(document.get("step")))
-        return
-    _render_run(
-        _mapping(document.get("run")),
-        [_mapping(item) for item in _list(document.get("steps"))],
-    )
-
-
-def _render_thread(thread: Mapping[str, Any]) -> None:
-    _section("thread")
-    typer.echo(
-        "  ".join(
-            (
-                f"thread {thread.get('id', '-')}",
-                str(thread.get("status", "-")),
-                f"runs={thread.get('run_count', 0)}",
-            )
+def _validate_inspect_options(
+    pointer: Pointer | None,
+    *,
+    focus: str | None,
+    json_view: bool,
+    full: bool,
+    input_source: str | None,
+    arguments: Sequence[str],
+    include_thread: bool,
+    allows: Sequence[str],
+    defaults: Sequence[str],
+) -> None:
+    if full and json_view:
+        raise click.UsageError("--full and --json cannot be combined")
+    if pointer is None and focus not in {"model_call", "model_request"}:
+        raise click.UsageError(
+            "a Pointer is required unless --focus is model_call or model_request"
         )
+    if pointer is not None and focus is not None and pointer.field_ref:
+        raise click.UsageError("--focus requires a complete record Pointer")
+    try:
+        bindings = resolve_binding_overrides({}, defaults)
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    if pointer is not None and (
+        input_source is not None
+        or arguments
+        or include_thread
+        or allows
+        or "runnable" in bindings
+    ):
+        raise click.UsageError(
+            "--input, --arg, --thread, --allow, and --default runnable "
+            "require prospective model focus"
+        )
+    if pointer is not None and "model" in bindings and focus != "model_request":
+        raise click.UsageError(
+            "--default model applies only to model_request focus for stored records"
+        )
+
+
+async def _inspect_value(
+    ctx: typer.Context,
+    pointer: Pointer | None,
+    *,
+    focus: str | None,
+    resources: ExecutionResources | None,
+    input_source: str | None,
+    arguments: tuple[str, ...],
+    include_thread: bool,
+    allows: tuple[str, ...],
+    defaults: tuple[str, ...],
+) -> object:
+    if pointer is not None:
+        execution = _require_execution(resources)
+        selected = execution.store.resolve_pointer(pointer)
+        if focus is None:
+            return selected
+        focused = _focus_record(execution, selected, focus=focus)
+        if focus != "model_request":
+            return focused
+        setup = await _inspect_setup(ctx, allows=(), defaults=defaults)
+        return build_model_request(
+            setup,
+            model_id=_request_model_id(setup),
+            call=cast(ModelCall, focused),
+        )
+
+    setup = await _inspect_setup(ctx, allows=allows, defaults=defaults)
+    state = await StateWatcher(context_layout(ctx)).refresh()
+    thread_id, history = _preview_history(resources, include=include_thread)
+    call = _prospective_model_call(
+        setup,
+        state,
+        thread_id=thread_id,
+        history=history,
+        input_source=input_source,
+        arguments=arguments,
     )
-    runs = [
-        _mapping(item)
-        for item in _list(thread.get("runs"))
-        if _mapping(item).get("parent") is None
+    if focus == "model_request":
+        return build_model_request(
+            setup,
+            model_id=_request_model_id(setup),
+            call=call,
+        )
+    return call
+
+
+def _focus_record(
+    resources: ExecutionResources,
+    selected: object,
+    *,
+    focus: str,
+) -> ModelCall | ToolCall:
+    if not isinstance(selected, StepRecord):
+        raise click.ClickException(f"{focus} focus requires a StepRecord")
+    if focus in {"model_call", "model_request"}:
+        if selected.kind != "model":
+            raise click.ClickException(f"step is not a model call: {selected.path}")
+        return resources.store.rebuild_model_call(selected)
+    if selected.kind != "tool" or not isinstance(selected.given, ToolStepGiven):
+        raise click.ClickException(f"step is not a tool call: {selected.path}")
+    return selected.given.call
+
+
+async def _inspect_setup(
+    ctx: typer.Context,
+    *,
+    allows: Sequence[str],
+    defaults: Sequence[str],
+) -> AgentSetup:
+    layout = context_layout(ctx)
+    environ = load_runtime_environ(layout, base_environ=os.environ)
+    return await SetupWatcher(
+        layout,
+        model_catalog=context_model_catalog(ctx),
+        ceiling_overrides=resolve_ceiling_overrides(environ, allows),
+        binding_overrides=resolve_binding_overrides(environ, defaults),
+    ).refresh()
+
+
+def _prospective_model_call(
+    setup: AgentSetup,
+    state: AgentState,
+    *,
+    thread_id: str,
+    history: Sequence[Message],
+    input_source: str | None,
+    arguments: Sequence[str],
+) -> ModelCall:
+    runnable = setup.bindings.runnable
+    if runnable is None:
+        raise click.ClickException(
+            "prospective model focus requires --default runnable=agic:NAME"
+        )
+    raw_input = _preview_input(input_source, arguments)
+    spec = resolve_spec(
+        (),
+        raw_input,
+        setup=setup,
+        state=state,
+        thread=thread_id,
+        default_runnable=runnable,
+        include=lambda reference: resolve_file_include(reference, base=Path.cwd()),
+    )
+    return prepare_model_call(
+        spec,
+        run_id=_PREVIEW_RUN_ID,
+        history=history,
+    )
+
+
+def _preview_input(
+    input_source: str | None,
+    arguments: Sequence[str],
+) -> RunnableInputRaw:
+    primary = sys.stdin.read() if input_source == "-" else input_source
+    named: list[tuple[str, str]] = []
+    for item in arguments:
+        name, separator, value = item.partition("=")
+        if not separator or not name or not value:
+            raise click.UsageError("--arg must use NAME=CONTENT")
+        named.append((name, value))
+    return RunnableInputRaw(primary=primary, named=tuple(named))
+
+
+def _preview_history(
+    resources: ExecutionResources | None,
+    *,
+    include: bool,
+) -> tuple[str, tuple[Message, ...]]:
+    if not include:
+        return _PREVIEW_THREAD_ID, ()
+    store = _require_execution(resources).store
+    threads = RunHistory(store).list_threads(limit=2)
+    if not threads:
+        raise click.ClickException("--thread requires one current thread")
+    if len(threads) > 1:
+        raise click.ClickException("--thread is ambiguous: multiple threads exist")
+    thread_id = threads[0].id
+    return (
+        thread_id,
+        tuple(
+            store.recent_conversation_messages(
+                thread_id=thread_id,
+                limit=_MODEL_HISTORY_LIMIT,
+            )
+        ),
+    )
+
+
+def _request_model_id(setup: AgentSetup) -> str:
+    model_id = setup.bindings.model
+    if model_id is None:
+        raise click.ClickException(
+            "model_request focus requires --default model=PROVIDER/MODEL_ID"
+        )
+    return model_id
+
+
+def _require_execution(
+    resources: ExecutionResources | None,
+) -> ExecutionResources:
+    if resources is None:
+        raise RuntimeError("execution resources were not opened")
+    return resources
+
+
+def _focused_data(value: object) -> object:
+    if isinstance(value, ThreadRecord | ControlRecord | RunRecord | StepRecord):
+        return record_to_data(value)
+    if isinstance(value, ModelCall):
+        return model_call_to_data(value)
+    if isinstance(value, ModelRequest):
+        return value.body
+    if isinstance(value, ToolCall):
+        return _TOOL_CALL_ADAPTER.dump_python(value, mode="json")
+    return value
+
+
+def _render_inspected(
+    value: object,
+    *,
+    pointer: Pointer | None,
+    full: bool,
+) -> None:
+    if isinstance(value, ThreadRecord | ControlRecord | RunRecord | StepRecord):
+        _render_record(value, pointer=pointer)
+        return
+    if isinstance(value, ModelCall):
+        _render_model_call(value, full=full)
+        return
+    if isinstance(value, ModelRequest):
+        _section(f"model request · {value.model.ref}")
+        _render_json(value.body, full=full)
+        return
+    if isinstance(value, ToolCall):
+        _render_tool_call(value, full=full)
+        return
+    _section(str(pointer) if pointer is not None else "value")
+    if isinstance(value, str):
+        typer.echo(_bounded_text(value, full=full))
+    elif value is None or isinstance(value, bool | int | float):
+        typer.echo(json.dumps(value, ensure_ascii=False))
+    else:
+        _render_json(value, full=full)
+
+
+def _render_record(record: Record, *, pointer: Pointer | None) -> None:
+    title = type(record).__name__
+    _section(f"{title} · {pointer or '-'}")
+    rows = [
+        (field, _human_cell(value)) for field, value in record_to_data(record).items()
     ]
-    if not runs:
-        return
-    _section("runs")
-    for run in runs:
-        status = _display_status(run.get("status"))
-        target = executable_label(
-            _text(run.get("runnable_kind")),
-            _text(run.get("runnable_name")),
-        )
-        summary = _text(run.get("input_text")) or _text(run.get("summary")) or ""
-        elapsed = _elapsed(
-            _text(run.get("started_at")),
-            _text(run.get("finished_at")),
-        )
-        typer.echo(
-            f"{_status_mark(status)} {run.get('id', '-')}  "
-            f"{elapsed or '-':>6}  {target:<16}  {_truncate(summary, width=72)}"
-        )
+    echo_table(("FIELD", "VALUE"), rows)
 
 
-def _render_run(run: Mapping[str, Any], steps: Sequence[Mapping[str, Any]]) -> None:
-    _section("run")
-    target = executable_label(
-        _text(run.get("runnable_kind")),
-        _text(run.get("runnable_name")),
-    )
-    typer.echo(
-        "  ".join(
-            (
-                f"run {run.get('id', '-')}",
-                _display_status(run.get("status")),
-                f"target={target}",
-                f"thread={run.get('thread_id', '-')}",
+def _render_model_call(call: ModelCall, *, full: bool) -> None:
+    data = model_call_to_data(call)
+    _section("model call")
+    _section("instructions")
+    typer.echo(_bounded_text(str(data.get("instructions") or ""), full=full))
+    for index, raw_message in enumerate(cast(list[object], data["messages"])):
+        message = cast(Mapping[str, object], raw_message)
+        _section(f"message {index} · {message.get('role', '-')}")
+        for part in cast(list[object], message.get("parts", [])):
+            part_data = (
+                cast(Mapping[str, object], part) if isinstance(part, Mapping) else None
             )
-        )
+            if part_data is not None and part_data.get("type") == "text":
+                typer.echo(_bounded_text(str(part_data.get("text") or ""), full=full))
+            else:
+                _render_json(part, full=full)
+    tools = cast(list[object], data["tools"])
+    if tools:
+        _section("tools")
+        for tool in tools:
+            _render_json(tool, full=full)
+    if data.get("state") is not None:
+        _section("state")
+        _render_json(data["state"], full=full)
+
+
+def _render_tool_call(call: ToolCall, *, full: bool) -> None:
+    data = cast(
+        Mapping[str, object],
+        _TOOL_CALL_ADAPTER.dump_python(call, mode="json"),
     )
-    if input_text := _text(run.get("input_text")):
-        _section("input")
-        typer.echo(input_text)
-    if error := _failure_text(run):
-        _section("output")
-        typer.echo(f"error: {error}")
-    elif summary := _text(run.get("summary")):
-        _section("output")
-        typer.echo(summary)
-    if steps:
-        _section("steps")
-        for step in steps:
-            _render_step_line(step)
+    _section(f"tool call · {data.get('name', '-')}")
+    rows = [
+        (field, _human_cell(value)) for field, value in data.items() if field != "input"
+    ]
+    echo_table(("FIELD", "VALUE"), rows)
+    _section("input")
+    _render_json(data.get("input"), full=full)
 
 
-def _render_step(step: Mapping[str, Any]) -> None:
-    _section("step")
-    typer.echo(
-        "  ".join(
-            (
-                f"step {step.get('run_id', '-')}:{step.get('path', '-')}",
-                _display_status(step.get("status")),
-                f"kind={step.get('kind', 'step')}",
-            )
-        )
+def _render_json(value: object, *, full: bool) -> None:
+    rendered = json.dumps(value, ensure_ascii=False, indent=2)
+    typer.echo(_bounded_text(rendered, full=full))
+
+
+def _bounded_text(value: str, *, full: bool) -> str:
+    if full or len(value) <= _HUMAN_TEXT_LIMIT:
+        return value
+    omitted = len(value) - _HUMAN_TEXT_LIMIT
+    head = (_HUMAN_TEXT_LIMIT * 2) // 3
+    tail = _HUMAN_TEXT_LIMIT - head
+    return (
+        f"{value[:head]}\n\n... [{omitted} characters omitted; use --full] ...\n\n"
+        f"{value[-tail:]}"
     )
-    if error := _text(step.get("error")):
-        _section("error")
-        typer.echo(error)
-    for label in ("input", "given", "output", "noted"):
-        value = step.get(label)
-        if value in (None, [], {}):
-            continue
-        _section(label)
-        typer.echo(json.dumps(value, ensure_ascii=False, indent=2))
-    children = [_mapping(item) for item in _list(step.get("children"))]
-    if children:
-        _section("children")
-        for child in children:
-            _render_step_line(child)
 
 
-def _render_step_line(step: Mapping[str, Any], *, depth: int = 0) -> None:
-    status = _display_status(step.get("status"))
-    summary = _step_summary(step)
-    line = (
-        f"{'  ' * depth}{_status_mark(status)} "
-        f"{str(step.get('path', '-')):<5} {str(step.get('kind', 'step')):<7}"
+def _human_cell(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, str):
+        return _truncate(value, width=100)
+    if isinstance(value, bool | int | float):
+        return json.dumps(value, ensure_ascii=False)
+    return _truncate(
+        json.dumps(value, ensure_ascii=False, separators=(",", ":")),
+        width=100,
     )
-    if summary:
-        line = f"{line}  {_truncate(summary, width=100)}"
-    typer.echo(line)
-    for child in [_mapping(item) for item in _list(step.get("children"))]:
-        _render_step_line(child, depth=depth + 1)
-
-
-def _step_summary(step: Mapping[str, Any]) -> str:
-    parts = _list(step.get("output"))
-    summaries: list[str] = []
-    for raw in parts:
-        part = _mapping(raw)
-        part_type = _text(part.get("type"))
-        if part_type == "text" and (text := _text(part.get("text"))):
-            summaries.append(" ".join(text.split()))
-        elif part_type == "tool_call":
-            summaries.append(
-                f"{part.get('tool_name') or part.get('name') or 'tool'} call"
-            )
-        elif part_type == "tool_result":
-            summaries.append(
-                f"{part.get('tool_name') or part.get('name') or 'tool'} result"
-            )
-        elif part_type:
-            summaries.append(f"[{part_type}]")
-    return " ".join(summaries) or (_text(step.get("error")) or "")
 
 
 def _active_run_id(history: RunHistory, target: str) -> str:
@@ -801,40 +929,8 @@ def _run_status(value: str | None) -> RunStatus | None:
     return cast(RunStatus, value)
 
 
-def _failure_text(run: Mapping[str, Any]) -> str:
-    error = run.get("error")
-    if isinstance(error, str):
-        return error
-    step = _text(_mapping(error).get("step"))
-    return f"step {step} failed" if step else ""
-
-
 def _display_status(value: object) -> str:
     return str(value or "")
-
-
-def _status_mark(status: str) -> str:
-    return {
-        "succeeded": "✓",
-        "failed": "✗",
-        "canceled": "-",
-        "running": "…",
-    }.get(status, "·")
-
-
-def _elapsed(started_at: str | None, finished_at: str | None) -> str:
-    if not started_at or not finished_at:
-        return ""
-    start = parse_utc_timestamp(started_at)
-    finish = parse_utc_timestamp(finished_at)
-    if start is None or finish is None:
-        return ""
-    seconds = max((finish - start).total_seconds(), 0)
-    if seconds < 1:
-        return f"{max(round(seconds * 1000), 1)}ms"
-    if seconds < 10:
-        return f"{seconds:.1f}s"
-    return f"{seconds:.0f}s"
 
 
 def _truncate(value: object, *, width: int) -> str:
@@ -848,18 +944,3 @@ def _truncate(value: object, *, width: int) -> str:
 
 def _section(label: str) -> None:
     click.secho(f"# {label}", dim=True)
-
-
-def _mapping(value: object) -> Mapping[str, Any]:
-    return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
-
-
-def _list(value: object) -> list[Any]:
-    return value if isinstance(value, list) else []
-
-
-def _text(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value)
-    return text or None

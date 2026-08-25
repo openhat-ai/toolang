@@ -12,11 +12,14 @@ from typing import Any, cast
 
 import click
 from click.utils import strip_ansi
+from jsonschema import Draft202012Validator
 import pytest
 from click.testing import CliRunner
 
 from toolang.base.types.message import Message, TextPart
-from toolang.base.types.run import ModelCallResult, ModelUsage
+from toolang.base.types.model import ModelInfo, Provider, ResolvedProvider
+from toolang.base.types.policy import RunBindings
+from toolang.base.types.run import ModelCall, ModelCallResult, ModelUsage, ToolCall
 from toolang.base.types.tool import ToolContext, ToolDefinition
 from toolang.catalog import templates
 from toolang.catalog.agent import LocalAgents
@@ -37,6 +40,9 @@ from toolang.execution.store import RunStore
 from toolang.execution.types import Local, StepPath, ThreadPrefix
 from toolang.lang.input import resolve_input_parts
 from toolang.setup import AgentSetup
+from toolang.plugin.models.adapters.chat_completions import (
+    ChatCompletionsModelAdapter,
+)
 from toolang.up import process as agents
 from toolang.work.state import load_ready_jobs
 from toolang.work.store import JobStore
@@ -63,11 +69,49 @@ def test_retry_anchor_accepts_only_dot_separated_step_paths(value: str) -> None:
 
 @pytest.mark.parametrize(
     "value",
-    ("run_root:2.3", "run_root/2/3", "run_root.01", "term_root.0"),
+    ("run_root:2.3", "run_root.01", "term_root.0", "run_root/~2"),
 )
-def test_inspect_rejects_noncanonical_step_paths(value: str) -> None:
-    with pytest.raises(click.ClickException, match="invalid inspect path"):
+def test_inspect_rejects_invalid_pointers(value: str) -> None:
+    with pytest.raises(click.ClickException, match="invalid Pointer"):
         thread_commands.parse_inspect_target(value)
+
+
+def test_inspect_accepts_a_field_ref_after_a_record_ref() -> None:
+    pointer = thread_commands.parse_inspect_target("run_root/output/value/0")
+
+    assert pointer.record_ref == "run_root"
+    assert pointer.field_tokens == ("output", "value", "0")
+
+
+def test_inspect_without_a_target_shows_pointer_and_schema_help(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+
+    result = _invoke(root, "alice", "inspect")
+
+    assert result.exit_code == 0
+    assert "A Pointer is a RECORD_REF" in result.stdout
+    assert "too records" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        ("model_call@run_test.0",),
+        ("run_test.0", "--request"),
+        ("run_test.0", "--send"),
+    ),
+)
+def test_inspect_rejects_removed_model_call_and_request_syntax(
+    tmp_path: Path,
+    arguments: tuple[str, ...],
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+
+    result = _invoke(root, "alice", "inspect", *arguments)
+
+    assert result.exit_code == 2
 
 
 def test_read_only_thread_commands_do_not_create_execution_store(
@@ -83,7 +127,7 @@ def test_read_only_thread_commands_do_not_create_execution_store(
     assert not layout.run_store.exists()
 
 
-@pytest.mark.parametrize("schema_version", [11, 18, 24, 27])
+@pytest.mark.parametrize("schema_version", [11, 18, 24, 27, 28])
 def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     tmp_path: Path,
     schema_version: int,
@@ -106,7 +150,7 @@ def test_read_only_thread_commands_do_not_migrate_incompatible_history(
     assert "Traceback" not in error_output
     assert "execution history is incompatible with toolang" in error_output
     assert f"uses schema {schema_version}" in error_output
-    assert "requires schema 28" in error_output
+    assert "requires schema 29" in error_output
     assert "backup" in error_output
     assert "database was not changed" in error_output.lower()
     connection = sqlite3.connect(layout.run_store)
@@ -254,17 +298,373 @@ def test_inspect_reads_typed_run_schema_and_step_path(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     document = json.loads(result.stdout)
-    assert document["kind"] == "step"
-    assert document["target"] == "run_inspect.0"
-    assert document["run"]["id"] == "run_inspect"
-    assert document["step"]["path"] == "run_inspect.0"
-    assert document["step"]["kind"] == "value"
-    assert document["step"]["output"] == {
+    assert document["path"] == "run_inspect.0"
+    assert document["kind"] == "value"
+    assert document["output"] == {
         "type": "Part[]",
         "value": [{"text": "prepared", "type": "text"}],
         "name": "_",
         "dim": 0,
     }
+
+
+def test_records_filters_and_expands_record_owned_variants(tmp_path: Path) -> None:
+    all_records = _invoke(tmp_path, "records")
+    selected = _invoke(
+        tmp_path,
+        "records",
+        "--filter",
+        "control",
+        "--filter",
+        "step",
+    )
+    control = _invoke(tmp_path, "records", "--filter", "control")
+    positional = _invoke(tmp_path, "records", "thread")
+
+    assert all_records.exit_code == 0
+    assert all(
+        name in all_records.stdout
+        for name in ("ThreadRecord", "ControlRecord", "RunRecord", "StepRecord")
+    )
+    assert selected.exit_code == 0
+    assert "ControlRecord" in selected.stdout
+    assert "StepRecord" in selected.stdout
+    assert "ThreadRecord" not in selected.stdout
+    assert control.exit_code == 0
+    assert "/payload (start)" in control.stdout
+    assert "StartControlPayload" in control.stdout
+    assert positional.exit_code == 2
+
+
+def test_record_schemas_validate_exact_inspect_json(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_schema",
+            thread_id="term_schema",
+            origin="chat",
+            input=Message.user("Validate records"),
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(TextPart("validated"),),
+            started_at="2026-07-25T01:00:00Z",
+            finished_at="2026-07-25T01:00:01Z",
+        )
+        project_run_end(store, run_id=run.id)
+    finally:
+        store.close()
+
+    targets = {
+        "thread": "term_schema",
+        "control": "run_schema^0",
+        "run": "run_schema",
+        "step": "run_schema.0",
+    }
+    for kind, target in targets.items():
+        inspected = _invoke(root, "alice", "inspect", target, "--json")
+        discovered = _invoke(root, "records", "--filter", kind, "--json")
+
+        assert inspected.exit_code == 0, inspected.stderr
+        assert discovered.exit_code == 0, discovered.stderr
+        schema = json.loads(discovered.stdout)
+        document = json.loads(inspected.stdout)
+        Draft202012Validator.check_schema(schema)
+        Draft202012Validator(schema).validate(document)
+
+    field = _invoke(root, "alice", "inspect", "run_schema/status", "--json")
+    assert field.exit_code == 0
+    assert json.loads(field.stdout) == "succeeded"
+
+
+def test_inspect_focuses_historical_model_and_tool_calls(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    store = RunStore(AgentLayout.resident(root, "alice").run_store)
+    model_call = ModelCall(
+        instructions="<policy>Keep XML verbatim.</policy>\nPlain instructions.",
+        messages=[Message.user("<request>Review this.</request>\nPlain input.")],
+    )
+    tool_call = ToolCall(
+        tool_call_id="tool_1",
+        call_id="call_1",
+        name="search",
+        input={"query": "record pointers"},
+    )
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_focus",
+            thread_id="term_focus",
+            origin="chat",
+            input=Message.user("Inspect calls"),
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="model",
+            status="succeeded",
+            input=(),
+            output=(TextPart("model result"),),
+            started_at="2026-07-25T01:00:00Z",
+            finished_at="2026-07-25T01:00:01Z",
+            context={"model": "test/model", "call": model_call},
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=1,
+            kind="tool",
+            status="succeeded",
+            input=(),
+            output=Local.typed("Json", {"matches": 1}, "_"),
+            started_at="2026-07-25T01:00:01Z",
+            finished_at="2026-07-25T01:00:02Z",
+            context={"plugin": "search", "call": tool_call},
+        )
+        project_run_end(store, run_id=run.id)
+    finally:
+        store.close()
+
+    model_json = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_focus.0",
+        "--focus",
+        "model_call",
+        "--json",
+    )
+    model_human = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_focus.0",
+        "--focus",
+        "model_call",
+    )
+    tool_json = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_focus.1",
+        "--focus",
+        "tool_call",
+        "--json",
+    )
+    step_schema_result = _invoke(root, "records", "--filter", "step", "--json")
+    model_record = _invoke(root, "alice", "inspect", "run_focus.0", "--json")
+    tool_record = _invoke(root, "alice", "inspect", "run_focus.1", "--json")
+    field_focus = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_focus.0/given",
+        "--focus",
+        "model_call",
+    )
+
+    assert model_json.exit_code == 0, model_json.stderr
+    model_document = json.loads(model_json.stdout)
+    assert model_document["instructions"] == model_call.instructions
+    assert model_document["messages"][0]["parts"][0]["text"] == (
+        "<request>Review this.</request>\nPlain input."
+    )
+    assert model_human.exit_code == 0
+    assert model_call.instructions in model_human.stdout
+    assert "<request>Review this.</request>\nPlain input." in model_human.stdout
+    assert tool_json.exit_code == 0
+    assert json.loads(tool_json.stdout) == {
+        "tool_call_id": "tool_1",
+        "call_id": "call_1",
+        "name": "search",
+        "input": {"query": "record pointers"},
+    }
+    assert step_schema_result.exit_code == 0
+    step_validator = Draft202012Validator(json.loads(step_schema_result.stdout))
+    step_validator.validate(json.loads(model_record.stdout))
+    step_validator.validate(json.loads(tool_record.stdout))
+    assert field_focus.exit_code == 2
+    assert "--focus requires a complete record Pointer" in field_focus.stderr
+
+
+def test_inspect_projects_a_historical_provider_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+    layout = AgentLayout.resident(root, "alice")
+    store = RunStore(layout.run_store)
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_request",
+            thread_id="term_request",
+            origin="chat",
+            input=Message.user("Inspect request"),
+        )
+        project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="model",
+            status="succeeded",
+            input=(),
+            output=(TextPart("done"),),
+            started_at="2026-07-25T01:00:00Z",
+            finished_at="2026-07-25T01:00:01Z",
+            context={
+                "model": "test/model-v1",
+                "call": ModelCall(
+                    instructions="Provider instructions",
+                    messages=[Message.user("Provider input")],
+                ),
+            },
+        )
+        project_run_end(store, run_id=run.id)
+    finally:
+        store.close()
+
+    class _SetupSnapshot:
+        def __init__(
+            self,
+            _layout: AgentLayout,
+            *,
+            binding_overrides: Mapping[str, str] | None = None,
+            **_kwargs: object,
+        ) -> None:
+            self.bindings = RunBindings(**dict(binding_overrides or {}))
+
+        async def refresh(self) -> AgentSetup:
+            return _request_inspection_setup(layout, bindings=self.bindings)
+
+    monkeypatch.setattr(thread_commands, "SetupWatcher", _SetupSnapshot)
+
+    result = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "run_request.0",
+        "--focus",
+        "model_request",
+        "--default",
+        "model=test/model-v1",
+        "--json",
+    )
+
+    assert result.exit_code == 0, result.stderr
+    document = json.loads(result.stdout)
+    assert document["model"] == "model-v1"
+    assert document["messages"] == [
+        {"role": "system", "content": "Provider instructions"},
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "Provider input"}],
+        },
+    ]
+    assert document["stream"] is False
+
+
+def test_inspect_previews_future_model_call_and_request_without_a_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "toolang"
+    source = """
+instruct review:
+  <policy>Preserve the authored XML.</policy>
+
+context review:
+  <workspace>future-state</workspace>
+
+agic review(_: Text) -> Text:
+  recall = none
+  instruct: review
+  context: review
+  user: <request>{{_}}</request>
+"""
+    harness = ExecutionHarness.create(root, source=source, responses=[])
+    _create_agent(root)
+    (harness.setup.layout.home / "agent.too").write_text(source, encoding="utf-8")
+    layout = harness.setup.layout
+
+    class _SetupSnapshot:
+        def __init__(
+            self,
+            _layout: AgentLayout,
+            *,
+            binding_overrides: Mapping[str, str] | None = None,
+            **_kwargs: object,
+        ) -> None:
+            self.bindings = RunBindings(**dict(binding_overrides or {}))
+
+        async def refresh(self) -> AgentSetup:
+            return _request_inspection_setup(layout, bindings=self.bindings)
+
+    class _StateSnapshot:
+        def __init__(self, _layout: AgentLayout) -> None:
+            pass
+
+        async def refresh(self):
+            return harness.state
+
+    monkeypatch.setattr(thread_commands, "SetupWatcher", _SetupSnapshot)
+    monkeypatch.setattr(thread_commands, "StateWatcher", _StateSnapshot)
+
+    model_call = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "--focus",
+        "model_call",
+        "--default",
+        "runnable=agic:review",
+        "--input",
+        "Review me",
+        "--json",
+    )
+    model_request = _invoke(
+        root,
+        "alice",
+        "inspect",
+        "--focus",
+        "model_request",
+        "--default",
+        "runnable=agic:review",
+        "--default",
+        "model=test/model-v1",
+        "--input",
+        "Review me",
+        "--json",
+    )
+
+    assert model_call.exit_code == 0, model_call.stderr
+    call_document = json.loads(model_call.stdout)
+    assert (
+        "<policy>Preserve the authored XML.</policy>" in call_document["instructions"]
+    )
+    prospective_text = call_document["messages"][-1]["parts"][0]["text"]
+    assert "<workspace>future-state</workspace>" in prospective_text
+    assert prospective_text.endswith("<request>Review me</request>")
+    assert model_request.exit_code == 0, model_request.stderr
+    request_document = json.loads(model_request.stdout)
+    assert request_document["model"] == "model-v1"
+    assert request_document["messages"][-1]["role"] == "user"
+    request_text = request_document["messages"][-1]["content"][0]["text"]
+    assert "<workspace>future-state</workspace>" in request_text
+    assert request_text.endswith("<request>Review me</request>")
+    assert harness.store.list_runs(thread_id=None) == []
+    harness.store.close()
 
 
 def test_inspect_step_path_does_not_cross_run_boundaries(tmp_path: Path) -> None:
@@ -318,9 +718,9 @@ def test_inspect_step_path_does_not_cross_run_boundaries(tmp_path: Path) -> None
     synthetic_result = _invoke(root, "alice", "inspect", "run_parent.0.0", "--json")
 
     assert child_result.exit_code == 0
-    assert json.loads(child_result.stdout)["step"]["path"] == "run_child.0"
+    assert json.loads(child_result.stdout)["path"] == "run_child.0"
     assert synthetic_result.exit_code == 1
-    assert "step not found: run_parent.0.0" in synthetic_result.stderr
+    assert "record not found: run_parent.0.0" in synthetic_result.stderr
 
 
 def test_roaming_source_reads_threads_runs_and_inspection(
@@ -368,9 +768,9 @@ def test_roaming_source_reads_threads_runs_and_inspection(
     assert "run_roaming" in runs_output.out
     assert inspect == 0
     document = json.loads(inspect_output.out)
-    assert document["kind"] == "step"
-    assert document["run"]["id"] == "run_roaming"
-    assert document["step"]["output"] == {
+    assert document["path"] == "run_roaming.0"
+    assert document["kind"] == "value"
+    assert document["output"] == {
         "type": "Part[]",
         "value": [{"text": "ready", "type": "text"}],
         "name": "_",
@@ -424,9 +824,9 @@ def test_visiting_selector_reads_inspection_without_fetching(
 
     assert result == 0
     document = json.loads(output.out)
-    assert document["kind"] == "step"
-    assert document["run"]["id"] == "run_visiting"
-    assert document["step"]["output"] == {
+    assert document["path"] == "run_visiting.0"
+    assert document["kind"] == "value"
+    assert document["output"] == {
         "type": "Part[]",
         "value": [{"text": "cached", "type": "text"}],
         "name": "_",
@@ -870,6 +1270,47 @@ def _create_agent(root: Path, name: str = "alice") -> None:
     home = agents.path(name)
     home.mkdir(parents=True, exist_ok=True)
     (home / "agent.too").write_text(content, encoding="utf-8")
+
+
+def _request_inspection_setup(
+    layout: AgentLayout,
+    *,
+    bindings: RunBindings,
+) -> AgentSetup:
+    provider = Provider(
+        id="test",
+        name="Test",
+        env=(),
+        npm="@ai-sdk/openai-compatible",
+        models={},
+        resolved=ResolvedProvider(
+            adapter="chat_completions",
+            api="https://example.test/v1",
+            env=(),
+            ready=True,
+        ),
+    )
+    adapter = ChatCompletionsModelAdapter()
+    return AgentSetup(
+        layout=layout,
+        providers={provider.id: provider},
+        adapters={adapter.name: adapter},
+        models=(
+            ModelInfo(
+                ref="test/model-v1",
+                provider="test",
+                name="Model V1",
+                model="model-v1",
+                selectors=("test/model-v1",),
+                adapter=adapter.name,
+                streaming=False,
+                metadata={"resolved_ready": True},
+            ),
+        ),
+        tools={},
+        envs={},
+        bindings=bindings,
+    )
 
 
 class _EmptySetupWatcher:

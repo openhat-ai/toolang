@@ -486,11 +486,11 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
     outcomes = _race_processes(
         (
             _race_claim_control,
-            (str(db_path), control.run, control.index),
+            (str(db_path), control.target, control.index),
         ),
         (
             _race_cancel_control,
-            (str(db_path), control.run, control.index),
+            (str(db_path), control.target, control.index),
         ),
     )
     kinds = {str(outcome[0]) for outcome in outcomes}
@@ -499,7 +499,7 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
     reopened = RunStore(db_path)
     try:
         stored = reopened.get_run_control(
-            run_id=control.run,
+            run_id=control.target,
             index=control.index,
         )
         assert stored is not None
@@ -535,8 +535,8 @@ def test_only_one_process_can_claim_a_pending_control(tmp_path: Path) -> None:
         store.close()
 
     outcomes = _race_processes(
-        (_race_claim_control, (str(db_path), control.run, control.index)),
-        (_race_claim_control, (str(db_path), control.run, control.index)),
+        (_race_claim_control, (str(db_path), control.target, control.index)),
+        (_race_claim_control, (str(db_path), control.target, control.index)),
     )
 
     assert [outcome[0] for outcome in outcomes].count("claimed") == 1

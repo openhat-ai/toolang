@@ -57,8 +57,8 @@ _EVENTS: tuple[RunEvent, ...] = (
         kind="model",
         given=ModelStepGiven(model="test/model", call=ModelCall("", [])),
         input=(
-            Pointer.control("run_root", 0, "_"),
-            Pointer.step(StepPath.parse("run_root.1")),
+            Pointer.control("run_root", 0, "payload", "locals", 0, "value"),
+            Pointer.step(StepPath.parse("run_root.1"), "output", "value"),
         ),
         started_at="2026-01-01T00:00:01Z",
     ),
@@ -95,7 +95,7 @@ _EVENTS: tuple[RunEvent, ...] = (
         status="succeeded",
         output=Local.typed(
             "Part[]",
-            Pointer.step(StepPath.parse("run_root.0")),
+            Pointer.step(StepPath.parse("run_root.0"), "output", "value"),
             "_",
             0,
         ),
@@ -364,12 +364,12 @@ def test_run_event_codec_serializes_step_error_references() -> None:
     event = RunEnd(
         run="run_root",
         status="failed",
-        error=Pointer.step(StepPath.parse("run_root.2")),
+        error=Pointer.step(StepPath.parse("run_root.2"), "error"),
     )
 
     data = run_event_to_data(event)
 
-    assert data["error"] == {"?": "@run_root.2"}
+    assert data["error"] == {"?": "@run_root.2/error"}
     assert run_event_from_data(data) == event
 
 
@@ -377,11 +377,11 @@ def test_run_event_codec_distinguishes_run_error_pointers_from_messages() -> Non
     pointer = RunEnd(
         run="run_root",
         status="failed",
-        error=Pointer.run("run_child"),
+        error=Pointer.run("run_child", "error"),
     )
     message = RunEnd(run="run_root", status="failed", error="timeout")
 
-    assert run_event_to_data(pointer)["error"] == {"?": "@run_child"}
+    assert run_event_to_data(pointer)["error"] == {"?": "@run_child/error"}
     assert run_event_from_data(run_event_to_data(pointer)) == pointer
     assert run_event_from_data(run_event_to_data(message)) == message
 

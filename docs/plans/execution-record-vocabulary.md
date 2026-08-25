@@ -42,9 +42,8 @@ new records.
 
 ### Request Boundary
 
-`RunControlRecord.request`, `ThreadControlRecord.request`, and their SQLite
-columns use the shorter durable field name `request`. Store indexes and queries
-use the same column name.
+The durable control-record field and its SQLite column use the shorter name
+`request`. Store indexes and queries use the same column name.
 
 Caller-facing names remain `request_id`, including executor and thread-manager
 parameters, HTTP request bodies, and `RunControlInfo.request_id`. Mapping to the

@@ -92,6 +92,8 @@ toolang start <agent>                # Start an agent in the background
 toolang stop <agent>                 # Stop a running agent
 
 # Inspection
+toolang records                      # Show durable record schemas
+toolang <agent> inspect <pointer>    # Inspect a record or field
 toolang models                       # List model catalog entries and availability
 toolang providers                    # List catalog providers
 toolang adapters                     # List installed model adapters

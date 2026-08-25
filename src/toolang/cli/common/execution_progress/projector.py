@@ -213,7 +213,7 @@ class ProgressProjector:
             raise _PresentationError(f"RunEnd with active child Run for {event.run}")
         run.end = event
         if event.error is not None:
-            self._errors[Pointer.run(event.run)] = event.error
+            self._errors[Pointer.run(event.run, "error")] = event.error
 
         owner = (
             self._steps.get(run.begin.parent) if run.begin.parent is not None else None
@@ -358,7 +358,7 @@ class ProgressProjector:
         if any(child.begin.parent == event.step for child in self._runs.values()):
             raise _PresentationError(f"StepEnd with active child Run for {event.step}")
         if event.error is not None:
-            self._errors[Pointer.step(event.step)] = event.error
+            self._errors[Pointer.step(event.step, "error")] = event.error
         if (
             event.kind == "model"
             and event.status == "succeeded"

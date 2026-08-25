@@ -54,7 +54,7 @@ class RunExecutor:
         timing: ControlTiming = "immediate",
         request_id: str | None = None,
         reason: str | None = None,
-    ) -> RunControlRecord: ...
+    ) -> ControlRecord: ...
 
     def steer(
         self,
@@ -63,14 +63,14 @@ class RunExecutor:
         message: Message,
         timing: ControlTiming,
         request_id: str | None = None,
-    ) -> RunControlRecord: ...
+    ) -> ControlRecord: ...
 
     def cancel_control(
         self,
         *,
         run_id: str,
         index: int,
-    ) -> RunControlRecord: ...
+    ) -> ControlRecord: ...
 
     async def shutdown(self) -> None: ...
 ```
@@ -146,7 +146,7 @@ ID. The supplied or allocated ID must be globally unique in `RunStore`.
 1. validate the thread;
 2. reject a conflicting run ID;
 3. insert the pending `RunRecord`;
-4. insert start `RunControlRecord(index=0)` with effective `bindings`,
+4. insert start `ControlRecord(index=0)` with effective `bindings`,
    `limits`, `input`, and final `resources` snapshots;
 5. commit the accepted run before its owner task is scheduled.
 

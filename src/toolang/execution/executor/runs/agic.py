@@ -16,7 +16,7 @@ from toolang.lang.ast import AgicDecl
 from toolang.lang.errors import ToolangOutputError
 from toolang.lang.input import coerce_output
 
-from ...records import RunControlRecord
+from ...records import ControlRecord
 from ...types import StepPath, Pointer
 from ..common import (
     BoundRun,
@@ -40,7 +40,7 @@ class _AgicState:
     prepared: _AgicFrame
     layout: AgentLayout
     emit: EventEmitter
-    pending_inputs: Callable[[], tuple[RunControlRecord, ...]]
+    pending_inputs: Callable[[], tuple[ControlRecord, ...]]
     steer_before_next_step: Callable[[], bool]
     immediate_steer: Callable[[], bool]
     before_call: Callable[[], None]
@@ -60,7 +60,7 @@ class _AgicState:
     tool_calls: int = 0
     tool_call_sources: dict[str, tuple[int, int]] = field(default_factory=dict)
     initial_inputs: tuple[Pointer, ...] = ()
-    claimed_inputs: tuple[RunControlRecord, ...] = ()
+    claimed_inputs: tuple[ControlRecord, ...] = ()
     repairing_output: bool = False
 
     def before_model_call(self) -> None:
@@ -180,7 +180,11 @@ async def _execute(state: _AgicState) -> Message | None:
             raise
         if state.last_step is None:
             raise RuntimeError("model step did not record its index")
-        ref = Pointer.step(StepPath(state.prepared.run.run_id, (state.last_step,)))
+        ref = Pointer.step(
+            StepPath(state.prepared.run.run_id, (state.last_step,)),
+            "output",
+            "value",
+        )
         state.output = ref
         state.record_output(ref)
         if result.tool_calls:
@@ -211,6 +215,8 @@ def _append_canceled_tool_results(
     state.next_model_inputs = tuple(
         Pointer.step(
             StepPath(state.prepared.run.run_id, (source[0],)),
+            "output",
+            "value",
             source[1],
         )
         for call in calls

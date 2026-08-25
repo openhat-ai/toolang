@@ -142,6 +142,7 @@ class MessagesModelAdapter(ModelAdapter):
             _tool_call(block, fallback=f"tool-call-{index}")
             for index, block in sorted(tool_blocks.items())
         )
+
         parts: list[TextPart | ToolCallPart] = []
         output = "".join(text)
         if output:
@@ -165,6 +166,15 @@ class MessagesModelAdapter(ModelAdapter):
                 ),
             ),
         )
+
+    def request_payload(
+        self,
+        target: ModelTarget,
+        request: ModelCall,
+    ) -> Mapping[str, object]:
+        """Build the provider request body without invoking the provider."""
+
+        return messages_payload(target, request, stream=target.streaming)
 
 
 def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:

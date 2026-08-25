@@ -17,7 +17,7 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.policy import RunLimits
 from toolang.execution.records import (
-    RunControlRecord,
+    ControlRecord,
     RetryControlPayload,
     StartControlPayload,
     SteerControlPayload,
@@ -42,9 +42,16 @@ from toolang.lang.types import Array, Struct
 
 def test_pointer_accepts_run_step_control_and_json_paths() -> None:
     assert str(Pointer("run_1")) == "run_1"
-    assert Pointer("run_1.0.2/key~1name/1").anchor == "run_1.0.2"
-    assert Pointer("run_1.0.2/key~1name/1").pointer == "key~1name/1"
-    assert Pointer("run_1^3/_/1").anchor == "run_1^3"
+    step = Pointer("run_1.0.2/key~1name/1")
+    control = Pointer("run_1^3/payload/locals/0/value")
+
+    assert step.record_ref == "run_1.0.2"
+    assert step.field_ref == "/key~1name/1"
+    assert step.field_tokens == ("key/name", "1")
+    assert step.record_kind == "step"
+    assert control.record_ref == "run_1^3"
+    assert control.record_kind == "control"
+    assert Pointer("term_1").record_kind == "thread"
 
 
 @pytest.mark.parametrize(
@@ -52,10 +59,8 @@ def test_pointer_accepts_run_step_control_and_json_paths() -> None:
     (
         "",
         "run.01",
-        "run.0/key/",
-        "run.0/key~2name",
-        "run^0",
-        "run^x/_",
+        "run_1.0/key~2name",
+        "run_1^x/_",
         "run@file",
     ),
 )
@@ -64,8 +69,11 @@ def test_pointer_rejects_noncanonical_values(value: str) -> None:
         Pointer(value)
 
 
-def test_pointer_accepts_a_whole_value_slash() -> None:
-    assert Pointer("run/").pointer == ""
+def test_pointer_accepts_empty_field_tokens_and_bare_controls() -> None:
+    assert Pointer("term_1/").field_ref == "/"
+    assert Pointer("term_1/").field_tokens == ("",)
+    assert Pointer("term_1^0").field_ref == ""
+    assert Pointer("run_1^0").field_ref == ""
 
 
 def test_local_keeps_complete_type_separate_from_execution_dimension() -> None:
@@ -412,7 +420,7 @@ def test_control_protocol_uses_kind_to_restore_payload_variant(
     kind: Literal["steer", "stop"],
     payload: SteerControlPayload | StopControlPayload,
 ) -> None:
-    record = RunControlRecord(
+    record = ControlRecord(
         target="run_test",
         index=1,
         kind=kind,
@@ -431,8 +439,8 @@ def test_control_protocol_uses_kind_to_restore_payload_variant(
         finished_at=None,
     )
 
-    restored_record = TypeAdapter(RunControlRecord).validate_python(
-        TypeAdapter(RunControlRecord).dump_python(record, mode="json")
+    restored_record = TypeAdapter(ControlRecord).validate_python(
+        TypeAdapter(ControlRecord).dump_python(record, mode="json")
     )
     restored_info = TypeAdapter(ControlInfo).validate_python(
         TypeAdapter(ControlInfo).dump_python(info, mode="json")

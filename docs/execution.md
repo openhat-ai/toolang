@@ -31,9 +31,9 @@ perform the final pure record-to-schema conversion.
 
 `runs.db` contains:
 
-- `ThreadRecord` and `ThreadControlRecord`;
-- `RunRecord` and `RunControlRecord`;
-- `StepRecord` and complete step outputs;
+- `ThreadRecord`, `RunRecord`, and `StepRecord`;
+- one `ControlRecord` shape for run and thread mutations;
+- complete step outputs;
 - content-addressed model instructions, messages, and toolsets.
 
 Run events are transient facts emitted during execution. They are never stored
@@ -42,12 +42,10 @@ records and observes only new live events.
 
 Persistence makes completed history available after process restart and for
 later model calls. Toolang does not resume an unfinished run after its owner
-process exits. Schema upgrades migrate supported versions in place and fail
-without deleting records when an unsupported or conflicting schema is found.
-A store never opens a newer schema by rebuilding it as an older one. Read-only
-inspection opens SQLite in read-only mode, requires the current schema, and
-never applies migrations; the agent runtime performs supported forward
-migrations when it opens the store for execution.
+process exits. The current record-pointer schema has no predecessor migration:
+read-only and writable opens reject every older version without rewriting or
+deleting it. A store never opens a newer schema by rebuilding it as an older
+one.
 
 
 ## IDs And Indexes
@@ -77,9 +75,9 @@ execution of a run tree.
 
 ```text
 start(RunSpec, run_id?, request_id?, tracer?)          -> RunHandle
-stop(run_id, timing, request_id?, reason?)     -> RunControlRecord
-steer(run_id, message, timing, request_id?)    -> RunControlRecord
-cancel_control(run_id, index)                  -> RunControlRecord
+stop(run_id, timing, request_id?, reason?)     -> ControlRecord
+steer(run_id, message, timing, request_id?)    -> ControlRecord
+cancel_control(run_id, index)                  -> ControlRecord
 shutdown()                                     -> None
 ```
 
@@ -124,7 +122,7 @@ For every `RunEvent`, ordering is:
 ```text
 runtime produces event
   -> one transaction projects RunRecord or StepRecord
-     and updates referenced RunControlRecord statuses
+     and updates referenced ControlRecord statuses
   -> optional RunTracer observes the event
 ```
 
@@ -219,7 +217,7 @@ optional run id; omission selects the last visible top-level run. Recursive
 child runs are never thread anchors. An empty thread has no implicit anchor and
 cannot be forked or rewound. Every selected anchor must be terminal.
 
-Every successful mutation has a durable `ThreadControlRecord` and produces one
+Every successful mutation has a durable `ControlRecord` and produces one
 success event:
 
 ```text
@@ -243,6 +241,55 @@ processes with an agent-local file lock. Anchor resolution, terminal checks,
 the rewind idle check, and control insertion occur in one SQLite write
 transaction. The store keeps expected-head comparison as an internal defensive
 check; it is not part of the public manager API.
+
+
+## Record Pointers And Inspection
+
+One `Pointer` addresses a complete durable record or a field in its canonical
+JSON document:
+
+```text
+term_ab12                         ThreadRecord
+run_ab12                          RunRecord
+run_ab12.0                        StepRecord
+run_ab12^1                        ControlRecord
+run_ab12.0/output/value           StepRecord output value
+run_ab12^1/payload/locals/0/value first control Local value
+```
+
+Run ids occupy the reserved `run_` namespace; thread ids cannot begin with
+`run_`. The optional field ref starts with `/` and follows RFC 6901. Within one
+member name, `~0` represents `~` and `~1` represents `/`. Field selection never
+follows a stored reference implicitly.
+
+`too records` lists the four canonical schemas. `--filter/-f` selects record
+kinds and `--json` emits JSON Schema Draft 2020-12. Record inspection defaults
+to a compact human table; `--json` returns the selected record or field without
+an inspection envelope:
+
+```bash
+too records --filter step
+too alice inspect run_ab12.0
+too alice inspect run_ab12.0/output/value --json
+```
+
+`--focus` derives a semantic object from a complete Step record. Historical
+model and tool calls use their Step Pointer. Omitting the Pointer previews the
+first model call for a runnable without accepting or sending a run:
+
+```bash
+too alice inspect run_ab12.0 --focus model_call
+too alice inspect run_ab12.0 --focus model_request \
+  --default model=openai/gpt-5 --json
+too alice inspect --focus model_call \
+  --default runnable=agic:review
+too alice inspect --focus model_request \
+  --default runnable=agic:review \
+  --default model=openai/gpt-5 --json
+```
+
+`model_request` displays the provider-native JSON request body. Inspection does
+not send it.
 
 
 ## State Capture

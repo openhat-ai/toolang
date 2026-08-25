@@ -16,7 +16,7 @@ from toolang.execution.events import (
     StepEnd,
 )
 from toolang.execution.records import (
-    RunControlRecord,
+    ControlRecord,
     RunRecord,
     StepRecord,
 )
@@ -86,7 +86,7 @@ def accept_run_start(
     bindings: RunBindings | None = None,
     limits: RunLimits | None = None,
     resources: AgentResources | None = None,
-) -> tuple[RunRecord, RunControlRecord]:
+) -> tuple[RunRecord, ControlRecord]:
     """Accept a run with explicit default preparation snapshots for store tests."""
 
     resolved_input = (
@@ -214,7 +214,7 @@ def project_run_control(
     context: Mapping[str, Any] | None = None,
     request_id: str | None = None,
     created_at: str | None = None,
-) -> RunControlRecord:
+) -> ControlRecord:
     """Project one accepted steer or stop run control."""
 
     if kind == "start":
@@ -317,19 +317,29 @@ def _step_given(
             if isinstance(model, Mapping)
             else str(model or "test")
         )
+        call = facts.get("call")
         return ModelStepGiven(
             model=identity,
-            call=ModelCall(instructions="", messages=[]),
+            call=(
+                call
+                if isinstance(call, ModelCall)
+                else ModelCall(instructions="", messages=[])
+            ),
         )
     if kind == "tool":
         plugin = str(facts.get("plugin") or facts.get("tool") or "test")
+        call = facts.get("call")
         return ToolStepGiven(
             plugin=plugin,
-            call=ToolCall(
-                tool_call_id=str(facts.get("tool_call_id") or "test-call"),
-                call_id=str(facts.get("call_id") or "test-call"),
-                name=str(facts.get("name") or "test"),
-                input={},
+            call=(
+                call
+                if isinstance(call, ToolCall)
+                else ToolCall(
+                    tool_call_id=str(facts.get("tool_call_id") or "test-call"),
+                    call_id=str(facts.get("call_id") or "test-call"),
+                    name=str(facts.get("name") or "test"),
+                    input={},
+                )
             ),
         )
 

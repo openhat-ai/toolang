@@ -87,6 +87,20 @@ class ResponsesModelAdapter(ModelAdapter):
             on_event=on_event,
         )
 
+    def request_payload(
+        self,
+        target: ModelTarget,
+        request: ModelCall,
+    ) -> Mapping[str, object]:
+        """Build the provider request body without invoking the provider."""
+
+        _require_supported_inputs(target, request)
+        return response_payload(
+            target,
+            request,
+            stateful=_stateful_target(target),
+        )
+
 
 def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
     """Create the built-in Responses model adapter."""

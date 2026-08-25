@@ -117,13 +117,14 @@ Each root uses the durable dataclass's top-level fields:
 - `ControlRecord`: `target`, `index`, `kind`, `payload`, `request`,
   `status`, `timing`, `error`, and timestamps.
 
-`ControlRecord` is the single public domain model for controls. A run or thread
-control ref resolves to the same record shape; `kind` discriminates its payload.
-Existing internal run/thread narrowing does not create separate public schemas,
-and the public shape adds no synthetic scope field. Nested values use stable
-protocol projections rather than SQLite rows or private columns. Pointer fields
-are strings, `StepPath` values are strings, `ControlRef` values retain `target`
-and `index`, and `Local` values use one documented protocol shape.
+`ControlRecord` is the single domain model for controls. A run or thread control
+ref resolves to the same record shape; `kind` discriminates its payload. There
+are no scoped control record types and the shape adds no synthetic scope field.
+Scoped payload unions may retain run/thread names because they describe only
+the variants accepted by one operation. Nested values use stable protocol
+projections rather than SQLite rows or private columns. Pointer fields are
+strings, `StepPath` values are strings, `ControlRef` values retain `target` and
+`index`, and `Local` values use one documented protocol shape.
 
 A stored model step keeps `ModelCallRefs` in `given.call`; exact StepRecord JSON
 does not rebuild prompt blobs. Reconstruction belongs to `model_call` focus.
@@ -281,8 +282,8 @@ errors exit 1. No error path mutates the store.
 - `src/toolang/execution/types.py`: the single Pointer value and its canonical
   grammar parser; do not add wrapper types for record or field refs.
 - `src/toolang/execution/records.py`: canonical record and Pointer-bearing
-  payload codecs; expose one public `ControlRecord` shape regardless of internal
-  run/thread narrowing.
+  payload codecs; remove scoped control record types and use one
+  `ControlRecord`.
 - `src/toolang/execution/schemas.py`: record schemas, traversal metadata, and
   JSON Schema generation without store dependencies.
 - `src/toolang/execution/store.py`: exact record lookup, universal resolution,

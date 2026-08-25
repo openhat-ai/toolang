@@ -33,10 +33,10 @@ typed control payloads, the unified controls table, run and step records,
 events, SQLite codecs, projections, retry/rerun/child derivation, steer timing,
 repeat locals, and acceptance tests.
 
-It does not type all `given` and `noted` variants, rename the public
-`RunControlRecord` and `ThreadControlRecord` concepts, redesign resource
-selection, or migrate legacy control and record tables. Caller-facing request
-fields remain `request_id`; durable storage uses `request`.
+It does not type all `given` and `noted` variants, rename the public control
+record concepts, redesign resource selection, or migrate legacy control and
+record tables. Caller-facing request fields remain `request_id`; durable
+storage uses `request`.
 
 ## Values And Locals
 

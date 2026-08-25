@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from toolang.lang.ast import LetStmt
 from toolang.lang.input import resolve_input_parts
 
-from ...records import RunControlRecord, StepPath
+from ...records import ControlRecord, StepPath
 from ...types import Occurrence
 from ..common import BoundRun
 from ..common import Local
@@ -24,7 +24,7 @@ async def execute(
     locals: Mapping[str, Local],
     path: StepPath,
     statement: LetStmt,
-    controls: Sequence[RunControlRecord],
+    controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,
 ) -> Local:
     async def evaluate() -> Local:

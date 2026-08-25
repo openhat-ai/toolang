@@ -5,6 +5,7 @@ from toolang.lang.input import RunnableInput
 from toolang.execution.types import AgentResources
 
 from .executor import RunExecutor, RunHandle, RunSpec
+from .preview import prepare_model_call
 
 __all__ = [
     "AgentResources",
@@ -15,4 +16,5 @@ __all__ = [
     "RunnableInput",
     "RunLimits",
     "RunSpec",
+    "prepare_model_call",
 ]

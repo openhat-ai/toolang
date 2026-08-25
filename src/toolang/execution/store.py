@@ -30,7 +30,6 @@ from .records import (
     ForkControlPayload,
     PreparationControlPayload,
     RerunControlPayload,
-    RunControlPayload,
     RetryControlPayload,
     RewindControlPayload,
     StartControlPayload,
@@ -38,14 +37,12 @@ from .records import (
     StopControlPayload,
     control_payload_from_data,
     control_payload_to_data,
-    RunControlRecord,
+    ControlRecord,
     RunRecord,
     StepRecord,
     StoredModelStepGiven,
     StoredStepGiven,
     ThreadPeer,
-    ThreadControlPayload,
-    ThreadControlRecord,
     ThreadRecord,
     execution_error_from_data,
     execution_error_to_data,
@@ -79,12 +76,15 @@ from .types import (
     Occurrence,
     Pointer,
     TypedPointer,
+    value_from_protocol_data,
     validate_runtime_value,
-    validate_execution_id,
+    valid_run_id,
+    valid_thread_id,
 )
+from .schemas import Record, select_record_field
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 28
+_SCHEMA_VERSION = 29
 _MIGRATABLE_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
 
 
@@ -202,17 +202,20 @@ class RunStore:
         created_at: str,
         kind: Literal["start", "rerun"] = "start",
         source: str | None = None,
-    ) -> tuple[RunRecord, RunControlRecord]:
+    ) -> tuple[RunRecord, ControlRecord]:
         """Atomically insert one new run and its start control."""
 
-        validate_execution_id(run_id, label="run id")
-        validate_execution_id(thread, label="thread id")
+        if not valid_run_id(run_id):
+            raise ValueError(f"invalid run id: {run_id!r}")
+        if not valid_thread_id(thread):
+            raise ValueError(f"invalid thread id: {thread!r}")
         if kind == "start" and source is not None:
             raise ValueError("start control cannot have a source run")
         if kind == "rerun" and source is None:
             raise ValueError("rerun control requires a source run")
         if source is not None:
-            validate_execution_id(source, label="source run id")
+            if not valid_run_id(source):
+                raise ValueError(f"invalid source run id: {source!r}")
         _validate_request_id(request_id)
 
         with self._lock:
@@ -373,7 +376,7 @@ class RunStore:
                 raise
         if run_row is None or control_row is None:
             raise RuntimeError(f"run acceptance failed: {run_id}")
-        return _run_from_row(run_row), _run_control_from_row(control_row)
+        return _run_from_row(run_row), _control_from_row(control_row)
 
     def accept_run_control(
         self,
@@ -384,10 +387,11 @@ class RunStore:
         locals: tuple[Local, ...],
         request_id: str | None,
         created_at: str,
-    ) -> RunControlRecord:
+    ) -> ControlRecord:
         """Atomically allocate and accept one steer or stop control."""
 
-        validate_execution_id(run_id, label="run id")
+        if not valid_run_id(run_id):
+            raise ValueError(f"invalid run id: {run_id!r}")
         if kind not in {"steer", "stop"}:
             raise ValueError(f"unsupported run control kind: {kind}")
         if timing not in {"immediate", "next_step", "next_call"}:
@@ -497,7 +501,7 @@ class RunStore:
                 raise
         if inserted is None:
             raise RuntimeError(f"run control acceptance failed: {run_id}")
-        return _run_control_from_row(inserted)
+        return _control_from_row(inserted)
 
     def accept_retry(
         self,
@@ -512,10 +516,11 @@ class RunStore:
         locals: tuple[Local, ...] | None,
         request_id: str | None,
         created_at: str,
-    ) -> tuple[RunRecord, RunControlRecord, tuple[StepPath, ...]]:
+    ) -> tuple[RunRecord, ControlRecord, tuple[StepPath, ...]]:
         """Atomically cut one root run at a step and reopen it for execution."""
 
-        validate_execution_id(run_id, label="run id")
+        if not valid_run_id(run_id):
+            raise ValueError(f"invalid run id: {run_id!r}")
         _validate_request_id(request_id)
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -546,7 +551,7 @@ class RunStore:
                     (run.control.target, run.control.index),
                 ).fetchone()
                 preparation = (
-                    _run_control_from_row(preparation_row)
+                    _control_from_row(preparation_row)
                     if preparation_row is not None
                     else None
                 )
@@ -657,7 +662,7 @@ class RunStore:
             raise RuntimeError(f"run retry acceptance failed: {run_id}")
         return (
             _run_from_row(updated_run_row),
-            _run_control_from_row(control_row),
+            _control_from_row(control_row),
             ejected,
         )
 
@@ -772,7 +777,7 @@ class RunStore:
         run_id: str,
         index: int,
         canceled_at: str,
-    ) -> RunControlRecord:
+    ) -> ControlRecord:
         """Cancel one pending steer or stop control."""
 
         with self.write_transaction():
@@ -782,7 +787,7 @@ class RunStore:
             ).fetchone()
             if row is None:
                 raise ValueError(f"run control not found: {run_id}:{index}")
-            control = _run_control_from_row(row)
+            control = _control_from_row(row)
             if control.kind in {"start", "rerun"}:
                 raise ValueError("run entry controls cannot be canceled")
             if control.status != "pending":
@@ -811,7 +816,7 @@ class RunStore:
             ).fetchone()
         if updated is None:
             raise RuntimeError(f"run control cancellation failed: {run_id}:{index}")
-        return _run_control_from_row(updated)
+        return _control_from_row(updated)
 
     def claim_run_controls(
         self,
@@ -821,7 +826,8 @@ class RunStore:
     ) -> set[int]:
         """Atomically claim pending controls before runtime application."""
 
-        validate_execution_id(run_id, label="run id")
+        if not valid_run_id(run_id):
+            raise ValueError(f"invalid run id: {run_id!r}")
         control_indexes = tuple(dict.fromkeys(int(index) for index in indexes))
         if not control_indexes:
             return set()
@@ -847,10 +853,11 @@ class RunStore:
         peer: ThreadPeer | None = None,
         request_id: str | None = None,
         created_at: str | None = None,
-    ) -> tuple[ThreadRecord, ThreadControlRecord]:
+    ) -> tuple[ThreadRecord, ControlRecord]:
         """Atomically create one thread and its create control."""
 
-        validate_execution_id(thread_id, label="thread id")
+        if not valid_thread_id(thread_id):
+            raise ValueError(f"invalid thread id: {thread_id!r}")
         _validate_request_id(request_id)
         now = created_at or utc_now()
         effective_peer = peer or ThreadPeer()
@@ -912,7 +919,7 @@ class RunStore:
                 raise
         if thread_row is None or control_row is None:
             raise RuntimeError(f"thread creation failed: {thread_id}")
-        return _thread_from_row(thread_row), _thread_control_from_row(control_row)
+        return _thread_from_row(thread_row), _control_from_row(control_row)
 
     def fork_thread(
         self,
@@ -922,13 +929,16 @@ class RunStore:
         anchor: str | None,
         request_id: str | None,
         created_at: str,
-    ) -> tuple[ThreadRecord, ThreadControlRecord]:
+    ) -> tuple[ThreadRecord, ControlRecord]:
         """Atomically fork from one terminal anchor without copying runs."""
 
-        validate_execution_id(thread_id, label="thread id")
-        validate_execution_id(source, label="source thread id")
+        if not valid_thread_id(thread_id):
+            raise ValueError(f"invalid thread id: {thread_id!r}")
+        if not valid_thread_id(source):
+            raise ValueError(f"invalid source thread id: {source!r}")
         if anchor is not None:
-            validate_execution_id(anchor, label="anchor run id")
+            if not valid_run_id(anchor):
+                raise ValueError(f"invalid anchor run id: {anchor!r}")
         _validate_request_id(request_id)
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -1011,7 +1021,7 @@ class RunStore:
                 raise
         if thread_row is None or control_row is None:
             raise RuntimeError(f"thread fork failed: {thread_id}")
-        return _thread_from_row(thread_row), _thread_control_from_row(control_row)
+        return _thread_from_row(thread_row), _control_from_row(control_row)
 
     def rewind_thread(
         self,
@@ -1021,12 +1031,14 @@ class RunStore:
         request_id: str | None,
         expected_head: ControlRef,
         created_at: str,
-    ) -> tuple[ThreadRecord, ThreadControlRecord, tuple[str, ...]]:
+    ) -> tuple[ThreadRecord, ControlRecord, tuple[str, ...]]:
         """Atomically rewind one idle thread using optimistic head comparison."""
 
-        validate_execution_id(thread_id, label="thread id")
+        if not valid_thread_id(thread_id):
+            raise ValueError(f"invalid thread id: {thread_id!r}")
         if anchor is not None:
-            validate_execution_id(anchor, label="anchor run id")
+            if not valid_run_id(anchor):
+                raise ValueError(f"invalid anchor run id: {anchor!r}")
         _validate_request_id(request_id)
         index: int | None = None
         with self._lock:
@@ -1142,7 +1154,7 @@ class RunStore:
             raise RuntimeError(f"thread rewind failed: {thread_id}")
         return (
             _thread_from_row(updated_thread),
-            _thread_control_from_row(control_row),
+            _control_from_row(control_row),
             ejected,
         )
 
@@ -1161,25 +1173,28 @@ class RunStore:
             ).fetchall()
         return [_thread_from_row(row) for row in rows]
 
-    def get_thread_control(
-        self, *, thread_id: str, index: int
-    ) -> ThreadControlRecord | None:
+    def get_thread_control(self, *, thread_id: str, index: int) -> ControlRecord | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM controls WHERE scope = 'thread' AND target = ? AND \"index\" = ?",
                 (thread_id, index),
             ).fetchone()
-        return _thread_control_from_row(row) if row is not None else None
+        return _control_from_row(row) if row is not None else None
 
-    def list_thread_controls(
-        self, *, thread_id: str
-    ) -> tuple[ThreadControlRecord, ...]:
+    def list_thread_controls(self, *, thread_id: str) -> tuple[ControlRecord, ...]:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM controls WHERE scope = 'thread' AND target = ? ORDER BY \"index\" ASC",
                 (thread_id,),
             ).fetchall()
-        return tuple(_thread_control_from_row(row) for row in rows)
+        return tuple(_control_from_row(row) for row in rows)
+
+    def get_control(self, *, target: str, index: int) -> ControlRecord | None:
+        """Return one control using the target namespace to select its scope."""
+
+        if target.startswith("run_"):
+            return self.get_run_control(run_id=target, index=index)
+        return self.get_thread_control(thread_id=target, index=index)
 
     def update_thread_peer(
         self,
@@ -1318,6 +1333,50 @@ class RunStore:
 
         return self._resolve_value(value, seen=set())
 
+    def dereference_value_pointer(
+        self,
+        pointer: Pointer,
+        type_name: str,
+    ) -> Pointer:
+        """Return the field that stores a referenced value directly."""
+
+        current = pointer
+        seen: set[Pointer] = set()
+        while True:
+            if current in seen:
+                raise ValueError(f"value pointer cycle: {current}")
+            seen.add(current)
+            selected = self.resolve_pointer(current)
+            value = value_from_protocol_data(selected, type_name)
+            if isinstance(value, TypedPointer):
+                current = value.pointer
+                continue
+            validate_runtime_value(value, type_name, path=f"pointer {current}")
+            return current
+
+    def get_record(self, pointer: Pointer) -> Record | None:
+        """Resolve the record ref of one Pointer without selecting a field."""
+
+        record_ref = pointer.record_ref
+        if pointer.record_kind == "thread":
+            return self.get_thread(thread_id=record_ref)
+        if pointer.record_kind == "run":
+            return self.get_run(run_id=record_ref)
+        if pointer.record_kind == "step":
+            return self.get_step(path=StepPath.parse(record_ref))
+        target, raw_index = record_ref.split("^", 1)
+        return self.get_control(target=target, index=int(raw_index))
+
+    def resolve_pointer(self, pointer: Pointer) -> object:
+        """Resolve one Pointer to a complete record or canonical JSON field."""
+
+        record = self.get_record(pointer)
+        if record is None:
+            raise ValueError(f"record not found: {pointer.record_ref}")
+        if not pointer.field_ref:
+            return record
+        return select_record_field(record, pointer)
+
     def resolve_error(self, error: ExecutionError) -> str:
         """Resolve one run or step error pointer to its concrete message."""
 
@@ -1345,26 +1404,12 @@ class RunStore:
             return error
         if error in seen:
             raise ValueError(f"error pointer cycle: {error}")
-        if "^" in error.anchor:
-            raise ValueError(f"error pointer cannot target a control: {error}")
-        if error.pointer:
-            raise ValueError(f"error pointer cannot select a value: {error}")
         seen.add(error)
         try:
-            target, *raw_indices = error.anchor.split(".")
-            if raw_indices:
-                path = StepPath(target, tuple(int(index) for index in raw_indices))
-                with self._lock:
-                    row = self._conn.execute(
-                        "SELECT * FROM steps WHERE run = ? AND path = ?",
-                        (path.run, path.local),
-                    ).fetchone()
-                source = _step_from_row(row).error if row is not None else None
-            else:
-                run = self.get_run(run_id=target)
-                source = run.error if run is not None else None
-            if source is None:
+            selected = self.resolve_pointer(error)
+            if selected is None:
                 raise ValueError(f"error pointer target has no error: {error}")
+            source = execution_error_from_data(selected)
             return self._resolve_error(source, seen=seen)
         finally:
             seen.remove(error)
@@ -1376,7 +1421,11 @@ class RunStore:
                 raise ValueError(f"value pointer cycle: {pointer}")
             seen.add(pointer)
             try:
-                result = self._resolve_pointer(pointer, seen=seen)
+                selected = self.resolve_pointer(pointer)
+                result = self._resolve_value(
+                    value_from_protocol_data(selected, value.type),
+                    seen=seen,
+                )
                 validate_runtime_value(result, value.type, path=f"pointer {pointer}")
                 return result
             finally:
@@ -1402,57 +1451,6 @@ class RunStore:
         if isinstance(value, tuple | list):
             return tuple(self._resolve_value(item, seen=seen) for item in value)
         return value
-
-    def _resolve_pointer(self, pointer: Pointer, *, seen: set[Pointer]) -> object:
-        anchor = pointer.anchor
-        suffix = pointer.pointer
-        if "^" in anchor:
-            target, raw_index = anchor.split("^", 1)
-            control = self.get_run_control(run_id=target, index=int(raw_index))
-            if control is None or not isinstance(
-                control.payload,
-                StartControlPayload
-                | RerunControlPayload
-                | RetryControlPayload
-                | SteerControlPayload
-                | StopControlPayload,
-            ):
-                raise ValueError(f"control value pointer target is missing: {pointer}")
-            segments = _json_pointer_segments(suffix)
-            if not segments:
-                raise ValueError(f"control value pointer requires a local: {pointer}")
-            locals_value = control.payload.locals
-            if locals_value is None:
-                raise ValueError(f"control locals are inherited: {pointer}")
-            local = next(
-                (item for item in locals_value if item.name == segments[0]),
-                None,
-            )
-            if local is None:
-                raise ValueError(f"control local is missing: {pointer}")
-            value = self._resolve_value(local.value, seen=seen)
-            return _select_json_value(value, segments[1:], source=pointer)
-        target, *raw_indices = anchor.split(".")
-        local: Local | None
-        if raw_indices:
-            path = StepPath(target, tuple(int(index) for index in raw_indices))
-            with self._lock:
-                row = self._conn.execute(
-                    "SELECT * FROM steps WHERE run = ? AND path = ?",
-                    (path.run, path.local),
-                ).fetchone()
-            local = _step_from_row(row).output if row is not None else None
-        else:
-            run = self.get_run(run_id=target)
-            local = run.output if run is not None else None
-        if local is None:
-            raise ValueError(f"value pointer target has no output: {pointer}")
-        value = self._resolve_value(local.value, seen=seen)
-        return _select_json_value(
-            value,
-            _json_pointer_segments(suffix),
-            source=pointer,
-        )
 
     def run_output_text(self, *, run_id: str) -> str:
         """Return the text projection of one run's durable output."""
@@ -1578,10 +1576,10 @@ class RunStore:
             record.thread_id: record
             for record in (_thread_from_row(row) for row in thread_rows)
         }
-        controls_by_thread: dict[str, list[ThreadControlRecord]] = {}
+        controls_by_thread: dict[str, list[ControlRecord]] = {}
         for row in control_rows:
-            control = _thread_control_from_row(row)
-            controls_by_thread.setdefault(control.thread, []).append(control)
+            control = _control_from_row(row)
+            controls_by_thread.setdefault(control.target, []).append(control)
         runs_by_thread: dict[str, list[RunRecord]] = {}
         for row in run_rows:
             run = _run_from_row(row)
@@ -1863,7 +1861,7 @@ class RunStore:
                 (root.control.target, root.control.index),
             ).fetchone()
             control = (
-                _run_control_from_row(control_row) if control_row is not None else None
+                _control_from_row(control_row) if control_row is not None else None
             )
             if (
                 control is not None
@@ -2019,6 +2017,19 @@ class RunStore:
             (_step_from_row(row) for row in rows),
             key=lambda step: step.path.indices,
         )
+
+    def get_step(self, *, path: StepPath) -> StepRecord | None:
+        """Return one visible durable step by its complete path."""
+
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT * FROM steps
+                WHERE run = ? AND path = ? AND ejected_by_target IS NULL
+                """,
+                (path.run, path.local),
+            ).fetchone()
+        return _step_from_row(row) if row is not None else None
 
     def list_steps_for_runs(
         self, *, run_ids: Sequence[str], include_ejected: bool = False
@@ -2274,20 +2285,20 @@ class RunStore:
         )
         return current[-limit:]
 
-    def get_run_control(self, *, run_id: str, index: int) -> RunControlRecord | None:
+    def get_run_control(self, *, run_id: str, index: int) -> ControlRecord | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM controls WHERE scope = 'run' AND target = ? AND \"index\" = ?",
                 (run_id, index),
             ).fetchone()
-        return _run_control_from_row(row) if row is not None else None
+        return _control_from_row(row) if row is not None else None
 
     def list_run_controls(
         self,
         *,
         run_id: str,
         kind: ControlKind | None = None,
-    ) -> tuple[RunControlRecord, ...]:
+    ) -> tuple[ControlRecord, ...]:
         clauses = ["scope = 'run'", "target = ?"]
         params: list[object] = [run_id]
         if kind is not None:
@@ -2303,20 +2314,20 @@ class RunStore:
                 """,
                 tuple(params),
             ).fetchall()
-        return tuple(_run_control_from_row(row) for row in rows)
+        return tuple(_control_from_row(row) for row in rows)
 
     def list_run_controls_for_runs(
         self,
         *,
         run_ids: Sequence[str],
         kind: ControlKind | None = None,
-    ) -> dict[str, tuple[RunControlRecord, ...]]:
+    ) -> dict[str, tuple[ControlRecord, ...]]:
         """Return controls for several runs, grouped by run id."""
 
         selected = tuple(dict.fromkeys(item for item in run_ids if item))
         if not selected:
             return {}
-        grouped: dict[str, list[RunControlRecord]] = {run_id: [] for run_id in selected}
+        grouped: dict[str, list[ControlRecord]] = {run_id: [] for run_id in selected}
         with self._lock:
             for offset in range(0, len(selected), 500):
                 chunk = selected[offset : offset + 500]
@@ -2335,8 +2346,8 @@ class RunStore:
                     params,
                 ).fetchall()
                 for row in rows:
-                    control = _run_control_from_row(row)
-                    grouped[control.run].append(control)
+                    control = _control_from_row(row)
+                    grouped[control.target].append(control)
         return {run_id: tuple(controls) for run_id, controls in grouped.items()}
 
     def pending_run_controls(
@@ -2344,7 +2355,7 @@ class RunStore:
         *,
         run_id: str,
         kind: ControlKind,
-    ) -> tuple[RunControlRecord, ...]:
+    ) -> tuple[ControlRecord, ...]:
         """Return accepted run_controls not yet consumed by an execution event."""
 
         with self._lock:
@@ -2357,7 +2368,7 @@ class RunStore:
                 """,
                 (run_id, kind),
             ).fetchall()
-        return tuple(_run_control_from_row(row) for row in rows)
+        return tuple(_control_from_row(row) for row in rows)
 
     def latest_run_control_revision(self) -> int:
         """Return the latest durable run-control change revision."""
@@ -2372,7 +2383,7 @@ class RunStore:
         self,
         *,
         after_revision: int,
-    ) -> tuple[int, tuple[RunControlRecord, ...]]:
+    ) -> tuple[int, tuple[ControlRecord, ...]]:
         """Return controls changed after one process-local polling cursor."""
 
         if after_revision < 0:
@@ -2390,7 +2401,7 @@ class RunStore:
             return after_revision, ()
         return (
             max(int(row["_revision"]) for row in rows),
-            tuple(_run_control_from_row(row) for row in rows),
+            tuple(_control_from_row(row) for row in rows),
         )
 
     def _next_run_control_revision(self) -> int:
@@ -2823,16 +2834,10 @@ def _step_kind_from_data(value: object) -> StepKind:
     return cast(StepKind, value)
 
 
-def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
-    kind = cast(
-        Literal["start", "rerun", "retry", "steer", "stop"],
-        row["kind"],
-    )
-    payload = cast(
-        RunControlPayload,
-        control_payload_from_data(kind, _load_json(str(row["payload"]))),
-    )
-    return RunControlRecord(
+def _control_from_row(row: sqlite3.Row) -> ControlRecord:
+    kind = cast(ControlKind, row["kind"])
+    payload = control_payload_from_data(kind, _load_json(str(row["payload"])))
+    return ControlRecord(
         target=str(row["target"]),
         index=int(row["index"]),
         kind=kind,
@@ -2846,65 +2851,12 @@ def _run_control_from_row(row: sqlite3.Row) -> RunControlRecord:
     )
 
 
-def _thread_control_from_row(row: sqlite3.Row) -> ThreadControlRecord:
-    kind = cast(Literal["create", "fork", "rewind"], row["kind"])
-    payload = cast(
-        ThreadControlPayload,
-        control_payload_from_data(kind, _load_json(str(row["payload"]))),
-    )
-    return ThreadControlRecord(
-        target=str(row["target"]),
-        index=int(row["index"]),
-        kind=kind,
-        payload=payload,
-        request=str(row["request"]) if row["request"] is not None else None,
-        status=cast(ControlStatus, row["status"]),
-        created_at=str(row["created_at"]),
-        finished_at=str(row["finished_at"]) if row["finished_at"] is not None else None,
-    )
-
-
 def _replay_messages_from_step(step: StepRecord) -> list[Message]:
     role = step_message_role(step.kind)
     if role is None or not step.output:
         return []
     parts = parts_from_local(step.output)
     return [Message(role=role, parts=parts)] if parts else []
-
-
-def _json_pointer_segments(pointer: str | None) -> tuple[str, ...]:
-    if not pointer:
-        return ()
-    return tuple(
-        segment.replace("~1", "/").replace("~0", "~") for segment in pointer.split("/")
-    )
-
-
-def _select_json_value(
-    value: object,
-    segments: Sequence[str],
-    *,
-    source: Pointer,
-) -> object:
-    current = value
-    for segment in segments:
-        if isinstance(current, Mapping):
-            if segment not in current:
-                raise ValueError(f"value pointer key is missing: {source}")
-            current = cast(Mapping[str, object], current)[segment]
-            continue
-        if isinstance(current, Sequence) and not isinstance(
-            current, (str, bytes, bytearray)
-        ):
-            if not segment.isascii() or not segment.isdigit():
-                raise ValueError(f"value pointer index is invalid: {source}")
-            index = int(segment)
-            if index >= len(current):
-                raise ValueError(f"value pointer index is out of range: {source}")
-            current = current[index]
-            continue
-        raise ValueError(f"value pointer traverses a scalar: {source}")
-    return current
 
 
 def _recent_valid_model_history(

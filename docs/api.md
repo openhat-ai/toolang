@@ -903,7 +903,7 @@ Every payload retains its canonical `type` discriminator. A `part_begin`
 payload uses `part_type` for the message-part kind so it does not collide with
 the event discriminator.
 
-Run control acceptance and status are durable `RunControlRecord` truth, not
+Run control acceptance and status are durable `ControlRecord` truth, not
 synthetic stream events. A thread stream may additionally carry
 `thread_created`, `thread_forked`, and `thread_rewound`, and aggregates live run
 events belonging to that thread.

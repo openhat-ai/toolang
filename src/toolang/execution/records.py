@@ -260,14 +260,6 @@ ControlPayloadField = Annotated[
     ControlPayload,
     BeforeValidator(_control_payload_variant),
 ]
-RunControlPayloadField = Annotated[
-    RunControlPayload,
-    BeforeValidator(_control_payload_variant),
-]
-ThreadControlPayloadField = Annotated[
-    ThreadControlPayload,
-    BeforeValidator(_control_payload_variant),
-]
 
 
 @dataclass(frozen=True, slots=True)
@@ -365,8 +357,8 @@ class StepRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class ControlRecordBase:
-    """Fields shared by durable run and thread controls."""
+class ControlRecord:
+    """One durable control sent to a run or thread."""
 
     target: str
     index: int
@@ -387,30 +379,6 @@ class ControlRecordBase:
         expected = _CONTROL_PAYLOAD_TYPES[self.kind]
         if not isinstance(self.payload, expected):
             raise TypeError(f"{self.kind} control has an invalid payload")
-
-
-@dataclass(frozen=True, slots=True)
-class RunControlRecord(ControlRecordBase):
-    """One durable control sent to a run."""
-
-    kind: Literal["start", "rerun", "retry", "steer", "stop"]
-    payload: RunControlPayloadField
-
-    @property
-    def run(self) -> RunId:
-        return self.target
-
-
-@dataclass(frozen=True, slots=True)
-class ThreadControlRecord(ControlRecordBase):
-    """One durable mutation applied to a thread."""
-
-    kind: Literal["create", "fork", "rewind"]
-    payload: ThreadControlPayloadField
-
-    @property
-    def thread(self) -> str:
-        return self.target
 
 
 _PART_STORAGE_TYPES = {
@@ -1416,7 +1384,7 @@ def execution_error_message(
 ) -> str | None:
     """Resolve one execution error to a displayable message when possible."""
 
-    by_pointer = {Pointer(_step_pointer(step.path)): step for step in steps}
+    by_pointer = {Pointer.step(step.path, "error"): step for step in steps}
     seen: set[Pointer] = set()
     current = error
     while isinstance(current, Pointer):
@@ -1490,7 +1458,3 @@ def _validate_control_locals(locals: tuple[Local, ...]) -> None:
         raise ValueError("control locals must be named")
     if len(names) != len(set(names)):
         raise ValueError("control local names must be unique")
-
-
-def _step_pointer(path: StepPath) -> str:
-    return str(path)

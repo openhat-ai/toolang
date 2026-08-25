@@ -20,7 +20,7 @@ from toolang.api.schemas import (
 from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
 from toolang.execution.executor import RunHandle, RunSpec
-from toolang.execution.records import RunControlRecord, RunRecord
+from toolang.execution.records import ControlRecord, RunRecord
 from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
 from toolang.lang.input import resolve_runnable_input
@@ -311,7 +311,7 @@ def _terminal_root_or_409(core: AgentCore, run_id: str) -> RunRecord:
 def _control_result(
     core: AgentCore,
     run_id: str,
-    control: RunControlRecord,
+    control: ControlRecord,
 ) -> RunCommandResult:
     run = _run_or_404(core, run_id)
     detail = core.history.get_run(run_id)

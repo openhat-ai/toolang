@@ -122,6 +122,15 @@ class GenerateContentModelAdapter(ModelAdapter):
             ),
         )
 
+    def request_payload(
+        self,
+        target: ModelTarget,
+        request: ModelCall,
+    ) -> Mapping[str, object]:
+        """Build the provider request body without invoking the provider."""
+
+        return generate_content_payload(target, request)
+
 
 def create_model_adapter(config: Mapping[str, object]) -> ModelAdapter:
     """Create the built-in Generate Content adapter."""

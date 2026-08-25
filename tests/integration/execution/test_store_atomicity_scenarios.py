@@ -84,7 +84,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 28
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 29
         finally:
             connection.close()
     finally:
@@ -542,7 +542,16 @@ def test_step_and_control_projection_roll_back_as_one_write_unit(
                 store.begin_step(
                     path=StepPath("run_atomic_event", (0,)),
                     kind="value",
-                    input=(Pointer.control("run_atomic_event", control.index, "_"),),
+                    input=(
+                        Pointer.control(
+                            "run_atomic_event",
+                            control.index,
+                            "payload",
+                            "locals",
+                            0,
+                            "value",
+                        ),
+                    ),
                     occurrence=None,
                     given=LetStmt(span=Span(line=1), value="test"),
                     started_at="2026-01-01T00:00:02Z",
@@ -650,7 +659,7 @@ def test_run_control_revision_only_advances_when_control_state_changes(
         )
 
         canceled = store.cancel_run_control(
-            run_id=steer.run,
+            run_id=steer.target,
             index=steer.index,
             canceled_at="2026-01-01T00:00:02Z",
         )
@@ -719,17 +728,17 @@ def test_claimed_control_cannot_be_canceled_before_its_event_is_persisted(
         )
 
         assert store.claim_run_controls(
-            run_id=control.run,
+            run_id=control.target,
             indexes=(control.index,),
         ) == {control.index}
         with pytest.raises(ValueError, match="already being applied"):
             store.cancel_run_control(
-                run_id=control.run,
+                run_id=control.target,
                 index=control.index,
                 canceled_at="2026-01-01T00:00:02Z",
             )
         unchanged = store.get_run_control(
-            run_id=control.run,
+            run_id=control.target,
             index=control.index,
         )
         assert unchanged is not None

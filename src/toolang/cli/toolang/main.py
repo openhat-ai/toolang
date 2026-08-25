@@ -39,6 +39,7 @@ from .commands import program as program_commands
 from .commands import runtime as runtime_commands
 from .commands import job as job_commands
 from .commands import model_catalog as model_catalog_commands
+from .commands import records as records_commands
 from .commands import thread as thread_commands
 
 _PREFIX_AGENT: ContextVar[str | None] = ContextVar(
@@ -79,6 +80,7 @@ _INSPECTION_PANEL_COMMAND_ORDER = (
     "inspect",
     "caps",
     "models",
+    "records",
     "providers",
     "adapters",
     "tools",
@@ -308,8 +310,14 @@ _registered_command(
 )(thread_commands.runs_command)
 _registered_command(
     "inspect",
-    help="Inspect a thread or run.",
-    no_args_is_help=True,
+    help="Inspect a durable record, field, or focused call.",
+    epilog=(
+        "A Pointer is a RECORD_REF followed by optional /FIELD segments. "
+        "Run ids select runs, dotted run "
+        "paths select steps, ids with ^INDEX select controls, and other ids "
+        "select threads. Field refs use RFC 6901 escaping. Use too records "
+        "for complete schemas."
+    ),
     cls=RequiredPrefixAgentCommand,
     rich_help_panel=INSPECTION_COMMAND_PANEL,
 )(thread_commands.inspect_command)
@@ -356,6 +364,11 @@ _registered_command(
     rich_help_panel=CONTROL_COMMAND_PANEL,
 )(thread_commands.fork_command)
 
+_registered_command(
+    "records",
+    help="Inspect durable record schemas.",
+    rich_help_panel=INSPECTION_COMMAND_PANEL,
+)(records_commands.records_command)
 _registered_command(
     "models",
     help="Inspect models.",

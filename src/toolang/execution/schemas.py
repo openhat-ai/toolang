@@ -4,19 +4,23 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, fields
-from typing import Literal
+from typing import Any, Literal, cast, get_args
+
+from pydantic import TypeAdapter
 
 from toolang.base.types.message import Part, message_summary
 from toolang.base.types.run import ModelCall
+from toolang.lang.ast import FlowStmt
 from .records import (
     ControlPayloadField,
     PreparationControlPayload,
-    RunControlRecord,
+    ControlRecord,
     RunRecord,
     StepRecord,
     StoredModelStepGiven,
     ThreadPeer,
     ThreadRecord,
+    stored_step_given_to_data,
     step_message_role,
 )
 from .types import (
@@ -41,6 +45,286 @@ from .types import (
     validate_step_noted,
 )
 from .values import parts_from_local
+
+
+Record = ThreadRecord | ControlRecord | RunRecord | StepRecord
+_RECORD_TYPES = {
+    "thread": ThreadRecord,
+    "control": ControlRecord,
+    "run": RunRecord,
+    "step": StepRecord,
+}
+_RECORD_ADAPTERS = {
+    kind: TypeAdapter(record_type) for kind, record_type in _RECORD_TYPES.items()
+}
+
+
+def record_kinds() -> tuple[str, ...]:
+    """Return record kinds in their public discovery order."""
+
+    return tuple(_RECORD_TYPES)
+
+
+def record_variants(kind: str) -> tuple[tuple[str, str, str], ...]:
+    """Return field, discriminator, and schema names for record-owned unions."""
+
+    if kind not in _RECORD_TYPES:
+        raise ValueError(f"unknown record kind: {kind}")
+    if kind == "control":
+        schema = record_schema(kind)
+        return tuple(
+            ("payload", _control_variant_name(name), name)
+            for name in _schema_reference_names(schema["properties"]["payload"])
+        )
+    if kind == "step":
+        return (
+            *(
+                ("given", statement_type.kind, statement_type.__name__)
+                for statement_type in _flow_statement_types()
+            ),
+            ("given", "model", "StoredModelStepGiven"),
+            ("given", "tool", "ToolStepGiven"),
+        )
+    return ()
+
+
+def record_schema(kind: str) -> dict[str, Any]:
+    """Return the canonical JSON Schema for one durable record kind."""
+
+    adapter = _RECORD_ADAPTERS.get(kind)
+    if adapter is None:
+        raise ValueError(f"unknown record kind: {kind}")
+    schema = adapter.json_schema(mode="serialization")
+    if kind == "control":
+        _add_control_payload_discriminators(schema)
+    elif kind == "step":
+        _add_flow_statement_discriminators(schema)
+        _add_execution_error_schema(schema)
+    elif kind == "run":
+        _add_execution_error_schema(schema)
+    _require_canonical_object_fields(schema)
+    return {"$schema": "https://json-schema.org/draft/2020-12/schema", **schema}
+
+
+def records_schema(kinds: Sequence[str] | None = None) -> dict[str, Any]:
+    """Return a named JSON Schema bundle for selected durable records."""
+
+    selected = tuple(dict.fromkeys(kinds)) if kinds is not None else record_kinds()
+    if not selected:
+        raise ValueError("record schema selection must not be empty")
+    definitions: dict[str, object] = {}
+    roots: list[dict[str, str]] = []
+    for kind in selected:
+        schema = dict(record_schema(kind))
+        schema.pop("$schema", None)
+        nested = cast(dict[str, object], schema.pop("$defs", {}))
+        for name, definition in nested.items():
+            previous = definitions.get(name)
+            if previous is not None and previous != definition:
+                raise ValueError(f"conflicting record schema definition: {name}")
+            definitions[name] = definition
+        name = cast(type[Any], _RECORD_TYPES[kind]).__name__
+        definitions[name] = schema
+        roots.append({"$ref": f"#/$defs/{name}"})
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Toolang execution records",
+        "oneOf": roots,
+        "$defs": definitions,
+    }
+
+
+def record_to_data(record: Record) -> dict[str, object]:
+    """Serialize one durable record to its canonical public JSON document."""
+
+    kind = record_kind(record)
+    data = cast(
+        dict[str, object],
+        _RECORD_ADAPTERS[kind].dump_python(record, mode="json"),
+    )
+    if isinstance(record, StepRecord):
+        data["given"] = stored_step_given_to_data(record.kind, record.given)
+    return data
+
+
+def record_from_data(kind: str, data: object) -> Record:
+    """Validate one canonical record JSON document."""
+
+    adapter = _RECORD_ADAPTERS.get(kind)
+    if adapter is None:
+        raise ValueError(f"unknown record kind: {kind}")
+    record = adapter.validate_python(data)
+    if record_to_data(record) != data:
+        raise ValueError(f"{kind} record requires canonical JSON fields")
+    return record
+
+
+def _add_flow_statement_discriminators(schema: dict[str, Any]) -> None:
+    definitions = cast(dict[str, dict[str, Any]], schema.get("$defs", {}))
+    for statement_type in _flow_statement_types():
+        definition = definitions.get(statement_type.__name__)
+        if definition is None:
+            continue
+        properties = cast(dict[str, object], definition.setdefault("properties", {}))
+        properties["kind"] = {
+            "const": statement_type.kind,
+            "title": "Kind",
+            "type": "string",
+        }
+        required = cast(list[str], definition.setdefault("required", []))
+        if "kind" not in required:
+            required.insert(0, "kind")
+
+
+def _add_control_payload_discriminators(schema: dict[str, Any]) -> None:
+    payload = cast(dict[str, object], schema["properties"])["payload"]
+    schema_names = _schema_reference_names(payload)
+    kinds = cast(tuple[str, ...], get_args(ControlKind))
+    if len(schema_names) != len(kinds):
+        raise RuntimeError("control kind and payload schemas are inconsistent")
+    schema["allOf"] = [
+        {
+            "if": {
+                "properties": {"kind": {"const": kind}},
+                "required": ["kind"],
+            },
+            "then": {
+                "properties": {
+                    "payload": {"$ref": f"#/$defs/{schema_name}"},
+                }
+            },
+        }
+        for kind, schema_name in zip(kinds, schema_names, strict=True)
+    ]
+
+
+def _add_execution_error_schema(schema: dict[str, Any]) -> None:
+    properties = cast(dict[str, object], schema["properties"])
+    properties["error"] = {
+        "anyOf": [
+            {"type": "string"},
+            {
+                "type": "object",
+                "properties": {
+                    "?": {"type": "string", "pattern": "^@.+"},
+                },
+                "required": ["?"],
+            },
+            {"type": "null"},
+        ],
+        "title": "Error",
+    }
+
+
+def _flow_statement_types() -> tuple[type[Any], ...]:
+    union = get_args(FlowStmt)[0]
+    return tuple(cast(type[Any], get_args(variant)[0]) for variant in get_args(union))
+
+
+def _schema_reference_names(schema: object) -> tuple[str, ...]:
+    if not isinstance(schema, Mapping):
+        return ()
+    mapping = cast(Mapping[str, object], schema)
+    reference = mapping.get("$ref")
+    if isinstance(reference, str):
+        return (reference.rsplit("/", 1)[-1],)
+    names: list[str] = []
+    for key in ("anyOf", "oneOf"):
+        variants = mapping.get(key)
+        if isinstance(variants, Sequence) and not isinstance(
+            variants, (str, bytes, bytearray)
+        ):
+            for variant in variants:
+                names.extend(_schema_reference_names(variant))
+    return tuple(names)
+
+
+def _control_variant_name(schema_name: str) -> str:
+    suffix = "ControlPayload"
+    stem = schema_name[: -len(suffix)] if schema_name.endswith(suffix) else schema_name
+    return stem.lower()
+
+
+def _require_canonical_object_fields(schema: object, *, root: bool = True) -> None:
+    if isinstance(schema, Mapping):
+        mapping = cast(dict[str, object], schema)
+        properties = mapping.get("properties")
+        if mapping.get("type") == "object" and isinstance(properties, Mapping):
+            if root:
+                mapping["required"] = list(cast(Mapping[str, object], properties))
+            mapping["additionalProperties"] = False
+        for value in tuple(mapping.values()):
+            _require_canonical_object_fields(value, root=False)
+        return
+    if isinstance(schema, list):
+        for value in schema:
+            _require_canonical_object_fields(value, root=False)
+
+
+def record_kind(record: Record) -> Literal["thread", "control", "run", "step"]:
+    """Return the public kind of one durable record."""
+
+    if isinstance(record, ThreadRecord):
+        return "thread"
+    if isinstance(record, ControlRecord):
+        return "control"
+    if isinstance(record, RunRecord):
+        return "run"
+    if isinstance(record, StepRecord):
+        return "step"
+    raise TypeError(f"unsupported record: {type(record).__name__}")
+
+
+def select_record_field(record: Record, pointer: Pointer) -> object:
+    """Select one RFC 6901 field from a record's canonical JSON document."""
+
+    kind = record_kind(record)
+    if pointer.record_kind != kind:
+        raise ValueError(
+            f"pointer identifies {pointer.record_kind}, not {kind}: {pointer}"
+        )
+    return select_json_field(
+        record_to_data(record),
+        pointer.field_tokens,
+        source=str(pointer),
+    )
+
+
+def select_json_field(
+    value: object,
+    tokens: Sequence[str],
+    *,
+    source: str,
+) -> object:
+    """Apply decoded RFC 6901 reference tokens to canonical JSON data."""
+
+    selected = value
+    for token in tokens:
+        if isinstance(selected, Mapping):
+            mapping = cast(Mapping[str, object], selected)
+            if token not in mapping:
+                raise ValueError(f"field does not exist ({token!r}): {source}")
+            selected = mapping[token]
+            continue
+        if isinstance(selected, list):
+            if token == "-" or not _canonical_array_index(token):
+                raise ValueError(f"invalid array index in field ref: {source}")
+            index = int(token)
+            if index >= len(selected):
+                raise ValueError(f"array index is out of range: {source}")
+            selected = selected[index]
+            continue
+        raise ValueError(f"field ref traverses a scalar: {source}")
+    return selected
+
+
+def _canonical_array_index(value: str) -> bool:
+    return (
+        bool(value)
+        and value.isascii()
+        and value.isdigit()
+        and (value == "0" or not value.startswith("0"))
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,7 +486,7 @@ class RunInfo:
         cls,
         run: RunRecord,
         *,
-        controls: Sequence[RunControlRecord],
+        controls: Sequence[ControlRecord],
         steps: Sequence[StepRecord],
         root_run_id: str,
         error_message: str | None,
@@ -270,7 +554,7 @@ class ControlInfo:
     finished_at: str | None
 
     @classmethod
-    def from_record(cls, run: RunRecord, control: RunControlRecord) -> ControlInfo:
+    def from_record(cls, run: RunRecord, control: ControlRecord) -> ControlInfo:
         return cls(
             run_id=run.id,
             index=control.index,
@@ -357,7 +641,7 @@ class RunDetail(RunInfo):
         run: RunRecord,
         *,
         steps: Sequence[StepRecord],
-        controls: Sequence[RunControlRecord] = (),
+        controls: Sequence[ControlRecord] = (),
         model_calls: Mapping[StepPath, ModelCall] | None = None,
         root_run_id: str,
         error_message: str | None,
@@ -416,7 +700,7 @@ def _thread_channel(thread_id: str, origin: str) -> str:
 
 def _preparation_payload(
     run: RunRecord,
-    controls: Sequence[RunControlRecord],
+    controls: Sequence[ControlRecord],
 ) -> PreparationControlPayload:
     for control in controls:
         if control.index == run.control.index and isinstance(

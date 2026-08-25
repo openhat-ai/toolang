@@ -6,7 +6,8 @@ project run and step truth.
 
 ## Paths And References
 
-`StepPath` globally identifies one step within its owning run:
+`Pointer` identifies a record and an optional field in its canonical JSON.
+`StepPath` is the record ref used for a step:
 
 ```text
 run_id.step_index[.step_index...]
@@ -19,10 +20,9 @@ run_abc123.0
 run_abc123.0.1
 ```
 
-`RunInputRef(index, part?)` references a control input in the current run.
-`StepOutputRef(step, part?)` references step output. `ValueRef` is their union.
-`RunControlRef(run, index)` globally references a durable run mutation.
-`ThreadControlRef(thread, index)` references a durable thread mutation.
+An explicit `/output/value`, `/error`, or `/payload/locals/INDEX/value` field
+ref selects runtime data. Roots never imply a value or error. `ControlRef`
+retains `target` and `index` when a record embeds a control identity.
 
 
 ## Statuses
@@ -43,25 +43,24 @@ reserved for future use and is not currently emitted.
 id
 parent
 thread
-input
+control
 output
-context
+occurrence
 status
 error
-ejected
+ejected_by
 created_at
 started_at
 finished_at
 ```
 
-`parent` is the calling `StepPath` for a child run. `input` normally references
-the index-zero start control and remains persisted rather than inferred from
-the first step. `output` is a `ValueRef`, so a pass-through run may point
-directly to a control input while computed output points to a step.
-`ejected` identifies the thread or run control that removed this run from the
-effective projection.
+`parent` is the calling `StepPath` for a child run. `control` references the
+accepted preparation control. `output` is an optional typed `Local`; its value
+may contain an explicit Pointer to the Step field that produced it.
+`ejected_by` identifies the thread or run control that removed this run from
+the effective projection.
 
-Retry does not write `RunRecord.ejected`: it ejects steps. A child run whose
+Retry does not write `RunRecord.ejected_by`: it ejects steps. A child run whose
 calling `StepPath` was ejected is consequently omitted from effective run and
 thread projections while its durable run record remains available to audit
 reads.
@@ -69,37 +68,39 @@ reads.
 Run and step errors share one compact shape:
 
 ```text
-ExecutionError = string | StepErrorRef(step: StepPath)
+ExecutionError = string | Pointer
 ```
 
 The step that directly catches an exception stores its message string. An
-enclosing step or run stores `{"step": "run_id/path"}` to reference the step
-that owns the next error detail. A runtime failure outside a step stores its
-message directly on the run and does not create a synthetic diagnostic step.
+enclosing step or run stores a Pointer such as `run_id.0/error` to reference
+the record field that owns the next error detail. A runtime failure outside a
+step stores its message directly on the run and does not create a synthetic
+diagnostic step.
 
 
-## RunControlRecord
+## ControlRecord
 
 ```text
-run
+target
 index
 kind
-timing
-input
-source
-anchor
+payload
 request
-context
 status
+timing
 error
 created_at
 finished_at
 ```
 
-`(run, index)` is the durable identity. Kinds are `start`, `rerun`, `retry`,
-`steer`, and `stop`.
+`(target, index)` is the durable identity for both run and thread controls.
+`kind` discriminates the payload. The record has no synthetic scope field.
+
+### Run controls
+
+Run-control kinds are `start`, `rerun`, `retry`, `steer`, and `stop`.
 Timing is `immediate`, `next_step`, or `next_call`. A non-null request is
-unique across the `run_controls` table. Duplicate requests are rejected;
+unique across the `controls` table. Duplicate requests are rejected;
 they do not replay a previous result.
 
 The index-zero `start` or `rerun` control and `RunRecord` are inserted in one
@@ -126,7 +127,7 @@ context. `cost` is decimal USD text; the other values are integers or null.
 
 `runs.db` also stores an internal monotonic revision on every run-control
 insert and status change. The revision is a polling cursor, not part of
-`RunControlRecord`'s protocol shape. It lets an owning executor observe remote
+`ControlRecord`'s protocol shape. It lets an owning executor observe remote
 steer, stop, and cancellation changes without rescanning controls for every
 active run. A storage-only claim flag serializes runtime application against
 cross-process cancellation; it is not another `ControlStatus`.
@@ -138,25 +139,23 @@ cross-process cancellation; it is not another `ControlStatus`.
 path
 kind
 input
-output
 given
+output
+occurrence
 noted
 status
 error
-ejected
+ejected_by
 created_at
 started_at
 finished_at
 ```
 
 `path` is the complete `StepPath`. SQLite stores its owning `run` and local
-index path separately and uses `(run, path)` as the durable identity. Step
-input may contain run-control references, step-output references, and inline
-messages. Step output is ordered `MessagePart[]`: ordinary content uses
-`PerceptPart` values (the runtime representation of language `Part`), model
-steps may add `ToolCallPart`, and tool steps emit `ToolResultPart`. The
-corresponding `PartEnd.data` event carries the same `MessagePart` value that is
-later persisted in step output.
+index path separately and uses `(run, path)` as the durable identity. `input`
+contains explicit Pointers to the fields consumed by the step. `output` is an
+optional typed `Local`; model steps may include `ToolCallPart`, and tool steps
+emit `ToolResultPart`.
 
 `given` contains information known when `StepBegin` is emitted. `noted`
 contains additional information recorded by `StepEnd`. Neither repeats the
@@ -181,7 +180,7 @@ without either summary and use the legacy tool-name presentation.
 
 A succeeded flow step also notes its typed local result (`shape`, `type`, and
 `value`). This makes the step a reusable commit boundary for retry without a
-separate checkpoint record. `ejected` is the `RunControlRef` of the retry that
+separate checkpoint record. `ejected_by` is the `ControlRef` of the retry that
 removed the step from the effective projection. Normal inspection excludes
 ejected steps; audit reads may include them.
 
@@ -227,28 +226,13 @@ references the latest successful thread control and is used for optimistic
 concurrency.
 
 
-## ThreadControlRecord
+### Thread controls
 
-```text
-thread
-index
-kind
-source
-anchor
-request
-expected_head
-context
-status
-created_at
-finished_at
-```
-
-Kinds are `create`, `fork`, and `rewind`. `(thread, index)` is the durable
-identity. Thread mutations are synchronous, so callers observe their success or
-failure directly. Only successful mutations produce thread events.
-Non-null requests are unique across the `thread_controls` table. Clients
-must keep requests globally unique across both control tables or pass
-`None`.
+Thread-control kinds are `create`, `fork`, and `rewind`. Thread mutations are
+synchronous, so callers observe their success or failure directly. Only
+successful mutations produce thread events.
+Non-null requests are globally unique in the `controls` table; callers may pass
+`None` when they do not need request deduplication.
 
 
 ## Projection Ownership
@@ -257,8 +241,8 @@ Control acceptance is not event projection:
 
 ```text
 RunExecutor.start/rerun/retry/steer/stop/cancel_control
-    -> RunStore -> RunControlRecord
-ThreadManager operations     -> RunStore -> ThreadControlRecord
+    -> RunStore -> ControlRecord
+ThreadManager operations     -> RunStore -> ControlRecord
 ```
 
 Run and step facts are event projection:
@@ -267,17 +251,15 @@ Run and step facts are event projection:
 runtime -> RunEvent -> RunExecutor persistence -> RunRecord / StepRecord
 ```
 
-For model steps, `given` references the normalized `ModelCall`:
-content-addressed instructions, ordered canonical messages, one
-content-addressed toolset, and opaque adapter state. It also records a
-non-secret effective model-target snapshot, including the provider, model,
-adapter, base URL, options, and streaming mode. API keys and headers are never
-stored. `RunStore.rebuild_model_call()` resolves the call references without
-depending on a provider-specific HTTP payload.
+For model steps, `given` retains the effective model identity and compact
+references to normalized call data: content-addressed instructions, ordered
+canonical messages, one content-addressed toolset, and opaque adapter state.
+`RunStore.rebuild_model_call()` resolves those references without depending on
+a provider-specific HTTP payload.
 
-Durable `StepRecord.given["call"]` keeps those compact references.
-Caller-facing inspection resolves the same field back to normalized
-`ModelCall` data, so storage details do not become a second public shape.
+Durable `StepRecord.given.call` keeps those compact references. Inspection with
+`--focus model_call` reconstructs normalized `ModelCall` data, so the exact
+Step JSON remains the stored record shape.
 
 The runtime projects each event fact and its referenced control transitions in
 one SQLite write transaction:
@@ -295,7 +277,7 @@ The executor's private event projector owns no control transitions.
 ## Idempotency And Concurrency
 
 SQLite primary keys protect run, control, thread, and step identities.
-Non-null `request` values are unique within their control table; duplicate
+Non-null `request` values are globally unique in the controls table; duplicate
 submissions are rejected rather than replayed. Index allocation and insertion use one
 `BEGIN IMMEDIATE` transaction, and every process owns its own SQLite
 connection. A configured busy timeout allows concurrent local processes to

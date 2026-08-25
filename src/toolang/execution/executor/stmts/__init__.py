@@ -23,7 +23,7 @@ from toolang.lang.ast import (
     StormStmt,
 )
 
-from ...records import RunControlRecord, StepPath
+from ...records import ControlRecord, StepPath
 from ...types import Occurrence
 from ..common import BoundRun
 from ..common import Local
@@ -53,7 +53,7 @@ async def execute(
     *,
     path: StepPath,
     statement: FlowStmt,
-    controls: Sequence[RunControlRecord],
+    controls: Sequence[ControlRecord],
     occurrence: Occurrence | None,
 ) -> Local:
     """Dispatch one lowered flow statement to its semantic implementation."""
