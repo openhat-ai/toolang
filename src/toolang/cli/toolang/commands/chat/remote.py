@@ -27,6 +27,7 @@ from toolang.execution.types import RunOverride
 from toolang.execution.values import parts_from_local
 
 from .base import (
+    ChatExecutorMetadata,
     ChatResult,
     ChatRunState,
     RunAccepted,
@@ -73,7 +74,8 @@ class _CallbackTracer(RunTracer):
 @dataclass(frozen=True, slots=True)
 class _RuntimeIdentity:
     version: str
-    sandbox: str
+    driver: str
+    selector: str
     instance: str | None
 
 
@@ -88,8 +90,8 @@ class RemoteChatSession:
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._endpoint = endpoint
-        self._expected_sandbox = expected_sandbox.partition(":")[0].strip()
-        if not self._expected_sandbox:
+        self._expected_sandbox = expected_sandbox.strip()
+        if not self._expected_sandbox or self._expected_sandbox != expected_sandbox:
             raise ValueError("remote chat requires the running sandbox identity")
         self._transport = transport
         self._loop = asyncio.new_event_loop()
@@ -98,7 +100,7 @@ class RemoteChatSession:
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._http: httpx.AsyncClient | None = None
         self.run_client: RemoteRunClient | None = None
-        self.executor_label = ""
+        self.executor_metadata: ChatExecutorMetadata
         self._blocked_run_id: str | None = None
         self._blocked_message: str | None = None
         self._closed = False
@@ -222,19 +224,19 @@ class RemoteChatSession:
             operation="profile",
         )
         identity = _runtime_identity(profile)
-        if identity.sandbox != self._expected_sandbox:
+        if identity.selector != self._expected_sandbox:
             raise RemoteChatError(
                 "running executor sandbox does not match its runtime status"
             )
         port = urlsplit(self.run_client.endpoint).port
         if port is None:
             raise RemoteChatError("running executor endpoint has no explicit port")
-        suffix = (
-            f" · {identity.sandbox}({identity.instance})"
-            if identity.instance is not None
-            else ""
+        self.executor_metadata = ChatExecutorMetadata(
+            endpoint=self.run_client.endpoint,
+            version=identity.version,
+            sandbox=identity.selector if identity.driver != "host" else None,
+            instance=identity.instance,
         )
-        self.executor_label = f"v{identity.version} · :{port}{suffix}"
 
     async def _list_models(self) -> dict[str, object]:
         payload = await self._request_json(
@@ -621,12 +623,17 @@ def _runtime_identity(payload: object) -> _RuntimeIdentity:
             "remote chat profile returned invalid runtime identity"
         )
     sandbox = _mapping(runtime.get("sandbox"), operation="profile sandbox")
-    if set(sandbox) != {"driver", "instance"}:
+    if set(sandbox) != {"driver", "selector", "instance"}:
         raise _RemoteChatProtocolError(
             "remote chat profile returned invalid sandbox identity"
         )
     version = _label(runtime.get("version"), label="runtime version")
     driver = _token(sandbox.get("driver"), label="sandbox driver")
+    selector = _label(sandbox.get("selector"), label="sandbox selector")
+    if selector.partition(":")[0] != driver:
+        raise _RemoteChatProtocolError(
+            "remote chat sandbox selector does not match its driver"
+        )
     instance_value = sandbox.get("instance")
     if driver == "host":
         if instance_value is not None:
@@ -636,11 +643,11 @@ def _runtime_identity(payload: object) -> _RuntimeIdentity:
         instance = None
     else:
         instance = _token(instance_value, label="sandbox instance")
-        if len(instance) != 6:
+        if len(instance) != 12:
             raise _RemoteChatProtocolError(
-                "remote chat sandbox instance must contain six characters"
+                "remote chat sandbox instance must contain twelve characters"
             )
-    return _RuntimeIdentity(version, driver, instance)
+    return _RuntimeIdentity(version, driver, selector, instance)
 
 
 def _catalog_payload(

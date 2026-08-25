@@ -7,8 +7,10 @@ from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
+import pytest
 
 from toolang.api.app import create_app
 from toolang.api.routers.agent import profile
@@ -100,7 +102,7 @@ agic chat(_: Part[]) -> Part[]:
 
         assert runtime == {
             "version": package_version("toolang"),
-            "sandbox": {"driver": "host", "instance": None},
+            "sandbox": {"driver": "host", "selector": "host", "instance": None},
         }
         assert valid.status_code == 204
         assert invalid.status_code == 422
@@ -121,7 +123,7 @@ agic chat(_: Part[]) -> Part[]:
         asyncio.run(core.close())
 
 
-def test_profile_reports_six_character_docker_instance(tmp_path: Path) -> None:
+def test_profile_reports_docker_selector_and_short_instance(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     agents.write_runtime_state(
@@ -139,7 +141,34 @@ def test_profile_reports_six_character_docker_instance(tmp_path: Path) -> None:
 
         assert payload["runtime"] == {
             "version": package_version("toolang"),
-            "sandbox": {"driver": "docker", "instance": "a1b2c3"},
+            "sandbox": {
+                "driver": "docker",
+                "selector": "docker:python:3.13-slim",
+                "instance": "a1b2c3d4e5f6",
+            },
         }
+    finally:
+        asyncio.run(core.close())
+
+
+def test_profile_rejects_short_non_host_instance(tmp_path: Path) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    agents.write_runtime_state(
+        layout,
+        endpoint="http://127.0.0.1:7001",
+        started_at="2026-08-25T00:00:00Z",
+        pid=123,
+        sandbox="docker:python:3.13-slim",
+        sandbox_instance="a1b2c3",
+    )
+    core = AgentCore(layout)
+
+    try:
+        with pytest.raises(
+            HTTPException,
+            match="runtime sandbox instance is unavailable",
+        ):
+            profile(core)
     finally:
         asyncio.run(core.close())

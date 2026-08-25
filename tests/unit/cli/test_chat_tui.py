@@ -44,6 +44,7 @@ from toolang.cli.toolang.commands.chat.policy import apply_session_commands
 from toolang.cli.toolang.commands.chat.events import ChatUIEvent
 from toolang.cli.toolang.commands.chat.base import (
     ChatClient,
+    ChatExecutorMetadata,
     ChatResult,
     ChatRunState,
     QueuedCall,
@@ -1558,7 +1559,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
 def test_chat_header_uses_wide_local_executor_layout() -> None:
     block = blocks.HeaderBlock(
         home="/tmp/toolang/agents/alice",
-        executor_label="embedded",
+        executor_metadata=ChatExecutorMetadata(),
         version_label="0.1.0",
     )
     rendered = _render_text(block.render(), width=80)
@@ -1579,13 +1580,13 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     home_line = next(line for line in lines if "/tmp/toolang/agents/alice" in line)
     executor_line = next(line for line in lines if "embedded" in line)
     version_line = next(line for line in lines if "v0.1.0" in line)
-    assert lines.index(version_line) < lines.index(home_line)
-    assert lines.index(home_line) < lines.index(executor_line)
+    assert lines.index(version_line) < lines.index(executor_line)
+    assert lines.index(executor_line) < lines.index(home_line)
     assert next(index for index, line in enumerate(lines) if "████" in line) == next(
         index for index, line in enumerate(lines) if "Toolang" in line
     )
     assert next(index for index, line in enumerate(lines) if "⬤" in line) == next(
-        index for index, line in enumerate(lines) if "/tmp/toolang/agents/alice" in line
+        index for index, line in enumerate(lines) if "embedded" in line
     )
     assert version_line.index("Toolang") == home_line.index("home")
     assert home_line.index("home") == executor_line.index("executor")
@@ -1596,8 +1597,9 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert len({len(line) for line in bordered_lines}) == 1
     assert not bordered_lines[1].strip("│ ")
     assert "████" in bordered_lines[2]
-    assert "executor" in bordered_lines[-3]
-    assert "embedded" in bordered_lines[-3]
+    assert "executor" in bordered_lines[-4]
+    assert "embedded" in bordered_lines[-4]
+    assert "home" in bordered_lines[-3]
     assert not bordered_lines[-2].strip("│ ")
     logo_line = next(line for line in lines if "Toolang" in line)
     assert logo_line.startswith("│  ████           ██    Toolang")
@@ -1608,7 +1610,12 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
             home="/tmp/toolang/agents/alice-with-a-long-home",
-            executor_label="v0.3.9 · :7001 · docker(a1b2c3)",
+            executor_metadata=ChatExecutorMetadata(
+                endpoint="http://runtime.test:7001",
+                version="0.3.9",
+                sandbox="docker:python:3.13-slim",
+                instance="a1b2c3d4e5f6",
+            ),
             version_label="0.1.0",
         ).render(),
         width=40,
@@ -1623,34 +1630,115 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     assert len({len(line) for line in bordered_lines}) == 1
     unwrapped = rendered.replace("\n", "").replace("│", "").replace(" ", "")
     assert "alice-with-a-long-home" in unwrapped
-    assert "executorv0.3.9·:7001·docker(a1b2c3)" in unwrapped
+    assert "executorhttp://runtime.test:7001·v0.3.9" in unwrapped
+    assert "sandboxdocker:python:3.13-slim·a1b2c3d4e5f6" in unwrapped
 
 
 @pytest.mark.parametrize(
-    "executor_label",
+    "executor_metadata, expected_executor, expected_sandbox",
     (
-        "v0.3.9 · :7001",
-        "v0.3.9 · :7001 · docker(a1b2c3)",
+        (
+            ChatExecutorMetadata(
+                endpoint="http://runtime.test:7001",
+                version="0.3.9",
+            ),
+            "http://runtime.test:7001 · v0.3.9",
+            None,
+        ),
+        (
+            ChatExecutorMetadata(
+                endpoint="http://runtime.test:7001",
+                version="0.3.9",
+                sandbox="docker:python:3.13-slim",
+                instance="a1b2c3d4e5f6",
+            ),
+            "http://runtime.test:7001 · v0.3.9",
+            "docker:python:3.13-slim · a1b2c3d4e5f6",
+        ),
     ),
 )
-def test_chat_header_supports_remote_executor_identity(executor_label: str) -> None:
+def test_chat_header_supports_remote_executor_identity(
+    executor_metadata: ChatExecutorMetadata,
+    expected_executor: str,
+    expected_sandbox: str | None,
+) -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
             home="~/.toolang/agents/alice",
-            executor_label=executor_label,
+            executor_metadata=executor_metadata,
             version_label="0.1.0",
         ).render(),
         width=120,
     )
 
-    assert f"executor {executor_label}" in " ".join(rendered.split())
+    compact = " ".join(rendered.split())
+    assert f"executor {expected_executor}" in compact
+    if expected_sandbox is None:
+        assert "sandbox" not in compact
+    else:
+        assert f"sandbox {expected_sandbox}" in compact
+
+
+def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> None:
+    local = blocks.HeaderBlock(
+        home="~/.toolang/agents/eve",
+        executor_metadata=ChatExecutorMetadata(),
+        version_label="0.3.0+69439a4e*",
+    )
+    remote = blocks.HeaderBlock(
+        home="~/.toolang/agents/eve",
+        executor_metadata=ChatExecutorMetadata(
+            endpoint="http://localhost:7001",
+            version="0.3.0",
+        ),
+        version_label="0.3.0+69439a4e*",
+    )
+    sandboxed = blocks.HeaderBlock(
+        home="~/.toolang/agents/eve",
+        executor_metadata=ChatExecutorMetadata(
+            endpoint="http://localhost:7001",
+            version="0.3.0",
+            sandbox="docker:pyslim-3.11",
+            instance="2f0f8934abcd",
+        ),
+        version_label="0.3.0+69439a4e*",
+    )
+
+    local_lines = _render_text(local.render(), width=120).splitlines()
+    remote_lines = _render_text(remote.render(), width=120).splitlines()
+    sandboxed_lines = _render_text(sandboxed.render(), width=120).splitlines()
+    sandboxed_segments = rendering.render_segments(sandboxed.render(), width=120)
+
+    assert len(remote_lines) == len(local_lines)
+    assert len(sandboxed_lines) == len(remote_lines) + 1
+    for lines in (local_lines, remote_lines, sandboxed_lines):
+        bordered = [line for line in lines if line]
+        assert not bordered[1].strip("│ ")
+        assert not bordered[-2].strip("│ ")
+    ordered = [
+        next(index for index, line in enumerate(sandboxed_lines) if value in line)
+        for value in (
+            "v0.3.0+69439a4e*",
+            "http://localhost:7001",
+            "docker:pyslim-3.11",
+            "~/.toolang/agents/eve",
+        )
+    ]
+    assert ordered == sorted(ordered)
+    endpoint = next(
+        segment
+        for segment in sandboxed_segments
+        if segment.text == "http://localhost:7001"
+    )
+    assert endpoint.style is not None
+    assert endpoint.style.link == "http://localhost:7001"
 
 
 def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     segments = rendering.render_segments(
         blocks.HeaderBlock(
             home="/tmp/toolang/agents/alice",
-            executor_label="embedded",
+            executor_metadata=ChatExecutorMetadata(),
             version_label="0.1.0",
         ).render(),
         width=80,
@@ -3064,7 +3152,7 @@ class FakeApp:
 
 
 class FakeClient(ChatClient):
-    executor_label = "embedded"
+    executor_metadata = ChatExecutorMetadata()
 
     def list_models(self) -> dict[str, object]:
         return {

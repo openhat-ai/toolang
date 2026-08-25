@@ -14,6 +14,7 @@ from pydantic import TypeAdapter
 from toolang.base.types.message import TextPart
 from toolang.cli.toolang.commands.chat import remote
 from toolang.cli.toolang.commands.chat.base import (
+    ChatExecutorMetadata,
     RunAccepted,
     RunBlocked,
     RunDisconnected,
@@ -42,12 +43,17 @@ class _Bytes(httpx.AsyncByteStream):
 def _profile(
     *,
     driver: str = "host",
+    selector: str | None = None,
     instance: str | None = None,
 ) -> dict[str, object]:
     return {
         "runtime": {
             "version": "0.3.9",
-            "sandbox": {"driver": driver, "instance": instance},
+            "sandbox": {
+                "driver": driver,
+                "selector": selector or driver,
+                "instance": instance,
+            },
         }
     }
 
@@ -140,7 +146,7 @@ def _json(value: object) -> object:
     return TypeAdapter(type(value)).dump_python(value, mode="json")
 
 
-def test_remote_chat_non_run_operations_and_executor_label() -> None:
+def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
     requests: list[tuple[str, str, object | None]] = []
     result = _detail(
         output=Local.typed("Part[]", (TextPart("remote answer"),), "_"),
@@ -154,7 +160,11 @@ def test_remote_chat_non_run_operations_and_executor_label() -> None:
         if request.url.path == "/api/v1/profile":
             return httpx.Response(
                 200,
-                json=_profile(driver="docker", instance="a1b2c3"),
+                json=_profile(
+                    driver="docker",
+                    selector="docker:python:3.13-slim",
+                    instance="a1b2c3d4e5f6",
+                ),
             )
         if request.url.path == "/api/v1/models":
             return httpx.Response(
@@ -188,7 +198,12 @@ def test_remote_chat_non_run_operations_and_executor_label() -> None:
         transport=httpx.MockTransport(handler),
     )
     try:
-        assert session.executor_label == "v0.3.9 · :7001 · docker(a1b2c3)"
+        assert session.executor_metadata == ChatExecutorMetadata(
+            endpoint="http://runtime.test:7001",
+            version="0.3.9",
+            sandbox="docker:python:3.13-slim",
+            instance="a1b2c3d4e5f6",
+        )
         assert session.run_client is not None
         assert session.run_client.endpoint == "http://runtime.test:7001"
         assert session.list_models()["default"] == "test/model"
@@ -237,6 +252,69 @@ def test_remote_chat_non_run_operations_and_executor_label() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("profile_payload", "expected_sandbox", "message"),
+    (
+        (
+            {
+                "runtime": {
+                    "version": "0.3.9",
+                    "sandbox": {"driver": "host", "instance": None},
+                }
+            },
+            "host",
+            "invalid sandbox identity",
+        ),
+        (
+            _profile(driver="host", instance="a1b2c3d4e5f6"),
+            "host",
+            "host sandbox returned an instance ID",
+        ),
+        (
+            _profile(
+                driver="docker",
+                selector="docker:python:3.13-slim",
+                instance="a1b2c3",
+            ),
+            "docker:python:3.13-slim",
+            "sandbox instance must contain twelve characters",
+        ),
+        (
+            _profile(driver="host", selector="docker:python:3.13-slim"),
+            "host",
+            "sandbox selector does not match its driver",
+        ),
+        (
+            _profile(
+                driver="docker",
+                selector="docker:python:3.12-slim",
+                instance="a1b2c3d4e5f6",
+            ),
+            "docker:python:3.13-slim",
+            "sandbox does not match its runtime status",
+        ),
+    ),
+)
+def test_remote_chat_rejects_invalid_runtime_identity(
+    profile_payload: dict[str, object],
+    expected_sandbox: str,
+    message: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/healthz":
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/profile":
+            return httpx.Response(200, json=profile_payload)
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    with pytest.raises(remote.RemoteChatError, match=message):
+        remote.RemoteChatSession(
+            "http://runtime.test:7001",
+            expected_sandbox=expected_sandbox,
+            transport=httpx.MockTransport(handler),
+        )
+
+
 def test_remote_chat_uses_remote_run_client_native_events() -> None:
     detail = _detail()
     requests: list[str] = []
@@ -273,7 +351,10 @@ def test_remote_chat_uses_remote_run_client_native_events() -> None:
     finally:
         session.close()
 
-    assert session.executor_label == "v0.3.9 · :7001"
+    assert session.executor_metadata == ChatExecutorMetadata(
+        endpoint="http://runtime.test:7001",
+        version="0.3.9",
+    )
     assert [type(item) for item in events] == [RunBegin, RunEnd]
     assert states == [RunAccepted("run_remote")]
     assert errors == []
