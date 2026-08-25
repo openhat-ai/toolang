@@ -1,4 +1,4 @@
-"""HTTP request schemas."""
+"""HTTP request and response schemas."""
 
 from __future__ import annotations
 
@@ -230,6 +230,27 @@ class AuthoredRunRequest(ApiRequest):
     input: RunnableInputRawPayload
     session_commands: list[RunOverridePayload] = Field(default_factory=list)
     runnable_fallbacks: list[StrictText] = Field(min_length=1)
+
+
+class AuthoredRunValidationRequest(ApiRequest):
+    """Complete session policy awaiting server-owned validation."""
+
+    session_commands: list[RunOverridePayload] = Field(default_factory=list)
+    runnable_fallbacks: list[StrictText] = Field(min_length=1)
+
+
+class RuntimeSandboxPayload(ApiRequest):
+    """Public identity of the sandbox hosting the current server process."""
+
+    driver: StrictText
+    instance: StrictText | None = None
+
+
+class RuntimeIdentityPayload(ApiRequest):
+    """Version and sandbox identity of the current server process."""
+
+    version: StrictText
+    sandbox: RuntimeSandboxPayload
 
 
 class RunRerunRequest(ApiRequest):

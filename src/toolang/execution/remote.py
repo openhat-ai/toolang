@@ -79,6 +79,12 @@ class RemoteRunClient:
     def closed(self) -> bool:
         return self._closed
 
+    @property
+    def endpoint(self) -> str:
+        """Return the normalized HTTP origin used by this client."""
+
+        return self._endpoint
+
     async def start(
         self,
         request: RunRequest,

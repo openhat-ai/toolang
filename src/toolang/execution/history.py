@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Literal
 
 from toolang.base.types.message import Part
@@ -178,6 +179,31 @@ class RunHistory:
             ejection_scope=self._ejection_scope(run.ejected_by),
             input_parts=self._input_parts(run, controls),
         )
+
+    def get_run_result(self, run_id: str) -> RunDetail | None:
+        """Return one run detail with its durable output fully resolved."""
+
+        detail = self.get_run(run_id)
+        if detail is None or detail.output is None:
+            return detail
+        return replace(detail, output=self._store.resolve_local(detail.output))
+
+    def latest_thread_result(self, thread_id: str) -> RunDetail | None:
+        """Return the newest succeeded root run with a nonempty result."""
+
+        if self._store.get_thread(thread_id=thread_id) is None:
+            raise KeyError(thread_id)
+        runs = self._store.list_thread_history_chronological(thread_id=thread_id)
+        for run in reversed(runs):
+            if (
+                run.parent is not None
+                or run.status != "succeeded"
+                or run.output is None
+                or not self._store.run_output(run_id=run.id)
+            ):
+                continue
+            return self.get_run_result(run.id)
+        return None
 
     def _error_message(self, error: ExecutionError | None) -> str | None:
         if error is None:

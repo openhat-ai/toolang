@@ -1,6 +1,7 @@
 """Thread inspection and management routes."""
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -16,7 +17,7 @@ from toolang.api.schemas import (
     ThreadRewindRequest,
 )
 from toolang.execution.records import ThreadPeer
-from toolang.execution.schemas import ThreadDetail, ThreadInfo
+from toolang.execution.schemas import RunDetail, ThreadDetail, ThreadInfo
 from toolang.execution.types import ThreadPrefix
 from toolang.up import AgentCore
 
@@ -75,6 +76,30 @@ def thread_detail(
     detail = core.history.get_thread(thread_id, run_limit=limit)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"thread not found: {thread_id}")
+    return replace(
+        detail,
+        runs=[core.history.get_run_result(run.id) or run for run in detail.runs],
+    )
+
+
+@router.get(
+    "/{thread_id}/result",
+    summary="Get Latest Thread Result",
+    response_model=RunDetail,
+)
+def latest_thread_result(core: AgentCoreDep, thread_id: str) -> RunDetail:
+    try:
+        detail = core.history.latest_thread_result(thread_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"thread not found: {thread_id}",
+        ) from None
+    if detail is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"thread has no result: {thread_id}",
+        )
     return detail
 
 

@@ -9,11 +9,13 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from toolang.api.app import AgentCoreDep, LiveEventRelayDep
 from toolang.api.common import RUN_ID_HEADER, EventSubscription, sse_stream
 from toolang.api.conversion import (
+    parse_authored_run_validation,
     parse_authored_run,
     parse_parts,
     parse_user_message,
 )
 from toolang.api.schemas import (
+    AuthoredRunValidationRequest,
     AuthoredRunRequest,
     RunCancelRequest,
     RunCommandResult,
@@ -24,7 +26,7 @@ from toolang.api.schemas import (
 )
 from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
-from toolang.execution.calls import resolve_run_request
+from toolang.execution.calls import resolve_run_request, validate_session_commands
 from toolang.execution.executor import LocalRunHandle, RunSpec
 from toolang.execution.records import RunControlRecord, RunRecord
 from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
@@ -206,9 +208,33 @@ async def execute_authored_run_stream(
         yield event
 
 
+@router.post(
+    "/authored/validate",
+    summary="Validate Authored Run Session",
+    status_code=204,
+)
+def validate_authored_run_session(
+    core: AgentCoreDep,
+    payload: AuthoredRunValidationRequest,
+) -> Response:
+    commands, fallbacks = parse_authored_run_validation(payload)
+    try:
+        setup = core.setup.current()
+        state = core.state.current()
+        validate_session_commands(
+            commands,
+            setup=setup,
+            state=state,
+            runnable_fallbacks=fallbacks,
+        )
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(status_code=204)
+
+
 @router.get("/{run_id}", summary="Get Run", response_model=RunDetail)
 def run_detail(core: AgentCoreDep, run_id: str) -> RunDetail:
-    detail = core.history.get_run(run_id)
+    detail = core.history.get_run_result(run_id)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
     return detail

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from toolang.execution.events import RunBegin, RunEnd, RunEvent, StepBegin
+from toolang.execution.schemas import RunDetail
 
 from toolang.cli.common.execution_progress import (
     ProgressProjector,
@@ -67,6 +68,45 @@ class ChatRunPresenter:
         else:
             stop.status = "failed"
             stop.error = ""
+        stop.set_metrics(self._projector.root_metrics)
+        stop.gap_before = self._projector.needs_footer_gap
+        app.finalize_block(stop)
+        app.finish_run()
+        self.reset()
+        return True
+
+    def handle_recovered(self, app: AppContext, detail: RunDetail) -> bool:
+        """Finalize an incomplete stream from durable terminal run truth."""
+
+        if detail.status in {"pending", "running"}:
+            return False
+        active_run_id = app.get_active_run()
+        if active_run_id not in {None, detail.id}:
+            return False
+        for block in list(app.get_live_blocks()):
+            if isinstance(block, (blocks.RunStartBlock, blocks.RunSteerBlock)):
+                app.finalize_block(block)
+        self._apply(
+            self._projector.diagnostic(
+                "Live output may be incomplete after reconnecting; inspect the "
+                f"durable result with :show {detail.id}."
+            ),
+            app,
+        )
+        stop = self._run_stop(app, detail.id)
+        if stop is None:
+            stop = blocks.RunStopBlock(
+                run_id=detail.id,
+                status=detail.status,
+                started_at=detail.started_at,
+                finished_at=detail.finished_at or "",
+                max_width=self._max_width,
+            )
+            self._append_tail(stop, app)
+        else:
+            stop.status = detail.status
+            stop.finished_at = detail.finished_at or stop.finished_at
+        stop.error = friendly_error(detail.error) if detail.error else ""
         stop.set_metrics(self._projector.root_metrics)
         stop.gap_before = self._projector.needs_footer_gap
         app.finalize_block(stop)

@@ -187,6 +187,23 @@ def validate_commands(
     )
 
 
+def validate_session_commands(
+    commands: Sequence[RunOverride],
+    *,
+    setup: AgentSetup,
+    state: AgentState,
+    runnable_fallbacks: tuple[str, ...],
+) -> None:
+    """Validate session commands against the first available runnable fallback."""
+
+    validate_commands(
+        commands,
+        setup=setup,
+        state=state,
+        default_runnable=_select_runnable_fallback(state, runnable_fallbacks),
+    )
+
+
 def _resolve_named_sources(
     sources: NamedInputSources,
     *,

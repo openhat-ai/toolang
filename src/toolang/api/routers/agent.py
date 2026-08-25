@@ -1,16 +1,20 @@
 """Formal agent inspection routes."""
 
+from importlib.metadata import version as package_version
+import re
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 
 from toolang.api.app import AgentCoreDep
+from toolang.api.schemas import RuntimeIdentityPayload, RuntimeSandboxPayload
 from toolang.common.errors import ToolangError
 from toolang.execution.runnables import effective_agics, runnable_binding_defaults
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.types import ModelStepNoted
 from toolang.execution.executor.resources import agent_model_targets
 from toolang.up import AgentCore, process as agents
+from toolang.up.sandbox import SandboxState
 
 
 router = APIRouter(tags=["agent"])
@@ -26,6 +30,7 @@ def profile(core: AgentCoreDep) -> dict[str, object]:
         "summary": None,
         "description": None,
         "avatar": None,
+        "runtime": _profile_runtime(core, runtime_state=runtime_state).model_dump(),
         "environment": _profile_environment(core, runtime_state=runtime_state),
         "metrics": _profile_metrics(core),
     }
@@ -136,6 +141,72 @@ def _profile_environment(
         "home": str(core.layout.home),
         "endpoint": _runtime_endpoint(runtime_state),
     }
+
+
+def _profile_runtime(
+    core: AgentCore, *, runtime_state: dict[str, object]
+) -> RuntimeIdentityPayload:
+    sandbox_spec = _runtime_sandbox_spec(runtime_state)
+    driver = _runtime_token(sandbox_spec.partition(":")[0], label="sandbox driver")
+    return RuntimeIdentityPayload(
+        version=_runtime_version(),
+        sandbox=RuntimeSandboxPayload(
+            driver=driver,
+            instance=_runtime_instance(core, driver=driver),
+        ),
+    )
+
+
+def _runtime_version() -> str:
+    return _runtime_label(package_version("toolang"), label="Toolang version")
+
+
+def _runtime_instance(core: AgentCore, *, driver: str) -> str | None:
+    if driver == "host":
+        return None
+    try:
+        state = SandboxState.load(core.layout.sandbox_state)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="runtime sandbox identity is invalid",
+        ) from exc
+    if state is None or state.sandbox.partition(":")[0].strip() != driver:
+        raise HTTPException(
+            status_code=500,
+            detail="runtime sandbox identity is unavailable",
+        )
+    raw = (
+        state.ref.meta.get("container_id")
+        if driver == "docker"
+        else state.ref.runtime_id
+    )
+    if not isinstance(raw, str) or len(raw.strip()) < 6:
+        raise HTTPException(
+            status_code=500,
+            detail="runtime sandbox instance is unavailable",
+        )
+    return _runtime_token(raw.strip()[:6], label="sandbox instance")
+
+
+def _runtime_token(value: str, *, label: str) -> str:
+    text = _runtime_label(value, label=label)
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", text) is None:
+        raise HTTPException(status_code=500, detail=f"invalid runtime {label}")
+    return text
+
+
+def _runtime_label(value: str, *, label: str) -> str:
+    text = value.strip()
+    if (
+        not text
+        or text != value
+        or not text.isprintable()
+        or any(character.isspace() for character in text)
+        or any(character in text for character in ",()")
+    ):
+        raise HTTPException(status_code=500, detail=f"invalid runtime {label}")
+    return text
 
 
 def _runtime_endpoint(runtime_state: dict[str, object]) -> str | None:

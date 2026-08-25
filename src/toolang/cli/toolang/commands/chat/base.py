@@ -6,11 +6,12 @@ import ast
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import json
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast
 
 from toolang.base.types.message import Part
 from toolang.execution.events import RunEvent
 from toolang.execution.records import execution_error_message
+from toolang.execution.schemas import RunDetail
 from toolang.execution.types import ExecutionError, RunOverride
 
 if TYPE_CHECKING:
@@ -32,6 +33,39 @@ class QueuedCall:
 
     source: str
     selects: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class RunAccepted:
+    """A root run has an addressable durable identity."""
+
+    run_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class RunDisconnected:
+    """The live stream was lost after the root run was accepted."""
+
+    run_id: str
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class RunRecovered:
+    """Durable terminal truth recovered an incomplete live stream."""
+
+    detail: RunDetail
+
+
+@dataclass(frozen=True, slots=True)
+class RunBlocked:
+    """Further submissions are unsafe until Chat is restarted."""
+
+    run_id: str | None
+    message: str
+
+
+ChatRunState: TypeAlias = RunAccepted | RunDisconnected | RunRecovered | RunBlocked
 
 
 class ChatClient(Protocol):
@@ -64,6 +98,7 @@ class ChatClient(Protocol):
         selects: Mapping[str, object],
         on_event: Callable[[RunEvent], None],
         on_error: Callable[[str], None],
+        on_state: Callable[[ChatRunState], None] | None = None,
     ) -> None: ...
 
     def stop_run(
