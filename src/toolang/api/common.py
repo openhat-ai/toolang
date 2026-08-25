@@ -22,6 +22,9 @@ from toolang.execution.events import (
     event_to_data,
 )
 
+
+RUN_ID_HEADER = "X-Toolang-Run-ID"
+
 KEEP_ALIVE_SEC = 15.0
 LiveEvent = RunEvent | ThreadEvent
 LiveEventKind = Literal["run", "thread"]

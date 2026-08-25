@@ -19,6 +19,7 @@ from toolang.state.state import AgentState
 
 from .policy import parse_policy_prefix, resolve_commands
 from .runnables import parse_runnable_ref, resolve_runnable
+from .schemas import RunRequest
 from .types import RunOverride
 
 if TYPE_CHECKING:
@@ -33,6 +34,30 @@ def parse_call(source: str) -> tuple[tuple[RunOverride, ...], RunnableInputRaw]:
     body = _strip_final_line_break(source)
     commands, named, primary = parse_policy_prefix(body)
     return commands, parse_input(primary or None, named=named)
+
+
+def resolve_run_request(
+    request: RunRequest,
+    *,
+    setup: AgentSetup,
+    state: AgentState,
+    include: IncludeResolver | None = None,
+) -> RunSpec:
+    """Resolve one caller request against one setup and state snapshot pair."""
+
+    return resolve_spec(
+        request.commands,
+        request.input,
+        setup=setup,
+        state=state,
+        thread=request.thread,
+        default_runnable=_select_runnable_fallback(
+            state,
+            request.runnable_fallbacks,
+        ),
+        session_commands=request.session_commands,
+        include=include,
+    )
 
 
 def resolve_spec(
@@ -176,6 +201,28 @@ def _resolve_named_sources(
             include=include,
         )
     return result
+
+
+def _select_runnable_fallback(
+    state: AgentState,
+    candidates: tuple[str, ...],
+) -> str:
+    for candidate in candidates:
+        name, kind = parse_runnable_ref(candidate)
+        if kind == "agic" and (
+            name == "default" or state.program.find_agic(name) is not None
+        ):
+            return candidate
+        if kind == "flow" and state.program.find_flow(name) is not None:
+            return candidate
+        if kind is None and (
+            name == "default"
+            or state.program.find_agic(name) is not None
+            or state.program.find_flow(name) is not None
+        ):
+            return candidate
+    joined = ", ".join(candidates)
+    raise ValueError(f"no runnable fallback is available: {joined}")
 
 
 def _strip_final_line_break(source: str) -> str:

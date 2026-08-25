@@ -7,12 +7,11 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from toolang.base.types.message import Message
-from toolang.execution.calls import IncludeResolver, resolve_spec
+from toolang.execution.calls import IncludeResolver, resolve_run_request
 from toolang.execution.events import RunTracer
 from toolang.execution.executor import LocalRunHandle, RunExecutor
 from toolang.execution.history import RunHistory
 from toolang.execution.records import RunControlRecord
-from toolang.execution.runnables import parse_runnable_ref
 from toolang.execution.schemas import ControlInfo, RunDetail, RunRequest
 from toolang.execution.types import ControlTiming
 from toolang.setup import AgentSetup
@@ -107,18 +106,10 @@ class LocalRunClient:
         self._require_open()
         setup = self._setup()
         state = self._state()
-        default_runnable = _select_runnable_fallback(
-            state,
-            request.runnable_fallbacks,
-        )
-        spec = resolve_spec(
-            request.commands,
-            request.input,
+        spec = resolve_run_request(
+            request,
             setup=setup,
             state=state,
-            thread=request.thread,
-            default_runnable=default_runnable,
-            session_commands=request.session_commands,
             include=self._include(setup),
         )
         handle = self._executor.start(
@@ -185,25 +176,3 @@ class LocalRunClient:
     def _require_open(self) -> None:
         if self._closed:
             raise RuntimeError("run client is closed")
-
-
-def _select_runnable_fallback(
-    state: AgentState,
-    candidates: tuple[str, ...],
-) -> str:
-    for candidate in candidates:
-        name, kind = parse_runnable_ref(candidate)
-        if kind == "agic" and (
-            name == "default" or state.program.find_agic(name) is not None
-        ):
-            return candidate
-        if kind == "flow" and state.program.find_flow(name) is not None:
-            return candidate
-        if kind is None and (
-            name == "default"
-            or state.program.find_agic(name) is not None
-            or state.program.find_flow(name) is not None
-        ):
-            return candidate
-    joined = ", ".join(candidates)
-    raise ValueError(f"no runnable fallback is available: {joined}")
