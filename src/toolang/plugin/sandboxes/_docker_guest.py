@@ -25,6 +25,7 @@ def write_agent_script(
         "#!/bin/sh",
         "set -eu",
         'export PATH="$HOME/.local/bin:$PATH"',
+        'export TOOLANG_SANDBOX_INSTANCE="${HOSTNAME:?docker sandbox hostname is unavailable}"',
         'have() { command -v "$1" >/dev/null 2>&1; }',
         'PYTHON_BIN=""',
         'if have python; then PYTHON_BIN="python"; elif have python3; then PYTHON_BIN="python3"; fi',

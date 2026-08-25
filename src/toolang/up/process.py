@@ -531,6 +531,7 @@ def write_runtime_state(
     started_at: str,
     pid: int | None,
     sandbox: str = "host",
+    sandbox_instance: str | None = None,
     models: Sequence[str] | None = None,
     status: str = "running",
     message: str | None = None,
@@ -538,20 +539,20 @@ def write_runtime_state(
     """Persist one minimal runtime state file for a running agent."""
 
     path = layout.runtime_status
-    _save_runtime_state(
-        path,
-        {
-            "agent": layout.name,
-            "status": status,
-            "endpoint": endpoint,
-            "started_at": started_at,
-            "updated_at": started_at,
-            "pid": pid,
-            "sandbox": sandbox,
-            "models": list(models or ()),
-            "message": message,
-        },
-    )
+    payload: dict[str, object] = {
+        "agent": layout.name,
+        "status": status,
+        "endpoint": endpoint,
+        "started_at": started_at,
+        "updated_at": started_at,
+        "pid": pid,
+        "sandbox": sandbox,
+        "models": list(models or ()),
+        "message": message,
+    }
+    if sandbox_instance is not None:
+        payload["sandbox_instance"] = sandbox_instance
+    _save_runtime_state(path, payload)
     return path
 
 
