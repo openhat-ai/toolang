@@ -64,11 +64,11 @@ def test_local_chat_close_cancels_watchers_without_waiting_for_polling() -> None
         session: Any = object.__new__(local.LocalChatSession)
         session._stop_signal = asyncio.Event()
 
-        class Executor:
-            async def shutdown(self) -> None:
+        class RunClient:
+            async def close(self) -> None:
                 pass
 
-        session.executor = Executor()
+        session.run_client = RunClient()
 
         async def wait_forever() -> None:
             await asyncio.Event().wait()
@@ -87,7 +87,72 @@ def test_local_chat_close_cancels_watchers_without_waiting_for_polling() -> None
     asyncio.run(scenario())
 
 
-def test_local_chat_uses_run_executor_and_canonical_tracer(
+def test_local_chat_run_request_keeps_chat_fallback_agic_only() -> None:
+    requests = []
+
+    class Handle:
+        run_id = "run_test"
+
+        async def wait(self) -> None:
+            pass
+
+    class RunClient:
+        async def start(self, request, *, tracer=None):
+            del tracer
+            requests.append(request)
+            return Handle()
+
+    async def scenario() -> None:
+        session: Any = object.__new__(local.LocalChatSession)
+        session.run_client = RunClient()
+
+        await session._run("term_test", "hello", {}, lambda _event: None)
+
+    asyncio.run(scenario())
+
+    assert len(requests) == 1
+    assert requests[0].runnable_fallbacks == ("agic:chat", "default")
+
+
+def test_local_chat_owner_loop_control_does_not_wait_on_itself() -> None:
+    class RunClient:
+        async def stop(self, _run_id: str, **_kwargs: object) -> None:
+            pass
+
+    class Submitted:
+        def __init__(self) -> None:
+            self.result_calls = 0
+            self.callbacks: list[Any] = []
+
+        def result(self) -> None:
+            self.result_calls += 1
+
+        def add_done_callback(self, callback: Any) -> None:
+            self.callbacks.append(callback)
+
+    session: Any = object.__new__(local.LocalChatSession)
+    session.run_client = RunClient()
+    session._thread = threading.current_thread()
+    submitted = Submitted()
+
+    def submit(coroutine: Any, *, allow_closed: bool = False) -> Submitted:
+        del allow_closed
+        coroutine.close()
+        return submitted
+
+    session._submit = submit
+    errors: list[str] = []
+
+    session.stop_run("run_test", errors.append)
+
+    assert submitted.result_calls == 0
+    assert len(submitted.callbacks) == 1
+    submitted.callbacks[0](submitted)
+    assert submitted.result_calls == 1
+    assert errors == []
+
+
+def test_local_chat_uses_run_client_and_canonical_tracer(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:

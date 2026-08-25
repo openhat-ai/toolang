@@ -240,7 +240,7 @@ The public execution concepts are:
 
 - `RunSpec`: immutable setup, state, thread, effective bindings and limits,
   ceiling restrictions, primary `Percept`, and named inputs
-- `RunHandle`: an awaitable locally started run with control conveniences
+- `LocalRunHandle`: an awaitable locally started run with control conveniences
 - `RunExecutor`: run acceptance, control, and agic/flow execution
 - `ThreadManager`: synchronous thread creation, rewind, and fork orchestration
 - `RunEvent`: the complete ordered execution event stream
@@ -264,8 +264,8 @@ top-level runs.
 `RunExecutor.start()` is the external execution entry point. It uses mandatory
 internal persistence and an optional per-start tracer. Internal child runs
 reuse private runtime logic and never call the public entry point. Runtime
-owners retain or await the returned `RunHandle`; `RunExecutor` does not provide
-`spawn()`.
+owners retain or await the returned `LocalRunHandle`; `RunExecutor` does not
+provide `spawn()`.
 
 The target execution package is:
 
@@ -280,7 +280,7 @@ execution/
 ├── threads.py              # ThreadManager
 ├── tools/                  # agent-specific built-in tools
 └── executor/               # RunExecutor and execution implementation helpers
-    ├── __init__.py         # stable RunExecutor, RunSpec, and RunHandle exports
+    ├── __init__.py         # RunExecutor, RunSpec, and LocalRunHandle exports
     ├── executor.py         # public run contract and private per-start _Execution
     ├── common.py           # bound runs, locals, and shared execution helpers
     ├── prepare.py          # agic resolution and complete model-input preparation

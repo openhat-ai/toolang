@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass
 from decimal import Decimal
@@ -15,8 +15,9 @@ from uuid import uuid4
 from toolang.base.types.message import Message
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
+from toolang.execution.calls import IncludeResolver, parse_call, validate_commands
+from toolang.execution.client import LocalRunClient, RunClient
 from toolang.execution.events import RunEvent, RunTracer
-from toolang.execution.calls import parse_call, resolve_spec, validate_commands
 from toolang.execution.executor import RunExecutor
 from toolang.execution.runnables import runnable_binding_defaults
 from toolang.execution.executor.resources import (
@@ -25,9 +26,10 @@ from toolang.execution.executor.resources import (
 )
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
+from toolang.execution.schemas import RunRequest
 from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.includes import resolve_file_include
-from toolang.setup import SetupWatcher
+from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.state import AgentState
 from toolang.state.watcher import StateWatcher
 from .base import ChatResult
@@ -60,7 +62,6 @@ class LocalChatSession:
         self.store = RunStore(layout.run_store)
         self.ids = IdIssuer(layout.id_state)
         self.threads = ThreadManager(self.store, self.ids)
-        self.executor = RunExecutor(self.store, self.ids)
         self.setup_watcher = SetupWatcher(
             layout,
             model_catalog=model_catalog,
@@ -69,6 +70,12 @@ class LocalChatSession:
             limit_overrides=limit_overrides,
         )
         self.state_watcher = StateWatcher(layout)
+        self.run_client: RunClient = LocalRunClient(
+            RunExecutor(self.store, self.ids),
+            setup=self.setup_watcher.current,
+            state=self.state_watcher.current,
+            include=self._include_resolver,
+        )
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
         self._stop_signal: asyncio.Event | None = None
@@ -205,13 +212,13 @@ class LocalChatSession:
         run_id: str,
         on_error: Callable[[str], None],
     ) -> None:
-        try:
-            self.executor.stop(
-                run_id=run_id,
+        self._submit_control(
+            self.run_client.stop(
+                run_id,
                 request_id=f"term_{uuid4().hex}",
-            )
-        except Exception as exc:
-            on_error(_error_message(exc))
+            ),
+            on_error,
+        )
 
     def steer_run(
         self,
@@ -219,15 +226,15 @@ class LocalChatSession:
         message: str,
         on_error: Callable[[str], None],
     ) -> None:
-        try:
-            self.executor.steer(
-                run_id=run_id,
-                message=Message.user(message),
+        self._submit_control(
+            self.run_client.steer(
+                run_id,
+                Message.user(message),
                 timing="next_step",
                 request_id=f"term_{uuid4().hex}",
-            )
-        except Exception as exc:
-            on_error(_error_message(exc))
+            ),
+            on_error,
+        )
 
     def close(self) -> None:
         if self._closed:
@@ -263,43 +270,64 @@ class LocalChatSession:
         selects: Mapping[str, object],
         on_event: Callable[[RunEvent], None],
     ) -> None:
-        state = self.state_watcher.current()
-        setup = self.setup_watcher.current()
         commands, input = parse_call(message)
-        base = (
-            setup.environment.working_directory
-            if setup.environment is not None
-            else self.layout.home
-        )
-        spec = resolve_spec(
-            commands,
-            input,
-            setup=setup,
-            state=state,
+        request = RunRequest(
             thread=thread_id,
-            default_runnable=_default_runnable(state),
+            commands=commands,
+            input=input,
             session_commands=commands_from_selects(selects),
-            include=lambda reference: resolve_file_include(reference, base=base),
-        )
-        handle = self.executor.start(
-            spec,
+            runnable_fallbacks=("agic:chat", "default"),
             request_id=f"term_{uuid4().hex}",
+        )
+        handle = await self.run_client.start(
+            request,
             tracer=_CallbackTracer(on_event),
         )
-        await handle
+        await handle.wait()
 
     async def _close(self) -> None:
         if self._stop_signal is not None:
             self._stop_signal.set()
-        await self.executor.shutdown()
+        await self.run_client.close()
         if self._watch_tasks:
             for task in self._watch_tasks:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*self._watch_tasks, return_exceptions=True)
 
-    def _submit(self, coroutine: Any, *, allow_closed: bool = False) -> Future[Any]:
+    def _include_resolver(self, setup: AgentSetup) -> IncludeResolver:
+        base = (
+            setup.environment.working_directory
+            if setup.environment is not None
+            else self.layout.home
+        )
+        return lambda reference: resolve_file_include(reference, base=base)
+
+    def _submit_control(
+        self,
+        coroutine: Coroutine[Any, Any, Any],
+        on_error: Callable[[str], None],
+    ) -> None:
+        try:
+            future = self._submit(coroutine)
+        except Exception as exc:
+            on_error(_error_message(exc))
+            return
+        if threading.current_thread() is self._thread:
+            future.add_done_callback(
+                lambda completed: _finish_control(completed, on_error)
+            )
+            return
+        _finish_control(future, on_error)
+
+    def _submit(
+        self,
+        coroutine: Coroutine[Any, Any, Any],
+        *,
+        allow_closed: bool = False,
+    ) -> Future[Any]:
         if self._closed and not allow_closed:
+            coroutine.close()
             raise RuntimeError("local chat session is closed")
         return asyncio.run_coroutine_threadsafe(coroutine, self._loop)
 
@@ -334,3 +362,13 @@ def _default_runnable(state: AgentState) -> str:
 def _error_message(exc: Exception) -> str:
     cause = exc.__cause__
     return str(cause or exc) or type(cause or exc).__name__
+
+
+def _finish_control(
+    future: Future[Any],
+    on_error: Callable[[str], None],
+) -> None:
+    try:
+        future.result()
+    except Exception as exc:
+        on_error(_error_message(exc))
