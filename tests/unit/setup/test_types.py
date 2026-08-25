@@ -60,7 +60,7 @@ def test_agent_setup_copies_and_freezes_implementation_mappings() -> None:
         cast(dict[str, object], setup.tools)["other"] = object()
 
 
-def test_agent_environment_captures_safe_hosting_context(
+def test_agent_environment_captures_safe_sandbox_context(
     tmp_path: Path,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")

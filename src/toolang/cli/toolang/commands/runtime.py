@@ -36,7 +36,7 @@ from ...common.context import (
 from ...common.output import active_agent_error, echo_error
 
 if TYPE_CHECKING:
-    from toolang.up.hosting import HostingState, LaunchSpec
+    from toolang.up.sandbox import SandboxState, LaunchSpec
     from ...common.progress import CliProgress
 
 
@@ -68,7 +68,7 @@ def is_roaming_file_request(args: list[str]) -> bool:
 
 
 def run_roaming_file(source: Path, args: list[str]) -> int:
-    from toolang.up import hosting
+    from toolang.up import sandbox as sandbox_runtime
     from ...common.context import load_runtime_environ
 
     try:
@@ -106,7 +106,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
         )
         startup = user_call(
             asyncio.run,
-            hosting.resolve_launch(
+            sandbox_runtime.resolve_launch(
                 layout=layout,
                 host=options.host,
                 endpoint_host=options.endpoint_host,
@@ -125,7 +125,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
         )
         return user_call(
             asyncio.run,
-            hosting.run(
+            sandbox_runtime.run(
                 startup,
                 on_ready=lambda state: _report_foreground_ready(
                     layout.name,
@@ -156,7 +156,7 @@ def _parse_roaming_file_options(argv: list[str]) -> _RoamingFileOptions:
     host = "127.0.0.1"
     endpoint_host: str | None = None
     port: int | None = None
-    sandbox = "none"
+    sandbox = "host"
     dev: Path | None = None
     index = 0
     while index < len(argv):
@@ -238,7 +238,7 @@ def run(
     ),
     sandbox: Annotated[
         str | None,
-        typer.Option(help="Run in this sandbox; defaults to agent config or none."),
+        typer.Option(help="Run in this sandbox; defaults to agent config or host."),
     ] = None,
     allows: Annotated[
         list[str] | None,
@@ -280,7 +280,7 @@ def run(
         typer.Option("--endpoint-host", help="Endpoint host name.", hidden=True),
     ] = None,
 ) -> None:
-    from toolang.up import hosting
+    from toolang.up import sandbox as sandbox_runtime
     from ...common.progress import as_progress_sink, make_cli_progress
 
     selector = require_runtime_agent(ctx, agent)
@@ -316,7 +316,7 @@ def run(
         finished = True
         exit_code = user_call(
             asyncio.run,
-            hosting.run(
+            sandbox_runtime.run(
                 launch.startup,
                 on_ready=lambda state: _report_foreground_ready(
                     launch.target.name,
@@ -344,7 +344,7 @@ def run(
     raise typer.Exit(exit_code)
 
 
-def _report_foreground_ready(name: str, state: HostingState) -> None:
+def _report_foreground_ready(name: str, state: SandboxState) -> None:
     typer.echo(
         f"Running agent {name}: {state.ref.endpoint} (Ctrl+C to stop)",
         err=True,
@@ -358,7 +358,7 @@ def start(
     ),
     sandbox: Annotated[
         str | None,
-        typer.Option(help="Run in this sandbox; defaults to agent config or none."),
+        typer.Option(help="Run in this sandbox; defaults to agent config or host."),
     ] = None,
     allows: Annotated[
         list[str] | None,
@@ -400,7 +400,7 @@ def start(
         typer.Option("--endpoint-host", help="Endpoint host name.", hidden=True),
     ] = None,
 ) -> None:
-    from toolang.up import hosting
+    from toolang.up import sandbox as sandbox_runtime
     from ...common.progress import as_progress_sink, make_cli_progress
 
     selector = require_runtime_agent(ctx, agent)
@@ -439,7 +439,7 @@ def start(
 
     progress.finish(details=False)
     try:
-        handle = user_call(asyncio.run, hosting.launch(launch.startup))
+        handle = user_call(asyncio.run, sandbox_runtime.launch(launch.startup))
     except TimeoutError as exc:
         raise click.ClickException(
             f"Agent {launch.target.name} start timed out: {launch.target.runtime_log}"
@@ -459,14 +459,14 @@ def stop(
         typer.Option(help="Force-stop when graceful shutdown does not complete."),
     ] = False,
 ) -> None:
-    from toolang.up import hosting
+    from toolang.up import sandbox as sandbox_runtime
 
     agent_name = require_runtime_agent(ctx, agent)
     root = context_root(ctx)
     layout = AgentLayout.resident(root, agent_name)
     stopped = user_call(
         asyncio.run,
-        hosting.stop(layout, force=force),
+        sandbox_runtime.stop(layout, force=force),
     )
     if not stopped:
         raise click.ClickException(f"Agent {agent_name} not running")
@@ -546,7 +546,7 @@ def resolve_startup(
     background: bool,
     progress: CliProgress | None,
 ) -> RuntimeStartup:
-    from toolang.up import hosting
+    from toolang.up import sandbox as sandbox_runtime
 
     root, agent = target.root, target.name
     del progress
@@ -583,7 +583,7 @@ def resolve_startup(
     )
     startup = user_call(
         asyncio.run,
-        hosting.resolve_launch(
+        sandbox_runtime.resolve_launch(
             layout=target,
             host=host,
             endpoint_host=endpoint_host,

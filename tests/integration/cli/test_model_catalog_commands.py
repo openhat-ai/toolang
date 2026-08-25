@@ -15,7 +15,7 @@ from toolang.base.types.model import Model, ModelCatalogSnapshot, Provider
 import toolang.cli.toolang.main as cli
 import toolang.cli.toolang.commands.model_catalog as model_catalog_commands
 from toolang.plugin.models.catalog import parse_model_catalog_data
-from toolang.plugin.models.local import LlamaCppModels, OllamaModels
+from toolang.plugin.models.local import LlamaCppModelCatalog, OllamaModelCatalog
 
 
 runner = CliRunner()
@@ -211,8 +211,8 @@ def test_models_summary_counts_local_catalogs_and_providers_diagnose_offline(
             revision="runtime:llama_cpp",
         )
 
-    monkeypatch.setattr(OllamaModels, "snapshot", ollama_snapshot)
-    monkeypatch.setattr(LlamaCppModels, "snapshot", llama_snapshot)
+    monkeypatch.setattr(OllamaModelCatalog, "snapshot", ollama_snapshot)
+    monkeypatch.setattr(LlamaCppModelCatalog, "snapshot", llama_snapshot)
 
     result = runner.invoke(
         cli.app,
@@ -404,8 +404,8 @@ def _disable_local_discovery(monkeypatch) -> None:
     async def empty_snapshot(_source) -> ModelCatalogSnapshot:
         return ModelCatalogSnapshot(providers={}, models=(), revision="runtime:test")
 
-    monkeypatch.setattr(OllamaModels, "snapshot", empty_snapshot)
-    monkeypatch.setattr(LlamaCppModels, "snapshot", empty_snapshot)
+    monkeypatch.setattr(OllamaModelCatalog, "snapshot", empty_snapshot)
+    monkeypatch.setattr(LlamaCppModelCatalog, "snapshot", empty_snapshot)
 
 
 def _is_dim(text: Text, offset: int) -> bool:

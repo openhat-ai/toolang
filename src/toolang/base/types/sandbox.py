@@ -1,4 +1,4 @@
-"""Shared hosting value types."""
+"""Shared sandbox value types."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
-class HostingMount:
-    """One local path exposed inside a hosted environment."""
+class SandboxMount:
+    """One local path exposed inside a sandbox environment."""
 
     local_path: Path
     hosted_path: Path
@@ -17,7 +17,7 @@ class HostingMount:
 
 
 @dataclass(frozen=True, slots=True)
-class HostingPort:
+class SandboxPort:
     """One host-to-environment port publication."""
 
     bind_host: str
@@ -26,8 +26,8 @@ class HostingPort:
 
 
 @dataclass(frozen=True, slots=True)
-class HostingRequest:
-    """Explicit inputs from which one hosting implementation prepares a launch."""
+class SandboxRequest:
+    """Explicit inputs from which one sandbox prepares a launch."""
 
     local_root: Path
     local_home: Path
@@ -42,12 +42,12 @@ class HostingRequest:
     working_directory: Path
     log_path: Path | None
     envs: dict[str, str] = field(default_factory=dict)
-    mounts: tuple[HostingMount, ...] = ()
+    mounts: tuple[SandboxMount, ...] = ()
     local_dev_artifact: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class HostingPlan:
+class SandboxPlan:
     """One implementation-owned, fully prepared workload launch."""
 
     sandbox: str
@@ -56,13 +56,13 @@ class HostingPlan:
     log_path: Path | None
     endpoint: str
     envs: dict[str, str] = field(default_factory=dict)
-    mounts: tuple[HostingMount, ...] = ()
-    ports: tuple[HostingPort, ...] = ()
+    mounts: tuple[SandboxMount, ...] = ()
+    ports: tuple[SandboxPort, ...] = ()
     meta: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
-class HostingRef:
+class SandboxRef:
     """Serializable reference to one launched workload."""
 
     runtime_id: str
@@ -73,9 +73,9 @@ class HostingRef:
         runtime_id = self.runtime_id.strip()
         endpoint = self.endpoint.strip()
         if not runtime_id:
-            raise ValueError("hosting reference requires runtime_id")
+            raise ValueError("sandbox reference requires runtime_id")
         if not endpoint:
-            raise ValueError("hosting reference requires endpoint")
+            raise ValueError("sandbox reference requires endpoint")
         object.__setattr__(self, "runtime_id", runtime_id)
         object.__setattr__(self, "endpoint", endpoint)
         object.__setattr__(self, "meta", dict(self.meta))
@@ -88,17 +88,17 @@ class HostingRef:
         }
 
     @classmethod
-    def from_data(cls, payload: object) -> HostingRef:
+    def from_data(cls, payload: object) -> SandboxRef:
         if not isinstance(payload, dict):
-            raise ValueError("hosting reference must be a mapping")
+            raise ValueError("sandbox reference must be a mapping")
         data = {str(key): value for key, value in payload.items()}
         runtime_id = data.get("runtime_id")
         endpoint = data.get("endpoint")
         meta = data.get("meta")
         if not isinstance(runtime_id, str) or not runtime_id.strip():
-            raise ValueError("hosting reference is missing runtime_id")
+            raise ValueError("sandbox reference is missing runtime_id")
         if not isinstance(endpoint, str) or not endpoint.strip():
-            raise ValueError("hosting reference is missing endpoint")
+            raise ValueError("sandbox reference is missing endpoint")
         return cls(
             runtime_id=runtime_id.strip(),
             endpoint=endpoint.strip(),

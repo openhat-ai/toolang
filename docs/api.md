@@ -332,10 +332,10 @@ Behavior:
 | `toolang start` | Starts one local managed agent only. Remote selectors must be cloned first |
 
 `toolang run` and `toolang start` resolve the same `LaunchSpec` and call the
-same hosting lifecycle. A hidden `toolang serve` command is the only
-AgentServer process entrypoint. The hosting implementation launches that
+same sandbox lifecycle. A hidden `toolang serve` command is the only
+AgentServer process entrypoint. The sandbox implementation launches that
 entrypoint locally, in Docker, or in another environment; the server and
-executor do not branch on hosting.
+executor do not branch on sandbox.
 
 Both commands accept repeatable `--allow DOMAIN=SELECTORS`,
 `--limit FIELD=VALUE`, and `--default FIELD=VALUE` options. The CLI parses these
@@ -376,13 +376,13 @@ the process lifetime. Each `--default` or `--limit` field may occur once;
 repeated `--allow` values for the same domain accumulate within the CLI layer.
 
 When `--sandbox` is omitted, resident run/start commands use the effective
-root/home `[sandbox]` binding, falling back to `none` when no binding exists.
-An explicit selector, including `--sandbox none`, overrides that binding.
+root/home `[sandbox]` binding, falling back to `host` when no binding exists.
+An explicit selector, including `--sandbox host`, overrides that binding.
 
-For every hosting implementation, AgentServer is the environment's primary
+For every sandbox implementation, AgentServer is the environment's primary
 foreground workload. `run` waits for that workload and releases it on exit,
 while `start` returns after the health endpoint is ready. `stop` reloads the
-persisted `HostingState`, stops the primary workload, and releases its hosting
+persisted `SandboxState`, stops the primary workload, and releases its sandbox
 resources.
 
 Agent entrypoints also share one logging policy resolver:
@@ -668,8 +668,8 @@ a thread id, it continues that thread. The TUI runs in its own process, assemble
 the same core objects, calls `RunExecutor` directly, and observes native
 `RunEvent` values through a `RunTracer`. It does not depend on the HTTP run
 stream. Starting an agent HTTP server remains a separate CLI operation.
-Direct chat currently accepts only the `none` sandbox selector; placing the TUI
-process inside a hosted sandbox is a separate follow-up.
+Direct chat currently accepts only the `host` sandbox selector; placing the TUI
+process inside another sandbox is a separate follow-up.
 Job thread ids are inspectable and controllable through thread and run commands,
 but `chat` does not implicitly reopen tasks or create manual chore runs.
 

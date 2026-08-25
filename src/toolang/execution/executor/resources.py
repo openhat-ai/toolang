@@ -28,8 +28,11 @@ from toolang.plugin.models.resolution import (
     select_model_selectors,
     selectable_model_targets,
 )
-from toolang.plugin.tools.loading import select_tools, validate_tool_selectors
-from toolang.plugin.tools.registry import selected_tool_names, tool_ref_for_model_tool
+from toolang.plugin.toolsets.loading import select_tools, validate_tool_selectors
+from toolang.plugin.toolsets.registry import (
+    selected_tool_names,
+    tool_ref_for_model_tool,
+)
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState, PreparedCap, select_cap_entries
 

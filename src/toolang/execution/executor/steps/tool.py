@@ -66,7 +66,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     step_started = time.perf_counter()
     started_at = utc_now()
     tool = prepared.tools.get(call.name)
-    plugin_name = _plugin_name(tool)
+    toolset_name = _toolset_name(tool)
     summary_context = _tool_summary_context(call, tool)
     source = state.tool_call_sources.get(call.tool_call_id)
     step_input: tuple[Pointer, ...]
@@ -88,7 +88,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         thread_id=run.thread,
         run_id=run.run_id,
         step_index=step_index,
-        plugin_name=plugin_name,
+        toolset_name=toolset_name,
     )
     await state.emit(
         StepBegin(
@@ -96,7 +96,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             kind="tool",
             input=step_input,
             given=ToolStepGiven(
-                plugin=plugin_name,
+                plugin=toolset_name,
                 call=call,
                 summary=_tool_summary(summary_context, "running"),
             ),
@@ -172,7 +172,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
         thread_id=run.thread,
         run_id=run.run_id,
         step_index=step_index,
-        plugin_name=plugin_name,
+        toolset_name=toolset_name,
     )
     await state.emit(
         StepEnd(
@@ -199,10 +199,10 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
     return record
 
 
-def _plugin_name(tool: AgentTool | None) -> str:
-    plugin_name = getattr(tool, "plugin_name", None)
-    if isinstance(plugin_name, str) and plugin_name:
-        return plugin_name
+def _toolset_name(tool: AgentTool | None) -> str:
+    toolset_name = getattr(tool, "toolset_name", None)
+    if isinstance(toolset_name, str) and toolset_name:
+        return toolset_name
     return "-"
 
 
@@ -246,7 +246,7 @@ def _tool_identity(
         return family, name
 
     fallback_family = getattr(tool, "namespace", None) or getattr(
-        tool, "plugin_name", ""
+        tool, "toolset_name", ""
     )
     return (
         fallback_family if isinstance(fallback_family, str) else "",
@@ -364,13 +364,13 @@ def _tool_context(
     services: tuple[ToolService, ...],
 ) -> ToolContext:
     tool = tools.get(tool_name)
-    plugin_name = getattr(tool, "plugin_name", None)
-    if not isinstance(plugin_name, str) or not plugin_name:
-        raise ToolangError(f"unknown tool plugin for tool: {tool_name}")
+    toolset_name = getattr(tool, "toolset_name", None)
+    if not isinstance(toolset_name, str) or not toolset_name:
+        raise ToolangError(f"unknown toolset plugin for tool: {tool_name}")
     return ToolContext(
         run_id=run_id,
         home=layout.home,
-        room=layout.tool_room(plugin_name),
+        room=layout.tool_room(toolset_name),
         wd=layout.home,
         services=services,
         placement=layout.placement,

@@ -5,19 +5,19 @@ from dataclasses import dataclass
 from typing import Any
 
 from toolang.base.protocols.model import ModelAdapter
-from toolang.base.protocols.tool import AgentTool, AgentToolSet
+from toolang.base.protocols.tool import AgentTool, Toolset
 from toolang.base.types.model import ModelCatalogSnapshot, ModelTarget
 from toolang.base.types.run import ModelCall, ModelCallResult
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.plugin.models.loading import load_model_adapters, load_model_catalogs
-from toolang.plugin.tools.registry import ToolRef
+from toolang.plugin.toolsets.registry import ToolRef
 from toolang.plugin.loading import (
     PluginInfo,
     list_plugin_infos,
     list_plugin_names,
     load_plugin_factory,
 )
-from toolang.plugin.tools.loading import load_tool_plugins
+from toolang.plugin.toolsets.loading import load_tools, load_toolsets
 
 
 class _FakeEntryPoint:
@@ -31,43 +31,43 @@ class _FakeEntryPoint:
 
 
 def _patch_tool_entry_points(monkeypatch) -> None:
-    from toolang.base.examples.tools import create_echo_tool_set
-    from toolang.base.examples.tools import create_math_add_tool_set
-    from toolang.plugin.tools.filesystem import (
-        create_tool_set as create_filesystem_tool,
+    from toolang.base.examples.tools import create_echo_toolset
+    from toolang.base.examples.tools import create_math_add_toolset
+    from toolang.plugin.toolsets.filesystem import (
+        create_toolset as create_filesystem_tool,
     )
-    from toolang.plugin.tools.service_use import (
-        create_tool_set as create_service_use_tool,
+    from toolang.plugin.toolsets.service_use import (
+        create_toolset as create_service_use_tool,
     )
-    from toolang.plugin.tools.shell import create_tool_set as create_shell_tool
-    from toolang.plugin.tools.web_search import (
-        create_tool_set as create_web_search_tool,
+    from toolang.plugin.toolsets.shell import create_toolset as create_shell_tool
+    from toolang.plugin.toolsets.web_search import (
+        create_toolset as create_web_search_tool,
     )
     from toolang.execution.tools.agent_state import (
-        create_tool_set as create_agent_state_tool,
+        create_toolset as create_agent_state_tool,
     )
-    from toolang.base.examples.tools import create_working_tree_tool_set
+    from toolang.base.examples.tools import create_working_tree_toolset
 
     entries = [
         _FakeEntryPoint("agent_state", create_agent_state_tool),
-        _FakeEntryPoint("echo", create_echo_tool_set),
+        _FakeEntryPoint("echo", create_echo_toolset),
         _FakeEntryPoint("filesystem", create_filesystem_tool),
-        _FakeEntryPoint("math_add", create_math_add_tool_set),
+        _FakeEntryPoint("math_add", create_math_add_toolset),
         _FakeEntryPoint("service_use", create_service_use_tool),
         _FakeEntryPoint("shell", create_shell_tool),
         _FakeEntryPoint("web_search", create_web_search_tool),
-        _FakeEntryPoint("working_tree", create_working_tree_tool_set),
+        _FakeEntryPoint("working_tree", create_working_tree_toolset),
     ]
     monkeypatch.setattr(
         "toolang.plugin.loading.entry_points",
-        lambda *, group: entries if group == "toolang.tool" else [],
+        lambda *, group: entries if group == "toolang.toolset" else [],
     )
 
 
-def test_tool_plugins_load_from_entry_points(monkeypatch) -> None:
+def test_toolsets_load_from_entry_points(monkeypatch) -> None:
     _patch_tool_entry_points(monkeypatch)
 
-    assert list_plugin_names(group="toolang.tool") == [
+    assert list_plugin_names(group="toolang.toolset") == [
         "agent_state",
         "echo",
         "filesystem",
@@ -80,27 +80,27 @@ def test_tool_plugins_load_from_entry_points(monkeypatch) -> None:
 
 
 def test_plugin_infos_include_source(monkeypatch) -> None:
-    from toolang.base.examples.tools import create_echo_tool_set
-    from toolang.plugin.tools.filesystem import (
-        create_tool_set as create_filesystem_tool,
+    from toolang.base.examples.tools import create_echo_toolset
+    from toolang.plugin.toolsets.filesystem import (
+        create_toolset as create_filesystem_tool,
     )
 
     entries = [
         _FakeEntryPoint(
-            "echo", create_echo_tool_set, value="demo.tools:create_echo_tool_set"
+            "echo", create_echo_toolset, value="demo.tools:create_echo_toolset"
         ),
         _FakeEntryPoint(
             "filesystem",
             create_filesystem_tool,
-            value="toolang.plugin.tools.filesystem:create_tool_set",
+            value="toolang.plugin.toolsets.filesystem:create_toolset",
         ),
     ]
     monkeypatch.setattr(
         "toolang.plugin.loading.entry_points",
-        lambda *, group: entries if group == "toolang.tool" else [],
+        lambda *, group: entries if group == "toolang.toolset" else [],
     )
 
-    assert list_plugin_infos(group="toolang.tool") == [
+    assert list_plugin_infos(group="toolang.toolset") == [
         PluginInfo(name="echo", source="external"),
         PluginInfo(name="filesystem", source="built-in"),
     ]
@@ -109,15 +109,15 @@ def test_plugin_infos_include_source(monkeypatch) -> None:
 def test_load_plugin_factory_loads_named_factory(monkeypatch) -> None:
     _patch_tool_entry_points(monkeypatch)
 
-    factory = load_plugin_factory("echo", group="toolang.tool")
+    factory = load_plugin_factory("echo", group="toolang.toolset")
 
-    assert factory.__name__ == "create_echo_tool_set"
+    assert factory.__name__ == "create_echo_toolset"
 
 
-def test_load_tool_plugins_uses_encoded_model_names(monkeypatch) -> None:
+def test_load_tools_uses_encoded_model_names(monkeypatch) -> None:
     _patch_tool_entry_points(monkeypatch)
 
-    tools = load_tool_plugins()
+    tools = load_tools()
 
     assert "shell__execute" in tools
     assert "web_search__search" in tools
@@ -140,7 +140,7 @@ def test_load_tool_plugins_uses_encoded_model_names(monkeypatch) -> None:
     assert tools["service_use__tool_call"].definition().name == "service_use__tool_call"
 
 
-def test_load_tool_plugins_accepts_namespaced_plugin_keys(monkeypatch) -> None:
+def test_load_tools_accepts_namespaced_toolset_keys(monkeypatch) -> None:
     @tool(name="search", description="Search issues.")
     def search() -> dict[str, object]:
         return {}
@@ -150,7 +150,7 @@ def test_load_tool_plugins_accepts_namespaced_plugin_keys(monkeypatch) -> None:
         return {}
 
     @dataclass(frozen=True, slots=True)
-    class Plugin(AgentToolSet):
+    class Plugin(Toolset):
         name: str = "tracker"
         description: str | None = None
 
@@ -160,20 +160,20 @@ def test_load_tool_plugins_accepts_namespaced_plugin_keys(monkeypatch) -> None:
                 "issues/create": create_function_tool(create),
             }
 
-    def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
+    def create_toolset(config: Mapping[str, Any]) -> Toolset:
         del config
         return Plugin()
 
     monkeypatch.setattr(
         "toolang.plugin.loading.entry_points",
         lambda *, group: (
-            [_FakeEntryPoint("tracker", create_tool_set)]
-            if group == "toolang.tool"
+            [_FakeEntryPoint("tracker", create_toolset)]
+            if group == "toolang.toolset"
             else []
         ),
     )
 
-    tools = load_tool_plugins()
+    tools = load_tools()
 
     assert sorted(tools) == ["issues__create", "issues__search"]
     assert getattr(tools["issues__search"], "ref") == ToolRef(
@@ -191,7 +191,7 @@ def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> 
         return {}
 
     @dataclass(frozen=True, slots=True)
-    class ToolSet(AgentToolSet):
+    class DemoToolset(Toolset):
         name: str
         description: str | None
         _tools: Mapping[str, AgentTool]
@@ -199,13 +199,13 @@ def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> 
         def tools(self) -> Mapping[str, AgentTool]:
             return self._tools
 
-    def create_alpha_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
+    def create_alpha_toolset(config: Mapping[str, Any]) -> Toolset:
         del config
-        return ToolSet("alpha", None, {"alpha": create_function_tool(alpha)})
+        return DemoToolset("alpha", None, {"alpha": create_function_tool(alpha)})
 
-    def create_beta_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
+    def create_beta_toolset(config: Mapping[str, Any]) -> Toolset:
         del config
-        return ToolSet("beta", None, {"beta": create_function_tool(beta)})
+        return DemoToolset("beta", None, {"beta": create_function_tool(beta)})
 
     @dataclass(frozen=True, slots=True)
     class Adapter(ModelAdapter):
@@ -232,14 +232,14 @@ def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> 
         return Adapter()
 
     entry_points_by_group = {
-        "toolang.tool": [
+        "toolang.toolset": [
             _FakeEntryPoint(
                 "alpha",
-                create_alpha_tool_set,
-                value="demo.plugins:create_alpha_tool_set",
+                create_alpha_toolset,
+                value="demo.plugins:create_alpha_toolset",
             ),
             _FakeEntryPoint(
-                "beta", create_beta_tool_set, value="demo.plugins:create_beta_tool_set"
+                "beta", create_beta_toolset, value="demo.plugins:create_beta_toolset"
             ),
         ],
         "toolang.model_adapter": [
@@ -254,9 +254,11 @@ def test_one_python_package_can_define_multiple_toolang_plugins(monkeypatch) -> 
         "toolang.plugin.loading.entry_points",
         lambda *, group: entry_points_by_group.get(group, []),
     )
-    tools = load_tool_plugins()
+    toolsets = load_toolsets()
+    tools = load_tools()
     adapters = load_model_adapters()
 
+    assert sorted(toolsets) == ["alpha", "beta"]
     assert sorted(tools) == ["alpha__alpha", "beta__beta"]
     assert "package_adapter" in adapters
 

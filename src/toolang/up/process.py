@@ -248,13 +248,13 @@ class AgentProcess:
             if isinstance(raw_endpoint, str) and raw_endpoint.strip()
             else None
         )
-        pid_alive = isinstance(pid, int) and sandbox == "none" and _pid_alive(pid)
+        pid_alive = isinstance(pid, int) and sandbox == "host" and _pid_alive(pid)
         scan = runtime_state is not None and raw_status == "stopped" and not pid_alive
         process_alive = pid_alive or bool(self.pids() if scan else ())
         status = _runtime_status_label(
             raw_status,
             pid_alive=process_alive,
-            sandbox_alive=_hosting_running(self.layout),
+            sandbox_alive=_sandbox_running(self.layout),
         )
         active = status in {"running", "preparing", "starting"}
         return AgentStatus(
@@ -536,7 +536,7 @@ def write_runtime_state(
     endpoint: str,
     started_at: str,
     pid: int | None,
-    sandbox: str = "none",
+    sandbox: str = "host",
     models: Sequence[str] | None = None,
     status: str = "running",
     message: str | None = None,
@@ -645,9 +645,9 @@ def runtime_pid_label(
     if runtime_state is None:
         return None
     if layout is not None:
-        from toolang.up.hosting import HostingState
+        from toolang.up.sandbox import SandboxState
 
-        state = HostingState.load(layout.hosting_state)
+        state = SandboxState.load(layout.sandbox_state)
         if state is not None:
             return state.ref.runtime_id
     pid = runtime_state.get("pid")
@@ -741,7 +741,7 @@ def _runtime_sandbox_label(runtime_state: dict[str, object] | None) -> str | Non
     sandbox = runtime_state.get("sandbox")
     if isinstance(sandbox, str) and sandbox.strip():
         return sandbox.strip()
-    return "none"
+    return "host"
 
 
 def _runtime_command_matches(command: str, *, root: str, agent_name: str) -> bool:
@@ -790,19 +790,19 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _hosting_running(layout: AgentLayout) -> bool:
-    from toolang.up.hosting import HostingState
-    from toolang.plugin.sandboxes.loading import load_hosting
+def _sandbox_running(layout: AgentLayout) -> bool:
+    from toolang.up.sandbox import SandboxState
+    from toolang.plugin.sandboxes.loading import create_sandbox
 
     try:
-        state = HostingState.load(layout.hosting_state)
+        state = SandboxState.load(layout.sandbox_state)
     except ValueError:
         return False
     if state is None:
         return False
     name, _, _ = state.sandbox.partition(":")
     try:
-        return asyncio.run(load_hosting(name, config={}).running(state.ref))
+        return asyncio.run(create_sandbox(name, config={}).running(state.ref))
     except (OSError, RuntimeError, ValueError):
         return False
 

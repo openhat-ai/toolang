@@ -86,7 +86,7 @@ The meaning of `family` is domain-specific:
 | Domain | Family | Name | Example |
 | --- | --- | --- | --- |
 | `model` | model family | model name | `openai/gpt-5` |
-| `tool` | tool set | tool name | `shell/execute` |
+| `tool` | toolset | tool name | `shell/execute` |
 | `cap` | cap kind | cap name | `skill/reviewer` |
 
 Filters must not use identity keys such as `family`, `kind`, `name`,
@@ -171,7 +171,7 @@ execute
 *
 ```
 
-The pattern family is the tool set. CLI table output should call this column
+The pattern family is the toolset. CLI table output should call this column
 `SET`.
 
 Allowed filter keys:

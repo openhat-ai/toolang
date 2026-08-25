@@ -1,4 +1,4 @@
-"""Shell tool plugin."""
+"""Shell toolset plugin."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool, AgentToolSet
+from toolang.base.protocols.tool import AgentTool, Toolset
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
 
@@ -18,7 +18,7 @@ DEFAULT_MAX_OUTPUT_CHARS = 20_000
 
 
 @dataclass(slots=True)
-class ShellPlugin:
+class ShellToolset:
     """Shell execution tools scoped to one agent home."""
 
     config: dict[str, Any]
@@ -82,10 +82,10 @@ class ShellPlugin:
         return {"execute": create_function_tool(execute)}
 
 
-def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
-    """Create the shell tool plugin."""
+def create_toolset(config: Mapping[str, Any]) -> Toolset:
+    """Create the shell toolset plugin."""
 
-    return ShellPlugin(config=dict(config))
+    return ShellToolset(config=dict(config))
 
 
 def _resolve_cwd(raw_cwd: str | None, *, context: ToolContext | None) -> Path:

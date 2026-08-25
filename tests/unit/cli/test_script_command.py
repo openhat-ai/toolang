@@ -515,7 +515,7 @@ def test_script_rejects_sandbox_option(
 
     result = script.dispatch(
         [],
-        [str(source), "demo", "count=2", "--sandbox=none", "hello"],
+        [str(source), "demo", "count=2", "--sandbox=host", "hello"],
         prog_name="toolang",
         stdin=StringIO(),
     )

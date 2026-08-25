@@ -1,4 +1,4 @@
-"""Service-use tool plugin backed by mcat_cli."""
+"""Service-use toolset plugin backed by mcat_cli."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import threading
 from typing import Any, Literal, cast
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool, AgentToolSet
+from toolang.base.protocols.tool import AgentTool, Toolset
 from toolang.base.types.tool import ToolContext, ToolDefinition
 
 ServiceTransport = Literal["http", "stdio"]
@@ -61,7 +61,7 @@ class _LeafTool(AgentTool):
 
 @dataclass(frozen=True, slots=True)
 class _ServiceUseAdapter:
-    plugin_name: str
+    toolset_name: str
     connection_version: int | None
     write_connection_file: ConnectionFileWriter
 
@@ -535,8 +535,8 @@ class _ServiceUseAdapter:
 
 
 @dataclass(slots=True)
-class ServiceUsePlugin:
-    """One service plugin backed by mcat_cli modules."""
+class ServiceUseToolset:
+    """One service-use toolset backed by mcat_cli modules."""
 
     connection_version: int | None
     write_connection_file: ConnectionFileWriter
@@ -546,7 +546,7 @@ class ServiceUsePlugin:
 
     def __post_init__(self) -> None:
         adapter = _ServiceUseAdapter(
-            plugin_name=self.name,
+            toolset_name=self.name,
             connection_version=self.connection_version,
             write_connection_file=self.write_connection_file,
         )
@@ -556,11 +556,11 @@ class ServiceUsePlugin:
         return dict(self._tools)
 
 
-def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
-    """Create the service_use tool plugin."""
+def create_toolset(config: Mapping[str, Any]) -> Toolset:
+    """Create the service_use toolset plugin."""
 
     del config
-    return ServiceUsePlugin(
+    return ServiceUseToolset(
         connection_version=None,
         write_connection_file=_write_connection_file,
         name="service_use",

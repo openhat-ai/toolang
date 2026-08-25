@@ -11,10 +11,12 @@ import pytest
 from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.types.tool import ToolContext, ToolService
-from toolang.plugin.tools.filesystem import create_tool_set as create_filesystem_tool
-from toolang.plugin.tools.service_use import create_tool_set as create_service_use_tool
-from toolang.plugin.tools.shell import create_tool_set as create_shell_tool
-from toolang.plugin.tools.web_search import create_tool_set as create_web_search_tool
+from toolang.plugin.toolsets.filesystem import create_toolset as create_filesystem_tool
+from toolang.plugin.toolsets.service_use import (
+    create_toolset as create_service_use_tool,
+)
+from toolang.plugin.toolsets.shell import create_toolset as create_shell_tool
+from toolang.plugin.toolsets.web_search import create_toolset as create_web_search_tool
 
 
 def _tool_context(
@@ -164,7 +166,7 @@ def test_web_search_tool_filters_domains(monkeypatch, tmp_path: Path) -> None:
         ]
 
     monkeypatch.setattr(
-        "toolang.plugin.tools.web_search._run_search",
+        "toolang.plugin.toolsets.web_search._run_search",
         search,
     )
 
@@ -196,11 +198,11 @@ def test_web_search_worker_is_process_isolated_and_cancellable(
         return []
 
     monkeypatch.setattr(
-        "toolang.plugin.tools.web_search.to_process.run_sync",
+        "toolang.plugin.toolsets.web_search.to_process.run_sync",
         run_sync,
     )
 
-    from toolang.plugin.tools.web_search import _run_search, _search_text
+    from toolang.plugin.toolsets.web_search import _run_search, _search_text
 
     result = asyncio.run(_run_search("toolang", max_results=15, timeout=5))
 
@@ -230,7 +232,7 @@ def test_web_search_enforces_an_outer_timeout(
         return []
 
     monkeypatch.setattr(
-        "toolang.plugin.tools.web_search._run_search",
+        "toolang.plugin.toolsets.web_search._run_search",
         stalled,
     )
 

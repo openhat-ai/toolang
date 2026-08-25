@@ -1,4 +1,4 @@
-"""Hosting directly on the current machine."""
+"""Sandbox directly on the current machine."""
 
 from __future__ import annotations
 
@@ -12,24 +12,24 @@ import sys
 import time
 from typing import Any
 
-from toolang.base.protocols.hosting import Hosting
-from toolang.base.types.hosting import HostingPlan, HostingRef, HostingRequest
+from toolang.base.protocols.sandbox import Sandbox
+from toolang.base.types.sandbox import SandboxPlan, SandboxRef, SandboxRequest
 
 
 @dataclass(slots=True)
-class NoneHosting:
+class HostSandbox:
     """Run the AgentServer as a local child process."""
 
     config: dict[str, Any]
-    name: str = "none"
+    name: str = "host"
     _processes: dict[int, subprocess.Popen[bytes]] = field(
         default_factory=dict, init=False, repr=False
     )
 
-    def prepare(self, spec: str | None, request: HostingRequest) -> HostingPlan:
+    def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         if spec is not None:
-            raise ValueError("none sandbox does not accept a spec")
-        return HostingPlan(
+            raise ValueError("host sandbox does not accept a spec")
+        return SandboxPlan(
             sandbox=self.name,
             command=_local_command(request.command),
             working_directory=request.working_directory,
@@ -38,10 +38,10 @@ class NoneHosting:
             envs=dict(request.envs),
         )
 
-    async def launch(self, plan: HostingPlan) -> HostingRef:
+    async def launch(self, plan: SandboxPlan) -> SandboxRef:
         process = await asyncio.to_thread(_launch, plan)
         self._processes[process.pid] = process
-        return HostingRef(
+        return SandboxRef(
             runtime_id=str(process.pid),
             endpoint=plan.endpoint,
             meta={
@@ -50,14 +50,14 @@ class NoneHosting:
             },
         )
 
-    async def running(self, ref: HostingRef) -> bool:
+    async def running(self, ref: SandboxRef) -> bool:
         pid = _pid(ref)
         process = self._processes.get(pid)
         if process is not None:
             return process.poll() is None
         return _ref_process_running(ref, pid)
 
-    async def wait(self, ref: HostingRef) -> int:
+    async def wait(self, ref: SandboxRef) -> int:
         pid = _pid(ref)
         process = self._processes.get(pid)
         if process is not None:
@@ -66,7 +66,7 @@ class NoneHosting:
             await asyncio.sleep(0.1)
         return 0
 
-    async def stop(self, ref: HostingRef, *, force: bool = False) -> None:
+    async def stop(self, ref: SandboxRef, *, force: bool = False) -> None:
         pid = _pid(ref)
         process = self._processes.get(pid)
         if process is not None:
@@ -77,9 +77,7 @@ class NoneHosting:
             )
         else:
             if _pid_running(pid) and not _ref_process_running(ref, pid):
-                raise ValueError(
-                    f"local hosting reference no longer matches pid: {pid}"
-                )
+                raise ValueError(f"host sandbox reference no longer matches pid: {pid}")
             stopped = await asyncio.to_thread(
                 _stop_pid,
                 pid,
@@ -88,19 +86,19 @@ class NoneHosting:
         if not stopped:
             raise ValueError(f"agent process did not stop: {pid}; retry with --force")
 
-    async def release(self, ref: HostingRef) -> None:
+    async def release(self, ref: SandboxRef) -> None:
         self._processes.pop(_pid(ref), None)
 
 
-def create_hosting(config: Mapping[str, Any]) -> Hosting:
-    """Create built-in local hosting."""
+def create_sandbox(config: Mapping[str, Any]) -> Sandbox:
+    """Create built-in local sandbox."""
 
-    return NoneHosting(dict(config))
+    return HostSandbox(dict(config))
 
 
-def _launch(plan: HostingPlan) -> subprocess.Popen[bytes]:
+def _launch(plan: SandboxPlan) -> subprocess.Popen[bytes]:
     if not plan.command:
-        raise ValueError("none hosting requires a command")
+        raise ValueError("host sandbox requires a command")
     if plan.log_path is None:
         return subprocess.Popen(
             plan.command,
@@ -126,19 +124,19 @@ def _launch(plan: HostingPlan) -> subprocess.Popen[bytes]:
 
 def _local_command(command: tuple[str, ...]) -> tuple[str, ...]:
     if not command:
-        raise ValueError("none hosting requires a command")
+        raise ValueError("host sandbox requires a command")
     if command[0] not in {"too", "toolang"}:
         return command
     return (sys.executable, "-m", "toolang.cli.toolang", *command[1:])
 
 
-def _pid(ref: HostingRef) -> int:
+def _pid(ref: SandboxRef) -> int:
     try:
         pid = int(ref.runtime_id)
     except ValueError as exc:
-        raise ValueError(f"invalid local hosting pid: {ref.runtime_id}") from exc
+        raise ValueError(f"invalid host sandbox pid: {ref.runtime_id}") from exc
     if pid <= 0:
-        raise ValueError(f"invalid local hosting pid: {ref.runtime_id}")
+        raise ValueError(f"invalid host sandbox pid: {ref.runtime_id}")
     return pid
 
 
@@ -150,7 +148,7 @@ def _pid_running(pid: int) -> bool:
     return True
 
 
-def _ref_process_running(ref: HostingRef, pid: int) -> bool:
+def _ref_process_running(ref: SandboxRef, pid: int) -> bool:
     if not _pid_running(pid):
         return False
     expected = ref.meta.get("identity")

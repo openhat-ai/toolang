@@ -1,4 +1,4 @@
-"""Example tool plugins for tests and demos."""
+"""Example toolset plugins for tests and demos."""
 
 from __future__ import annotations
 
@@ -7,13 +7,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..protocols.tool import AgentTool, AgentToolSet
+from ..protocols.tool import AgentTool, Toolset
 from ..types.tool import ToolContext
 from ..utils.function_tools import create_function_tool, tool
 
 
 @dataclass(frozen=True, slots=True)
-class _ExamplePlugin(AgentToolSet):
+class _ExampleToolset(Toolset):
     name: str
     description: str | None
     _tools: dict[str, AgentTool]
@@ -22,23 +22,23 @@ class _ExamplePlugin(AgentToolSet):
         return dict(self._tools)
 
 
-def create_example_tool_plugins(
+def create_example_toolsets(
     config: Mapping[str, Mapping[str, Any]] | None = None,
-) -> dict[str, AgentToolSet]:
-    """Build the example tool set explicitly for tests or demos."""
+) -> dict[str, Toolset]:
+    """Build the example toolsets explicitly for tests or demos."""
 
     plugin_config = dict(config or {})
     return {
-        "echo": create_echo_tool_set(plugin_config.get("echo", {})),
-        "math_add": create_math_add_tool_set(plugin_config.get("math_add", {})),
-        "working_tree": create_working_tree_tool_set(
+        "echo": create_echo_toolset(plugin_config.get("echo", {})),
+        "math_add": create_math_add_toolset(plugin_config.get("math_add", {})),
+        "working_tree": create_working_tree_toolset(
             plugin_config.get("working_tree", {})
         ),
     }
 
 
-def create_echo_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
-    """Build the example echo tool plugin."""
+def create_echo_toolset(config: Mapping[str, Any]) -> Toolset:
+    """Build the example echo toolset plugin."""
 
     prefix = str(config.get("prefix", ""))
 
@@ -53,15 +53,15 @@ def create_echo_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
             "wd": str(context.wd),
         }
 
-    return _ExamplePlugin(
+    return _ExampleToolset(
         name="echo",
         description="Example echo tools.",
         _tools={"echo": create_function_tool(echo)},
     )
 
 
-def create_math_add_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
-    """Build the example math-add tool plugin."""
+def create_math_add_toolset(config: Mapping[str, Any]) -> Toolset:
+    """Build the example math-add toolset plugin."""
 
     offset = _number(config.get("offset", 0))
 
@@ -75,15 +75,15 @@ def create_math_add_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
             "offset": _normalize_number(offset),
         }
 
-    return _ExamplePlugin(
+    return _ExampleToolset(
         name="math_add",
         description="Example math tools.",
         _tools={"add": create_function_tool(add)},
     )
 
 
-def create_working_tree_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
-    """Build the example working-tree tool plugin."""
+def create_working_tree_toolset(config: Mapping[str, Any]) -> Toolset:
+    """Build the example working-tree toolset plugin."""
 
     max_entries = _limit(config.get("max_entries"), fallback=10)
 
@@ -112,7 +112,7 @@ def create_working_tree_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
             "truncated": len(entries) > effective_limit,
         }
 
-    return _ExamplePlugin(
+    return _ExampleToolset(
         name="working_tree",
         description="Example working-tree tools.",
         _tools={"list": create_function_tool(list_tree)},

@@ -49,7 +49,7 @@ _MODEL_FIELDS = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
-class ModelsDevModels(ModelCatalog):
+class ModelsDevModelCatalog(ModelCatalog):
     """One complete models.dev-compatible file-backed catalog."""
 
     path: Path
@@ -59,7 +59,7 @@ class ModelsDevModels(ModelCatalog):
     async def snapshot(self) -> ModelCatalogSnapshot:
         """Load and validate the selected catalog file."""
 
-        return load_model_catalog(self.path, max_bytes=self.max_bytes)
+        return read_model_catalog_snapshot(self.path, max_bytes=self.max_bytes)
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +99,7 @@ class MergedModelCatalog(ModelCatalog):
         )
 
 
-def create_models_dev_catalog(config: Mapping[str, object]) -> ModelCatalog:
+def create_models_dev_model_catalog(config: Mapping[str, object]) -> ModelCatalog:
     """Create the built-in models.dev file catalog plugin."""
 
     value = config.get("path")
@@ -108,7 +108,7 @@ def create_models_dev_catalog(config: Mapping[str, object]) -> ModelCatalog:
     max_bytes = config.get("max_bytes", DEFAULT_MAX_CATALOG_BYTES)
     if isinstance(max_bytes, bool) or not isinstance(max_bytes, int):
         raise TypeError("models_dev catalog max_bytes must be an integer")
-    return ModelsDevModels(Path(value), max_bytes=max_bytes)
+    return ModelsDevModelCatalog(Path(value), max_bytes=max_bytes)
 
 
 def resolve_model_catalog_path(
@@ -136,7 +136,7 @@ def resolve_model_catalog_path(
     return PACKAGED_MODEL_CATALOG.resolve(strict=False)
 
 
-def load_model_catalog(
+def read_model_catalog_snapshot(
     path: Path,
     *,
     max_bytes: int = DEFAULT_MAX_CATALOG_BYTES,

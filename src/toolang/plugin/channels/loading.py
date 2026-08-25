@@ -10,7 +10,7 @@ from toolang.base.protocols.channel import AgentChannel
 from toolang.plugin.loading import create_plugin
 
 
-def create_channel_plugin(
+def create_channel(
     name: str,
     *,
     config: Mapping[str, Any] | None = None,

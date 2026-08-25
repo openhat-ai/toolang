@@ -1,4 +1,4 @@
-"""Agent-owned task, chore, and cap state tool plugin."""
+"""Agent-owned task, chore, and cap state toolset plugin."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from toolang.common.layout import AgentLayout
 from toolang.catalog.job import AuthoredJobs, JobFile
 from toolang.catalog.types import CapKind, DEFAULT_CHORE_SCHEDULE, JobKind
 from toolang.common.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool, AgentToolSet
+from toolang.base.protocols.tool import AgentTool, Toolset
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
 from toolang.state.state import PreparedCap, PreparedVisibility
@@ -32,7 +32,7 @@ VisibilityFilter = Literal["all", "private", "shared"]
 
 
 @dataclass(slots=True)
-class AgentStatePlugin:
+class AgentStateToolset:
     """Tools for managing the current agent's authored state."""
 
     config: dict[str, Any]
@@ -536,10 +536,10 @@ class _AgentStateScope:
     layout: AgentLayout
 
 
-def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
-    """Create the agent_state tool plugin."""
+def create_toolset(config: Mapping[str, Any]) -> Toolset:
+    """Create the agent_state toolset plugin."""
 
-    return AgentStatePlugin(config=dict(config))
+    return AgentStateToolset(config=dict(config))
 
 
 def _scope(context: ToolContext | None) -> _AgentStateScope:

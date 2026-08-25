@@ -1,4 +1,4 @@
-"""Filesystem tool plugin."""
+"""Filesystem toolset plugin."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import threading
 from typing import Any
 
 from toolang.base.errors import ToolangError
-from toolang.base.protocols.tool import AgentTool, AgentToolSet
+from toolang.base.protocols.tool import AgentTool, Toolset
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
 
@@ -18,7 +18,7 @@ DEFAULT_MAX_CHARS = 20_000
 
 
 @dataclass(slots=True)
-class FilesystemPlugin:
+class FilesystemToolset:
     """Filesystem tools scoped to one agent home."""
 
     config: dict[str, Any]
@@ -182,10 +182,10 @@ class FilesystemPlugin:
             return lock
 
 
-def create_tool_set(config: Mapping[str, Any]) -> AgentToolSet:
-    """Create the filesystem tool plugin."""
+def create_toolset(config: Mapping[str, Any]) -> Toolset:
+    """Create the filesystem toolset plugin."""
 
-    return FilesystemPlugin(config=dict(config))
+    return FilesystemToolset(config=dict(config))
 
 
 def _resolve_path(path_value: str, *, context: ToolContext | None) -> Path:

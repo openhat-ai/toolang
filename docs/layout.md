@@ -130,7 +130,7 @@ Key paths:
 | `runs.db` | Threads, controls, runs, steps, and replayable model inputs   |
 | `files.db` | File request claims, fingerprints, and completion state        |
 | `ids.json`     | Local id allocator state                                     |
-| `tools/`       | Per-tool plugin working directories                          |
+| `tools/`       | Per-toolset plugin working directories                       |
 | `channels/`    | Per-channel plugin working directories                       |
 
 

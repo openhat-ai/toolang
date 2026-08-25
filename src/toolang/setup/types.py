@@ -37,7 +37,7 @@ class AgentEnvironment:
     ) -> AgentEnvironment:
         """Capture non-secret environment facts from explicit setup inputs."""
 
-        sandbox = envs.get("TOOLANG_SANDBOX", "none").strip() or "none"
+        sandbox = envs.get("TOOLANG_SANDBOX", "host").strip() or "host"
         return cls(
             sandbox=sandbox,
             system=platform.system(),

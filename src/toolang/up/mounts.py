@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from toolang.base.types.hosting import HostingMount
+from toolang.base.types.sandbox import SandboxMount
 
 _ROOT_MOUNT_DIR_NAMES = ("psyches", "skills", "services", "prompts")
 
@@ -12,7 +12,7 @@ _ROOT_MOUNT_DIR_NAMES = ("psyches", "skills", "services", "prompts")
 def prepare_root_mounts(
     local_root: Path,
     hosted_root: Path,
-) -> tuple[HostingMount, ...]:
+) -> tuple[SandboxMount, ...]:
     """Prepare Toolang root paths and return their explicit hosted mounts."""
 
     config_path = local_root / "config.toml"
@@ -20,7 +20,7 @@ def prepare_root_mounts(
     config_path.touch(exist_ok=True)
 
     mounts = [
-        HostingMount(
+        SandboxMount(
             local_path=config_path,
             hosted_path=hosted_root / "config.toml",
         )
@@ -29,7 +29,7 @@ def prepare_root_mounts(
         local_path = local_root / directory_name
         local_path.mkdir(parents=True, exist_ok=True)
         mounts.append(
-            HostingMount(
+            SandboxMount(
                 local_path=local_path,
                 hosted_path=hosted_root / directory_name,
             )

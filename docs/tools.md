@@ -1,6 +1,6 @@
 # Tool Runtime
 
-Toolang exposes tools through the tool plugin family.
+Toolang exposes tools through the toolset plugin family.
 
 Tools execute inside normal runs and are recorded as `tool_call` steps.
 `AgentTool.invoke()` is asynchronous. Function-tool wrappers await native
