@@ -381,3 +381,22 @@ def test_remove_releases_sandbox_resources_before_deleting_agent(
     assert result.stdout.strip() == "Removed agent alice"
     assert calls == [layout]
     assert not layout.home.exists()
+
+
+def test_remove_deletes_stopped_agent_home_without_authored_source(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "toolang"
+    layout = AgentLayout.resident(root, "alice")
+    layout.runtime.mkdir(parents=True)
+    layout.home_state.mkdir()
+
+    listed = runner.invoke(cli.app, ["--root", str(root), "list"])
+    removed = runner.invoke(cli.app, ["--root", str(root), "remove", "alice"])
+
+    assert listed.exit_code == 0, listed.stderr
+    assert "alice" in listed.stdout
+    assert "stopped" in listed.stdout
+    assert removed.exit_code == 0, removed.stderr
+    assert removed.stdout.strip() == "Removed agent alice"
+    assert not layout.home.exists()

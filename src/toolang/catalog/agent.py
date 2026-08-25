@@ -49,8 +49,8 @@ class LocalAgents:
         return target
 
     def remove(self, name: str) -> Path:
-        home = self.get(name)
-        if home is None:
+        home = self.path(name)
+        if not home.is_dir():
             raise FileNotFoundError(f"agent not found: {self.path(name)}")
         shutil.rmtree(home)
         return home
