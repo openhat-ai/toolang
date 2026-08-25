@@ -73,6 +73,23 @@ execution of a run tree.
 
 ## Run Execution
 
+`RunClient` is the transport-neutral caller boundary used by Terminal Chat. It
+accepts unresolved `RunRequest` values, exposes asynchronous start, stop, steer,
+and close operations, and returns caller-facing `RunDetail` and `ControlInfo`
+values. The boundary deliberately excludes stores, setup and state snapshots,
+local tasks, and durable records so a later remote implementation can preserve
+the same interaction shape.
+
+`LocalRunClient` implements that boundary over an owned `RunExecutor`. It reads
+the current setup and state once for each start, selects the first explicit
+caller fallback that exists, resolves authored input through `resolve_spec()`,
+and converts terminal and control records through the existing caller-facing
+schemas. Terminal Chat still owns its watchers, store, thread manager, result
+inspection, and event-loop thread. Other local execution owners continue to use
+`RunExecutor` directly.
+
+The process-local executor remains the execution engine:
+
 `RunExecutor` is the public run entry point:
 
 ```text

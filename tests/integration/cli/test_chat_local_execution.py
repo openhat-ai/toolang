@@ -64,11 +64,11 @@ def test_local_chat_close_cancels_watchers_without_waiting_for_polling() -> None
         session: Any = object.__new__(local.LocalChatSession)
         session._stop_signal = asyncio.Event()
 
-        class Executor:
-            async def shutdown(self) -> None:
+        class RunClient:
+            async def close(self) -> None:
                 pass
 
-        session.executor = Executor()
+        session.run_client = RunClient()
 
         async def wait_forever() -> None:
             await asyncio.Event().wait()
@@ -87,7 +87,7 @@ def test_local_chat_close_cancels_watchers_without_waiting_for_polling() -> None
     asyncio.run(scenario())
 
 
-def test_local_chat_uses_run_executor_and_canonical_tracer(
+def test_local_chat_uses_run_client_and_canonical_tracer(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:

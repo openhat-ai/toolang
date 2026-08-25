@@ -8,6 +8,7 @@ from typing import Literal
 
 from toolang.base.types.message import Part, message_summary
 from toolang.base.types.run import ModelCall
+from toolang.lang.input import RunnableInputRaw
 from .records import (
     ControlPayloadField,
     PreparationControlPayload,
@@ -36,6 +37,7 @@ from .types import (
     StepStatus,
     ThreadPeerType,
     Pointer,
+    RunOverride,
     validate_occurrence,
     validate_step_given,
     validate_step_noted,
@@ -71,6 +73,51 @@ EjectionRefData = ThreadControlRefData | RunControlRefData
 
 
 StepInputData = Pointer
+
+
+@dataclass(frozen=True, slots=True)
+class RunRequest:
+    """One unresolved caller request for a new root run."""
+
+    thread: str
+    commands: tuple[RunOverride, ...]
+    input: RunnableInputRaw
+    session_commands: tuple[RunOverride, ...]
+    runnable_fallbacks: tuple[str, ...]
+    request_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.thread, str):
+            raise TypeError("run request thread must be a string")
+        if not self.thread or self.thread != self.thread.strip():
+            raise ValueError("run request requires a canonical thread")
+        if not isinstance(self.commands, tuple) or not all(
+            isinstance(command, RunOverride) for command in self.commands
+        ):
+            raise TypeError("run request commands must be RunOverride objects")
+        if not isinstance(self.input, RunnableInputRaw):
+            raise TypeError("run request input must be RunnableInputRaw")
+        if not isinstance(self.session_commands, tuple) or not all(
+            isinstance(command, RunOverride) for command in self.session_commands
+        ):
+            raise TypeError("run request session commands must be RunOverride objects")
+        if not isinstance(self.runnable_fallbacks, tuple) or not all(
+            isinstance(candidate, str) for candidate in self.runnable_fallbacks
+        ):
+            raise TypeError("run request runnable fallbacks must be strings")
+        if not self.runnable_fallbacks:
+            raise ValueError("run request requires at least one runnable fallback")
+        if any(
+            not candidate or candidate != candidate.strip()
+            for candidate in self.runnable_fallbacks
+        ):
+            raise ValueError("run request runnable fallbacks must be canonical strings")
+        if len(self.runnable_fallbacks) != len(set(self.runnable_fallbacks)):
+            raise ValueError("run request runnable fallbacks must be unique")
+        if not isinstance(self.request_id, str):
+            raise TypeError("run request ID must be a string")
+        if not self.request_id or self.request_id != self.request_id.strip():
+            raise ValueError("run request requires a canonical request ID")
 
 
 @dataclass(frozen=True, slots=True)
