@@ -379,6 +379,24 @@ When `--sandbox` is omitted, resident run/start commands use the effective
 root/home `[sandbox]` binding, falling back to `host` when no binding exists.
 An explicit selector, including `--sandbox host`, overrides that binding.
 
+`run`, `start`, and roaming file-inbox runtime accept `--dev PATH` for a
+non-host sandbox. `PATH` is either one Toolang `.whl` file or a directory to
+search recursively for Toolang wheels. Directory selection uses the most
+recent file modification time and breaks equal-time ties by absolute path. The
+selected concrete wheel is staged into Docker and supplies its `too serve`
+command. Build a current wheel and select it with:
+
+```sh
+uv build --wheel
+too alice run --sandbox docker --dev dist
+```
+
+`--dev` does not treat a directory as a source project and does not rebuild
+after launch. Host runtime already uses the current Toolang environment and
+rejects `--dev`. When the controlling CLI runs from development source, a
+non-host launch without `--dev` warns that the sandbox package-index version may
+differ; the warning does not block launch or query the package index.
+
 Sandbox selection and implementation configuration are separate:
 
 ```toml

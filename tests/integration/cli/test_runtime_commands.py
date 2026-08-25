@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from click.utils import strip_ansi
@@ -11,6 +12,7 @@ from typer.testing import CliRunner
 
 from toolang.base.types.sandbox import SandboxRef
 import toolang.cli.toolang.main as cli
+from toolang.cli.toolang.commands import runtime as runtime_commands
 from toolang.common.layout import AgentLayout
 from toolang.up import sandbox as sandbox_runtime
 from toolang.up.server import ServeSpec
@@ -103,6 +105,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
         "[limit]\ntokens = 2000\ntime = 120\n",
         encoding="utf-8",
     )
+    dev = tmp_path / "dist"
     captured: dict[str, Any] = {}
 
     async def resolve_launch(**kwargs: Any) -> sandbox_runtime.LaunchSpec:
@@ -156,6 +159,8 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
             "cost=none",
             "--limit",
             "agic_tool_calls=40",
+            "--dev",
+            str(dev),
         ],
         env={},
     )
@@ -166,6 +171,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     assert resolved["sandbox"] == "docker:registry.example/a:b"
     assert resolved["host"] == "0.0.0.0"
     assert resolved["port"] == 8123
+    assert resolved["dev"] == dev
     assert resolved["ceiling_overrides"] == {
         "models": ("openai/gpt-5[openai]", "o3"),
         "tools": ("filesystem", "shell"),
@@ -185,12 +191,73 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     )
 
 
+def test_runtime_dev_help_describes_wheel_selection() -> None:
+    for command in ("run", "start"):
+        result = runner.invoke(cli.app, [command, "--help"])
+
+        assert result.exit_code == 0
+        output = " ".join(strip_ansi(result.stdout).split())
+        assert "Use a Toolang wheel" in output
+        assert "newest wheel found" in output
+        assert "recursively in a directory" in output
+
+
+@pytest.mark.parametrize(
+    ("sandbox", "dev", "development", "warns"),
+    (
+        ("docker:python:3.13", None, (True, Path("/source/toolang")), True),
+        ("docker", None, (True, None), True),
+        ("docker", None, (False, None), False),
+        ("host", None, (True, Path("/source/toolang")), False),
+        ("docker", Path("dist/toolang.whl"), (True, None), False),
+    ),
+)
+def test_runtime_warns_when_development_source_uses_index_package(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    sandbox: str,
+    dev: Path | None,
+    development: tuple[bool, Path | None],
+    warns: bool,
+) -> None:
+    monkeypatch.setattr(
+        runtime_commands,
+        "development_source",
+        lambda: development,
+    )
+    startup = cast(
+        sandbox_runtime.LaunchSpec,
+        SimpleNamespace(sandbox=sandbox),
+    )
+
+    runtime_commands._warn_development_sandbox_package(startup, dev=dev)
+
+    stderr = capsys.readouterr().err
+    assert ("may run a different version" in stderr) is warns
+    if warns:
+        assert "--dev dist" in stderr
+        if development[1] is not None:
+            assert str(development[1]) in stderr
+        else:
+            assert "source at" not in stderr
+
+
+def test_roaming_file_options_accept_dev_wheel_directory() -> None:
+    options = runtime_commands._parse_roaming_file_options(
+        ["--inbox", "inbox", "--sandbox", "docker", "--dev", "dist"]
+    )
+
+    assert options.sandbox == "docker"
+    assert options.dev == Path("dist")
+
+
 def test_start_launches_in_background_and_reports_endpoint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = tmp_path / "toolang"
     _create_agent(root)
+    dev = tmp_path / "dist" / "toolang-1.2.3-py3-none-any.whl"
     captured: dict[str, Any] = {}
 
     async def resolve_launch(**kwargs: Any) -> sandbox_runtime.LaunchSpec:
@@ -222,6 +289,10 @@ def test_start_launches_in_background_and_reports_endpoint(
             str(root),
             "start",
             "alice",
+            "--sandbox",
+            "docker",
+            "--dev",
+            str(dev),
             "--port",
             "8124",
         ],
@@ -231,6 +302,8 @@ def test_start_launches_in_background_and_reports_endpoint(
     assert result.exit_code == 0, result.stderr
     assert result.stdout.strip() == "Started agent alice: http://localhost:8124"
     resolved = captured["resolve"]
+    assert resolved["sandbox"] == "docker"
+    assert resolved["dev"] == dev
     assert resolved["log_path"] == root / "agents" / "alice" / ".runtime" / "agent.log"
 
 

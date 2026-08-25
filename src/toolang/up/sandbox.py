@@ -132,6 +132,7 @@ async def resolve_launch(
         state,
         explicit=sandbox,
     )
+    artifact = _resolve_dev_artifact(dev, sandbox=selected)
     serve = resolve_serve(
         layout=layout,
         host=host,
@@ -144,9 +145,6 @@ async def resolve_launch(
         log_spec=log_spec,
         temporary_port=temporary_port,
     )
-    artifact = dev.expanduser().resolve() if dev is not None else None
-    if artifact is not None and not artifact.exists():
-        raise FileNotFoundError(f"development artifact not found: {artifact}")
     return LaunchSpec(
         serve=serve,
         sandbox=selected,
@@ -321,6 +319,42 @@ def _split_sandbox(selector: str) -> tuple[str, str | None]:
     if not name:
         raise ValueError("sandbox selector is missing name")
     return name, spec if separator else None
+
+
+def _resolve_dev_artifact(raw: Path | None, *, sandbox: str) -> Path | None:
+    if raw is None:
+        return None
+    sandbox_name, _ = _split_sandbox(sandbox)
+    if sandbox_name == "host":
+        raise ValueError(
+            "--dev does not apply to the host sandbox; "
+            "it already uses the current Toolang environment"
+        )
+
+    candidate = raw.expanduser().resolve()
+    if not candidate.exists():
+        raise FileNotFoundError(f"development path not found: {candidate}")
+    if candidate.is_file():
+        if candidate.suffix.casefold() != ".whl":
+            raise ValueError(f"development path is not a wheel file: {candidate}")
+        if not _is_toolang_wheel(candidate):
+            raise ValueError(f"development wheel is not a Toolang wheel: {candidate}")
+        return candidate
+    if not candidate.is_dir():
+        raise ValueError(f"development path is not a file or directory: {candidate}")
+
+    wheels = [
+        path
+        for path in candidate.rglob("*.whl")
+        if path.is_file() and _is_toolang_wheel(path)
+    ]
+    if not wheels:
+        raise FileNotFoundError(f"no Toolang wheel files found in: {candidate}")
+    return min(wheels, key=lambda path: (-path.stat().st_mtime_ns, str(path)))
+
+
+def _is_toolang_wheel(path: Path) -> bool:
+    return path.name.casefold().startswith("toolang-")
 
 
 def _hosted_root(

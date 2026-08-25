@@ -1,13 +1,14 @@
 # Sandbox Development Wheel
 
-Status: Draft for human approval.
+Status: Approved for implementation on 2026-08-25.
 
 ## Work Type
 
-Feature definition for deterministic `--dev` wheel selection and actionable
-feedback when a development Toolang process starts a non-host sandbox without a
-development wheel. The implementation also restores the historical directory
-selection behavior that was lost during runtime refactoring.
+Feature implementation of this approved definition for deterministic `--dev`
+wheel selection and actionable feedback when a development Toolang process
+starts a non-host sandbox without a development wheel. The implementation also
+restores the historical directory selection behavior that was lost during
+runtime refactoring.
 
 ## Verified Current Behavior
 

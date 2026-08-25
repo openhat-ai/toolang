@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -333,6 +334,73 @@ def test_readiness_fails_when_workload_exits() -> None:
                 timeout_sec=0.1,
             )
         )
+
+
+def test_resolve_dev_artifact_accepts_one_toolang_wheel(tmp_path: Path) -> None:
+    wheel = tmp_path / "toolang-1.2.3-py3-none-any.whl"
+    wheel.write_bytes(b"wheel")
+
+    assert sandbox._resolve_dev_artifact(wheel, sandbox="docker") == wheel
+
+
+def test_resolve_dev_artifact_selects_newest_wheel_recursively(
+    tmp_path: Path,
+) -> None:
+    older = tmp_path / "toolang-1.0.0-py3-none-any.whl"
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    newer = nested / "toolang-0.9.0-py3-none-any.whl"
+    older.write_bytes(b"older")
+    newer.write_bytes(b"newer")
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "toolang"\nversion = "2.0.0"\n',
+        encoding="utf-8",
+    )
+    os.utime(older, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
+
+    assert sandbox._resolve_dev_artifact(tmp_path, sandbox="docker") == newer
+
+
+def test_resolve_dev_artifact_breaks_timestamp_ties_by_path(tmp_path: Path) -> None:
+    first = tmp_path / "toolang-a.whl"
+    second = tmp_path / "toolang-b.whl"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    os.utime(first, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(second, ns=(1_000_000_000, 1_000_000_000))
+
+    assert sandbox._resolve_dev_artifact(tmp_path, sandbox="docker") == first
+
+
+def test_resolve_dev_artifact_rejects_invalid_paths(tmp_path: Path) -> None:
+    text_file = tmp_path / "toolang.txt"
+    text_file.write_text("not a wheel", encoding="utf-8")
+    unrelated_wheel = tmp_path / "example-1.0.0-py3-none-any.whl"
+    unrelated_wheel.write_bytes(b"wheel")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+    (unrelated / unrelated_wheel.name).write_bytes(b"wheel")
+
+    with pytest.raises(FileNotFoundError, match="development path not found"):
+        sandbox._resolve_dev_artifact(tmp_path / "missing", sandbox="docker")
+    with pytest.raises(ValueError, match="not a wheel file"):
+        sandbox._resolve_dev_artifact(text_file, sandbox="docker")
+    with pytest.raises(ValueError, match="not a Toolang wheel"):
+        sandbox._resolve_dev_artifact(unrelated_wheel, sandbox="docker")
+    with pytest.raises(FileNotFoundError, match="no Toolang wheel files"):
+        sandbox._resolve_dev_artifact(empty, sandbox="docker")
+    with pytest.raises(FileNotFoundError, match="no Toolang wheel files"):
+        sandbox._resolve_dev_artifact(unrelated, sandbox="docker")
+
+
+def test_resolve_dev_artifact_rejects_host_before_path_validation(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="does not apply to the host sandbox"):
+        sandbox._resolve_dev_artifact(tmp_path / "missing", sandbox="host")
 
 
 def test_select_sandbox_keeps_selection_separate_from_plugin_config() -> None:
