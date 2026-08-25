@@ -31,6 +31,9 @@ from toolang.execution.schemas import (
 from toolang.execution.types import ControlRef, Local, RunOverride
 
 
+_CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
+
+
 class _Bytes(httpx.AsyncByteStream):
     def __init__(self, *chunks: bytes) -> None:
         self._chunks = chunks
@@ -163,7 +166,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
                 json=_profile(
                     driver="docker",
                     selector="docker:python:3.13-slim",
-                    instance="a1b2c3d4e5f6",
+                    instance=_CONTAINER_ID,
                 ),
             )
         if request.url.path == "/api/v1/models":
@@ -202,7 +205,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
             endpoint="http://runtime.test:7001",
             version="0.3.9",
             sandbox="docker:python:3.13-slim",
-            instance="a1b2c3d4e5f6",
+            instance=_CONTAINER_ID,
         )
         assert session.run_client is not None
         assert session.run_client.endpoint == "http://runtime.test:7001"
@@ -274,10 +277,10 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
             _profile(
                 driver="docker",
                 selector="docker:python:3.13-slim",
-                instance="a1b2c3",
+                instance="",
             ),
             "docker:python:3.13-slim",
-            "sandbox instance must contain twelve characters",
+            "sandbox instance is invalid",
         ),
         (
             _profile(driver="host", selector="docker:python:3.13-slim"),
@@ -313,6 +316,25 @@ def test_remote_chat_rejects_invalid_runtime_identity(
             expected_sandbox=expected_sandbox,
             transport=httpx.MockTransport(handler),
         )
+
+
+def test_remote_chat_runtime_identity_allows_additive_profile_fields() -> None:
+    identity = remote._runtime_identity(
+        {
+            "runtime": {
+                "version": "0.3.9",
+                "future": True,
+                "sandbox": {
+                    "driver": "docker",
+                    "selector": "docker:python:3.13-slim",
+                    "instance": _CONTAINER_ID,
+                    "future": True,
+                },
+            }
+        }
+    )
+
+    assert identity.instance == _CONTAINER_ID
 
 
 def test_remote_chat_uses_remote_run_client_native_events() -> None:

@@ -548,11 +548,24 @@ def _header_executor_values(
     executor.append(metadata.endpoint, style=Style(link=metadata.endpoint))
     executor.append(f" · v{metadata.version}")
     sandbox = (
-        Text(f"{metadata.sandbox} · {metadata.instance}")
+        Text(
+            f"{metadata.sandbox} · "
+            f"{_display_sandbox_instance(metadata.sandbox, metadata.instance)}"
+        )
         if metadata.sandbox is not None and metadata.instance is not None
         else None
     )
     return executor, sandbox
+
+
+def _display_sandbox_instance(selector: str, instance: str) -> str:
+    if (
+        selector.partition(":")[0] == "docker"
+        and len(instance) > 12
+        and all(character.casefold() in "0123456789abcdef" for character in instance)
+    ):
+        return instance[:12]
+    return instance
 
 
 @dataclass(frozen=True, slots=True)

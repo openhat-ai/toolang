@@ -10,6 +10,8 @@ import pytest
 from click.utils import strip_ansi
 from typer.testing import CliRunner
 
+from toolang.base.errors import ToolangError
+from toolang.base.types.progress import ProgressEvent, ProgressStatus
 from toolang.base.types.sandbox import SandboxOutput, SandboxRef
 import toolang.cli.toolang.main as cli
 from toolang.cli.toolang.commands import runtime as runtime_commands
@@ -19,6 +21,21 @@ from toolang.up.server import ServeSpec
 
 
 runner = CliRunner()
+
+
+def _startup_event(
+    phase: str,
+    label: str,
+    status: ProgressStatus,
+    detail: str | None = None,
+) -> ProgressEvent:
+    return ProgressEvent(
+        id="agent-startup",
+        phase=f"startup.{phase}",
+        label=label,
+        status=status,
+        detail=detail,
+    )
 
 
 @pytest.mark.parametrize(
@@ -118,8 +135,19 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
         spec: sandbox_runtime.LaunchSpec,
         *,
         on_ready: Any,
+        progress: Any,
     ) -> int:
         captured["run"] = spec
+        captured["progress"] = progress
+        for event in (
+            _startup_event("prepare", "Preparing sandbox", "running", spec.sandbox),
+            _startup_event("prepare", "Preparing sandbox", "ok"),
+            _startup_event("launch", "Starting workload", "running"),
+            _startup_event("launch", "Starting workload", "ok"),
+            _startup_event("ready", "Waiting for agent API", "running"),
+            _startup_event("ready", "Waiting for agent API", "ok"),
+        ):
+            progress(event)
         on_ready(
             sandbox_runtime.SandboxState(
                 sandbox=spec.sandbox,
@@ -189,9 +217,12 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
     assert resolved["output"] == "inherit"
     assert captured["run"] == _launch_spec(**resolved)
     assert result.stdout == ""
-    assert result.stderr.strip() == (
-        "Running agent alice: http://0.0.0.0:8123 (Ctrl+C to stop)"
-    )
+    assert result.stderr.strip().splitlines() == [
+        "Preparing sandbox: docker:registry.example/a:b",
+        "Starting workload",
+        "Waiting for agent API",
+        "Running agent alice: http://0.0.0.0:8123 (Ctrl+C to stop)",
+    ]
 
 
 def test_runtime_dev_help_describes_wheel_selection() -> None:
@@ -236,7 +267,7 @@ def test_runtime_warns_when_development_source_uses_index_package(
     runtime_commands._warn_development_sandbox_package(startup, dev=dev)
 
     stderr = capsys.readouterr().err
-    assert ("may run a different version" in stderr) is warns
+    assert ("will install Toolang from the package index" in stderr) is warns
     if warns:
         assert "--dev dist" in stderr
         if development[1] is not None:
@@ -267,7 +298,18 @@ def test_start_launches_in_background_and_reports_endpoint(
         captured["resolve"] = kwargs
         return _launch_spec(**kwargs)
 
-    async def launch(spec: sandbox_runtime.LaunchSpec) -> object:
+    async def launch(
+        spec: sandbox_runtime.LaunchSpec,
+        *,
+        progress: Any,
+    ) -> object:
+        captured["progress"] = progress
+        for event in (
+            _startup_event("prepare", "Preparing sandbox", "running", spec.sandbox),
+            _startup_event("launch", "Starting workload", "running"),
+            _startup_event("ready", "Waiting for agent API", "running"),
+        ):
+            progress(event)
         return type(
             "Handle",
             (),
@@ -304,11 +346,110 @@ def test_start_launches_in_background_and_reports_endpoint(
 
     assert result.exit_code == 0, result.stderr
     assert result.stdout.strip() == "Started agent alice: http://localhost:8124"
+    assert result.stderr.strip().splitlines() == [
+        "Preparing sandbox: docker",
+        "Starting workload",
+        "Waiting for agent API",
+    ]
     resolved = captured["resolve"]
     assert resolved["sandbox"] == "docker"
     assert resolved["dev"] == dev
     assert resolved["log_path"] == root / "agents" / "alice" / ".runtime" / "agent.log"
     assert resolved["output"] == "file"
+
+
+def test_start_reports_guest_failure_stage_reason_hint_and_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+
+    async def resolve_launch(**kwargs: Any) -> sandbox_runtime.LaunchSpec:
+        return _launch_spec(**kwargs)
+
+    async def launch(
+        _spec: sandbox_runtime.LaunchSpec,
+        *,
+        progress: Any,
+    ) -> object:
+        for event in (
+            _startup_event("install", "Installing Toolang", "running", "package index"),
+            _startup_event("validate", "Validating Toolang", "running"),
+            _startup_event(
+                "validate",
+                "Validating Toolang",
+                "failed",
+                "Installed Toolang does not provide the required `too serve` entrypoint.",
+            ),
+            _startup_event(
+                "ready",
+                "Waiting for agent API",
+                "failed",
+                "agent server exited before becoming ready",
+            ),
+        ):
+            progress(event)
+        raise ToolangError("agent server exited before becoming ready")
+
+    monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
+    monkeypatch.setattr(sandbox_runtime, "launch", launch)
+    monkeypatch.setattr(runtime_commands, "development_source", lambda: (False, None))
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(root), "start", "alice", "--sandbox", "docker"],
+        env={},
+    )
+
+    assert result.exit_code == 1
+    stderr = strip_ansi(result.stderr)
+    normalized = " ".join(stderr.replace("│", " ").split())
+    assert "Installing Toolang: package index" in stderr
+    assert "Validating Toolang" in stderr
+    assert "Could not start agent alice in docker" in normalized
+    assert "Stage: Validating Toolang" in normalized
+    assert (
+        "Reason: Installed Toolang does not provide the required `too serve` "
+        "entrypoint." in normalized
+    )
+    assert "Hint: Build a wheel" in normalized
+    compact = "".join(stderr.replace("│", "").split())
+    assert "Log:" in compact
+    assert "toolang/agents/alice/.runtime/agent.log" in compact
+
+
+def test_start_interruption_during_sandbox_launch_exits_130(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "toolang"
+    _create_agent(root)
+
+    async def resolve_launch(**kwargs: Any) -> sandbox_runtime.LaunchSpec:
+        return _launch_spec(**kwargs)
+
+    async def launch(
+        _spec: sandbox_runtime.LaunchSpec,
+        *,
+        progress: Any,
+    ) -> object:
+        progress(_startup_event("prepare", "Preparing sandbox", "running", "docker"))
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sandbox_runtime, "resolve_launch", resolve_launch)
+    monkeypatch.setattr(sandbox_runtime, "launch", launch)
+    monkeypatch.setattr(runtime_commands, "development_source", lambda: (False, None))
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(root), "start", "alice", "--sandbox", "docker"],
+        env={},
+    )
+
+    assert result.exit_code == 130
+    assert result.stdout == ""
+    assert strip_ansi(result.stderr).strip() == "Preparing sandbox: docker"
 
 
 def test_stop_forwards_force_to_sandbox(

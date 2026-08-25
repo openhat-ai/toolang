@@ -38,7 +38,7 @@ from ...common.version import development_source
 
 if TYPE_CHECKING:
     from toolang.up.sandbox import SandboxState, LaunchSpec
-    from ...common.progress import CliProgress
+    from ...common.startup_progress import RuntimeStartupProgress
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +71,9 @@ def is_roaming_file_request(args: list[str]) -> bool:
 def run_roaming_file(source: Path, args: list[str]) -> int:
     from toolang.up import sandbox as sandbox_runtime
     from ...common.context import load_runtime_environ
+    from ...common.startup_progress import make_runtime_startup_progress
 
+    startup_progress: RuntimeStartupProgress | None = None
     try:
         options = _parse_roaming_file_options(args)
         layout = agents.materialize_roaming_program(source)
@@ -126,6 +128,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
             ),
         )
         _warn_development_sandbox_package(startup, dev=options.dev)
+        startup_progress = make_runtime_startup_progress(layout.name, startup.sandbox)
         return user_call(
             asyncio.run,
             sandbox_runtime.run(
@@ -133,10 +136,14 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                 on_ready=lambda state: _report_foreground_ready(
                     layout.name,
                     state,
+                    startup_progress,
                 ),
+                progress=startup_progress,
             ),
         )
     except KeyboardInterrupt:
+        if startup_progress is not None:
+            startup_progress.interrupt()
         return 130
     except (
         FileExistsError,
@@ -146,7 +153,17 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
         ValueError,
         click.ClickException,
     ) as exc:
-        message = exc.message if isinstance(exc, click.ClickException) else str(exc)
+        if startup_progress is not None:
+            startup_progress.finish()
+        if startup_progress is not None:
+            message = _startup_failure_message(
+                startup_progress.agent,
+                startup_progress.sandbox,
+                startup_progress,
+                exc,
+            )
+        else:
+            message = exc.message if isinstance(exc, click.ClickException) else str(exc)
         echo_error(message)
         return 1
 
@@ -285,10 +302,12 @@ def run(
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
     from ...common.progress import as_progress_sink, make_cli_progress
+    from ...common.startup_progress import make_runtime_startup_progress
 
     selector = require_runtime_agent(ctx, agent)
     progress = make_cli_progress()
-    finished = False
+    source_finished = False
+    startup_progress: RuntimeStartupProgress | None = None
     try:
         selected_layout = cli_context(ctx).layout
         target = (
@@ -313,11 +332,14 @@ def run(
             endpoint_host=endpoint_host,
             dev=dev,
             background=False,
-            progress=progress,
         )
         progress.finish(details=False)
-        finished = True
+        source_finished = True
         _warn_development_sandbox_package(launch.startup, dev=dev)
+        startup_progress = make_runtime_startup_progress(
+            launch.target.name,
+            launch.startup.sandbox,
+        )
         exit_code = user_call(
             asyncio.run,
             sandbox_runtime.run(
@@ -325,12 +347,16 @@ def run(
                 on_ready=lambda state: _report_foreground_ready(
                     launch.target.name,
                     state,
+                    startup_progress,
                 ),
+                progress=startup_progress,
             ),
         )
     except KeyboardInterrupt:
-        if not finished:
+        if not source_finished:
             progress.interrupt()
+        if startup_progress is not None:
+            startup_progress.interrupt()
         raise typer.Exit(130) from None
     except (
         FileExistsError,
@@ -340,19 +366,59 @@ def run(
         ValueError,
         click.ClickException,
     ) as exc:
-        if not finished:
+        if not source_finished:
             progress.finish(details=False)
-        if isinstance(exc, click.ClickException):
+        if startup_progress is not None:
+            startup_progress.finish()
+        if isinstance(exc, click.ClickException) and startup_progress is None:
             raise
+        if startup_progress is not None:
+            raise click.ClickException(
+                _startup_failure_message(
+                    startup_progress.agent,
+                    startup_progress.sandbox,
+                    startup_progress,
+                    exc,
+                )
+            ) from exc
         raise click.ClickException(str(exc)) from exc
     raise typer.Exit(exit_code)
 
 
-def _report_foreground_ready(name: str, state: SandboxState) -> None:
+def _report_foreground_ready(
+    name: str,
+    state: SandboxState,
+    progress: RuntimeStartupProgress,
+) -> None:
+    progress.finish()
     typer.echo(
         f"Running agent {name}: {state.ref.endpoint} (Ctrl+C to stop)",
         err=True,
     )
+
+
+def _startup_failure_message(
+    name: str,
+    sandbox: str,
+    progress: RuntimeStartupProgress,
+    error: BaseException,
+    *,
+    log_path: Path | None = None,
+) -> str:
+    reason = progress.failure_reason or str(error).strip() or type(error).__name__
+    stage = progress.current_stage or "Starting agent"
+    lines = [
+        f"Could not start agent {name} in {sandbox}",
+        f"Stage: {stage}",
+        f"Reason: {reason}",
+    ]
+    if "required `too serve`" in reason:
+        lines.append(
+            "Hint: Build a wheel with `uv build --wheel` and pass `--dev dist`."
+        )
+    if log_path is not None:
+        lines.append(f"Log: {log_path}")
+    return "\n".join(lines)
 
 
 def _warn_development_sandbox_package(
@@ -365,12 +431,12 @@ def _warn_development_sandbox_package(
     detected, source = development_source()
     if not detected:
         return
-    location = f" at {source}" if source is not None else ""
+    sandbox_name = startup.sandbox.partition(":")[0]
+    target = "Docker" if sandbox_name == "docker" else f"Sandbox {startup.sandbox}"
+    source_label = str(source) if source is not None else "the current source tree"
     typer.echo(
-        "Warning: the current Toolang process is running from development source"
-        f"{location}, but sandbox {startup.sandbox} will install Toolang from the "
-        "package index and may run a different version. Build a wheel with "
-        "`uv build --wheel` and pass `--dev dist`.",
+        f"Warning: {target} will install Toolang from the package index, not local "
+        f"source {source_label}. Use `--dev dist` to run this build.",
         err=True,
     )
 
@@ -426,6 +492,7 @@ def start(
 ) -> None:
     from toolang.up import sandbox as sandbox_runtime
     from ...common.progress import as_progress_sink, make_cli_progress
+    from ...common.startup_progress import make_runtime_startup_progress
 
     selector = require_runtime_agent(ctx, agent)
     if user_call(agents.parse_agent_selector, selector).form != "name":
@@ -452,7 +519,6 @@ def start(
             endpoint_host=endpoint_host,
             dev=dev,
             background=True,
-            progress=progress,
         )
     except KeyboardInterrupt:
         progress.interrupt()
@@ -463,16 +529,39 @@ def start(
 
     progress.finish(details=False)
     _warn_development_sandbox_package(launch.startup, dev=dev)
+    startup_progress = make_runtime_startup_progress(
+        launch.target.name,
+        launch.startup.sandbox,
+    )
     try:
-        handle = user_call(asyncio.run, sandbox_runtime.launch(launch.startup))
-    except TimeoutError as exc:
+        handle = user_call(
+            asyncio.run,
+            sandbox_runtime.launch(
+                launch.startup,
+                progress=startup_progress,
+            ),
+        )
+    except KeyboardInterrupt:
+        startup_progress.interrupt()
+        raise typer.Exit(130) from None
+    except (
+        TimeoutError,
+        RuntimeError,
+        OSError,
+        ValueError,
+        click.ClickException,
+    ) as exc:
+        startup_progress.finish()
         raise click.ClickException(
-            f"Agent {launch.target.name} start timed out: {launch.target.runtime_log}"
+            _startup_failure_message(
+                launch.target.name,
+                launch.startup.sandbox,
+                startup_progress,
+                exc,
+                log_path=launch.target.runtime_log,
+            )
         ) from exc
-    except (RuntimeError, OSError) as exc:
-        raise click.ClickException(
-            f"Agent {launch.target.name} failed to start: {launch.target.runtime_log}"
-        ) from exc
+    startup_progress.finish()
     typer.echo(f"Started agent {launch.target.name}: {handle.state.ref.endpoint}")
 
 
@@ -569,12 +658,10 @@ def resolve_startup(
     endpoint_host: str | None,
     dev: Path | None,
     background: bool,
-    progress: CliProgress | None,
 ) -> RuntimeStartup:
     from toolang.up import sandbox as sandbox_runtime
 
     root, agent = target.root, target.name
-    del progress
     if target.placement == "resident" and not target.home.is_dir():
         raise click.ClickException(f"Agent {agent} not found")
     existing = agents.AgentProcess(target).status(ui_base_url=ui_base_url())

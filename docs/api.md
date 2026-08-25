@@ -337,6 +337,14 @@ AgentServer process entrypoint. The sandbox implementation launches that
 entrypoint locally, in Docker, or in another environment; the server and
 executor do not branch on sandbox.
 
+Both commands report the same ordered startup stages on stderr: preparing the
+sandbox, starting its workload, and waiting for the Agent API. Docker adds
+Toolang installation, CLI validation, and AgentServer execution between those
+controller-owned stages. A TTY uses one transient line with the current stage
+and elapsed time. A non-TTY writes each active stage once as a stable plain-text
+line. The existing `Running agent ...` and `Started agent ...` result lines are
+written only after readiness succeeds.
+
 Both commands accept repeatable `--allow DOMAIN=SELECTORS`,
 `--limit FIELD=VALUE`, and `--default FIELD=VALUE` options. The CLI parses these
 with `TOOLANG_ALLOW_*`, `TOOLANG_DEFAULT_*`, and `TOOLANG_LIMIT_*` into frozen
@@ -396,8 +404,9 @@ too alice run --sandbox docker --dev dist
 `--dev` does not treat a directory as a source project and does not rebuild
 after launch. Host runtime already uses the current Toolang environment and
 rejects `--dev`. When the controlling CLI runs from development source, a
-non-host launch without `--dev` warns that the sandbox package-index version may
-differ; the warning does not block launch or query the package index.
+non-host launch without `--dev` warns that Docker will install Toolang from the
+package index instead of the local source. The warning does not block launch or
+query the package index.
 
 Sandbox selection and implementation configuration are separate:
 
@@ -469,11 +478,10 @@ The lifecycle persists a versioned recovery reference immediately after the
 workload is created, then attaches process-local output observers and performs
 the readiness check. The Docker sandbox follows container output locally from
 container creation for foreground `run`. Background `start` instead creates the
-host `agent_log` with mode `0600` and writes Docker launch diagnostics, guest
-bootstrap and package installation output, and AgentServer output there. Early
-container diagnostics are copied to that log before a failed or stopped workload
-is released, bounded to the final 2000 Docker log lines and streamed without
-buffering them in memory.
+host `agent_log` with mode `0600` and writes Docker launch diagnostics,
+bootstrap errors, and AgentServer output there. Early container diagnostics are
+copied to that log before a failed or stopped workload is released, bounded to
+the final 2000 Docker log lines and streamed without buffering them in memory.
 Diagnostic write failures do not prevent container cleanup. Foreground
 interruption, ready-reporting errors, and wait failures stop and release the
 workload; cleanup failures preserve `SandboxState` for a later forced stop.
@@ -486,9 +494,31 @@ clean it up manually.
 Likewise, per-launch staging without a matching control reference is preserved
 and blocks relaunch or removal until any associated workload is removed and the
 staging directory is cleaned manually.
-Docker uses the engine's default missing-image pull behavior. Pull and launch
-progress is visible on the foreground console for `run` and in `agent_log` for
-background `start`.
+
+Docker uses the engine's default missing-image pull behavior. Its guest script
+quietly bootstraps uv and installs the selected package with `uv tool install`.
+Successful installation suppresses ensurepip chatter, pip's container root-user
+warning, package lists, and uv progress bars; installer failure stderr remains
+available. Before execution, the guest validates that the installed CLI
+provides `too serve`. A package-index version without that entrypoint fails in
+the validation stage with an explicit `uv build --wheel` and `--dev dist`
+remedy. Foreground output reports that diagnostic once through the structured
+startup error; background output also retains it in `agent_log`.
+
+Guest stage observation uses a unique mode-`0600`, append-only token file under
+the agent runtime directory. Tokens are a closed vocabulary for install,
+validation, and server-start transitions; they contain no commands, logs, or
+environment values. Guest writes are best-effort, and the host reads only a
+bounded, regular, non-symlink file. The file is presentation-only: unknown,
+duplicate, out-of-order, or stale values cannot affect readiness, recovery, or
+cleanup. The referenced file is removed with the sandbox resources.
+
+An active `toolang info` uses the sandbox reference's structured workload
+identity. Host workloads show `PID`; Docker workloads show `Container` with the
+generated name and a 12-character hexadecimal ID, while recovery retains the
+full immutable container ID. Other sandbox kinds show `Runtime KIND:ID` without
+assuming their identifiers can be shortened. Older version-1 references without
+identity fields remain readable as generic workloads.
 
 When `toolang start` runs without `--port`, Toolang first tries the agent's last
 runtime port. If that port is not reusable, Toolang scans its auto-assigned
@@ -611,7 +641,7 @@ script runs and TUI execution do not consume this endpoint.
   - the server process's Toolang package `version`
   - `sandbox.driver`
   - the complete `sandbox.selector`
-  - a twelve-character `sandbox.instance` for non-host runtimes
+  - the complete, unprojected `sandbox.instance` for non-host runtimes
 - environment summary
 - overview metrics:
 
@@ -782,10 +812,12 @@ metadata order is `Toolang`, `executor`, optional `sandbox`, then `home`.
 Embedded execution uses `executor  embedded`. Remote execution links the
 normalized endpoint and follows it with the server version, for example
 `executor  http://localhost:7001 · v0.3.9`. A non-host runtime adds exactly one
-row containing its complete selector and conventional twelve-character short
-instance, for example
+row containing its complete selector and a presentation-only instance label.
+Docker container IDs are shortened to the conventional twelve characters, for
+example
 `sandbox   docker:python:3.13-slim · a1b2c3d4e5f6`. Host execution omits this
-row.
+row. Structured client metadata and `/api/v1/profile` retain the complete
+instance value; shortening occurs only in the terminal renderer.
 Job thread ids are inspectable and controllable through thread and run commands,
 but `chat` does not implicitly reopen tasks or create manual chore runs.
 

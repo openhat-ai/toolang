@@ -198,9 +198,9 @@ def info_agent(
     if status.sandbox:
         rows.append(("Sandbox", status.sandbox))
     message = runtime_value(runtime_state.get("message"))
-    pid_text = agents.runtime_pid_label(runtime_state, layout=layout)
-    if pid_text is not None and status.status != "stopped":
-        rows.append(("PID", pid_text))
+    runtime_identity = agents.runtime_identity_row(runtime_state, layout=layout)
+    if runtime_identity is not None and status.status != "stopped":
+        rows.append(runtime_identity)
     if status.endpoint:
         rows.append(("API", status.endpoint))
     if status.webui_url:

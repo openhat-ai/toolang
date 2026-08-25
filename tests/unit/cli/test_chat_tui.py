@@ -92,6 +92,9 @@ from toolang.lang.ast import MapStmt, RunStmt, Span
 from tests.support import chat_tui_pty
 
 
+_CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
+
+
 def _parts(*parts: Part) -> Local:
     return Local.typed("Part[]", tuple(parts), "_", 0)
 
@@ -1614,7 +1617,7 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
                 endpoint="http://runtime.test:7001",
                 version="0.3.9",
                 sandbox="docker:python:3.13-slim",
-                instance="a1b2c3d4e5f6",
+                instance=_CONTAINER_ID,
             ),
             version_label="0.1.0",
         ).render(),
@@ -1631,7 +1634,8 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     unwrapped = rendered.replace("\n", "").replace("│", "").replace(" ", "")
     assert "alice-with-a-long-home" in unwrapped
     assert "executorhttp://runtime.test:7001·v0.3.9" in unwrapped
-    assert "sandboxdocker:python:3.13-slim·a1b2c3d4e5f6" in unwrapped
+    assert "sandboxdocker:python:3.13-slim·176191c1528b" in unwrapped
+    assert _CONTAINER_ID not in rendered
 
 
 @pytest.mark.parametrize(
@@ -1650,10 +1654,10 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
                 endpoint="http://runtime.test:7001",
                 version="0.3.9",
                 sandbox="docker:python:3.13-slim",
-                instance="a1b2c3d4e5f6",
+                instance=_CONTAINER_ID,
             ),
             "http://runtime.test:7001 · v0.3.9",
-            "docker:python:3.13-slim · a1b2c3d4e5f6",
+            "docker:python:3.13-slim · 176191c1528b",
         ),
     ),
 )

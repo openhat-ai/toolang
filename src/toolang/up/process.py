@@ -630,12 +630,12 @@ def _runtime_state_port(runtime_state: dict[str, object] | None) -> int | None:
         return None
 
 
-def runtime_pid_label(
+def runtime_identity_row(
     runtime_state: dict[str, object] | None,
     *,
     layout: AgentLayout | None = None,
-) -> str | None:
-    """Return one human-readable process label for runtime info output."""
+) -> tuple[str, str] | None:
+    """Return one human-readable workload identity for runtime info output."""
 
     if runtime_state is None:
         return None
@@ -644,10 +644,35 @@ def runtime_pid_label(
 
         state = SandboxState.load(layout.sandbox_state)
         if state is not None:
-            return state.ref.runtime_id
+            ref = state.ref
+            if ref.runtime_kind == "process":
+                return "PID", ref.runtime_id
+            if (
+                ref.runtime_kind == "container"
+                or state.sandbox.partition(":")[0] == "docker"
+            ):
+                short_id = (
+                    ref.runtime_id[:12]
+                    if len(ref.runtime_id) >= 12
+                    and all(
+                        char.casefold() in "0123456789abcdef" for char in ref.runtime_id
+                    )
+                    else ref.runtime_id
+                )
+                legacy_name = ref.meta.get("container_name")
+                runtime_name = ref.runtime_name
+                if runtime_name is None and isinstance(legacy_name, str):
+                    runtime_name = legacy_name or None
+                value = (
+                    f"{runtime_name} ({short_id})"
+                    if runtime_name is not None and runtime_name != short_id
+                    else short_id
+                )
+                return "Container", value
+            return "Runtime", f"{ref.runtime_kind}:{ref.runtime_id}"
     pid = runtime_state.get("pid")
     if isinstance(pid, int) and pid > 0:
-        return str(pid)
+        return "PID", str(pid)
     return None
 
 

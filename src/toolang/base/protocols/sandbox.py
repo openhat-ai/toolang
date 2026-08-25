@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from ..types.progress import ProgressSink
 from ..types.sandbox import (
     SandboxLocation,
     SandboxPlan,
@@ -29,7 +30,13 @@ class Sandbox(Protocol):
     async def launch(self, plan: SandboxPlan) -> SandboxRef:
         """Launch one workload and return its durable recovery reference."""
 
-    async def attach(self, plan: SandboxPlan, ref: SandboxRef) -> None:
+    async def attach(
+        self,
+        plan: SandboxPlan,
+        ref: SandboxRef,
+        *,
+        progress: ProgressSink | None = None,
+    ) -> None:
         """Attach process-local observers after the reference is persisted."""
 
     async def running(self, ref: SandboxRef) -> bool:

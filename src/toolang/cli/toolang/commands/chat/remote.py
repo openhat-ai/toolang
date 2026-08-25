@@ -618,12 +618,12 @@ class RemoteChatSession:
 def _runtime_identity(payload: object) -> _RuntimeIdentity:
     profile = _mapping(payload, operation="profile")
     runtime = _mapping(profile.get("runtime"), operation="profile runtime")
-    if set(runtime) != {"version", "sandbox"}:
+    if not {"version", "sandbox"}.issubset(runtime):
         raise _RemoteChatProtocolError(
             "remote chat profile returned invalid runtime identity"
         )
     sandbox = _mapping(runtime.get("sandbox"), operation="profile sandbox")
-    if set(sandbox) != {"driver", "selector", "instance"}:
+    if not {"driver", "selector", "instance"}.issubset(sandbox):
         raise _RemoteChatProtocolError(
             "remote chat profile returned invalid sandbox identity"
         )
@@ -643,10 +643,6 @@ def _runtime_identity(payload: object) -> _RuntimeIdentity:
         instance = None
     else:
         instance = _token(instance_value, label="sandbox instance")
-        if len(instance) != 12:
-            raise _RemoteChatProtocolError(
-                "remote chat sandbox instance must contain twelve characters"
-            )
     return _RuntimeIdentity(version, driver, selector, instance)
 
 
