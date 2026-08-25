@@ -27,6 +27,7 @@ class FakeSandbox:
         self.calls: list[object] = []
         self.alive = True
         self.stop_error: Exception | None = None
+        self.release_error: Exception | None = None
 
     def prepare(
         self,
@@ -62,6 +63,8 @@ class FakeSandbox:
 
     async def release(self, ref: SandboxRef) -> None:
         self.calls.append(("release", ref))
+        if self.release_error is not None:
+            raise self.release_error
 
 
 class ConcurrentSandbox(FakeSandbox):
@@ -85,6 +88,12 @@ class BlockingSandbox(FakeSandbox):
         self.waiting.set()
         await asyncio.Event().wait()
         raise AssertionError("blocking wait unexpectedly returned")
+
+
+class FailingWaitSandbox(FakeSandbox):
+    async def wait(self, ref: SandboxRef) -> int:
+        self.calls.append(("wait", ref))
+        raise RuntimeError("follow failed")
 
 
 def _launch_spec(tmp_path: Path) -> sandbox.LaunchSpec:
@@ -125,6 +134,23 @@ def test_sandbox_state_rejects_corrupted_data(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="invalid sandbox state"):
         sandbox.SandboxState.load(path)
+
+
+def test_remove_sandbox_data_removes_control_state_and_launches(
+    tmp_path: Path,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    sandbox.SandboxState(
+        sandbox="docker:python:3.13-slim",
+        ref=SandboxRef("toolang-alice-test", "http://localhost:8123"),
+    ).save(layout.sandbox_state)
+    launch_dir = layout.sandbox_stage / "test"
+    launch_dir.mkdir(parents=True)
+    (launch_dir / "guest.env").write_text("SECRET=value\n", encoding="utf-8")
+
+    process_runtime.remove_sandbox_data(layout)
+
+    assert not layout.sandbox_home.exists()
 
 
 def test_sandbox_status_treats_plugin_recovery_failure_as_not_running(
@@ -231,6 +257,28 @@ def test_launch_failure_stops_releases_and_clears_state(
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
 
 
+def test_readiness_cleanup_failure_preserves_sandbox_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = FakeSandbox()
+    implementation.release_error = RuntimeError("release failed")
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
+
+    async def fail(*_args, **_kwargs) -> None:
+        raise TimeoutError("not ready")
+
+    monkeypatch.setattr(sandbox, "_wait_ready", fail)
+    spec = _launch_spec(tmp_path)
+
+    with pytest.raises(TimeoutError, match="not ready"):
+        asyncio.run(sandbox.launch(spec))
+
+    state = sandbox.SandboxState.load(spec.serve.layout.sandbox_state)
+    assert state is not None
+    assert state.ref == SandboxRef("workload-1", spec.serve.endpoint)
+
+
 def test_foreground_run_waits_then_releases_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -251,6 +299,28 @@ def test_foreground_run_waits_then_releases_state(
     assert result == 7
     assert ready_states == [sandbox.SandboxState(sandbox=spec.sandbox, ref=ref)]
     assert ("wait", ref) in implementation.calls
+    assert ("release", ref) in implementation.calls
+    assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
+
+
+def test_foreground_wait_failure_stops_releases_and_clears_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = FailingWaitSandbox()
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
+
+    async def ready(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    spec = _launch_spec(tmp_path)
+
+    with pytest.raises(RuntimeError, match="follow failed"):
+        asyncio.run(sandbox.run(spec))
+
+    ref = SandboxRef("workload-1", spec.serve.endpoint)
+    assert ("stop", ref, True) in implementation.calls
     assert ("release", ref) in implementation.calls
     assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
 
@@ -317,6 +387,38 @@ def test_canceled_run_preserves_state_when_stop_fails(
         isinstance(call, tuple) and call[0] == "release"
         for call in implementation.calls
     )
+
+
+def test_canceled_run_stops_releases_and_clears_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = BlockingSandbox()
+    monkeypatch.setattr(sandbox, "create_sandbox", lambda _name, config: implementation)
+
+    async def ready(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(sandbox, "_wait_ready", ready)
+    spec = _launch_spec(tmp_path)
+
+    async def cancel_run() -> BaseException | None:
+        task = asyncio.create_task(sandbox.run(spec))
+        await implementation.waiting.wait()
+        task.cancel()
+        try:
+            await task
+        except BaseException as exc:
+            return exc
+        return None
+
+    error = asyncio.run(cancel_run())
+
+    assert isinstance(error, asyncio.CancelledError)
+    ref = SandboxRef("workload-1", spec.serve.endpoint)
+    assert ("stop", ref, False) in implementation.calls
+    assert ("release", ref) in implementation.calls
+    assert sandbox.SandboxState.load(spec.serve.layout.sandbox_state) is None
 
 
 def test_readiness_fails_when_workload_exits() -> None:

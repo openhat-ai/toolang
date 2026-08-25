@@ -288,11 +288,11 @@ class AgentProcess:
 VISITING_PROGRAM_CACHE_TTL_SEC = 3600
 
 
-def remove_sandbox_stage(layout: AgentLayout) -> None:
-    """Remove one agent's runtime-owned sandbox staging directory."""
+def remove_sandbox_data(layout: AgentLayout) -> None:
+    """Remove one agent's host-owned sandbox control and staging data."""
 
-    if layout.sandbox_stage.exists():
-        shutil.rmtree(layout.sandbox_stage)
+    if layout.sandbox_home.exists():
+        shutil.rmtree(layout.sandbox_home)
 
 
 def materialize_roaming_program(source_path: Path) -> AgentLayout:

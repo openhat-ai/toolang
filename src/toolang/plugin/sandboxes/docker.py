@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
@@ -27,6 +28,7 @@ from toolang.common.files import atomic_write_text
 
 DEFAULT_IMAGE = "python:3.13-slim"
 DEFAULT_HOST_GATEWAY = "host.docker.internal"
+DOCKER_DIAGNOSTIC_TAIL_LINES = 2000
 DEFAULT_ENVIRONMENT_ALLOW_PATTERN = (
     r"(?i)^(?:"
     r"TOOLANG_[A-Z0-9_]+|PY_LOG|"
@@ -51,6 +53,11 @@ class DockerSandbox:
     name: str = "docker"
     _default_image: str | None = field(init=False, repr=False, default=None)
     _environment_allow_pattern: re.Pattern[str] = field(init=False, repr=False)
+    _log_followers: dict[str, asyncio.subprocess.Process] = field(
+        init=False,
+        repr=False,
+        default_factory=dict,
+    )
 
     def __post_init__(self) -> None:
         image = str(self.config.get("image", "")).strip()
@@ -69,21 +76,33 @@ class DockerSandbox:
             ) from exc
 
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
-        stage_dir = request.local_root / ".sandbox" / request.agent_name
+        stage_dir = (
+            request.local_root
+            / ".sandbox"
+            / request.agent_name
+            / "launches"
+            / uuid4().hex[:8]
+        )
         try:
-            return self._prepare(spec, request)
+            return self._prepare(spec, request, stage_dir=stage_dir)
         except BaseException:
-            shutil.rmtree(stage_dir, ignore_errors=True)
+            _remove_stage_directory(stage_dir, ignore_errors=True)
             raise
 
-    def _prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
+    def _prepare(
+        self,
+        spec: str | None,
+        request: SandboxRequest,
+        *,
+        stage_dir: Path,
+    ) -> SandboxPlan:
         image = _image(spec, self._default_image)
-        stage_dir = request.local_root / ".sandbox" / request.agent_name
         runtime_dir = request.hosted_home / ".runtime" / "sandbox"
         dotenv_envs, process_envs = self._guest_environment_sections(request)
         _validate_guest_environment(dotenv_envs)
         _validate_guest_environment(process_envs)
-        stage_dir.mkdir(parents=True, exist_ok=True)
+        hosted_log_path = _prepare_background_log(request)
+        _prepare_stage_directory(stage_dir)
 
         hosted_dev_artifact: Path | None = None
         if request.local_dev_artifact is not None:
@@ -108,6 +127,7 @@ class DockerSandbox:
             script_path,
             runtime_dir=runtime_dir,
             guest_env_path=request.hosted_home / ".env",
+            log_path=hosted_log_path,
         )
         guest_env_path = stage_dir / "guest.env"
         _write_guest_env(
@@ -145,7 +165,7 @@ class DockerSandbox:
             SandboxMount(stage_dir, runtime_dir, read_only=True),
         ]
         container_name = (
-            f"toolang-{_container_label(request.agent_name)}-{uuid4().hex[:8]}"
+            f"toolang-{_container_label(request.agent_name)}-{stage_dir.name}"
         )
         return SandboxPlan(
             sandbox=f"{self.name}:{image}",
@@ -170,6 +190,11 @@ class DockerSandbox:
                 "container_name": container_name,
                 "image": image,
                 "stage_dir": str(stage_dir),
+                **(
+                    {"log_path": str(request.log_path)}
+                    if request.log_path is not None
+                    else {}
+                ),
             },
         )
 
@@ -198,8 +223,7 @@ class DockerSandbox:
             raise ValueError("docker sandbox requires exactly one published port")
         port = plan.ports[0]
         try:
-            container_id = await asyncio.to_thread(
-                docker_run_detached,
+            container_id = await docker_run_detached(
                 image=image,
                 container_name=container_name,
                 workdir=str(plan.working_directory),
@@ -209,12 +233,21 @@ class DockerSandbox:
                 published_port=port.local_port,
                 hosted_port=port.hosted_port,
                 env_values=plan.envs,
+                log_path=plan.log_path,
             )
+            if plan.log_path is None:
+                self._log_followers[
+                    container_name
+                ] = await docker_follow_container_logs(container_name)
         except BaseException as exc:
+            with suppress(BaseException):
+                await asyncio.shield(
+                    asyncio.to_thread(docker_remove_container, container_name)
+                )
             await asyncio.to_thread(
-                shutil.rmtree,
+                _remove_stage_directory,
                 _plan_text(plan, "stage_dir"),
-                True,
+                ignore_errors=True,
             )
             if isinstance(exc, (OSError, RuntimeError)):
                 raise ToolangError(f"Could not start docker sandbox: {exc}") from exc
@@ -226,7 +259,11 @@ class DockerSandbox:
                 "container_id": container_id,
                 "image": image,
                 "stage_dir": _plan_text(plan, "stage_dir"),
-                "follow_logs": plan.log_path is None,
+                **(
+                    {"log_path": str(plan.log_path)}
+                    if plan.log_path is not None
+                    else {}
+                ),
             },
         )
 
@@ -234,8 +271,11 @@ class DockerSandbox:
         return await asyncio.to_thread(docker_container_running, ref.runtime_id)
 
     async def wait(self, ref: SandboxRef) -> int:
-        if ref.meta.get("follow_logs") is True:
-            await asyncio.to_thread(docker_follow_container_logs, ref.runtime_id)
+        follower = self._log_followers.get(ref.runtime_id)
+        if follower is not None:
+            returncode = await follower.wait()
+            if returncode != 0:
+                raise RuntimeError("docker logs failed")
         return await asyncio.to_thread(docker_wait_container, ref.runtime_id)
 
     async def stop(self, ref: SandboxRef, *, force: bool = False) -> None:
@@ -246,10 +286,20 @@ class DockerSandbox:
         )
 
     async def release(self, ref: SandboxRef) -> None:
+        follower = self._log_followers.pop(ref.runtime_id, None)
+        if follower is not None:
+            await _finish_process(follower)
+        log_path = ref.meta.get("log_path")
+        if isinstance(log_path, str) and log_path:
+            await asyncio.to_thread(
+                docker_append_container_logs,
+                ref.runtime_id,
+                Path(log_path),
+            )
         await asyncio.to_thread(docker_remove_container, ref.runtime_id)
         stage_dir = ref.meta.get("stage_dir")
         if isinstance(stage_dir, str) and stage_dir:
-            await asyncio.to_thread(shutil.rmtree, stage_dir, True)
+            await asyncio.to_thread(_remove_stage_directory, stage_dir)
 
 
 def create_sandbox(config: Mapping[str, Any]) -> Sandbox:
@@ -301,8 +351,8 @@ def _write_agent_script(
         "ensure_uv() {",
         "  have uv && return 0",
         '  [ -n "$PYTHON_BIN" ] || { echo "python not available" >&2; exit 127; }',
-        '  "$PYTHON_BIN" -m ensurepip --upgrade >/dev/null 2>&1 || true',
-        '  "$PYTHON_BIN" -m pip install --disable-pip-version-check --user -U uv >/dev/null 2>&1 || true',
+        '  "$PYTHON_BIN" -m ensurepip --upgrade || true',
+        '  "$PYTHON_BIN" -m pip install --disable-pip-version-check --user -U uv || true',
         "  have uv && return 0",
         "  if have curl; then curl -LsSf https://astral.sh/uv/install.sh | sh; fi",
         "  have uv || { echo 'uv not available' >&2; exit 127; }",
@@ -322,12 +372,18 @@ def _write_start_script(
     *,
     runtime_dir: Path,
     guest_env_path: Path,
+    log_path: Path | None,
 ) -> None:
     bootstrap = runtime_dir / "bootstrap.py"
     agent_script = runtime_dir / "agent.sh"
     lines = [
         "#!/bin/sh",
         "set -eu",
+        *(
+            [f"exec >>{shlex.quote(str(log_path))} 2>&1"]
+            if log_path is not None
+            else []
+        ),
         'PYTHON_BIN=""',
         'if command -v python >/dev/null 2>&1; then PYTHON_BIN="python"; '
         'elif command -v python3 >/dev/null 2>&1; then PYTHON_BIN="python3"; fi',
@@ -440,6 +496,49 @@ def _dotenv_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "\\r")
 
 
+def _prepare_stage_directory(stage_dir: Path) -> None:
+    stage_root = stage_dir.parent
+    stage_root.mkdir(parents=True, exist_ok=True)
+    for entry in stage_root.iterdir():
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink(missing_ok=True)
+    stage_dir.mkdir()
+
+
+def _remove_stage_directory(
+    stage_dir: str | Path,
+    *,
+    ignore_errors: bool = False,
+) -> None:
+    path = Path(stage_dir)
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path, ignore_errors=ignore_errors)
+    else:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            if not ignore_errors:
+                raise
+
+
+def _prepare_background_log(request: SandboxRequest) -> Path | None:
+    log_path = request.log_path
+    if log_path is None:
+        return None
+    resolved_home = request.local_home.resolve()
+    resolved_log = log_path.resolve()
+    try:
+        relative = resolved_log.relative_to(resolved_home)
+    except ValueError as exc:
+        raise ValueError("docker background log must be inside the agent home") from exc
+    resolved_log.parent.mkdir(parents=True, exist_ok=True)
+    resolved_log.touch(mode=0o600, exist_ok=True)
+    resolved_log.chmod(0o600)
+    return request.hosted_home / relative
+
+
 def docker_container_running(container_name: str) -> bool:
     result = _docker(
         "inspect",
@@ -467,16 +566,18 @@ def docker_wait_container(container_name: str) -> int:
         raise RuntimeError("docker wait returned an invalid exit code") from exc
 
 
-def docker_follow_container_logs(container_name: str) -> None:
+async def docker_follow_container_logs(
+    container_name: str,
+) -> asyncio.subprocess.Process:
     try:
-        result = subprocess.run(
-            ("docker", "logs", "--follow", container_name),
-            check=False,
+        return await asyncio.create_subprocess_exec(
+            "docker",
+            "logs",
+            "--follow",
+            container_name,
         )
     except FileNotFoundError as exc:
         raise RuntimeError("docker command not found") from exc
-    if result.returncode != 0:
-        raise RuntimeError("docker logs failed")
 
 
 def docker_stop_container(container_name: str, *, force: bool) -> None:
@@ -491,10 +592,38 @@ def docker_stop_container(container_name: str, *, force: bool) -> None:
 
 
 def docker_remove_container(container_name: str) -> None:
-    _docker("rm", "--force", container_name, check=False)
+    result = _docker("rm", "--force", container_name, check=False)
+    if result is None:
+        raise RuntimeError("docker command not found")
+    if result.returncode != 0:
+        detail = result.stderr.strip()
+        if "No such container" not in detail:
+            raise RuntimeError(detail or "docker rm failed")
 
 
-def docker_run_detached(
+def docker_append_container_logs(container_name: str, log_path: Path) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.touch(mode=0o600, exist_ok=True)
+    log_path.chmod(0o600)
+    try:
+        with log_path.open("ab") as stream:
+            subprocess.run(
+                (
+                    "docker",
+                    "logs",
+                    "--tail",
+                    str(DOCKER_DIAGNOSTIC_TAIL_LINES),
+                    container_name,
+                ),
+                check=False,
+                stdout=stream,
+                stderr=subprocess.STDOUT,
+            )
+    except FileNotFoundError:
+        return
+
+
+async def docker_run_detached(
     *,
     image: str,
     container_name: str,
@@ -505,6 +634,7 @@ def docker_run_detached(
     published_port: int,
     hosted_port: int,
     env_values: Mapping[str, str],
+    log_path: Path | None,
 ) -> str:
     args = [
         "docker",
@@ -526,17 +656,54 @@ def docker_run_detached(
         args.extend(["--env", f"{name}={value}"])
     args.append(image)
     args.extend(command)
+    log_stream = log_path.open("ab") if log_path is not None else None
     try:
-        result = subprocess.run(args, check=False, capture_output=True, text=True)
-    except FileNotFoundError as exc:
-        raise RuntimeError("docker command not found") from exc
-    if result.returncode != 0:
-        raise RuntimeError(
-            result.stderr.strip()
-            or result.stdout.strip()
-            or f"docker exited with code {result.returncode}"
-        )
-    return result.stdout.strip()
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=log_stream,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError("docker command not found") from exc
+        try:
+            stdout, _stderr = await process.communicate()
+        except asyncio.CancelledError:
+            await asyncio.shield(_terminate_process(process))
+            raise
+    finally:
+        if log_stream is not None:
+            log_stream.close()
+    if process.returncode != 0:
+        suffix = f"; see {log_path}" if log_path is not None else ""
+        raise RuntimeError(f"docker exited with code {process.returncode}{suffix}")
+    container_id = stdout.decode().strip()
+    if not container_id:
+        raise RuntimeError("docker did not return a container id")
+    return container_id
+
+
+async def _terminate_process(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    with suppress(ProcessLookupError):
+        process.terminate()
+    try:
+        await asyncio.wait_for(process.wait(), timeout=2.0)
+    except TimeoutError:
+        with suppress(ProcessLookupError):
+            process.kill()
+        await process.wait()
+
+
+async def _finish_process(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        await process.wait()
+        return
+    try:
+        await asyncio.wait_for(process.wait(), timeout=2.0)
+    except TimeoutError:
+        await _terminate_process(process)
 
 
 def _docker(

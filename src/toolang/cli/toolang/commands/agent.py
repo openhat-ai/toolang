@@ -118,7 +118,7 @@ def remove_agent(
         LocalAgents(root / "agents").remove(agent)
     except FileNotFoundError as exc:
         raise click.ClickException(f"Agent {agent} not found") from exc
-    agents.remove_sandbox_stage(layout)
+    agents.remove_sandbox_data(layout)
     typer.echo(f"Removed agent {agent}")
 
 

@@ -115,7 +115,7 @@ class AgentLayout:
 
     @property
     def sandbox_state(self) -> Path:
-        return self.runtime / "sandbox.json"
+        return self.sandbox_home / "state.json"
 
     @property
     def run_store(self) -> Path:
@@ -154,8 +154,12 @@ class AgentLayout:
         return self.runtime / "channels" / binding
 
     @property
-    def sandbox_stage(self) -> Path:
+    def sandbox_home(self) -> Path:
         return self.root / ".sandbox" / self.name
+
+    @property
+    def sandbox_stage(self) -> Path:
+        return self.sandbox_home / "launches"
 
 
 def _safe_agent_label(value: str) -> str:

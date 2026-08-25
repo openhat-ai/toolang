@@ -458,6 +458,17 @@ Agent entrypoints also share one logging policy resolver:
 | `toolang start` | `agent_log` under the agent `.runtime` directory |
 | local `.too` script run | `run_log` under the agent `.runtime` directory when `PY_LOG` is set, otherwise `none` |
 
+The Docker sandbox follows container output locally from container creation for
+foreground `run`. Background `start` instead creates the host `agent_log` with
+mode `0600` and writes Docker launch diagnostics, guest bootstrap and package
+installation output, and AgentServer output there. Early container diagnostics
+are copied to that log before a failed or stopped workload is released, bounded
+to the final 2000 Docker log lines and streamed without buffering them in memory.
+Foreground interruption and wait failures stop and release the workload;
+cleanup failures preserve `SandboxState` for a later forced stop.
+`SandboxState` is host-control data under `.sandbox/<agent>/state.json`, outside
+all guest mounts; only per-launch staging children are exposed to Docker.
+
 When `toolang start` runs without `--port`, Toolang first tries the agent's last
 runtime port. If that port is not reusable, Toolang scans its auto-assigned
 local range `7001-7999`, starting at `7001` and counting upward, skipping ports

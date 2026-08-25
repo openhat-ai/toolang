@@ -14,6 +14,10 @@ def test_resident_layout_derives_agent_paths(tmp_path: Path) -> None:
     assert layout.model_cache == layout.root / ".setup" / "models"
     assert layout.root_state == layout.root / ".state"
     assert layout.home_state == layout.home / ".state"
+    assert layout.sandbox_home == layout.root / ".sandbox" / "alice"
+    assert layout.sandbox_state == layout.root / ".sandbox" / "alice" / "state.json"
+    assert layout.sandbox_stage == layout.sandbox_home / "launches"
+    assert not layout.sandbox_state.is_relative_to(layout.home)
     assert layout.run_store == layout.home / ".runtime" / "runs.db"
     assert layout.id_state == layout.home / ".runtime" / "ids.json"
 

@@ -232,12 +232,17 @@ async def _launch_locked(spec: LaunchSpec) -> SandboxHandle:
         )
         return SandboxHandle(implementation, state)
     except BaseException:
+        released = False
         if ref is not None:
             with suppress(BaseException):
                 await asyncio.shield(implementation.stop(ref, force=True))
-            with suppress(BaseException):
+            try:
                 await asyncio.shield(implementation.release(ref))
-        if state is not None:
+            except BaseException:
+                pass
+            else:
+                released = True
+        if state is not None and released:
             _clear_state(spec.serve.layout, expected=state)
         raise
 
@@ -255,13 +260,40 @@ async def run(
     try:
         exit_code = await handle.implementation.wait(handle.state.ref)
     except asyncio.CancelledError:
-        await handle.implementation.stop(handle.state.ref)
-        await handle.implementation.release(handle.state.ref)
-        _clear_state(spec.serve.layout, expected=handle.state)
+        await asyncio.shield(
+            _stop_and_release(
+                spec.serve.layout,
+                handle,
+                force=False,
+            )
+        )
         raise
-    await handle.implementation.release(handle.state.ref)
-    _clear_state(spec.serve.layout, expected=handle.state)
+    except BaseException:
+        await asyncio.shield(
+            _stop_and_release(
+                spec.serve.layout,
+                handle,
+                force=True,
+            )
+        )
+        raise
+    await _release(spec.serve.layout, handle)
     return exit_code
+
+
+async def _stop_and_release(
+    layout: AgentLayout,
+    handle: SandboxHandle,
+    *,
+    force: bool,
+) -> None:
+    await handle.implementation.stop(handle.state.ref, force=force)
+    await _release(layout, handle)
+
+
+async def _release(layout: AgentLayout, handle: SandboxHandle) -> None:
+    await handle.implementation.release(handle.state.ref)
+    _clear_state(layout, expected=handle.state)
 
 
 async def stop(layout: AgentLayout, *, force: bool = False) -> bool:
