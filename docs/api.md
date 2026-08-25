@@ -395,6 +395,17 @@ created. Status, stop, and interrupted-launch recovery re-read this current
 configuration; `SandboxState` stores only the sandbox selector and runtime
 reference.
 
+The host fixes the workload's runtime environment before sandbox preparation.
+Docker writes that explicit mapping to a mode-`0600` staged dotenv file and
+bind-mounts it read-only over the guest agent's `.env`. The root `.env` is not
+mounted, and the original agent `.env` remains hidden behind the nested file
+mount. The guest then applies the normal root dotenv, agent dotenv, and process
+environment precedence without exposing secret values as Docker command-line
+environment arguments. The container process receives only
+`TOOLANG_HOST_GATEWAY`, `TOOLANG_ROOT`, and `TOOLANG_SANDBOX`; Docker also maps
+`host.docker.internal` through the engine's `host-gateway`. Staged environment
+files are removed on release and after a failed Docker launch.
+
 For every sandbox implementation, AgentServer is the environment's primary
 foreground workload. `run` waits for that workload and releases it on exit,
 while `start` returns after the health endpoint is ready. `stop` reloads the

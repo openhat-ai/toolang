@@ -48,9 +48,10 @@ def load_agent_config(layout: AgentLayout) -> dict[str, object]:
 
 
 def load_setup_envs(layout: AgentLayout) -> dict[str, str]:
-    """Load root dotenv defaults below the process environment."""
+    """Load root and agent dotenv defaults below the process environment."""
 
     envs = _load_dotenv(layout.root_env)
+    envs.update(_load_dotenv(layout.env))
     envs.update(os.environ)
     return envs
 

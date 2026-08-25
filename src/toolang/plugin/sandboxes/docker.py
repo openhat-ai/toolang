@@ -22,8 +22,13 @@ from toolang.base.types.sandbox import (
     SandboxRef,
     SandboxRequest,
 )
+from toolang.common.files import atomic_write_text
 
 DEFAULT_IMAGE = "python:3.13-slim"
+DEFAULT_HOST_GATEWAY = "host.docker.internal"
+_CONTROL_ENV_NAMES = frozenset(
+    {"TOOLANG_HOST_GATEWAY", "TOOLANG_ROOT", "TOOLANG_SANDBOX"}
+)
 
 
 @dataclass(slots=True)
@@ -75,6 +80,8 @@ class DockerSandbox:
             command=request.command,
             hosted_dev_artifact=hosted_dev_artifact,
         )
+        guest_env_path = stage_dir / "guest.env"
+        _write_guest_env(guest_env_path, request.envs)
         (stage_dir / "start.json").write_text(
             json.dumps(
                 {
@@ -97,6 +104,11 @@ class DockerSandbox:
         mounts = [
             *request.mounts,
             SandboxMount(request.local_home, request.hosted_home),
+            SandboxMount(
+                guest_env_path,
+                request.hosted_home / ".env",
+                read_only=True,
+            ),
             SandboxMount(stage_dir, runtime_dir),
             *extra_mounts,
         ]
@@ -110,7 +122,7 @@ class DockerSandbox:
             log_path=request.log_path,
             endpoint=request.endpoint,
             envs={
-                **request.envs,
+                "TOOLANG_HOST_GATEWAY": DEFAULT_HOST_GATEWAY,
                 "TOOLANG_ROOT": str(request.hosted_root),
                 "TOOLANG_SANDBOX": f"{self.name}:{image}",
             },
@@ -149,6 +161,11 @@ class DockerSandbox:
                 env_values=plan.envs,
             )
         except RuntimeError as exc:
+            await asyncio.to_thread(
+                shutil.rmtree,
+                _plan_text(plan, "stage_dir"),
+                True,
+            )
             raise ToolangError(f"Could not start docker sandbox: {exc}") from exc
         return SandboxRef(
             runtime_id=container_name,
@@ -248,6 +265,30 @@ def _write_start_script(
     path.chmod(0o755)
 
 
+def _write_guest_env(path: Path, environ: Mapping[str, str]) -> None:
+    values = {
+        name: value for name, value in environ.items() if name not in _CONTROL_ENV_NAMES
+    }
+    content = "".join(
+        f"{_dotenv_name(name)}='{_dotenv_value(value)}'\n"
+        for name, value in sorted(values.items())
+    )
+    atomic_write_text(path, content)
+    path.chmod(0o600)
+
+
+def _dotenv_name(name: str) -> str:
+    if not name or any(char.isspace() or char in "=#\x00" for char in name):
+        raise ValueError(f"invalid guest environment variable name: {name!r}")
+    return name
+
+
+def _dotenv_value(value: str) -> str:
+    if "\x00" in value:
+        raise ValueError("guest environment variable values must not contain NUL")
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
 def _path_is_within(path: Path, root: Path) -> bool:
     try:
         path.resolve().relative_to(root.resolve())
@@ -336,6 +377,8 @@ def docker_run_detached(
         workdir,
         "--publish",
         f"{bind_host}:{published_port}:{hosted_port}",
+        "--add-host",
+        f"{DEFAULT_HOST_GATEWAY}:host-gateway",
     ]
     for mount in mounts:
         suffix = ":ro" if mount.read_only else ""

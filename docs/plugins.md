@@ -130,6 +130,8 @@ Authored plugin configuration is intended for non-sensitive values and secret
 references such as environment-variable names, never secret values. Concrete
 implementations must validate their own sensitive fields because a generic
 mapping loader cannot infer whether an arbitrary string is sensitive.
+Sandbox-specific dotenv materialization is runtime transport and does not
+change or resolve a plugin's configuration mapping.
 
 Only configured external model catalogs are instantiated; the three built-in
 catalogs are always loaded. After snapshots are merged, the resolver maps raw

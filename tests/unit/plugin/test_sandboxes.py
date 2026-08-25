@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import stat
 from typing import Any, cast
 
+from dotenv import dotenv_values
 import pytest
 
+from toolang.base.errors import ToolangError
 from toolang.base.protocols.sandbox import Sandbox
 from toolang.base.types.sandbox import SandboxMount, SandboxRequest
+from toolang.plugin.sandboxes import docker as docker_sandbox
 from toolang.plugin.sandboxes import host as host_sandbox
 from toolang.plugin.sandboxes.loading import create_sandbox
 
@@ -33,7 +37,13 @@ def _request(
         command=("too", "serve", "alice", "--port", "8123"),
         working_directory=home,
         log_path=None if foreground else home / ".runtime" / "agent.log",
-        envs={"EXAMPLE": "value"},
+        envs={
+            "COMPLEX": "line one\nline 'two'\\tail",
+            "EXAMPLE": "value",
+            "TOOLANG_HOST_GATEWAY": "wrong-gateway",
+            "TOOLANG_ROOT": str(root),
+            "TOOLANG_SANDBOX": "host",
+        },
         mounts=(
             SandboxMount(
                 local_path=root / "shared",
@@ -120,6 +130,17 @@ def test_docker_sandbox_prepares_and_launches(
         tmp_path / "agents" / "alice",
         Path("/root/.toolang/agents/alice"),
     ) in mounted
+    guest_env_mount = next(
+        item
+        for item in plan.mounts
+        if item.hosted_path == Path("/root/.toolang/agents/alice/.env")
+    )
+    assert guest_env_mount.read_only is True
+    assert dotenv_values(guest_env_mount.local_path) == {
+        "COMPLEX": "line one\nline 'two'\\tail",
+        "EXAMPLE": "value",
+    }
+    assert stat.S_IMODE(guest_env_mount.local_path.stat().st_mode) == 0o600
     script = tmp_path / ".sandbox" / "alice" / "start.sh"
     assert script.is_file()
     assert " too serve alice --port 8123" in script.read_text(encoding="utf-8")
@@ -133,6 +154,11 @@ def test_docker_sandbox_prepares_and_launches(
     assert run_call["image"] == "python:3.13-slim"
     assert run_call["published_port"] == 8123
     assert run_call["hosted_port"] == 8123
+    assert run_call["env_values"] == {
+        "TOOLANG_HOST_GATEWAY": "host.docker.internal",
+        "TOOLANG_ROOT": "/root/.toolang",
+        "TOOLANG_SANDBOX": "docker:python:3.13-slim",
+    }
 
 
 def test_docker_sandbox_uses_configured_default_image(tmp_path: Path) -> None:
@@ -141,6 +167,55 @@ def test_docker_sandbox_uses_configured_default_image(tmp_path: Path) -> None:
     plan = sandbox.prepare(None, _request(tmp_path))
 
     assert plan.sandbox == "docker:python:3.14"
+
+
+def test_docker_launch_failure_removes_the_staged_guest_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def fail_run(**_kwargs: object) -> str:
+        raise RuntimeError("docker failed")
+
+    monkeypatch.setattr(docker_sandbox, "docker_run_detached", fail_run)
+    sandbox = create_sandbox("docker", config={})
+    plan = sandbox.prepare(None, _request(tmp_path))
+    stage_dir = Path(cast(str, plan.meta["stage_dir"]))
+
+    with pytest.raises(ToolangError, match="Could not start docker sandbox"):
+        asyncio.run(sandbox.launch(plan))
+
+    assert not stage_dir.exists()
+
+
+def test_docker_run_adds_the_canonical_host_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: list[str] = []
+
+    def run(args: list[str], **_kwargs: object) -> object:
+        captured.extend(args)
+        return docker_sandbox.subprocess.CompletedProcess(args, 0, "container-id\n", "")
+
+    monkeypatch.setattr(docker_sandbox.subprocess, "run", run)
+
+    container_id = docker_sandbox.docker_run_detached(
+        image="python:3.13-slim",
+        container_name="toolang-alice-test",
+        workdir="/root/.toolang/agents/alice",
+        command=["/bin/true"],
+        mounts=(),
+        bind_host="127.0.0.1",
+        published_port=8123,
+        hosted_port=8123,
+        env_values={"TOOLANG_ROOT": "/root/.toolang"},
+    )
+
+    assert container_id == "container-id"
+    assert captured[captured.index("--add-host") + 1] == (
+        "host.docker.internal:host-gateway"
+    )
+    assert "TOOLANG_ROOT=/root/.toolang" in captured
 
 
 def test_docker_foreground_sandbox_follows_container_logs(
