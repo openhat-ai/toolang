@@ -23,6 +23,8 @@ execution-topology system.
   Windows container mode fails before an image is pulled.
 - Plugins receive one generic host-gateway marker and own any Docker-specific
   configuration, defaults, and endpoint selection.
+- Public plugin configuration uses the singular snake-case plugin family as its
+  top-level key, matching the Python entry-point group suffix exactly.
 - Every configured plugin receives its complete resolved plugin-owned mapping
   through the same factory contract in host and Docker execution.
 - The default suite remains offline and deterministic; Docker and real-provider
@@ -57,7 +59,8 @@ In scope:
   and compatible local Docker API implementations that pass the same preflight;
 - Docker launch preflight, host-route arguments, cross-platform bind mounts,
   diagnostics, and acceptance coverage;
-- generic preservation and factory delivery of configured plugin-owned values;
+- canonical plugin configuration roots, compatibility parsing, and generic
+  preservation and factory delivery of configured plugin-owned values;
 - `ollama` and `llama_cpp` local catalog defaults plus their existing exact
   endpoint escape hatches.
 
@@ -149,10 +152,10 @@ Plugin configuration may contain an optional plugin-owned `docker` table. The
 built-in local model catalogs support:
 
 ```toml
-[models.catalogs.ollama.docker]
+[model_catalog.ollama.docker]
 endpoint = "http://host.docker.internal:11434"
 
-[models.catalogs.llama_cpp.docker]
+[model_catalog.llama_cpp.docker]
 endpoint = "http://host.docker.internal:8080/v1"
 ```
 
@@ -187,6 +190,21 @@ Toolang root. Generic Chat Completions behavior remains unchanged.
 
 ## Generic Plugin Configuration Contract
 
+The canonical family identifier is singular `snake_case`. The Python entry-point
+group is `toolang.<family>`, and the authored plugin configuration root is
+`[<family>]`. The entry-point name is the stable key below that root. Product
+model configuration remains under `[models]`: `[models.providers]`,
+`[models.aliases]`, and `models.default` are not plugin factory configuration
+and must not be renamed or passed to plugins.
+
+| Plugin family | Entry-point group | Canonical authored configuration |
+| --- | --- | --- |
+| Tool | `toolang.tool` | `[tool.<entry-point-name>]` |
+| Channel | `toolang.channel` | `[channel.<binding>]`, with `plugin` selecting the entry point |
+| Sandbox | `toolang.sandbox` | `[sandbox]` selects `driver` and `target`; `[sandbox.<entry-point-name>]` configures the selected plugin |
+| Model catalog | `toolang.model_catalog` | `[model_catalog.<entry-point-name>]` |
+| Model adapter | `toolang.model_adapter` | `[model_adapter.<entry-point-name>]` |
+
 Plugin configuration delivery is a family-independent rule. A family loader
 may consume only its declared core binding keys, such as `plugin`, `enabled`,
 `driver`, or `target`. After root and agent configuration layers are merged and
@@ -214,17 +232,25 @@ The current authored locations map to factories as follows:
 
 | Plugin family | Authored configuration delivered to the factory |
 | --- | --- |
-| Tool | `[tools.<entry-point-name>]` |
-| Channel | `[channels.<binding>]` minus the core `plugin` selector |
-| Sandbox | `[sandbox.config]` for the selected `driver` |
-| Model catalog | `[models.catalogs.<entry-point-name>]` minus core `enabled` |
+| Tool | All values in `[tool.<entry-point-name>]` |
+| Channel | `[channel.<binding>]` minus the core `plugin` selector |
+| Sandbox | `[sandbox.<selected-driver>]`; `[sandbox].driver` and `target` remain core binding values |
+| Model catalog | `[model_catalog.<entry-point-name>]` minus core `enabled` |
+| Model adapter | All values in `[model_adapter.<entry-point-name>]` |
 
-Families without an authored configuration surface continue to receive an
-empty mapping; this feature does not invent a model-adapter configuration
-section. Family-owned runtime inputs may be added after the authored mapping,
-but must not remove unrelated plugin-owned keys. For example, the setup watcher
-may add the resolved environment view to Ollama while preserving its `docker`
-mapping.
+Every family therefore has an authored configuration surface, including model
+adapters. An installed, unconfigured plugin still receives an empty mapping.
+Family-owned runtime inputs may be added after the authored mapping, but must
+not remove unrelated plugin-owned keys. For example, the setup watcher may add
+the resolved environment view to Ollama while preserving its `docker` mapping.
+
+For one compatibility cycle, Toolang also accepts the existing `[tools]`,
+`[channels]`, `[models.catalogs]`, and `[sandbox.config]` locations and emits one
+actionable deprecation warning for each legacy root used. Normalize each config
+layer before applying the existing root-then-agent precedence. If one layer
+defines the same plugin or binding through both its canonical and legacy
+location, reject it as ambiguous instead of silently choosing one. Documentation
+and generated examples use only the canonical names.
 
 Docker guests load the mounted root and agent `config.toml` files through the
 same setup path as a host AgentServer. The Docker sandbox transports only the
@@ -291,13 +317,39 @@ and adds its selected concrete endpoint to provider diagnostics.
 Selecting a model absent from the guest catalog fails normally rather than
 falling back to a remote model.
 
+## Naming Review
+
+The existing entry-point groups already follow the canonical rule and remain
+unchanged: `toolang.tool`, `toolang.channel`, `toolang.sandbox`,
+`toolang.model_catalog`, and `toolang.model_adapter`. Entry-point names also use
+stable snake-case identifiers and remain unchanged.
+
+Factory callable names are not plugin identities: an entry point references the
+callable explicitly, so the public contract is its one-mapping signature and
+returned protocol, not a mechanically derived Python function name. Built-in
+factories may retain precise names such as `create_tool_set`, `create_channel`,
+`create_hosting`, `create_ollama_catalog`, and `create_model_adapter`. Plugin
+documentation must name factories that actually exist and must not imply that
+external packages need an identical function name.
+
+Several Python implementation names are internally inconsistent but do not
+affect configuration or entry-point identity: `ModelsDevModels`, `OllamaModels`,
+and `LlamaCppModels` implement `ModelCatalog`; tool-set implementations use a
+generic `Plugin` suffix; `create_channel_plugin` loads rather than creates; and
+sandbox implementations use the internal `Hosting` vocabulary. Renaming these
+symbols is a behavior-preserving refactor with a wider import surface and is not
+part of this feature. The implementation must not add further variants, and a
+separate refactor may normalize them to role-bearing names such as
+`OllamaModelCatalog`, `FilesystemToolSet`, and `load_channel`.
+
 ## Design Touchpoints
 
 - `src/toolang/plugin/sandboxes/docker.py`: inspect the effective local Docker
   environment, resolve concrete launch arguments, add the host marker, serialize
   cross-platform mounts, and write LF scripts.
 - `src/toolang/plugin/loading.py`, `src/toolang/plugin/config.py`, and
-  `docs/plugins.md`: enforce and document complete plugin configuration delivery
+  `docs/plugins.md`: normalize canonical family configuration roots, provide
+  one-cycle legacy parsing, and enforce complete plugin configuration delivery
   after family-owned binding keys are consumed.
 - `src/toolang/up/hosting.py` and `src/toolang/up/process.py`: stop
   re-instantiating configured sandbox plugins with an unconditional empty
@@ -305,6 +357,11 @@ falling back to a remote model.
 - `src/toolang/plugin/models/local.py`: let the Ollama and llama.cpp catalog
   plugins parse their own optional `docker` table and select their host or guest
   default from the marker.
+- `src/toolang/plugin/models/config.py`,
+  `src/toolang/plugin/models/loading.py`, and `src/toolang/setup/watcher.py`:
+  consume `[model_catalog]` and `[model_adapter]`, preserve nested mappings, and
+  deliver the resolved per-entry-point config to both built-in and external
+  factories.
 - `src/toolang/plugin/models/views.py` and `docs/models.md`: report and document
   the concrete endpoint, plugin-owned Docker override, Linux listener
   requirement, and exact endpoint behavior.
@@ -327,40 +384,46 @@ tool context, channel context, or persisted environment schema are added.
    performs no environment, context, platform, or vendor inspection.
 5. A Docker guest receives `TOOLANG_HOST_GATEWAY=host.docker.internal`; direct
    host execution does not synthesize the marker.
-6. Generic loader tests prove that root/agent configuration is merged, declared
-   environment references are resolved, nested plugin-owned mappings survive,
-   and the corresponding built-in or external factory receives a fresh complete
-   mapping. An unconfigured plugin receives `{}`.
-7. Sandbox launch, running, status, stop, release, and recovery instantiate the
+6. Generic loader tests cover canonical `[tool]`, `[channel]`, `[sandbox]`,
+   `[model_catalog]`, and `[model_adapter]` roots; prove that root/agent
+   configuration is merged, declared environment references are resolved,
+   nested plugin-owned mappings survive, and the corresponding built-in or
+   external factory receives a fresh complete mapping. An unconfigured plugin
+   receives `{}`.
+7. Legacy `[tools]`, `[channels]`, `[models.catalogs]`, and `[sandbox.config]`
+   inputs work for one compatibility cycle with actionable warnings. A
+   same-layer canonical/legacy collision for one plugin or binding fails as
+   ambiguous.
+8. Sandbox launch, running, status, stop, release, and recovery instantiate the
    selected plugin with current resolved configuration. Hosting state contains
    no plugin configuration or resolved secrets.
-8. A Docker AgentServer reloads the mounted catalog configuration and passes the
+9. A Docker AgentServer reloads the mounted catalog configuration and passes the
    same plugin-owned `docker` mapping to the Ollama or llama.cpp factory; the
    sandbox does not copy or reinterpret that mapping.
-9. Each local catalog ignores its Docker config without the marker and follows
+10. Each local catalog ignores its Docker config without the marker and follows
    the documented Docker precedence with the marker. Docker, catalog, and
    provider exact endpoints remain byte-for-byte unchanged.
-10. Loopback, localhost, and wildcard provider environment values preserve all
+11. Loopback, localhost, and wildcard provider environment values preserve all
    URL components except the translated hostname. Non-loopback values remain
    unchanged.
-11. Ollama discovery, Ollama calls, llama.cpp discovery, and llama.cpp calls use
+12. Ollama discovery, Ollama calls, llama.cpp discovery, and llama.cpp calls use
    the same resolved endpoint. Generic protocol adapters contain no Docker
    branch.
-12. Windows host mount sources retain drive letters and backslashes while all
+13. Windows host mount sources retain drive letters and backslashes while all
    guest paths are POSIX. Sources containing spaces remain one CLI argument,
    and staged scripts contain LF without CRLF.
-13. Linux loopback-only provider failure reports the concrete guest endpoint and
+14. Linux loopback-only provider failure reports the concrete guest endpoint and
    the listener-bind remedy without changing the host process.
-14. An opt-in offline Docker integration test starts deterministic fake Ollama
+15. An opt-in offline Docker integration test starts deterministic fake Ollama
     and llama.cpp endpoints on the host, starts a sandbox AgentServer, discovers
     and calls each endpoint, and cleans up the container.
-15. Opt-in `live_provider` checks discover and call one real Ollama and one real
+16. Opt-in `live_provider` checks discover and call one real Ollama and one real
     llama.cpp model without hard-coded model IDs.
-16. Manual platform checks cover macOS Docker Desktop or OrbStack, Windows
+17. Manual platform checks cover macOS Docker Desktop or OrbStack, Windows
     Docker Desktop in Linux-container mode, and native Linux Docker before
     implementation is declared supported. Colima is claimed only after the same
     check passes.
-17. The default verification suite passes without Docker or a local model
+18. The default verification suite passes without Docker or a local model
     runtime and remains offline.
 
 ## Risks
@@ -377,6 +440,9 @@ tool context, channel context, or persisted environment schema are added.
   and unusual forwarded sockets remain unsupported.
 - `host-gateway` establishes routing, not provider health; catalog probes remain
   transient and best effort.
+- Renaming public configuration roots can confuse existing users; the bounded
+  compatibility parser, warnings, conflict error, and canonical-only docs make
+  the migration explicit without keeping aliases indefinitely.
 
 ## Open Questions
 
