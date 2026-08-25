@@ -8,7 +8,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+import pytest
 from pydantic import TypeAdapter
 
 from toolang.api.app import create_app
@@ -185,6 +187,18 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                     "runnable_fallbacks": ["agic:chat", "default"],
                 },
             )
+            invalid_home_include = client.post(
+                "/api/v1/runs/authored/stream",
+                json={
+                    "thread": thread_id,
+                    "request_id": "invalid_home_include_request",
+                    "input": {
+                        "primary": "@~toolang_user_that_does_not_exist/file.txt",
+                        "named": [{"name": "tone", "source": "brief"}],
+                    },
+                    "runnable_fallbacks": ["agic:chat", "default"],
+                },
+            )
             missing_thread = client.post(
                 "/api/v1/runs/authored/stream",
                 json={
@@ -225,8 +239,8 @@ agic selected(_: Part[], tone: Text) -> Part[]:
             [Message.user("brief included")],
             [Message.user("direct hello")],
         ]
-        assert setup.reads == 5
-        assert state.reads == 5
+        assert setup.reads == 6
+        assert state.reads == 6
         assert duplicate.status_code == 422
         assert duplicate.json()["detail"] == (
             "run control request already exists: selected_request"
@@ -245,6 +259,10 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         )
         assert invalid_include.status_code == 422
         assert "missing.txt" in invalid_include.json()["detail"]
+        assert invalid_home_include.status_code == 422
+        assert invalid_home_include.json()["detail"] == (
+            "included file not found: ~toolang_user_that_does_not_exist/file.txt"
+        )
         assert missing_thread.status_code == 404
         assert missing_thread.json()["detail"] == "thread not found: term_missing"
         assert len(core.store.list_runs(thread_id=thread_id, limit=None)) == 2
@@ -315,6 +333,63 @@ agic chat(_: Part[]) -> Part[]:
         terminal = core.store.get_run(run_id=handle.run_id)
         assert terminal is not None
         assert terminal.status in {"succeeded", "canceled"}
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(core.close())
+
+
+def test_http_controls_map_transaction_state_races_to_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="agic chat:\n  hello\n",
+        responses=[],
+    )
+    harness.store.close()
+    core = AgentCore(harness.setup.layout)
+
+    async def scenario() -> None:
+        thread = core.threads.create(prefix=ThreadPrefix.TERM)
+        handle = core.executor.start(
+            resolve_run_request(
+                RunRequest(
+                    thread=thread,
+                    commands=(),
+                    input=RunnableInputRaw(primary="hello"),
+                    session_commands=(),
+                    runnable_fallbacks=("agic:chat", "default"),
+                    request_id="pending_race_request",
+                ),
+                setup=harness.setup,
+                state=harness.state,
+            ),
+            request_id="pending_race_request",
+        )
+
+        def reject_control(**_kwargs: object) -> None:
+            raise ValueError(f"run is not active: {handle.run_id}")
+
+        monkeypatch.setattr(core.executor, "stop", reject_control)
+        monkeypatch.setattr(core.executor, "steer", reject_control)
+
+        with pytest.raises(HTTPException) as stop_error:
+            cancel_run(core, handle.run_id)
+        with pytest.raises(HTTPException) as steer_error:
+            steer_run(
+                core,
+                handle.run_id,
+                RunSteerRequest(message=InputMessagePayload(parts=[])),
+            )
+
+        assert stop_error.value.status_code == 409
+        assert stop_error.value.detail == f"run is not active: {handle.run_id}"
+        assert steer_error.value.status_code == 409
+        assert steer_error.value.detail == f"run is not active: {handle.run_id}"
+        await handle
 
     try:
         asyncio.run(scenario())

@@ -419,6 +419,42 @@ def test_remote_client_does_not_retry_or_expose_transport_endpoint() -> None:
     asyncio.run(scenario())
 
 
+def test_remote_client_settles_unexpected_reader_failure() -> None:
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        raise RuntimeError("HTTP client failed unexpectedly")
+
+    async def scenario() -> None:
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = RemoteRunClient("https://runtime.test", client=http)
+
+        with pytest.raises(
+            RemoteRunClientError,
+            match="remote run start failed: RuntimeError",
+        ):
+            await asyncio.wait_for(client.start(_request()), timeout=1)
+
+        await asyncio.sleep(0)
+        assert not client._readers
+        await client.close()
+        await http.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_remote_client_rejects_closed_injected_http_client() -> None:
+    async def scenario() -> None:
+        http = httpx.AsyncClient()
+        await http.aclose()
+        client = RemoteRunClient("https://runtime.test", client=http)
+
+        with pytest.raises(RemoteRunClientError, match="HTTP client is closed"):
+            await client.start(_request())
+
+        await client.close()
+
+    asyncio.run(scenario())
+
+
 def test_remote_client_preserves_http_error_detail() -> None:
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(422, json={"detail": "Runnable not found: chat"})

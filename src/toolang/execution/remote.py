@@ -211,6 +211,13 @@ class RemoteRunClient:
             if not accepted.done():
                 accepted.set_exception(error)
             raise error from exc
+        except Exception as exc:
+            error = RemoteRunClientError(
+                f"remote run start failed: {type(exc).__name__}"
+            )
+            if not accepted.done():
+                accepted.set_exception(error)
+            raise error from exc
 
     async def _consume_events(
         self,
@@ -314,7 +321,7 @@ class RemoteRunClient:
         self._require_open()
         try:
             response = await self._http.request(method, self._url(path), **kwargs)
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, RuntimeError) as exc:
             raise _transport_error(operation, exc) from exc
         if not response.is_success:
             raise _http_error(response, operation=operation)
@@ -326,6 +333,8 @@ class RemoteRunClient:
     def _require_open(self) -> None:
         if self._closed:
             raise RemoteRunClientError("remote run client is closed")
+        if self._http.is_closed:
+            raise RemoteRunClientError("remote run HTTP client is closed")
 
     def _reader_done(self, reader: asyncio.Task[None]) -> None:
         self._readers.discard(reader)
@@ -448,7 +457,7 @@ def _http_error(response: httpx.Response, *, operation: str) -> RemoteRunClientE
     )
 
 
-def _transport_error(operation: str, error: httpx.HTTPError) -> RemoteRunClientError:
+def _transport_error(operation: str, error: Exception) -> RemoteRunClientError:
     return RemoteRunClientError(
         f"remote run {operation} transport failed: {type(error).__name__}"
     )

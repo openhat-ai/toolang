@@ -245,12 +245,15 @@ def cancel_run(
     payload: RunCancelRequest | None = None,
 ) -> RunCommandResult:
     run = _active_run_or_409(core, run_id)
-    control = core.executor.stop(
-        run_id=run.id,
-        timing=payload.mode if payload else "immediate",
-        request_id=payload.request_id if payload else None,
-        reason=payload.reason if payload else None,
-    )
+    try:
+        control = core.executor.stop(
+            run_id=run.id,
+            timing=payload.mode if payload else "immediate",
+            request_id=payload.request_id if payload else None,
+            reason=payload.reason if payload else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _control_result(core, run.id, control)
 
 
@@ -266,12 +269,15 @@ def steer_run(
     payload: RunSteerRequest,
 ) -> RunCommandResult:
     run = _active_run_or_409(core, run_id)
-    control = core.executor.steer(
-        run_id=run.id,
-        timing=payload.mode,
-        request_id=payload.request_id,
-        message=parse_user_message(payload.message),
-    )
+    try:
+        control = core.executor.steer(
+            run_id=run.id,
+            timing=payload.mode,
+            request_id=payload.request_id,
+            message=parse_user_message(payload.message),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _control_result(core, run.id, control)
 
 
