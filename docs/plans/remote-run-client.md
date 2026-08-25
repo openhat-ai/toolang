@@ -126,7 +126,7 @@ runtime objects. `POST /api/v1/runs/authored/stream` accepts:
     {"group": "limit", "field": "tokens", "value": 4000}
   ],
   "input": {
-    "primary": "Summarize ::include notes.md",
+    "primary": "Summarize\n@notes.md",
     "named": [
       {"name": "audience", "source": "maintainers"}
     ]
@@ -192,6 +192,25 @@ Add `RemoteRunClient` in a dedicated execution transport module. It owns an
 client for tests and future authentication. Add `httpx-sse` as a direct
 dependency rather than maintaining a second partial SSE parser.
 
+Its constructor is:
+
+```python
+RemoteRunClient(
+    endpoint: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+)
+```
+
+`endpoint` is the absolute HTTP or HTTPS agent-runtime origin reported by the
+runtime, with no user information, query, fragment, or path other than `/`;
+trailing slashes are ignored. Invalid endpoints fail during construction.
+Every operation builds a full absolute URL by appending its `/api/v1/...` path
+to this normalized endpoint, so an injected client's `base_url` is ignored.
+The injected client still supplies transport, authentication, connection
+pooling, and default timeout configuration. The remote client closes only a
+client it constructed itself.
+
 ### `start()`
 
 `start()`:
@@ -205,11 +224,15 @@ dependency rather than maintaining a second partial SSE parser.
 4. returns a private handle as soon as headers establish durable acceptance;
 5. keeps one background reader for that handle, even when no tracer is supplied,
    so protocol completion and terminal state can be observed;
-6. decodes each data event with `run_event_from_data()`, requires the first
+6. holds event delivery behind a private gate until the handle is constructed;
+   it opens the gate immediately before returning with no intervening await, so
+   the background task cannot call the tracer before the caller receives the
+   handle;
+7. decodes each data event with `run_event_from_data()`, requires the first
    event to be the matching root `RunBegin`, rejects any later second root
    `RunBegin`, and sends valid recursive events to the optional tracer
    sequentially;
-7. treats the matching root `RunEnd` as successful stream completion.
+8. treats the matching root `RunEnd` as successful stream completion.
 
 SSE comments are ignored. Malformed JSON, invalid native events, a wrong first
 event, a header/event root mismatch, a second root begin, or EOF before the root
@@ -308,9 +331,11 @@ from their owning modules.
 4. Assert missing thread is `404`; invalid policy, fallback, input, include, and
    duplicate request ID are pre-header `422` responses that do not create an
    unintended run.
-5. Exercise `RemoteRunClient.start()` and repeatable `wait()` over deterministic
-   HTTP/SSE fixtures, with and without a tracer, and decode the returned
-   `RunDetail`; tracer failures remain isolated as they are locally.
+5. Exercise endpoint normalization, injected-client base URL and ownership,
+   `RemoteRunClient.start()`, and repeatable `wait()` over deterministic HTTP/SSE
+   fixtures, with and without a tracer. Assert no tracer callback occurs before
+   `start()` returns, decode the returned `RunDetail`, and isolate tracer failures
+   as they are locally.
 6. Cover malformed JSON/event data, wrong first/root IDs, premature EOF,
    pre-header transport failure, HTTP detail errors, invalid detail/control
    responses, and the no-retry rule.
