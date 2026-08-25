@@ -203,6 +203,13 @@ merely because the plugin is built in. With no authored configuration, the
 factory receives an empty mapping. Built-in and external entry points follow
 the same rule.
 
+The rule applies every time a plugin factory is invoked, not only at initial
+launch. Status, running, stop, release, reload, and recovery paths must resolve
+the current authored configuration before re-instantiating a plugin. Do not
+persist the resolved mapping in hosting state because it may contain secrets;
+persisted references remain sufficient to identify the plugin instance, while
+the current configuration is reloaded at the host call site.
+
 The current authored locations map to factories as follows:
 
 | Plugin family | Authored configuration delivered to the factory |
@@ -292,6 +299,9 @@ falling back to a remote model.
 - `src/toolang/plugin/loading.py`, `src/toolang/plugin/config.py`, and
   `docs/plugins.md`: enforce and document complete plugin configuration delivery
   after family-owned binding keys are consumed.
+- `src/toolang/up/hosting.py` and `src/toolang/up/process.py`: stop
+  re-instantiating configured sandbox plugins with an unconditional empty
+  mapping during lifecycle inspection and recovery.
 - `src/toolang/plugin/models/local.py`: let the Ollama and llama.cpp catalog
   plugins parse their own optional `docker` table and select their host or guest
   default from the marker.
@@ -321,33 +331,36 @@ tool context, channel context, or persisted environment schema are added.
    environment references are resolved, nested plugin-owned mappings survive,
    and the corresponding built-in or external factory receives a fresh complete
    mapping. An unconfigured plugin receives `{}`.
-7. A Docker AgentServer reloads the mounted catalog configuration and passes the
+7. Sandbox launch, running, status, stop, release, and recovery instantiate the
+   selected plugin with current resolved configuration. Hosting state contains
+   no plugin configuration or resolved secrets.
+8. A Docker AgentServer reloads the mounted catalog configuration and passes the
    same plugin-owned `docker` mapping to the Ollama or llama.cpp factory; the
    sandbox does not copy or reinterpret that mapping.
-8. Each local catalog ignores its Docker config without the marker and follows
+9. Each local catalog ignores its Docker config without the marker and follows
    the documented Docker precedence with the marker. Docker, catalog, and
    provider exact endpoints remain byte-for-byte unchanged.
-9. Loopback, localhost, and wildcard provider environment values preserve all
+10. Loopback, localhost, and wildcard provider environment values preserve all
    URL components except the translated hostname. Non-loopback values remain
    unchanged.
-10. Ollama discovery, Ollama calls, llama.cpp discovery, and llama.cpp calls use
+11. Ollama discovery, Ollama calls, llama.cpp discovery, and llama.cpp calls use
    the same resolved endpoint. Generic protocol adapters contain no Docker
    branch.
-11. Windows host mount sources retain drive letters and backslashes while all
+12. Windows host mount sources retain drive letters and backslashes while all
    guest paths are POSIX. Sources containing spaces remain one CLI argument,
    and staged scripts contain LF without CRLF.
-12. Linux loopback-only provider failure reports the concrete guest endpoint and
+13. Linux loopback-only provider failure reports the concrete guest endpoint and
    the listener-bind remedy without changing the host process.
-13. An opt-in offline Docker integration test starts deterministic fake Ollama
+14. An opt-in offline Docker integration test starts deterministic fake Ollama
     and llama.cpp endpoints on the host, starts a sandbox AgentServer, discovers
     and calls each endpoint, and cleans up the container.
-14. Opt-in `live_provider` checks discover and call one real Ollama and one real
+15. Opt-in `live_provider` checks discover and call one real Ollama and one real
     llama.cpp model without hard-coded model IDs.
-15. Manual platform checks cover macOS Docker Desktop or OrbStack, Windows
+16. Manual platform checks cover macOS Docker Desktop or OrbStack, Windows
     Docker Desktop in Linux-container mode, and native Linux Docker before
     implementation is declared supported. Colima is claimed only after the same
     check passes.
-16. The default verification suite passes without Docker or a local model
+17. The default verification suite passes without Docker or a local model
     runtime and remains offline.
 
 ## Risks
