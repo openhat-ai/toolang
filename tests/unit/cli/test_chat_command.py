@@ -14,7 +14,11 @@ import pytest
 from toolang.base.types.message import TextPart
 from toolang.cli.common.output import shorten_home_path
 from toolang.cli.toolang.commands.chat import main as chat
-from toolang.cli.toolang.commands.chat.base import ChatResult, ChatRunState
+from toolang.cli.toolang.commands.chat.base import (
+    ChatExecutorMetadata,
+    ChatResult,
+    ChatRunState,
+)
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEnd, RunEvent, StepEnd
 from toolang.execution.types import Local, RunOverride, StepPath
@@ -22,7 +26,7 @@ from toolang.up.process import AgentStatus
 
 
 class _Client:
-    executor_label = "embedded"
+    executor_metadata = ChatExecutorMetadata()
 
     def __init__(self) -> None:
         self.created = 0

@@ -37,7 +37,7 @@ from toolang.lang.includes import resolve_file_include
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.watcher import StateWatcher
 from toolang.execution.values import parts_from_local
-from .base import ChatResult, ChatRunState, RunAccepted
+from .base import ChatExecutorMetadata, ChatResult, ChatRunState, RunAccepted
 from .policy import apply_session_commands, commands_from_selects
 
 
@@ -52,7 +52,7 @@ class _CallbackTracer(RunTracer):
 class LocalChatSession:
     """Expose the chat-client contract over one process-local executor."""
 
-    executor_label = "embedded"
+    executor_metadata = ChatExecutorMetadata()
 
     def __init__(
         self,

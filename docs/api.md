@@ -610,7 +610,8 @@ script runs and TUI execution do not consume this endpoint.
 - runtime identity:
   - the server process's Toolang package `version`
   - `sandbox.driver`
-  - a six-character `sandbox.instance` for non-host runtimes
+  - the complete `sandbox.selector`
+  - a twelve-character `sandbox.instance` for non-host runtimes
 - environment summary
 - overview metrics:
 
@@ -777,9 +778,14 @@ commands, while the server keeps ownership of setup, environment, providers,
 working directory, and sandbox.
 
 The banner always shows the TUI process version and host-side agent home. Its
-executor value is `embedded` locally. Remote values use
-`v<version> · :<port>` and append `<sandbox>(<six-character-instance>)` for a
-non-host runtime, for example `v0.3.9 · :7001 · docker(a1b2c3)`.
+metadata order is `Toolang`, `executor`, optional `sandbox`, then `home`.
+Embedded execution uses `executor  embedded`. Remote execution links the
+normalized endpoint and follows it with the server version, for example
+`executor  http://localhost:7001 · v0.3.9`. A non-host runtime adds exactly one
+row containing its complete selector and conventional twelve-character short
+instance, for example
+`sandbox   docker:python:3.13-slim · a1b2c3d4e5f6`. Host execution omits this
+row.
 Job thread ids are inspectable and controllable through thread and run commands,
 but `chat` does not implicitly reopen tasks or create manual chore runs.
 

@@ -18,7 +18,7 @@ import time
 from tests import PROJECT_ROOT
 
 _CSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
-_OSC = re.compile(rb"\x1b\][^\x07]*(?:\x07|\x1b\\)")
+_OSC = re.compile(rb"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 
 
 class ChatTuiPtySession:

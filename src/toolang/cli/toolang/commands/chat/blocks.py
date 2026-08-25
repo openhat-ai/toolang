@@ -12,6 +12,7 @@ from rich import box
 from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.markup import escape
 from rich.panel import Panel
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
@@ -39,7 +40,7 @@ from toolang.cli.common.execution_progress.rich_rendering import (
 )
 from toolang.cli.common.execution_progress.state import Metrics
 
-from .base import friendly_error
+from .base import ChatExecutorMetadata, friendly_error
 from .rendering import (
     CONTROL_BAR_BACKGROUND,
     ACCENT_CELL,
@@ -471,7 +472,7 @@ class _SlashResultDivider:
 @dataclass(frozen=True, slots=True)
 class HeaderBlock:
     home: str
-    executor_label: str
+    executor_metadata: ChatExecutorMetadata
     version_label: str
 
     def render(self) -> RenderableType:
@@ -489,8 +490,11 @@ class HeaderBlock:
             Text("Toolang", style=f"bold {TOOLANG_COLOR}"),
             Text(f"v{self.version_label}", style="dim"),
         )
+        executor_value, sandbox_value = _header_executor_values(self.executor_metadata)
+        details.add_row(Text("executor", style="dim"), executor_value)
+        if sandbox_value is not None:
+            details.add_row(Text("sandbox", style="dim"), sandbox_value)
         details.add_row(Text("home", style="dim"), Text(self.home))
-        details.add_row(Text("executor", style="dim"), Text(self.executor_label))
 
         logo_text = toolang_logo_text()
         logo = toolang_logo(console)
@@ -501,7 +505,8 @@ class HeaderBlock:
             + max(
                 1 + display_width(self.version_label),
                 display_width(self.home),
-                display_width(self.executor_label),
+                display_width(executor_value.plain),
+                display_width(sandbox_value.plain) if sandbox_value else 0,
             )
         )
         wide_width = (
@@ -530,6 +535,24 @@ class HeaderBlock:
             padding=(1, _HEADER_HORIZONTAL_PADDING),
             expand=False,
         )
+
+
+def _header_executor_values(
+    metadata: ChatExecutorMetadata,
+) -> tuple[Text, Text | None]:
+    if metadata.endpoint is None:
+        return Text("embedded"), None
+    if metadata.version is None:
+        raise ValueError("remote chat executor metadata is missing its version")
+    executor = Text()
+    executor.append(metadata.endpoint, style=Style(link=metadata.endpoint))
+    executor.append(f" · v{metadata.version}")
+    sandbox = (
+        Text(f"{metadata.sandbox} · {metadata.instance}")
+        if metadata.sandbox is not None and metadata.instance is not None
+        else None
+    )
+    return executor, sandbox
 
 
 @dataclass(frozen=True, slots=True)

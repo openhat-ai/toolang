@@ -213,6 +213,21 @@ blocks further submissions until Chat restarts; read-only commands and exit
 remain available. Chat never retries a submission or falls back to embedded
 execution after selecting the remote runtime.
 
+The startup banner keeps the TUI process and executor identities separate. Its
+metadata order is `Toolang`, `executor`, optional `sandbox`, then `home`:
+
+```text
+Toolang   v0.3.0+69439a4e*
+executor  http://localhost:7001 · v0.3.0
+sandbox   docker:pyslim-3.11 · 2f0f8934abcd
+home      ~/.toolang/agents/eve
+```
+
+A remote host omits the `sandbox` row. Embedded Chat instead renders
+`executor  embedded` and also omits that row. Remote endpoints are terminal
+hyperlinks. The optional sandbox adds one content row without changing the
+panel's vertical padding.
+
 The chat TUI keeps only live mutable blocks in its live area. Stable blocks
 move into terminal scrollback progressively instead of waiting for the whole
 run to finish. Parallel tool calls, agic calls, and flow lanes are summarized by

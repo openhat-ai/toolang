@@ -149,6 +149,7 @@ def _profile_runtime(*, runtime_state: dict[str, object]) -> RuntimeIdentityPayl
         version=_runtime_version(),
         sandbox=RuntimeSandboxPayload(
             driver=driver,
+            selector=_runtime_label(sandbox_spec, label="sandbox selector"),
             instance=_runtime_instance(runtime_state, driver=driver),
         ),
     )
@@ -162,12 +163,12 @@ def _runtime_instance(runtime_state: dict[str, object], *, driver: str) -> str |
     if driver == "host":
         return None
     raw = runtime_state.get("sandbox_instance")
-    if not isinstance(raw, str) or len(raw.strip()) < 6:
+    if not isinstance(raw, str) or len(raw.strip()) < 12:
         raise HTTPException(
             status_code=500,
             detail="runtime sandbox instance is unavailable",
         )
-    return _runtime_token(raw.strip()[:6], label="sandbox instance")
+    return _runtime_token(raw.strip()[:12], label="sandbox instance")
 
 
 def _runtime_token(value: str, *, label: str) -> str:

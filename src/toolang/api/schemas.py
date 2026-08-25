@@ -243,6 +243,7 @@ class RuntimeSandboxPayload(ApiRequest):
     """Public identity of the sandbox hosting the current server process."""
 
     driver: StrictText
+    selector: StrictText
     instance: StrictText | None = None
 
 
