@@ -231,6 +231,7 @@ def test_docker_sandbox_prepares_and_launches(
     assert stage_dir.is_relative_to(control_lock.parent / "launches")
     assert "bootstrap.py" in (stage_dir / "start.sh").read_text(encoding="utf-8")
     agent_script = (stage_dir / "agent.sh").read_text(encoding="utf-8")
+    assert 'export TOOLANG_SANDBOX_INSTANCE="${HOSTNAME:?' in agent_script
     assert (
         "exec uv tool run --from "
         "/root/.toolang/agents/alice/.runtime/sandbox/"

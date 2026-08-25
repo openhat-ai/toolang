@@ -14,13 +14,11 @@ from toolang.api.app import create_app
 from toolang.api.routers.agent import profile
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
-from toolang.base.types.sandbox import SandboxRef
 from toolang.catalog import CapsManager, JobsManager
 from toolang.common.layout import AgentLayout
 from toolang.execution.schemas import RunDetail
 from toolang.execution.values import parts_from_local
 from toolang.up import AgentCore, process as agents
-from toolang.up.sandbox import SandboxState
 from tests.support.execution_harness import ExecutionHarness, TEST_MODEL_REF
 
 
@@ -132,15 +130,8 @@ def test_profile_reports_six_character_docker_instance(tmp_path: Path) -> None:
         started_at="2026-08-25T00:00:00Z",
         pid=123,
         sandbox="docker:python:3.13-slim",
+        sandbox_instance="a1b2c3d4e5f67890",
     )
-    SandboxState(
-        sandbox="docker:python:3.13-slim",
-        ref=SandboxRef(
-            runtime_id="toolang-alice-runtime",
-            endpoint="http://127.0.0.1:7001",
-            meta={"container_id": "a1b2c3d4e5f67890"},
-        ),
-    ).save(layout.sandbox_state)
     core = AgentCore(layout)
 
     try:

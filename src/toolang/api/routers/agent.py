@@ -14,7 +14,6 @@ from toolang.execution.schemas import ThreadInfo
 from toolang.execution.types import ModelStepNoted
 from toolang.execution.executor.resources import agent_model_targets
 from toolang.up import AgentCore, process as agents
-from toolang.up.sandbox import SandboxState
 
 
 router = APIRouter(tags=["agent"])
@@ -30,7 +29,7 @@ def profile(core: AgentCoreDep) -> dict[str, object]:
         "summary": None,
         "description": None,
         "avatar": None,
-        "runtime": _profile_runtime(core, runtime_state=runtime_state).model_dump(),
+        "runtime": _profile_runtime(runtime_state=runtime_state).model_dump(),
         "environment": _profile_environment(core, runtime_state=runtime_state),
         "metrics": _profile_metrics(core),
     }
@@ -143,16 +142,14 @@ def _profile_environment(
     }
 
 
-def _profile_runtime(
-    core: AgentCore, *, runtime_state: dict[str, object]
-) -> RuntimeIdentityPayload:
+def _profile_runtime(*, runtime_state: dict[str, object]) -> RuntimeIdentityPayload:
     sandbox_spec = _runtime_sandbox_spec(runtime_state)
     driver = _runtime_token(sandbox_spec.partition(":")[0], label="sandbox driver")
     return RuntimeIdentityPayload(
         version=_runtime_version(),
         sandbox=RuntimeSandboxPayload(
             driver=driver,
-            instance=_runtime_instance(core, driver=driver),
+            instance=_runtime_instance(runtime_state, driver=driver),
         ),
     )
 
@@ -161,26 +158,10 @@ def _runtime_version() -> str:
     return _runtime_label(package_version("toolang"), label="Toolang version")
 
 
-def _runtime_instance(core: AgentCore, *, driver: str) -> str | None:
+def _runtime_instance(runtime_state: dict[str, object], *, driver: str) -> str | None:
     if driver == "host":
         return None
-    try:
-        state = SandboxState.load(core.layout.sandbox_state)
-    except (OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="runtime sandbox identity is invalid",
-        ) from exc
-    if state is None or state.sandbox.partition(":")[0].strip() != driver:
-        raise HTTPException(
-            status_code=500,
-            detail="runtime sandbox identity is unavailable",
-        )
-    raw = (
-        state.ref.meta.get("container_id")
-        if driver == "docker"
-        else state.ref.runtime_id
-    )
+    raw = runtime_state.get("sandbox_instance")
     if not isinstance(raw, str) or len(raw.strip()) < 6:
         raise HTTPException(
             status_code=500,
