@@ -64,7 +64,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         ],
     )
     harness.setup.layout.home.mkdir(parents=True, exist_ok=True)
-    (harness.setup.layout.home / "note.md").write_text("included", encoding="utf-8")
+    (harness.setup.layout.home / "note.txt").write_text("included", encoding="utf-8")
     harness.store.close()
     core = AgentCore(harness.setup.layout)
     setup = _Snapshot(harness.setup)
@@ -89,7 +89,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                     "thread": thread_id,
                     "request_id": "fallback_request",
                     "input": {
-                        "primary": "@note.md",
+                        "primary": "@note.txt",
                         "named": [{"name": "tone", "source": "brief"}],
                     },
                     "session_commands": [
@@ -179,7 +179,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
                     "thread": thread_id,
                     "request_id": "invalid_include_request",
                     "input": {
-                        "primary": "@missing.md",
+                        "primary": "@missing.txt",
                         "named": [{"name": "tone", "source": "brief"}],
                     },
                     "runnable_fallbacks": ["agic:chat", "default"],
@@ -244,7 +244,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
             "named input must use a canonical name"
         )
         assert invalid_include.status_code == 422
-        assert "missing.md" in invalid_include.json()["detail"]
+        assert "missing.txt" in invalid_include.json()["detail"]
         assert missing_thread.status_code == 404
         assert missing_thread.json()["detail"] == "thread not found: term_missing"
         assert len(core.store.list_runs(thread_id=thread_id, limit=None)) == 2
