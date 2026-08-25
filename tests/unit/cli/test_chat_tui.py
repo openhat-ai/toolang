@@ -1608,7 +1608,7 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     rendered = _render_text(
         blocks.HeaderBlock(
             home="/tmp/toolang/agents/alice-with-a-long-home",
-            executor_label="v0.3.9, :7001, docker(a1b2c3)",
+            executor_label="v0.3.9 · :7001 · docker(a1b2c3)",
             version_label="0.1.0",
         ).render(),
         width=40,
@@ -1623,14 +1623,14 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     assert len({len(line) for line in bordered_lines}) == 1
     unwrapped = rendered.replace("\n", "").replace("│", "").replace(" ", "")
     assert "alice-with-a-long-home" in unwrapped
-    assert "executorv0.3.9,:7001,docker(a1b2c3)" in unwrapped
+    assert "executorv0.3.9·:7001·docker(a1b2c3)" in unwrapped
 
 
 @pytest.mark.parametrize(
     "executor_label",
     (
-        "v0.3.9, :7001",
-        "v0.3.9, :7001, docker(a1b2c3)",
+        "v0.3.9 · :7001",
+        "v0.3.9 · :7001 · docker(a1b2c3)",
     ),
 )
 def test_chat_header_supports_remote_executor_identity(executor_label: str) -> None:

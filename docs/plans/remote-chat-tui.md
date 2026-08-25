@@ -88,12 +88,12 @@ executor  embedded
 host-side agent path resolved by that process. Embedded execution needs no
 second version or `host` suffix because it is the same process.
 
-A remote host executor is compactly rendered as `v<version>, :<port>`. A
+A remote host executor is compactly rendered as `v<version> · :<port>`. A
 sandboxed executor appends its driver and short runtime instance ID:
 
 ```text
-executor  v0.3.9, :7001
-executor  v0.3.9, :7001, docker(a1b2c3)
+executor  v0.3.9 · :7001
+executor  v0.3.9 · :7001 · docker(a1b2c3)
 ```
 
 The remote version is reported by the server process, not copied from the TUI.

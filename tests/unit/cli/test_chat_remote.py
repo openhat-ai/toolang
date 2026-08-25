@@ -188,7 +188,7 @@ def test_remote_chat_non_run_operations_and_executor_label() -> None:
         transport=httpx.MockTransport(handler),
     )
     try:
-        assert session.executor_label == "v0.3.9, :7001, docker(a1b2c3)"
+        assert session.executor_label == "v0.3.9 · :7001 · docker(a1b2c3)"
         assert session.run_client is not None
         assert session.run_client.endpoint == "http://runtime.test:7001"
         assert session.list_models()["default"] == "test/model"
@@ -273,7 +273,7 @@ def test_remote_chat_uses_remote_run_client_native_events() -> None:
     finally:
         session.close()
 
-    assert session.executor_label == "v0.3.9, :7001"
+    assert session.executor_label == "v0.3.9 · :7001"
     assert [type(item) for item in events] == [RunBegin, RunEnd]
     assert states == [RunAccepted("run_remote")]
     assert errors == []

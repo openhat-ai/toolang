@@ -230,11 +230,11 @@ class RemoteChatSession:
         if port is None:
             raise RemoteChatError("running executor endpoint has no explicit port")
         suffix = (
-            f", {identity.sandbox}({identity.instance})"
+            f" · {identity.sandbox}({identity.instance})"
             if identity.instance is not None
             else ""
         )
-        self.executor_label = f"v{identity.version}, :{port}{suffix}"
+        self.executor_label = f"v{identity.version} · :{port}{suffix}"
 
     async def _list_models(self) -> dict[str, object]:
         payload = await self._request_json(

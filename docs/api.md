@@ -778,8 +778,8 @@ working directory, and sandbox.
 
 The banner always shows the TUI process version and host-side agent home. Its
 executor value is `embedded` locally. Remote values use
-`v<version>, :<port>` and append `<sandbox>(<six-character-instance>)` for a
-non-host runtime, for example `v0.3.9, :7001, docker(a1b2c3)`.
+`v<version> · :<port>` and append `<sandbox>(<six-character-instance>)` for a
+non-host runtime, for example `v0.3.9 · :7001 · docker(a1b2c3)`.
 Job thread ids are inspectable and controllable through thread and run commands,
 but `chat` does not implicitly reopen tasks or create manual chore runs.
 
