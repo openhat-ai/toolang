@@ -86,29 +86,14 @@ class DockerSandbox:
         stage_dir.mkdir(parents=True, exist_ok=True)
 
         hosted_dev_artifact: Path | None = None
-        extra_mounts: list[SandboxMount] = []
         if request.local_dev_artifact is not None:
             artifact = request.local_dev_artifact
-            if artifact.is_file():
-                staged = stage_dir / artifact.name
-                if artifact.resolve() != staged.resolve():
-                    shutil.copy2(artifact, staged)
-                hosted_dev_artifact = runtime_dir / staged.name
-            elif _path_is_within(artifact, request.local_root):
-                hosted_dev_artifact = _translate_path(
-                    artifact,
-                    local_root=request.local_root,
-                    hosted_root=request.hosted_root,
-                )
-            else:
-                hosted_dev_artifact = runtime_dir / "dev"
-                extra_mounts.append(
-                    SandboxMount(
-                        local_path=artifact,
-                        hosted_path=hosted_dev_artifact,
-                        read_only=True,
-                    )
-                )
+            if not artifact.is_file() or artifact.suffix.casefold() != ".whl":
+                raise ValueError("docker development artifact must be a wheel file")
+            staged = stage_dir / artifact.name
+            if artifact.resolve() != staged.resolve():
+                shutil.copy2(artifact, staged)
+            hosted_dev_artifact = runtime_dir / staged.name
 
         agent_script_path = stage_dir / "agent.sh"
         _write_agent_script(
@@ -158,7 +143,6 @@ class DockerSandbox:
                 read_only=True,
             ),
             SandboxMount(stage_dir, runtime_dir, read_only=True),
-            *extra_mounts,
         ]
         container_name = (
             f"toolang-{_container_label(request.agent_name)}-{uuid4().hex[:8]}"
@@ -454,18 +438,6 @@ def _dotenv_value(value: str) -> str:
     if "\x00" in value:
         raise ValueError("guest environment variable values must not contain NUL")
     return value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "\\r")
-
-
-def _path_is_within(path: Path, root: Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-    except ValueError:
-        return False
-    return True
-
-
-def _translate_path(path: Path, *, local_root: Path, hosted_root: Path) -> Path:
-    return hosted_root / path.resolve().relative_to(local_root.resolve())
 
 
 def docker_container_running(container_name: str) -> bool:

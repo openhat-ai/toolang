@@ -34,6 +34,7 @@ from ...common.context import (
     user_call,
 )
 from ...common.output import active_agent_error, echo_error
+from ...common.version import development_source
 
 if TYPE_CHECKING:
     from toolang.up.sandbox import SandboxState, LaunchSpec
@@ -123,6 +124,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
                 environ=log_plan.environ,
             ),
         )
+        _warn_development_sandbox_package(startup, dev=options.dev)
         return user_call(
             asyncio.run,
             sandbox_runtime.run(
@@ -272,7 +274,7 @@ def run(
         Path | None,
         typer.Option(
             "--dev",
-            help="Use wheels from this file or directory when starting a sandbox.",
+            help="Use a Toolang wheel, or the newest wheel found recursively in a directory.",
         ),
     ] = None,
     endpoint_host: Annotated[
@@ -314,6 +316,7 @@ def run(
         )
         progress.finish(details=False)
         finished = True
+        _warn_development_sandbox_package(launch.startup, dev=dev)
         exit_code = user_call(
             asyncio.run,
             sandbox_runtime.run(
@@ -347,6 +350,26 @@ def run(
 def _report_foreground_ready(name: str, state: SandboxState) -> None:
     typer.echo(
         f"Running agent {name}: {state.ref.endpoint} (Ctrl+C to stop)",
+        err=True,
+    )
+
+
+def _warn_development_sandbox_package(
+    startup: LaunchSpec,
+    *,
+    dev: Path | None,
+) -> None:
+    if dev is not None or startup.sandbox.partition(":")[0] == "host":
+        return
+    detected, source = development_source()
+    if not detected:
+        return
+    location = f" at {source}" if source is not None else ""
+    typer.echo(
+        "Warning: the current Toolang process is running from development source"
+        f"{location}, but sandbox {startup.sandbox} will install Toolang from the "
+        "package index and may run a different version. Build a wheel with "
+        "`uv build --wheel` and pass `--dev dist`.",
         err=True,
     )
 
@@ -392,7 +415,7 @@ def start(
         Path | None,
         typer.Option(
             "--dev",
-            help="Use wheels from this file or directory when starting a sandbox.",
+            help="Use a Toolang wheel, or the newest wheel found recursively in a directory.",
         ),
     ] = None,
     endpoint_host: Annotated[
@@ -438,6 +461,7 @@ def start(
         raise
 
     progress.finish(details=False)
+    _warn_development_sandbox_package(launch.startup, dev=dev)
     try:
         handle = user_call(asyncio.run, sandbox_runtime.launch(launch.startup))
     except TimeoutError as exc:

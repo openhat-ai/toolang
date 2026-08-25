@@ -126,7 +126,7 @@ def test_docker_sandbox_prepares_and_launches(
         "toolang.plugin.sandboxes.docker.docker_container_running",
         lambda name: name.startswith("toolang-alice-"),
     )
-    dev = tmp_path / "dist" / "toolang.whl"
+    dev = tmp_path / "dist" / "toolang-1.2.3-py3-none-any.whl"
     dev.parent.mkdir(parents=True)
     dev.write_bytes(b"wheel")
     (tmp_path / "shared").mkdir()
@@ -171,9 +171,12 @@ def test_docker_sandbox_prepares_and_launches(
     )
     assert stage_mount.read_only is True
     assert "bootstrap.py" in (stage_dir / "start.sh").read_text(encoding="utf-8")
-    assert " too serve alice --port 8123" in (stage_dir / "agent.sh").read_text(
-        encoding="utf-8"
-    )
+    agent_script = (stage_dir / "agent.sh").read_text(encoding="utf-8")
+    assert (
+        "exec uv tool run --from "
+        "/root/.toolang/agents/alice/.runtime/sandbox/"
+        "toolang-1.2.3-py3-none-any.whl too serve alice --port 8123"
+    ) in agent_script
     assert not (stage_dir / "environment.json").exists()
     bootstrap = subprocess.run(
         (
@@ -212,6 +215,30 @@ def test_docker_sandbox_prepares_and_launches(
         "TOOLANG_ROOT": "/root/.toolang",
         "TOOLANG_SANDBOX": "docker:python:3.13-slim",
     }
+
+
+def test_docker_sandbox_requires_a_concrete_dev_wheel(tmp_path: Path) -> None:
+    dev = tmp_path / "dist"
+    dev.mkdir()
+    sandbox = create_sandbox("docker", config={})
+
+    with pytest.raises(ValueError, match="must be a wheel file"):
+        sandbox.prepare(None, _request(tmp_path, dev=dev))
+
+
+def test_docker_agent_script_quotes_a_dev_wheel_path(tmp_path: Path) -> None:
+    script = tmp_path / "agent.sh"
+
+    docker_sandbox._write_agent_script(
+        script,
+        command=("too", "serve", "alice"),
+        hosted_dev_artifact=Path("/runtime/dev wheels/toolang.whl"),
+    )
+
+    assert (
+        "exec uv tool run --from '/runtime/dev wheels/toolang.whl' too serve alice"
+        in script.read_text(encoding="utf-8")
+    )
 
 
 def test_docker_sandbox_uses_configured_default_image(tmp_path: Path) -> None:
