@@ -42,6 +42,7 @@ from ._docker_cli import (
 from ._docker_guest import (
     DOCKER_TOOLANG_COMPATIBILITY_ERROR,
     prepare_background_log,
+    prepare_sandbox_instance,
     prepare_stage_directory,
     prepare_startup_events,
     remove_stage_directory,
@@ -50,6 +51,7 @@ from ._docker_guest import (
     write_agent_script,
     write_bootstrap,
     write_guest_env,
+    write_sandbox_instance,
     write_start_script,
 )
 
@@ -183,6 +185,8 @@ class DockerSandbox:
         validate_guest_environment(process_envs)
         hosted_log_path = prepare_background_log(request)
         prepare_stage_directory(stage_dir)
+        sandbox_instance_path = stage_dir / "instance"
+        prepare_sandbox_instance(sandbox_instance_path)
         prepare_startup_events(startup_events_path)
 
         hosted_dev_artifact: Path | None = None
@@ -199,6 +203,7 @@ class DockerSandbox:
             stage_dir / "agent.sh",
             command=request.command,
             hosted_dev_artifact=hosted_dev_artifact,
+            sandbox_instance_path=runtime_dir / sandbox_instance_path.name,
             startup_events_path=(
                 request.hosted_home / ".runtime" / startup_events_path.name
             ),
@@ -273,6 +278,7 @@ class DockerSandbox:
                 "container_name": container_name,
                 "image": image,
                 "stage_dir": str(stage_dir),
+                "sandbox_instance_path": str(sandbox_instance_path),
                 "startup_events_path": str(startup_events_path),
                 "package_source": (
                     request.local_dev_artifact.name
@@ -302,12 +308,13 @@ class DockerSandbox:
 
     async def launch(self, plan: SandboxPlan) -> SandboxRef:
         container_name = _plan_text(plan, "container_name")
+        runtime_id = container_name
         image = _plan_text(plan, "image")
         if len(plan.ports) != 1:
             raise ValueError("docker sandbox requires exactly one published port")
         port = plan.ports[0]
         try:
-            container_id = await docker_run_detached(
+            runtime_id = await docker_run_detached(
                 image=image,
                 container_name=container_name,
                 workdir=str(plan.working_directory),
@@ -318,6 +325,11 @@ class DockerSandbox:
                 hosted_port=port.hosted_port,
                 env_values=plan.envs,
                 log_path=plan.log_path if plan.output == "file" else None,
+            )
+            await asyncio.to_thread(
+                write_sandbox_instance,
+                _plan_text(plan, "sandbox_instance_path"),
+                runtime_id,
             )
         except BaseException as exc:
             cleanup_error: BaseException | None = None
@@ -341,7 +353,7 @@ class DockerSandbox:
             else:
                 ref = _docker_ref(
                     plan,
-                    runtime_id=container_name,
+                    runtime_id=runtime_id,
                     container_name=container_name,
                 )
                 raise SandboxLaunchError(
@@ -354,7 +366,7 @@ class DockerSandbox:
             raise
         return _docker_ref(
             plan,
-            runtime_id=container_id,
+            runtime_id=runtime_id,
             container_name=container_name,
         )
 

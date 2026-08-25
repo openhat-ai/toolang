@@ -647,7 +647,10 @@ def runtime_identity_row(
             ref = state.ref
             if ref.runtime_kind == "process":
                 return "PID", ref.runtime_id
-            if ref.runtime_kind == "container":
+            if (
+                ref.runtime_kind == "container"
+                or state.sandbox.partition(":")[0] == "docker"
+            ):
                 short_id = (
                     ref.runtime_id[:12]
                     if len(ref.runtime_id) >= 12
@@ -656,9 +659,13 @@ def runtime_identity_row(
                     )
                     else ref.runtime_id
                 )
+                legacy_name = ref.meta.get("container_name")
+                runtime_name = ref.runtime_name
+                if runtime_name is None and isinstance(legacy_name, str):
+                    runtime_name = legacy_name or None
                 value = (
-                    f"{ref.runtime_name} ({short_id})"
-                    if ref.runtime_name is not None and ref.runtime_name != short_id
+                    f"{runtime_name} ({short_id})"
+                    if runtime_name is not None and runtime_name != short_id
                     else short_id
                 )
                 return "Container", value

@@ -168,7 +168,7 @@ def _runtime_instance(runtime_state: dict[str, object], *, driver: str) -> str |
             status_code=500,
             detail="runtime sandbox instance is unavailable",
         )
-    return _runtime_token(raw.strip()[:12], label="sandbox instance")
+    return _runtime_token(raw.strip(), label="sandbox instance")
 
 
 def _runtime_token(value: str, *, label: str) -> str:

@@ -32,6 +32,9 @@ class _Snapshot:
         return self.value
 
 
+_CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
+
+
 def test_remote_chat_validation_and_latest_result_endpoints(tmp_path: Path) -> None:
     harness = ExecutionHarness.create(
         tmp_path,
@@ -123,7 +126,7 @@ agic chat(_: Part[]) -> Part[]:
         asyncio.run(core.close())
 
 
-def test_profile_reports_docker_selector_and_short_instance(tmp_path: Path) -> None:
+def test_profile_preserves_complete_docker_instance(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     agents.write_runtime_state(
@@ -132,7 +135,7 @@ def test_profile_reports_docker_selector_and_short_instance(tmp_path: Path) -> N
         started_at="2026-08-25T00:00:00Z",
         pid=123,
         sandbox="docker:python:3.13-slim",
-        sandbox_instance="a1b2c3d4e5f67890",
+        sandbox_instance=_CONTAINER_ID,
     )
     core = AgentCore(layout)
 
@@ -144,7 +147,7 @@ def test_profile_reports_docker_selector_and_short_instance(tmp_path: Path) -> N
             "sandbox": {
                 "driver": "docker",
                 "selector": "docker:python:3.13-slim",
-                "instance": "a1b2c3d4e5f6",
+                "instance": _CONTAINER_ID,
             },
         }
     finally:

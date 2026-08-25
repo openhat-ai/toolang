@@ -641,7 +641,7 @@ script runs and TUI execution do not consume this endpoint.
   - the server process's Toolang package `version`
   - `sandbox.driver`
   - the complete `sandbox.selector`
-  - a twelve-character `sandbox.instance` for non-host runtimes
+  - the complete, unprojected `sandbox.instance` for non-host runtimes
 - environment summary
 - overview metrics:
 
@@ -812,10 +812,12 @@ metadata order is `Toolang`, `executor`, optional `sandbox`, then `home`.
 Embedded execution uses `executor  embedded`. Remote execution links the
 normalized endpoint and follows it with the server version, for example
 `executor  http://localhost:7001 · v0.3.9`. A non-host runtime adds exactly one
-row containing its complete selector and conventional twelve-character short
-instance, for example
+row containing its complete selector and a presentation-only instance label.
+Docker container IDs are shortened to the conventional twelve characters, for
+example
 `sandbox   docker:python:3.13-slim · a1b2c3d4e5f6`. Host execution omits this
-row.
+row. Structured client metadata and `/api/v1/profile` retain the complete
+instance value; shortening occurs only in the terminal renderer.
 Job thread ids are inspectable and controllable through thread and run commands,
 but `chat` does not implicitly reopen tasks or create manual chore runs.
 

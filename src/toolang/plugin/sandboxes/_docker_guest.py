@@ -21,6 +21,7 @@ def write_agent_script(
     *,
     command: tuple[str, ...],
     hosted_dev_artifact: Path | None,
+    sandbox_instance_path: Path,
     startup_events_path: Path,
     validation_error_to_stderr: bool,
 ) -> None:
@@ -32,7 +33,20 @@ def write_agent_script(
         "#!/bin/sh",
         "set -eu",
         'export PATH="$HOME/.local/bin:$PATH"',
-        'export TOOLANG_SANDBOX_INSTANCE="${HOSTNAME:?docker sandbox hostname is unavailable}"',
+        "TOOLANG_SANDBOX_INSTANCE_PATH=" + shlex.quote(str(sandbox_instance_path)),
+        "TOOLANG_SANDBOX_INSTANCE_ATTEMPTS=0",
+        'while [ ! -s "$TOOLANG_SANDBOX_INSTANCE_PATH" ]; do',
+        "  TOOLANG_SANDBOX_INSTANCE_ATTEMPTS="
+        "$((TOOLANG_SANDBOX_INSTANCE_ATTEMPTS + 1))",
+        '  if [ "$TOOLANG_SANDBOX_INSTANCE_ATTEMPTS" -ge 600 ]; then',
+        "    echo 'docker sandbox instance is unavailable' >&2",
+        "    exit 64",
+        "  fi",
+        "  sleep 0.05",
+        "done",
+        'IFS= read -r TOOLANG_SANDBOX_INSTANCE <"$TOOLANG_SANDBOX_INSTANCE_PATH"',
+        'export TOOLANG_SANDBOX_INSTANCE="${TOOLANG_SANDBOX_INSTANCE:'
+        '?docker sandbox instance is unavailable}"',
         "startup_event() { { printf '%s\\n' \"$1\" >>"
         + shlex.quote(str(startup_events_path))
         + "; } 2>/dev/null || :; }",
@@ -211,6 +225,20 @@ def prepare_startup_events(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, "")
     path.chmod(0o600)
+
+
+def prepare_sandbox_instance(path: Path) -> None:
+    atomic_write_text(path, "")
+    path.chmod(0o600)
+
+
+def write_sandbox_instance(path: str | Path, instance: str) -> None:
+    value = instance.strip()
+    if not value or value != instance:
+        raise ValueError("docker sandbox instance must be a nonempty token")
+    target = Path(path)
+    atomic_write_text(target, value + "\n")
+    target.chmod(0o600)
 
 
 def remove_startup_events(path: str | Path, *, ignore_errors: bool = False) -> None:

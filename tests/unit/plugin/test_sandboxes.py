@@ -27,6 +27,9 @@ from toolang.plugin.sandboxes import host as host_sandbox
 from toolang.plugin.sandboxes.loading import create_sandbox
 
 
+_CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
+
+
 def _request(
     root: Path,
     *,
@@ -218,6 +221,7 @@ def test_docker_sandbox_prepares_and_launches(
     assert "UNRELATED_HOST_SECRET" not in guest_env_source
     assert stat.S_IMODE(guest_env_mount.local_path.stat().st_mode) == 0o600
     stage_dir = Path(cast(str, plan.meta["stage_dir"]))
+    sandbox_instance_path = Path(cast(str, plan.meta["sandbox_instance_path"]))
     startup_events_path = Path(cast(str, plan.meta["startup_events_path"]))
     stage_mount = next(
         item
@@ -232,11 +236,17 @@ def test_docker_sandbox_prepares_and_launches(
     )
     assert control_lock.read_text(encoding="utf-8") == "host control\n"
     assert stage_dir.is_relative_to(control_lock.parent / "launches")
+    assert sandbox_instance_path.read_text(encoding="utf-8") == ""
+    assert stat.S_IMODE(sandbox_instance_path.stat().st_mode) == 0o600
     assert startup_events_path.is_file()
     assert stat.S_IMODE(startup_events_path.stat().st_mode) == 0o600
     assert "bootstrap.py" in (stage_dir / "start.sh").read_text(encoding="utf-8")
     agent_script = (stage_dir / "agent.sh").read_text(encoding="utf-8")
-    assert 'export TOOLANG_SANDBOX_INSTANCE="${HOSTNAME:?' in agent_script
+    assert (
+        "TOOLANG_SANDBOX_INSTANCE_PATH="
+        "/root/.toolang/agents/alice/.runtime/sandbox/instance" in agent_script
+    )
+    assert "IFS= read -r TOOLANG_SANDBOX_INSTANCE" in agent_script
     assert (
         "uv tool install --quiet --no-progress --force "
         "/root/.toolang/agents/alice/.runtime/sandbox/"
@@ -270,6 +280,7 @@ def test_docker_sandbox_prepares_and_launches(
     ref = asyncio.run(sandbox.launch(plan))
 
     assert ref.runtime_id == "container-123"
+    assert sandbox_instance_path.read_text(encoding="utf-8") == "container-123\n"
     assert ref.runtime_kind == "container"
     assert ref.runtime_name == container_name
     assert ref.meta["startup_events_path"] == str(startup_events_path)
@@ -370,6 +381,7 @@ def test_docker_agent_script_quotes_a_dev_wheel_path(tmp_path: Path) -> None:
         script,
         command=("too", "serve", "alice"),
         hosted_dev_artifact=Path("/runtime/dev wheels/toolang.whl"),
+        sandbox_instance_path=Path("/runtime/sandbox instance"),
         startup_events_path=Path("/runtime/startup events"),
         validation_error_to_stderr=False,
     )
@@ -402,6 +414,7 @@ def test_docker_agent_script_reports_quiet_install_and_server_stages(
         script,
         command=("too", "serve", "alice"),
         hosted_dev_artifact=None,
+        sandbox_instance_path=_sandbox_instance(tmp_path),
         startup_events_path=events,
         validation_error_to_stderr=False,
     )
@@ -425,6 +438,55 @@ def test_docker_agent_script_reports_quiet_install_and_server_stages(
     ]
 
 
+def test_docker_agent_script_waits_for_complete_sandbox_instance(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "agent.sh"
+    instance = tmp_path / "sandbox.instance"
+    instance.touch()
+    events = tmp_path / "startup.events"
+    events.touch()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(bin_dir / "sleep", '#!/bin/sh\n/bin/sleep "$1"\n')
+    _write_executable(bin_dir / "uv", "#!/bin/sh\nexit 0\n")
+    _write_executable(
+        bin_dir / "too",
+        "#!/bin/sh\n"
+        'if [ "$2" = "--help" ]; then exit 0; fi\n'
+        'printf "%s\\n" "$TOOLANG_SANDBOX_INSTANCE"\n',
+    )
+    docker_guest.write_agent_script(
+        script,
+        command=("too", "serve", "alice"),
+        hosted_dev_artifact=None,
+        sandbox_instance_path=instance,
+        startup_events_path=events,
+        validation_error_to_stderr=False,
+    )
+
+    process = subprocess.Popen(
+        ("/bin/sh", str(script)),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={"HOME": str(tmp_path / "home"), "PATH": str(bin_dir)},
+    )
+    try:
+        threading.Event().wait(0.1)
+        assert process.poll() is None
+        instance.write_text(_CONTAINER_ID + "\n", encoding="utf-8")
+        stdout, stderr = process.communicate(timeout=2)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=2)
+
+    assert process.returncode == 0
+    assert stdout == _CONTAINER_ID + "\n"
+    assert stderr == ""
+
+
 def test_docker_agent_script_ignores_unwritable_startup_event_target(
     tmp_path: Path,
 ) -> None:
@@ -444,6 +506,7 @@ def test_docker_agent_script_ignores_unwritable_startup_event_target(
         script,
         command=("too", "serve", "alice"),
         hosted_dev_artifact=None,
+        sandbox_instance_path=_sandbox_instance(tmp_path),
         startup_events_path=events,
         validation_error_to_stderr=False,
     )
@@ -490,6 +553,7 @@ def test_docker_agent_script_discards_successful_uv_fallback_output(
         script,
         command=("too", "serve", "alice"),
         hosted_dev_artifact=None,
+        sandbox_instance_path=_sandbox_instance(tmp_path),
         startup_events_path=events,
         validation_error_to_stderr=False,
     )
@@ -533,6 +597,7 @@ def test_docker_agent_script_reports_all_uv_fallback_failures(
         script,
         command=("too", "serve", "alice"),
         hosted_dev_artifact=None,
+        sandbox_instance_path=_sandbox_instance(tmp_path),
         startup_events_path=events,
         validation_error_to_stderr=False,
     )
@@ -572,6 +637,7 @@ def test_docker_agent_script_reports_curated_compatibility_failure(
         script,
         command=("too", "serve", "alice"),
         hosted_dev_artifact=None,
+        sandbox_instance_path=_sandbox_instance(tmp_path),
         startup_events_path=events,
         validation_error_to_stderr=True,
     )
@@ -607,6 +673,7 @@ def test_docker_agent_script_reports_uv_bootstrap_as_install_failure(
         script,
         command=("too", "serve", "alice"),
         hosted_dev_artifact=None,
+        sandbox_instance_path=_sandbox_instance(tmp_path),
         startup_events_path=events,
         validation_error_to_stderr=False,
     )
@@ -1105,3 +1172,9 @@ def _async_value(value: str) -> Any:
 def _write_executable(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)
+
+
+def _sandbox_instance(root: Path) -> Path:
+    path = root / "sandbox.instance"
+    path.write_text(_CONTAINER_ID + "\n")
+    return path
