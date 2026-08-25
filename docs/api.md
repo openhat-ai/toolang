@@ -378,6 +378,8 @@ repeated `--allow` values for the same domain accumulate within the CLI layer.
 When `--sandbox` is omitted, resident run/start commands use the effective
 root/home `[sandbox]` binding, falling back to `host` when no binding exists.
 An explicit selector, including `--sandbox host`, overrides that binding.
+Docker sandbox control is supported from Linux and macOS hosts. Windows users
+must run Toolang through WSL2; native Windows host control is not supported.
 
 `run`, `start`, and roaming file-inbox runtime accept `--dev PATH` for a
 non-host sandbox. `PATH` is either one Toolang `.whl` file or a directory to
@@ -411,7 +413,9 @@ root = "/root/.toolang"
 Root and agent plugin tables are merged before the selected sandbox factory is
 created. Status, stop, and interrupted-launch recovery re-read this current
 configuration; `SandboxState` stores only the sandbox selector and runtime
-reference.
+reference. Each plugin owns its runtime-root configuration and reports whether
+the workload runs on the host or in a guest environment; orchestration does not
+interpret plugin-specific path settings.
 
 The host fixes the workload's runtime environment before sandbox preparation.
 Docker includes every name authored in the root or agent `.env`, then includes
@@ -441,14 +445,17 @@ both host and guest, so `${NAME}` is not expanded during either load.
 Toolang passes only `TOOLANG_HOST_GATEWAY`, `TOOLANG_ROOT`, and
 `TOOLANG_SANDBOX` through Docker's environment arguments; Docker also maps
 `host.docker.internal` through the engine's `host-gateway`. The complete staging
-mount is read-only in the guest. Staged files are removed on release and after
-any failed Docker launch.
+mount is read-only in the guest. Staged files are removed on release and after a
+failed Docker launch whose workload was removed successfully. If Docker cleanup
+fails, the staged files remain with the persisted recovery reference.
 
 For every sandbox implementation, AgentServer is the environment's primary
 foreground workload. `run` waits for that workload and releases it on exit,
 while `start` returns after the health endpoint is ready. `stop` reloads the
 persisted `SandboxState`, stops the primary workload, and releases its sandbox
-resources.
+resources. Agent removal also asks the sandbox lifecycle to release any stopped
+workload before deleting the agent home; no caller deletes sandbox control state
+as ordinary filesystem data.
 
 Agent entrypoints also share one logging policy resolver:
 
@@ -457,6 +464,31 @@ Agent entrypoints also share one logging policy resolver:
 | `toolang run` | `stderr` |
 | `toolang start` | `agent_log` under the agent `.runtime` directory |
 | local `.too` script run | `run_log` under the agent `.runtime` directory when `PY_LOG` is set, otherwise `none` |
+
+The lifecycle persists a versioned recovery reference immediately after the
+workload is created, then attaches process-local output observers and performs
+the readiness check. The Docker sandbox follows container output locally from
+container creation for foreground `run`. Background `start` instead creates the
+host `agent_log` with mode `0600` and writes Docker launch diagnostics, guest
+bootstrap and package installation output, and AgentServer output there. Early
+container diagnostics are copied to that log before a failed or stopped workload
+is released, bounded to the final 2000 Docker log lines and streamed without
+buffering them in memory.
+Diagnostic write failures do not prevent container cleanup. Foreground
+interruption, ready-reporting errors, and wait failures stop and release the
+workload; cleanup failures preserve `SandboxState` for a later forced stop.
+`SandboxState` is host-control data under `.sandbox/<agent>/state.json`, outside
+all guest mounts; only per-launch staging children are exposed to Docker.
+An older guest-writable `agents/<agent>/.runtime/sandbox.json` is never trusted
+or migrated automatically. Its presence blocks launch, stop, and agent removal
+with instructions to stop the workload using the previous Toolang version or
+clean it up manually.
+Likewise, per-launch staging without a matching control reference is preserved
+and blocks relaunch or removal until any associated workload is removed and the
+staging directory is cleaned manually.
+Docker uses the engine's default missing-image pull behavior. Pull and launch
+progress is visible on the foreground console for `run` and in `agent_log` for
+background `start`.
 
 When `toolang start` runs without `--port`, Toolang first tries the agent's last
 runtime port. If that port is not reusable, Toolang scans its auto-assigned

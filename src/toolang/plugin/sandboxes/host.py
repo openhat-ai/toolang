@@ -6,14 +6,21 @@ import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import os
+from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
 from typing import Any
 
+from toolang.base.errors import SandboxLaunchError
 from toolang.base.protocols.sandbox import Sandbox
-from toolang.base.types.sandbox import SandboxPlan, SandboxRef, SandboxRequest
+from toolang.base.types.sandbox import (
+    SandboxLocation,
+    SandboxPlan,
+    SandboxRef,
+    SandboxRequest,
+)
 
 
 @dataclass(slots=True)
@@ -22,9 +29,15 @@ class HostSandbox:
 
     config: dict[str, Any]
     name: str = "host"
+    location: SandboxLocation = "host"
     _processes: dict[int, subprocess.Popen[bytes]] = field(
         default_factory=dict, init=False, repr=False
     )
+
+    def runtime_root(self, local_root: Path) -> Path:
+        """Use the caller's Toolang root without path translation."""
+
+        return local_root
 
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         if spec is not None:
@@ -33,22 +46,38 @@ class HostSandbox:
             sandbox=self.name,
             command=_local_command(request.command),
             working_directory=request.working_directory,
+            output=request.output,
             log_path=request.log_path,
             endpoint=request.endpoint,
             envs=dict(request.envs),
         )
 
     async def launch(self, plan: SandboxPlan) -> SandboxRef:
-        process = await asyncio.to_thread(_launch, plan)
+        worker = asyncio.create_task(asyncio.to_thread(_launch, plan))
+        try:
+            process = await asyncio.shield(worker)
+        except asyncio.CancelledError as exc:
+            process = await worker
+            ref = _process_ref(process, plan.endpoint)
+            try:
+                stopped = await asyncio.to_thread(_stop_process, process, force=True)
+                if not stopped:
+                    raise RuntimeError(f"agent process did not stop: {process.pid}")
+            except BaseException as cleanup_exc:
+                self._processes[process.pid] = process
+                raise SandboxLaunchError(
+                    "Could not cancel host sandbox launch and stop its workload "
+                    f"{process.pid}: {cleanup_exc}",
+                    ref=ref,
+                ) from exc
+            raise
         self._processes[process.pid] = process
-        return SandboxRef(
-            runtime_id=str(process.pid),
-            endpoint=plan.endpoint,
-            meta={
-                "pid": process.pid,
-                "identity": _process_identity(process.pid),
-            },
-        )
+        return _process_ref(process, plan.endpoint)
+
+    async def attach(self, plan: SandboxPlan, ref: SandboxRef) -> None:
+        """Keep inherited host streams attached by the launched process itself."""
+
+        del plan, ref
 
     async def running(self, ref: SandboxRef) -> bool:
         pid = _pid(ref)
@@ -99,7 +128,7 @@ def create_sandbox(config: Mapping[str, Any]) -> Sandbox:
 def _launch(plan: SandboxPlan) -> subprocess.Popen[bytes]:
     if not plan.command:
         raise ValueError("host sandbox requires a command")
-    if plan.log_path is None:
+    if plan.output == "inherit":
         return subprocess.Popen(
             plan.command,
             stdin=subprocess.DEVNULL,
@@ -108,6 +137,8 @@ def _launch(plan: SandboxPlan) -> subprocess.Popen[bytes]:
             start_new_session=True,
             close_fds=True,
         )
+    if plan.output != "file" or plan.log_path is None:
+        raise ValueError("host file output requires a log path")
     plan.log_path.parent.mkdir(parents=True, exist_ok=True)
     with plan.log_path.open("ab") as stream:
         return subprocess.Popen(
@@ -128,6 +159,18 @@ def _local_command(command: tuple[str, ...]) -> tuple[str, ...]:
     if command[0] not in {"too", "toolang"}:
         return command
     return (sys.executable, "-m", "toolang.cli.toolang", *command[1:])
+
+
+def _process_ref(process: subprocess.Popen[bytes], endpoint: str) -> SandboxRef:
+    identity = _process_identity(process.pid)
+    return SandboxRef(
+        runtime_id=str(process.pid),
+        endpoint=endpoint,
+        meta={
+            "pid": process.pid,
+            **({"identity": identity} if identity is not None else {}),
+        },
+    )
 
 
 def _pid(ref: SandboxRef) -> int:

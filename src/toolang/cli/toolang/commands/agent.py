@@ -106,6 +106,8 @@ def remove_agent(
     ctx: typer.Context,
     agent: Annotated[str, typer.Argument(help="Agent name")],
 ) -> None:
+    from toolang.up import sandbox as sandbox_runtime
+
     root = context_root(ctx)
     layout = AgentLayout.resident(root, agent)
     process = agents.AgentProcess(layout)
@@ -115,10 +117,12 @@ def remove_agent(
     if process.pids():
         raise click.ClickException(f"Agent {agent} already running")
     try:
+        user_call(asyncio.run, sandbox_runtime.release_for_removal(layout))
         LocalAgents(root / "agents").remove(agent)
     except FileNotFoundError as exc:
         raise click.ClickException(f"Agent {agent} not found") from exc
-    agents.remove_sandbox_stage(layout)
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(f"Could not release agent {agent}: {exc}") from exc
     typer.echo(f"Removed agent {agent}")
 
 

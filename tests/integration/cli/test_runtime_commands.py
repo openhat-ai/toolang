@@ -10,7 +10,7 @@ import pytest
 from click.utils import strip_ansi
 from typer.testing import CliRunner
 
-from toolang.base.types.sandbox import SandboxRef
+from toolang.base.types.sandbox import SandboxOutput, SandboxRef
 import toolang.cli.toolang.main as cli
 from toolang.cli.toolang.commands import runtime as runtime_commands
 from toolang.common.layout import AgentLayout
@@ -66,6 +66,7 @@ def _launch_spec(
     file_inboxes: Sequence[Path] | None,
     dev: Path | None,
     log_spec: str | None,
+    output: SandboxOutput,
     log_path: Path | None,
     environ: Mapping[str, str],
     **_kwargs: object,
@@ -86,6 +87,7 @@ def _launch_spec(
         sandbox=sandbox or "host",
         config={},
         environ=dict(environ),
+        output=output,
         log_path=log_path,
         dev_artifact=dev,
     )
@@ -184,6 +186,7 @@ def test_run_resolves_sandbox_inputs_and_runs_in_foreground(
         "cost": None,
     }
     assert resolved["log_path"] is None
+    assert resolved["output"] == "inherit"
     assert captured["run"] == _launch_spec(**resolved)
     assert result.stdout == ""
     assert result.stderr.strip() == (
@@ -305,6 +308,7 @@ def test_start_launches_in_background_and_reports_endpoint(
     assert resolved["sandbox"] == "docker"
     assert resolved["dev"] == dev
     assert resolved["log_path"] == root / "agents" / "alice" / ".runtime" / "agent.log"
+    assert resolved["output"] == "file"
 
 
 def test_stop_forwards_force_to_sandbox(
@@ -351,3 +355,29 @@ def test_stop_rejects_agent_without_sandbox_state(
 
     assert result.exit_code == 1
     assert "Agent alice not running" in result.stderr
+
+
+def test_remove_releases_sandbox_resources_before_deleting_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "toolang"
+    layout = _create_agent(root)
+    calls: list[AgentLayout] = []
+
+    async def release_for_removal(target: AgentLayout) -> None:
+        assert target.home.is_dir()
+        calls.append(target)
+
+    monkeypatch.setattr(
+        sandbox_runtime,
+        "release_for_removal",
+        release_for_removal,
+    )
+
+    result = runner.invoke(cli.app, ["--root", str(root), "remove", "alice"])
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.strip() == "Removed agent alice"
+    assert calls == [layout]
+    assert not layout.home.exists()

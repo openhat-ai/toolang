@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ..types.sandbox import SandboxPlan, SandboxRef, SandboxRequest
+from ..types.sandbox import (
+    SandboxLocation,
+    SandboxPlan,
+    SandboxRef,
+    SandboxRequest,
+)
 
 
 @runtime_checkable
@@ -12,12 +18,19 @@ class Sandbox(Protocol):
     """Lifecycle operations implemented by one sandbox plugin."""
 
     name: str
+    location: SandboxLocation
+
+    def runtime_root(self, local_root: Path) -> Path:
+        """Resolve the Toolang root used by the workload environment."""
 
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         """Parse an implementation-owned spec and prepare one launch."""
 
     async def launch(self, plan: SandboxPlan) -> SandboxRef:
-        """Launch one prepared workload."""
+        """Launch one workload and return its durable recovery reference."""
+
+    async def attach(self, plan: SandboxPlan, ref: SandboxRef) -> None:
+        """Attach process-local observers after the reference is persisted."""
 
     async def running(self, ref: SandboxRef) -> bool:
         """Return whether a launched workload is still running."""
