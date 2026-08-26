@@ -57,7 +57,7 @@ Only core toolsets have the single leading underscore:
 
 | Toolset | Meaning | This phase |
 | --- | --- | --- |
-| `_me` | current agent authored state | flow read and save |
+| `_me` | current agent authored state | existing authoring tools plus flows |
 | `_too` | Toolang executor and run tree | state apply and dynamic run |
 | `_hat` | Human Agent Teaming | reserved only |
 
@@ -65,18 +65,51 @@ Only core toolsets have the single leading underscore:
 of transport. User-facing built-ins and external plugins cannot register a core
 toolset name. Tool names are verb-first.
 
-This phase adds:
+The existing `agent_state` toolset becomes `_me`; its tools become verb-first:
 
 ```text
+_me__list_tasks
+_me__get_task
+_me__create_task
+_me__update_task
+_me__list_chores
+_me__get_chore
+_me__create_chore
+_me__update_chore
+_me__list_psyches
+_me__get_psyche
+_me__create_psyche
+_me__update_psyche
+_me__delete_psyche
+_me__list_skills
+_me__get_skill
+_me__create_skill
+_me__update_skill
+_me__delete_skill
+_me__list_services
+_me__get_service
+_me__create_service
+_me__update_service
+_me__delete_service
+_me__list_prompts
+_me__get_prompt
+_me__create_prompt
+_me__update_prompt
+_me__delete_prompt
 _me__get_flow
 _me__save_flow
+```
+
+This phase also adds the executor-owned `_too` tools:
+
+```text
 _too__apply_state
 _too__run
 ```
 
-These are execution-core actions, not `toolang.toolset` plugins. They use the
-normal model tool-call protocol, remain durable tool steps, count toward agic
-tool-call limits, and participate in existing tool directives and ceilings.
+All use the normal model tool-call protocol, remain durable tool steps, count
+toward agic tool-call limits, and participate in existing tool directives and
+ceilings. No legacy aliases are exposed.
 
 ## Flow Source Actions
 
@@ -205,7 +238,8 @@ only after the prepared state and durable transition are both available.
 
 Included:
 
-- the four core actions and reserved toolset-name enforcement;
+- the `agent_state` to `_me` migration, four new core actions, and reserved
+  toolset-name enforcement;
 - public toolset renames;
 - root state head and durable `next_step` apply;
 - dynamic agic/flow children and runnable instructions;
@@ -257,8 +291,8 @@ Excluded:
     diagnostic output.
 12. Concurrent applies install whole serialized state snapshots.
 13. Retry rejects an applied transition; rerun uses current state.
-14. Built-in identities migrate to `fs`, `web`, `shell`, and `service` without
-    exposing legacy duplicates.
+14. Built-in identities migrate to `fs`, `web`, `shell`, and `service`, while
+    `agent_state` becomes `_me` with verb-first tools and no legacy duplicates.
 15. The default offline verification suite passes.
 
 ## Risks
