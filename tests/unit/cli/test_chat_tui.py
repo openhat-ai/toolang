@@ -1633,20 +1633,22 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     assert len({len(line) for line in bordered_lines}) == 1
     unwrapped = rendered.replace("\n", "").replace("│", "").replace(" ", "")
     assert "alice-with-a-long-home" in unwrapped
-    assert "executorhttp://runtime.test:7001·v0.3.9" in unwrapped
-    assert "sandboxdocker:python:3.13-slim·176191c1528b" in unwrapped
+    assert "executorhttp://runtime.test:7001v0.3.9" in unwrapped
+    assert "sandboxdocker:python:3.13-slim176191c1528b" in unwrapped
+    assert "·" not in rendered
     assert _CONTAINER_ID not in rendered
 
 
 @pytest.mark.parametrize(
-    "executor_metadata, expected_executor, expected_sandbox",
+    "executor_metadata, version_label, expected_executor, expected_sandbox",
     (
         (
             ChatExecutorMetadata(
                 endpoint="http://runtime.test:7001",
                 version="v0.2.7-88-gc73484a9",
             ),
-            "http://runtime.test:7001 · v0.2.7-88-gc73484a9",
+            "v0.2.7-87-g69439a4e",
+            "http://runtime.test:7001 v0.2.7-88-gc73484a9",
             None,
         ),
         (
@@ -1656,13 +1658,42 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
                 sandbox="docker:python:3.13-slim",
                 instance=_CONTAINER_ID,
             ),
-            "http://runtime.test:7001 · v0.3.9",
-            "docker:python:3.13-slim · 176191c1528b",
+            "v0.3.8",
+            "http://runtime.test:7001 v0.3.9",
+            "docker:python:3.13-slim 176191c1528b",
+        ),
+        (
+            ChatExecutorMetadata(
+                endpoint="http://runtime.test:7001",
+                version="v0.3.9",
+            ),
+            "v0.3.9",
+            "http://runtime.test:7001",
+            None,
+        ),
+        (
+            ChatExecutorMetadata(
+                endpoint="http://runtime.test:7001",
+                version="v0.3.9*",
+            ),
+            "v0.3.9*",
+            "http://runtime.test:7001 v0.3.9*",
+            None,
+        ),
+        (
+            ChatExecutorMetadata(
+                endpoint="http://runtime.test:7001",
+                version="unknown",
+            ),
+            "unknown",
+            "http://runtime.test:7001 unknown",
+            None,
         ),
     ),
 )
 def test_chat_header_supports_remote_executor_identity(
     executor_metadata: ChatExecutorMetadata,
+    version_label: str,
     expected_executor: str,
     expected_sandbox: str | None,
 ) -> None:
@@ -1670,17 +1701,22 @@ def test_chat_header_supports_remote_executor_identity(
         blocks.HeaderBlock(
             home="~/.toolang/agents/alice",
             executor_metadata=executor_metadata,
-            version_label="v0.1.0",
+            version_label=version_label,
         ).render(),
         width=120,
     )
 
     compact = " ".join(rendered.split())
-    assert f"executor {expected_executor}" in compact
+    assert "·" not in compact
+    executor_line = next(line for line in rendered.splitlines() if "executor" in line)
+    executor_text = executor_line[executor_line.index("executor") :].rstrip("│ ")
+    assert " ".join(executor_text.split()) == f"executor {expected_executor}"
     if expected_sandbox is None:
         assert "sandbox" not in compact
     else:
-        assert f"sandbox {expected_sandbox}" in compact
+        sandbox_line = next(line for line in rendered.splitlines() if "sandbox" in line)
+        sandbox_text = sandbox_line[sandbox_line.index("sandbox") :].rstrip("│ ")
+        assert " ".join(sandbox_text.split()) == f"sandbox {expected_sandbox}"
 
 
 def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> None:

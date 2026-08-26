@@ -31,8 +31,9 @@ The change succeeds when:
   requiring the Git executable;
 - a built wheel displays the same source version captured at build time,
   including a trailing `*` for a dirty tracked worktree;
-- a remote executor reports that same source version through its runtime profile,
-  and Chat renders it without altering the version text;
+- a remote executor reports that same source version through its runtime profile;
+  Chat renders differing or uncertain versions without alteration and suppresses
+  only a confirmed clean match with the TUI version;
 - an sdist carries its captured provenance into a wheel built from that sdist;
 - non-editable installs never infer source state from an enclosing Git worktree;
 - the package version remains the PEP 440 value from project and distribution
@@ -157,7 +158,8 @@ Out of scope:
 8. Release workflow checks reject tag, source-version, revision, or metadata
    mismatches.
 9. A remote runtime profile returns the shared source version, and Chat renders
-   it exactly once without adding a prefix.
+   it exactly once without adding a prefix when it differs, is dirty, or is
+   unknown; a matching known clean version is omitted.
 10. Ruff, formatting, type checking, and the complete default offline suite
     pass.
 

@@ -490,7 +490,10 @@ class HeaderBlock:
             Text("Toolang", style=f"bold {TOOLANG_COLOR}"),
             Text(self.version_label, style="dim"),
         )
-        executor_value, sandbox_value = _header_executor_values(self.executor_metadata)
+        executor_value, sandbox_value = _header_executor_values(
+            self.executor_metadata,
+            tui_version=self.version_label,
+        )
         details.add_row(Text("executor", style="dim"), executor_value)
         if sandbox_value is not None:
             details.add_row(Text("sandbox", style="dim"), sandbox_value)
@@ -539,6 +542,8 @@ class HeaderBlock:
 
 def _header_executor_values(
     metadata: ChatExecutorMetadata,
+    *,
+    tui_version: str,
 ) -> tuple[Text, Text | None]:
     if metadata.endpoint is None:
         return Text("embedded"), None
@@ -546,16 +551,25 @@ def _header_executor_values(
         raise ValueError("remote chat executor metadata is missing its version")
     executor = Text()
     executor.append(metadata.endpoint, style=Style(link=metadata.endpoint))
-    executor.append(f" · {metadata.version}")
+    if not _versions_confirmed_equal(metadata.version, tui_version):
+        executor.append(f" {metadata.version}")
     sandbox = (
         Text(
-            f"{metadata.sandbox} · "
+            f"{metadata.sandbox} "
             f"{_display_sandbox_instance(metadata.sandbox, metadata.instance)}"
         )
         if metadata.sandbox is not None and metadata.instance is not None
         else None
     )
     return executor, sandbox
+
+
+def _versions_confirmed_equal(executor_version: str, tui_version: str) -> bool:
+    return (
+        executor_version == tui_version
+        and executor_version != "unknown"
+        and not executor_version.endswith("*")
+    )
 
 
 def _display_sandbox_instance(selector: str, instance: str) -> str:
