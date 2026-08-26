@@ -523,7 +523,7 @@ class HeaderBlock:
             content = Table.grid(padding=(0, _HEADER_COLUMN_GAP))
             content.add_column(no_wrap=True, vertical="top")
             content.add_column(no_wrap=False, vertical="top")
-            content.add_row(logo, details)
+            content.add_row(Group(Text(), logo), details)
         else:
             content = Table.grid(padding=0)
             content.add_column(no_wrap=False)

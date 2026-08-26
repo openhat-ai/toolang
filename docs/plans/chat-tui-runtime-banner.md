@@ -65,11 +65,12 @@ origin contains only the scheme, host, and explicit port already accepted by
 executor source version is presentation-only metadata: suppressing a confirmed
 clean match does not remove it from the runtime profile.
 
-The wide layout keeps the three-line logo and the metadata grid side by side,
-top-aligned, with `home` as the only metadata row below the logo. The narrow
-layout keeps the existing logo, blank separator row, then the complete metadata
-grid. Panel padding remains `(1, 2)`, and the existing blank separation before
-the panel and after it remains unchanged.
+The wide layout keeps the three-line logo and the metadata grid side by side.
+The `Toolang` row sits one line above the logo; the logo then aligns with the
+`executor`, `sandbox`, and `home` rows. The narrow layout keeps the existing
+logo, blank separator row, then the complete metadata grid. Panel padding remains
+`(1, 2)`, and the existing blank separation before the panel and after it remains
+unchanged.
 
 ## Runtime identity and client boundary
 
@@ -142,7 +143,9 @@ command, run, control, recovery, or queue behavior changes.
 5. Host detection covers macOS, Linux, and Windows name/version/architecture
    without displaying OS build identifiers or starting an external command.
 6. Wide and narrow renders preserve aligned keys and values, complete folding,
-   existing logo styling, and one internal blank row above and below.
+   existing logo styling, and one internal blank row above and below. In the
+   wide layout, the logo begins on the row after `Toolang` and aligns with the
+   remaining three metadata rows.
 7. Focused tests and the default repository verification pass.
 
 ## Risks and open questions

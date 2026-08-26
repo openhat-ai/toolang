@@ -1593,10 +1593,10 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert lines.index(executor_line) < lines.index(sandbox_line)
     assert lines.index(sandbox_line) < lines.index(home_line)
     assert next(index for index, line in enumerate(lines) if "████" in line) == next(
-        index for index, line in enumerate(lines) if "Toolang" in line
+        index for index, line in enumerate(lines) if "embedded" in line
     )
     assert next(index for index, line in enumerate(lines) if "⬤" in line) == next(
-        index for index, line in enumerate(lines) if "embedded" in line
+        index for index, line in enumerate(lines) if _HOST_SANDBOX_VALUE in line
     )
     assert version_line.index("Toolang") == home_line.index("home")
     assert home_line.index("home") == executor_line.index("executor")
@@ -1608,15 +1608,17 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     bordered_lines = [line for line in lines if line]
     assert len({len(line) for line in bordered_lines}) == 1
     assert not bordered_lines[1].strip("│ ")
-    assert "████" in bordered_lines[2]
+    assert "Toolang" in bordered_lines[2]
+    assert "████" not in bordered_lines[2]
     assert "executor" in bordered_lines[-5]
+    assert "████" in bordered_lines[-5]
     assert "embedded" in bordered_lines[-5]
     assert "sandbox" in bordered_lines[-4]
     assert _HOST_SANDBOX_VALUE in bordered_lines[-4]
     assert "home" in bordered_lines[-3]
     assert not bordered_lines[-2].strip("│ ")
     logo_line = next(line for line in lines if "Toolang" in line)
-    assert logo_line.startswith("│  ████           ██    Toolang")
+    assert logo_line.startswith("│                       Toolang")
     assert "Toolang v0.1.0" in " ".join(logo_line.split())
 
 
