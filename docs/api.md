@@ -644,6 +644,7 @@ script runs and TUI execution do not consume this endpoint.
   - the complete, unprojected `sandbox.instance` for Docker, otherwise `null`
   - the host-plugin-supplied `sandbox.description` for non-Docker runtimes,
     otherwise `null`
+
 - environment summary
 - overview metrics:
 
@@ -652,6 +653,13 @@ script runs and TUI execution do not consume this endpoint.
 | `threads` | Thread totals grouped by chat, chore, and task |
 | `steps` | Step totals grouped by `model_call`, `tool_call`, and `runtime` |
 | `tokens` | Aggregated input, output, and total token usage |
+
+`sandbox.description` is optional presentation metadata. Its absence or a `null`
+value does not block Chat: host execution falls back to the local host sandbox
+plugin description, while Docker continues to use `sandbox.instance`. Runtime
+profile readers ignore unknown additive fields, so TUI and executor releases can
+be upgraded independently. Breaking protocol changes require a separately
+versioned contract rather than making an additive display field mandatory.
 
 `GET /api/v1/models` returns the selectable model routes inside the server's
 current `AgentSetup.ceiling`. Runnable `models` directives are applied when a

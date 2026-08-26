@@ -232,6 +232,12 @@ and `unknown` remain visible because they do not prove identical source.
 Adjacent identity values use a dim ` · ` separator, and every form keeps the
 same panel padding.
 
+The sandbox description is optional runtime-profile presentation metadata. Its
+absence or a `null` value does not block Chat: host execution uses the local host
+sandbox plugin description, and Docker continues to use the reported container
+instance. Profile readers ignore unknown additive fields, allowing the TUI and
+executor to use different source releases without coupling their deployment.
+
 The chat TUI keeps only live mutable blocks in its live area. Stable blocks
 move into terminal scrollback progressively instead of waiting for the whole
 run to finish. Parallel tool calls, agic calls, and flow lanes are summarized by

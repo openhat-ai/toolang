@@ -63,6 +63,24 @@ def _profile(
     }
 
 
+def _profile_without_description(
+    *,
+    driver: str = "host",
+    selector: str | None = None,
+    instance: str | None = None,
+) -> dict[str, object]:
+    return {
+        "runtime": {
+            "version": "v0.3.9",
+            "sandbox": {
+                "driver": driver,
+                "selector": selector or driver,
+                "instance": instance,
+            },
+        }
+    }
+
+
 def _thread(thread_id: str = "term_remote") -> ThreadInfo:
     return ThreadInfo(
         id=thread_id,
@@ -276,21 +294,6 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
             "non-docker sandbox returned an instance ID",
         ),
         (
-            {
-                "runtime": {
-                    "version": "v0.3.9",
-                    "sandbox": {
-                        "driver": "host",
-                        "selector": "host",
-                        "instance": None,
-                        "description": None,
-                    },
-                }
-            },
-            "host",
-            "sandbox description is invalid",
-        ),
-        (
             _profile(
                 driver="docker",
                 selector="docker:python:3.13-slim",
@@ -354,6 +357,95 @@ def test_remote_chat_runtime_identity_allows_additive_profile_fields() -> None:
 
     assert identity.instance == _CONTAINER_ID
     assert identity.description is None
+
+
+@pytest.mark.parametrize(
+    ("profile_payload", "expected_description"),
+    (
+        (_profile_without_description(), None),
+        (
+            {
+                "runtime": {
+                    "version": "v0.3.9",
+                    "sandbox": {
+                        "driver": "host",
+                        "selector": "host",
+                        "instance": None,
+                        "description": None,
+                    },
+                }
+            },
+            None,
+        ),
+        (
+            _profile_without_description(
+                driver="docker",
+                selector="docker:python:3.13-slim",
+                instance=_CONTAINER_ID,
+            ),
+            None,
+        ),
+    ),
+)
+def test_remote_chat_runtime_identity_allows_optional_description(
+    profile_payload: dict[str, object],
+    expected_description: str | None,
+) -> None:
+    identity = remote._runtime_identity(profile_payload)
+
+    assert identity.description == expected_description
+
+
+@pytest.mark.parametrize(
+    "profile_payload",
+    (
+        _profile_without_description(),
+        {
+            "runtime": {
+                "version": "v0.4.0-12-g12345678",
+                "sandbox": {
+                    "driver": "host",
+                    "selector": "host",
+                    "instance": None,
+                    "description": None,
+                    "future": True,
+                },
+                "future": True,
+            }
+        },
+    ),
+)
+def test_remote_chat_uses_local_host_description_when_profile_does_not_supply_it(
+    profile_payload: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        remote,
+        "host_sandbox_description",
+        lambda: "Test OS 1.0 arm64",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/healthz":
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/profile":
+            return httpx.Response(200, json=profile_payload)
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    session = remote.RemoteChatSession(
+        "http://runtime.test:7001",
+        expected_sandbox="host",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert session.executor_metadata == ChatExecutorMetadata(
+            sandbox_selector="host",
+            sandbox_detail="Test OS 1.0 arm64",
+            endpoint="http://runtime.test:7001",
+            version=remote._runtime_identity(profile_payload).version,
+        )
+    finally:
+        session.close()
 
 
 def test_remote_chat_uses_remote_run_client_native_events() -> None:

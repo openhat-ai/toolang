@@ -91,12 +91,15 @@ control environment value. Docker explicitly removes that host-only value.
 
 The API runtime profile remains the source of remote process truth. Its sandbox
 identity contains the complete selector and two mutually exclusive details:
-Docker supplies the complete `instance`, while non-Docker sandboxes supply a
-ready `description`. `RemoteChatSession` validates that the selector matches the
-selected resident runtime status, validates the applicable detail, shortens a
-Docker container ID to twelve characters, and exposes the ready detail. Missing,
-malformed, mismatched, or contradictory remote identity fails selection rather
-than displaying a guessed value.
+Docker supplies the complete `instance`, while non-Docker sandboxes normally
+supply a ready `description`. `RemoteChatSession` validates that the selector
+matches the selected resident runtime status, validates the applicable detail,
+shortens a Docker container ID to twelve characters, and exposes the ready
+detail. `description` is optional presentation metadata: a missing or `null`
+host description is obtained from the local host sandbox plugin, while Docker
+continues to use `instance`. Unknown additive profile fields are ignored.
+Explicitly malformed, mismatched, or contradictory execution identity still
+fails selection rather than displaying a guessed value.
 
 `HeaderBlock` owns labels, ordering, styles, hyperlink rendering, and responsive
 width calculation. It joins the supplied sandbox selector and detail with the
@@ -133,8 +136,9 @@ command, run, control, recovery, or queue behavior changes.
    differing, dirty, or unknown versions.
 3. Remote Docker Chat renders the complete selector and twelve-character
    instance with a dim middle-dot separator.
-4. The runtime profile requires a description for non-Docker sandboxes and an
-   instance for Docker, and rejects contradictory, missing, or malformed values.
+4. Docker execution requires an instance; sandbox descriptions remain optional
+   presentation metadata. Missing or `null` host descriptions use the host
+   plugin fallback, and contradictory or malformed identity is rejected.
 5. Host detection covers macOS, Linux, and Windows name/version/architecture
    without displaying OS build identifiers or starting an external command.
 6. Wide and narrow renders preserve aligned keys and values, complete folding,
@@ -143,8 +147,10 @@ command, run, control, recovery, or queue behavior changes.
 
 ## Risks and open questions
 
-The profile gains an optional `sandbox.description` field. Strict consumers must
-accept the additive field. Long host descriptions and sandbox selectors can
-widen the banner; existing narrow folding remains the mitigation.
+The profile's `sandbox.description` field is optional. TUI and executor releases
+must independently tolerate absent optional fields and ignore unknown additive
+fields; a breaking protocol change requires an explicit versioned contract.
+Long host descriptions and sandbox selectors can widen the banner; existing
+narrow folding remains the mitigation.
 
 Open questions: none.

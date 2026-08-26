@@ -25,6 +25,7 @@ from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.schemas import RunDetail, RunRequest, ThreadInfo
 from toolang.execution.types import RunOverride
 from toolang.execution.values import parts_from_local
+from toolang.plugin.sandboxes.host import host_sandbox_description
 
 from .base import (
     ChatExecutorMetadata,
@@ -232,9 +233,17 @@ class RemoteChatSession:
         port = urlsplit(self.run_client.endpoint).port
         if port is None:
             raise RemoteChatError("running executor endpoint has no explicit port")
+        fallback_host_description = (
+            host_sandbox_description()
+            if identity.driver == "host" and identity.description is None
+            else None
+        )
         self.executor_metadata = ChatExecutorMetadata(
             sandbox_selector=identity.selector,
-            sandbox_detail=_sandbox_detail(identity),
+            sandbox_detail=_sandbox_detail(
+                identity,
+                fallback_host_description=fallback_host_description,
+            ),
             endpoint=self.run_client.endpoint,
             version=identity.version,
         )
@@ -624,7 +633,7 @@ def _runtime_identity(payload: object) -> _RuntimeIdentity:
             "remote chat profile returned invalid runtime identity"
         )
     sandbox = _mapping(runtime.get("sandbox"), operation="profile sandbox")
-    if not {"driver", "selector", "instance", "description"}.issubset(sandbox):
+    if not {"driver", "selector", "instance"}.issubset(sandbox):
         raise _RemoteChatProtocolError(
             "remote chat profile returned invalid sandbox identity"
         )
@@ -636,6 +645,8 @@ def _runtime_identity(payload: object) -> _RuntimeIdentity:
             "remote chat sandbox selector does not match its driver"
         )
     instance_value = sandbox.get("instance")
+    # Presentation metadata stays optional so TUI and executor releases can
+    # evolve independently without weakening execution identity validation.
     description_value = sandbox.get("description")
     if driver == "docker":
         if description_value is not None:
@@ -650,14 +661,19 @@ def _runtime_identity(payload: object) -> _RuntimeIdentity:
                 "remote chat non-docker sandbox returned an instance ID"
             )
         instance = None
-        description = _description(
-            description_value,
-            label="sandbox description",
+        description = (
+            None
+            if description_value is None
+            else _description(description_value, label="sandbox description")
         )
     return _RuntimeIdentity(version, driver, selector, instance, description)
 
 
-def _sandbox_detail(identity: _RuntimeIdentity) -> str:
+def _sandbox_detail(
+    identity: _RuntimeIdentity,
+    *,
+    fallback_host_description: str | None = None,
+) -> str:
     if identity.driver == "docker":
         if identity.instance is None:
             raise AssertionError("docker runtime identity is missing its instance")
@@ -668,6 +684,8 @@ def _sandbox_detail(identity: _RuntimeIdentity) -> str:
             instance = instance[:12]
         return instance
     if identity.description is None:
+        if identity.driver == "host" and fallback_host_description is not None:
+            return fallback_host_description
         raise AssertionError("non-docker runtime identity is missing its description")
     return identity.description
 
