@@ -31,7 +31,7 @@ from toolang.lang.ast import (
 from toolang.lang.input import resolve_input_parts
 from toolang.plugin.models.resolution import resolve_model
 from toolang.state import state as cap_store
-from toolang.state.state import PreparedCap
+from toolang.state.state import PreparedCap, state_program_module
 
 from . import prompts
 from .common import BoundRun, value_parts, value_text
@@ -84,7 +84,9 @@ def prepare_agic(
         allowed_selectors=model_selectors,
     )
     tools = dict(resource_tools(run.setup, resources))
-    caps = resource_caps(run.state, resources)
+    caps = resource_caps(run.state, resources, module=run.module)
+    module = state_program_module(run.state, run.module)
+    program = module.program
     psyches = tuple(item for item in caps if item.kind == "psyche")
     skills = tuple(item for item in caps if item.kind == "skill")
     services = tuple(item for item in caps if item.kind == "service")
@@ -104,12 +106,12 @@ def prepare_agic(
         }
     )
     rendered = _render_messages(
-        run.state.program,
+        program,
         agic.messages,
         values=body_variables,
         types=body_types,
     )
-    prompt_context = _render_context(run.state.program, agic, system_runtime)
+    prompt_context = _render_context(program, agic, system_runtime)
     fallback = _run_message(
         agic=agic,
         rendered=rendered,
@@ -135,7 +137,7 @@ def prepare_agic(
             fallback=fallback,
         ),
     )
-    instructions = _render_instructions(run.state.program, agic, system_runtime)
+    instructions = _render_instructions(program, agic, system_runtime)
     adapter = run.setup.adapters.get(model.adapter)
     if adapter is None:
         raise ToolangError(f"unknown model adapter: {model.adapter}")
@@ -328,7 +330,10 @@ def _runtime_context(
         "run": {
             "id": run.run_id,
             "thread_id": run.thread,
-            "program_source": run.state.program_source,
+            "program_source": state_program_module(
+                run.state,
+                run.module,
+            ).authored_path,
         },
         "agent": {
             "name": run.setup.layout.name,

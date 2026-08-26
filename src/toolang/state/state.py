@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
@@ -26,10 +26,15 @@ from toolang.catalog.types import (
     CAP_KIND_BY_DIR,
     CAP_KINDS as CATALOG_CAP_KINDS,
 )
-from toolang.state.source import AuthoredFile, AuthoredSource, read_authored_source
+from toolang.state.source import (
+    AuthoredFile,
+    AuthoredSource,
+    ProgramSource,
+    read_authored_source,
+)
 from ..common.immutable import freeze_mapping, mutable_data
 from ..common.progress import ProgressSink, emit_progress
-from ..lang.ast import CapDecl, Program, to_data
+from ..lang.ast import CapDecl, Program, program_from_data, to_data
 from toolang.common.selectors import (
     Selector,
     filter_value_matches,
@@ -51,6 +56,8 @@ from .types import (
     EntryScope,
     EntryShape,
     PreparedVisibility,
+    ProgramModuleKind,
+    RunnableKind,
     SourceForm,
     SourceOrigin,
     Visibility,
@@ -246,6 +253,176 @@ class PreparedCap:
 
 
 @dataclass(frozen=True, slots=True)
+class ProgramModuleExport:
+    """The filename-bound public entry exported by one flow module."""
+
+    public_name: str
+    local_name: str
+
+    def to_data(self) -> dict[str, str]:
+        return {"public_name": self.public_name, "local_name": self.local_name}
+
+    @classmethod
+    def from_data(cls, data: Mapping[str, object]) -> ProgramModuleExport:
+        export = cls(
+            public_name=str(data["public_name"]),
+            local_name=str(data["local_name"]),
+        )
+        if not export.public_name or not export.local_name:
+            raise ValueError("program module export names must not be empty")
+        return export
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedProgramModule:
+    """One independently validated program fixed in prepared home state."""
+
+    identity: str
+    kind: ProgramModuleKind
+    authored_path: str
+    prepared_path: str
+    digest: str
+    program: Program
+    export: ProgramModuleExport | None = None
+    here_caps: tuple[PreparedCap, ...] = ()
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "identity": self.identity,
+            "kind": self.kind,
+            "authored_path": self.authored_path,
+            "prepared_path": self.prepared_path,
+            "digest": self.digest,
+            "program": to_data(self.program),
+            "export": self.export.to_data() if self.export is not None else None,
+            "here_caps": [cap.to_data() for cap in self.here_caps],
+        }
+
+    @classmethod
+    def from_data(cls, data: Mapping[str, object]) -> PreparedProgramModule:
+        raw_export = data.get("export")
+        if raw_export is not None and not isinstance(raw_export, Mapping):
+            raise TypeError("program module export must be an object")
+        raw_caps = data.get("here_caps", [])
+        if not isinstance(raw_caps, list):
+            raise TypeError("program module here_caps must be a list")
+        if any(not isinstance(raw, dict) for raw in raw_caps):
+            raise TypeError("program module here cap must be an object")
+        kind = str(data["kind"])
+        if kind not in {"agent", "flow"}:
+            raise ValueError(f"invalid program module kind: {kind!r}")
+        return cls(
+            identity=str(data["identity"]),
+            kind=cast(ProgramModuleKind, kind),
+            authored_path=str(data["authored_path"]),
+            prepared_path=str(data["prepared_path"]),
+            digest=str(data["digest"]),
+            program=program_from_data(data["program"]),
+            export=(
+                ProgramModuleExport.from_data(
+                    {str(key): value for key, value in raw_export.items()}
+                )
+                if raw_export is not None
+                else None
+            ),
+            here_caps=tuple(
+                PreparedCap.from_data(
+                    {
+                        str(key): value
+                        for key, value in cast(dict[object, object], raw).items()
+                    }
+                )
+                for raw in raw_caps
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PublicRunnable:
+    """One public runnable name bound to its owner module declaration."""
+
+    name: str
+    kind: RunnableKind
+    module: str
+    local_name: str
+
+
+def public_runnable_catalog(
+    modules: tuple[PreparedProgramModule, ...],
+) -> dict[str, PublicRunnable]:
+    """Compose unique public runnable bindings from prepared program modules."""
+
+    result: dict[str, PublicRunnable] = {}
+
+    def add(entry: PublicRunnable) -> None:
+        if entry.name in result:
+            raise ValueError(f"Public runnable name is not unique: {entry.name}")
+        result[entry.name] = entry
+
+    agent = next((module for module in modules if module.kind == "agent"), None)
+    if agent is None:
+        raise ValueError("prepared home state is missing the agent module")
+    for agic in agent.program.agics:
+        add(PublicRunnable(agic.name, "agic", agent.identity, agic.name))
+    for flow in agent.program.flows:
+        add(PublicRunnable(flow.name, "flow", agent.identity, flow.name))
+    if agent.program.find_agic("default") is None:
+        add(PublicRunnable("default", "agic", agent.identity, "default"))
+    for module in modules:
+        if module.kind != "flow":
+            continue
+        if module.export is None:
+            raise ValueError(
+                f"flow module has no public export: {module.authored_path}"
+            )
+        add(
+            PublicRunnable(
+                module.export.public_name,
+                "flow",
+                module.identity,
+                module.export.local_name,
+            )
+        )
+    return result
+
+
+def state_program_module(
+    state: object,
+    identity: str = "agent",
+) -> PreparedProgramModule:
+    """Return a module while preserving legacy single-Program state fixtures."""
+
+    resolver = getattr(state, "module", None)
+    if callable(resolver):
+        return cast(PreparedProgramModule, resolver(identity))
+    if identity != "agent":
+        raise ValueError(f"Program module not found: {identity}")
+    program = getattr(state, "program", None)
+    if not isinstance(program, Program):
+        raise TypeError("agent state is missing its program")
+    return PreparedProgramModule(
+        identity="agent",
+        kind="agent",
+        authored_path="agent.too",
+        prepared_path="files/agent.too",
+        digest="",
+        program=program,
+    )
+
+
+def state_module_caps(
+    state: object,
+    identity: str = "agent",
+) -> tuple[PreparedCap, ...]:
+    """Return module-effective caps with legacy single-Program compatibility."""
+
+    resolver = getattr(state, "caps_for", None)
+    if callable(resolver):
+        return cast(tuple[PreparedCap, ...], resolver(identity))
+    return cast(tuple[PreparedCap, ...], tuple(getattr(state, "caps", ())))
+
+
+@dataclass(frozen=True, slots=True)
 class AgentState:
     """Program and effective prepared caps fixed for one top-level run."""
 
@@ -260,11 +437,30 @@ class AgentState:
     program: Program
     caps: tuple[PreparedCap, ...]
     loaded_at: str
+    modules: tuple[PreparedProgramModule, ...] = ()
+    catalog: Mapping[str, PublicRunnable] = field(default_factory=dict)
+    base_caps: tuple[PreparedCap, ...] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "root_config", freeze_mapping(self.root_config))
         object.__setattr__(self, "home_config", freeze_mapping(self.home_config))
         object.__setattr__(self, "config", freeze_mapping(self.config))
+        modules = self.modules or (
+            PreparedProgramModule(
+                identity="agent",
+                kind="agent",
+                authored_path="agent.too",
+                prepared_path="files/agent.too",
+                digest="",
+                program=self.program,
+            ),
+        )
+        object.__setattr__(self, "modules", modules)
+        object.__setattr__(
+            self,
+            "catalog",
+            freeze_mapping(self.catalog or public_runnable_catalog(modules)),
+        )
 
     @property
     def fingerprint(self) -> str:
@@ -273,6 +469,36 @@ class AgentState:
     @property
     def updated_at(self) -> str:
         return self.loaded_at
+
+    def module(self, identity: str) -> PreparedProgramModule:
+        """Return one prepared program module by stable identity."""
+
+        module = next(
+            (item for item in self.modules if item.identity == identity), None
+        )
+        if module is None:
+            raise ValueError(f"Program module not found: {identity}")
+        return module
+
+    @property
+    def agent_module(self) -> PreparedProgramModule:
+        return next(item for item in self.modules if item.kind == "agent")
+
+    def caps_for(self, module: str) -> tuple[PreparedCap, ...]:
+        """Return effective root/home/here caps for one executing module."""
+
+        base = self.caps if self.base_caps is None else self.base_caps
+        return effective_caps(base, self.module(module).here_caps)
+
+    def public_runnables(
+        self,
+        kind: RunnableKind | None = None,
+    ) -> tuple[PublicRunnable, ...]:
+        return tuple(
+            entry
+            for entry in self.catalog.values()
+            if kind is None or entry.kind == kind
+        )
 
     def to_snapshot(self) -> dict[str, object]:
         return {
@@ -286,6 +512,7 @@ class AgentState:
             "program_source": self.program_source,
             "program": to_data(self.program),
             "caps": [cap.path for cap in self.caps],
+            "modules": [module.to_data() for module in self.modules],
         }
 
 
@@ -300,10 +527,20 @@ def compose_agent_state(
     program: Program,
     root_caps: tuple[PreparedCap, ...],
     home_caps: tuple[PreparedCap, ...],
+    modules: tuple[PreparedProgramModule, ...] = (),
     loaded_at: str,
 ) -> AgentState:
     """Compose runtime state without retaining prepared cache layers."""
 
+    effective_base = effective_caps(root_caps, home_caps)
+    agent_here = (
+        next(
+            (module.here_caps for module in modules if module.kind == "agent"),
+            (),
+        )
+        if modules
+        else ()
+    )
     return AgentState(
         version=agent_state_version(root_version, home_version),
         root_version=root_version,
@@ -314,8 +551,11 @@ def compose_agent_state(
         config=_merge_config(root_config, home_config),
         program_source=program_source,
         program=program,
-        caps=effective_caps(root_caps, home_caps),
+        caps=effective_caps(effective_base, agent_here),
         loaded_at=loaded_at,
+        modules=modules,
+        catalog=public_runnable_catalog(modules) if modules else {},
+        base_caps=effective_base,
     )
 
 
@@ -809,6 +1049,7 @@ def _collect_visibility_entries_with_files(
     materialize_remote: bool = False,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
+    include_program: bool = True,
 ) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
     local_entries = collect_local_entries(authored, visibility=visibility, kinds=kinds)
     remote_entries, files = _collect_remote_entries(
@@ -819,19 +1060,27 @@ def _collect_visibility_entries_with_files(
         remote_cache=remote_cache,
         progress=progress,
     )
-    embedded_entries, embedded_files = _collect_program_embedded_entries(
-        authored,
-        visibility=visibility,
-        kinds=kinds,
-        materialize=materialize_remote,
+    embedded_entries, embedded_files = (
+        _collect_program_embedded_entries(
+            authored,
+            visibility=visibility,
+            kinds=kinds,
+            materialize=materialize_remote,
+        )
+        if include_program
+        else ((), {})
     )
-    use_entries, use_files = _collect_program_use_entries(
-        authored,
-        visibility=visibility,
-        kinds=kinds,
-        materialize=materialize_remote,
-        remote_cache=remote_cache,
-        progress=progress,
+    use_entries, use_files = (
+        _collect_program_use_entries(
+            authored,
+            visibility=visibility,
+            kinds=kinds,
+            materialize=materialize_remote,
+            remote_cache=remote_cache,
+            progress=progress,
+        )
+        if include_program
+        else ((), {})
     )
     files.update(embedded_files)
     files.update(use_files)
@@ -847,6 +1096,7 @@ def materialize_visibility(
     visibility: PreparedVisibility,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
+    include_program: bool = True,
 ) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
     """Build prepared cap entries and materialized files for one visibility."""
 
@@ -864,6 +1114,7 @@ def materialize_visibility(
         materialize_remote=True,
         remote_cache=remote_cache,
         progress=progress,
+        include_program=include_program,
     )
     _ensure_no_conflicts(entries)
     emit_progress(
@@ -874,6 +1125,36 @@ def materialize_visibility(
         status="ok",
         detail=f"{len(entries)} entries",
     )
+    return entries, files
+
+
+def materialize_program_caps(
+    authored: AuthoredSource,
+    source: ProgramSource,
+    *,
+    remote_cache: _RemoteEntryCache | None = None,
+    progress: ProgressSink | None = None,
+) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
+    """Materialize only the here-scoped caps owned by one program module."""
+
+    embedded, embedded_files = _collect_program_embedded_entries(
+        authored,
+        visibility="private",
+        materialize=True,
+        program_source=source,
+    )
+    cited, cited_files = _collect_program_use_entries(
+        authored,
+        visibility="private",
+        materialize=True,
+        remote_cache=remote_cache,
+        progress=progress,
+        program_source=source,
+    )
+    files = dict(embedded_files)
+    files.update(cited_files)
+    entries = _dedupe_entries((*embedded, *cited))
+    _ensure_no_conflicts(entries)
     return entries, files
 
 
@@ -1316,13 +1597,14 @@ def _collect_program_use_entries(
     materialize: bool = False,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
+    program_source: ProgramSource | None = None,
 ) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
     if visibility == "shared" or authored.program_path is None:
         return (), {}
-    program_source = authored.load_program()
+    program_source = program_source or authored.load_program()
     program = program_source.parse()
     relative_program_path = Path(program_source.source_path)
-    program_file = next(item for item in authored.files if item.category == "program")
+    program_file = authored.program_file(program_source)
     requests: list[_RemoteEntryRequest] = []
     for use in program.withs:
         kind = use.cap_kind
@@ -1337,8 +1619,8 @@ def _collect_program_use_entries(
                 ref=use.reference,
                 name=None,
                 relative_config_path=relative_program_path,
-                source_fingerprint=program_file.digest,
-                source_mtime_ns=program_file.mtime_ns,
+                source_fingerprint=program_source.digest,
+                source_mtime_ns=(program_file.mtime_ns if program_file else 0),
                 form="ref",
                 source_line=use.span.line,
             )
@@ -1357,11 +1639,12 @@ def _collect_program_embedded_entries(
     visibility: PreparedVisibility | None = None,
     kinds: set[EntryKind] | None = None,
     materialize: bool = False,
+    program_source: ProgramSource | None = None,
 ) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
     del materialize
     if visibility == "shared" or authored.program_path is None:
         return (), {}
-    program_source = authored.load_program()
+    program_source = program_source or authored.load_program()
     program = program_source.parse()
     relative_program_path = Path(program_source.source_path)
     program_path = authored.toolang_root / relative_program_path

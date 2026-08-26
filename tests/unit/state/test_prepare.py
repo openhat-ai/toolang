@@ -9,7 +9,12 @@ import pytest
 
 from toolang.common.layout import AgentLayout
 from toolang.state import state as cap_state
-from toolang.state.cache import load_root_prepared, prepared_version_dir
+from toolang.state.cache import (
+    load_home_prepared,
+    load_root_prepared,
+    prepared_version_dir,
+)
+from toolang.state.errors import StatePreparationError
 from toolang.state.prepare import (
     compose_prepared_state,
     prepare_agent_state,
@@ -193,7 +198,13 @@ def test_prepare_materializes_inline_caps_as_independent_files(
         state.home_version,
     )
     assert Path(entry.path) == (
-        home_version_dir / "files" / "inline" / "prompts" / "summarize.md"
+        home_version_dir
+        / "files"
+        / "modules"
+        / "agent"
+        / "inline"
+        / "prompts"
+        / "summarize.md"
     )
     assert Path(entry.path).read_text(encoding="utf-8") == "Summarize this."
     assert entry.read_content() == "Summarize this."
@@ -201,7 +212,7 @@ def test_prepare_materializes_inline_caps_as_independent_files(
     prepared = json.loads(
         (home_version_dir / "prepared.json").read_text(encoding="utf-8")
     )
-    assert "content" not in prepared["caps"][0]
+    assert "content" not in prepared["modules"][0]["here_caps"][0]
 
     (home / "agent.too").write_text(
         "agent alice\n\nprompt summarize:\n  Changed later.\n",
@@ -494,3 +505,134 @@ def test_prepare_repairs_missing_prepared_cap_file(tmp_path: Path) -> None:
     assert Path(repaired.caps[0].path).read_text(encoding="utf-8") == (
         "---\ndescription: Review\n---\nReview carefully.\n"
     )
+
+
+def test_prepare_discovers_independent_flow_module_exports(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    flows = home / "flows"
+    flows.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (flows / "research.too").write_text(
+        "agic helper:\n  Research.\n\nflow:\n  settle helper\n",
+        encoding="utf-8",
+    )
+
+    state = prepare_agent_state(_layout(toolang_root), toolang_version="0.2.7")
+
+    assert [(item.kind, item.name) for item in state.public_runnables()] == [
+        ("agic", "default"),
+        ("flow", "research"),
+    ]
+    module = state.module("flow:research")
+    assert module.authored_path == "flows/research.too"
+    assert module.export is not None
+    assert module.export.local_name == "main"
+    assert module.program.find_agic("helper") is not None
+    assert "helper" not in state.catalog
+    assert Path(module.prepared_path).as_posix() == "files/flows/research.too"
+
+
+def test_unnamed_flow_export_renames_with_its_file(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    flows = home / "flows"
+    flows.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    source = flows / "research.too"
+    source.write_text("flow:\n  pass\n", encoding="utf-8")
+    first = prepare_agent_state(_layout(toolang_root), toolang_version="0.2.7")
+
+    source.rename(flows / "report.too")
+    second = prepare_agent_state(_layout(toolang_root), toolang_version="0.2.7")
+
+    assert "research" in first.catalog
+    assert "research" not in second.catalog
+    assert second.catalog["report"].local_name == "main"
+    assert first.fingerprint != second.fingerprint
+
+
+@pytest.mark.parametrize(
+    ("source", "layer"),
+    [
+        ("flow research:\n  settle missing\n", "program"),
+        ("flow other:\n  pass\n", "flow-extension"),
+        ("flow:\n  pass\n\nflow research:\n  pass\n", "flow-extension"),
+    ],
+)
+def test_prepare_rejects_flow_module_at_the_correct_layer(
+    tmp_path: Path,
+    source: str,
+    layer: str,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    flows = home / "flows"
+    flows.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (flows / "research.too").write_text(source, encoding="utf-8")
+
+    with pytest.raises(StatePreparationError) as raised:
+        prepare_agent_state(_layout(toolang_root), toolang_version="0.2.7")
+
+    diagnostic = raised.value.diagnostics[0]
+    assert diagnostic.layer == layer
+    assert diagnostic.module_kind == "flow"
+    assert diagnostic.authored_path == "flows/research.too"
+
+
+def test_prepare_rejects_public_runnable_collisions(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    flows = home / "flows"
+    flows.mkdir(parents=True)
+    (home / "agent.too").write_text(
+        "agent alice\n\nflow research:\n  pass\n",
+        encoding="utf-8",
+    )
+    (flows / "research.too").write_text(
+        "flow research:\n  pass\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StatePreparationError) as raised:
+        prepare_agent_state(_layout(toolang_root), toolang_version="0.2.7")
+
+    assert raised.value.diagnostics[0].layer == "state-composition"
+
+
+def test_module_here_caps_are_isolated_and_reload_from_cache(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    flows = home / "flows"
+    flows.mkdir(parents=True)
+    (home / "agent.too").write_text(
+        (
+            "agent alice\n\n"
+            "prompt style:\n  Agent style.\n\n"
+            "prompt only_agent:\n  Private to agent.\n"
+        ),
+        encoding="utf-8",
+    )
+    flow_path = flows / "research.too"
+    flow_path.write_text(
+        "prompt style:\n  Flow style.\n\nflow:\n  pass\n",
+        encoding="utf-8",
+    )
+    state = prepare_agent_state(_layout(toolang_root), toolang_version="0.2.7")
+
+    agent_cap = next(item for item in state.caps_for("agent") if item.name == "style")
+    flow_cap = next(
+        item for item in state.caps_for("flow:research") if item.name == "style"
+    )
+    assert agent_cap.read_content() == "Agent style."
+    assert flow_cap.read_content() == "Flow style."
+    assert agent_cap.path != flow_cap.path
+    assert all(item.name != "only_agent" for item in state.caps_for("flow:research"))
+
+    flow_path.write_text("invalid", encoding="utf-8")
+    loaded = load_home_prepared(_layout(toolang_root), state.home_version)
+    loaded_flow = next(
+        item for item in loaded.modules if item.identity == "flow:research"
+    )
+    assert loaded_flow.program.find_flow("main") is not None

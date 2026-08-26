@@ -44,6 +44,7 @@ from toolang.execution.types import (
 )
 from toolang.lang.input import resolve_input_parts
 from toolang.lang.types import Array
+from toolang.state.prepare import prepare_agent_state
 
 
 def _output_value(harness: ExecutionHarness, run_id: str) -> object:
@@ -637,6 +638,71 @@ flow fail(_: Part[]) -> Number:
                 f"step_end:{record.id}.0:value:succeeded",
                 f"run_end:{record.id}:failed",
             ]
+
+    asyncio.run(scenario())
+
+
+def test_home_flow_module_executes_with_local_types_and_helpers(tmp_path: Path) -> None:
+    home = tmp_path / "agents" / "alice"
+    flows = home / "flows"
+    flows.mkdir(parents=True)
+    agent_source = "agent alice\n"
+    (home / "agent.too").write_text(agent_source, encoding="utf-8")
+    (flows / "research.too").write_text(
+        """
+struct Brief:
+  title: Text
+
+agic echo(brief: Brief) -> Text:
+  recall = none
+  context: none
+  instruct: none
+  user: {{brief.title}}
+
+flow research(brief: Brief) -> Text:
+  run echo
+""".lstrip(),
+        encoding="utf-8",
+    )
+    harness = ExecutionHarness.create(
+        tmp_path,
+        source="",
+        responses=[ModelCallResult(message=Message.assistant("completed"))],
+    )
+    harness.state = prepare_agent_state(
+        harness.setup.layout,
+        toolang_version="test",
+    )
+
+    async def scenario() -> None:
+        async with harness:
+            thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+            root = await harness.executor.start(
+                harness.run_spec(
+                    thread=thread,
+                    runnable="flow:research",
+                    named={"brief": {"title": "Module-local input"}},
+                )
+            )
+
+            assert root.status == "succeeded", root.error
+            assert harness.store.run_output_text(run_id=root.id) == "completed"
+            accepted = harness.store.get_run_control(run_id=root.id, index=0)
+            assert accepted is not None
+            assert isinstance(accepted.payload, StartControlPayload)
+            assert accepted.payload.runnable == "flow:research"
+            child = next(
+                run
+                for run in harness.store.list_runs(thread_id=thread, limit=None)
+                if run.parent is not None
+            )
+            child_start = harness.store.get_run_control(run_id=child.id, index=0)
+            assert child_start is not None
+            assert isinstance(child_start.payload, StartControlPayload)
+            assert child_start.payload.runnable == "agic:echo"
+            assert "Module-Local Input" in message_text(
+                harness.adapter.invocations[0].call.messages[0].parts
+            )
 
     asyncio.run(scenario())
 

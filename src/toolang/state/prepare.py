@@ -7,18 +7,30 @@ from datetime import datetime, timezone
 from hashlib import sha256
 import logging
 from pathlib import Path
-from typing import cast
+import re
 
 from toolang.common.layout import AgentLayout
 
 from ..common.progress import ProgressSink
-from ..lang.ast import Program, to_data
-from .state import AgentState, compose_agent_state
+from ..lang.ast import Program
+from .state import (
+    AgentState,
+    PreparedProgramModule,
+    ProgramModuleExport,
+    compose_agent_state,
+    public_runnable_catalog,
+)
+from .errors import StateDiagnostic, StatePreparationError, StateValidationLayer
 from .config import parse_config
-from .state import prepared_remote_cache, materialize_visibility
+from .state import (
+    materialize_program_caps,
+    materialize_visibility,
+    prepared_remote_cache,
+)
 from .source import (
     AuthoredFile,
     AuthoredSource,
+    ProgramSource,
     read_authored_source,
     read_root_source,
 )
@@ -43,8 +55,10 @@ from .state import (
 )
 from .source import Source, scan_home_source, scan_root_source
 
-_PREPARED_SCHEMA = 1
+_PREPARED_SCHEMA = 2
 _MAX_SOURCE_SNAPSHOT_ATTEMPTS = 3
+_RUNNABLE_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*$")
+_ERROR_LINE_RE = re.compile(r"\bline (\d+)\b", re.IGNORECASE)
 logger = logging.getLogger(__name__)
 
 
@@ -88,6 +102,7 @@ def compose_prepared_state(
         program=home.program,
         root_caps=root.caps,
         home_caps=home.caps,
+        modules=home.modules,
         loaded_at=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -280,12 +295,63 @@ def _build_prepared(
             visibility=visibility,
             remote_cache=remote_cache or None,
             progress=progress,
+            include_program=scope == "root",
         )
+        modules: tuple[PreparedProgramModule, ...] = ()
+        module_entries: tuple[PreparedCap, ...] = ()
+        module_sources: dict[str, ProgramSource] = {}
+        if scope == "home":
+            drafts = _program_module_drafts(authored)
+            previous_modules = _previous_program_modules(layout)
+            materialized: list[PreparedProgramModule] = []
+            all_module_entries: list[PreparedCap] = []
+            for draft, module_source in drafts:
+                module_sources[draft.identity] = module_source
+                previous = next(
+                    (
+                        item
+                        for item in previous_modules
+                        if item.identity == draft.identity
+                    ),
+                    None,
+                )
+                module_cache = prepared_remote_cache(
+                    authored,
+                    visibility="private",
+                    entries=previous.here_caps if previous is not None else (),
+                )
+                try:
+                    here_entries, here_files = materialize_program_caps(
+                        authored,
+                        module_source,
+                        remote_cache=module_cache or None,
+                        progress=progress,
+                    )
+                except Exception as exc:
+                    raise _module_error(
+                        module_source,
+                        layer="program",
+                        code="module-cap-preparation",
+                        error=exc,
+                    ) from exc
+                here_entries, here_files = _namespace_module_materialization(
+                    draft.identity,
+                    here_entries,
+                    here_files,
+                )
+                generated_files.update(here_files)
+                all_module_entries.extend(here_entries)
+                materialized.append(replace(draft, here_caps=here_entries))
+            modules = tuple(materialized)
+            module_entries = tuple(all_module_entries)
         files = _snapshot_files(
             authored,
             generated_files,
             visibility=visibility,
         )
+        for module in modules:
+            source_text = module_sources[module.identity].source_text
+            files.setdefault(module.authored_path, source_text.encode("utf-8"))
         entries = tuple(
             _snapshot_entry(
                 entry,
@@ -295,9 +361,29 @@ def _build_prepared(
             )
             for entry in entries
         )
-        resolutions = _cap_resolutions(entries, files)
+        if modules:
+            modules = tuple(
+                replace(
+                    module,
+                    here_caps=tuple(
+                        _snapshot_entry(
+                            entry,
+                            agent_name=authored.agent_name,
+                            files=files,
+                            visibility=visibility,
+                        )
+                        for entry in module.here_caps
+                    ),
+                )
+                for module in modules
+            )
+            module_entries = tuple(
+                entry for module in modules for entry in module.here_caps
+            )
+        resolutions = _cap_resolutions((*entries, *module_entries), files)
         prepared = _prepared_document(
             entries,
+            modules=modules,
             authored=authored,
             files=files,
             scope=scope,
@@ -335,6 +421,15 @@ def _previous_prepared_caps(
         return ()
 
 
+def _previous_program_modules(
+    layout: AgentLayout,
+) -> tuple[PreparedProgramModule, ...]:
+    try:
+        return load_home_prepared(layout).modules
+    except (FileNotFoundError, KeyError, TypeError, ValueError):
+        return ()
+
+
 def _scan_scope_source(
     layout: AgentLayout,
     *,
@@ -353,6 +448,154 @@ def _require_root(layout: AgentLayout) -> None:
 def _require_agent_home(layout: AgentLayout) -> None:
     if not layout.home.is_dir():
         raise FileNotFoundError(f"agent home not found: {layout.home}")
+
+
+def _program_module_drafts(
+    authored: AuthoredSource,
+) -> tuple[tuple[PreparedProgramModule, ProgramSource], ...]:
+    sources = authored.load_programs()
+    programs: list[tuple[ProgramSource, Program]] = []
+    diagnostics: list[StateDiagnostic] = []
+    for source in sources:
+        try:
+            programs.append((source, source.parse()))
+        except Exception as exc:
+            diagnostics.append(
+                _diagnostic(
+                    source,
+                    layer="program",
+                    code="invalid-program",
+                    error=exc,
+                )
+            )
+    if diagnostics:
+        raise StatePreparationError(*diagnostics)
+
+    drafts: list[tuple[PreparedProgramModule, ProgramSource]] = []
+    extension_diagnostics: list[StateDiagnostic] = []
+    for source, program in programs:
+        if source.kind == "agent":
+            drafts.append(
+                (
+                    PreparedProgramModule(
+                        identity="agent",
+                        kind="agent",
+                        authored_path=source.authored_path,
+                        prepared_path=f"files/{source.authored_path}",
+                        digest=source.digest,
+                        program=program,
+                    ),
+                    source,
+                )
+            )
+            continue
+        try:
+            export = _flow_module_export(source, program)
+        except ValueError as exc:
+            extension_diagnostics.append(
+                _diagnostic(
+                    source,
+                    layer="flow-extension",
+                    code="invalid-flow-export",
+                    error=exc,
+                )
+            )
+            continue
+        drafts.append(
+            (
+                PreparedProgramModule(
+                    identity=f"flow:{export.public_name}",
+                    kind="flow",
+                    authored_path=source.authored_path,
+                    prepared_path=f"files/{source.authored_path}",
+                    digest=source.digest,
+                    program=program,
+                    export=export,
+                ),
+                source,
+            )
+        )
+    if extension_diagnostics:
+        raise StatePreparationError(*extension_diagnostics)
+
+    modules = tuple(draft for draft, _source in drafts)
+    try:
+        public_runnable_catalog(modules)
+    except ValueError as exc:
+        agent = sources[0]
+        raise StatePreparationError(
+            _diagnostic(
+                agent,
+                layer="state-composition",
+                code="public-runnable-conflict",
+                error=exc,
+            )
+        ) from exc
+    return tuple(drafts)
+
+
+def _flow_module_export(
+    source: ProgramSource,
+    program: Program,
+) -> ProgramModuleExport:
+    name = Path(source.authored_path).stem
+    if _RUNNABLE_NAME_RE.fullmatch(name) is None:
+        raise ValueError(f"Flow module filename is not a runnable name: {name!r}")
+    candidates = tuple(
+        flow for flow in program.flows if not flow.name_explicit or flow.name == name
+    )
+    if not candidates:
+        raise ValueError(
+            f"Flow module {source.authored_path!r} must contain an unnamed flow "
+            f"or flow {name!r}"
+        )
+    if len(candidates) > 1:
+        raise ValueError(f"Flow module entry is ambiguous: {source.authored_path}")
+    return ProgramModuleExport(public_name=name, local_name=candidates[0].name)
+
+
+def _diagnostic(
+    source: ProgramSource,
+    *,
+    layer: StateValidationLayer,
+    code: str,
+    error: Exception,
+) -> StateDiagnostic:
+    message = str(error) or type(error).__name__
+    match = _ERROR_LINE_RE.search(message)
+    return StateDiagnostic(
+        layer=layer,
+        module_kind=source.kind,
+        authored_path=source.authored_path,
+        line=int(match.group(1)) if match is not None else None,
+        code=code,
+        message=message,
+    )
+
+
+def _module_error(
+    source: ProgramSource,
+    *,
+    layer: StateValidationLayer,
+    code: str,
+    error: Exception,
+) -> StatePreparationError:
+    return StatePreparationError(
+        _diagnostic(source, layer=layer, code=code, error=error)
+    )
+
+
+def _namespace_module_materialization(
+    identity: str,
+    entries: tuple[PreparedCap, ...],
+    files: dict[str, bytes],
+) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
+    namespace = identity.replace(":", "-")
+    prefix = Path("modules") / namespace
+    return (
+        tuple(replace(entry, path=str(prefix / entry.path)) for entry in entries),
+        {str(prefix / path): content for path, content in files.items()},
+    )
 
 
 def _snapshot_files(
@@ -399,7 +642,7 @@ def _authored_snapshot_path(
     if item.category == "cap":
         return Path("authored") / relative
     if item.category == "program":
-        return Path("agent.too")
+        return relative
     if item.category == "config":
         return Path("config.toml")
     return Path("authored") / relative
@@ -410,6 +653,10 @@ def _generated_snapshot_path(
 ) -> Path:
     if len(path.parts) < 3:
         raise ValueError(f"unexpected materialized cap path: {path}")
+    if path.parts[0] == "modules":
+        if len(path.parts) < 5 or path.parts[2] not in {"cited", "inline"}:
+            raise ValueError(f"unexpected module cap path: {path}")
+        return path
     if path.parts[0] not in {"cited", "inline", "wired"}:
         raise ValueError(f"unexpected materialized cap bucket: {path.parts[0]}")
     return path
@@ -555,7 +802,10 @@ def _cap_resolutions(
 def _resolved_definition_path(entry: PreparedCap) -> Path:
     if entry.source.form == "wired":
         return Path("config.toml")
-    return Path("agent.too")
+    path = Path(entry.source.path)
+    if path.parts[:1] == ("agents",) and len(path.parts) >= 3:
+        return Path(*path.parts[2:])
+    return path
 
 
 def _entry_materialized_files(
@@ -578,6 +828,7 @@ def _entry_materialized_files(
 def _prepared_document(
     entries: tuple[PreparedCap, ...],
     *,
+    modules: tuple[PreparedProgramModule, ...],
     authored: AuthoredSource,
     files: dict[str, bytes],
     scope: PreparedScope,
@@ -591,8 +842,7 @@ def _prepared_document(
         "caps": [entry.to_data() for entry in entries],
     }
     if scope == "home":
-        program: Program = authored.load_program().parse()
-        document["program"] = cast(dict[str, object], to_data(program))
+        document["modules"] = [module.to_data() for module in modules]
     return document
 
 

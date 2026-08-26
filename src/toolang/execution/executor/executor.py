@@ -17,7 +17,14 @@ from toolang.base.types.run import ModelUsage
 from toolang.base.types.message import Message, TextPart
 from toolang.common.ids import IdIssuer
 from toolang.common.time import utc_now
-from toolang.lang.ast import AgicDecl, FlowDecl, FlowStmt, Parameter, RepeatStmt
+from toolang.lang.ast import (
+    AgicDecl,
+    FlowDecl,
+    FlowStmt,
+    Parameter,
+    Program,
+    RepeatStmt,
+)
 from toolang.lang.input import (
     RunnableInput,
     resolve_runnable_input,
@@ -29,7 +36,7 @@ from toolang.plugin.models.config import (
     parse_default_models,
     parse_model_aliases,
 )
-from toolang.state.state import AgentState
+from toolang.state.state import AgentState, state_program_module
 from toolang.setup import AgentSetup
 
 from ..accounting import selected_usd_cost
@@ -55,7 +62,7 @@ from ..types import (
     OccurrencePosition,
     TypedPointer,
 )
-from ..runnables import parse_runnable_ref, resolve_runnable
+from ..runnables import parse_runnable_ref, resolve_runnable, resolve_state_runnable
 from .common import (
     BoundRun,
     EventEmitter,
@@ -363,13 +370,13 @@ class RunExecutor:
         _kind, _separator, runnable = control.payload.runnable.partition(":")
         if not runnable:
             raise ValueError(f"run runnable not found: {run_id}")
-        executable = resolve_runnable(state.program, runnable)
+        resolved = resolve_state_runnable(state, runnable)
         return RunSpec(
             setup=setup,
             state=state,
             thread=run.thread,
             bindings=RunBindings(
-                runnable=f"{executable.kind}:{runnable}",
+                runnable=f"{resolved.public.kind}:{resolved.public.name}",
                 model=model if model is not None else control.payload.model,
             ),
             limits=limits,
@@ -1158,7 +1165,10 @@ class _Execution:
     ) -> Local:
         """Accept and execute one recursive child agic or flow run."""
 
-        executable = resolve_runnable(parent.state.program, name)
+        executable = resolve_runnable(
+            state_program_module(parent.state, parent.module).program,
+            name,
+        )
         binding = _child_binding(
             self,
             parent,
@@ -1220,7 +1230,10 @@ class _Execution:
     ) -> Local:
         """Execute child runs concurrently and preserve their output type."""
 
-        executable = resolve_runnable(binding.state.program, runnable)
+        executable = resolve_runnable(
+            state_program_module(binding.state, binding.module).program,
+            runnable,
+        )
         lanes = limit or max(len(inputs), 1)
         available_lanes: asyncio.Queue[int] = asyncio.Queue()
         for lane in range(lanes):
@@ -1411,7 +1424,10 @@ def _child_binding(
     parent_step: StepPath,
     occurrence: Occurrence | None,
 ) -> BoundRun:
-    structs = {item.name: item for item in parent.state.program.structs}
+    structs = {
+        item.name: item
+        for item in state_program_module(parent.state, parent.module).program.structs
+    }
     source_locals: dict[str, Local] = {}
     primary_value: object | None = None
     if executable.input is not None:
@@ -1469,6 +1485,7 @@ def _child_binding(
         control_locals=tuple(control_locals),
         state=parent.state,
         setup=parent.setup,
+        module=parent.module,
         limits=parent.limits,
         ceilings=parent.ceilings,
         agent_resources=parent.agent_resources,
@@ -1503,13 +1520,21 @@ def _bind_run(
 ) -> BoundRun:
     if not spec.thread or spec.thread != spec.thread.strip():
         raise ValueError("run spec requires a canonical thread id")
+    if spec.bindings.runnable is None:
+        raise ValueError("run spec requires a runnable binding")
+    runnable_name, runnable_kind = parse_runnable_ref(spec.bindings.runnable)
+    resolved = resolve_state_runnable(
+        spec.state,
+        runnable_name,
+        kind=runnable_kind,
+    )
     control_locals = _input_locals(input, executable)
     return BoundRun(
         run_id=run_id,
         root_run_id=run_id,
         thread=spec.thread,
         bindings=RunBindings(
-            runnable=f"{executable.kind}:{executable.name}",
+            runnable=f"{resolved.public.kind}:{resolved.public.name}",
             model=spec.bindings.model
             or (resources.models[0] if resources.models else "none"),
         ),
@@ -1517,6 +1542,7 @@ def _bind_run(
         control_locals=control_locals,
         state=spec.state,
         setup=spec.setup,
+        module=resolved.module.identity,
         limits=spec.limits,
         ceilings=spec.ceilings,
         agent_resources=agent_resources,
@@ -1543,17 +1569,23 @@ def _prepare_start_spec(
     if spec.bindings.runnable is None:
         raise ValueError("run spec requires a runnable binding")
     runnable_name, runnable_kind = parse_runnable_ref(spec.bindings.runnable)
-    executable = resolve_runnable(
-        spec.state.program,
+    resolved = resolve_state_runnable(
+        spec.state,
         runnable_name,
         kind=runnable_kind,
     )
+    executable = resolved.executable
     input = spec.input
-    _validate_inputs(state=spec.state, executable=executable, input=input)
+    _validate_inputs(
+        program=resolved.module.program,
+        executable=executable,
+        input=input,
+    )
     agent_resources = resolve_agent_resources(
         spec.setup,
         spec.state,
         spec.setup.ceiling,
+        module=resolved.module.identity,
     )
     for ceiling in spec.ceilings:
         agent_resources = apply_agent_ceiling(
@@ -1561,6 +1593,7 @@ def _prepare_start_spec(
             spec.state,
             agent_resources,
             ceiling,
+            module=resolved.module.identity,
         )
     selection = snapshot_model_selection(spec.setup, spec.state)
     resources = resolve_runnable_resources(
@@ -1569,6 +1602,7 @@ def _prepare_start_spec(
         base=agent_resources,
         setup=spec.setup,
         state=spec.state,
+        module=resolved.module.identity,
     )
     validate_model_binding(
         selection,
@@ -1598,6 +1632,7 @@ def _prepare_child_run(
         base=base,
         setup=binding.setup,
         state=binding.state,
+        module=binding.module,
     )
     return replace(
         binding,
@@ -1610,11 +1645,11 @@ def _prepare_child_run(
 
 def _validate_inputs(
     *,
-    state: AgentState,
+    program: Program,
     executable: AgicDecl | FlowDecl,
     input: RunnableInput,
 ) -> None:
-    structs = {item.name: item for item in state.program.structs}
+    structs = {item.name: item for item in program.structs}
     params = {param.name: param for param in executable.params}
     args = input.named
     unknown = sorted(set(args) - set(params))

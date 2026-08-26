@@ -39,7 +39,7 @@ from toolang.lang.ast import (
 )
 from toolang.lang.input import RunnableInput
 from toolang.lang.types import Array
-from toolang.state.state import AgentState
+from toolang.state.state import AgentState, state_program_module
 from toolang.setup import AgentSetup
 
 from ..events import RunEvent, StepBegin, StepEnd
@@ -94,6 +94,7 @@ class BoundRun:
     state: AgentState
     setup: AgentSetup
     created_at: str
+    module: str = "agent"
     control_index: int = 0
     limits: RunLimits = RunLimits()
     ceilings: tuple[AgentCeiling, ...] = ()
@@ -394,7 +395,10 @@ def statement_input_refs(
         child_name = _statement_child_runnable(statement)
         if child_name is not None:
             try:
-                child = resolve_runnable(binding.state.program, child_name)
+                child = resolve_runnable(
+                    state_program_module(binding.state, binding.module).program,
+                    child_name,
+                )
             except (ToolangError, ValueError):
                 child = None
             if child is not None:
@@ -545,7 +549,10 @@ def number(value: Any, *, operation: str) -> float:
 
 
 def program_structs(binding: BoundRun) -> dict[str, StructDecl]:
-    return {item.name: item for item in binding.state.program.structs}
+    return {
+        item.name: item
+        for item in state_program_module(binding.state, binding.module).program.structs
+    }
 
 
 def output_parts(local: Local) -> tuple[Part, ...]:

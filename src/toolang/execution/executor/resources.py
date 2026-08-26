@@ -34,7 +34,12 @@ from toolang.plugin.toolsets.registry import (
     tool_ref_for_model_tool,
 )
 from toolang.setup import AgentSetup
-from toolang.state.state import AgentState, PreparedCap, select_cap_entries
+from toolang.state.state import (
+    AgentState,
+    PreparedCap,
+    select_cap_entries,
+    state_module_caps,
+)
 
 _Executable = AgicDecl | FlowDecl
 
@@ -96,6 +101,8 @@ def resolve_agent_resources(
     setup: AgentSetup,
     state: AgentState,
     ceiling: AgentCeiling,
+    *,
+    module: str | None = None,
 ) -> AgentResources:
     """Build initial stable resources from complete immutable snapshots."""
 
@@ -105,7 +112,7 @@ def resolve_agent_resources(
     validate_tool_selectors(dict(setup.tools), ceiling.tools)
     tools = select_tools(dict(setup.tools), ceiling.tools)
 
-    caps = tuple(state.caps)
+    caps = state_module_caps(state, module or "agent")
     if ceiling.caps is not None:
         missing = [
             selector
@@ -135,6 +142,8 @@ def apply_agent_ceiling(
     state: AgentState,
     resources: AgentResources,
     ceiling: AgentCeiling,
+    *,
+    module: str | None = None,
 ) -> AgentResources:
     """Apply one agent ceiling without expanding the base resource set."""
 
@@ -156,7 +165,7 @@ def apply_agent_ceiling(
     validate_tool_selectors(dict(available_tools), ceiling.tools)
     tools = select_tools(dict(available_tools), ceiling.tools)
 
-    caps = resource_caps(state, resources)
+    caps = resource_caps(state, resources, module=module)
     if ceiling.caps is not None:
         missing = [
             selector
@@ -190,6 +199,7 @@ def resolve_runnable_resources(
     base: AgentResources,
     setup: AgentSetup,
     state: AgentState,
+    module: str | None = None,
 ) -> AgentResources:
     """Apply one runnable's authored selectors within a chosen resource base."""
 
@@ -225,7 +235,7 @@ def resolve_runnable_resources(
     )
     tools = {name: available_tools[name] for name in tool_names}
 
-    available_caps = resource_caps(state, base)
+    available_caps = resource_caps(state, base, module=module)
     selected_cap_ids: set[tuple[str, str, str]] = {
         (item.kind, item.name, item.ref)
         for item in available_caps
@@ -302,11 +312,14 @@ def resource_tools(
 def resource_caps(
     state: AgentState,
     resources: AgentResources,
+    *,
+    module: str | None = None,
 ) -> tuple[PreparedCap, ...]:
     """Resolve stable cap identities against the current immutable state."""
 
     by_id: dict[tuple[str, str, str], PreparedCap] = {
-        (item.kind, item.name, item.ref): item for item in state.caps
+        (item.kind, item.name, item.ref): item
+        for item in state_module_caps(state, module or "agent")
     }
     result: list[PreparedCap] = []
     for item in resources.caps:

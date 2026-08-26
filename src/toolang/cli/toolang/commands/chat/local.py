@@ -85,6 +85,7 @@ class LocalChatSession:
             RunExecutor(self.store, self.ids),
             setup=self.setup_watcher.current,
             state=self.state_watcher.current,
+            refresh_state=self.state_watcher.refresh,
             include=self._include_resolver,
         )
         self._loop = asyncio.new_event_loop()
@@ -125,17 +126,15 @@ class LocalChatSession:
 
     def list_executables(self, kind: str) -> Mapping[str, Any]:
         setup = self.setup_watcher.current()
-        program = self.state_watcher.current().program
+        state = self._submit(self.state_watcher.refresh()).result()
         default_agic, default_flow = runnable_binding_defaults(
-            program,
+            state,
             setup.bindings.runnable,
             fallback_agic="chat",
         )
         if kind == "agic":
-            names = [agic.name for agic in program.agics]
+            names = [item.name for item in state.public_runnables("agic")]
             default = default_agic
-            if "default" not in names:
-                names.append("default")
             return {
                 "default": default,
                 "items": [{"name": name} for name in names],
@@ -143,13 +142,17 @@ class LocalChatSession:
         if kind == "flow":
             return {
                 "default": default_flow,
-                "items": [{"name": flow.name} for flow in program.flows],
+                "items": [
+                    {"name": item.name} for item in state.public_runnables("flow")
+                ],
             }
         if kind == "runnable":
             return {
                 "default": setup.bindings.runnable or f"agic:{default_agic}",
-                "items": [{"kind": "agic", "name": agic.name} for agic in program.agics]
-                + [{"kind": "flow", "name": flow.name} for flow in program.flows],
+                "items": [
+                    {"kind": item.kind, "name": item.name}
+                    for item in state.public_runnables()
+                ],
             }
         raise ValueError(f"unknown executable kind: {kind}")
 

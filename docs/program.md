@@ -27,6 +27,32 @@ Top-level agics and flows share one executable namespace. Their authored names
 must be unique across both declaration kinds.
 
 
+## Program Modules
+
+Resident agents may contain complete program modules at either of these home
+paths:
+
+```text
+agent.too
+flows/<name>.too
+```
+
+Every file is parsed and semantically validated as an independent Toolang
+program. A flow module cannot use structs, contexts, instructs, caps, agics, or
+flows declared in another file.
+
+The agent module publicly exports all of its agics and flows. A flow module
+exports exactly one Flow: either an unnamed `flow:` or `flow <name>:`, where
+`<name>` exactly matches its filename stem. An unnamed Flow keeps its local
+name `main` but uses the filename as its public name, so renaming the file also
+renames the public Flow. Other declarations in that module are private static
+helpers.
+
+Public runnable names must be unique across the complete home. Direct files
+under `flows/` are discovered; nested files, non-`.too` files, and a root-level
+`${TOOLANG_ROOT}/flows/` directory are not.
+
+
 ## Documentation Comments
 
 `##!` documents the complete program. Program documentation comments must be
@@ -78,8 +104,9 @@ accept documentation comments.
 with skill https://github.com/coinbase/agentic-wallet-skills/tree/main/skills/fund
 ```
 
-Prepare resolves the reference and materializes it into the agent's prepared
-cap set. The cap is then available to agic directives by its resolved name.
+Prepare resolves the reference and materializes it into the owning program
+module's `here` cap set. The cap is then available to declarations in that
+module by its resolved name.
 
 ```too
 agic pay:
@@ -95,8 +122,9 @@ for a future static tool-call statement.
 ## Inline Caps
 
 Program-level `psyche`, `skill`, `service`, and `prompt` declarations are
-inline caps. Prepare materializes them under the agent's prepared cap set while
-retaining the `.too` file as their authored source.
+inline caps. Prepare materializes them under the owning module's `here` cap set
+while retaining the `.too` file as their authored source. They do not leak to
+another program module.
 
 Cap declarations use their own schemas. They are not executable declarations
 and do not share the agic/flow namespace.
@@ -111,7 +139,7 @@ agic [NAME] [(PARAMS)] [-> T]:
 flow [NAME] [(PARAMS)] [-> T]:
 ```
 
-An omitted name means `default`:
+An omitted agic name means `default`; an omitted flow name means `main`:
 
 ```too
 agic:
@@ -119,10 +147,14 @@ agic:
 
 agic default:
   Reply directly.
+
+flow:
+  pass
 ```
 
-These two declarations have the same executable name and therefore cannot
-appear together.
+The two agic declarations have the same executable name and therefore cannot
+appear together. In a home flow module, the unnamed Flow's public name is
+instead bound from the filename as described above.
 
 
 ### Primary Input

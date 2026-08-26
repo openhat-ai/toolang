@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from toolang.lang.ast import LetStmt
 from toolang.lang.input import resolve_input_parts
+from toolang.state.state import state_program_module
 
 from ...records import RunControlRecord, StepPath
 from ...types import Occurrence
@@ -31,7 +32,7 @@ async def execute(
         return Local(
             resolve_input_parts(
                 statement.value,
-                program=binding.state.program,
+                program=state_program_module(binding.state, binding.module).program,
                 values={
                     name: local.value
                     for name, local in locals.items()

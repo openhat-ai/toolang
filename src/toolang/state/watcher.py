@@ -13,6 +13,7 @@ from toolang.common.layout import AgentLayout
 from toolang.common.version import base_toolang_version
 
 from .state import AgentState
+from .errors import StateDiagnostic, StatePreparationError
 from .cache import (
     load_current_version,
     load_version_source,
@@ -35,6 +36,7 @@ class StateWatcher:
     def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout
         self._state: AgentState | None = None
+        self._diagnostics: tuple[StateDiagnostic, ...] = ()
         self._toolang_version = base_toolang_version()
         self._refresh_lock = asyncio.Lock()
 
@@ -45,16 +47,52 @@ class StateWatcher:
             raise RuntimeError("state watcher has not been refreshed")
         return self._state
 
+    def diagnostics(self) -> tuple[StateDiagnostic, ...]:
+        """Return diagnostics for the latest rejected candidate, if any."""
+
+        return self._diagnostics
+
     async def refresh(self, *, force: bool = False) -> AgentState:
         """Prepare a fresh state snapshot, optionally refreshing remote sources."""
 
         async with self._refresh_lock:
-            self._state = await asyncio.to_thread(
-                prepare_agent_state,
-                self.layout,
-                toolang_version=self._toolang_version,
-                force=force,
-            )
+            try:
+                candidate = await asyncio.to_thread(
+                    prepare_agent_state,
+                    self.layout,
+                    toolang_version=self._toolang_version,
+                    force=force,
+                )
+            except StatePreparationError as exc:
+                self._diagnostics = exc.diagnostics
+                if self._state is None:
+                    raise
+                logger.warning(
+                    "watch.rejected agent=%s diagnostics=%s",
+                    self.layout.name,
+                    len(exc.diagnostics),
+                )
+                return self._state
+            except Exception as exc:
+                if self._state is None:
+                    raise
+                self._diagnostics = (
+                    StateDiagnostic(
+                        layer="state-composition",
+                        module_kind="agent",
+                        authored_path="",
+                        line=None,
+                        code="candidate-preparation",
+                        message=str(exc) or type(exc).__name__,
+                    ),
+                )
+                logger.warning(
+                    "watch.rejected agent=%s diagnostics=1",
+                    self.layout.name,
+                )
+                return self._state
+            self._state = candidate
+            self._diagnostics = ()
             return self._state
 
     async def updates(

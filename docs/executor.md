@@ -98,8 +98,9 @@ class RunSpec:
     input: RunnableInput = RunnableInput()
 ```
 
-`bindings.runnable` is required and resolves to exactly one agic or flow in the
-captured program. `bindings.model` is the effective singular model choice.
+`bindings.runnable` is required and resolves to exactly one public agic or flow
+in the captured state's runnable catalog. Resolution also fixes the owner
+program module. `bindings.model` is the effective singular model choice.
 The spec does not carry an origin, run identity, request identity, or arbitrary
 transport context. Each item in `ceilings` is one independently applied
 selector-based restriction inside `setup.ceiling`; retaining separate session
@@ -218,6 +219,10 @@ nearest containing flow resources, or directly from the agent resources at the
 root. Agic directives affect only that agic. A nested flow does not inherit its
 caller's flow restriction; returning from it naturally restores the caller's
 immutable flow resources.
+
+Input structs, prompts, static child calls, and `here` caps resolve against the
+bound owner module. Static child calls stay within that module; private helpers
+cannot be selected as top-level public runnables.
 
 Agic and flow bodies run natively on the owner event loop. Model adapters,
 tool invocation, step emission, and run tracing are asynchronous. A wrapper

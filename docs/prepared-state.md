@@ -14,14 +14,14 @@ created by state.
 Preparation has two independently versioned scopes:
 
 - `RootPrepared` contains root config and shared `PreparedCap` values;
-- `HomePrepared` contains agent config, the parsed `Program`, and private
-  `PreparedCap` values.
+- `HomePrepared` contains agent config, independently parsed agent and flow
+  program modules, and private `PreparedCap` values.
 
-`AgentState` is the parsed `Program`, immutable root and home config layers,
-their merged config view, and the effective `PreparedCap` values from one exact
-root/home version pair. It retains the three version identifiers but not the two
-cache objects. An executor takes an `AgentState` snapshot at the beginning of
-each top-level run and keeps using that snapshot for the entire run.
+`AgentState` contains the immutable program module set, its unique public
+runnable catalog, root and home config layers, and effective prepared caps from
+one exact root/home version pair. Its compatibility `program` value is the
+agent module. An executor takes an `AgentState` snapshot at the beginning of
+each top-level run and keeps using that snapshot for the entire run tree.
 
 
 ## Layout
@@ -40,11 +40,18 @@ under `${TOOLANG_ROOT}/agents/<agent>/.state`.
       prepared.json
       files/
         agent.too
+        flows/
+          <name>.too
         config.toml
         authored/
-        inline/
-        cited/
         wired/
+        modules/
+          agent/
+            inline/
+            cited/
+          flow-<name>/
+            inline/
+            cited/
 ```
 
 Root versions omit `agent.too`. Directories that have no files may also be
@@ -75,8 +82,10 @@ Callers request that network refresh through `refresh_agent_state()`. Normal
 startup and watcher updates use `prepare_agent_state()` and therefore reuse an
 unchanged authored ref without contacting its remote source.
 
-`prepared.json` contains the Toolang version, parsed config, parsed program AST
-for home state, and serialized `PreparedCap` values. Cap bodies are not
+`prepared.json` contains the Toolang version, parsed config, serialized program
+modules for home state, and serialized `PreparedCap` values. Each module stores
+its authored and prepared paths, digest, parsed Program, optional public export,
+and `here` caps. Cap bodies are not
 embedded in this document; runtime consumers read the corresponding immutable
 file only when needed. A new process can construct
 `RootPrepared` or `HomePrepared` from the three cache documents and `files/`
@@ -92,10 +101,10 @@ cache garbage collector rather than deleted on the prepare hot path.
 `files/` makes a prepared version self-contained:
 
 - `authored/` copies authored cap files;
-- `inline/` contains materialized caps declared inside `agent.too`;
-- `cited/` contains materialized program references;
+- `modules/<identity>/inline/` contains caps declared in one program module;
+- `modules/<identity>/cited/` contains that module's program references;
 - `wired/` contains materialized wired caps;
-- `agent.too` and `config.toml` preserve the scope inputs when present.
+- `agent.too`, `flows/<name>.too`, and `config.toml` preserve scope inputs.
 
 Each inline cap has its own materialized file so runtime consumers can read cap
 content lazily without reparsing or reading the entire program.

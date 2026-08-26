@@ -379,6 +379,7 @@ class _Lowerer:
         )
 
     def _lower_flow(self, node: CstNode, *, doc: str | None) -> ast.FlowDecl:
+        name = node.child_by_field_name("name")
         input_param, params = self._parameters(
             node.child_by_field_name("params"), owner=node
         )
@@ -400,7 +401,8 @@ class _Lowerer:
                 f"Unsupported flow CST node {child.type!r} at line {self._line(child)}."
             )
         return ast.FlowDecl(
-            name=self._optional_text(node.child_by_field_name("name")) or "main",
+            name=self._optional_text(name) or "main",
+            name_explicit=name is not None,
             input=input_param,
             params=params,
             output=self._optional_text(node.child_by_field_name("return")),

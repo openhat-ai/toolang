@@ -32,8 +32,9 @@ from toolang.execution.records import RunControlRecord, RunRecord
 from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
 from toolang.lang.input import resolve_runnable_input
-from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
+from toolang.execution.runnables import parse_runnable_ref, resolve_state_runnable
 from toolang.lang.includes import resolve_file_include
+from toolang.state.state import AgentState
 from toolang.up import AgentCore
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -53,13 +54,14 @@ async def _start_run_stream(
         else setup.limits
     )
     try:
-        state = core.state.current()
+        state = await _fresh_state(core)
         runnable_name, runnable_kind = parse_runnable_ref(payload.runnable)
-        runnable = resolve_runnable(
-            state.program,
+        resolved = resolve_state_runnable(
+            state,
             runnable_name,
             kind=runnable_kind,
         )
+        runnable = resolved.executable
         handle = core.executor.start(
             RunSpec(
                 setup=setup,
@@ -78,7 +80,9 @@ async def _start_run_stream(
                     runnable,
                     primary=parse_parts(payload.input) if payload.input else None,
                     named=payload.args,
-                    structs={item.name: item for item in state.program.structs},
+                    structs={
+                        item.name: item for item in resolved.module.program.structs
+                    },
                 ),
             ),
             request_id=payload.request_id,
@@ -102,7 +106,7 @@ async def _start_authored_run_stream(
     thread_id = _run_thread(core, payload.thread)
     run_request = parse_authored_run(payload)
     setup = core.setup.current()
-    state = core.state.current()
+    state = await _fresh_state(core)
     include_base = (
         setup.environment.working_directory
         if setup.environment is not None
@@ -213,14 +217,14 @@ async def execute_authored_run_stream(
     summary="Validate Authored Run Session",
     status_code=204,
 )
-def validate_authored_run_session(
+async def validate_authored_run_session(
     core: AgentCoreDep,
     payload: AuthoredRunValidationRequest,
 ) -> Response:
     commands, fallbacks = parse_authored_run_validation(payload)
     try:
         setup = core.setup.current()
-        state = core.state.current()
+        state = await _fresh_state(core)
         validate_session_commands(
             commands,
             setup=setup,
@@ -326,7 +330,7 @@ async def retry_run(
         handle = core.executor.retry(
             source.id,
             setup=setup,
-            state=core.state.current(),
+            state=await _fresh_state(core),
             anchor=request.anchor,
             model=(
                 request.model if request.model is not None else setup.bindings.model
@@ -364,7 +368,7 @@ async def rerun_run(
         handle = core.executor.rerun(
             source.id,
             setup=setup,
-            state=core.state.current(),
+            state=await _fresh_state(core),
             model=(
                 request.model if request.model is not None else setup.bindings.model
             ),
@@ -389,6 +393,11 @@ def _run_or_404(core: AgentCore, run_id: str) -> RunRecord:
     if run is None:
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
     return run
+
+
+async def _fresh_state(core: AgentCore) -> AgentState:
+    refresh = getattr(core.state, "refresh", None)
+    return await refresh() if callable(refresh) else core.state.current()
 
 
 def _active_run_or_409(core: AgentCore, run_id: str) -> RunRecord:

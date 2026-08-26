@@ -474,6 +474,16 @@ agic:
     assert program.agics[0].messages[0].content == "Reply directly."
 
 
+def test_flow_name_explicitness_survives_serialization() -> None:
+    from toolang.lang.ast import program_from_data
+
+    program = Program.from_source("flow:\n  pass\n\nflow named:\n  pass\n")
+
+    assert [flow.name for flow in program.flows] == ["main", "named"]
+    assert [flow.name_explicit for flow in program.flows] == [False, True]
+    assert program_from_data(to_data(program)) == program
+
+
 def test_program_expands_prompt_calls(tmp_path: Path) -> None:
     root = _write_program(
         tmp_path,

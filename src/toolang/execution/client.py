@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -62,6 +62,7 @@ class RunClient(Protocol):
 
 SetupSource = Callable[[], AgentSetup]
 StateSource = Callable[[], AgentState]
+StateRefresh = Callable[[], Awaitable[AgentState]]
 IncludeSource = Callable[[AgentSetup], IncludeResolver]
 
 
@@ -88,11 +89,13 @@ class LocalRunClient:
         *,
         setup: SetupSource,
         state: StateSource,
+        refresh_state: StateRefresh | None = None,
         include: IncludeSource,
     ) -> None:
         self._executor = executor
         self._setup = setup
         self._state = state
+        self._refresh_state = refresh_state
         self._include = include
         self._history = RunHistory(executor.store)
         self._closed = False
@@ -105,7 +108,11 @@ class LocalRunClient:
     ) -> RunHandle:
         self._require_open()
         setup = self._setup()
-        state = self._state()
+        state = (
+            await self._refresh_state()
+            if self._refresh_state is not None
+            else self._state()
+        )
         spec = resolve_run_request(
             request,
             setup=setup,
