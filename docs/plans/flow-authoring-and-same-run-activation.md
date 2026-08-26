@@ -31,11 +31,13 @@ last-valid watcher behavior remain unchanged.
   call is recorded as a normal child run and its result returns to the model.
 - Every model call receives a runtime-owned description of the public
   runnables it may call, including their signatures.
+- Existing public core toolsets use the canonical short names `fs`, `web`,
+  `shell`, and `service` without duplicate legacy model names.
 - State transitions are durable run controls with the old and new state
   fingerprints.
-- Reserved internal names cannot be registered by user-facing built-ins or
-  external toolset plugins, and progress renderers can recognize them without
-  plugin-specific heuristics.
+- `_me`, `_too`, and `_hat` are core-owned namespaces that cannot be registered
+  by user-facing built-ins or external toolset plugins, and progress renderers
+  can recognize them without plugin-specific heuristics.
 - Existing static Flow calls, next-root refresh, and watcher publication remain
   unchanged.
 
@@ -45,6 +47,8 @@ This phase includes:
 
 - reserved model-facing core actions for reading and saving home flow source,
   applying state, and calling public runnables;
+- canonical public toolset renames from `filesystem`, `web_search`, and
+  `service_use` to `fs`, `web`, and `service`, with `shell` unchanged;
 - safe, optimistic full-file flow updates;
 - one mutable state head per active root run tree;
 - `next_step` state-activation controls and durable state-transition facts;
@@ -62,8 +66,11 @@ This phase does not include:
 - shared-flow wiring, `with` attachments, or marketplace installation;
 - flow deletion or rename actions;
 - same-run `AgentSetup`, plugin, environment, model-catalog, or policy changes;
-- external API or CLI endpoints for state activation; or
-- retry across a root run that applied more than one state version.
+- external API or CLI endpoints for state activation;
+- compatibility aliases that expose old and new public tool names together;
+- retry across a root run that applied more than one state version; or
+- compatibility for retrying historical runs that captured legacy public tool
+  identities.
 
 The quoted dynamic Flow syntax remains the final, tree-sitter-dependent phase.
 
@@ -92,15 +99,47 @@ Consequently:
 This preserves coherent module-local source, structs, caps, and private helper
 resolution while allowing new public modules to be used in the same root tree.
 
-## Reserved Core Actions
+## Tool Namespace Model
 
-The reserved model-name prefix is `__toolang_`. Phase 2 defines four actions:
+Tool namespaces identify the domain an action affects. Public capabilities that
+interact with the external world have ordinary names:
+
+| Namespace | Replaces | Domain |
+| --- | --- | --- |
+| `fs` | `filesystem` | agent-home filesystem |
+| `web` | `web_search` | web search and retrieval |
+| `shell` | unchanged | command execution |
+| `service` | `service_use` | service-cap interaction |
+
+The implementation changes both the built-in toolset identity and its public
+namespace. Repository-owned selectors, configuration, examples, documentation,
+and tests migrate to the canonical names. Old and new model tools are not
+coexposed, and this phase adds no legacy selector or configuration aliases.
+
+A single leading underscore marks a core-owned model-facing namespace:
+
+| Namespace | Meaning | This phase |
+| --- | --- | --- |
+| `_me` | the current agent's authored and persistent state | flow read and save |
+| `_too` | the Toolang language, executor, and current run tree | state apply and dynamic run |
+| `_hat` | Human Agent Teaming | reserved; no communication actions yet |
+
+`_hat` expands to **Human Agent Teaming**. It owns future human-agent,
+agent-agent, and team communication or coordination actions rather than a
+specific transport.
+
+All toolset and public namespaces beginning with `_` are reserved for the
+Toolang/OpenHat core. User-facing built-ins and external toolset plugins must
+use ordinary namespaces and cannot return a model tool name beginning with
+`_`. The existing `namespace__leaf` encoding remains unchanged.
+
+Phase 2 defines four core actions:
 
 ```text
-__toolang_flow_get
-__toolang_flow_save
-__toolang_state_apply
-__toolang_run
+_me__flow_get
+_me__flow_save
+_too__state_apply
+_too__run
 ```
 
 They use the model provider's existing tool-definition and tool-call protocol,
@@ -112,17 +151,13 @@ Core action definitions participate in the existing effective tool selection.
 ceilings can therefore remove them. With the normal default tool selection they
 are available. They count toward the existing agic tool-call limit.
 
-The core registry assigns these actions the reserved selector namespace
-`__toolang`. Plugin loading rejects a plugin toolset name, namespace, leaf name,
-or resulting model name that uses the reserved namespace or model-name prefix.
-This applies equally to user-facing built-in toolsets and external plugins.
-
-Internal classification is derived only from the reserved identity. It is not
-inferred from a Python package path or plugin name.
+Internal classification is derived from the core namespace identity. It is not
+inferred from a Python package path or plugin name. Progress may distinguish
+`_me`, `_too`, and future `_hat` actions without matching individual leaf names.
 
 ## Flow Source Actions
 
-`__toolang_flow_get` accepts a canonical public flow name and returns:
+`_me__flow_get` accepts a canonical public flow name and returns:
 
 ```text
 name
@@ -131,7 +166,7 @@ source          exact UTF-8 source text
 digest          SHA-256 of the source bytes
 ```
 
-`__toolang_flow_save` accepts:
+`_me__flow_save` accepts:
 
 ```text
 name
@@ -164,7 +199,7 @@ keeps file mutation and state publication independent.
 
 ## Explicit State Activation
 
-`__toolang_state_apply` has no source or path arguments. It asks the
+`_too__state_apply` has no source or path arguments. It asks the
 process-composition layer for one atomic watcher refresh result containing:
 
 ```text
@@ -234,7 +269,7 @@ extension rather than guessing a state.
 
 ## Dynamic Runnable Calls
 
-`__toolang_run` accepts:
+`_too__run` accepts:
 
 ```text
 runnable        name, agic:name, or flow:name
@@ -267,7 +302,7 @@ required.
 ## Runnable Instructions
 
 The execution core appends a runtime-owned `<available-runnables>` block to
-model instructions when `__toolang_run` is in the effective tool set. The block
+model instructions when `_too__run` is in the effective tool set. The block
 is independent of authored `instruct` declarations and contains only public
 catalog entries:
 
@@ -280,7 +315,7 @@ output type, if present
 declaration documentation, if present
 ```
 
-The block tells the model to call `__toolang_run` rather than inventing a normal
+The block tells the model to call `_too__run` rather than inventing a normal
 plugin tool call. It omits private helpers and module filesystem paths.
 
 The annex is rebuilt at every model-call boundary from the root state head.
@@ -323,7 +358,8 @@ debugging. Logs retain the reserved identity.
 - `src/toolang/execution/tools/`: core action definitions, flow file safety,
   and internal invocation contracts;
 - `src/toolang/plugin/toolsets/registry.py` and loading: reserved-name
-  enforcement and normal resource selection for core definitions;
+  enforcement, canonical public toolset names, and normal resource selection
+  for core definitions;
 - `src/toolang/setup/`: include core action definitions in the immutable setup
   tool snapshot without plugin entry points;
 - `src/toolang/state/watcher.py`: return one atomic refresh result with
@@ -363,8 +399,9 @@ debugging. Logs retain the reserved identity.
     parented below the internal tool step.
 13. Tool directives and tool ceilings can exclude core actions; default tool
     selection includes them.
-14. User-facing and external toolset plugins cannot register the reserved
-    namespace or model-name prefix.
+14. User-facing and external toolset plugins cannot register an underscore-led
+    namespace or model name; `_hat` is reserved as Human Agent Teaming without
+    adding communication actions in this phase.
 15. Every eligible model request lists the exact public catalog and signatures;
     the request after state apply lists the new flow.
 16. Progress hides raw internal names, shows meaningful save/apply facts, and
@@ -375,13 +412,19 @@ debugging. Logs retain the reserved identity.
     current normal root-run state.
 19. Next-root-run refresh and roots with no state apply preserve Phase 1
     behavior and records.
-20. The default offline verification suite remains deterministic and passes.
+20. Built-in tool identities and repository-owned selectors migrate to `fs`,
+    `web`, `shell`, and `service`; no model request exposes both a legacy and a
+    canonical name.
+21. The default offline verification suite remains deterministic and passes.
 
 ## Risks
 
 - Core actions must participate in policy without becoming externally
   registerable plugins; mixing the two registries would weaken reserved-name
   ownership.
+- The public toolset rename is intentionally breaking. Authored selectors,
+  configuration, and historical run resource snapshots that contain legacy
+  identities do not silently resolve to the new tools.
 - Updating only the root state head, rather than an accepted `BoundRun`, is the
   central isolation rule. Rebinding an active run would mix program, struct,
   and cap versions.
