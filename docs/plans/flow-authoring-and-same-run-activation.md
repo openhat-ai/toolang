@@ -24,7 +24,7 @@ refresh, last-valid watcher behavior, and static Flow calls remain unchanged.
   child run.
 - Each eligible model call receives the active public runnable signatures.
 - State transitions are durable controls with old and new fingerprints.
-- Core namespaces are reserved, and public core toolsets use the short canonical
+- Core namespaces are reserved, and public built-in toolsets use the short canonical
   names `fs`, `web`, `shell`, and `service`.
 
 ## Tool Names
@@ -42,7 +42,18 @@ The built-in toolset identity and public namespace both change. Repository
 configuration, selectors, examples, docs, and tests migrate together. Legacy
 and canonical names are not coexposed, and no compatibility aliases are added.
 
-A leading underscore marks a core-owned model-facing namespace:
+Canonical model-facing and persisted names use `namespace__tool`. Frontends may
+render the same reference as `namespace.tool`, but must translate it back before
+dispatch; the dotted form is not an identity or protocol value.
+
+Names use conservative, provider-portable grammar:
+
+- user-facing toolset namespaces and tool names match
+  `[A-Za-z]+(?:_[A-Za-z]+)*`; and
+- core namespaces match `_[A-Za-z]+(?:_[A-Za-z]+)*`.
+
+This excludes leading or trailing underscores and `__` inside either component.
+Only core namespaces have the single leading underscore:
 
 | Namespace | Meaning | This phase |
 | --- | --- | --- |
@@ -51,16 +62,15 @@ A leading underscore marks a core-owned model-facing namespace:
 | `_hat` | Human Agent Teaming | reserved only |
 
 `_hat` covers future human-agent, agent-agent, and team coordination independent
-of transport. All underscore-led toolset or public namespaces are core-reserved;
-user-facing built-ins and external plugins cannot register them or return an
-underscore-led model tool name. The existing `namespace__leaf` encoding remains.
+of transport. User-facing built-ins and external plugins cannot register a core
+namespace. Tool names are verb-first.
 
 This phase adds:
 
 ```text
-_me__flow_get
-_me__flow_save
-_too__state_apply
+_me__get_flow
+_me__save_flow
+_too__apply_state
 _too__run
 ```
 
@@ -70,10 +80,10 @@ tool-call limits, and participate in existing tool directives and ceilings.
 
 ## Flow Source Actions
 
-`_me__flow_get(name)` returns the home-relative path, exact UTF-8 source, and
+`_me__get_flow(name)` returns the home-relative path, exact UTF-8 source, and
 SHA-256 digest.
 
-`_me__flow_save` accepts:
+`_me__save_flow` accepts:
 
 ```text
 name
@@ -113,7 +123,7 @@ The state head starts at the entry state. Applying state changes only the head:
 
 This prevents mixing module source, structs, helpers, or caps across versions.
 
-`_too__state_apply()` requests one atomic result from the process-owned watcher:
+`_too__apply_state()` requests one atomic result from the process-owned watcher:
 the latest last-valid `AgentState` plus diagnostics for the newest candidate.
 The executor receives this through a narrow callback; it does not own file
 watching. Local Chat, hosted execution, sandboxes, and one-shot execution supply
@@ -241,8 +251,8 @@ Excluded:
 8. Every eligible model request lists the active public signatures, including
    the request following apply.
 9. Tool directives and ceilings can exclude core actions; defaults include them.
-10. Underscore-led plugin namespaces and model names are rejected; `_hat` is
-    reserved as Human Agent Teaming.
+10. Toolset and tool names enforce the portable component grammar; core
+    namespaces are reserved and `_hat` means Human Agent Teaming.
 11. Progress hides raw wrappers and preserves useful save, apply, child, and
     diagnostic output.
 12. Concurrent applies install whole serialized state snapshots.
