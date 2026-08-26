@@ -32,6 +32,12 @@ Step footer, and attach that footer directly to preceding child Model output.
 
 - Root Run footers begin with `∎ ` (U+220E END OF PROOF) and use no square
   brackets.
+- Root identity and status stay at the left while Run facts align to the right
+  edge when they fit on the same line.
+- Successful root identity and status use normal intensity and the terminal's
+  default color. Failed and canceled identity and status use normal intensity
+  and their existing red or yellow. Run facts always use dim intensity and the
+  terminal's default color.
 - Existing Flow facts rows also show their complete canonical `StepPath`, with
   facts at the left and the path at the right of the available progress width.
 - Step footers retain the existing two-cell indentation, maximum-width policy,
@@ -67,14 +73,26 @@ Step footer, and attach that footer directly to preceding child Model output.
 The stable wide form is:
 
 ```text
-∎ run_nrqpt0mf succeeded · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
+∎ run_nrqpt0mf succeeded        1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
-Failed, canceled, retry, and rerun captions keep their current wording and
-status style. `∎ ` replaces the opening `[ ` and the closing ` ]` is removed.
-The marker begins in column zero. Wrapped lines use the marker's two-cell width
-as their hanging indent. Facts continue to wrap only at fact boundaries when
-possible, and every physical line remains within the available progress width.
+`∎ ` replaces the opening `[ ` and the closing ` ]` is removed. The left field
+is the existing Run caption: Run ID, optional retry or rerun operation, and
+status. The right field is the existing facts joined by ` · `. When both fields
+fit, insert at least two spaces between them and pad that gap so the final fact
+ends at the available progress width. Padding replaces the former ` · ` between
+status and the first fact; centered dots remain only between facts.
+
+The marker begins in column zero. When the fields do not fit together, render
+the complete caption first and place facts on following lines with a two-cell
+hanging indent. Facts continue to wrap only at fact boundaries when possible,
+and every physical line remains within the available progress width.
+
+The marker, Run caption, and status use normal intensity. Successful captions
+use the terminal's default color; failed and canceled captions keep their
+existing red and yellow. Facts use dim intensity and the terminal's default
+color for every status. Status color never leaks into fact text. Padding and
+continuation indentation carry no semantic color.
 
 ### Flow Step Footer
 
@@ -127,8 +145,8 @@ unchanged.
   with the owning canonical StepPath and treat direct Flow `run` facts as a
   continuation of child output.
 - `src/toolang/cli/common/execution_progress/rich_rendering.py`: render
-  two-ended Step footers by display-cell width and replace bracketed Run framing
-  with `∎`.
+  two-ended Step and Run footers by display-cell width, replace bracketed Run
+  framing with `∎`, and style the Run caption separately from its facts.
 - `tests/unit/cli/test_execution_progress_projector.py`: verify semantic footer
   content, path ownership, and direct Flow `run` gap policy.
 - `tests/unit/cli/test_script_run_presenter.py` and
@@ -143,27 +161,35 @@ unchanged.
 
 ## Acceptance Tests
 
-1. Successful, failed, and canceled root footers begin with exactly `∎ `, contain
-   no framing square brackets, preserve status styling, and remain within the
-   configured width.
-2. Retry and rerun footers retain their operation caption and facts after the
-   new marker.
-3. A facts-bearing Flow Step projects the unchanged facts as its left field and
+1. Successful, failed, and canceled root footers begin with exactly `∎ `,
+   contain no framing square brackets, and remain within the configured width.
+2. A wide root footer keeps its caption at the left, uses at least two padding
+   cells instead of a centered dot before its first fact, and ends its facts at
+   the available width's final cell.
+3. A narrow root footer renders its caption first and wraps complete facts on
+   following lines under a two-cell indent without width overflow.
+4. Successful root captions use normal/default styling. Failed and canceled
+   captions use normal red and yellow respectively. Facts always use
+   dim/default styling, including in failed and canceled footers.
+5. Retry and rerun footers retain their operation caption and facts after the
+   new marker and follow the same alignment and split styling.
+6. A facts-bearing Flow Step projects the unchanged facts as its left field and
    its complete canonical StepPath as its right field.
-4. At a wide configured width, the footer uses two leading spaces, at least two
-   separating spaces, and a path whose final cell is the width's final cell.
-5. At a narrow width, facts and long Unicode-aware StepPaths wrap or fold
+7. At a wide configured width, the Step footer uses two leading spaces, at
+   least two separating spaces, and a path whose final cell is the width's
+   final cell.
+8. At a narrow width, Step facts and long Unicode-aware StepPaths wrap or fold
    without truncation, collision, or width overflow.
-6. Flow Steps without aggregate facts, and all Model, Tool, and direct-value
+9. Flow Steps without aggregate facts, and all Model, Tool, and direct-value
    Steps, gain no new footer row.
-7. A direct Flow `run` with child Model output renders the Step footer on the
+10. A direct Flow `run` with child Model output renders the Step footer on the
    immediately following physical row, with no extra blank row from Model Part
    closure, Model Step closure, or wrapper Step closure.
-8. Exactly one trailing blank row still separates that completed Flow Step from
+11. Exactly one trailing blank row still separates that completed Flow Step from
    the next Step or root footer.
-9. Script TTY, Script non-TTY, and Chat produce equivalent finalized footer
+12. Script TTY, Script non-TTY, and Chat produce equivalent finalized footer
    content subject only to ANSI and terminal-width mechanics.
-10. The default offline verification suite passes.
+13. The default offline verification suite passes.
 
 ## Risks
 
@@ -179,4 +205,5 @@ unchanged.
 
 ## Open Questions
 
-None. Implementation requires explicit human approval of this definition.
+None. The human approved the initial definition and this root-footer refinement
+on 2026-08-26 before implementation.
