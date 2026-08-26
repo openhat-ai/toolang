@@ -25,6 +25,7 @@ from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.schemas import RunDetail, RunRequest, ThreadInfo
 from toolang.execution.types import RunOverride
 from toolang.execution.values import parts_from_local
+from toolang.plugin.sandboxes.host import host_sandbox_description
 
 from .base import (
     ChatExecutorMetadata,
@@ -77,6 +78,7 @@ class _RuntimeIdentity:
     driver: str
     selector: str
     instance: str | None
+    description: str | None
 
 
 class RemoteChatSession:
@@ -231,11 +233,19 @@ class RemoteChatSession:
         port = urlsplit(self.run_client.endpoint).port
         if port is None:
             raise RemoteChatError("running executor endpoint has no explicit port")
+        fallback_host_description = (
+            host_sandbox_description()
+            if identity.driver == "host" and identity.description is None
+            else None
+        )
         self.executor_metadata = ChatExecutorMetadata(
+            sandbox_selector=identity.selector,
+            sandbox_detail=_sandbox_detail(
+                identity,
+                fallback_host_description=fallback_host_description,
+            ),
             endpoint=self.run_client.endpoint,
             version=identity.version,
-            sandbox=identity.selector if identity.driver != "host" else None,
-            instance=identity.instance,
         )
 
     async def _list_models(self) -> dict[str, object]:
@@ -635,15 +645,49 @@ def _runtime_identity(payload: object) -> _RuntimeIdentity:
             "remote chat sandbox selector does not match its driver"
         )
     instance_value = sandbox.get("instance")
-    if driver == "host":
+    # Presentation metadata stays optional so TUI and executor releases can
+    # evolve independently without weakening execution identity validation.
+    description_value = sandbox.get("description")
+    if driver == "docker":
+        if description_value is not None:
+            raise _RemoteChatProtocolError(
+                "remote chat docker sandbox returned a description"
+            )
+        instance = _token(instance_value, label="sandbox instance")
+        description = None
+    else:
         if instance_value is not None:
             raise _RemoteChatProtocolError(
-                "remote chat host sandbox returned an instance ID"
+                "remote chat non-docker sandbox returned an instance ID"
             )
         instance = None
-    else:
-        instance = _token(instance_value, label="sandbox instance")
-    return _RuntimeIdentity(version, driver, selector, instance)
+        description = (
+            None
+            if description_value is None
+            else _description(description_value, label="sandbox description")
+        )
+    return _RuntimeIdentity(version, driver, selector, instance, description)
+
+
+def _sandbox_detail(
+    identity: _RuntimeIdentity,
+    *,
+    fallback_host_description: str | None = None,
+) -> str:
+    if identity.driver == "docker":
+        if identity.instance is None:
+            raise AssertionError("docker runtime identity is missing its instance")
+        instance = identity.instance
+        if len(instance) > 12 and all(
+            character.casefold() in "0123456789abcdef" for character in instance
+        ):
+            instance = instance[:12]
+        return instance
+    if identity.description is None:
+        if identity.driver == "host" and fallback_host_description is not None:
+            return fallback_host_description
+        raise AssertionError("non-docker runtime identity is missing its description")
+    return identity.description
 
 
 def _catalog_payload(
@@ -694,6 +738,15 @@ def _label(value: object, *, label: str) -> str:
         or any(character.isspace() for character in text)
         or any(character in text for character in ",()")
     ):
+        raise _RemoteChatProtocolError(f"remote chat {label} is invalid")
+    return text
+
+
+def _description(value: object, *, label: str) -> str:
+    if not isinstance(value, str):
+        raise _RemoteChatProtocolError(f"remote chat {label} is invalid")
+    text = value.strip()
+    if not text or text != value or not text.isprintable():
         raise _RemoteChatProtocolError(f"remote chat {label} is invalid")
     return text
 

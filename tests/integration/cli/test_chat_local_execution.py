@@ -14,6 +14,7 @@ from tests.support.execution_harness import ExecutionHarness
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.cli.toolang.commands.chat import local
+from toolang.cli.toolang.commands.chat.base import ChatExecutorMetadata
 from toolang.execution.events import RunEvent
 
 
@@ -199,6 +200,11 @@ agic chat(_: Part[]) -> Part[]:
 
     monkeypatch.setattr(local, "SetupWatcher", SetupWatcher)
     monkeypatch.setattr(local, "StateWatcher", StateWatcher)
+    monkeypatch.setattr(
+        local,
+        "host_sandbox_description",
+        lambda: "macOS 27.0 arm64",
+    )
 
     session = local.LocalChatSession(
         harness.setup.layout,
@@ -212,6 +218,10 @@ agic chat(_: Part[]) -> Part[]:
         event_threads.append(threading.get_ident())
 
     try:
+        assert session.executor_metadata == ChatExecutorMetadata(
+            sandbox_selector="host",
+            sandbox_detail="macOS 27.0 arm64",
+        )
         thread_id = session.create_thread()
         session.start_run(
             thread_id,

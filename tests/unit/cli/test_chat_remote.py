@@ -32,6 +32,7 @@ from toolang.execution.types import ControlRef, Local, RunOverride
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
+_HOST_DESCRIPTION = "macOS 27.0 arm64"
 
 
 class _Bytes(httpx.AsyncByteStream):
@@ -51,7 +52,26 @@ def _profile(
 ) -> dict[str, object]:
     return {
         "runtime": {
-            "version": "0.3.9",
+            "version": "v0.3.9",
+            "sandbox": {
+                "driver": driver,
+                "selector": selector or driver,
+                "instance": instance,
+                "description": (None if driver == "docker" else _HOST_DESCRIPTION),
+            },
+        }
+    }
+
+
+def _profile_without_description(
+    *,
+    driver: str = "host",
+    selector: str | None = None,
+    instance: str | None = None,
+) -> dict[str, object]:
+    return {
+        "runtime": {
+            "version": "v0.3.9",
             "sandbox": {
                 "driver": driver,
                 "selector": selector or driver,
@@ -202,10 +222,10 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
     )
     try:
         assert session.executor_metadata == ChatExecutorMetadata(
+            sandbox_selector="docker:python:3.13-slim",
+            sandbox_detail="176191c1528b",
             endpoint="http://runtime.test:7001",
-            version="0.3.9",
-            sandbox="docker:python:3.13-slim",
-            instance=_CONTAINER_ID,
+            version="v0.3.9",
         )
         assert session.run_client is not None
         assert session.run_client.endpoint == "http://runtime.test:7001"
@@ -261,7 +281,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
         (
             {
                 "runtime": {
-                    "version": "0.3.9",
+                    "version": "v0.3.9",
                     "sandbox": {"driver": "host", "instance": None},
                 }
             },
@@ -271,7 +291,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
         (
             _profile(driver="host", instance="a1b2c3d4e5f6"),
             "host",
-            "host sandbox returned an instance ID",
+            "non-docker sandbox returned an instance ID",
         ),
         (
             _profile(
@@ -322,12 +342,13 @@ def test_remote_chat_runtime_identity_allows_additive_profile_fields() -> None:
     identity = remote._runtime_identity(
         {
             "runtime": {
-                "version": "0.3.9",
+                "version": "v0.3.9",
                 "future": True,
                 "sandbox": {
                     "driver": "docker",
                     "selector": "docker:python:3.13-slim",
                     "instance": _CONTAINER_ID,
+                    "description": None,
                     "future": True,
                 },
             }
@@ -335,6 +356,96 @@ def test_remote_chat_runtime_identity_allows_additive_profile_fields() -> None:
     )
 
     assert identity.instance == _CONTAINER_ID
+    assert identity.description is None
+
+
+@pytest.mark.parametrize(
+    ("profile_payload", "expected_description"),
+    (
+        (_profile_without_description(), None),
+        (
+            {
+                "runtime": {
+                    "version": "v0.3.9",
+                    "sandbox": {
+                        "driver": "host",
+                        "selector": "host",
+                        "instance": None,
+                        "description": None,
+                    },
+                }
+            },
+            None,
+        ),
+        (
+            _profile_without_description(
+                driver="docker",
+                selector="docker:python:3.13-slim",
+                instance=_CONTAINER_ID,
+            ),
+            None,
+        ),
+    ),
+)
+def test_remote_chat_runtime_identity_allows_optional_description(
+    profile_payload: dict[str, object],
+    expected_description: str | None,
+) -> None:
+    identity = remote._runtime_identity(profile_payload)
+
+    assert identity.description == expected_description
+
+
+@pytest.mark.parametrize(
+    "profile_payload",
+    (
+        _profile_without_description(),
+        {
+            "runtime": {
+                "version": "v0.4.0-12-g12345678",
+                "sandbox": {
+                    "driver": "host",
+                    "selector": "host",
+                    "instance": None,
+                    "description": None,
+                    "future": True,
+                },
+                "future": True,
+            }
+        },
+    ),
+)
+def test_remote_chat_uses_local_host_description_when_profile_does_not_supply_it(
+    profile_payload: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        remote,
+        "host_sandbox_description",
+        lambda: "Test OS 1.0 arm64",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/healthz":
+            return httpx.Response(200, json={"ok": True})
+        if request.url.path == "/api/v1/profile":
+            return httpx.Response(200, json=profile_payload)
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    session = remote.RemoteChatSession(
+        "http://runtime.test:7001",
+        expected_sandbox="host",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert session.executor_metadata == ChatExecutorMetadata(
+            sandbox_selector="host",
+            sandbox_detail="Test OS 1.0 arm64",
+            endpoint="http://runtime.test:7001",
+            version=remote._runtime_identity(profile_payload).version,
+        )
+    finally:
+        session.close()
 
 
 def test_remote_chat_uses_remote_run_client_native_events() -> None:
@@ -374,8 +485,10 @@ def test_remote_chat_uses_remote_run_client_native_events() -> None:
         session.close()
 
     assert session.executor_metadata == ChatExecutorMetadata(
+        sandbox_selector="host",
+        sandbox_detail=_HOST_DESCRIPTION,
         endpoint="http://runtime.test:7001",
-        version="0.3.9",
+        version="v0.3.9",
     )
     assert [type(item) for item in events] == [RunBegin, RunEnd]
     assert states == [RunAccepted("run_remote")]

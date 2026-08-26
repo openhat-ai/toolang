@@ -15,8 +15,11 @@ from toolang.catalog import CapsManager, JobsManager
 from toolang.cli.toolang.commands.chat.base import RunAccepted
 from toolang.cli.toolang.commands.chat.remote import RemoteChatSession
 from toolang.execution.events import RunBegin, RunEnd, RunEvent
-from toolang.up import AgentCore
+from toolang.up import AgentCore, process as agents
 from tests.support.execution_harness import ExecutionHarness
+
+
+_HOST_DESCRIPTION = "Test OS 1.0 arm64"
 
 
 class _Snapshot:
@@ -43,6 +46,13 @@ agic chat(_: Part[]) -> Part[]:
     core = AgentCore(harness.setup.layout)
     core.setup = _Snapshot(harness.setup)
     core.state = _Snapshot(harness.state)
+    agents.write_runtime_state(
+        core.layout,
+        endpoint="http://runtime.test:7001",
+        started_at="2026-08-26T00:00:00Z",
+        pid=123,
+        sandbox_description=_HOST_DESCRIPTION,
+    )
     app = create_app(
         core,
         CapsManager(core.layout),

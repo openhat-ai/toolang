@@ -1,6 +1,5 @@
 """Formal agent inspection routes."""
 
-from importlib.metadata import version as package_version
 import re
 from typing import Any, Literal
 
@@ -9,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from toolang.api.app import AgentCoreDep
 from toolang.api.schemas import RuntimeIdentityPayload, RuntimeSandboxPayload
 from toolang.common.errors import ToolangError
+from toolang.common.version import toolang_version
 from toolang.execution.runnables import effective_agics, runnable_binding_defaults
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.types import ModelStepNoted
@@ -146,29 +146,56 @@ def _profile_runtime(*, runtime_state: dict[str, object]) -> RuntimeIdentityPayl
     sandbox_spec = _runtime_sandbox_spec(runtime_state)
     driver = _runtime_token(sandbox_spec.partition(":")[0], label="sandbox driver")
     return RuntimeIdentityPayload(
-        version=_runtime_version(),
+        version=_runtime_label(toolang_version(), label="Toolang version"),
         sandbox=RuntimeSandboxPayload(
             driver=driver,
             selector=_runtime_label(sandbox_spec, label="sandbox selector"),
             instance=_runtime_instance(runtime_state, driver=driver),
+            description=_runtime_description(runtime_state, driver=driver),
         ),
     )
 
 
-def _runtime_version() -> str:
-    return _runtime_label(package_version("toolang"), label="Toolang version")
-
-
 def _runtime_instance(runtime_state: dict[str, object], *, driver: str) -> str | None:
-    if driver == "host":
-        return None
     raw = runtime_state.get("sandbox_instance")
+    if driver != "docker":
+        if raw is not None:
+            raise HTTPException(
+                status_code=500,
+                detail="runtime sandbox instance is invalid",
+            )
+        return None
     if not isinstance(raw, str) or len(raw.strip()) < 12:
         raise HTTPException(
             status_code=500,
             detail="runtime sandbox instance is unavailable",
         )
     return _runtime_token(raw.strip(), label="sandbox instance")
+
+
+def _runtime_description(
+    runtime_state: dict[str, object], *, driver: str
+) -> str | None:
+    raw = runtime_state.get("sandbox_description")
+    if driver == "docker":
+        if raw is not None:
+            raise HTTPException(
+                status_code=500,
+                detail="runtime sandbox description is invalid",
+            )
+        return None
+    if not isinstance(raw, str):
+        raise HTTPException(
+            status_code=500,
+            detail="runtime sandbox description is unavailable",
+        )
+    text = raw.strip()
+    if not text or text != raw or not text.isprintable():
+        raise HTTPException(
+            status_code=500,
+            detail="runtime sandbox description is invalid",
+        )
+    return text
 
 
 def _runtime_token(value: str, *, label: str) -> str:

@@ -62,6 +62,7 @@ def _request(
             "TOOLANG_HOST_GATEWAY": "wrong-gateway",
             "TOOLANG_ROOT": str(root),
             "TOOLANG_SANDBOX": "host",
+            "TOOLANG_SANDBOX_DESCRIPTION": "wrong-host-description",
         },
         dotenv_envs={
             "COMPLEX": "line one\nline \"two\" 'three'\r\\tail${HOME}",
@@ -80,8 +81,14 @@ def _request(
 
 
 def test_host_sandbox_parses_own_spec_and_prepares_local_process(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr(
+        host_sandbox,
+        "host_sandbox_description",
+        lambda: "macOS 27.0 arm64",
+    )
     sandbox = create_sandbox("host", config={})
 
     assert isinstance(sandbox, Sandbox)
@@ -90,8 +97,65 @@ def test_host_sandbox_parses_own_spec_and_prepares_local_process(
     assert plan.sandbox == "host"
     assert plan.command[-4:] == ("serve", "alice", "--port", "8123")
     assert plan.working_directory == tmp_path / "agents" / "alice"
+    assert plan.envs[host_sandbox.HOST_SANDBOX_DESCRIPTION_ENV] == ("macOS 27.0 arm64")
     with pytest.raises(ValueError, match="does not accept"):
         sandbox.prepare("", _request(tmp_path))
+
+
+def test_host_sandbox_description_formats_macos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def system() -> str:
+        nonlocal calls
+        calls += 1
+        return "Darwin"
+
+    host_sandbox.host_sandbox_description.cache_clear()
+    monkeypatch.setattr(host_sandbox.platform, "system", system)
+    monkeypatch.setattr(host_sandbox.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(
+        host_sandbox.platform,
+        "mac_ver",
+        lambda: ("27.0", ("", "", ""), "arm64"),
+    )
+    assert host_sandbox.host_sandbox_description() == "macOS 27.0 arm64"
+    assert host_sandbox.host_sandbox_description() == "macOS 27.0 arm64"
+    assert calls == 1
+    host_sandbox.host_sandbox_description.cache_clear()
+
+
+def test_host_sandbox_description_formats_linux_distribution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host_sandbox.host_sandbox_description.cache_clear()
+    monkeypatch.setattr(host_sandbox.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(host_sandbox.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        host_sandbox.platform,
+        "freedesktop_os_release",
+        lambda: {"NAME": "Ubuntu", "VERSION_ID": "24.04"},
+    )
+
+    assert host_sandbox.host_sandbox_description() == "Ubuntu 24.04 x86_64"
+    host_sandbox.host_sandbox_description.cache_clear()
+
+
+def test_host_sandbox_description_formats_windows_without_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host_sandbox.host_sandbox_description.cache_clear()
+    monkeypatch.setattr(host_sandbox.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(host_sandbox.platform, "machine", lambda: "AMD64")
+    monkeypatch.setattr(
+        host_sandbox.platform,
+        "win32_ver",
+        lambda: ("11", "10.0.26100", "SP0", "Multiprocessor Free"),
+    )
+
+    assert host_sandbox.host_sandbox_description() == "Windows 11 AMD64"
+    host_sandbox.host_sandbox_description.cache_clear()
 
 
 def test_none_sandbox_selector_is_not_supported() -> None:

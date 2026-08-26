@@ -70,29 +70,27 @@ ChatRunState: TypeAlias = RunAccepted | RunDisconnected | RunRecovered | RunBloc
 
 @dataclass(frozen=True, slots=True)
 class ChatExecutorMetadata:
-    """Structured executor identity rendered by the Chat banner."""
+    """Structured executor source identity rendered by the Chat banner."""
 
+    sandbox_selector: str
+    sandbox_detail: str
     endpoint: str | None = None
     version: str | None = None
-    sandbox: str | None = None
-    instance: str | None = None
 
     def __post_init__(self) -> None:
         values = {
+            "sandbox_selector": self.sandbox_selector,
+            "sandbox_detail": self.sandbox_detail,
             "endpoint": self.endpoint,
             "version": self.version,
-            "sandbox": self.sandbox,
-            "instance": self.instance,
         }
         for label, value in values.items():
-            if value is not None and (not value or value != value.strip()):
+            if value is not None and (
+                not value or value != value.strip() or not value.isprintable()
+            ):
                 raise ValueError(f"chat executor {label} must be a nonempty label")
         if (self.endpoint is None) != (self.version is None):
             raise ValueError("remote chat executor requires endpoint and version")
-        if (self.sandbox is None) != (self.instance is None):
-            raise ValueError("chat executor sandbox requires selector and instance")
-        if self.endpoint is None and self.sandbox is not None:
-            raise ValueError("embedded chat executor cannot have a sandbox")
 
 
 class ChatClient(Protocol):

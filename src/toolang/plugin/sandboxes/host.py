@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import cache
 import os
 from pathlib import Path
+import platform
 import signal
 import subprocess
 import sys
@@ -22,6 +24,8 @@ from toolang.base.types.sandbox import (
     SandboxRef,
     SandboxRequest,
 )
+
+HOST_SANDBOX_DESCRIPTION_ENV = "TOOLANG_SANDBOX_DESCRIPTION"
 
 
 @dataclass(slots=True)
@@ -43,6 +47,8 @@ class HostSandbox:
     def prepare(self, spec: str | None, request: SandboxRequest) -> SandboxPlan:
         if spec is not None:
             raise ValueError("host sandbox does not accept a spec")
+        envs = dict(request.envs)
+        envs[HOST_SANDBOX_DESCRIPTION_ENV] = host_sandbox_description()
         return SandboxPlan(
             sandbox=self.name,
             command=_local_command(request.command),
@@ -50,7 +56,7 @@ class HostSandbox:
             output=request.output,
             log_path=request.log_path,
             endpoint=request.endpoint,
-            envs=dict(request.envs),
+            envs=envs,
         )
 
     async def launch(self, plan: SandboxPlan) -> SandboxRef:
@@ -130,6 +136,45 @@ def create_sandbox(config: Mapping[str, Any]) -> Sandbox:
     """Create built-in local sandbox."""
 
     return HostSandbox(dict(config))
+
+
+@cache
+def host_sandbox_description() -> str:
+    """Return one compact, human-readable description of the current host."""
+
+    system = _fact(platform.system()) or "Unknown"
+    machine = _fact(platform.machine()) or "unknown"
+    if system == "Darwin":
+        release, _version_info, detected_machine = platform.mac_ver()
+        return _description(
+            "macOS",
+            _fact(release),
+            machine if machine != "unknown" else _fact(detected_machine),
+        )
+    if system == "Linux":
+        try:
+            release_info = platform.freedesktop_os_release()
+        except OSError:
+            name = "Linux"
+            release = _fact(platform.release())
+        else:
+            name = _fact(release_info.get("NAME", "Linux")) or "Linux"
+            release = _fact(
+                release_info.get("VERSION_ID", "") or release_info.get("VERSION", "")
+            )
+        return _description(name, release, machine)
+    if system == "Windows":
+        release, _version, _service_pack, _product_type = platform.win32_ver()
+        return _description("Windows", _fact(release), machine)
+    return _description(system, _fact(platform.release()), machine)
+
+
+def _description(name: str, version: str, machine: str) -> str:
+    return " ".join(value for value in (name, version, machine) if value)
+
+
+def _fact(value: str) -> str:
+    return " ".join(value.split())
 
 
 def _launch(plan: SandboxPlan) -> subprocess.Popen[bytes]:

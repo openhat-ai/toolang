@@ -213,20 +213,30 @@ blocks further submissions until Chat restarts; read-only commands and exit
 remain available. Chat never retries a submission or falls back to embedded
 execution after selecting the remote runtime.
 
-The startup banner keeps the TUI process and executor identities separate. Its
-metadata order is `Toolang`, `executor`, optional `sandbox`, then `home`:
+The startup banner keeps the TUI process, executor, and sandbox identities
+separate. Its metadata order is always `Toolang`, `executor`, `sandbox`, then
+`home`:
 
 ```text
-Toolang   v0.3.0+69439a4e*
-executor  http://localhost:7001 · v0.3.0
-sandbox   docker:pyslim-3.11 · 2f0f8934abcd
+Toolang   v0.2.7-87-g69439a4e*
+executor  http://localhost:7001 · v0.2.7-88-gc73484a9
+sandbox   docker:python:3.13-slim · 5741cca76066
 home      ~/.toolang/agents/eve
 ```
 
-A remote host omits the `sandbox` row. Embedded Chat instead renders
-`executor  embedded` and also omits that row. Remote endpoints are terminal
-hyperlinks. The optional sandbox adds one content row without changing the
-panel's vertical padding.
+Host execution, including embedded Chat, renders a plugin-supplied operating
+system identity such as `sandbox  host · macOS 27.0 arm64`. Remote
+endpoints are terminal hyperlinks. A remote executor version is omitted only
+when it exactly matches the known, clean TUI version; matching dirty versions
+and `unknown` remain visible because they do not prove identical source.
+Adjacent identity values use a dim ` · ` separator, and every form keeps the
+same panel padding.
+
+The sandbox description is optional runtime-profile presentation metadata. Its
+absence or a `null` value does not block Chat: host execution uses the local host
+sandbox plugin description, and Docker continues to use the reported container
+instance. Profile readers ignore unknown additive fields, allowing the TUI and
+executor to use different source releases without coupling their deployment.
 
 The chat TUI keeps only live mutable blocks in its live area. Stable blocks
 move into terminal scrollback progressively instead of waiting for the whole

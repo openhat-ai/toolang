@@ -1,20 +1,33 @@
-"""Toolang CLI version helpers."""
+"""Toolang package and source version resolution."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from functools import cache
 from importlib.metadata import distribution as package_distribution
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 import json
 from pathlib import Path
-import subprocess
 import tomllib
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
+_BUILD_INFO_NAME = "_build_info.json"
+_UNKNOWN_SOURCE_VERSION = "unknown"
 
+
+@cache
 def toolang_version() -> str:
-    return f"{base_toolang_version()}{source_state_suffix()}"
+    """Return the source version captured at process startup."""
+
+    detected, source = development_source()
+    if detected:
+        source_root = source if source is not None else source_project_root()
+        if source_root is None:
+            return _UNKNOWN_SOURCE_VERSION
+        return repository_source_version(source_root) or _UNKNOWN_SOURCE_VERSION
+    return embedded_source_version()
 
 
 def base_toolang_version() -> str:
@@ -65,44 +78,49 @@ def development_source() -> tuple[bool, Path | None]:
     return True, _local_file_url(url) if isinstance(url, str) else None
 
 
-def source_state_suffix() -> str:
-    source_root = source_tree_root()
-    if source_root is None:
-        return ""
-    short_sha = git_output(source_root, "rev-parse", "--short", "HEAD")
-    if short_sha is None:
-        return ""
-    dirty = git_output(source_root, "status", "--short")
-    if dirty is None:
-        return f"+{short_sha}"
-    dirty_suffix = "*" if dirty else ""
-    return f"+{short_sha}{dirty_suffix}"
+def embedded_source_version() -> str:
+    """Return validated source provenance from an installed artifact."""
 
-
-def git_output(source_root: Path, *args: str) -> str | None:
+    path = Path(__file__).resolve().parents[1] / _BUILD_INFO_NAME
     try:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=source_root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            check=False,
-            timeout=2,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _UNKNOWN_SOURCE_VERSION
+    if not isinstance(payload, Mapping):
+        return _UNKNOWN_SOURCE_VERSION
+
+    schema = payload.get("schema")
+    source_version = payload.get("source_version")
+    revision = payload.get("revision")
+    dirty = payload.get("dirty")
+    if (
+        type(schema) is not int
+        or schema != 1
+        or not isinstance(source_version, str)
+        or not source_version
+        or (revision is not None and not isinstance(revision, str))
+        or (dirty is not None and type(dirty) is not bool)
+    ):
+        return _UNKNOWN_SOURCE_VERSION
+    return source_version
 
 
-def source_tree_root() -> Path | None:
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        if (parent / ".git").exists():
-            return parent
-    return None
+def repository_source_version(source_root: Path) -> str | None:
+    """Describe tracked source state without requiring a Git executable."""
+
+    from dulwich import porcelain
+    from dulwich.errors import NotGitRepository, ObjectMissing
+    from dulwich.repo import Repo
+
+    try:
+        with Repo.discover(source_root) as repository:
+            source_version = porcelain.describe(repository, abbrev=8)
+            status = porcelain.status(repository, untracked_files="no")
+            if any(status.staged.values()) or status.unstaged:
+                return f"{source_version}*"
+            return source_version
+    except (KeyError, NotGitRepository, ObjectMissing, OSError, ValueError):
+        return None
 
 
 def source_project_root() -> Path | None:

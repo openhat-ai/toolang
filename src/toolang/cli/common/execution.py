@@ -10,11 +10,11 @@ import click
 import typer
 
 from toolang.common.ids import IdIssuer
+from toolang.common.version import toolang_version
 from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.store import RunStore
 
 from .context import context_layout
-from .version import toolang_version
 
 
 @dataclass(frozen=True, slots=True)

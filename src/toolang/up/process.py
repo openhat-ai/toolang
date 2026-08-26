@@ -531,6 +531,7 @@ def write_runtime_state(
     started_at: str,
     pid: int | None,
     sandbox: str = "host",
+    sandbox_description: str | None = None,
     sandbox_instance: str | None = None,
     models: Sequence[str] | None = None,
     status: str = "running",
@@ -552,6 +553,8 @@ def write_runtime_state(
     }
     if sandbox_instance is not None:
         payload["sandbox_instance"] = sandbox_instance
+    if sandbox_description is not None:
+        payload["sandbox_description"] = sandbox_description
     _save_runtime_state(path, payload)
     return path
 

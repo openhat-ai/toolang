@@ -32,8 +32,8 @@ from toolang.execution.events import (
 )
 from toolang.execution.runnables import parse_runnable_ref
 from toolang.common.errors import ToolangError
+from toolang.common.version import toolang_version
 
-from toolang.cli.common.version import toolang_version
 from toolang.cli.common.execution_progress.config import DEFAULT_MAX_PROGRESS_WIDTH
 from . import blocks
 from . import events

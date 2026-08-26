@@ -638,10 +638,13 @@ script runs and TUI execution do not consume this endpoint.
 
 - profile metadata
 - runtime identity:
-  - the server process's Toolang package `version`
+  - the server process's Toolang source `version`
   - `sandbox.driver`
   - the complete `sandbox.selector`
-  - the complete, unprojected `sandbox.instance` for non-host runtimes
+  - the complete, unprojected `sandbox.instance` for Docker, otherwise `null`
+  - the host-plugin-supplied `sandbox.description` for non-Docker runtimes,
+    otherwise `null`
+
 - environment summary
 - overview metrics:
 
@@ -650,6 +653,13 @@ script runs and TUI execution do not consume this endpoint.
 | `threads` | Thread totals grouped by chat, chore, and task |
 | `steps` | Step totals grouped by `model_call`, `tool_call`, and `runtime` |
 | `tokens` | Aggregated input, output, and total token usage |
+
+`sandbox.description` is optional presentation metadata. Its absence or a `null`
+value does not block Chat: host execution falls back to the local host sandbox
+plugin description, while Docker continues to use `sandbox.instance`. Runtime
+profile readers ignore unknown additive fields, so TUI and executor releases can
+be upgraded independently. Breaking protocol changes require a separately
+versioned contract rather than making an additive display field mandatory.
 
 `GET /api/v1/models` returns the selectable model routes inside the server's
 current `AgentSetup.ceiling`. Runnable `models` directives are applied when a
@@ -807,17 +817,18 @@ executor. Explicit Chat policy options become remotely validated session
 commands, while the server keeps ownership of setup, environment, providers,
 working directory, and sandbox.
 
-The banner always shows the TUI process version and host-side agent home. Its
-metadata order is `Toolang`, `executor`, optional `sandbox`, then `home`.
-Embedded execution uses `executor  embedded`. Remote execution links the
-normalized endpoint and follows it with the server version, for example
-`executor  http://localhost:7001 · v0.3.9`. A non-host runtime adds exactly one
-row containing its complete selector and a presentation-only instance label.
-Docker container IDs are shortened to the conventional twelve characters, for
-example
-`sandbox   docker:python:3.13-slim · a1b2c3d4e5f6`. Host execution omits this
-row. Structured client metadata and `/api/v1/profile` retain the complete
-instance value; shortening occurs only in the terminal renderer.
+The banner always shows the TUI process version, executor, sandbox, and
+host-side agent home in that order. Embedded execution uses
+`executor  embedded`. Remote execution links the normalized endpoint and follows
+it with the server version when it is not a confirmed clean match, for example
+`executor  http://localhost:7001 · v0.3.9`. Docker displays its complete selector
+and conventional twelve-character container ID, for example
+`sandbox  docker:python:3.13-slim · a1b2c3d4e5f6`. Host execution displays the
+ready OS description produced by the host sandbox plugin, for example
+`sandbox  host · macOS 27.0 arm64`. The middle-dot separators use the dim style,
+and OS build identifiers are omitted. `/api/v1/profile` retains the complete
+Docker instance; the remote Chat client validates and shortens it before passing
+structured selector and detail fields to the terminal renderer.
 Job thread ids are inspectable and controllable through thread and run commands,
 but `chat` does not implicitly reopen tasks or create manual chore runs.
 

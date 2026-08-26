@@ -39,7 +39,7 @@ longest metadata value fits without wrapping:
 ```text
 ╭────────────────────────────────────────────────────────╮
 │                                                        │
-│  ████           ██    Toolang 0.3.0+cd50c7f*           │
+│  ████           ██    Toolang v0.2.7-87-gcd50c7f*      │
 │   ██   ⬤   ⬤    ██    home      ~/.toolang/agents/eve  │
 │   ██          ████    executor  local                  │
 │                                                        │

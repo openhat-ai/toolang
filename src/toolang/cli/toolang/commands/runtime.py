@@ -34,7 +34,7 @@ from ...common.context import (
     user_call,
 )
 from ...common.output import active_agent_error, echo_error
-from ...common.version import development_source
+from toolang.common.version import development_source
 
 if TYPE_CHECKING:
     from toolang.up.sandbox import SandboxState, LaunchSpec

@@ -32,6 +32,7 @@ from toolang.execution.executor.resources import (
     agent_model_targets,
     validate_agent_ceiling,
 )
+from toolang.plugin.sandboxes.host import HOST_SANDBOX_DESCRIPTION_ENV
 from toolang.setup import AgentSetup
 from toolang.state import watcher as state_watcher
 from toolang.state.state import AgentState
@@ -221,6 +222,7 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
                 pid=os.getpid(),
                 models=ceiling.models or (),
                 sandbox=environ.get("TOOLANG_SANDBOX", "host"),
+                sandbox_description=environ.get(HOST_SANDBOX_DESCRIPTION_ENV),
                 sandbox_instance=environ.get("TOOLANG_SANDBOX_INSTANCE"),
             )
             scheduler = JobScheduler(

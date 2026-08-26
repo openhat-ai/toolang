@@ -245,10 +245,11 @@ class RuntimeSandboxPayload(ApiRequest):
     driver: StrictText
     selector: StrictText
     instance: StrictText | None = None
+    description: StrictText | None = None
 
 
 class RuntimeIdentityPayload(ApiRequest):
-    """Version and sandbox identity of the current server process."""
+    """Source version and sandbox identity of the current server process."""
 
     version: StrictText
     sandbox: RuntimeSandboxPayload
