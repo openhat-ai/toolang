@@ -184,21 +184,23 @@ def _terminal_status_color(status: str) -> str | None:
     }.get(status)
 
 
-def _run_footer_style(status: str) -> str:
-    return "dim" if status == "succeeded" else _terminal_status_color(status) or "none"
+def _run_footer_title_style(status: str) -> str:
+    return _terminal_status_color(status) or "none"
 
 
-def _wrap_run_footer_content(
+def _wrap_run_footer_facts(
     *,
-    title: str,
     facts: tuple[str, ...],
     console: Console,
     width: int,
 ) -> list[Text]:
-    lines = list(Text(title).wrap(console, width, overflow="fold")) or [Text()]
+    lines: list[Text] = []
     for fact in facts:
+        if not lines:
+            lines.extend(Text(fact).wrap(console, width, overflow="fold") or [Text()])
+            continue
         current = lines[-1]
-        separator = " · " if current.plain else ""
+        separator = " · "
         if display_width(current.plain + separator + fact) <= width:
             current.append(separator + fact)
             continue
@@ -228,31 +230,49 @@ class _RunFooter:
             if self.operation is not None
             else f"{self.run_id} {self.status}"
         )
-        footer_style = _run_footer_style(self.status)
+        title_style = _run_footer_title_style(self.status)
         prefix = "∎ "
         prefix_width = display_width(prefix)
         if width <= prefix_width:
             yield Text(
                 truncate(f"{prefix}{title}", width),
-                style=footer_style,
+                style=title_style,
                 no_wrap=True,
             )
             return
 
-        content_lines = _wrap_run_footer_content(
-            title=title,
+        title_text = f"{prefix}{title}"
+        facts_text = " · ".join(self.facts)
+        separating_width = width - display_width(title_text) - display_width(facts_text)
+        if facts_text and separating_width >= 2:
+            line = Text(no_wrap=True)
+            line.append(title_text, style=title_style)
+            line.append(" " * separating_width)
+            line.append(facts_text, style="dim")
+            yield line
+            return
+
+        continuation = " " * prefix_width
+        title_lines = Text(title).wrap(
+            console,
+            width - prefix_width,
+            overflow="fold",
+        ) or [Text()]
+        for index, title_line in enumerate(title_lines):
+            line = Text(no_wrap=True)
+            line.append(prefix if index == 0 else continuation, style=title_style)
+            line.append(title_line.plain, style=title_style)
+            yield line
+
+        fact_lines = _wrap_run_footer_facts(
             facts=self.facts,
             console=console,
             width=width - prefix_width,
         )
-        continuation = " " * prefix_width
-        for index, content_line in enumerate(content_lines):
-            line = Text(
-                prefix if index == 0 else continuation,
-                style=footer_style,
-                no_wrap=True,
-            )
-            line.append_text(content_line)
+        for fact_line in fact_lines:
+            line = Text(no_wrap=True)
+            line.append(continuation)
+            line.append(fact_line.plain, style="dim")
             yield line
 
 

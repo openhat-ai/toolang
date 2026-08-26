@@ -21,6 +21,7 @@ from toolang.cli.common.execution_progress import (
     ProgressUpdate,
 )
 from toolang.cli.common.execution_progress.formatting import display_width
+from toolang.cli.common.execution_progress.rich_rendering import run_footer_renderable
 from toolang.cli.common.script_progress import ScriptRunPresenter
 from toolang.cli.common.script_progress.console import ProgressConsole
 from toolang.execution.events import (
@@ -141,10 +142,60 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
         for line in output.splitlines()
         if line.startswith("∎ ") and "run_one succeeded" in line
     )
-    assert footer.startswith("∎ run_one succeeded · 2.0s · 1 model call")
+    assert footer.startswith("∎ run_one succeeded  ")
+    assert footer.endswith("2.0s · 1 model call · ↑3.4k ↓86 ~$0.006")
+    assert "succeeded ·" not in footer
+    assert display_width(footer) == 120
     assert "┌" not in output
     assert "└" not in output
     assert "2.0s · 1 model call · ↑3.4k ↓86 ~$0.006" in output
+
+
+def test_run_footer_right_aligns_long_facts_and_indents_narrow_facts() -> None:
+    facts = [
+        "1m 25s",
+        "26 runs",
+        "32 model calls",
+        "10 tool calls",
+        "↑42.3k(17.5%) ↓14.7k ~$0.009025",
+    ]
+
+    wide_stream = StringIO()
+    ProgressConsole(wide_stream, width=120).write_renderable(
+        run_footer_renderable(
+            run_id="run_rm5pxy5e",
+            status="succeeded",
+            facts=facts,
+            max_width=120,
+            gap_before=False,
+        )
+    )
+    wide_lines = wide_stream.getvalue().splitlines()
+
+    assert len(wide_lines) == 1
+    assert wide_lines[0].startswith("∎ run_rm5pxy5e succeeded  ")
+    assert wide_lines[0].endswith(facts[-1])
+    assert "succeeded ·" not in wide_lines[0]
+    assert display_width(wide_lines[0]) == 120
+
+    narrow_stream = StringIO()
+    ProgressConsole(narrow_stream, width=80).write_renderable(
+        run_footer_renderable(
+            run_id="run_rm5pxy5e",
+            status="succeeded",
+            facts=facts,
+            max_width=120,
+            gap_before=False,
+        )
+    )
+    narrow_lines = narrow_stream.getvalue().splitlines()
+
+    assert narrow_lines == [
+        "∎ run_rm5pxy5e succeeded",
+        "  1m 25s · 26 runs · 32 model calls · 10 tool calls",
+        "  ↑42.3k(17.5%) ↓14.7k ~$0.009025",
+    ]
+    assert all(display_width(line) <= 80 for line in narrow_lines)
 
 
 @pytest.mark.parametrize("tty", [False, True])

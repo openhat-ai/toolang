@@ -14,7 +14,7 @@ child-Run closure rows, verbosity-specific structures, and the `·`, `↳`, and
 • Mapped all 6 items in parallel
   31.0s · 6 runs · 12 model calls · 8 tool calls · ↑18.4k ↓5.2k $0.00        run_root.2
 
-∎ run_nrqpt0mf succeeded · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
+∎ run_nrqpt0mf succeeded        1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
 This file remains as a compatibility pointer for existing documentation links.

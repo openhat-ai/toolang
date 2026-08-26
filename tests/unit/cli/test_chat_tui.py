@@ -526,7 +526,9 @@ def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
     rendered = _render_text(app.finalized[0].render())
     lines = rendered.splitlines()
     assert lines[0] == ""
-    assert lines[1] == "∎ run_1 canceled · 3.0s"
+    assert lines[1].startswith("∎ run_1 canceled  ")
+    assert lines[1].endswith("3.0s")
+    assert rendering.display_len(lines[1]) == 80
     assert lines[2] == ""
 
 
@@ -633,7 +635,11 @@ def test_chat_root_footer_keeps_short_facts_inline() -> None:
     block.update(_run_end(run_id="run_pmqv7gfc", status="succeeded"))
 
     lines = [line for line in _render_text(block.render()).splitlines() if line]
-    assert lines == ["∎ run_pmqv7gfc succeeded · 3.0s"]
+    assert len(lines) == 1
+    assert lines[0].startswith("∎ run_pmqv7gfc succeeded  ")
+    assert lines[0].endswith("3.0s")
+    assert "succeeded ·" not in lines[0]
+    assert rendering.display_len(lines[0]) == 80
 
 
 def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> None:
@@ -654,8 +660,10 @@ def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> No
     ]
 
     assert all(len(line) <= 32 for line in lines)
-    assert lines[0].startswith("∎ run_1 failed · ")
+    assert lines[0] == "∎ run_1 failed"
     assert all(line.startswith("  ") for line in lines[1:])
+    assert "3.0s" in lines[1]
+    assert "6 runs" in "\n".join(lines)
     assert all("─" not in line for line in lines)
 
 
@@ -1069,17 +1077,16 @@ def test_chat_canceled_statement_uses_one_diagnostic_and_continuation_facts() ->
 
 
 @pytest.mark.parametrize(
-    ("status", "color", "dim"),
+    ("status", "color"),
     [
-        ("succeeded", None, True),
-        ("failed", "red", False),
-        ("canceled", "yellow", False),
+        ("succeeded", None),
+        ("failed", "red"),
+        ("canceled", "yellow"),
     ],
 )
-def test_chat_run_footer_uses_status_intensity_and_color(
+def test_chat_run_footer_styles_caption_separately_from_facts(
     status: Literal["succeeded", "failed", "canceled"],
     color: str | None,
-    dim: bool,
 ) -> None:
     root_summary = blocks.RunStopBlock.create(_run_begin())
     root_summary.update(_run_end(status=status))
@@ -1090,15 +1097,20 @@ def test_chat_run_footer_uses_status_intensity_and_color(
     ]
 
     assert _render_text(root_summary.render()).strip().startswith("∎ ")
-    for segment in segments:
-        assert segment.style is not None
-        assert bool(segment.style.dim) is dim
-        assert not segment.style.bold
-        if color is None:
-            assert segment.style.color is None
-        else:
-            assert segment.style.color is not None
-            assert segment.style.color.name == color
+    caption = next(segment for segment in segments if "∎ " in segment.text)
+    facts = next(segment for segment in segments if "3.0s" in segment.text)
+    assert caption.style is not None
+    assert not caption.style.dim
+    assert not caption.style.bold
+    if color is None:
+        assert caption.style.color is None
+    else:
+        assert caption.style.color is not None
+        assert caption.style.color.name == color
+    assert facts.style is not None
+    assert facts.style.dim
+    assert facts.style.color is None
+    assert not facts.style.bold
 
 
 def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:

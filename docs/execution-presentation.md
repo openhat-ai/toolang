@@ -289,23 +289,28 @@ root-owned error row. There is no separate diagnostic marker.
 Script and Chat end a root Run with the same footer:
 
 ```text
-∎ run_nrqpt0mf succeeded · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
-∎ run_nrqpt0mf failed · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
-∎ run_nrqpt0mf canceled · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
+∎ run_nrqpt0mf succeeded        1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
+∎ run_nrqpt0mf failed           1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
+∎ run_nrqpt0mf canceled         1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
 A CLI retry or rerun identifies the operation in the same footer instead of
 appending a separate result line:
 
 ```text
-∎ run_zvczap2h: retry succeeded · 2.0s · 1 model call
+∎ run_zvczap2h: retry succeeded        2.0s · 1 model call
 ```
 
 The U+220E END OF PROOF character marks the complete root Run; square brackets
-do not frame the footer. Successful footers are dim without a color. Failed and
-canceled footers use normal intensity across the entire line, with red for
-failure and yellow for cancellation. Narrow terminals wrap the caption and
-facts with a two-cell hanging indent matching the marker and following space.
+do not frame the footer. The Run caption stays at the left while facts align to
+the available width's right edge, separated by at least two spaces and no
+centered dot before the first fact. When both fields do not fit, the caption is
+followed by facts wrapped on two-cell-indented continuation lines.
+
+The marker, Run identity, operation, and status use normal intensity. A
+successful caption uses the terminal's default color; failed and canceled
+captions use red and yellow respectively. Facts always use dim intensity and
+the terminal's default color, independent of status.
 
 The footer owns total duration and whole-tree Run facts. Script does not append
 a separate `Run: RUN_ID` line. Errors before `RunBegin` are reported outside
