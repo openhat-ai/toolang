@@ -19,7 +19,7 @@ class ScriptRunPresenter(RunTracer):
     def __init__(
         self,
         *,
-        run_id: str,
+        run_id: str | None,
         operation: str | None = None,
         stream: TextIO | None = None,
         width: int | None = None,
@@ -37,6 +37,8 @@ class ScriptRunPresenter(RunTracer):
 
     async def on_event(self, event: RunEvent) -> None:
         if isinstance(event, RunBegin) and event.parent is None:
+            if self.run_id is None:
+                self.run_id = event.run
             self._begin_root(event)
 
         self.console.apply(self._projector.handle(event))

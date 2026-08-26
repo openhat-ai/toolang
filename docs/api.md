@@ -185,7 +185,7 @@ Foreground runtime port selection depends on the agent mode:
 | --- | --- | --- |
 | Resident | Local managed name such as `alice` | Reuse the agent's last port when available, otherwise choose from `7001-7999` |
 | Visiting | Remote selector such as `brice/alice` or `https://toolang.ai/alice.too` | Reuse the visiting root's last port when available, otherwise choose an OS temporary port |
-| Script run | Local `.too` path with an agic or flow name | No HTTP runtime port; the executable runs directly in the CLI process |
+| Script run | Local `.too` path with an agic or flow name | No port for embedded host execution; attached and temporary guest execution use the selected AgentServer endpoint |
 | Roaming file runtime | Local `.too` path with `--inbox` and no agic name | Choose an OS temporary port |
 
 
@@ -222,12 +222,18 @@ Behavior:
 - TTY progress uses color and live replacement; non-TTY progress is stable,
   append-only, and contains no ANSI control sequences
 - `-q` or `--quiet` suppresses prepare and execution progress
+- `--sandbox SELECTOR` selects the execution sandbox for this invocation; an
+  already-running compatible AgentServer is attached instead
+- `--dev PATH` supplies a Toolang wheel, or a directory containing wheels, when
+  this command starts a temporary non-host AgentServer
 - `--default model=SELECTOR` supplies the invocation's setup model binding
 - `--limit FIELD=VALUE` overrides one run-limit field; it may be repeated
 - `--allow DOMAIN=SELECTORS` sets model, tool, cap, or cap-kind allow fields and
   may be repeated
-- execution happens directly in the current CLI process; script run does not
-  currently accept `--sandbox`
+- host execution remains embedded when no AgentServer is active; a selected
+  non-host sandbox starts a temporary AgentServer and cleans it up after the run
+- an explicit sandbox that does not match an active AgentServer is rejected
+  before creating a thread or run; `--dev` cannot modify an active AgentServer
 - `PY_LOG=toolang.execution=info toolang a.too summarize ...` writes runtime logs
   under `.toolang/agents/<agent>/.runtime/logs/<runnable>/<run_id>.log`
 - `PY_LOG=debug toolang a.too summarize ...` also writes lower-level provider
@@ -480,7 +486,8 @@ Agent entrypoints also share one logging policy resolver:
 | --- | --- |
 | `toolang run` | `stderr` |
 | `toolang start` | `agent_log` under the agent `.runtime` directory |
-| local `.too` script run | `run_log` under the agent `.runtime` directory when `PY_LOG` is set, otherwise `none` |
+| embedded host `.too` script run | `run_log` under the agent `.runtime` directory when `PY_LOG` is set, otherwise `none` |
+| attached or temporary `.too` script run | AgentServer output remains in its `agent_log`; Script progress and result output retain their stderr/stdout split |
 
 The lifecycle persists a versioned recovery reference immediately after the
 workload is created, then attaches process-local output observers and performs
@@ -505,6 +512,9 @@ staging directory is cleaned manually.
 
 Docker uses the engine's default missing-image pull behavior. Its guest script
 quietly bootstraps uv and installs the selected package with `uv tool install`.
+For a source-local roaming agent, Docker overlays linked `agent.too` and
+`config.toml` targets as explicit read-only guest files so host symlinks do not
+become broken paths in the container.
 Successful installation suppresses ensurepip chatter, pip's container root-user
 warning, package lists, and uv progress bars; installer failure stderr remains
 available. Before execution, the guest validates that the installed CLI

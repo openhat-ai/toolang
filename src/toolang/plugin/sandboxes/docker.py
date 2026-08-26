@@ -96,6 +96,29 @@ _STARTUP_EVENT_TRANSITIONS = {
 }
 
 
+def _linked_agent_file_mounts(
+    request: SandboxRequest,
+) -> tuple[SandboxMount, ...]:
+    """Keep source-local roaming agent links readable in the guest."""
+
+    mounts: list[SandboxMount] = []
+    for name in ("agent.too", "config.toml"):
+        local_path = request.local_home / name
+        if not local_path.is_symlink():
+            continue
+        target = local_path.resolve(strict=True)
+        if not target.is_file():
+            raise ValueError(f"linked agent file is not a regular file: {local_path}")
+        mounts.append(
+            SandboxMount(
+                target,
+                request.hosted_home / name,
+                read_only=True,
+            )
+        )
+    return tuple(mounts)
+
+
 @dataclass(slots=True)
 class DockerSandbox:
     """Stage and run the AgentServer as a Docker container's main workload."""
@@ -245,6 +268,7 @@ class DockerSandbox:
         mounts = [
             *request.mounts,
             SandboxMount(request.local_home, request.hosted_home),
+            *_linked_agent_file_mounts(request),
             SandboxMount(
                 guest_env_path,
                 request.hosted_home / ".env",

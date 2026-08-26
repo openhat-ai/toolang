@@ -8,7 +8,6 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from decimal import Decimal
 import json
-import re
 import threading
 from typing import Any, cast
 from urllib.parse import urlsplit
@@ -19,6 +18,10 @@ from pydantic import TypeAdapter, ValidationError
 
 from toolang.base.types.message import Message
 from toolang.common.errors import ToolangError
+from toolang.cli.common.remote_runtime import (
+    RemoteRuntimeIdentity as _RuntimeIdentity,
+    parse_remote_runtime_identity as _runtime_identity,
+)
 from toolang.execution.calls import parse_call
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
@@ -70,15 +73,6 @@ class _CallbackTracer(RunTracer):
 
     async def on_event(self, event: RunEvent) -> None:
         self.callback(event)
-
-
-@dataclass(frozen=True, slots=True)
-class _RuntimeIdentity:
-    version: str
-    driver: str
-    selector: str
-    instance: str | None
-    description: str | None
 
 
 class RemoteChatSession:
@@ -225,7 +219,10 @@ class RemoteChatSession:
             "/api/v1/profile",
             operation="profile",
         )
-        identity = _runtime_identity(profile)
+        try:
+            identity = _runtime_identity(profile)
+        except ValueError as exc:
+            raise _RemoteChatProtocolError(f"remote chat {exc}") from exc
         if identity.selector != self._expected_sandbox:
             raise RemoteChatError(
                 "running executor sandbox does not match its runtime status"
@@ -625,50 +622,6 @@ class RemoteChatSession:
         return self.run_client
 
 
-def _runtime_identity(payload: object) -> _RuntimeIdentity:
-    profile = _mapping(payload, operation="profile")
-    runtime = _mapping(profile.get("runtime"), operation="profile runtime")
-    if not {"version", "sandbox"}.issubset(runtime):
-        raise _RemoteChatProtocolError(
-            "remote chat profile returned invalid runtime identity"
-        )
-    sandbox = _mapping(runtime.get("sandbox"), operation="profile sandbox")
-    if not {"driver", "selector", "instance"}.issubset(sandbox):
-        raise _RemoteChatProtocolError(
-            "remote chat profile returned invalid sandbox identity"
-        )
-    version = _label(runtime.get("version"), label="runtime version")
-    driver = _token(sandbox.get("driver"), label="sandbox driver")
-    selector = _label(sandbox.get("selector"), label="sandbox selector")
-    if selector.partition(":")[0] != driver:
-        raise _RemoteChatProtocolError(
-            "remote chat sandbox selector does not match its driver"
-        )
-    instance_value = sandbox.get("instance")
-    # Presentation metadata stays optional so TUI and executor releases can
-    # evolve independently without weakening execution identity validation.
-    description_value = sandbox.get("description")
-    if driver == "docker":
-        if description_value is not None:
-            raise _RemoteChatProtocolError(
-                "remote chat docker sandbox returned a description"
-            )
-        instance = _token(instance_value, label="sandbox instance")
-        description = None
-    else:
-        if instance_value is not None:
-            raise _RemoteChatProtocolError(
-                "remote chat non-docker sandbox returned an instance ID"
-            )
-        instance = None
-        description = (
-            None
-            if description_value is None
-            else _description(description_value, label="sandbox description")
-        )
-    return _RuntimeIdentity(version, driver, selector, instance, description)
-
-
 def _sandbox_detail(
     identity: _RuntimeIdentity,
     *,
@@ -725,37 +678,6 @@ def _mapping(payload: object, *, operation: str) -> Mapping[str, object]:
     if not isinstance(payload, Mapping):
         raise _RemoteChatProtocolError(f"remote chat {operation} returned invalid data")
     return cast(Mapping[str, object], payload)
-
-
-def _label(value: object, *, label: str) -> str:
-    if not isinstance(value, str):
-        raise _RemoteChatProtocolError(f"remote chat {label} is invalid")
-    text = value.strip()
-    if (
-        not text
-        or text != value
-        or not text.isprintable()
-        or any(character.isspace() for character in text)
-        or any(character in text for character in ",()")
-    ):
-        raise _RemoteChatProtocolError(f"remote chat {label} is invalid")
-    return text
-
-
-def _description(value: object, *, label: str) -> str:
-    if not isinstance(value, str):
-        raise _RemoteChatProtocolError(f"remote chat {label} is invalid")
-    text = value.strip()
-    if not text or text != value or not text.isprintable():
-        raise _RemoteChatProtocolError(f"remote chat {label} is invalid")
-    return text
-
-
-def _token(value: object, *, label: str) -> str:
-    text = _label(value, label=label)
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", text) is None:
-        raise _RemoteChatProtocolError(f"remote chat {label} is invalid")
-    return text
 
 
 def _run_override_data(command: RunOverride) -> dict[str, object]:

@@ -49,6 +49,23 @@ def test_non_tty_shutdown_prints_each_active_stage_once() -> None:
     ]
 
 
+def test_shutdown_progress_can_track_without_rendering() -> None:
+    stream = StringIO()
+    progress = RuntimeShutdownProgress(
+        "alice",
+        "docker",
+        stream=stream,
+        live=False,
+        enabled=False,
+    )
+
+    progress(_event("stop", "Stopping workload"))
+    progress.finish()
+
+    assert progress.current_stage == "Stopping workload"
+    assert stream.getvalue() == ""
+
+
 def test_tty_shutdown_tracks_stage_and_clears_transient_line() -> None:
     stream = StringIO()
     progress = RuntimeShutdownProgress(
