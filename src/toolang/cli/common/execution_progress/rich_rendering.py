@@ -141,6 +141,8 @@ def _row_renderable(
             open_detail=open_tool_detail,
             close_detail=close_tool_detail,
         )
+    elif row.format == "plain" and row.right_text:
+        renderable = _TwoEndedPlainRow(row, live=live, max_width=max_width)
     elif row.format == "markdown":
         renderable = _MarkdownRow(row, max_width=max_width)
     else:
@@ -182,21 +184,23 @@ def _terminal_status_color(status: str) -> str | None:
     }.get(status)
 
 
-def _run_footer_style(status: str) -> str:
-    return "dim" if status == "succeeded" else _terminal_status_color(status) or "none"
+def _run_footer_title_style(status: str) -> str:
+    return _terminal_status_color(status) or "none"
 
 
-def _wrap_run_footer_content(
+def _wrap_run_footer_facts(
     *,
-    title: str,
     facts: tuple[str, ...],
     console: Console,
     width: int,
 ) -> list[Text]:
-    lines = list(Text(title).wrap(console, width, overflow="fold")) or [Text()]
+    lines: list[Text] = []
     for fact in facts:
+        if not lines:
+            lines.extend(Text(fact).wrap(console, width, overflow="fold") or [Text()])
+            continue
         current = lines[-1]
-        separator = " · " if current.plain else ""
+        separator = " · "
         if display_width(current.plain + separator + fact) <= width:
             current.append(separator + fact)
             continue
@@ -226,34 +230,49 @@ class _RunFooter:
             if self.operation is not None
             else f"{self.run_id} {self.status}"
         )
-        footer_style = _run_footer_style(self.status)
-        prefix = "[ "
-        suffix = " ]"
-        framing_width = display_width(prefix + suffix)
-        if width <= framing_width:
+        title_style = _run_footer_title_style(self.status)
+        prefix = "∎ "
+        prefix_width = display_width(prefix)
+        if width <= prefix_width:
             yield Text(
-                truncate(f"{prefix}{title}{suffix}", width),
-                style=footer_style,
+                truncate(f"{prefix}{title}", width),
+                style=title_style,
                 no_wrap=True,
             )
             return
 
-        content_lines = _wrap_run_footer_content(
-            title=title,
+        title_text = f"{prefix}{title}"
+        facts_text = " · ".join(self.facts)
+        separating_width = width - display_width(title_text) - display_width(facts_text)
+        if facts_text and separating_width >= 2:
+            line = Text(no_wrap=True)
+            line.append(title_text, style=title_style)
+            line.append(" " * separating_width)
+            line.append(facts_text, style="dim")
+            yield line
+            return
+
+        continuation = " " * prefix_width
+        title_lines = Text(title).wrap(
+            console,
+            width - prefix_width,
+            overflow="fold",
+        ) or [Text()]
+        for index, title_line in enumerate(title_lines):
+            line = Text(no_wrap=True)
+            line.append(prefix if index == 0 else continuation, style=title_style)
+            line.append(title_line.plain, style=title_style)
+            yield line
+
+        fact_lines = _wrap_run_footer_facts(
             facts=self.facts,
             console=console,
-            width=width - framing_width,
+            width=width - prefix_width,
         )
-        continuation = " " * display_width(prefix)
-        for index, content_line in enumerate(content_lines):
-            line = Text(
-                prefix if index == 0 else continuation,
-                style=footer_style,
-                no_wrap=True,
-            )
-            line.append_text(content_line)
-            if index + 1 == len(content_lines):
-                line.append(suffix)
+        for fact_line in fact_lines:
+            line = Text(no_wrap=True)
+            line.append(continuation)
+            line.append(fact_line.plain, style="dim")
             yield line
 
 
@@ -307,6 +326,68 @@ class _PlainRow:
             line.rstrip()
             yield Text(
                 f"{prefix if index == 0 else continuation}{line.plain}",
+                style=style,
+                no_wrap=True,
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class _TwoEndedPlainRow:
+    """Render a left value and a complete right value within one row width."""
+
+    row: ProgressRow
+    live: bool
+    max_width: int
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        style = (
+            "dim"
+            if self.live and self.row.surface == "tool_summary"
+            else _STYLES[self.row.tone]
+        )
+        width = max(1, min(options.max_width, self.max_width))
+        prefix, left = split_hanging_prefix(self.row.text)
+        prefix_width = display_width(prefix)
+        right = self.row.right_text
+        if prefix_width < width:
+            content_width = width - prefix_width
+            separating_width = (
+                content_width - display_width(left) - display_width(right)
+            )
+            if separating_width >= 2:
+                yield Text(
+                    f"{prefix}{left}{' ' * separating_width}{right}",
+                    style=style,
+                    no_wrap=True,
+                )
+                return
+
+        yield from _PlainRow(
+            self.row,
+            live=self.live,
+            max_width=self.max_width,
+        ).__rich_console__(console, options)
+
+        if prefix_width < width:
+            path_prefix = prefix
+            path_width = width - prefix_width
+        else:
+            path_prefix = ""
+            path_width = width
+        path_lines = Text(right).wrap(
+            console,
+            path_width,
+            overflow="fold",
+        ) or [Text()]
+        for path_line in path_lines:
+            path_line.rstrip()
+            padding = " " * max(0, path_width - display_width(path_line.plain))
+            yield Text(
+                f"{path_prefix}{padding}{path_line.plain}",
                 style=style,
                 no_wrap=True,
             )

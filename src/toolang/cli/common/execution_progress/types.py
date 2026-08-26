@@ -21,6 +21,7 @@ class ProgressRow:
     prefix: str = ""
     gap_before: bool = False
     surface: ProgressSurface = "none"
+    right_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)

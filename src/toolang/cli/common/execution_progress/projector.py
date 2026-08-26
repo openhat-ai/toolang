@@ -441,7 +441,17 @@ class ProgressProjector:
                         state,
                     )
                 if rows:
-                    block = self._commit_block(state, rows)
+                    block = self._commit_block(
+                        state,
+                        rows,
+                        gap_before=(
+                            False
+                            if event.kind == "run"
+                            and not state.boundaries
+                            and rows[0].right_text
+                            else None
+                        ),
+                    )
                 else:
                     self._release_boundaries(state.boundaries)
 
@@ -611,7 +621,12 @@ class ProgressProjector:
             rows = list(flow_terminal_rows(event, error=self._error_text(event.error)))
         facts = self._flow_facts(state, event)
         if facts:
-            rows.append(ProgressRow(f"  {' · '.join(facts)}"))
+            rows.append(
+                ProgressRow(
+                    f"  {' · '.join(facts)}",
+                    right_text=str(event.step),
+                )
+            )
         if rows:
             rows.append(ProgressRow(""))
         return tuple(rows)
@@ -651,7 +666,12 @@ class ProgressProjector:
                 rows.extend(flow_error_rows(error))
         facts = self._flow_facts(state, event)
         if facts:
-            rows.append(ProgressRow(f"  {' · '.join(facts)}"))
+            rows.append(
+                ProgressRow(
+                    f"  {' · '.join(facts)}",
+                    right_text=str(event.step),
+                )
+            )
         rows.append(ProgressRow(""))
         return tuple(rows)
 
@@ -693,11 +713,15 @@ class ProgressProjector:
         self,
         state: StepState,
         rows: tuple[ProgressRow, ...],
+        *,
+        gap_before: bool | None = None,
     ) -> ProgressBlock:
         block = ProgressBlock(
             self._block_key(state),
             (*self._rows_for_boundaries(state.boundaries), *rows),
-            gap_before=self._step_gap_before(state),
+            gap_before=(
+                self._step_gap_before(state) if gap_before is None else gap_before
+            ),
         )
         self._commit_boundaries(state.boundaries)
         return block
