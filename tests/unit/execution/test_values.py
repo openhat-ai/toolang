@@ -343,11 +343,43 @@ def test_preparation_payload_round_trips_resolved_locals() -> None:
         runnable="agic:worker",
         model="test/model",
         locals=(Local.typed("Part[]", (TextPart("hello"),), "_", 0),),
+        sandbox="docker:python:3.13-slim",
     )
 
-    assert (
-        control_payload_from_data("start", control_payload_to_data(payload)) == payload
+    data = control_payload_to_data(payload)
+    assert data["sandbox"] == "docker:python:3.13-slim"
+    assert control_payload_from_data("start", data) == payload
+
+
+def test_preparation_payload_reads_legacy_missing_sandbox_as_unknown() -> None:
+    payload = StartControlPayload(
+        resources=AgentResources(),
+        limits=RunLimits(),
+        state="0" * 64,
+        runnable="flow:worker",
+        model="none",
+        locals=(),
     )
+
+    restored = control_payload_from_data("start", control_payload_to_data(payload))
+
+    assert isinstance(restored, StartControlPayload)
+    assert restored.sandbox is None
+    assert "sandbox" not in control_payload_to_data(restored)
+
+
+@pytest.mark.parametrize("sandbox", ("", " host", "host "))
+def test_preparation_payload_rejects_noncanonical_sandbox(sandbox: str) -> None:
+    with pytest.raises(ValueError, match="canonical sandbox"):
+        StartControlPayload(
+            resources=AgentResources(),
+            limits=RunLimits(),
+            state="0" * 64,
+            runnable="flow:worker",
+            model="none",
+            locals=(),
+            sandbox=sandbox,
+        )
 
 
 def test_preparation_payload_rejects_instead_of_dropping_invalid_locals() -> None:

@@ -226,9 +226,14 @@ agic selected(_: Part[], tone: Text) -> Part[]:
         assert fallback_detail.runnable_name == "chat"
         assert fallback_detail.input_text == "included"
         assert fallback_detail.controls[0].request_id == "fallback_request"
+        assert (
+            fallback_detail_response.json()["controls"][0]["payload"]["sandbox"]
+            == "host"
+        )
         assert fallback_control is not None
         assert isinstance(fallback_control.payload, StartControlPayload)
         assert fallback_control.payload.limits.cost == Decimal("2.50")
+        assert fallback_control.payload.sandbox == "host"
         assert selected.status_code == 200
         assert selected.headers["X-Toolang-Run-ID"] == selected_id
         assert selected_detail.runnable_name == "selected"

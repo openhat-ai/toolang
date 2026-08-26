@@ -172,6 +172,7 @@ def test_missing_default_model_is_rejected_before_run_persistence(tmp_path) -> N
         models=(),
         tools={},
         envs={},
+        environment=harness.setup.environment,
     )
 
     async def scenario() -> None:
