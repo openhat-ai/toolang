@@ -9,7 +9,7 @@ from toolang.api.app import AgentCoreDep
 from toolang.api.schemas import RuntimeIdentityPayload, RuntimeSandboxPayload
 from toolang.common.errors import ToolangError
 from toolang.common.version import toolang_version
-from toolang.execution.runnables import effective_agics, runnable_binding_defaults
+from toolang.execution.runnables import runnable_binding_defaults
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.types import ModelStepNoted
 from toolang.execution.executor.resources import agent_model_targets
@@ -53,24 +53,28 @@ def models(core: AgentCoreDep) -> dict[str, object]:
 
 
 @router.get("/agics", summary="List Agent Agics")
-def agics(core: AgentCoreDep) -> dict[str, object]:
+async def agics(core: AgentCoreDep) -> dict[str, object]:
     setup = core.setup.current()
-    program = core.state.current().program
-    default, _flow = _runnable_defaults(program, setup.bindings.runnable)
+    state = await _fresh_state(core)
+    default, _flow = _runnable_defaults(state, setup.bindings.runnable)
     return {
         "default": default,
-        "items": [{"name": agic.name} for agic in effective_agics(program)],
+        "items": [
+            {"name": runnable.name} for runnable in state.public_runnables("agic")
+        ],
     }
 
 
 @router.get("/flows", summary="List Agent Flows")
-def flows(core: AgentCoreDep) -> dict[str, object]:
+async def flows(core: AgentCoreDep) -> dict[str, object]:
     setup = core.setup.current()
-    program = core.state.current().program
-    _agic, default = _runnable_defaults(program, setup.bindings.runnable)
+    state = await _fresh_state(core)
+    _agic, default = _runnable_defaults(state, setup.bindings.runnable)
     return {
         "default": default,
-        "items": [{"name": flow.name} for flow in program.flows],
+        "items": [
+            {"name": runnable.name} for runnable in state.public_runnables("flow")
+        ],
     }
 
 
@@ -257,3 +261,8 @@ def _runnable_defaults(
         )
     except (ToolangError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+async def _fresh_state(core: AgentCore) -> Any:
+    refresh = getattr(core.state, "refresh", None)
+    return await refresh() if callable(refresh) else core.state.current()

@@ -142,9 +142,18 @@ def scan_root_source(toolang_root: Path) -> Source:
 def scan_home_source(toolang_root: Path, agent_name: str) -> Source:
     """Capture one agent program, config, and authored cap paths."""
 
+    home = toolang_root / "agents" / agent_name
     return scan_source(
-        toolang_root / "agents" / agent_name,
-        ("agent.too", "config.toml", *CAP_DIRECTORY_NAMES),
+        home,
+        (
+            "agent.too",
+            "config.toml",
+            *CAP_DIRECTORY_NAMES,
+            *(
+                str(Path("flows") / path.name)
+                for path in _direct_flow_files(home / "flows")
+            ),
+        ),
     )
 
 
@@ -189,8 +198,11 @@ class ProgramSource:
     """Authored program text captured during preparation."""
 
     agent_name: str
+    kind: Literal["agent", "flow"]
+    authored_path: str
     source_path: str
     source_text: str
+    digest: str
 
     def parse(self) -> Program:
         source = _parseable_program_source(self.source_text)
@@ -230,14 +242,26 @@ class AuthoredSource:
 
     @property
     def program_path(self) -> str | None:
+        expected = Path("agents") / self.agent_name / "agent.too"
         for item in self.files:
-            if item.category == "program":
+            if item.category == "program" and Path(item.relative_path) == expected:
                 return item.relative_path
         return None
 
+    @property
+    def program_files(self) -> tuple[AuthoredFile, ...]:
+        """Return agent and direct flow program files in authored-path order."""
+
+        return tuple(item for item in self.files if item.category == "program")
+
     def load_program(self) -> ProgramSource:
+        expected = Path("agents") / self.agent_name / "agent.too"
         program_file = next(
-            (item for item in self.files if item.category == "program"),
+            (
+                item
+                for item in self.program_files
+                if Path(item.relative_path) == expected
+            ),
             None,
         )
         source_path = (
@@ -247,15 +271,52 @@ class AuthoredSource:
         )
         source = ProgramSource(
             agent_name=self.agent_name,
+            kind="agent",
+            authored_path="agent.too",
             source_path=source_path,
             source_text=(
                 program_file.read_text()
                 if program_file is not None
                 else f"agent {self.agent_name}\n"
             ),
+            digest=(
+                program_file.digest
+                if program_file is not None
+                else sha256(f"agent {self.agent_name}\n".encode()).hexdigest()
+            ),
         )
-        source.parse()
         return source
+
+    def load_programs(self) -> tuple[ProgramSource, ...]:
+        """Load the special agent module followed by direct home flow modules."""
+
+        agent = self.load_program()
+        prefix = Path("agents") / self.agent_name
+        flows = tuple(
+            ProgramSource(
+                agent_name=self.agent_name,
+                kind="flow",
+                authored_path=str(Path(item.relative_path).relative_to(prefix)),
+                source_path=item.relative_path,
+                source_text=item.read_text(),
+                digest=item.digest,
+            )
+            for item in self.program_files
+            if Path(item.relative_path) != prefix / "agent.too"
+        )
+        return (agent, *flows)
+
+    def program_file(self, source: ProgramSource) -> AuthoredFile | None:
+        """Return the captured authored file for one program source."""
+
+        return next(
+            (
+                item
+                for item in self.program_files
+                if item.relative_path == source.source_path
+            ),
+            None,
+        )
 
     @property
     def config_paths(self) -> tuple[str, ...]:
@@ -300,6 +361,12 @@ def is_source_path(toolang_root: Path, agent_name: str, path: Path) -> bool:
     agent_relative = Path(*relative_path.parts[2:])
     if agent_relative in {Path("config.toml"), Path("agent.too")}:
         return True
+    if (
+        len(agent_relative.parts) == 2
+        and agent_relative.parts[0] == "flows"
+        and agent_relative.suffix == ".too"
+    ):
+        return True
     return bool(
         agent_relative.parts
         and agent_relative.parts[0] in CAP_DIRECTORY_NAMES
@@ -341,6 +408,15 @@ def _authored_files(toolang_root: Path, agent_name: str) -> list[AuthoredFile]:
             toolang_root, agent_dir / "config.toml", category="config", origin="agent"
         )
     )
+    for path in _direct_flow_files(agent_dir / "flows"):
+        files.extend(
+            _collect_file(
+                toolang_root,
+                path,
+                category="program",
+                origin="agent",
+            )
+        )
     files.extend(
         _collect_file(
             toolang_root,
@@ -417,6 +493,16 @@ def _collect_directory(
             _collect_file(toolang_root, path, category=category, origin=origin)
         )
     return files
+
+
+def _direct_flow_files(directory: Path) -> tuple[Path, ...]:
+    if not directory.is_dir():
+        return ()
+    return tuple(
+        path
+        for path in sorted(directory.iterdir(), key=lambda item: item.name)
+        if path.is_file() and path.suffix == ".too"
+    )
 
 
 def _content_fingerprint(files: tuple[AuthoredFile, ...]) -> str:

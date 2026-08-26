@@ -5,8 +5,12 @@ from pathlib import Path
 import pytest
 
 from toolang.common.layout import AgentLayout
-from toolang.lang.ast import Program, SettleStmt, to_data
-from toolang.state.state import CapResolution, agent_state_version
+from toolang.lang.ast import Program, SettleStmt
+from toolang.state.state import (
+    CapResolution,
+    PreparedProgramModule,
+    agent_state_version,
+)
 from toolang.state.cache import (
     load_current_version,
     load_version_prepared,
@@ -95,11 +99,20 @@ def test_prepared_version_is_self_contained_and_can_be_published(
     (source_dir / "agent.too").write_text("agent alice\n", encoding="utf-8")
     source = scan_source(source_dir, ("agent.too",))
     prepared = {
-        "schema": 1,
+        "schema": 2,
         "scope": "home",
         "toolang_version": "0.2.7",
         "config": {"models": {"default": "fast"}},
-        "program": to_data(Program.from_source("agic hello:\n  Hello.\n")),
+        "modules": [
+            PreparedProgramModule(
+                identity="agent",
+                kind="agent",
+                authored_path="agent.too",
+                prepared_path="files/agent.too",
+                digest="00" * 32,
+                program=Program.from_source("agic hello:\n  Hello.\n"),
+            ).to_data()
+        ],
         "caps": [],
     }
 
@@ -120,7 +133,7 @@ def test_prepared_version_is_self_contained_and_can_be_published(
 
     assert load_current_version(layout, "home") == version
     assert load_version_source(version_dir) == source
-    assert load_version_resolved(version_dir) == {"schema": 1, "entries": []}
+    assert load_version_resolved(version_dir) == {"schema": 2, "entries": []}
     assert load_version_prepared(version_dir) == prepared
     home = load_home_prepared(layout)
     assert home.version == version
@@ -146,10 +159,19 @@ def test_home_prepared_loads_program_without_reparsing_source(
         source=source,
         resolutions=(),
         prepared={
-            "schema": 1,
+            "schema": 2,
             "scope": "home",
             "toolang_version": "0.2.7",
-            "program": to_data(Program.from_source(source_text)),
+            "modules": [
+                PreparedProgramModule(
+                    identity="agent",
+                    kind="agent",
+                    authored_path="agent.too",
+                    prepared_path="files/agent.too",
+                    digest="00" * 32,
+                    program=Program.from_source(source_text),
+                ).to_data()
+            ],
             "caps": [],
         },
         files={"agent.too": source_text.encode()},
@@ -181,7 +203,7 @@ def test_prepared_version_rejects_files_outside_its_files_directory(
             source=source,
             resolutions=(),
             prepared={
-                "schema": 1,
+                "schema": 2,
                 "scope": "root",
                 "toolang_version": "0.2.7",
                 "caps": [],

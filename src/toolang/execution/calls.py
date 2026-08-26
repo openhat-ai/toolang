@@ -14,11 +14,12 @@ from toolang.lang.input import (
     resolve_input_parts,
     resolve_runnable_input,
 )
+from toolang.lang.ast import Program
 from toolang.setup import AgentSetup
 from toolang.state.state import AgentState
 
 from .policy import parse_policy_prefix, resolve_commands
-from .runnables import parse_runnable_ref, resolve_runnable
+from .runnables import parse_runnable_ref, resolve_state_runnable
 from .schemas import RunRequest
 from .types import RunOverride
 
@@ -86,11 +87,13 @@ def resolve_spec(
     )
     runnable_ref = bindings.runnable or default_runnable
     runnable_name, runnable_kind = parse_runnable_ref(runnable_ref)
-    runnable = resolve_runnable(
-        state.program,
+    resolved = resolve_state_runnable(
+        state,
         runnable_name,
         kind=runnable_kind,
     )
+    runnable = resolved.executable
+    program = resolved.module.program
     if surface_named and surface_named_sources:
         raise ValueError("surface named inputs cannot be both bound and sourced")
     if input.named and (surface_named or surface_named_sources):
@@ -99,7 +102,7 @@ def resolve_spec(
     named = (
         _resolve_named_sources(
             raw_named,
-            state=state,
+            program=program,
             include=include,
         )
         if raw_named
@@ -108,7 +111,7 @@ def resolve_spec(
     primary = (
         resolve_input_parts(
             input.primary,
-            program=state.program,
+            program=program,
             include=include,
         )
         if input.primary is not None
@@ -120,7 +123,7 @@ def resolve_spec(
         thread=thread,
         bindings=RunBindings(
             model=bindings.model,
-            runnable=f"{runnable.kind}:{runnable.name}",
+            runnable=f"{resolved.public.kind}:{resolved.public.name}",
         ),
         limits=limits,
         ceilings=ceilings,
@@ -128,7 +131,7 @@ def resolve_spec(
             runnable,
             primary=primary,
             named=named,
-            structs={struct.name: struct for struct in state.program.structs},
+            structs={struct.name: struct for struct in program.structs},
         ),
     )
 
@@ -159,18 +162,25 @@ def validate_commands(
     runnable_name, runnable_kind = parse_runnable_ref(
         bindings.runnable or default_runnable
     )
-    runnable = resolve_runnable(
-        state.program,
+    resolved = resolve_state_runnable(
+        state,
         runnable_name,
         kind=runnable_kind,
     )
-    resources = resolve_agent_resources(setup, state, setup.ceiling)
+    runnable = resolved.executable
+    resources = resolve_agent_resources(
+        setup,
+        state,
+        setup.ceiling,
+        module=resolved.module.identity,
+    )
     for ceiling in ceilings:
         resources = apply_agent_ceiling(
             setup,
             state,
             resources,
             ceiling,
+            module=resolved.module.identity,
         )
     resources = resolve_runnable_resources(
         snapshot_model_selection(setup, state),
@@ -178,6 +188,7 @@ def validate_commands(
         base=resources,
         setup=setup,
         state=state,
+        module=resolved.module.identity,
     )
     validate_model_binding(
         snapshot_model_selection(setup, state),
@@ -207,14 +218,14 @@ def validate_session_commands(
 def _resolve_named_sources(
     sources: NamedInputSources,
     *,
-    state: AgentState,
+    program: Program,
     include: IncludeResolver | None,
 ) -> dict[str, object]:
     result: dict[str, object] = {}
     for name, source in sources:
         result[name] = resolve_input_parts(
             source,
-            program=state.program,
+            program=program,
             include=include,
         )
     return result
@@ -226,17 +237,8 @@ def _select_runnable_fallback(
 ) -> str:
     for candidate in candidates:
         name, kind = parse_runnable_ref(candidate)
-        if kind == "agic" and (
-            name == "default" or state.program.find_agic(name) is not None
-        ):
-            return candidate
-        if kind == "flow" and state.program.find_flow(name) is not None:
-            return candidate
-        if kind is None and (
-            name == "default"
-            or state.program.find_agic(name) is not None
-            or state.program.find_flow(name) is not None
-        ):
+        entry = state.catalog.get(name)
+        if entry is not None and (kind is None or entry.kind == kind):
             return candidate
     joined = ", ".join(candidates)
     raise ValueError(f"no runnable fallback is available: {joined}")

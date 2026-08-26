@@ -297,6 +297,7 @@ class FlowDecl(Node):
     kind: ClassVar[str] = "flow"
 
     name: str
+    name_explicit: bool = True
     input: Parameter | None = None
     params: tuple[Parameter, ...] = ()
     output: str | None = None

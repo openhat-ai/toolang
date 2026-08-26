@@ -32,6 +32,8 @@ ${TOOLANG_ROOT}/
   agents/
     <agent>/
       agent.too
+      flows/
+        <name>.too
       config.toml
       psyches/
       skills/
@@ -70,6 +72,7 @@ Key paths:
 | Path | Purpose |
 | --- | --- |
 | `agent.too` | Agent program |
+| `flows/<name>.too` | Independently validated home flow module |
 | `config.toml` | Agent-local configuration |
 | `psyches/`, `skills/`, `services/`, `prompts/` | Agent-local cap definitions |
 | `tasks/` | Ready task documents |

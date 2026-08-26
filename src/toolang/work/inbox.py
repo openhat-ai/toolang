@@ -14,7 +14,7 @@ from toolang.base.types.policy import RunBindings
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor, RunSpec
 from toolang.execution.records import RunRecord
-from toolang.execution.runnables import parse_runnable_ref, resolve_runnable
+from toolang.execution.runnables import parse_runnable_ref, resolve_state_runnable
 from toolang.execution.store import RunStore
 from toolang.lang.input import resolve_runnable_input
 from toolang.state.state import AgentState
@@ -110,15 +110,19 @@ async def run(
                 state = get_agent_state()
                 runnable_ref = (
                     "agic:file"
-                    if state.program.find_agic("file") is not None
+                    if (
+                        (entry := state.catalog.get("file")) is not None
+                        and entry.kind == "agic"
+                    )
                     else "agic:default"
                 )
                 runnable_name, runnable_kind = parse_runnable_ref(runnable_ref)
-                runnable = resolve_runnable(
-                    state.program,
+                resolved = resolve_state_runnable(
+                    state,
                     runnable_name,
                     kind=runnable_kind,
                 )
+                runnable = resolved.executable
                 handle = executor.start(
                     RunSpec(
                         setup=setup,
@@ -132,7 +136,10 @@ async def run(
                         input=resolve_runnable_input(
                             runnable,
                             primary=submission.input.parts,
-                            structs={item.name: item for item in state.program.structs},
+                            structs={
+                                item.name: item
+                                for item in resolved.module.program.structs
+                            },
                         ),
                     )
                 )

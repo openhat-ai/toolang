@@ -3,7 +3,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from toolang.state.source import Source, scan_source
+from toolang.state.source import (
+    Source,
+    is_source_path,
+    scan_home_source,
+    scan_source,
+)
 
 
 def test_source_tree_round_trips_nested_metadata(tmp_path: Path) -> None:
@@ -66,3 +71,25 @@ def test_source_tree_follows_symbolic_linked_files(tmp_path: Path) -> None:
 
     assert before.root.children[0].name == "agent.too"
     assert after != before
+
+
+def test_home_source_discovers_only_direct_lowercase_too_flows(tmp_path: Path) -> None:
+    root = tmp_path / "toolang"
+    flows = root / "agents" / "alice" / "flows"
+    nested = flows / "nested"
+    nested.mkdir(parents=True)
+    direct = flows / "research.too"
+    direct.write_text("flow:\n  pass\n", encoding="utf-8")
+    (flows / "notes.txt").write_text("ignored", encoding="utf-8")
+    (flows / "upper.TOO").write_text("flow:\n  pass\n", encoding="utf-8")
+    (nested / "hidden.too").write_text("flow:\n  pass\n", encoding="utf-8")
+    root_flow = root / "flows" / "shared.too"
+    root_flow.parent.mkdir()
+    root_flow.write_text("flow:\n  pass\n", encoding="utf-8")
+
+    source = scan_home_source(root, "alice")
+
+    assert [item.name for item in source.root.children] == ["flows/research.too"]
+    assert is_source_path(root, "alice", direct)
+    assert not is_source_path(root, "alice", nested / "hidden.too")
+    assert not is_source_path(root, "alice", root_flow)

@@ -78,3 +78,37 @@ def test_timeout_check_skips_full_prepare_when_metadata_is_current(
         assert observed == []
 
     asyncio.run(run())
+
+
+def test_invalid_flow_candidate_retains_last_valid_state_until_repaired(
+    tmp_path: Path,
+) -> None:
+    async def run() -> None:
+        toolang_root = tmp_path / "toolang"
+        home = toolang_root / "agents" / "alice"
+        flows = home / "flows"
+        flows.mkdir(parents=True)
+        (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+        flow = flows / "research.too"
+        flow.write_text("flow research:\n  pass\n", encoding="utf-8")
+        watcher = state_watcher.StateWatcher(
+            AgentLayout.resident(toolang_root, "alice")
+        )
+        initial = await watcher.refresh()
+
+        flow.write_text("flow other:\n  pass\n", encoding="utf-8")
+        rejected = await watcher.refresh()
+
+        assert rejected is initial
+        assert rejected.fingerprint == initial.fingerprint
+        assert watcher.diagnostics()[0].layer == "flow-extension"
+        assert watcher.diagnostics()[0].authored_path == "flows/research.too"
+
+        flow.write_text("flow research:\n  pass\n", encoding="utf-8")
+        repaired = await watcher.refresh()
+
+        assert repaired.fingerprint != initial.fingerprint
+        assert "research" in repaired.catalog
+        assert watcher.diagnostics() == ()
+
+    asyncio.run(run())

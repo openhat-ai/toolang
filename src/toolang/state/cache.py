@@ -17,18 +17,23 @@ from uuid import uuid4
 from toolang.common.layout import AgentLayout
 
 from ..common.immutable import freeze_mapping
-from ..lang.ast import Program, program_from_data
-from .state import CapResolution, PreparedCap
+from ..lang.ast import Program
+from .state import (
+    CapResolution,
+    PreparedCap,
+    PreparedProgramModule,
+    public_runnable_catalog,
+)
 from .source import Source
 
 PreparedScope = Literal["root", "home"]
-PREPARED_VERSION_SCHEMA = 1
-_PREPARED_VERSION_DOMAIN = b"toolang-prepared-v1\0"
+PREPARED_VERSION_SCHEMA = 2
+_PREPARED_VERSION_DOMAIN = b"toolang-prepared-v2\0"
 _SOURCE_FILE = "source.json"
 _RESOLVED_FILE = "resolved.json"
 _PREPARED_FILE = "prepared.json"
 _FILES_DIR = "files"
-_DOCUMENT_SCHEMA = 1
+_DOCUMENT_SCHEMA = 2
 _INVALID_VERSION_ERRORS = (OSError, KeyError, TypeError, ValueError)
 
 
@@ -60,6 +65,7 @@ class HomePrepared:
     config: Mapping[str, object]
     program: Program
     caps: tuple[PreparedCap, ...]
+    modules: tuple[PreparedProgramModule, ...]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "config", freeze_mapping(self.config))
@@ -161,6 +167,8 @@ def load_home_prepared(
         version=effective_version,
         scope="home",
     )
+    modules = _prepared_modules(prepared, version_dir=version_dir)
+    agent_module = next(module for module in modules if module.kind == "agent")
     return HomePrepared(
         version=effective_version,
         toolang_version=_document_toolang_version(prepared),
@@ -168,8 +176,9 @@ def load_home_prepared(
         source=source,
         resolutions=resolutions,
         config=_prepared_config(prepared),
-        program=_prepared_program(prepared),
+        program=agent_module.program,
         caps=caps,
+        modules=modules,
     )
 
 
@@ -351,7 +360,7 @@ def _load_validated_version(
     _prepared_config(prepared)
     _document_toolang_version(prepared)
     if scope == "home":
-        _prepared_program(prepared)
+        _prepared_modules(prepared, version_dir=version_dir)
     return source, resolutions, prepared, caps
 
 
@@ -385,10 +394,45 @@ def _prepared_config(prepared: Mapping[str, object]) -> dict[str, object]:
     return {str(key): value for key, value in raw.items()}
 
 
-def _prepared_program(prepared: Mapping[str, object]) -> Program:
-    if "program" not in prepared:
-        raise ValueError("home prepared document is missing program")
-    return program_from_data(prepared["program"])
+def _prepared_modules(
+    prepared: Mapping[str, object],
+    *,
+    version_dir: Path,
+) -> tuple[PreparedProgramModule, ...]:
+    raw_modules = prepared.get("modules")
+    if not isinstance(raw_modules, list) or not raw_modules:
+        raise ValueError("home prepared document is missing program modules")
+    modules: list[PreparedProgramModule] = []
+    identities: set[str] = set()
+    for raw in raw_modules:
+        if not isinstance(raw, dict):
+            raise TypeError("prepared program module must be an object")
+        module = PreparedProgramModule.from_data(
+            {str(key): value for key, value in raw.items()}
+        )
+        if module.identity in identities:
+            raise ValueError(f"duplicate prepared program module: {module.identity}")
+        identities.add(module.identity)
+        program_path = version_dir / _prepared_file_path(module.prepared_path)
+        if not program_path.is_file():
+            raise FileNotFoundError(f"prepared program file not found: {program_path}")
+        caps = tuple(
+            _prepared_cap(cap, version_dir=version_dir) for cap in module.here_caps
+        )
+        modules.append(replace(module, here_caps=caps))
+    if sum(module.kind == "agent" for module in modules) != 1:
+        raise ValueError("home prepared document requires exactly one agent module")
+    result = tuple(modules)
+    public_runnable_catalog(result)
+    return result
+
+
+def _prepared_cap(cap: PreparedCap, *, version_dir: Path) -> PreparedCap:
+    relative_path = _prepared_file_path(cap.path)
+    path = version_dir / relative_path
+    if not path.is_file():
+        raise FileNotFoundError(f"prepared cap file not found: {path}")
+    return replace(cap, path=str(path))
 
 
 def _validate_loaded_version(

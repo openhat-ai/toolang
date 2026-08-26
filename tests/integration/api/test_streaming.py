@@ -40,6 +40,7 @@ from toolang.execution.schemas import RunDetail, ThreadDetail
 from toolang.execution.types import ControlRef, Local, StepPath, Pointer
 from toolang.lang.ast import LetStmt, RunStmt, Span
 from toolang.up import AgentCore
+from toolang.state.prepare import prepare_agent_state
 from tests.support.execution_fixtures import project_run_start, project_step
 from tests.support.execution_harness import ExecutionHarness
 
@@ -50,6 +51,39 @@ class _Snapshot:
 
     def current(self) -> Any:
         return self.value
+
+
+def test_flow_module_is_listed_from_the_public_state_catalog(tmp_path: Path) -> None:
+    harness = ExecutionHarness.create(tmp_path, source="", responses=[])
+    home = harness.setup.layout.home
+    flows = home / "flows"
+    flows.mkdir(parents=True)
+    (home / "agent.too").write_text("agent alice\n", encoding="utf-8")
+    (flows / "research.too").write_text(
+        "agic helper:\n  Private.\n\nflow:\n  run helper\n",
+        encoding="utf-8",
+    )
+    state = prepare_agent_state(harness.setup.layout, toolang_version="test")
+    harness.store.close()
+    core = AgentCore(harness.setup.layout)
+    core.setup = _Snapshot(harness.setup)
+    core.state = _Snapshot(state)
+    app = create_app(
+        core,
+        CapsManager(core.layout),
+        JobsManager(core.layout),
+        cors_allowed_origins=(),
+    )
+
+    try:
+        with TestClient(app) as client:
+            agics = client.get("/api/v1/agics")
+            flows_response = client.get("/api/v1/flows")
+
+        assert agics.json()["items"] == [{"name": "default"}]
+        assert flows_response.json()["items"] == [{"name": "research"}]
+    finally:
+        asyncio.run(core.close())
 
 
 def test_run_stream_emits_complete_canonical_event_sequence(tmp_path: Path) -> None:

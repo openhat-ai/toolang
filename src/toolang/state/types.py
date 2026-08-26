@@ -12,3 +12,5 @@ Visibility = PreparedVisibility
 EntryOrigin = SourceOrigin
 EntryForm = SourceForm
 EntryScope = Literal["root", "home", "here"]
+ProgramModuleKind = Literal["agent", "flow"]
+RunnableKind = Literal["agic", "flow"]

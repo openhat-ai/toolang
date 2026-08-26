@@ -2,12 +2,30 @@
 
 from __future__ import annotations
 
-from typing import TypeAlias
+from dataclasses import dataclass
+from typing import TypeAlias, cast
 
 from toolang.base.errors import ToolangError
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program, Span
+from toolang.state.state import (
+    AgentState,
+    PreparedProgramModule,
+    PublicRunnable,
+    state_program_module,
+)
+from toolang.state.types import RunnableKind
 
 Runnable: TypeAlias = AgicDecl | FlowDecl
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedRunnable:
+    """One public runnable resolved with its owning program module."""
+
+    public: PublicRunnable
+    module: PreparedProgramModule
+    executable: Runnable
+
 
 _RUNTIME_DEFAULT_AGIC = AgicDecl(
     name="default",
@@ -47,6 +65,43 @@ def resolve_runnable(
     return matches[0]
 
 
+def resolve_state_runnable(
+    state: AgentState,
+    name: str,
+    *,
+    kind: str | None = None,
+) -> ResolvedRunnable:
+    """Resolve one public runnable from immutable module-bearing state."""
+
+    if not name or name != name.strip():
+        raise ValueError("run spec requires a canonical runnable name")
+    catalog = getattr(state, "catalog", None)
+    if catalog is None:
+        module = state_program_module(state)
+        executable = resolve_runnable(module.program, name, kind=kind)
+        public = PublicRunnable(
+            name,
+            cast(RunnableKind, executable.kind),
+            module.identity,
+            executable.name,
+        )
+        return ResolvedRunnable(
+            public=public,
+            module=module,
+            executable=executable,
+        )
+    public = catalog.get(name)
+    if public is None or (kind is not None and public.kind != kind):
+        raise ToolangError(f"Runnable not found: {name}")
+    module = state.module(public.module)
+    executable = resolve_runnable(
+        module.program,
+        public.local_name,
+        kind=public.kind,
+    )
+    return ResolvedRunnable(public=public, module=module, executable=executable)
+
+
 def parse_runnable_ref(value: str) -> tuple[str, str | None]:
     """Split one optional kind-qualified runnable reference."""
 
@@ -59,7 +114,7 @@ def parse_runnable_ref(value: str) -> tuple[str, str | None]:
 
 
 def runnable_binding_defaults(
-    program: Program,
+    program: Program | AgentState,
     binding: str | None,
     *,
     fallback_agic: str,
@@ -67,14 +122,24 @@ def runnable_binding_defaults(
     """Project one runnable binding into exclusive agic and flow defaults."""
 
     if binding is None:
-        agic = (
-            fallback_agic if program.find_agic(fallback_agic) is not None else "default"
-        )
+        if isinstance(program, AgentState):
+            fallback = program.catalog.get(fallback_agic)
+            agic = (
+                fallback_agic
+                if fallback is not None and fallback.kind == "agic"
+                else "default"
+            )
+        else:
+            agic = (
+                fallback_agic
+                if program.find_agic(fallback_agic) is not None
+                else "default"
+            )
         return agic, None
     name, kind = parse_runnable_ref(binding)
-    runnable = resolve_runnable(program, name, kind=kind)
-    return (
-        (runnable.name, None)
-        if isinstance(runnable, AgicDecl)
-        else (None, runnable.name)
+    runnable = (
+        resolve_state_runnable(program, name, kind=kind).executable
+        if isinstance(program, AgentState)
+        else resolve_runnable(program, name, kind=kind)
     )
+    return (name, None) if isinstance(runnable, AgicDecl) else (None, name)
