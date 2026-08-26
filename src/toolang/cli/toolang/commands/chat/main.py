@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 import os
+from pathlib import Path
 import sys
 
 import click
@@ -30,6 +31,10 @@ from toolang.cli.common.context import (
     user_call,
 )
 from toolang.cli.common.execution import open_execution
+from toolang.cli.common.execution_runtime import (
+    ExecutionRuntimeError,
+    open_execution_runtime,
+)
 from toolang.cli.common.execution_progress.config import resolve_progress_max_width
 from toolang.cli.common.output import shorten_home_path
 from . import slashes as chat_slashes
@@ -52,7 +57,6 @@ from .input import (
 from .local import LocalChatSession
 from .remote import RemoteChatError, RemoteChatSession
 from .tui import ChatTuiApp
-from toolang.up import process as agents
 
 
 def chat_command(
@@ -61,6 +65,7 @@ def chat_command(
     allows: list[str] | None = None,
     defaults: list[str] | None = None,
     sandbox: str | None = None,
+    dev: Path | None = None,
     limits: list[str] | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
@@ -68,6 +73,7 @@ def chat_command(
         ctx,
         thread_id=thread_id,
         sandbox=sandbox,
+        dev=dev,
         allow_options=allows,
         default_options=defaults,
         limit_options=limits,
@@ -80,6 +86,7 @@ def _chat_interactive(
     thread_id: str | None,
     selector_payload: dict[str, object] | None = None,
     sandbox: str | None = None,
+    dev: Path | None = None,
     allow_options: list[str] | None = None,
     default_options: list[str] | None = None,
     limit_options: list[str] | None = None,
@@ -89,6 +96,7 @@ def _chat_interactive(
         ctx,
         selector_payload=selectors,
         sandbox=sandbox,
+        dev=dev,
         allow_options=allow_options,
         default_options=default_options,
         limit_options=limit_options,
@@ -114,91 +122,87 @@ def _chat_runtime(
     *,
     selector_payload: dict[str, object] | None = None,
     sandbox: str | None,
+    dev: Path | None = None,
     allow_options: list[str] | None = None,
     default_options: list[str] | None = None,
     limit_options: list[str] | None = None,
 ) -> Iterator[ChatClient]:
-    """Own one local or resident-remote execution session for Chat."""
+    """Own one local, attached, or temporary-remote Chat session."""
 
     layout = context_layout(ctx)
-    if layout.placement == "resident":
-        status = agents.AgentProcess(layout).status(ui_base_url=ui_base_url())
-        if status is not None and status.status in {"preparing", "starting"}:
-            raise click.ClickException(
-                f"agent {layout.name} is {status.status}; wait for it to become ready"
-            )
-        if status is not None and status.status == "running":
-            if status.endpoint is None or status.sandbox is None:
-                raise click.ClickException(
-                    f"running agent {layout.name} has incomplete runtime status"
-                )
-            if sandbox is not None and not _sandbox_matches(
-                sandbox,
-                status.sandbox,
-            ):
-                raise click.ClickException(
-                    f"--sandbox {sandbox} does not match running sandbox "
-                    f"{status.sandbox}"
-                )
-            remote: RemoteChatSession | None = None
-            try:
-                remote = RemoteChatSession(
-                    status.endpoint,
-                    expected_sandbox=status.sandbox,
-                )
-                current = dict(selector_payload or {})
-                updated = remote.apply_settings(
-                    _remote_session_commands(
-                        allow_options=allow_options,
-                        default_options=default_options,
-                        limit_options=limit_options,
-                    ),
-                    current,
-                )
-                if selector_payload is not None:
-                    selector_payload.clear()
-                    selector_payload.update(updated)
-            except (RemoteChatError, ValueError) as exc:
-                if remote is not None:
-                    remote.close()
-                raise click.ClickException(str(exc)) from exc
-            try:
-                yield remote
-            finally:
-                remote.close()
-            return
-
-    if sandbox is not None and sandbox.partition(":")[0].strip() != "host":
-        raise click.ClickException(
-            "embedded chat execution currently supports only the host sandbox"
-        )
-    environ = load_runtime_environ(layout, base_environ=os.environ)
     model_catalog = (
         context_model_catalog(ctx) if isinstance(ctx, typer.Context) else None
     )
-    local = LocalChatSession(
-        layout,
-        **({"model_catalog": model_catalog} if model_catalog is not None else {}),
-        ceiling_overrides=user_call(
-            resolve_ceiling_overrides,
-            environ,
-            allow_options,
-        ),
-        binding_overrides=user_call(
-            resolve_binding_overrides,
-            environ,
-            default_options,
-        ),
-        limit_overrides=user_call(
-            resolve_limit_overrides,
-            environ,
-            limit_options,
-        ),
-    )
     try:
-        yield local
-    finally:
-        local.close()
+        runtime_context = open_execution_runtime(
+            layout,
+            sandbox=sandbox,
+            dev=dev,
+            model_catalog=model_catalog,
+            ui_base_url=ui_base_url(),
+        )
+        with runtime_context as runtime:
+            if runtime.mode == "remote":
+                if runtime.endpoint is None:  # pragma: no cover - value invariant
+                    raise RuntimeError("remote execution runtime has no endpoint")
+                remote: RemoteChatSession | None = None
+                try:
+                    remote = RemoteChatSession(
+                        runtime.endpoint,
+                        expected_sandbox=runtime.sandbox,
+                    )
+                    current = dict(selector_payload or {})
+                    updated = remote.apply_settings(
+                        _remote_session_commands(
+                            allow_options=allow_options,
+                            default_options=default_options,
+                            limit_options=limit_options,
+                        ),
+                        current,
+                    )
+                    if selector_payload is not None:
+                        selector_payload.clear()
+                        selector_payload.update(updated)
+                except (RemoteChatError, ValueError) as exc:
+                    if remote is not None:
+                        remote.close()
+                    raise click.ClickException(str(exc)) from exc
+                try:
+                    yield remote
+                finally:
+                    remote.close()
+                return
+
+            environ = load_runtime_environ(layout, base_environ=os.environ)
+            local = LocalChatSession(
+                layout,
+                **(
+                    {"model_catalog": model_catalog}
+                    if model_catalog is not None
+                    else {}
+                ),
+                ceiling_overrides=user_call(
+                    resolve_ceiling_overrides,
+                    environ,
+                    allow_options,
+                ),
+                binding_overrides=user_call(
+                    resolve_binding_overrides,
+                    environ,
+                    default_options,
+                ),
+                limit_overrides=user_call(
+                    resolve_limit_overrides,
+                    environ,
+                    limit_options,
+                ),
+            )
+            try:
+                yield local
+            finally:
+                local.close()
+    except ExecutionRuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _remote_session_commands(
@@ -215,14 +219,6 @@ def _remote_session_commands(
         *(RunOverride("default", field, value) for field, value in bindings.items()),
         *(RunOverride("limit", field, value) for field, value in limits.items()),
     )
-
-
-def _sandbox_matches(requested: str, running: str) -> bool:
-    requested_name, separator, _requested_spec = requested.partition(":")
-    running_name = running.partition(":")[0]
-    if requested_name.strip() != running_name.strip():
-        return False
-    return not separator or requested.strip() == running.strip()
 
 
 def _chat_input_history_store(ctx: typer.Context) -> ChatInputHistoryStore | None:

@@ -40,6 +40,8 @@ if TYPE_CHECKING:
     from toolang.up.sandbox import SandboxState, LaunchSpec
     from ...common.startup_progress import RuntimeStartupProgress
 
+from ...common.startup_progress import runtime_startup_failure_message
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeStartup:
@@ -156,7 +158,7 @@ def run_roaming_file(source: Path, args: list[str]) -> int:
         if startup_progress is not None:
             startup_progress.finish()
         if startup_progress is not None:
-            message = _startup_failure_message(
+            message = runtime_startup_failure_message(
                 startup_progress.agent,
                 startup_progress.sandbox,
                 startup_progress,
@@ -374,7 +376,7 @@ def run(
             raise
         if startup_progress is not None:
             raise click.ClickException(
-                _startup_failure_message(
+                runtime_startup_failure_message(
                     startup_progress.agent,
                     startup_progress.sandbox,
                     startup_progress,
@@ -395,30 +397,6 @@ def _report_foreground_ready(
         f"Running agent {name}: {state.ref.endpoint} (Ctrl+C to stop)",
         err=True,
     )
-
-
-def _startup_failure_message(
-    name: str,
-    sandbox: str,
-    progress: RuntimeStartupProgress,
-    error: BaseException,
-    *,
-    log_path: Path | None = None,
-) -> str:
-    reason = progress.failure_reason or str(error).strip() or type(error).__name__
-    stage = progress.current_stage or "Starting agent"
-    lines = [
-        f"Could not start agent {name} in {sandbox}",
-        f"Stage: {stage}",
-        f"Reason: {reason}",
-    ]
-    if "required `too serve`" in reason:
-        lines.append(
-            "Hint: Build a wheel with `uv build --wheel` and pass `--dev dist`."
-        )
-    if log_path is not None:
-        lines.append(f"Log: {log_path}")
-    return "\n".join(lines)
 
 
 def _warn_development_sandbox_package(
@@ -553,7 +531,7 @@ def start(
     ) as exc:
         startup_progress.finish()
         raise click.ClickException(
-            _startup_failure_message(
+            runtime_startup_failure_message(
                 launch.target.name,
                 launch.startup.sandbox,
                 startup_progress,

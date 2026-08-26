@@ -198,10 +198,20 @@ Runtime surfaces should treat the canonical thread and root-run event streams
 as the source of progress truth. A web client adapts native `RunEvent` values
 into any UI-specific protocol locally.
 
-The TUI selects execution from the resident runtime state. A healthy running
-resident uses `RemoteRunClient` and the agent HTTP API. Stopped residents,
-roaming agents, and visiting agents call the process-local executor through
-`LocalRunClient`. Both paths render the same native `RunEvent` values.
+The TUI selects one `ExecutionRuntime` after materializing the agent layout. A
+healthy running AgentServer is reused for resident, roaming, and visiting
+layouts. An explicit `--sandbox` must match that runtime; Chat never stops or
+reconfigures an attached server. When no server is active, Chat resolves the
+explicit selector, then the merged root/agent `[sandbox]` binding, then `host`.
+Host execution uses the process-local `LocalRunClient`; a non-host selector
+starts a temporary AgentServer and uses `RemoteRunClient` through its API.
+Chat stops only the temporary workload it launched. Both paths render the same
+native `RunEvent` values. `--dev PATH` may provide a Toolang wheel, or a
+directory containing one, when Chat creates that temporary non-host runtime;
+it cannot modify an attached server and does not apply to embedded host mode.
+On exit, Chat reports the stop and sandbox-release stages while it cleans up a
+temporary runtime. Attached AgentServers are left running and need no cleanup
+progress.
 
 Remote acceptance records the root run id before the first event so stop and
 steer remain addressable. If an accepted stream disconnects, the TUI keeps the

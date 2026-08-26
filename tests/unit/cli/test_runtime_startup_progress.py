@@ -3,7 +3,10 @@ from __future__ import annotations
 from io import StringIO
 
 from toolang.base.types.progress import ProgressEvent, ProgressStatus
-from toolang.cli.common.startup_progress import RuntimeStartupProgress
+from toolang.cli.common.startup_progress import (
+    RuntimeStartupProgress,
+    runtime_startup_failure_message,
+)
 
 
 def _event(
@@ -108,3 +111,31 @@ def test_controller_failure_replaces_a_completed_guest_stage() -> None:
 
     assert progress.current_stage == "Starting workload"
     assert progress.failure_reason == "container exited"
+
+
+def test_startup_failure_uses_an_action_supported_by_the_calling_command() -> None:
+    progress = RuntimeStartupProgress(
+        "alice",
+        "docker",
+        stream=StringIO(),
+        live=False,
+    )
+    error = RuntimeError("installed package lacks required `too serve`")
+
+    development = runtime_startup_failure_message(
+        "alice",
+        "docker",
+        progress,
+        error,
+    )
+    packaged = runtime_startup_failure_message(
+        "alice",
+        "docker",
+        progress,
+        error,
+        development_hint=False,
+    )
+
+    assert "pass `--dev dist`" in development
+    assert "Upgrade the Toolang package" in packaged
+    assert "--dev" not in packaged

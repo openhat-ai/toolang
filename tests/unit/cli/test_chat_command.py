@@ -12,6 +12,7 @@ import click
 import pytest
 
 from toolang.base.types.message import TextPart
+from toolang.cli.common.execution_runtime import ExecutionRuntime
 from toolang.cli.common.output import shorten_home_path
 from toolang.cli.toolang.commands.chat import main as chat
 from toolang.cli.toolang.commands.chat.base import (
@@ -22,7 +23,6 @@ from toolang.cli.toolang.commands.chat.base import (
 from toolang.common.layout import AgentLayout
 from toolang.execution.events import RunEnd, RunEvent, StepEnd
 from toolang.execution.types import Local, RunOverride, StepPath
-from toolang.up.process import AgentStatus
 
 _HOST_DESCRIPTION = "macOS 27.0 arm64"
 
@@ -262,6 +262,23 @@ def test_chat_runtime_builds_process_local_execution_resources(
             captured["closed"] = True
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(chat, "ui_base_url", lambda: "https://ui.test")
+
+    @contextmanager
+    def execution_runtime(
+        selected: AgentLayout,
+        **kwargs: object,
+    ) -> Iterator[ExecutionRuntime]:
+        assert selected == layout
+        assert kwargs == {
+            "sandbox": "host",
+            "dev": None,
+            "model_catalog": None,
+            "ui_base_url": "https://ui.test",
+        }
+        yield ExecutionRuntime(sandbox="host", mode="embedded")
+
+    monkeypatch.setattr(chat, "open_execution_runtime", execution_runtime)
     monkeypatch.setattr(
         chat,
         "load_runtime_environ",
@@ -302,28 +319,30 @@ def test_chat_runtime_builds_process_local_execution_resources(
     assert captured["closed"] is True
 
 
-def test_chat_runtime_uses_running_resident_without_local_environment(
+def test_chat_runtime_uses_remote_execution_without_local_environment(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
-    status = AgentStatus(
-        name="alice",
-        status="running",
-        endpoint="http://127.0.0.1:7001",
-        api_url=None,
-        webui_url=None,
-        sandbox="docker:python:3.13-slim",
-    )
     captured: dict[str, object] = {}
 
-    class Process:
-        def __init__(self, selected: AgentLayout) -> None:
-            assert selected == layout
-
-        def status(self, *, ui_base_url: str) -> AgentStatus:
-            assert ui_base_url == "https://ui.test"
-            return status
+    @contextmanager
+    def execution_runtime(
+        selected: AgentLayout,
+        **kwargs: object,
+    ) -> Iterator[ExecutionRuntime]:
+        assert selected == layout
+        assert kwargs == {
+            "sandbox": "docker",
+            "dev": None,
+            "model_catalog": None,
+            "ui_base_url": "https://ui.test",
+        }
+        yield ExecutionRuntime(
+            sandbox="docker:python:3.13-slim",
+            mode="remote",
+            endpoint="http://127.0.0.1:7001",
+        )
 
     class Session(_Client):
         def __init__(self, endpoint: str, *, expected_sandbox: str) -> None:
@@ -345,7 +364,7 @@ def test_chat_runtime_uses_running_resident_without_local_environment(
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
     monkeypatch.setattr(chat, "ui_base_url", lambda: "https://ui.test")
-    monkeypatch.setattr(chat.agents, "AgentProcess", Process)
+    monkeypatch.setattr(chat, "open_execution_runtime", execution_runtime)
     monkeypatch.setattr(chat, "RemoteChatSession", Session)
     monkeypatch.setattr(
         chat,
@@ -380,70 +399,29 @@ def test_chat_runtime_uses_running_resident_without_local_environment(
     }
 
 
-@pytest.mark.parametrize("runtime_status", ("preparing", "starting"))
-def test_chat_runtime_fails_closed_for_unready_resident(
-    runtime_status: str,
-    tmp_path: Path,
-    monkeypatch: Any,
-) -> None:
-    layout = AgentLayout.resident(tmp_path, "alice")
-    status = AgentStatus(
-        name="alice",
-        status=runtime_status,
-        endpoint="http://127.0.0.1:7001",
-        api_url=None,
-        webui_url=None,
-        sandbox="host",
-    )
-
-    class Process:
-        def __init__(self, _layout: AgentLayout) -> None:
-            pass
-
-        def status(self, *, ui_base_url: str) -> AgentStatus:
-            del ui_base_url
-            return status
-
-    monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
-    monkeypatch.setattr(chat, "ui_base_url", lambda: "")
-    monkeypatch.setattr(chat.agents, "AgentProcess", Process)
-
-    with pytest.raises(click.ClickException, match=runtime_status):
-        with chat._chat_runtime(
-            object(),  # type: ignore[arg-type]
-            sandbox=None,
-        ):
-            raise AssertionError("unready resident must not open Chat")
-
-
 def test_chat_runtime_does_not_fall_back_after_remote_health_failure(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
-    status = AgentStatus(
-        name="alice",
-        status="running",
-        endpoint="http://127.0.0.1:7001",
-        api_url=None,
-        webui_url=None,
-        sandbox="host",
-    )
 
-    class Process:
-        def __init__(self, _layout: AgentLayout) -> None:
-            pass
-
-        def status(self, *, ui_base_url: str) -> AgentStatus:
-            del ui_base_url
-            return status
+    @contextmanager
+    def execution_runtime(
+        _layout: AgentLayout,
+        **_kwargs: object,
+    ) -> Iterator[ExecutionRuntime]:
+        yield ExecutionRuntime(
+            sandbox="host",
+            mode="remote",
+            endpoint="http://127.0.0.1:7001",
+        )
 
     def failed_remote(*_args: object, **_kwargs: object) -> object:
         raise chat.RemoteChatError("remote chat health failed")
 
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
     monkeypatch.setattr(chat, "ui_base_url", lambda: "")
-    monkeypatch.setattr(chat.agents, "AgentProcess", Process)
+    monkeypatch.setattr(chat, "open_execution_runtime", execution_runtime)
     monkeypatch.setattr(chat, "RemoteChatSession", failed_remote)
     monkeypatch.setattr(
         chat,
@@ -459,16 +437,6 @@ def test_chat_runtime_does_not_fall_back_after_remote_health_failure(
             sandbox=None,
         ):
             raise AssertionError("failed remote must not open Chat")
-
-
-def test_running_sandbox_match_accepts_driver_or_exact_spec() -> None:
-    assert chat._sandbox_matches("docker", "docker:python:3.13-slim")
-    assert chat._sandbox_matches(
-        "docker:python:3.13-slim",
-        "docker:python:3.13-slim",
-    )
-    assert not chat._sandbox_matches("host", "docker:python:3.13-slim")
-    assert not chat._sandbox_matches("docker:other", "docker:python:3.13-slim")
 
 
 def test_chat_ui_paths_follow_the_selected_layout(
@@ -487,18 +455,89 @@ def test_chat_ui_paths_follow_the_selected_layout(
     )
 
 
-def test_chat_runtime_rejects_hosted_sandboxes(
+def test_chat_runtime_uses_a_temporary_remote_runtime(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
     layout = AgentLayout.roaming(tmp_path / "alice.too")
+    development = tmp_path / "dist"
+    opened = False
+
+    @contextmanager
+    def execution_runtime(
+        _layout: AgentLayout,
+        **_kwargs: object,
+    ) -> Iterator[ExecutionRuntime]:
+        nonlocal opened
+        assert _kwargs["dev"] == development
+        opened = True
+        yield ExecutionRuntime(
+            sandbox="docker:python:3.13-slim",
+            mode="remote",
+            endpoint="http://127.0.0.1:8123",
+            owned=True,
+        )
+
+    class Session(_Client):
+        def __init__(self, endpoint: str, *, expected_sandbox: str) -> None:
+            super().__init__()
+            assert endpoint == "http://127.0.0.1:8123"
+            assert expected_sandbox == "docker:python:3.13-slim"
+
+        def close(self) -> None:
+            pass
+
     monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
-    with pytest.raises(
-        click.ClickException,
-        match="supports only the host sandbox",
-    ):
+    monkeypatch.setattr(chat, "ui_base_url", lambda: "")
+    monkeypatch.setattr(chat, "open_execution_runtime", execution_runtime)
+    monkeypatch.setattr(chat, "RemoteChatSession", Session)
+
+    with chat._chat_runtime(
+        object(),  # type: ignore[arg-type]
+        sandbox="docker",
+        dev=development,
+    ) as client:
+        assert isinstance(client, Session)
+
+    assert opened is True
+
+
+def test_chat_runtime_closes_temporary_runtime_after_remote_initialization_failure(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    layout = AgentLayout.roaming(tmp_path / "alice.too")
+    cleaned = False
+
+    @contextmanager
+    def execution_runtime(
+        _layout: AgentLayout,
+        **_kwargs: object,
+    ) -> Iterator[ExecutionRuntime]:
+        nonlocal cleaned
+        try:
+            yield ExecutionRuntime(
+                sandbox="docker:python:3.13-slim",
+                mode="remote",
+                endpoint="http://127.0.0.1:8123",
+                owned=True,
+            )
+        finally:
+            cleaned = True
+
+    def failed_remote(*_args: object, **_kwargs: object) -> object:
+        raise chat.RemoteChatError("temporary remote initialization failed")
+
+    monkeypatch.setattr(chat, "context_layout", lambda _ctx: layout)
+    monkeypatch.setattr(chat, "ui_base_url", lambda: "")
+    monkeypatch.setattr(chat, "open_execution_runtime", execution_runtime)
+    monkeypatch.setattr(chat, "RemoteChatSession", failed_remote)
+
+    with pytest.raises(click.ClickException, match="initialization failed"):
         with chat._chat_runtime(
             object(),  # type: ignore[arg-type]
             sandbox="docker",
         ):
-            raise AssertionError("unsupported sandbox must not open a session")
+            raise AssertionError("failed remote must not open Chat")
+
+    assert cleaned is True

@@ -176,6 +176,31 @@ def _launch_spec(tmp_path: Path) -> sandbox.LaunchSpec:
     )
 
 
+def test_resolve_selection_uses_explicit_home_root_host_precedence(
+    tmp_path: Path,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+
+    assert sandbox.resolve_selection(layout) == "host"
+
+    layout.root_config.write_text(
+        "[sandbox]\ndriver = 'docker'\ntarget = 'root-image'\n",
+        encoding="utf-8",
+    )
+    assert sandbox.resolve_selection(layout) == "docker:root-image"
+
+    layout.config.write_text(
+        "[sandbox]\ndriver = 'docker'\ntarget = 'home-image'\n",
+        encoding="utf-8",
+    )
+    assert sandbox.resolve_selection(layout) == "docker:home-image"
+    assert (
+        sandbox.resolve_selection(layout, explicit="docker:explicit-image")
+        == "docker:explicit-image"
+    )
+
+
 def test_sandbox_state_round_trips(tmp_path: Path) -> None:
     path = tmp_path / "sandbox.json"
     state = sandbox.SandboxState(
@@ -272,6 +297,142 @@ def test_agent_removal_releases_control_state_through_the_sandbox(
         implementation.calls
     )
     assert sandbox.SandboxState.load(layout.sandbox_state) is None
+
+
+def test_release_stopped_rejects_a_workload_that_became_active(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    implementation = FakeSandbox()
+    monkeypatch.setattr(
+        sandbox,
+        "load_state_sandbox",
+        lambda _layout, _state: implementation,
+    )
+    layout = AgentLayout.resident(tmp_path, "alice")
+    state = sandbox.SandboxState(
+        sandbox="docker:python:3.13-slim",
+        ref=SandboxRef("toolang-alice-test", "http://localhost:8123"),
+    )
+    state.save(layout.sandbox_state)
+
+    with pytest.raises(ValueError, match="already running"):
+        asyncio.run(sandbox.release_stopped(layout))
+
+    assert ("release", state.ref) not in implementation.calls
+    assert sandbox.SandboxState.load(layout.sandbox_state) == state
+
+
+def test_stop_handle_stops_only_its_exact_owned_workload(
+    tmp_path: Path,
+) -> None:
+    implementation = FakeSandbox()
+    layout = AgentLayout.resident(tmp_path, "alice")
+    state = sandbox.SandboxState(
+        sandbox="docker:python:3.13-slim",
+        ref=SandboxRef("toolang-alice-owned", "http://localhost:8123"),
+    )
+    state.save(layout.sandbox_state)
+    handle = sandbox.SandboxHandle(implementation, state)
+    events: list[ProgressEvent] = []
+
+    assert (
+        asyncio.run(sandbox.stop_handle(layout, handle, progress=events.append)) is True
+    )
+
+    assert ("stop", state.ref, False) in implementation.calls
+    assert ("release", state.ref) in implementation.calls
+    assert sandbox.SandboxState.load(layout.sandbox_state) is None
+    assert [(event.phase, event.status) for event in events] == [
+        ("shutdown.stop", "running"),
+        ("shutdown.stop", "ok"),
+        ("shutdown.release", "running"),
+        ("shutdown.release", "ok"),
+    ]
+
+
+def test_stop_handle_reports_the_failed_cleanup_stage(
+    tmp_path: Path,
+) -> None:
+    implementation = FakeSandbox()
+    implementation.stop_error = RuntimeError("stop failed")
+    layout = AgentLayout.resident(tmp_path, "alice")
+    state = sandbox.SandboxState(
+        sandbox="docker:python:3.13-slim",
+        ref=SandboxRef("toolang-alice-owned", "http://localhost:8123"),
+    )
+    state.save(layout.sandbox_state)
+    events: list[ProgressEvent] = []
+
+    with pytest.raises(RuntimeError, match="stop failed"):
+        asyncio.run(
+            sandbox.stop_handle(
+                layout,
+                sandbox.SandboxHandle(implementation, state),
+                progress=events.append,
+            )
+        )
+
+    assert [(event.phase, event.status, event.detail) for event in events] == [
+        ("shutdown.stop", "running", "docker:python:3.13-slim"),
+        ("shutdown.stop", "failed", "stop failed"),
+    ]
+    assert sandbox.SandboxState.load(layout.sandbox_state) == state
+
+
+def test_stop_handle_rejects_replaced_ownership_without_stopping(
+    tmp_path: Path,
+) -> None:
+    implementation = FakeSandbox()
+    layout = AgentLayout.resident(tmp_path, "alice")
+    owned = sandbox.SandboxState(
+        sandbox="docker:python:3.13-slim",
+        ref=SandboxRef("toolang-alice-owned", "http://localhost:8123"),
+    )
+    replacement = sandbox.SandboxState(
+        sandbox="docker:python:3.13-slim",
+        ref=SandboxRef("toolang-alice-replacement", "http://localhost:8124"),
+    )
+    replacement.save(layout.sandbox_state)
+
+    with pytest.raises(ValueError, match="ownership changed"):
+        asyncio.run(
+            sandbox.stop_handle(
+                layout,
+                sandbox.SandboxHandle(implementation, owned),
+            )
+        )
+
+    assert not any(
+        isinstance(call, tuple) and call[0] in {"stop", "release"}
+        for call in implementation.calls
+    )
+    assert sandbox.SandboxState.load(layout.sandbox_state) == replacement
+
+
+def test_stop_handle_does_not_stop_without_current_ownership(
+    tmp_path: Path,
+) -> None:
+    implementation = FakeSandbox()
+    layout = AgentLayout.resident(tmp_path, "alice")
+    owned = sandbox.SandboxState(
+        sandbox="docker:python:3.13-slim",
+        ref=SandboxRef("toolang-alice-owned", "http://localhost:8123"),
+    )
+
+    assert (
+        asyncio.run(
+            sandbox.stop_handle(
+                layout,
+                sandbox.SandboxHandle(implementation, owned),
+            )
+        )
+        is False
+    )
+    assert not any(
+        isinstance(call, tuple) and call[0] in {"stop", "release"}
+        for call in implementation.calls
+    )
 
 
 def test_sandbox_status_treats_plugin_recovery_failure_as_not_running(

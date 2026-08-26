@@ -619,6 +619,56 @@ def test_cli_opens_roaming_chat_with_its_exact_layout(
     }
 
 
+def test_cli_routes_chat_development_artifact_to_the_exact_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "demo.too"
+    source.write_text("agic chat:\n  Reply directly.\n", encoding="utf-8")
+    development = tmp_path / "dist"
+    captured: dict[str, object] = {}
+
+    def interactive(
+        ctx: typer.Context,
+        *,
+        thread_id: str | None,
+        selector_payload: dict[str, object] | None = None,
+        sandbox: str | None = None,
+        dev: Path | None = None,
+        **_kwargs: object,
+    ) -> None:
+        captured.update(
+            layout=chat_commands.context_layout(ctx),
+            thread=thread_id,
+            selectors=selector_payload,
+            sandbox=sandbox,
+            dev=dev,
+        )
+
+    monkeypatch.setattr(chat_commands, "_chat_interactive", interactive)
+
+    assert (
+        cli.main(
+            [
+                str(source),
+                "chat",
+                "--sandbox",
+                "docker",
+                "--dev",
+                str(development),
+            ]
+        )
+        == 0
+    )
+    assert captured == {
+        "layout": AgentLayout.roaming(source),
+        "thread": None,
+        "selectors": None,
+        "sandbox": "docker",
+        "dev": development,
+    }
+
+
 def test_cli_routes_visiting_chat_through_materialization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
