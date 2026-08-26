@@ -24,12 +24,12 @@ refresh, last-valid watcher behavior, and static Flow calls remain unchanged.
   child run.
 - Each eligible model call receives the active public runnable signatures.
 - State transitions are durable controls with old and new fingerprints.
-- Core namespaces are reserved, and public built-in toolsets use the short canonical
-  names `fs`, `web`, `shell`, and `service`.
+- Core toolset names are reserved, and public built-in toolsets use the short
+  canonical names `fs`, `web`, `shell`, and `service`.
 
-## Tool Names
+## Toolset And Tool Names
 
-Public tools that interact with the external world use ordinary namespaces:
+Public toolsets that interact with the external world use ordinary names:
 
 | Canonical | Replaces | Domain |
 | --- | --- | --- |
@@ -38,24 +38,24 @@ Public tools that interact with the external world use ordinary namespaces:
 | `shell` | unchanged | command execution |
 | `service` | `service_use` | service-cap interaction |
 
-The built-in toolset identity and public namespace both change. Repository
-configuration, selectors, examples, docs, and tests migrate together. Legacy
-and canonical names are not coexposed, and no compatibility aliases are added.
+The built-in toolset names change. Repository configuration, selectors,
+examples, docs, and tests migrate together. Legacy and canonical names are not
+coexposed, and no compatibility aliases are added.
 
-Canonical model-facing and persisted names use `namespace__tool`. Frontends may
-render the same reference as `namespace.tool`, but must translate it back before
+Canonical model-facing and persisted names use `toolset__tool`. Frontends may
+render the same reference as `toolset.tool`, but must translate it back before
 dispatch; the dotted form is not an identity or protocol value.
 
 Names use conservative, provider-portable grammar:
 
-- user-facing toolset namespaces and tool names match
+- user-facing toolset names and tool names match
   `[A-Za-z]+(?:_[A-Za-z]+)*`; and
-- core namespaces match `_[A-Za-z]+(?:_[A-Za-z]+)*`.
+- core toolset names match `_[A-Za-z]+(?:_[A-Za-z]+)*`.
 
 This excludes leading or trailing underscores and `__` inside either component.
-Only core namespaces have the single leading underscore:
+Only core toolsets have the single leading underscore:
 
-| Namespace | Meaning | This phase |
+| Toolset | Meaning | This phase |
 | --- | --- | --- |
 | `_me` | current agent authored state | flow read and save |
 | `_too` | Toolang executor and run tree | state apply and dynamic run |
@@ -63,7 +63,7 @@ Only core namespaces have the single leading underscore:
 
 `_hat` covers future human-agent, agent-agent, and team coordination independent
 of transport. User-facing built-ins and external plugins cannot register a core
-namespace. Tool names are verb-first.
+toolset name. Tool names are verb-first.
 
 This phase adds:
 
@@ -205,7 +205,7 @@ only after the prepared state and durable transition are both available.
 
 Included:
 
-- the four core actions and reserved namespace enforcement;
+- the four core actions and reserved toolset-name enforcement;
 - public toolset renames;
 - root state head and durable `next_step` apply;
 - dynamic agic/flow children and runnable instructions;
@@ -251,8 +251,8 @@ Excluded:
 8. Every eligible model request lists the active public signatures, including
    the request following apply.
 9. Tool directives and ceilings can exclude core actions; defaults include them.
-10. Toolset and tool names enforce the portable component grammar; core
-    namespaces are reserved and `_hat` means Human Agent Teaming.
+10. Toolset and tool names enforce the portable component grammar; core toolset
+    names are reserved and `_hat` means Human Agent Teaming.
 11. Progress hides raw wrappers and preserves useful save, apply, child, and
     diagnostic output.
 12. Concurrent applies install whole serialized state snapshots.
