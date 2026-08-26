@@ -166,7 +166,7 @@ async def execute(state: _AgicState, call: ToolCall) -> ToolCallResult:
             data=part,
         )
     )
-    status = "failed" if record.error else "succeeded"
+    status = "failed" if record.error is not None else "succeeded"
     log_tool_call_output(
         record,
         thread_id=run.thread,
@@ -344,7 +344,7 @@ async def invoke_tool_call(
         error = None
     except Exception as exc:
         output = {}
-        error = str(exc)
+        error = str(exc) or type(exc).__name__
     return ToolCallResult(
         tool_call_id=call.tool_call_id,
         call_id=call.call_id,
