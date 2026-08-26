@@ -100,6 +100,31 @@ def test_execution_runtime_attaches_to_a_compatible_running_agent(
         )
 
 
+def test_execution_runtime_rejects_dev_for_an_attached_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    _set_status(
+        monkeypatch,
+        layout,
+        _status(
+            value="running",
+            endpoint="http://127.0.0.1:7001",
+            sandbox="docker:python:3.13-slim",
+        ),
+    )
+
+    with pytest.raises(runtime.ExecutionRuntimeError, match="cannot modify running"):
+        with runtime.open_execution_runtime(
+            layout,
+            sandbox="docker",
+            dev=tmp_path / "dist",
+            ui_base_url="https://ui.test",
+        ):
+            raise AssertionError("an attached runtime must not accept --dev")
+
+
 @pytest.mark.parametrize(
     ("requested", "message"),
     (
@@ -189,6 +214,28 @@ def test_execution_runtime_opens_embedded_host_and_releases_stopped_state(
     assert released == [layout]
 
 
+def test_execution_runtime_rejects_dev_for_embedded_host(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    _set_status(monkeypatch, layout, _status(value="stopped"))
+    monkeypatch.setattr(
+        runtime.sandbox_runtime,
+        "resolve_selection",
+        lambda _layout, *, explicit: "host",
+    )
+
+    with pytest.raises(runtime.ExecutionRuntimeError, match="does not apply"):
+        with runtime.open_execution_runtime(
+            layout,
+            sandbox="host",
+            dev=tmp_path / "dist",
+            ui_base_url="https://ui.test",
+        ):
+            raise AssertionError("embedded host must not accept --dev")
+
+
 def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -201,11 +248,13 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
         lambda _layout, *, explicit: explicit or "docker",
     )
     launch = SimpleNamespace(sandbox="docker")
-    monkeypatch.setattr(
-        runtime,
-        "_resolve_inactive_launch",
-        lambda *_args, **_kwargs: launch,
-    )
+    development = tmp_path / "dist"
+
+    def resolve_launch(*_args: object, **kwargs: object) -> object:
+        assert kwargs["dev"] == development
+        return launch
+
+    monkeypatch.setattr(runtime, "_resolve_inactive_launch", resolve_launch)
     progress = _Progress()
     monkeypatch.setattr(
         runtime,
@@ -239,6 +288,7 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
     with runtime.open_execution_runtime(
         layout,
         sandbox="docker",
+        dev=development,
         ui_base_url="https://ui.test",
     ) as selected:
         calls.append("body")
@@ -255,6 +305,58 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
         ("stop", layout, handle, False),
     ]
     assert progress.finished == 1
+
+
+@pytest.mark.parametrize(
+    ("development", "hint"),
+    (
+        (None, "pass `--dev dist`"),
+        (Path("dist"), "Upgrade the Toolang package"),
+    ),
+)
+def test_execution_runtime_startup_failure_uses_the_available_dev_hint(
+    development: Path | None,
+    hint: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    _set_status(monkeypatch, layout, _status(value="stopped"))
+    monkeypatch.setattr(
+        runtime.sandbox_runtime,
+        "resolve_selection",
+        lambda _layout, *, explicit: explicit or "docker",
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_resolve_inactive_launch",
+        lambda *_args, **_kwargs: SimpleNamespace(sandbox="docker"),
+    )
+    progress = _Progress()
+    progress.failure_reason = (
+        "Installed Toolang does not provide the required `too serve` entrypoint."
+    )
+    monkeypatch.setattr(
+        runtime,
+        "make_runtime_startup_progress",
+        lambda *_args, **_kwargs: progress,
+    )
+
+    async def fail_launch(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("startup failed")
+
+    monkeypatch.setattr(runtime.sandbox_runtime, "launch", fail_launch)
+
+    with pytest.raises(runtime.ExecutionRuntimeError) as captured:
+        with runtime.open_execution_runtime(
+            layout,
+            sandbox="docker",
+            dev=development,
+            ui_base_url="https://ui.test",
+        ):
+            raise AssertionError("a failed runtime must not open")
+
+    assert hint in str(captured.value)
 
 
 def test_execution_runtime_cleanup_does_not_hide_a_body_failure(
@@ -377,6 +479,7 @@ def test_inactive_launch_wraps_environment_errors(
         runtime._resolve_inactive_launch(
             layout,
             sandbox="docker",
+            dev=None,
             model_catalog=None,
             base_environ={},
         )
@@ -388,6 +491,7 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
 ) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     catalog = tmp_path / "models.json"
+    development = tmp_path / "toolang.whl"
     captured: dict[str, Any] = {}
 
     def load_environ(
@@ -419,6 +523,7 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
     result = runtime._resolve_inactive_launch(
         layout,
         sandbox="docker",
+        dev=development,
         model_catalog=catalog,
         base_environ={"PROCESS": "value"},
     )
@@ -437,6 +542,7 @@ def test_inactive_launch_uses_fresh_environment_and_file_logging(
     assert captured["launch"] == {
         "layout": layout,
         "sandbox": "docker",
+        "dev": development,
         "output": "file",
         "log_path": layout.runtime_log,
         "log_spec": "error",

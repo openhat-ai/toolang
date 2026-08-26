@@ -206,7 +206,9 @@ explicit selector, then the merged root/agent `[sandbox]` binding, then `host`.
 Host execution uses the process-local `LocalRunClient`; a non-host selector
 starts a temporary AgentServer and uses `RemoteRunClient` through its API.
 Chat stops only the temporary workload it launched. Both paths render the same
-native `RunEvent` values.
+native `RunEvent` values. `--dev PATH` may provide a Toolang wheel, or a
+directory containing one, when Chat creates that temporary non-host runtime;
+it cannot modify an attached server and does not apply to embedded host mode.
 
 Remote acceptance records the root run id before the first event so stop and
 steer remain addressable. If an accepted stream disconnects, the TUI keeps the

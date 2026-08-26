@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -21,6 +22,13 @@ def chat_command(
         typer.Option(
             "--sandbox",
             help="Execute the session in this sandbox.",
+        ),
+    ] = None,
+    dev: Annotated[
+        Path | None,
+        typer.Option(
+            "--dev",
+            help="Use a Toolang wheel, or the newest wheel found recursively in a directory.",
         ),
     ] = None,
     allows: Annotated[
@@ -47,5 +55,6 @@ def chat_command(
         allows=allows,
         defaults=defaults,
         sandbox=sandbox,
+        dev=dev,
         limits=limits,
     )

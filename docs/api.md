@@ -393,7 +393,9 @@ Chat uses the same explicit/configured/host selection when no AgentServer is
 active. `host` stays embedded in the CLI; another selector starts a temporary
 AgentServer that Chat stops on exit. If an AgentServer is already running, Chat
 attaches to it and rejects an explicit incompatible selector without executing
-or restarting the server.
+or restarting the server. `chat --dev PATH` installs a local Toolang wheel in a
+new temporary non-host runtime. It is rejected for embedded host execution or
+when Chat attaches to an existing AgentServer.
 
 `run`, `start`, and roaming file-inbox runtime accept `--dev PATH` for a
 non-host sandbox. `PATH` is either one Toolang `.whl` file or a directory to

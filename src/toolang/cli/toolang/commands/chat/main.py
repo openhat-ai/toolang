@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 import os
+from pathlib import Path
 import sys
 
 import click
@@ -64,6 +65,7 @@ def chat_command(
     allows: list[str] | None = None,
     defaults: list[str] | None = None,
     sandbox: str | None = None,
+    dev: Path | None = None,
     limits: list[str] | None = None,
 ) -> None:
     thread_id = _target_thread_id(ctx, thread) if thread is not None else None
@@ -71,6 +73,7 @@ def chat_command(
         ctx,
         thread_id=thread_id,
         sandbox=sandbox,
+        dev=dev,
         allow_options=allows,
         default_options=defaults,
         limit_options=limits,
@@ -83,6 +86,7 @@ def _chat_interactive(
     thread_id: str | None,
     selector_payload: dict[str, object] | None = None,
     sandbox: str | None = None,
+    dev: Path | None = None,
     allow_options: list[str] | None = None,
     default_options: list[str] | None = None,
     limit_options: list[str] | None = None,
@@ -92,6 +96,7 @@ def _chat_interactive(
         ctx,
         selector_payload=selectors,
         sandbox=sandbox,
+        dev=dev,
         allow_options=allow_options,
         default_options=default_options,
         limit_options=limit_options,
@@ -117,6 +122,7 @@ def _chat_runtime(
     *,
     selector_payload: dict[str, object] | None = None,
     sandbox: str | None,
+    dev: Path | None = None,
     allow_options: list[str] | None = None,
     default_options: list[str] | None = None,
     limit_options: list[str] | None = None,
@@ -131,6 +137,7 @@ def _chat_runtime(
         runtime_context = open_execution_runtime(
             layout,
             sandbox=sandbox,
+            dev=dev,
             model_catalog=model_catalog,
             ui_base_url=ui_base_url(),
         )

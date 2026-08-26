@@ -272,6 +272,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
         assert selected == layout
         assert kwargs == {
             "sandbox": "host",
+            "dev": None,
             "model_catalog": None,
             "ui_base_url": "https://ui.test",
         }
@@ -333,6 +334,7 @@ def test_chat_runtime_uses_remote_execution_without_local_environment(
         assert selected == layout
         assert kwargs == {
             "sandbox": "docker",
+            "dev": None,
             "model_catalog": None,
             "ui_base_url": "https://ui.test",
         }
@@ -458,6 +460,7 @@ def test_chat_runtime_uses_a_temporary_remote_runtime(
     monkeypatch: Any,
 ) -> None:
     layout = AgentLayout.roaming(tmp_path / "alice.too")
+    development = tmp_path / "dist"
     opened = False
 
     @contextmanager
@@ -466,6 +469,7 @@ def test_chat_runtime_uses_a_temporary_remote_runtime(
         **_kwargs: object,
     ) -> Iterator[ExecutionRuntime]:
         nonlocal opened
+        assert _kwargs["dev"] == development
         opened = True
         yield ExecutionRuntime(
             sandbox="docker:python:3.13-slim",
@@ -491,6 +495,7 @@ def test_chat_runtime_uses_a_temporary_remote_runtime(
     with chat._chat_runtime(
         object(),  # type: ignore[arg-type]
         sandbox="docker",
+        dev=development,
     ) as client:
         assert isinstance(client, Session)
 

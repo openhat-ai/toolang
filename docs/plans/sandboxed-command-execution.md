@@ -146,7 +146,7 @@ Closing its client releases only client-owned transport resources.
 A temporary runtime:
 
 1. uses the existing sandbox selection, environment, mount, port, readiness,
-   startup-progress, and recovery paths;
+   startup-progress, development-wheel injection, and recovery paths;
 2. captures AgentServer output in the agent log so it cannot corrupt Chat or
    Script presentation;
 3. yields only after the API is ready and its identity matches the selected

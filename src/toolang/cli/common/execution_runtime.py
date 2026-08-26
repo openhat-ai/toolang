@@ -64,6 +64,7 @@ def open_execution_runtime(
     layout: AgentLayout,
     *,
     sandbox: str | None,
+    dev: Path | None = None,
     model_catalog: Path | None = None,
     ui_base_url: str = "",
     base_environ: Mapping[str, str] | None = None,
@@ -76,6 +77,11 @@ def open_execution_runtime(
             f"agent {layout.name} is {status.status}; wait for it to become ready"
         )
     if status is not None and status.status == "running":
+        if dev is not None:
+            raise ExecutionRuntimeError(
+                f"--dev cannot modify running agent {layout.name}; "
+                "stop it before starting a development runtime"
+            )
         yield _attached_runtime(layout, status, requested=sandbox)
         return
 
@@ -91,6 +97,11 @@ def open_execution_runtime(
     ) as exc:
         raise ExecutionRuntimeError(str(exc)) from exc
     if selected == "host":
+        if dev is not None:
+            raise ExecutionRuntimeError(
+                "--dev does not apply to the host sandbox; "
+                "it already uses the current Toolang environment"
+            )
         try:
             asyncio.run(sandbox_runtime.release_stopped(layout))
         except (
@@ -108,6 +119,7 @@ def open_execution_runtime(
     launch = _resolve_inactive_launch(
         layout,
         sandbox=selected,
+        dev=dev,
         model_catalog=model_catalog,
         base_environ=base_environ,
     )
@@ -134,7 +146,7 @@ def open_execution_runtime(
                 progress,
                 exc,
                 log_path=layout.runtime_log,
-                development_hint=False,
+                development_hint=dev is None,
             )
         ) from exc
     progress.finish()
@@ -205,6 +217,7 @@ def _resolve_inactive_launch(
     layout: AgentLayout,
     *,
     sandbox: str | None,
+    dev: Path | None,
     model_catalog: Path | None,
     base_environ: Mapping[str, str] | None,
 ) -> sandbox_runtime.LaunchSpec:
@@ -225,6 +238,7 @@ def _resolve_inactive_launch(
             sandbox_runtime.resolve_launch(
                 layout=layout,
                 sandbox=sandbox,
+                dev=dev,
                 output="file",
                 log_path=log_plan.path,
                 log_spec=log_plan.spec,
