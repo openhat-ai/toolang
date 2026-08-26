@@ -46,6 +46,23 @@ def test_non_tty_startup_prints_each_active_stage_once() -> None:
     ]
 
 
+def test_startup_progress_can_track_without_rendering() -> None:
+    stream = StringIO()
+    progress = RuntimeStartupProgress(
+        "alice",
+        "docker",
+        stream=stream,
+        live=False,
+        enabled=False,
+    )
+
+    progress(_event("server", "Starting server"))
+    progress.finish()
+
+    assert progress.current_stage == "Starting server"
+    assert stream.getvalue() == ""
+
+
 def test_tty_startup_tracks_stage_and_clears_transient_line() -> None:
     stream = StringIO()
     progress = RuntimeStartupProgress(

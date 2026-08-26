@@ -69,6 +69,7 @@ def open_execution_runtime(
     model_catalog: Path | None = None,
     ui_base_url: str = "",
     base_environ: Mapping[str, str] | None = None,
+    show_progress: bool = True,
 ) -> Iterator[ExecutionRuntime]:
     """Attach to, embed, or temporarily launch one execution runtime."""
 
@@ -125,7 +126,11 @@ def open_execution_runtime(
         base_environ=base_environ,
     )
 
-    progress = make_runtime_startup_progress(layout.name, launch.sandbox)
+    progress = make_runtime_startup_progress(
+        layout.name,
+        launch.sandbox,
+        enabled=show_progress,
+    )
     try:
         handle = asyncio.run(sandbox_runtime.launch(launch, progress=progress))
     except KeyboardInterrupt:
@@ -171,6 +176,7 @@ def open_execution_runtime(
         shutdown_progress = make_runtime_shutdown_progress(
             layout.name,
             handle.state.sandbox,
+            enabled=show_progress,
         )
         try:
             asyncio.run(

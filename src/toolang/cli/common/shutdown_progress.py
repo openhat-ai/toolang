@@ -28,12 +28,14 @@ class RuntimeShutdownProgress:
         *,
         stream: TextIO | None = None,
         live: bool | None = None,
+        enabled: bool = True,
     ) -> None:
         self.agent = agent
         self.sandbox = sandbox
         self._stream = stream or sys.stderr
         stream_is_tty = bool(getattr(self._stream, "isatty", lambda: False)())
         self._live_enabled = stream_is_tty if live is None else live
+        self._enabled = enabled
         self._console = Console(
             file=self._stream,
             force_terminal=True if self._live_enabled else None,
@@ -63,6 +65,8 @@ class RuntimeShutdownProgress:
             if event.status in {"running", "failed"}:
                 self._current_stage = event.label
                 self._current_detail = detail
+            if not self._enabled:
+                return
             if self._live_enabled:
                 self._render_live()
             elif event.status == "running" and event.phase not in self._printed_phases:
@@ -79,7 +83,7 @@ class RuntimeShutdownProgress:
             if display is not None:
                 display.stop()
                 self._display = None
-            if display is not None and self._console.is_terminal:
+            if display is not None and self._enabled and self._console.is_terminal:
                 self._stream.write("\x1b[0m")
                 self._stream.flush()
 
@@ -133,10 +137,11 @@ def make_runtime_shutdown_progress(
     sandbox: str,
     *,
     live: bool | None = None,
+    enabled: bool = True,
 ) -> RuntimeShutdownProgress:
     """Create the standard command-owned runtime cleanup presenter."""
 
-    return RuntimeShutdownProgress(agent, sandbox, live=live)
+    return RuntimeShutdownProgress(agent, sandbox, live=live, enabled=enabled)
 
 
 def _bounded_detail(detail: str | None) -> str | None:

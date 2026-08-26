@@ -37,12 +37,14 @@ class RuntimeStartupProgress:
         *,
         stream: TextIO | None = None,
         live: bool | None = None,
+        enabled: bool = True,
     ) -> None:
         self.agent = agent
         self.sandbox = sandbox
         self._stream = stream or sys.stderr
         stream_is_tty = bool(getattr(self._stream, "isatty", lambda: False)())
         self._live_enabled = stream_is_tty if live is None else live
+        self._enabled = enabled
         self._console = Console(
             file=self._stream,
             force_terminal=True if self._live_enabled else None,
@@ -105,6 +107,8 @@ class RuntimeStartupProgress:
                 self._current_running = False
             if event.status == "failed":
                 self._failure_reason = reason
+            if not self._enabled:
+                return
             if self._live_enabled:
                 self._render_live()
             elif event.status == "running" and event.phase not in self._printed_phases:
@@ -120,7 +124,7 @@ class RuntimeStartupProgress:
             if self._display is not None:
                 self._display.stop()
                 self._display = None
-            if self._console.is_terminal:
+            if self._enabled and self._console.is_terminal:
                 self._stream.write("\x1b[0m")
                 self._stream.flush()
 
@@ -174,10 +178,11 @@ def make_runtime_startup_progress(
     sandbox: str,
     *,
     live: bool | None = None,
+    enabled: bool = True,
 ) -> RuntimeStartupProgress:
     """Create the standard runtime-startup presenter."""
 
-    return RuntimeStartupProgress(agent, sandbox, live=live)
+    return RuntimeStartupProgress(agent, sandbox, live=live, enabled=enabled)
 
 
 def runtime_startup_failure_message(

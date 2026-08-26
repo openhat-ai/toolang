@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
+import json
 import os
 from pathlib import Path
 import sys
 from typing import Any, TextIO
+from uuid import uuid4
 
 import click
+import httpx
+from pydantic import TypeAdapter, ValidationError
 import typer
 from typer.core import TyperArgument, TyperCommand, TyperGroup, TyperOption
 
@@ -26,7 +30,9 @@ from toolang.cli.common.policy import (
 )
 from toolang.execution.calls import parse_call, resolve_spec
 from toolang.execution.executor import LocalRunHandle, RunExecutor
+from toolang.execution.remote import RemoteRunClient, RemoteRunClientError
 from toolang.execution.records import RunRecord
+from toolang.execution.schemas import RunRequest, ThreadInfo
 from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import RunOverride, ThreadPrefix
@@ -40,7 +46,9 @@ from toolang.up import process as agents
 from toolang.up.logging import configure_logging_plan, resolve_agent_logging
 
 from ...common.context import load_runtime_environ
+from ...common.execution_runtime import open_execution_runtime
 from ...common.progress import as_progress_sink, make_cli_progress
+from ...common.remote_runtime import inspect_remote_runtime
 from ...common.result_saving import save_result
 from ...common.output import echo_error
 from ...common.execution_progress.config import resolve_progress_max_width
@@ -50,6 +58,7 @@ Runnable = AgicDecl | FlowDecl
 _LITERAL_ITEM_PREFIX = "\ue002"
 _UNPERSISTED_THREAD = "<unpersisted-script-thread>"
 _RUNNABLES_PANEL = "Runnables"
+_THREAD_INFO_ADAPTER = TypeAdapter(ThreadInfo)
 
 
 class _HelpArgument(TyperArgument):
@@ -173,6 +182,8 @@ def _runnable_command(
         allow: tuple[str, ...],
         default: tuple[str, ...],
         limit: tuple[str, ...],
+        sandbox: str | None,
+        dev: Path | None,
         save: str | None,
         quiet: bool,
     ) -> int:
@@ -190,6 +201,8 @@ def _runnable_command(
             allow_options=allow,
             default_options=default,
             limit_options=limit,
+            sandbox=sandbox,
+            dev=dev,
             save=save,
             quiet=quiet,
         )
@@ -216,6 +229,22 @@ def _runnable_command(
             multiple=True,
             default=(),
             help="Set FIELD=VALUE. Repeat for another field.",
+        ),
+        TyperOption(
+            param_decls=["--sandbox"],
+            type=str,
+            default=None,
+            help="Execute this run in the selected sandbox.",
+        ),
+        TyperOption(
+            param_decls=["--dev"],
+            type=click.Path(path_type=Path),
+            default=None,
+            metavar="PATH",
+            help=(
+                "Use a Toolang wheel, or the newest wheel found recursively "
+                "in a directory."
+            ),
         ),
         TyperOption(
             param_decls=["--save"],
@@ -405,6 +434,8 @@ def _run(
     allow_options: tuple[str, ...],
     default_options: tuple[str, ...],
     limit_options: tuple[str, ...],
+    sandbox: str | None,
+    dev: Path | None,
     save: str | None,
     quiet: bool,
 ) -> int:
@@ -413,48 +444,80 @@ def _run(
     store: RunStore | None = None
     run_id: str | None = None
     log_path: Path | None = None
+    accepted: list[str] = []
     try:
         layout = agents.materialize_roaming_program(source_path)
-        store = RunStore(layout.run_store)
-        ids = IdIssuer(layout.id_state)
-        run_id = ids.issue_run()
-        log_plan = resolve_agent_logging(
-            mode="script",
-            environ=os.environ,
-            run_log_path=layout.run_log(runnable, run_id),
-        )
-        configure_logging_plan(log_plan)
-        log_path = log_plan.path
-        state = prepare_agent_state(
+        _reject_runnable_option(default_options)
+        with open_execution_runtime(
             layout,
-            toolang_version=toolang_version(),
-            progress=as_progress_sink(progress),
-        )
-        if progress is not None:
-            progress.finish(details=False)
-        result = asyncio.run(
-            _execute(
-                layout=layout,
-                state=state,
-                store=store,
-                ids=ids,
-                run_id=run_id,
-                runnable=runnable,
-                commands=commands,
-                input=input,
-                raw_named=raw_named,
-                allow_options=allow_options,
-                default_options=default_options,
-                limit_options=limit_options,
-                quiet=quiet,
-            )
-        )
+            sandbox=sandbox,
+            dev=dev,
+            show_progress=not quiet,
+        ) as runtime:
+            if runtime.mode == "embedded":
+                store = RunStore(layout.run_store)
+                ids = IdIssuer(layout.id_state)
+                run_id = ids.issue_run()
+                log_plan = resolve_agent_logging(
+                    mode="script",
+                    environ=os.environ,
+                    run_log_path=layout.run_log(runnable, run_id),
+                )
+                configure_logging_plan(log_plan)
+                log_path = log_plan.path
+                state = prepare_agent_state(
+                    layout,
+                    toolang_version=toolang_version(),
+                    progress=as_progress_sink(progress),
+                )
+                if progress is not None:
+                    progress.finish(details=False)
+                result = asyncio.run(
+                    _execute(
+                        layout=layout,
+                        state=state,
+                        store=store,
+                        ids=ids,
+                        run_id=run_id,
+                        runnable=runnable,
+                        commands=commands,
+                        input=input,
+                        raw_named=raw_named,
+                        allow_options=allow_options,
+                        default_options=default_options,
+                        limit_options=limit_options,
+                        quiet=quiet,
+                    )
+                )
+            else:
+                if runtime.endpoint is None:  # pragma: no cover - value invariant
+                    raise RuntimeError("remote execution runtime has no endpoint")
+                log_path = layout.runtime_log
+                result = asyncio.run(
+                    _execute_remote(
+                        layout=layout,
+                        endpoint=runtime.endpoint,
+                        sandbox=runtime.sandbox,
+                        runnable=runnable,
+                        commands=commands,
+                        input=input,
+                        raw_named=raw_named,
+                        allow_options=allow_options,
+                        default_options=default_options,
+                        limit_options=limit_options,
+                        quiet=quiet,
+                        on_accept=accepted.append,
+                    )
+                )
+                run_id = accepted[0] if accepted else None
     except KeyboardInterrupt:
+        if run_id is None and accepted:
+            run_id = accepted[0]
         if progress is not None:
             progress.interrupt()
         interruption_reported = False
-        if store is not None and run_id is not None and not quiet:
-            record = store.get_run(run_id=run_id)
+        if layout is not None and run_id is not None and not quiet:
+            record = _stored_run(layout, run_id, store=store)
             interruption_reported = record is not None and record.status == "canceled"
         if not interruption_reported:
             typer.echo("toolang interrupted", err=True)
@@ -480,6 +543,232 @@ def _run(
         save=save,
         error_reported=not quiet,
     )
+
+
+def _reject_runnable_option(default_options: tuple[str, ...]) -> None:
+    if "runnable" in resolve_binding_overrides({}, default_options):
+        raise ValueError(
+            "--default runnable does not apply when a script runnable is explicit"
+        )
+
+
+async def _execute_remote(
+    *,
+    layout: AgentLayout,
+    endpoint: str,
+    sandbox: str,
+    runnable: str,
+    commands: tuple[RunOverride, ...],
+    input: RunnableInputRaw,
+    raw_named: NamedInputSources,
+    allow_options: tuple[str, ...],
+    default_options: tuple[str, ...],
+    limit_options: tuple[str, ...],
+    quiet: bool,
+    on_accept: Callable[[str], None] | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> RunRecord:
+    """Execute one script request through a validated AgentServer."""
+
+    environ = load_runtime_environ(layout, base_environ=os.environ)
+    request_input = _remote_script_input(input, raw_named=raw_named)
+    session_commands = _remote_script_session_commands(
+        runnable=runnable,
+        allow_options=allow_options,
+        default_options=default_options,
+        limit_options=limit_options,
+    )
+    tracer = (
+        ScriptRunPresenter(
+            run_id=None,
+            max_width=resolve_progress_max_width(environ),
+        )
+        if not quiet
+        else None
+    )
+    async with httpx.AsyncClient(
+        transport=transport,
+        timeout=httpx.Timeout(3.0),
+    ) as http:
+        client = RemoteRunClient(endpoint, client=http)
+        try:
+            await inspect_remote_runtime(
+                http,
+                client.endpoint,
+                expected_sandbox=sandbox,
+            )
+            thread = await _create_remote_script_thread(http, client.endpoint)
+            handle = await client.start(
+                RunRequest(
+                    thread=thread,
+                    commands=_remote_script_commands(commands, runnable=runnable),
+                    input=request_input,
+                    session_commands=session_commands,
+                    runnable_fallbacks=(runnable,),
+                    request_id=f"term_{uuid4().hex}",
+                ),
+                tracer=tracer,
+            )
+            if on_accept is not None:
+                on_accept(handle.run_id)
+            try:
+                detail = await handle.wait()
+            except BaseException as exc:
+                await _stop_remote_script_run(
+                    client,
+                    handle.run_id,
+                    handle.wait,
+                    reason=(
+                        "script interrupted"
+                        if isinstance(exc, asyncio.CancelledError | KeyboardInterrupt)
+                        else "script client failed"
+                    ),
+                )
+                raise
+            record = _stored_run(layout, detail.id)
+            if record is None:
+                raise RuntimeError(
+                    f"run detail missing from the script store: {detail.id}"
+                )
+            return record
+        finally:
+            await client.close()
+            if tracer is not None:
+                tracer.close()
+
+
+def _remote_script_input(
+    input: RunnableInputRaw,
+    *,
+    raw_named: NamedInputSources,
+) -> RunnableInputRaw:
+    """Encode CLI-surface named sources in the authored request input."""
+
+    if input.named and raw_named:
+        raise ValueError("named inputs cannot be supplied by both source and surface")
+    return replace(input, named=input.named or raw_named)
+
+
+def _remote_script_commands(
+    commands: tuple[RunOverride, ...],
+    *,
+    runnable: str,
+) -> tuple[RunOverride, ...]:
+    """Keep `:runnable default` anchored to the dynamic CLI runnable."""
+
+    return tuple(
+        RunOverride("default", "runnable", runnable)
+        if command.group == "default"
+        and command.field == "runnable"
+        and command.value is None
+        else command
+        for command in commands
+    )
+
+
+def _remote_script_session_commands(
+    *,
+    runnable: str,
+    allow_options: tuple[str, ...],
+    default_options: tuple[str, ...],
+    limit_options: tuple[str, ...],
+) -> tuple[RunOverride, ...]:
+    """Place the explicit CLI runnable above AgentServer setup bindings."""
+
+    ceilings = resolve_ceiling_overrides({}, allow_options)
+    bindings = resolve_binding_overrides({}, default_options)
+    limits = resolve_limit_overrides({}, limit_options)
+    if "runnable" in bindings:
+        raise ValueError(
+            "--default runnable does not apply when a script runnable is explicit"
+        )
+    return (
+        RunOverride("default", "runnable", runnable),
+        *(RunOverride("allow", field, value) for field, value in ceilings.items()),
+        *(RunOverride("default", field, value) for field, value in bindings.items()),
+        *(RunOverride("limit", field, value) for field, value in limits.items()),
+    )
+
+
+async def _create_remote_script_thread(
+    client: httpx.AsyncClient,
+    endpoint: str,
+) -> str:
+    try:
+        response = await client.post(
+            f"{endpoint}/api/v1/threads",
+            json={"client": "script"},
+        )
+    except (httpx.HTTPError, RuntimeError) as exc:
+        raise RuntimeError(
+            f"remote script thread creation failed: {type(exc).__name__}"
+        ) from exc
+    if not response.is_success:
+        detail = response.reason_phrase or "request failed"
+        try:
+            payload = response.json()
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            pass
+        else:
+            if isinstance(payload, Mapping) and isinstance(payload.get("detail"), str):
+                detail = str(payload["detail"])
+        raise RuntimeError(
+            "remote script thread creation failed: "
+            f"HTTP {response.status_code} {detail}"
+        )
+    try:
+        payload = response.json()
+        if not isinstance(payload, Mapping) or set(payload) != {"thread"}:
+            raise ValueError
+        thread = _THREAD_INFO_ADAPTER.validate_python(payload["thread"])
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValidationError,
+        ValueError,
+    ) as exc:
+        raise RuntimeError(
+            "remote script thread creation returned invalid data"
+        ) from exc
+    if thread.origin != "script" or not thread.id.startswith("script_"):
+        raise RuntimeError("remote script thread creation returned invalid identity")
+    return thread.id
+
+
+async def _stop_remote_script_run(
+    client: RemoteRunClient,
+    run_id: str,
+    wait: Callable[[], Awaitable[object]],
+    *,
+    reason: str,
+) -> None:
+    try:
+        await client.stop(
+            run_id,
+            request_id=f"term_{uuid4().hex}",
+            reason=reason,
+        )
+    except (OSError, ValueError, RemoteRunClientError, RuntimeError):
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(wait()), timeout=5)
+    except (TimeoutError, OSError, ValueError, RemoteRunClientError, RuntimeError):
+        pass
+
+
+def _stored_run(
+    layout: AgentLayout,
+    run_id: str,
+    *,
+    store: RunStore | None = None,
+) -> RunRecord | None:
+    if store is not None:
+        return store.get_run(run_id=run_id)
+    opened = RunStore(layout.run_store)
+    try:
+        return opened.get_run(run_id=run_id)
+    finally:
+        opened.close()
 
 
 async def _execute(

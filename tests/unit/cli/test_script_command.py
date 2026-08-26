@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from click.utils import strip_ansi
 
 from toolang.base.errors import ToolangError
 from toolang.cli.toolang.commands import script
+from toolang.cli.common.execution_runtime import ExecutionRuntime
+from toolang.common.layout import AgentLayout
 from toolang.execution.calls import parse_call
 from toolang.execution.records import RunRecord
 from toolang.execution.types import ControlRef, RunOverride, RunStatus
@@ -63,6 +68,10 @@ def test_script_binds_options_arguments_and_primary_input(
             "cost=2.5",
             "--limit",
             "time=60",
+            "--sandbox",
+            "docker:python:3.13-slim",
+            "--dev",
+            str(tmp_path / "dist"),
             "--save",
             "-",
             "count=2.5",
@@ -86,6 +95,8 @@ def test_script_binds_options_arguments_and_primary_input(
     )
     assert "verbosity" not in captured
     assert captured["save"] == "-"
+    assert captured["sandbox"] == "docker:python:3.13-slim"
+    assert captured["dev"] == tmp_path / "dist"
     assert captured["limit_options"] == (
         "tokens=1000",
         "cost=2.5",
@@ -375,6 +386,8 @@ def test_script_uses_typer_help_and_authored_docs(
     assert "[enabled=Boolean]" in stdout.partition("Arguments")[2]
     assert "Primary Part[] input." in stdout
     assert "--save" in stdout
+    assert "--sandbox" in stdout
+    assert "--dev" in stdout
     assert "Save the Run result to PATH, or use - for" in stdout
     assert "stdout." in stdout
     assert "--verbose" not in stdout
@@ -507,11 +520,17 @@ def test_script_rejects_an_explicit_runnable_kind_mismatch(
     assert "runnable is not a flow: demo" in capsys.readouterr().err
 
 
-def test_script_rejects_sandbox_option(
+def test_script_accepts_sandbox_option_at_the_runnable_level(
     tmp_path: Path,
-    capsys,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = _write_source(tmp_path)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        script,
+        "_run",
+        lambda _source, **kwargs: captured.update(kwargs) or 0,
+    )
 
     result = script.dispatch(
         [],
@@ -519,10 +538,179 @@ def test_script_rejects_sandbox_option(
         prog_name="toolang",
         stdin=StringIO(),
     )
-    output = capsys.readouterr()
+    assert result == 0
+    assert captured["sandbox"] == "host"
 
-    assert result == 2
-    assert "No such option: --sandbox" in strip_ansi(output.err)
+
+def test_script_routes_quiet_execution_through_a_remote_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    source = _write_source(tmp_path)
+    layout = AgentLayout.roaming(source)
+    captured: dict[str, object] = {}
+
+    @contextmanager
+    def execution_runtime(selected: AgentLayout, **kwargs):
+        assert selected == layout
+        captured["runtime"] = kwargs
+        yield ExecutionRuntime(
+            sandbox="docker:python:3.13-slim",
+            mode="remote",
+            endpoint="http://127.0.0.1:7001",
+            owned=True,
+        )
+
+    async def execute_remote(**kwargs):
+        captured["execute"] = kwargs
+        kwargs["on_accept"]("run_remote")
+        return RunRecord(
+            id="run_remote",
+            parent=None,
+            thread="script_remote",
+            control=ControlRef("run_remote", 0),
+            output=None,
+            status="succeeded",
+            error=None,
+        )
+
+    monkeypatch.setattr(
+        script.agents,
+        "materialize_roaming_program",
+        lambda _source: layout,
+    )
+    monkeypatch.setattr(script, "open_execution_runtime", execution_runtime)
+    monkeypatch.setattr(script, "_execute_remote", execute_remote)
+    monkeypatch.setattr(
+        script,
+        "prepare_agent_state",
+        lambda *_args, **_kwargs: pytest.fail("remote execution prepared local state"),
+    )
+
+    result = script._run(
+        source,
+        runnable="demo",
+        commands=(),
+        input=RunnableInputRaw(primary="hello"),
+        raw_named=(("count", "2"),),
+        allow_options=(),
+        default_options=(),
+        limit_options=(),
+        sandbox="docker",
+        dev=tmp_path / "dist",
+        save=None,
+        quiet=True,
+    )
+
+    assert result == 0
+    assert captured["runtime"] == {
+        "sandbox": "docker",
+        "dev": tmp_path / "dist",
+        "show_progress": False,
+    }
+    execute = cast(dict[str, object], captured["execute"])
+    assert execute["sandbox"] == "docker:python:3.13-slim"
+    assert execute["quiet"] is True
+    assert capsys.readouterr() == ("", "")
+
+
+def test_remote_script_cancellation_stops_the_accepted_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    entered = asyncio.Event()
+    stopped = asyncio.Event()
+    calls: list[object] = []
+
+    class Handle:
+        run_id = "run_remote"
+
+        async def wait(self):
+            calls.append("wait")
+            entered.set()
+            await stopped.wait()
+            return SimpleNamespace(id=self.run_id)
+
+    class Client:
+        endpoint = "http://runtime.test:7001"
+
+        def __init__(self, endpoint: str, *, client: object) -> None:
+            assert endpoint == self.endpoint
+            del client
+
+        async def start(self, request, *, tracer=None):
+            calls.append(("start", request, tracer))
+            return Handle()
+
+        async def stop(self, run_id: str, **kwargs):
+            calls.append(("stop", run_id, kwargs))
+            stopped.set()
+            return object()
+
+        async def close(self) -> None:
+            calls.append("close")
+
+    async def inspect(*_args, **_kwargs):
+        return object()
+
+    async def create_thread(*_args, **_kwargs):
+        return "script_remote"
+
+    monkeypatch.setattr(script, "RemoteRunClient", Client)
+    monkeypatch.setattr(script, "inspect_remote_runtime", inspect)
+    monkeypatch.setattr(script, "_create_remote_script_thread", create_thread)
+    monkeypatch.setattr(script, "load_runtime_environ", lambda *_args, **_kwargs: {})
+
+    async def scenario() -> None:
+        task = asyncio.create_task(
+            script._execute_remote(
+                layout=layout,
+                endpoint=Client.endpoint,
+                sandbox="docker:python:3.13-slim",
+                runnable="demo",
+                commands=(),
+                input=RunnableInputRaw(primary="hello"),
+                raw_named=(("count", "2"),),
+                allow_options=(),
+                default_options=(),
+                limit_options=(),
+                quiet=True,
+            )
+        )
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1)
+
+    asyncio.run(scenario())
+
+    stop = next(item for item in calls if isinstance(item, tuple) and item[0] == "stop")
+    assert stop[1] == "run_remote"
+    assert cast(dict[str, object], stop[2])["reason"] == "script interrupted"
+    assert calls.count("wait") == 2
+    assert calls[-1] == "close"
+
+
+def test_remote_script_default_returns_to_the_dynamic_runnable() -> None:
+    commands = script._remote_script_commands(
+        (RunOverride("default", "runnable", None),),
+        runnable="demo",
+    )
+
+    assert commands == (RunOverride("default", "runnable", "demo"),)
+
+
+def test_remote_script_rejects_mixed_named_input_sources() -> None:
+    with pytest.raises(
+        ValueError,
+        match="named inputs cannot be supplied by both source and surface",
+    ):
+        script._remote_script_input(
+            RunnableInputRaw(named=(("count", "1"),)),
+            raw_named=(("enabled", "true"),),
+        )
 
 
 @pytest.mark.parametrize("option", ("-v", "--verbose"))
