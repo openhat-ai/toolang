@@ -34,7 +34,7 @@ from toolang.execution.threads import ThreadManager
 from toolang.execution.schemas import RunRequest
 from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.includes import resolve_file_include
-from toolang.plugin.sandboxes.host import host_sandbox_label
+from toolang.plugin.sandboxes.host import host_sandbox_description
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.watcher import StateWatcher
 from toolang.execution.values import parts_from_local
@@ -66,7 +66,8 @@ class LocalChatSession:
     ) -> None:
         self.layout = layout
         self.executor_metadata = ChatExecutorMetadata(
-            sandbox_label=host_sandbox_label()
+            sandbox_selector="host",
+            sandbox_detail=host_sandbox_description(),
         )
         self.store = RunStore(layout.run_store)
         self.history = RunHistory(self.store)

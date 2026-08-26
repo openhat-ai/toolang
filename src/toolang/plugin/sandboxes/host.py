@@ -9,7 +9,6 @@ from functools import cache
 import os
 from pathlib import Path
 import platform
-import plistlib
 import signal
 import subprocess
 import sys
@@ -27,7 +26,6 @@ from toolang.base.types.sandbox import (
 )
 
 HOST_SANDBOX_DESCRIPTION_ENV = "TOOLANG_SANDBOX_DESCRIPTION"
-_MACOS_SYSTEM_VERSION_PATH = Path("/System/Library/CoreServices/SystemVersion.plist")
 
 
 @dataclass(slots=True)
@@ -140,12 +138,6 @@ def create_sandbox(config: Mapping[str, Any]) -> Sandbox:
     return HostSandbox(dict(config))
 
 
-def host_sandbox_label() -> str:
-    """Return the complete host identity displayed by runtime clients."""
-
-    return f"host {host_sandbox_description()}"
-
-
 @cache
 def host_sandbox_description() -> str:
     """Return one compact, human-readable description of the current host."""
@@ -156,7 +148,7 @@ def host_sandbox_description() -> str:
         release, _version_info, detected_machine = platform.mac_ver()
         return _description(
             "macOS",
-            _version_with_build(_fact(release), _macos_build_version()),
+            _fact(release),
             machine if machine != "unknown" else _fact(detected_machine),
         )
     if system == "Linux":
@@ -172,33 +164,9 @@ def host_sandbox_description() -> str:
             )
         return _description(name, release, machine)
     if system == "Windows":
-        release, version, _service_pack, _product_type = platform.win32_ver()
-        version = _fact(version)
-        build = version.rpartition(".")[2] if "." in version else ""
-        return _description(
-            "Windows",
-            _version_with_build(_fact(release), build),
-            machine,
-        )
+        release, _version, _service_pack, _product_type = platform.win32_ver()
+        return _description("Windows", _fact(release), machine)
     return _description(system, _fact(platform.release()), machine)
-
-
-def _macos_build_version() -> str:
-    try:
-        with _MACOS_SYSTEM_VERSION_PATH.open("rb") as stream:
-            payload = plistlib.load(stream)
-    except (OSError, plistlib.InvalidFileException):
-        return ""
-    if not isinstance(payload, dict):
-        return ""
-    value = payload.get("ProductBuildVersion")
-    return _fact(value) if isinstance(value, str) else ""
-
-
-def _version_with_build(version: str, build: str) -> str:
-    if version and build:
-        return f"{version}({build})"
-    return version or build
 
 
 def _description(name: str, version: str, machine: str) -> str:

@@ -219,17 +219,18 @@ separate. Its metadata order is always `Toolang`, `executor`, `sandbox`, then
 
 ```text
 Toolang   v0.2.7-87-g69439a4e*
-executor  http://localhost:7001 v0.2.7-88-gc73484a9
-sandbox   docker:python:3.13-slim 5741cca76066
+executor  http://localhost:7001 · v0.2.7-88-gc73484a9
+sandbox   docker:python:3.13-slim · 5741cca76066
 home      ~/.toolang/agents/eve
 ```
 
 Host execution, including embedded Chat, renders a plugin-supplied operating
-system identity such as `sandbox  host macOS 27.0(26A5416b) arm64`. Remote
+system identity such as `sandbox  host · macOS 27.0 arm64`. Remote
 endpoints are terminal hyperlinks. A remote executor version is omitted only
 when it exactly matches the known, clean TUI version; matching dirty versions
-and `unknown` remain visible because they do not prove identical source. Values
-use one space as their separator, and every form keeps the same panel padding.
+and `unknown` remain visible because they do not prove identical source.
+Adjacent identity values use a dim ` · ` separator, and every form keeps the
+same panel padding.
 
 The chat TUI keeps only live mutable blocks in its live area. Stable blocks
 move into terminal scrollback progressively instead of waiting for the whole

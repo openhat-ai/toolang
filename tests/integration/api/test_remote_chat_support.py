@@ -33,7 +33,7 @@ class _Snapshot:
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
-_HOST_DESCRIPTION = "macOS 27.0(26A5416b) arm64"
+_HOST_DESCRIPTION = "macOS 27.0 arm64"
 
 
 def test_remote_chat_validation_and_latest_result_endpoints(

@@ -233,7 +233,8 @@ class RemoteChatSession:
         if port is None:
             raise RemoteChatError("running executor endpoint has no explicit port")
         self.executor_metadata = ChatExecutorMetadata(
-            sandbox_label=_sandbox_label(identity),
+            sandbox_selector=identity.selector,
+            sandbox_detail=_sandbox_detail(identity),
             endpoint=self.run_client.endpoint,
             version=identity.version,
         )
@@ -656,7 +657,7 @@ def _runtime_identity(payload: object) -> _RuntimeIdentity:
     return _RuntimeIdentity(version, driver, selector, instance, description)
 
 
-def _sandbox_label(identity: _RuntimeIdentity) -> str:
+def _sandbox_detail(identity: _RuntimeIdentity) -> str:
     if identity.driver == "docker":
         if identity.instance is None:
             raise AssertionError("docker runtime identity is missing its instance")
@@ -665,10 +666,10 @@ def _sandbox_label(identity: _RuntimeIdentity) -> str:
             character.casefold() in "0123456789abcdef" for character in instance
         ):
             instance = instance[:12]
-        return f"{identity.selector} {instance}"
+        return instance
     if identity.description is None:
         raise AssertionError("non-docker runtime identity is missing its description")
-    return f"{identity.selector} {identity.description}"
+    return identity.description
 
 
 def _catalog_payload(

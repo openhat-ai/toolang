@@ -202,8 +202,8 @@ agic chat(_: Part[]) -> Part[]:
     monkeypatch.setattr(local, "StateWatcher", StateWatcher)
     monkeypatch.setattr(
         local,
-        "host_sandbox_label",
-        lambda: "host macOS 27.0(26A5416b) arm64",
+        "host_sandbox_description",
+        lambda: "macOS 27.0 arm64",
     )
 
     session = local.LocalChatSession(
@@ -219,7 +219,8 @@ agic chat(_: Part[]) -> Part[]:
 
     try:
         assert session.executor_metadata == ChatExecutorMetadata(
-            sandbox_label="host macOS 27.0(26A5416b) arm64"
+            sandbox_selector="host",
+            sandbox_detail="macOS 27.0 arm64",
         )
         thread_id = session.create_thread()
         session.start_run(

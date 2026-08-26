@@ -17,14 +17,14 @@ The change succeeds when:
 - `Toolang` shows `v<exact-chat-process-version>`;
 - an embedded executor shows only `executor  embedded`;
 - a remote executor shows its normalized HTTP origin as a terminal hyperlink,
-  followed by one space and its source version unless that version is confirmed
-  equal to the TUI source version;
+  followed by a dim ` · ` separator and its source version unless that version
+  is confirmed equal to the TUI source version;
 - equal versions are confirmed only when both are known and clean, so matching
   dirty versions and matching `unknown` values remain visible;
 - Docker displays the complete selector and conventional twelve-character
-  container ID, separated by one space;
+  container ID, separated by a dim ` · `;
 - host execution displays `host` followed by a compact operating-system name,
-  version, build when available, and architecture;
+  version, and architecture, separated from `host` by a dim ` · `;
 - the host sandbox plugin owns and caches host-system detection and supplies a
   ready display value; the banner does not inspect the OS or sandbox identity;
 - the panel keeps exactly one empty content row above and below the logo and
@@ -38,22 +38,22 @@ hyperlink target are the same normalized origin.
 
 ```text
 Toolang   v0.2.7-87-g69439a4e*
-executor  http://localhost:7001 v0.2.7-88-gc73484a9
-sandbox   docker:python:3.13-slim 5741cca76066
+executor  http://localhost:7001 · v0.2.7-88-gc73484a9
+sandbox   docker:python:3.13-slim · 5741cca76066
 home      ~/.toolang/agents/eve
 ```
 
 ```text
 Toolang   v0.3.0
 executor  http://localhost:7001
-sandbox   host macOS 27.0(26A5416b) arm64
+sandbox   host · macOS 27.0 arm64
 home      ~/.toolang/agents/eve
 ```
 
 ```text
 Toolang   v0.2.7-87-g69439a4e*
 executor  embedded
-sandbox   host macOS 27.0(26A5416b) arm64
+sandbox   host · macOS 27.0 arm64
 home      ~/.toolang/agents/eve
 ```
 
@@ -73,7 +73,8 @@ the panel and after it remains unchanged.
 
 ## Runtime identity and client boundary
 
-`ChatClient` exposes structured banner metadata with a ready `sandbox_label`:
+`ChatClient` exposes structured banner metadata with a sandbox selector and
+ready detail:
 
 - embedded: executor kind `embedded` and the local host sandbox label;
 - remote host: normalized endpoint, the conditionally displayed remote source
@@ -82,9 +83,9 @@ the panel and after it remains unchanged.
   version, complete sandbox selector, and a twelve-character container ID.
 
 The host sandbox plugin derives its description with Python's standard
-`platform` APIs. On macOS it reads `ProductBuildVersion` from the system version
-property list with `plistlib`; Linux uses the freedesktop OS release values;
-Windows uses its release and build values. Detection is cached once per process.
+`platform` APIs. macOS uses its product version, Linux uses the freedesktop OS
+release values, and Windows uses its release. All platforms append the machine
+architecture and omit OS build identifiers. Detection is cached once per process.
 `HostSandbox.prepare()` supplies this description to AgentServer through a
 control environment value. Docker explicitly removes that host-only value.
 
@@ -93,13 +94,14 @@ identity contains the complete selector and two mutually exclusive details:
 Docker supplies the complete `instance`, while non-Docker sandboxes supply a
 ready `description`. `RemoteChatSession` validates that the selector matches the
 selected resident runtime status, validates the applicable detail, shortens a
-Docker container ID to twelve characters, and assembles the ready label. Missing,
+Docker container ID to twelve characters, and exposes the ready detail. Missing,
 malformed, mismatched, or contradictory remote identity fails selection rather
 than displaying a guessed value.
 
 `HeaderBlock` owns labels, ordering, styles, hyperlink rendering, and responsive
-width calculation. It always renders the supplied sandbox label and does not
-parse, shorten, or calculate sandbox or operating-system identity.
+width calculation. It joins the supplied sandbox selector and detail with the
+dim separator and does not parse, shorten, or calculate sandbox or
+operating-system identity.
 
 ## Scope and implementation touchpoints
 
@@ -110,7 +112,7 @@ parse, shorten, or calculate sandbox or operating-system identity.
 - `src/toolang/api/schemas.py` and `routers/agent.py`: expose and validate the
   mutually exclusive sandbox instance and description fields.
 - `src/toolang/cli/toolang/commands/chat/base.py`: expose structured banner
-  metadata with a required ready sandbox label.
+  metadata with required sandbox selector and detail fields.
 - `src/toolang/cli/toolang/commands/chat/local.py` and `remote.py`: supply and
   validate the exact executor and sandbox identities.
 - `src/toolang/cli/toolang/commands/chat/blocks.py` and `tui.py`: render the
@@ -130,11 +132,11 @@ command, run, control, recovery, or queue behavior changes.
 2. Remote execution omits a matching known clean executor version and retains
    differing, dirty, or unknown versions.
 3. Remote Docker Chat renders the complete selector and twelve-character
-   instance with one space between adjacent values and no dot separators.
+   instance with a dim middle-dot separator.
 4. The runtime profile requires a description for non-Docker sandboxes and an
    instance for Docker, and rejects contradictory, missing, or malformed values.
-5. Host detection covers macOS version/build/architecture and Linux
-   name/version/architecture without starting an external command.
+5. Host detection covers macOS, Linux, and Windows name/version/architecture
+   without displaying OS build identifiers or starting an external command.
 6. Wide and narrow renders preserve aligned keys and values, complete folding,
    existing logo styling, and one internal blank row above and below.
 7. Focused tests and the default repository verification pass.

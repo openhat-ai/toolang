@@ -72,13 +72,15 @@ ChatRunState: TypeAlias = RunAccepted | RunDisconnected | RunRecovered | RunBloc
 class ChatExecutorMetadata:
     """Structured executor source identity rendered by the Chat banner."""
 
-    sandbox_label: str
+    sandbox_selector: str
+    sandbox_detail: str
     endpoint: str | None = None
     version: str | None = None
 
     def __post_init__(self) -> None:
         values = {
-            "sandbox_label": self.sandbox_label,
+            "sandbox_selector": self.sandbox_selector,
+            "sandbox_detail": self.sandbox_detail,
             "endpoint": self.endpoint,
             "version": self.version,
         }

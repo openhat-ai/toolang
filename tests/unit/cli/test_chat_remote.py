@@ -32,8 +32,7 @@ from toolang.execution.types import ControlRef, Local, RunOverride
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
-_HOST_DESCRIPTION = "macOS 27.0(26A5416b) arm64"
-_HOST_SANDBOX_LABEL = f"host {_HOST_DESCRIPTION}"
+_HOST_DESCRIPTION = "macOS 27.0 arm64"
 
 
 class _Bytes(httpx.AsyncByteStream):
@@ -205,7 +204,8 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
     )
     try:
         assert session.executor_metadata == ChatExecutorMetadata(
-            sandbox_label="docker:python:3.13-slim 176191c1528b",
+            sandbox_selector="docker:python:3.13-slim",
+            sandbox_detail="176191c1528b",
             endpoint="http://runtime.test:7001",
             version="v0.3.9",
         )
@@ -393,7 +393,8 @@ def test_remote_chat_uses_remote_run_client_native_events() -> None:
         session.close()
 
     assert session.executor_metadata == ChatExecutorMetadata(
-        sandbox_label=_HOST_SANDBOX_LABEL,
+        sandbox_selector="host",
+        sandbox_detail=_HOST_DESCRIPTION,
         endpoint="http://runtime.test:7001",
         version="v0.3.9",
     )

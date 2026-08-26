@@ -24,11 +24,14 @@ from toolang.execution.events import RunEnd, RunEvent, StepEnd
 from toolang.execution.types import Local, RunOverride, StepPath
 from toolang.up.process import AgentStatus
 
-_HOST_SANDBOX_LABEL = "host macOS 27.0(26A5416b) arm64"
+_HOST_DESCRIPTION = "macOS 27.0 arm64"
 
 
 class _Client:
-    executor_metadata = ChatExecutorMetadata(sandbox_label=_HOST_SANDBOX_LABEL)
+    executor_metadata = ChatExecutorMetadata(
+        sandbox_selector="host",
+        sandbox_detail=_HOST_DESCRIPTION,
+    )
 
     def __init__(self) -> None:
         self.created = 0

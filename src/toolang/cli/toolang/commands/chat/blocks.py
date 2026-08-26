@@ -495,7 +495,7 @@ class HeaderBlock:
             tui_version=self.version_label,
         )
         details.add_row(Text("executor", style="dim"), executor_value)
-        sandbox_value = Text(self.executor_metadata.sandbox_label)
+        sandbox_value = _header_sandbox_value(self.executor_metadata)
         details.add_row(Text("sandbox", style="dim"), sandbox_value)
         details.add_row(Text("home", style="dim"), Text(self.home))
 
@@ -552,8 +552,16 @@ def _header_executor_value(
     executor = Text()
     executor.append(metadata.endpoint, style=Style(link=metadata.endpoint))
     if not _versions_confirmed_equal(metadata.version, tui_version):
-        executor.append(f" {metadata.version}")
+        executor.append(" · ", style="dim")
+        executor.append(metadata.version)
     return executor
+
+
+def _header_sandbox_value(metadata: ChatExecutorMetadata) -> Text:
+    sandbox = Text(metadata.sandbox_selector)
+    sandbox.append(" · ", style="dim")
+    sandbox.append(metadata.sandbox_detail)
+    return sandbox
 
 
 def _versions_confirmed_equal(executor_version: str, tui_version: str) -> bool:
