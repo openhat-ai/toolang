@@ -141,6 +141,8 @@ def _row_renderable(
             open_detail=open_tool_detail,
             close_detail=close_tool_detail,
         )
+    elif row.format == "plain" and row.right_text:
+        renderable = _TwoEndedPlainRow(row, live=live, max_width=max_width)
     elif row.format == "markdown":
         renderable = _MarkdownRow(row, max_width=max_width)
     else:
@@ -227,12 +229,11 @@ class _RunFooter:
             else f"{self.run_id} {self.status}"
         )
         footer_style = _run_footer_style(self.status)
-        prefix = "[ "
-        suffix = " ]"
-        framing_width = display_width(prefix + suffix)
-        if width <= framing_width:
+        prefix = "∎ "
+        prefix_width = display_width(prefix)
+        if width <= prefix_width:
             yield Text(
-                truncate(f"{prefix}{title}{suffix}", width),
+                truncate(f"{prefix}{title}", width),
                 style=footer_style,
                 no_wrap=True,
             )
@@ -242,9 +243,9 @@ class _RunFooter:
             title=title,
             facts=self.facts,
             console=console,
-            width=width - framing_width,
+            width=width - prefix_width,
         )
-        continuation = " " * display_width(prefix)
+        continuation = " " * prefix_width
         for index, content_line in enumerate(content_lines):
             line = Text(
                 prefix if index == 0 else continuation,
@@ -252,8 +253,6 @@ class _RunFooter:
                 no_wrap=True,
             )
             line.append_text(content_line)
-            if index + 1 == len(content_lines):
-                line.append(suffix)
             yield line
 
 
@@ -307,6 +306,68 @@ class _PlainRow:
             line.rstrip()
             yield Text(
                 f"{prefix if index == 0 else continuation}{line.plain}",
+                style=style,
+                no_wrap=True,
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class _TwoEndedPlainRow:
+    """Render a left value and a complete right value within one row width."""
+
+    row: ProgressRow
+    live: bool
+    max_width: int
+
+    def __rich_console__(
+        self,
+        console: Console,
+        options: ConsoleOptions,
+    ) -> RenderResult:
+        style = (
+            "dim"
+            if self.live and self.row.surface == "tool_summary"
+            else _STYLES[self.row.tone]
+        )
+        width = max(1, min(options.max_width, self.max_width))
+        prefix, left = split_hanging_prefix(self.row.text)
+        prefix_width = display_width(prefix)
+        right = self.row.right_text
+        if prefix_width < width:
+            content_width = width - prefix_width
+            separating_width = (
+                content_width - display_width(left) - display_width(right)
+            )
+            if separating_width >= 2:
+                yield Text(
+                    f"{prefix}{left}{' ' * separating_width}{right}",
+                    style=style,
+                    no_wrap=True,
+                )
+                return
+
+        yield from _PlainRow(
+            self.row,
+            live=self.live,
+            max_width=self.max_width,
+        ).__rich_console__(console, options)
+
+        if prefix_width < width:
+            path_prefix = prefix
+            path_width = width - prefix_width
+        else:
+            path_prefix = ""
+            path_width = width
+        path_lines = Text(right).wrap(
+            console,
+            path_width,
+            overflow="fold",
+        ) or [Text()]
+        for path_line in path_lines:
+            path_line.rstrip()
+            padding = " " * max(0, path_width - display_width(path_line.plain))
+            yield Text(
+                f"{path_prefix}{padding}{path_line.plain}",
                 style=style,
                 no_wrap=True,
             )

@@ -49,9 +49,9 @@ Iteration and condition headers create the same kind of stable boundary.
 
 ## Markers and Style
 
-`•` is the only execution-row marker. There is no separate marker for errors,
-child closure, control decisions, or parallel work. The centered dot `·` is
-only an inline facts separator.
+`•` is the only Step execution-row marker. There is no separate marker for
+errors, child closure, control decisions, or parallel work. `∎` marks the root
+Run footer. The centered dot `·` is only an inline facts separator.
 
 - Model activity and output use `•` and normal text.
 - Tool activity uses `•` and normal text. Its successful terminal marker,
@@ -66,9 +66,10 @@ Successful Model and Flow outputs use the terminal's default foreground;
 successful Tool terminal output uses that foreground dimmed. Failure uses red
 and cancellation uses yellow. Green is not a terminal status color.
 
-Step paths, child-Run closure, binding effects, result pointers, and control
-decisions are not displayed. Model and Tool Steps also omit duration, model
-name, exit code, usage, cost, and other per-Step facts.
+Step paths appear only at the right edge of facts-bearing Flow Step footers.
+Child-Run closure, binding effects, result pointers, and control decisions are
+not displayed. Model and Tool Steps also omit duration, model name, exit code,
+usage, cost, and other per-Step facts.
 
 ## Flow Headers
 
@@ -181,21 +182,30 @@ same completed Part. Started Parts, child Steps, and child Runs must close
 before their owning Step closes. Violations are reported as execution contract
 errors rather than repaired by the presenter.
 
-## Flow Facts
+## Flow Step Footer
 
-A Flow Step that owns child execution may append one unmarked facts row:
+A Flow Step that owns child execution may append one dim footer:
 
 ```text
 [2] Search the web for each query
 
 • Mapped all 6 items in parallel
-  31.0s · 6 runs · 12 model calls · 8 tool calls · ↑18.4k ↓5.2k $0.00
+  31.0s · 6 runs · 12 model calls · 8 tool calls · ↑18.4k ↓5.2k $0.00        run_root.2
 ```
 
-The row has no StepPath. Undefined facts are omitted. Usage and optional cost
-form one `↑INPUT ↓OUTPUT $COST` fact, with cost rounded to cents. Model,
-Tool, and direct-value Steps define no facts. Run facts appear only in the root
-footer and aggregate the complete Run tree.
+Facts retain their two-cell indentation at the left, and the complete canonical
+StepPath is right-aligned to the available progress width. At least two cells
+separate the fields. When they do not fit together, facts wrap under the same
+indent and the untruncated StepPath follows on a right-aligned continuation
+line. Undefined facts are omitted, and a StepPath is not displayed by itself.
+Usage and optional cost form one `↑INPUT ↓OUTPUT $COST` fact, with cost rounded
+to cents. Model, Tool, and direct-value Steps define no footer facts. Run facts
+appear only in the root footer and aggregate the complete Run tree.
+
+The footer immediately follows the owning Step's last visible output. A direct
+single-Run Flow Step therefore places its footer directly after its child Model
+output without opening another visual section. The normal trailing blank row
+still separates the completed Flow Step from the next Step or root footer.
 
 ## Parallel Work
 
@@ -279,23 +289,23 @@ root-owned error row. There is no separate diagnostic marker.
 Script and Chat end a root Run with the same footer:
 
 ```text
-[ run_nrqpt0mf succeeded · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01 ]
-[ run_nrqpt0mf failed · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01 ]
-[ run_nrqpt0mf canceled · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01 ]
+∎ run_nrqpt0mf succeeded · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
+∎ run_nrqpt0mf failed · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
+∎ run_nrqpt0mf canceled · 1m 16s · 26 runs · 32 model calls · 8 tool calls · ↑43.8k ↓17.6k $0.01
 ```
 
 A CLI retry or rerun identifies the operation in the same footer instead of
 appending a separate result line:
 
 ```text
-[ run_zvczap2h: retry succeeded · 2.0s · 1 model call ]
+∎ run_zvczap2h: retry succeeded · 2.0s · 1 model call
 ```
 
-Square brackets frame the complete footer. Successful footers are dim without
-a color. Failed and canceled footers use normal intensity across the entire
-line, with red for failure and yellow for cancellation. Narrow terminals wrap
-the caption and facts with a two-cell hanging indent and place the closing
-bracket on the final line.
+The U+220E END OF PROOF character marks the complete root Run; square brackets
+do not frame the footer. Successful footers are dim without a color. Failed and
+canceled footers use normal intensity across the entire line, with red for
+failure and yellow for cancellation. Narrow terminals wrap the caption and
+facts with a two-cell hanging indent matching the marker and following space.
 
 The footer owns total duration and whole-tree Run facts. Script does not append
 a separate `Run: RUN_ID` line. Errors before `RunBegin` are reported outside

@@ -133,16 +133,15 @@ def test_non_tty_appends_only_finalized_model_progress() -> None:
 
     assert "Thinking..." not in output
     assert output.startswith("\n• Use a shared reducer.\n")
-    assert "• Use a shared reducer.\n\n[ run_one succeeded" in output
+    assert "• Use a shared reducer.\n\n∎ run_one succeeded" in output
     assert "run_one.0" not in output
     assert "deepseek/deepseek-chat" not in output
     footer = next(
         line
         for line in output.splitlines()
-        if line.startswith("[ ") and "run_one succeeded" in line
+        if line.startswith("∎ ") and "run_one succeeded" in line
     )
-    assert footer.startswith("[ run_one succeeded · 2.0s · 1 model call")
-    assert footer.endswith(" ]")
+    assert footer.startswith("∎ run_one succeeded · 2.0s · 1 model call")
     assert "┌" not in output
     assert "└" not in output
     assert "2.0s · 1 model call · ↑3.4k ↓86 ~$0.006" in output
@@ -450,6 +449,61 @@ def test_non_tty_finalized_progress_wraps_without_truncation() -> None:
     assert " ".join(line.strip().removeprefix("• ") for line in lines) == content
 
 
+def test_step_footer_aligns_facts_and_path_to_the_progress_width() -> None:
+    stream = StringIO()
+    console = ProgressConsole(stream, width=40)
+
+    console.apply(
+        ProgressUpdate(
+            committed=(
+                ProgressBlock(
+                    "step:run_root.2",
+                    (
+                        ProgressRow(
+                            "  完成 · 6 runs",
+                            right_text="run_root.2",
+                        ),
+                    ),
+                ),
+            )
+        )
+    )
+
+    line = stream.getvalue().rstrip("\n")
+    assert line.startswith("  完成 · 6 runs  ")
+    assert line.endswith("run_root.2")
+    assert display_width(line) == 40
+
+
+def test_narrow_step_footer_wraps_facts_then_right_aligns_the_complete_path() -> None:
+    stream = StringIO()
+    console = ProgressConsole(stream, width=18)
+    path = "run_abcdefghijkl.123"
+
+    console.apply(
+        ProgressUpdate(
+            committed=(
+                ProgressBlock(
+                    "step:run_root.2",
+                    (
+                        ProgressRow(
+                            "  2.0s · 6 runs · 12 model calls",
+                            right_text=path,
+                        ),
+                    ),
+                ),
+            )
+        )
+    )
+
+    lines = stream.getvalue().splitlines()
+    path_lines = lines[2:]
+    assert lines[:2] == ["  2.0s · 6 runs ·", "  12 model calls"]
+    assert "".join(line.strip() for line in path_lines) == path
+    assert all(display_width(line) <= 18 for line in lines)
+    assert display_width(path_lines[-1]) == 18
+
+
 def test_non_tty_prints_only_incrementally_committed_markdown() -> None:
     stream = StringIO()
     console = ProgressConsole(stream, width=40)
@@ -731,6 +785,8 @@ def test_single_run_gather_progressively_commits_markdown() -> None:
 
     assert "• First section" in rendered
     assert "  Second paragraph" in rendered
+    assert "  Second paragraph\n  1 run · 1 model call" in rendered.replace("\r", "")
+    assert "run_root.0" in rendered
 
 
 def test_tty_wraps_complete_cjk_output_by_terminal_cell_width() -> None:

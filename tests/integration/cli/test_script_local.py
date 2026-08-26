@@ -104,12 +104,12 @@ def test_local_script_saves_only_to_an_explicit_destination(
     assert output.out == expected_stdout
     if save_mode == "missing-parent":
         assert "result destination parent does not exist" in output.err
-        assert "[ run_" in output.err
+        assert "∎ run_" in output.err
     elif quiet:
         assert output.err == ""
     else:
         assert "• done" in output.err
-        assert "[ run_" in output.err
+        assert "∎ run_" in output.err
         assert "\x1b[" not in output.err
     if save_mode == "file":
         assert destination.read_bytes() == b"done"
@@ -188,7 +188,7 @@ def test_local_script_renders_composite_flow_progress(
         assert "line 10" not in output.err
         assert "Run agic expand" not in output.err
         assert '• ["one","two"]' in output.err
-        assert "[ run_" in output.err
+        assert "∎ run_" in output.err
         assert "list returned" not in output.err
         assert "~~~" not in output.err
         assert "\x1b[" not in output.err

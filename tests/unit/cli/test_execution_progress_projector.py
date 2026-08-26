@@ -879,6 +879,8 @@ def test_flow_run_header_wraps_real_agic_steps_without_a_wrapper_row() -> None:
             "",
         ]
     ]
+    assert wrapper.committed[0].gap_before is False
+    assert wrapper.committed[0].rows[0].right_text == "run_root.0"
 
 
 @pytest.mark.parametrize(
@@ -1050,6 +1052,7 @@ def test_flow_scalar_output_is_displayed_in_its_normal_output_slot() -> None:
 
     assert _rows(update.committed) == [["• agent runtimes", ""]]
     assert update.committed[0].rows[0].tone == "normal"
+    assert all(not row.right_text for row in update.committed[0].rows)
     assert not reducer.needs_footer_gap
 
 
@@ -1379,6 +1382,7 @@ def test_parallel_lane_is_single_line_and_terminal_failure_replaces_lanes() -> N
             "",
         ]
     ]
+    assert terminal.committed[0].rows[-2].right_text == "run_root.0"
 
 
 def test_parent_error_pointers_are_silent_but_ownerless_run_errors_are_visible() -> (
