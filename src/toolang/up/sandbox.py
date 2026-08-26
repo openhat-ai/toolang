@@ -118,6 +118,20 @@ async def resolve_launch(
     )
 
 
+def resolve_selection(
+    layout: AgentLayout,
+    *,
+    explicit: str | None = None,
+) -> str:
+    """Resolve one explicit or configured sandbox selector without preparing state."""
+
+    selected, _config = _select_sandbox_configs(
+        (load_setup_config(layout), load_agent_config(layout)),
+        explicit=explicit,
+    )
+    return selected
+
+
 async def launch(
     spec: LaunchSpec,
     *,
@@ -145,20 +159,7 @@ async def _launch_locked(
         detail=spec.sandbox,
     )
     try:
-        _reject_legacy_state(spec.serve.layout)
-        current = SandboxState.load(spec.serve.layout.sandbox_state)
-        if current is not None:
-            implementation = load_state_sandbox(
-                spec.serve.layout,
-                current,
-            )
-            if await implementation.running(current.ref):
-                raise ValueError(f"agent is already running: {spec.serve.layout.name}")
-            await implementation.release(current.ref)
-            _reject_unreferenced_staging(spec.serve.layout)
-            _clear_state(spec.serve.layout, expected=current)
-        else:
-            _reject_unreferenced_staging(spec.serve.layout)
+        await _release_stopped_locked(spec.serve.layout)
 
         name, raw_spec = _split_sandbox(spec.sandbox)
         implementation = create_sandbox(name, config=spec.config)
@@ -417,6 +418,31 @@ async def stop(layout: AgentLayout, *, force: bool = False) -> bool:
             return True
 
 
+async def stop_handle(
+    layout: AgentLayout,
+    handle: SandboxHandle,
+    *,
+    force: bool = False,
+) -> bool:
+    """Stop and release one exact process-owned sandbox workload."""
+
+    lock_path = layout.sandbox_state.with_suffix(".lock")
+    async with _task_lock(lock_path):
+        with file_write_lock(lock_path):
+            _reject_legacy_state(layout)
+            current = SandboxState.load(layout.sandbox_state)
+            if current is None:
+                return False
+            if current != handle.state:
+                raise ValueError(
+                    f"sandbox ownership changed while agent was running: {layout.name}"
+                )
+            await handle.implementation.stop(handle.state.ref, force=force)
+            await handle.implementation.release(handle.state.ref)
+            _clear_state(layout, expected=handle.state)
+            return True
+
+
 async def running(layout: AgentLayout) -> bool:
     """Return whether the currently referenced hosted workload is running."""
 
@@ -432,11 +458,22 @@ def _select_sandbox(
     *,
     explicit: str | None,
 ) -> tuple[str, dict[str, object]]:
-    configs = merge_plugin_configs(
+    return _select_sandbox_configs(
         (state.root_config, state.home_config),
+        explicit=explicit,
+    )
+
+
+def _select_sandbox_configs(
+    sources: Sequence[Mapping[str, object]],
+    *,
+    explicit: str | None,
+) -> tuple[str, dict[str, object]]:
+    configs = merge_plugin_configs(
+        sources,
         family="sandbox",
     )
-    binding = resolve_sandbox_binding((state.root_config, state.home_config))
+    binding = resolve_sandbox_binding(sources)
     if explicit is not None:
         selected = explicit.strip()
         if not selected:
@@ -565,20 +602,30 @@ def _clear_state(layout: AgentLayout, *, expected: SandboxState) -> None:
 async def release_for_removal(layout: AgentLayout) -> None:
     """Release stopped sandbox resources before removing an agent home."""
 
+    await release_stopped(layout)
+
+
+async def release_stopped(layout: AgentLayout) -> None:
+    """Release any stopped sandbox resources before embedded execution."""
+
     lock_path = layout.sandbox_state.with_suffix(".lock")
     async with _task_lock(lock_path):
         with file_write_lock(lock_path):
-            _reject_legacy_state(layout)
-            state = SandboxState.load(layout.sandbox_state)
-            if state is None:
-                _reject_unreferenced_staging(layout)
-                return
-            implementation = load_state_sandbox(layout, state)
-            if await implementation.running(state.ref):
-                raise ValueError(f"agent is already running: {layout.name}")
-            await implementation.release(state.ref)
-            _reject_unreferenced_staging(layout)
-            _clear_state(layout, expected=state)
+            await _release_stopped_locked(layout)
+
+
+async def _release_stopped_locked(layout: AgentLayout) -> None:
+    _reject_legacy_state(layout)
+    state = SandboxState.load(layout.sandbox_state)
+    if state is None:
+        _reject_unreferenced_staging(layout)
+        return
+    implementation = load_state_sandbox(layout, state)
+    if await implementation.running(state.ref):
+        raise ValueError(f"agent is already running: {layout.name}")
+    await implementation.release(state.ref)
+    _reject_unreferenced_staging(layout)
+    _clear_state(layout, expected=state)
 
 
 def _reject_legacy_state(layout: AgentLayout) -> None:

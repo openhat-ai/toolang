@@ -100,11 +100,16 @@ protocol has no replay cursor. Closing the client detaches its readers and
 owned HTTP resources without canceling server runs or managing the server
 process.
 
-Terminal Chat composes `RemoteRunClient` only after a running resident endpoint
-passes health and profile checks. Non-run HTTP operations remain in the Chat
-client: runtime/model/runnable inspection, thread creation, session validation,
-and result reads. A stream failure after acceptance is recovered from durable
-run detail without retrying the start or synthesizing missing `RunEvent` values.
+Terminal Chat first resolves a CLI-owned `ExecutionRuntime`. It attaches to a
+compatible running AgentServer for any materialized layout, uses embedded host
+execution when no server is active and `host` is selected, or starts a
+command-owned temporary AgentServer for a non-host sandbox. Remote execution is
+used only after endpoint health and profile checks. Non-run HTTP operations
+remain in the Chat client: runtime/model/runnable inspection, thread creation,
+session validation, and result reads. A stream failure after acceptance is
+recovered from durable run detail without retrying the start or synthesizing
+missing `RunEvent` values. Closing Chat never stops an attached server and
+stops and releases only a temporary server created by that command.
 
 The process-local executor remains the execution engine:
 

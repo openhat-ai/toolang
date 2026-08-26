@@ -389,6 +389,12 @@ An explicit selector, including `--sandbox host`, overrides that binding.
 Docker sandbox control is supported from Linux and macOS hosts. Windows users
 must run Toolang through WSL2; native Windows host control is not supported.
 
+Chat uses the same explicit/configured/host selection when no AgentServer is
+active. `host` stays embedded in the CLI; another selector starts a temporary
+AgentServer that Chat stops on exit. If an AgentServer is already running, Chat
+attaches to it and rejects an explicit incompatible selector without executing
+or restarting the server.
+
 `run`, `start`, and roaming file-inbox runtime accept `--dev PATH` for a
 non-host sandbox. `PATH` is either one Toolang `.whl` file or a directory to
 search recursively for Toolang wheels. Directory selection uses the most

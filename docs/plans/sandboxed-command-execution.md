@@ -1,6 +1,6 @@
 # Define Sandboxed Command Execution
 
-Status: Draft for human approval.
+Status: Approved on 2026-08-26.
 
 ## Work Type
 

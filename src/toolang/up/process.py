@@ -226,7 +226,7 @@ class AgentStatus:
 
 
 class AgentProcess:
-    """Inspect one resident AgentServer process."""
+    """Inspect one materialized AgentServer process."""
 
     def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout

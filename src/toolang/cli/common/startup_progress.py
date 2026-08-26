@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from threading import RLock
 import time
 from typing import TextIO
@@ -177,6 +178,37 @@ def make_runtime_startup_progress(
     """Create the standard runtime-startup presenter."""
 
     return RuntimeStartupProgress(agent, sandbox, live=live)
+
+
+def runtime_startup_failure_message(
+    name: str,
+    sandbox: str,
+    progress: RuntimeStartupProgress,
+    error: BaseException,
+    *,
+    log_path: Path | None = None,
+    development_hint: bool = True,
+) -> str:
+    """Describe one failed AgentServer startup with its active stage."""
+
+    reason = progress.failure_reason or str(error).strip() or type(error).__name__
+    stage = progress.current_stage or "Starting agent"
+    lines = [
+        f"Could not start agent {name} in {sandbox}",
+        f"Stage: {stage}",
+        f"Reason: {reason}",
+    ]
+    if "required `too serve`" in reason:
+        lines.append(
+            (
+                "Hint: Build a wheel with `uv build --wheel` and pass `--dev dist`."
+                if development_hint
+                else "Hint: Upgrade the Toolang package available to the sandbox."
+            )
+        )
+    if log_path is not None:
+        lines.append(f"Log: {log_path}")
+    return "\n".join(lines)
 
 
 def _bounded_detail(detail: str | None) -> str | None:
