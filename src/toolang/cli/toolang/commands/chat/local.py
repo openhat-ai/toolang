@@ -34,6 +34,7 @@ from toolang.execution.threads import ThreadManager
 from toolang.execution.schemas import RunRequest
 from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.lang.includes import resolve_file_include
+from toolang.plugin.sandboxes.host import host_sandbox_label
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.watcher import StateWatcher
 from toolang.execution.values import parts_from_local
@@ -52,7 +53,7 @@ class _CallbackTracer(RunTracer):
 class LocalChatSession:
     """Expose the chat-client contract over one process-local executor."""
 
-    executor_metadata = ChatExecutorMetadata()
+    executor_metadata: ChatExecutorMetadata
 
     def __init__(
         self,
@@ -64,6 +65,9 @@ class LocalChatSession:
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     ) -> None:
         self.layout = layout
+        self.executor_metadata = ChatExecutorMetadata(
+            sandbox_label=host_sandbox_label()
+        )
         self.store = RunStore(layout.run_store)
         self.history = RunHistory(self.store)
         self.ids = IdIssuer(layout.id_state)

@@ -93,6 +93,7 @@ from tests.support import chat_tui_pty
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
+_HOST_SANDBOX_LABEL = "host macOS 27.0(26A5416b) arm64"
 
 
 def _parts(*parts: Part) -> Local:
@@ -1562,7 +1563,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
 def test_chat_header_uses_wide_local_executor_layout() -> None:
     block = blocks.HeaderBlock(
         home="/tmp/toolang/agents/alice",
-        executor_metadata=ChatExecutorMetadata(),
+        executor_metadata=ChatExecutorMetadata(sandbox_label=_HOST_SANDBOX_LABEL),
         version_label="v0.1.0",
     )
     rendered = _render_text(block.render(), width=80)
@@ -1582,9 +1583,11 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     assert lines[1].startswith("╭")
     home_line = next(line for line in lines if "/tmp/toolang/agents/alice" in line)
     executor_line = next(line for line in lines if "embedded" in line)
+    sandbox_line = next(line for line in lines if _HOST_SANDBOX_LABEL in line)
     version_line = next(line for line in lines if "v0.1.0" in line)
     assert lines.index(version_line) < lines.index(executor_line)
-    assert lines.index(executor_line) < lines.index(home_line)
+    assert lines.index(executor_line) < lines.index(sandbox_line)
+    assert lines.index(sandbox_line) < lines.index(home_line)
     assert next(index for index, line in enumerate(lines) if "████" in line) == next(
         index for index, line in enumerate(lines) if "Toolang" in line
     )
@@ -1593,15 +1596,19 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     )
     assert version_line.index("Toolang") == home_line.index("home")
     assert home_line.index("home") == executor_line.index("executor")
+    assert executor_line.index("executor") == sandbox_line.index("sandbox")
     value_column = version_line.index("v0.1.0")
     assert value_column == home_line.index("/tmp/toolang/agents/alice")
     assert value_column == executor_line.index("embedded")
+    assert value_column == sandbox_line.index(_HOST_SANDBOX_LABEL)
     bordered_lines = [line for line in lines if line]
     assert len({len(line) for line in bordered_lines}) == 1
     assert not bordered_lines[1].strip("│ ")
     assert "████" in bordered_lines[2]
-    assert "executor" in bordered_lines[-4]
-    assert "embedded" in bordered_lines[-4]
+    assert "executor" in bordered_lines[-5]
+    assert "embedded" in bordered_lines[-5]
+    assert "sandbox" in bordered_lines[-4]
+    assert _HOST_SANDBOX_LABEL in bordered_lines[-4]
     assert "home" in bordered_lines[-3]
     assert not bordered_lines[-2].strip("│ ")
     logo_line = next(line for line in lines if "Toolang" in line)
@@ -1614,10 +1621,9 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
         blocks.HeaderBlock(
             home="/tmp/toolang/agents/alice-with-a-long-home",
             executor_metadata=ChatExecutorMetadata(
+                sandbox_label="docker:python:3.13-slim 176191c1528b",
                 endpoint="http://runtime.test:7001",
                 version="v0.3.9",
-                sandbox="docker:python:3.13-slim",
-                instance=_CONTAINER_ID,
             ),
             version_label="v0.1.0",
         ).render(),
@@ -1644,19 +1650,19 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
     (
         (
             ChatExecutorMetadata(
+                sandbox_label=_HOST_SANDBOX_LABEL,
                 endpoint="http://runtime.test:7001",
                 version="v0.2.7-88-gc73484a9",
             ),
             "v0.2.7-87-g69439a4e",
             "http://runtime.test:7001 v0.2.7-88-gc73484a9",
-            None,
+            _HOST_SANDBOX_LABEL,
         ),
         (
             ChatExecutorMetadata(
+                sandbox_label="docker:python:3.13-slim 176191c1528b",
                 endpoint="http://runtime.test:7001",
                 version="v0.3.9",
-                sandbox="docker:python:3.13-slim",
-                instance=_CONTAINER_ID,
             ),
             "v0.3.8",
             "http://runtime.test:7001 v0.3.9",
@@ -1664,30 +1670,33 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
         ),
         (
             ChatExecutorMetadata(
+                sandbox_label=_HOST_SANDBOX_LABEL,
                 endpoint="http://runtime.test:7001",
                 version="v0.3.9",
             ),
             "v0.3.9",
             "http://runtime.test:7001",
-            None,
+            _HOST_SANDBOX_LABEL,
         ),
         (
             ChatExecutorMetadata(
+                sandbox_label=_HOST_SANDBOX_LABEL,
                 endpoint="http://runtime.test:7001",
                 version="v0.3.9*",
             ),
             "v0.3.9*",
             "http://runtime.test:7001 v0.3.9*",
-            None,
+            _HOST_SANDBOX_LABEL,
         ),
         (
             ChatExecutorMetadata(
+                sandbox_label=_HOST_SANDBOX_LABEL,
                 endpoint="http://runtime.test:7001",
                 version="unknown",
             ),
             "unknown",
             "http://runtime.test:7001 unknown",
-            None,
+            _HOST_SANDBOX_LABEL,
         ),
     ),
 )
@@ -1711,23 +1720,22 @@ def test_chat_header_supports_remote_executor_identity(
     executor_line = next(line for line in rendered.splitlines() if "executor" in line)
     executor_text = executor_line[executor_line.index("executor") :].rstrip("│ ")
     assert " ".join(executor_text.split()) == f"executor {expected_executor}"
-    if expected_sandbox is None:
-        assert "sandbox" not in compact
-    else:
-        sandbox_line = next(line for line in rendered.splitlines() if "sandbox" in line)
-        sandbox_text = sandbox_line[sandbox_line.index("sandbox") :].rstrip("│ ")
-        assert " ".join(sandbox_text.split()) == f"sandbox {expected_sandbox}"
+    assert expected_sandbox is not None
+    sandbox_line = next(line for line in rendered.splitlines() if "sandbox" in line)
+    sandbox_text = sandbox_line[sandbox_line.index("sandbox") :].rstrip("│ ")
+    assert " ".join(sandbox_text.split()) == f"sandbox {expected_sandbox}"
 
 
 def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> None:
     local = blocks.HeaderBlock(
         home="~/.toolang/agents/eve",
-        executor_metadata=ChatExecutorMetadata(),
+        executor_metadata=ChatExecutorMetadata(sandbox_label=_HOST_SANDBOX_LABEL),
         version_label="v0.2.7-87-g69439a4e*",
     )
     remote = blocks.HeaderBlock(
         home="~/.toolang/agents/eve",
         executor_metadata=ChatExecutorMetadata(
+            sandbox_label=_HOST_SANDBOX_LABEL,
             endpoint="http://localhost:7001",
             version="v0.3.0",
         ),
@@ -1736,10 +1744,9 @@ def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> N
     sandboxed = blocks.HeaderBlock(
         home="~/.toolang/agents/eve",
         executor_metadata=ChatExecutorMetadata(
+            sandbox_label="docker:pyslim-3.11 2f0f8934abcd",
             endpoint="http://localhost:7001",
             version="v0.3.0",
-            sandbox="docker:pyslim-3.11",
-            instance="2f0f8934abcd",
         ),
         version_label="v0.2.7-87-g69439a4e*",
     )
@@ -1751,7 +1758,7 @@ def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> N
 
     assert "Toolang v0.2.7-87-g69439a4e*" in " ".join(" ".join(local_lines).split())
     assert len(remote_lines) == len(local_lines)
-    assert len(sandboxed_lines) == len(remote_lines) + 1
+    assert len(sandboxed_lines) == len(remote_lines)
     for lines in (local_lines, remote_lines, sandboxed_lines):
         bordered = [line for line in lines if line]
         assert not bordered[1].strip("│ ")
@@ -1779,7 +1786,7 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     segments = rendering.render_segments(
         blocks.HeaderBlock(
             home="/tmp/toolang/agents/alice",
-            executor_metadata=ChatExecutorMetadata(),
+            executor_metadata=ChatExecutorMetadata(sandbox_label=_HOST_SANDBOX_LABEL),
             version_label="v0.1.0",
         ).render(),
         width=80,
@@ -1791,11 +1798,15 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
     version = next(segment for segment in segments if segment.text.strip() == "v0.1.0")
     keys = [
         next(segment for segment in segments if segment.text.strip() == key)
-        for key in ("home", "executor")
+        for key in ("home", "executor", "sandbox")
     ]
     values = [
         next(segment for segment in segments if segment.text.strip() == value)
-        for value in ("/tmp/toolang/agents/alice", "embedded")
+        for value in (
+            "/tmp/toolang/agents/alice",
+            "embedded",
+            _HOST_SANDBOX_LABEL,
+        )
     ]
 
     assert sum(segment.text.count("█") for segment in logo_blocks) == 16
@@ -3193,7 +3204,7 @@ class FakeApp:
 
 
 class FakeClient(ChatClient):
-    executor_metadata = ChatExecutorMetadata()
+    executor_metadata = ChatExecutorMetadata(sandbox_label=_HOST_SANDBOX_LABEL)
 
     def list_models(self) -> dict[str, object]:
         return {

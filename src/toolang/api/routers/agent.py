@@ -151,20 +151,51 @@ def _profile_runtime(*, runtime_state: dict[str, object]) -> RuntimeIdentityPayl
             driver=driver,
             selector=_runtime_label(sandbox_spec, label="sandbox selector"),
             instance=_runtime_instance(runtime_state, driver=driver),
+            description=_runtime_description(runtime_state, driver=driver),
         ),
     )
 
 
 def _runtime_instance(runtime_state: dict[str, object], *, driver: str) -> str | None:
-    if driver == "host":
-        return None
     raw = runtime_state.get("sandbox_instance")
+    if driver != "docker":
+        if raw is not None:
+            raise HTTPException(
+                status_code=500,
+                detail="runtime sandbox instance is invalid",
+            )
+        return None
     if not isinstance(raw, str) or len(raw.strip()) < 12:
         raise HTTPException(
             status_code=500,
             detail="runtime sandbox instance is unavailable",
         )
     return _runtime_token(raw.strip(), label="sandbox instance")
+
+
+def _runtime_description(
+    runtime_state: dict[str, object], *, driver: str
+) -> str | None:
+    raw = runtime_state.get("sandbox_description")
+    if driver == "docker":
+        if raw is not None:
+            raise HTTPException(
+                status_code=500,
+                detail="runtime sandbox description is invalid",
+            )
+        return None
+    if not isinstance(raw, str):
+        raise HTTPException(
+            status_code=500,
+            detail="runtime sandbox description is unavailable",
+        )
+    text = raw.strip()
+    if not text or text != raw or not text.isprintable():
+        raise HTTPException(
+            status_code=500,
+            detail="runtime sandbox description is invalid",
+        )
+    return text
 
 
 def _runtime_token(value: str, *, label: str) -> str:

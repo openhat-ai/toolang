@@ -245,6 +245,7 @@ class RuntimeSandboxPayload(ApiRequest):
     driver: StrictText
     selector: StrictText
     instance: StrictText | None = None
+    description: StrictText | None = None
 
 
 class RuntimeIdentityPayload(ApiRequest):

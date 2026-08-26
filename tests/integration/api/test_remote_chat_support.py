@@ -33,6 +33,7 @@ class _Snapshot:
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
+_HOST_DESCRIPTION = "macOS 27.0(26A5416b) arm64"
 
 
 def test_remote_chat_validation_and_latest_result_endpoints(
@@ -56,6 +57,13 @@ agic chat(_: Part[]) -> Part[]:
     core = AgentCore(harness.setup.layout)
     core.setup = _Snapshot(harness.setup)
     core.state = _Snapshot(harness.state)
+    agents.write_runtime_state(
+        core.layout,
+        endpoint="http://127.0.0.1:7001",
+        started_at="2026-08-25T00:00:00Z",
+        pid=123,
+        sandbox_description=_HOST_DESCRIPTION,
+    )
     app = create_app(
         core,
         CapsManager(core.layout),
@@ -110,7 +118,12 @@ agic chat(_: Part[]) -> Part[]:
 
         assert runtime == {
             "version": source_version,
-            "sandbox": {"driver": "host", "selector": "host", "instance": None},
+            "sandbox": {
+                "driver": "host",
+                "selector": "host",
+                "instance": None,
+                "description": _HOST_DESCRIPTION,
+            },
         }
         assert valid.status_code == 204
         assert invalid.status_code == 422
@@ -163,13 +176,14 @@ def test_profile_preserves_source_version_and_complete_docker_instance(
                 "driver": "docker",
                 "selector": "docker:python:3.13-slim",
                 "instance": _CONTAINER_ID,
+                "description": None,
             },
         }
     finally:
         asyncio.run(core.close())
 
 
-def test_profile_rejects_short_non_host_instance(tmp_path: Path) -> None:
+def test_profile_rejects_short_docker_instance(tmp_path: Path) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     agents.write_runtime_state(
@@ -186,6 +200,27 @@ def test_profile_rejects_short_non_host_instance(tmp_path: Path) -> None:
         with pytest.raises(
             HTTPException,
             match="runtime sandbox instance is unavailable",
+        ):
+            profile(core)
+    finally:
+        asyncio.run(core.close())
+
+
+def test_profile_rejects_missing_host_description(tmp_path: Path) -> None:
+    layout = AgentLayout.resident(tmp_path, "alice")
+    layout.home.mkdir(parents=True)
+    agents.write_runtime_state(
+        layout,
+        endpoint="http://127.0.0.1:7001",
+        started_at="2026-08-25T00:00:00Z",
+        pid=123,
+    )
+    core = AgentCore(layout)
+
+    try:
+        with pytest.raises(
+            HTTPException,
+            match="runtime sandbox description is unavailable",
         ):
             profile(core)
     finally:

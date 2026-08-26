@@ -32,6 +32,8 @@ from toolang.execution.types import ControlRef, Local, RunOverride
 
 
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
+_HOST_DESCRIPTION = "macOS 27.0(26A5416b) arm64"
+_HOST_SANDBOX_LABEL = f"host {_HOST_DESCRIPTION}"
 
 
 class _Bytes(httpx.AsyncByteStream):
@@ -56,6 +58,7 @@ def _profile(
                 "driver": driver,
                 "selector": selector or driver,
                 "instance": instance,
+                "description": (None if driver == "docker" else _HOST_DESCRIPTION),
             },
         }
     }
@@ -202,10 +205,9 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
     )
     try:
         assert session.executor_metadata == ChatExecutorMetadata(
+            sandbox_label="docker:python:3.13-slim 176191c1528b",
             endpoint="http://runtime.test:7001",
             version="v0.3.9",
-            sandbox="docker:python:3.13-slim",
-            instance=_CONTAINER_ID,
         )
         assert session.run_client is not None
         assert session.run_client.endpoint == "http://runtime.test:7001"
@@ -271,7 +273,22 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
         (
             _profile(driver="host", instance="a1b2c3d4e5f6"),
             "host",
-            "host sandbox returned an instance ID",
+            "non-docker sandbox returned an instance ID",
+        ),
+        (
+            {
+                "runtime": {
+                    "version": "v0.3.9",
+                    "sandbox": {
+                        "driver": "host",
+                        "selector": "host",
+                        "instance": None,
+                        "description": None,
+                    },
+                }
+            },
+            "host",
+            "sandbox description is invalid",
         ),
         (
             _profile(
@@ -328,6 +345,7 @@ def test_remote_chat_runtime_identity_allows_additive_profile_fields() -> None:
                     "driver": "docker",
                     "selector": "docker:python:3.13-slim",
                     "instance": _CONTAINER_ID,
+                    "description": None,
                     "future": True,
                 },
             }
@@ -335,6 +353,7 @@ def test_remote_chat_runtime_identity_allows_additive_profile_fields() -> None:
     )
 
     assert identity.instance == _CONTAINER_ID
+    assert identity.description is None
 
 
 def test_remote_chat_uses_remote_run_client_native_events() -> None:
@@ -374,6 +393,7 @@ def test_remote_chat_uses_remote_run_client_native_events() -> None:
         session.close()
 
     assert session.executor_metadata == ChatExecutorMetadata(
+        sandbox_label=_HOST_SANDBOX_LABEL,
         endpoint="http://runtime.test:7001",
         version="v0.3.9",
     )

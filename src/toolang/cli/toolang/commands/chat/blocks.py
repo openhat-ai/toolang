@@ -490,13 +490,13 @@ class HeaderBlock:
             Text("Toolang", style=f"bold {TOOLANG_COLOR}"),
             Text(self.version_label, style="dim"),
         )
-        executor_value, sandbox_value = _header_executor_values(
+        executor_value = _header_executor_value(
             self.executor_metadata,
             tui_version=self.version_label,
         )
         details.add_row(Text("executor", style="dim"), executor_value)
-        if sandbox_value is not None:
-            details.add_row(Text("sandbox", style="dim"), sandbox_value)
+        sandbox_value = Text(self.executor_metadata.sandbox_label)
+        details.add_row(Text("sandbox", style="dim"), sandbox_value)
         details.add_row(Text("home", style="dim"), Text(self.home))
 
         logo_text = toolang_logo_text()
@@ -509,7 +509,7 @@ class HeaderBlock:
                 display_width(self.version_label),
                 display_width(self.home),
                 display_width(executor_value.plain),
-                display_width(sandbox_value.plain) if sandbox_value else 0,
+                display_width(sandbox_value.plain),
             )
         )
         wide_width = (
@@ -540,28 +540,20 @@ class HeaderBlock:
         )
 
 
-def _header_executor_values(
+def _header_executor_value(
     metadata: ChatExecutorMetadata,
     *,
     tui_version: str,
-) -> tuple[Text, Text | None]:
+) -> Text:
     if metadata.endpoint is None:
-        return Text("embedded"), None
+        return Text("embedded")
     if metadata.version is None:
         raise ValueError("remote chat executor metadata is missing its version")
     executor = Text()
     executor.append(metadata.endpoint, style=Style(link=metadata.endpoint))
     if not _versions_confirmed_equal(metadata.version, tui_version):
         executor.append(f" {metadata.version}")
-    sandbox = (
-        Text(
-            f"{metadata.sandbox} "
-            f"{_display_sandbox_instance(metadata.sandbox, metadata.instance)}"
-        )
-        if metadata.sandbox is not None and metadata.instance is not None
-        else None
-    )
-    return executor, sandbox
+    return executor
 
 
 def _versions_confirmed_equal(executor_version: str, tui_version: str) -> bool:
@@ -570,16 +562,6 @@ def _versions_confirmed_equal(executor_version: str, tui_version: str) -> bool:
         and executor_version != "unknown"
         and not executor_version.endswith("*")
     )
-
-
-def _display_sandbox_instance(selector: str, instance: str) -> str:
-    if (
-        selector.partition(":")[0] == "docker"
-        and len(instance) > 12
-        and all(character.casefold() in "0123456789abcdef" for character in instance)
-    ):
-        return instance[:12]
-    return instance
 
 
 @dataclass(frozen=True, slots=True)

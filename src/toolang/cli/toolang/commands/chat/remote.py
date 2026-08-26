@@ -77,6 +77,7 @@ class _RuntimeIdentity:
     driver: str
     selector: str
     instance: str | None
+    description: str | None
 
 
 class RemoteChatSession:
@@ -232,10 +233,9 @@ class RemoteChatSession:
         if port is None:
             raise RemoteChatError("running executor endpoint has no explicit port")
         self.executor_metadata = ChatExecutorMetadata(
+            sandbox_label=_sandbox_label(identity),
             endpoint=self.run_client.endpoint,
             version=identity.version,
-            sandbox=identity.selector if identity.driver != "host" else None,
-            instance=identity.instance,
         )
 
     async def _list_models(self) -> dict[str, object]:
@@ -623,7 +623,7 @@ def _runtime_identity(payload: object) -> _RuntimeIdentity:
             "remote chat profile returned invalid runtime identity"
         )
     sandbox = _mapping(runtime.get("sandbox"), operation="profile sandbox")
-    if not {"driver", "selector", "instance"}.issubset(sandbox):
+    if not {"driver", "selector", "instance", "description"}.issubset(sandbox):
         raise _RemoteChatProtocolError(
             "remote chat profile returned invalid sandbox identity"
         )
@@ -635,15 +635,40 @@ def _runtime_identity(payload: object) -> _RuntimeIdentity:
             "remote chat sandbox selector does not match its driver"
         )
     instance_value = sandbox.get("instance")
-    if driver == "host":
+    description_value = sandbox.get("description")
+    if driver == "docker":
+        if description_value is not None:
+            raise _RemoteChatProtocolError(
+                "remote chat docker sandbox returned a description"
+            )
+        instance = _token(instance_value, label="sandbox instance")
+        description = None
+    else:
         if instance_value is not None:
             raise _RemoteChatProtocolError(
-                "remote chat host sandbox returned an instance ID"
+                "remote chat non-docker sandbox returned an instance ID"
             )
         instance = None
-    else:
-        instance = _token(instance_value, label="sandbox instance")
-    return _RuntimeIdentity(version, driver, selector, instance)
+        description = _description(
+            description_value,
+            label="sandbox description",
+        )
+    return _RuntimeIdentity(version, driver, selector, instance, description)
+
+
+def _sandbox_label(identity: _RuntimeIdentity) -> str:
+    if identity.driver == "docker":
+        if identity.instance is None:
+            raise AssertionError("docker runtime identity is missing its instance")
+        instance = identity.instance
+        if len(instance) > 12 and all(
+            character.casefold() in "0123456789abcdef" for character in instance
+        ):
+            instance = instance[:12]
+        return f"{identity.selector} {instance}"
+    if identity.description is None:
+        raise AssertionError("non-docker runtime identity is missing its description")
+    return f"{identity.selector} {identity.description}"
 
 
 def _catalog_payload(
@@ -694,6 +719,15 @@ def _label(value: object, *, label: str) -> str:
         or any(character.isspace() for character in text)
         or any(character in text for character in ",()")
     ):
+        raise _RemoteChatProtocolError(f"remote chat {label} is invalid")
+    return text
+
+
+def _description(value: object, *, label: str) -> str:
+    if not isinstance(value, str):
+        raise _RemoteChatProtocolError(f"remote chat {label} is invalid")
+    text = value.strip()
+    if not text or text != value or not text.isprintable():
         raise _RemoteChatProtocolError(f"remote chat {label} is invalid")
     return text
 

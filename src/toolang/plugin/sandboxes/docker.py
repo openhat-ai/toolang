@@ -72,6 +72,7 @@ _CONTROL_ENV_NAMES = frozenset(
         "TOOLANG_HOST_GATEWAY",
         "TOOLANG_ROOT",
         "TOOLANG_SANDBOX",
+        "TOOLANG_SANDBOX_DESCRIPTION",
         "TOOLANG_SANDBOX_INSTANCE",
     }
 )
