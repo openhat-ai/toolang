@@ -29,7 +29,7 @@ jobs:
 
           from dulwich.repo import Repo
 
-          from toolang.cli.common.version import repository_source_version
+          from toolang.common.version import repository_source_version
 
           version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
           tag = os.environ["GITHUB_REF_NAME"]

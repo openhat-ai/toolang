@@ -34,14 +34,14 @@ text and hyperlink target are the same normalized origin.
 
 ```text
 Toolang   v0.2.7-87-g69439a4e*
-executor  http://localhost:7001 · v0.3.0
+executor  http://localhost:7001 · v0.2.7-88-gc73484a9
 sandbox   docker:pyslim-3.11 · 2f0f8934abcd
 home      ~/.toolang/agents/eve
 ```
 
 ```text
 Toolang   v0.2.7-87-g69439a4e*
-executor  http://localhost:7001 · v0.3.0
+executor  http://localhost:7001 · v0.2.7-88-gc73484a9
 home      ~/.toolang/agents/eve
 ```
 
@@ -71,9 +71,9 @@ structured banner metadata owned by the client:
 
 - embedded: executor kind `embedded`, with no endpoint, remote version, or
   sandbox identity;
-- remote host: normalized endpoint plus remote runtime version, with no sandbox
+- remote host: normalized endpoint plus remote source version, with no sandbox
   display identity;
-- remote non-host: normalized endpoint, remote runtime version, complete
+- remote non-host: normalized endpoint, remote source version, complete
   sandbox selector, and a twelve-character runtime instance ID. For Docker,
   this matches the short container ID shown by the Docker CLI.
 

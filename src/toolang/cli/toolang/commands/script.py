@@ -18,6 +18,7 @@ from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
+from toolang.common.version import toolang_version
 from toolang.cli.common.policy import (
     resolve_binding_overrides,
     resolve_ceiling_overrides,
@@ -44,7 +45,6 @@ from ...common.result_saving import save_result
 from ...common.output import echo_error
 from ...common.execution_progress.config import resolve_progress_max_width
 from ...common.script_progress import ScriptRunPresenter
-from ...common.version import toolang_version
 
 Runnable = AgicDecl | FlowDecl
 _LITERAL_ITEM_PREFIX = "\ue002"

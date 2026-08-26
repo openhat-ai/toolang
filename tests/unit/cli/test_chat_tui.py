@@ -1615,7 +1615,7 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
             home="/tmp/toolang/agents/alice-with-a-long-home",
             executor_metadata=ChatExecutorMetadata(
                 endpoint="http://runtime.test:7001",
-                version="0.3.9",
+                version="v0.3.9",
                 sandbox="docker:python:3.13-slim",
                 instance=_CONTAINER_ID,
             ),
@@ -1644,15 +1644,15 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
         (
             ChatExecutorMetadata(
                 endpoint="http://runtime.test:7001",
-                version="0.3.9",
+                version="v0.2.7-88-gc73484a9",
             ),
-            "http://runtime.test:7001 · v0.3.9",
+            "http://runtime.test:7001 · v0.2.7-88-gc73484a9",
             None,
         ),
         (
             ChatExecutorMetadata(
                 endpoint="http://runtime.test:7001",
-                version="0.3.9",
+                version="v0.3.9",
                 sandbox="docker:python:3.13-slim",
                 instance=_CONTAINER_ID,
             ),
@@ -1693,7 +1693,7 @@ def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> N
         home="~/.toolang/agents/eve",
         executor_metadata=ChatExecutorMetadata(
             endpoint="http://localhost:7001",
-            version="0.3.0",
+            version="v0.3.0",
         ),
         version_label="v0.2.7-87-g69439a4e*",
     )
@@ -1701,7 +1701,7 @@ def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> N
         home="~/.toolang/agents/eve",
         executor_metadata=ChatExecutorMetadata(
             endpoint="http://localhost:7001",
-            version="0.3.0",
+            version="v0.3.0",
             sandbox="docker:pyslim-3.11",
             instance="2f0f8934abcd",
         ),

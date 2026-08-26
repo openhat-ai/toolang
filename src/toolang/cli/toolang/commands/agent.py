@@ -39,7 +39,7 @@ from ...common.output import (
     shorten_home_path,
 )
 from ...common.progress import as_progress_sink, make_cli_progress
-from ...common.version import toolang_version
+from toolang.common.version import toolang_version
 from . import plugin
 
 

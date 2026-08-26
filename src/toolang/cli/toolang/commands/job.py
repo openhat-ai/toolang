@@ -33,7 +33,7 @@ from ...common.context import (
 from ...common.execution import open_execution
 from ...common.output import echo_table
 from ...common.routing import PrefixAgentJobGroup, RequiredPrefixAgentCommand
-from ...common.version import toolang_version
+from toolang.common.version import toolang_version
 
 JobKind = Literal["task", "chore"]
 

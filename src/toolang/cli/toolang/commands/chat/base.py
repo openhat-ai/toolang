@@ -70,7 +70,7 @@ ChatRunState: TypeAlias = RunAccepted | RunDisconnected | RunRecovered | RunBloc
 
 @dataclass(frozen=True, slots=True)
 class ChatExecutorMetadata:
-    """Structured executor identity rendered by the Chat banner."""
+    """Structured executor source identity rendered by the Chat banner."""
 
     endpoint: str | None = None
     version: str | None = None

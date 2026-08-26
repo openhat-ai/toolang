@@ -248,7 +248,7 @@ class RuntimeSandboxPayload(ApiRequest):
 
 
 class RuntimeIdentityPayload(ApiRequest):
-    """Version and sandbox identity of the current server process."""
+    """Source version and sandbox identity of the current server process."""
 
     version: StrictText
     sandbox: RuntimeSandboxPayload

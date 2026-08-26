@@ -51,7 +51,7 @@ def _profile(
 ) -> dict[str, object]:
     return {
         "runtime": {
-            "version": "0.3.9",
+            "version": "v0.3.9",
             "sandbox": {
                 "driver": driver,
                 "selector": selector or driver,
@@ -203,7 +203,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
     try:
         assert session.executor_metadata == ChatExecutorMetadata(
             endpoint="http://runtime.test:7001",
-            version="0.3.9",
+            version="v0.3.9",
             sandbox="docker:python:3.13-slim",
             instance=_CONTAINER_ID,
         )
@@ -261,7 +261,7 @@ def test_remote_chat_non_run_operations_and_executor_metadata() -> None:
         (
             {
                 "runtime": {
-                    "version": "0.3.9",
+                    "version": "v0.3.9",
                     "sandbox": {"driver": "host", "instance": None},
                 }
             },
@@ -322,7 +322,7 @@ def test_remote_chat_runtime_identity_allows_additive_profile_fields() -> None:
     identity = remote._runtime_identity(
         {
             "runtime": {
-                "version": "0.3.9",
+                "version": "v0.3.9",
                 "future": True,
                 "sandbox": {
                     "driver": "docker",
@@ -375,7 +375,7 @@ def test_remote_chat_uses_remote_run_client_native_events() -> None:
 
     assert session.executor_metadata == ChatExecutorMetadata(
         endpoint="http://runtime.test:7001",
-        version="0.3.9",
+        version="v0.3.9",
     )
     assert [type(item) for item in events] == [RunBegin, RunEnd]
     assert states == [RunAccepted("run_remote")]

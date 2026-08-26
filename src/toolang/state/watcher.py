@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from importlib.metadata import version as package_version
 import logging
 from pathlib import Path
 
 from watchfiles import Change, awatch
 
 from toolang.common.layout import AgentLayout
+from toolang.common.version import base_toolang_version
 
 from .state import AgentState
 from .cache import (
@@ -35,7 +35,7 @@ class StateWatcher:
     def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout
         self._state: AgentState | None = None
-        self._toolang_version = package_version("toolang")
+        self._toolang_version = base_toolang_version()
         self._refresh_lock = asyncio.Lock()
 
     def current(self) -> AgentState:

@@ -31,6 +31,8 @@ The change succeeds when:
   requiring the Git executable;
 - a built wheel displays the same source version captured at build time,
   including a trailing `*` for a dirty tracked worktree;
+- a remote executor reports that same source version through its runtime profile,
+  and Chat renders it without altering the version text;
 - an sdist carries its captured provenance into a wheel built from that sdist;
 - non-editable installs never infer source state from an enclosing Git worktree;
 - the package version remains the PEP 440 value from project and distribution
@@ -82,7 +84,8 @@ startup snapshot after the first lazy, process-cached lookup.
 Non-editable execution reads packaged `_build_info.json` and never searches
 ancestor directories for `.git`. `direct_url.json` may remain available for
 installation diagnostics, but installation origin does not affect or appear in
-the source version.
+the source version. CLI and API callers share this resolution through
+`toolang.common.version`; no caller independently derives a displayed version.
 
 ## Build Provenance
 
@@ -124,7 +127,8 @@ Future release tags should be annotated, while runtime and build logic retain
 In scope:
 
 - `hatch_build.py` and Hatch build configuration;
-- `src/toolang/cli/common/version.py` runtime resolution;
+- `src/toolang/common/version.py` shared runtime resolution;
+- the runtime profile and Chat executor-version presentation;
 - deterministic unit tests for runtime and build provenance;
 - PyPI workflow release checks; and
 - banner examples whose source-version fixture uses the new format.
@@ -152,7 +156,10 @@ Out of scope:
    information; the wheel retains the package metadata version.
 8. Release workflow checks reject tag, source-version, revision, or metadata
    mismatches.
-9. Ruff, formatting, type checking, and the complete default offline suite pass.
+9. A remote runtime profile returns the shared source version, and Chat renders
+   it exactly once without adding a prefix.
+10. Ruff, formatting, type checking, and the complete default offline suite
+    pass.
 
 ## Risks And Open Questions
 

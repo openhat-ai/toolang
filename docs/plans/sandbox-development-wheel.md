@@ -141,11 +141,11 @@ development wheel.
 
 - `src/toolang/up/sandbox.py`
 - `src/toolang/plugin/sandboxes/docker.py`
-- `src/toolang/cli/common/version.py`
+- `src/toolang/common/version.py`
 - `src/toolang/cli/toolang/commands/runtime.py`
 - `tests/unit/up/test_sandbox.py`
 - `tests/unit/plugin/test_sandboxes.py`
-- `tests/unit/cli/test_cli_version.py`
+- `tests/unit/common/test_version.py`
 - `tests/integration/cli/test_runtime_commands.py`
 - `docs/api.md`
 

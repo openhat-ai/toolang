@@ -1,4 +1,4 @@
-"""Toolang CLI version helpers."""
+"""Toolang package and source version resolution."""
 
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ def development_source() -> tuple[bool, Path | None]:
 def embedded_source_version() -> str:
     """Return validated source provenance from an installed artifact."""
 
-    path = Path(__file__).resolve().parents[2] / _BUILD_INFO_NAME
+    path = Path(__file__).resolve().parents[1] / _BUILD_INFO_NAME
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 from dulwich import porcelain
 
-import toolang.cli.common.version as version
+import toolang.common.version as version
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +23,7 @@ def test_base_toolang_version_reads_nearest_source_pyproject(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = tmp_path / "src" / "toolang" / "cli" / "common" / "version.py"
+    source = tmp_path / "src" / "toolang" / "common" / "version.py"
     source.parent.mkdir(parents=True)
     source.touch()
     (tmp_path / "pyproject.toml").write_text(
@@ -63,7 +63,7 @@ def test_toolang_version_reads_embedded_info_without_git(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    module_path = tmp_path / "toolang" / "cli" / "common" / "version.py"
+    module_path = tmp_path / "toolang" / "common" / "version.py"
     module_path.parent.mkdir(parents=True)
     module_path.touch()
     (tmp_path / "toolang" / "_build_info.json").write_text(
@@ -107,7 +107,7 @@ def test_embedded_source_version_rejects_missing_or_invalid_info(
     monkeypatch: pytest.MonkeyPatch,
     payload: object,
 ) -> None:
-    module_path = tmp_path / "toolang" / "cli" / "common" / "version.py"
+    module_path = tmp_path / "toolang" / "common" / "version.py"
     module_path.parent.mkdir(parents=True)
     module_path.touch()
     if payload is not None:

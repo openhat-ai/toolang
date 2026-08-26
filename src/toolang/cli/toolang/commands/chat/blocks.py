@@ -546,7 +546,7 @@ def _header_executor_values(
         raise ValueError("remote chat executor metadata is missing its version")
     executor = Text()
     executor.append(metadata.endpoint, style=Style(link=metadata.endpoint))
-    executor.append(f" · v{metadata.version}")
+    executor.append(f" · {metadata.version}")
     sandbox = (
         Text(
             f"{metadata.sandbox} · "

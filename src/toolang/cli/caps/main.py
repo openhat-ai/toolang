@@ -13,6 +13,7 @@ import click
 import typer
 
 from ...up.logging import configure_logging
+from ...common.version import toolang_version
 from ..common.context import CliContext, resolve_root
 from ..common.output import echo_error
 from ..common.routing import (
@@ -21,7 +22,6 @@ from ..common.routing import (
     explicit_agent,
     extract_root_args,
 )
-from ..common.version import toolang_version
 from . import commands
 
 _PREFIX_AGENT: ContextVar[str | None] = ContextVar(

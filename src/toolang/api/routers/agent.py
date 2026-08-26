@@ -1,6 +1,5 @@
 """Formal agent inspection routes."""
 
-from importlib.metadata import version as package_version
 import re
 from typing import Any, Literal
 
@@ -9,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from toolang.api.app import AgentCoreDep
 from toolang.api.schemas import RuntimeIdentityPayload, RuntimeSandboxPayload
 from toolang.common.errors import ToolangError
+from toolang.common.version import toolang_version
 from toolang.execution.runnables import effective_agics, runnable_binding_defaults
 from toolang.execution.schemas import ThreadInfo
 from toolang.execution.types import ModelStepNoted
@@ -146,17 +146,13 @@ def _profile_runtime(*, runtime_state: dict[str, object]) -> RuntimeIdentityPayl
     sandbox_spec = _runtime_sandbox_spec(runtime_state)
     driver = _runtime_token(sandbox_spec.partition(":")[0], label="sandbox driver")
     return RuntimeIdentityPayload(
-        version=_runtime_version(),
+        version=_runtime_label(toolang_version(), label="Toolang version"),
         sandbox=RuntimeSandboxPayload(
             driver=driver,
             selector=_runtime_label(sandbox_spec, label="sandbox selector"),
             instance=_runtime_instance(runtime_state, driver=driver),
         ),
     )
-
-
-def _runtime_version() -> str:
-    return _runtime_label(package_version("toolang"), label="Toolang version")
 
 
 def _runtime_instance(runtime_state: dict[str, object], *, driver: str) -> str | None:

@@ -29,7 +29,7 @@ from ..common.routing import (
     OptionalPrefixAgentListCommand,
     OptionalPrefixAgentTemplateCommand,
 )
-from ..common.version import toolang_version
+from toolang.common.version import toolang_version
 
 if TYPE_CHECKING:
     from toolang.state.state import AgentState

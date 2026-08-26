@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +12,7 @@ from pydantic import TypeAdapter
 import pytest
 
 from toolang.api.app import create_app
+from toolang.api.routers import agent as agent_router
 from toolang.api.routers.agent import profile
 from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
@@ -35,7 +35,12 @@ class _Snapshot:
 _CONTAINER_ID = "176191c1528b8e2861cc16422dee13ade59d4977c2148a9ebf5d36a06f090abb"
 
 
-def test_remote_chat_validation_and_latest_result_endpoints(tmp_path: Path) -> None:
+def test_remote_chat_validation_and_latest_result_endpoints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_version = "v0.2.7-88-gc73484a9"
+    monkeypatch.setattr(agent_router, "toolang_version", lambda: source_version)
     harness = ExecutionHarness.create(
         tmp_path,
         source="""
@@ -104,7 +109,7 @@ agic chat(_: Part[]) -> Part[]:
         latest = TypeAdapter(RunDetail).validate_python(latest_response.json())
 
         assert runtime == {
-            "version": package_version("toolang"),
+            "version": source_version,
             "sandbox": {"driver": "host", "selector": "host", "instance": None},
         }
         assert valid.status_code == 204
@@ -126,7 +131,10 @@ agic chat(_: Part[]) -> Part[]:
         asyncio.run(core.close())
 
 
-def test_profile_preserves_complete_docker_instance(tmp_path: Path) -> None:
+def test_profile_preserves_source_version_and_complete_docker_instance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     layout = AgentLayout.resident(tmp_path, "alice")
     layout.home.mkdir(parents=True)
     agents.write_runtime_state(
@@ -138,12 +146,19 @@ def test_profile_preserves_complete_docker_instance(tmp_path: Path) -> None:
         sandbox_instance=_CONTAINER_ID,
     )
     core = AgentCore(layout)
+    source_version = "v0.2.7-88-gc73484a9"
+    monkeypatch.setattr(
+        agent_router,
+        "toolang_version",
+        lambda: source_version,
+        raising=False,
+    )
 
     try:
         payload = profile(core)
 
         assert payload["runtime"] == {
-            "version": package_version("toolang"),
+            "version": source_version,
             "sandbox": {
                 "driver": "docker",
                 "selector": "docker:python:3.13-slim",
