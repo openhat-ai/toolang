@@ -209,6 +209,9 @@ Chat stops only the temporary workload it launched. Both paths render the same
 native `RunEvent` values. `--dev PATH` may provide a Toolang wheel, or a
 directory containing one, when Chat creates that temporary non-host runtime;
 it cannot modify an attached server and does not apply to embedded host mode.
+On exit, Chat reports the stop and sandbox-release stages while it cleans up a
+temporary runtime. Attached AgentServers are left running and need no cleanup
+progress.
 
 Remote acceptance records the root run id before the first event so stop and
 steer remain addressable. If an accepted stream disconnects, the TUI keeps the

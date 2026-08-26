@@ -19,6 +19,7 @@ from toolang.up import sandbox as sandbox_runtime
 from toolang.up.logging import resolve_agent_logging
 
 from .context import load_runtime_environ
+from .shutdown_progress import make_runtime_shutdown_progress
 from .startup_progress import (
     make_runtime_startup_progress,
     runtime_startup_failure_message,
@@ -167,8 +168,21 @@ def open_execution_runtime(
             raise ExecutionRuntimeError(str(exc)) from exc
         raise
     finally:
+        shutdown_progress = make_runtime_shutdown_progress(
+            layout.name,
+            handle.state.sandbox,
+        )
         try:
-            asyncio.run(sandbox_runtime.stop_handle(layout, handle))
+            asyncio.run(
+                sandbox_runtime.stop_handle(
+                    layout,
+                    handle,
+                    progress=shutdown_progress,
+                )
+            )
+        except KeyboardInterrupt:
+            shutdown_progress.interrupt()
+            raise
         except Exception as exc:
             message = (
                 f"could not stop temporary agent {layout.name} in "
@@ -180,6 +194,8 @@ def open_execution_runtime(
                 print(message, file=sys.stderr)
             else:
                 raise ExecutionRuntimeError(message) from exc
+        finally:
+            shutdown_progress.finish()
 
 
 def sandbox_matches(requested: str, running: str) -> bool:

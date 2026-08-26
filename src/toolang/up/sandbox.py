@@ -423,6 +423,7 @@ async def stop_handle(
     handle: SandboxHandle,
     *,
     force: bool = False,
+    progress: ProgressSink | None = None,
 ) -> bool:
     """Stop and release one exact process-owned sandbox workload."""
 
@@ -437,9 +438,65 @@ async def stop_handle(
                 raise ValueError(
                     f"sandbox ownership changed while agent was running: {layout.name}"
                 )
-            await handle.implementation.stop(handle.state.ref, force=force)
-            await handle.implementation.release(handle.state.ref)
-            _clear_state(layout, expected=handle.state)
+            _shutdown_progress(
+                progress,
+                layout,
+                handle.state,
+                phase="stop",
+                label="Stopping workload",
+                status="running",
+            )
+            try:
+                await handle.implementation.stop(handle.state.ref, force=force)
+            except BaseException as exc:
+                _shutdown_progress(
+                    progress,
+                    layout,
+                    handle.state,
+                    phase="stop",
+                    label="Stopping workload",
+                    status="failed",
+                    detail=str(exc),
+                )
+                raise
+            _shutdown_progress(
+                progress,
+                layout,
+                handle.state,
+                phase="stop",
+                label="Stopping workload",
+                status="ok",
+            )
+            _shutdown_progress(
+                progress,
+                layout,
+                handle.state,
+                phase="release",
+                label="Releasing sandbox resources",
+                status="running",
+            )
+            try:
+                await handle.implementation.release(handle.state.ref)
+                _clear_state(layout, expected=handle.state)
+            except BaseException as exc:
+                _shutdown_progress(
+                    progress,
+                    layout,
+                    handle.state,
+                    phase="release",
+                    label="Releasing sandbox resources",
+                    status="failed",
+                    detail=str(exc),
+                )
+                raise
+            _shutdown_progress(
+                progress,
+                layout,
+                handle.state,
+                phase="release",
+                label="Releasing sandbox resources",
+                status="ok",
+            )
             return True
 
 
@@ -563,6 +620,27 @@ def _startup_progress(
             label=label,
             status=status,
             detail=detail,
+        )
+
+
+def _shutdown_progress(
+    progress: ProgressSink | None,
+    layout: AgentLayout,
+    state: SandboxState,
+    *,
+    phase: str,
+    label: str,
+    status: ProgressStatus,
+    detail: str | None = None,
+) -> None:
+    with suppress(Exception):
+        emit_progress(
+            progress,
+            id=f"shutdown:{layout.name}:{phase}",
+            phase=f"shutdown.{phase}",
+            label=label,
+            status=status,
+            detail=detail if detail is not None else state.sandbox,
         )
 
 

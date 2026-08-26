@@ -334,12 +334,50 @@ def test_stop_handle_stops_only_its_exact_owned_workload(
     )
     state.save(layout.sandbox_state)
     handle = sandbox.SandboxHandle(implementation, state)
+    events: list[ProgressEvent] = []
 
-    assert asyncio.run(sandbox.stop_handle(layout, handle)) is True
+    assert (
+        asyncio.run(sandbox.stop_handle(layout, handle, progress=events.append)) is True
+    )
 
     assert ("stop", state.ref, False) in implementation.calls
     assert ("release", state.ref) in implementation.calls
     assert sandbox.SandboxState.load(layout.sandbox_state) is None
+    assert [(event.phase, event.status) for event in events] == [
+        ("shutdown.stop", "running"),
+        ("shutdown.stop", "ok"),
+        ("shutdown.release", "running"),
+        ("shutdown.release", "ok"),
+    ]
+
+
+def test_stop_handle_reports_the_failed_cleanup_stage(
+    tmp_path: Path,
+) -> None:
+    implementation = FakeSandbox()
+    implementation.stop_error = RuntimeError("stop failed")
+    layout = AgentLayout.resident(tmp_path, "alice")
+    state = sandbox.SandboxState(
+        sandbox="docker:python:3.13-slim",
+        ref=SandboxRef("toolang-alice-owned", "http://localhost:8123"),
+    )
+    state.save(layout.sandbox_state)
+    events: list[ProgressEvent] = []
+
+    with pytest.raises(RuntimeError, match="stop failed"):
+        asyncio.run(
+            sandbox.stop_handle(
+                layout,
+                sandbox.SandboxHandle(implementation, state),
+                progress=events.append,
+            )
+        )
+
+    assert [(event.phase, event.status, event.detail) for event in events] == [
+        ("shutdown.stop", "running", "docker:python:3.13-slim"),
+        ("shutdown.stop", "failed", "stop failed"),
+    ]
+    assert sandbox.SandboxState.load(layout.sandbox_state) == state
 
 
 def test_stop_handle_rejects_replaced_ownership_without_stopping(

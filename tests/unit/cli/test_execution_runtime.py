@@ -256,10 +256,16 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
 
     monkeypatch.setattr(runtime, "_resolve_inactive_launch", resolve_launch)
     progress = _Progress()
+    shutdown_progress = _Progress()
     monkeypatch.setattr(
         runtime,
         "make_runtime_startup_progress",
         lambda *_args, **_kwargs: progress,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "make_runtime_shutdown_progress",
+        lambda *_args, **_kwargs: shutdown_progress,
     )
     implementation = cast(Any, SimpleNamespace())
     state = SandboxState(
@@ -278,8 +284,9 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
         selected_handle: object,
         *,
         force: bool = False,
+        progress: object | None = None,
     ) -> bool:
-        calls.append(("stop", selected, selected_handle, force))
+        calls.append(("stop", selected, selected_handle, force, progress))
         return True
 
     monkeypatch.setattr(runtime.sandbox_runtime, "launch", launch_runtime)
@@ -302,9 +309,10 @@ def test_execution_runtime_launches_and_cleans_up_a_temporary_guest(
     assert calls == [
         ("launch", launch, progress),
         "body",
-        ("stop", layout, handle, False),
+        ("stop", layout, handle, False, shutdown_progress),
     ]
     assert progress.finished == 1
+    assert shutdown_progress.finished == 1
 
 
 @pytest.mark.parametrize(
@@ -444,8 +452,10 @@ def test_execution_runtime_cleans_up_a_launched_guest_with_invalid_identity(
     async def stop_handle(
         selected: AgentLayout,
         selected_handle: object,
+        *,
+        progress: object | None = None,
     ) -> bool:
-        cleaned.append((selected, selected_handle))
+        cleaned.append((selected, selected_handle, progress))
         return True
 
     monkeypatch.setattr(runtime.sandbox_runtime, "launch", launch_runtime)
@@ -459,7 +469,8 @@ def test_execution_runtime_cleans_up_a_launched_guest_with_invalid_identity(
         ):
             raise AssertionError("an invalid remote runtime must not open")
 
-    assert cleaned == [(layout, handle)]
+    assert len(cleaned) == 1
+    assert cleaned[0][:2] == (layout, handle)
 
 
 def test_inactive_launch_wraps_environment_errors(
