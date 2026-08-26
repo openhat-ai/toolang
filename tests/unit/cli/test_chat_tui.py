@@ -1687,7 +1687,7 @@ def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> N
     local = blocks.HeaderBlock(
         home="~/.toolang/agents/eve",
         executor_metadata=ChatExecutorMetadata(),
-        version_label="0.3.0+69439a4e*",
+        version_label="v0.2.7-87-g69439a4e*",
     )
     remote = blocks.HeaderBlock(
         home="~/.toolang/agents/eve",
@@ -1695,7 +1695,7 @@ def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> N
             endpoint="http://localhost:7001",
             version="0.3.0",
         ),
-        version_label="0.3.0+69439a4e*",
+        version_label="v0.2.7-87-g69439a4e*",
     )
     sandboxed = blocks.HeaderBlock(
         home="~/.toolang/agents/eve",
@@ -1705,7 +1705,7 @@ def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> N
             sandbox="docker:pyslim-3.11",
             instance="2f0f8934abcd",
         ),
-        version_label="0.3.0+69439a4e*",
+        version_label="v0.2.7-87-g69439a4e*",
     )
 
     local_lines = _render_text(local.render(), width=120).splitlines()
@@ -1722,7 +1722,7 @@ def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> N
     ordered = [
         next(index for index, line in enumerate(sandboxed_lines) if value in line)
         for value in (
-            "v0.3.0+69439a4e*",
+            "v0.2.7-87-g69439a4e*",
             "http://localhost:7001",
             "docker:pyslim-3.11",
             "~/.toolang/agents/eve",

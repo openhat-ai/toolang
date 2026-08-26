@@ -217,7 +217,7 @@ The startup banner keeps the TUI process and executor identities separate. Its
 metadata order is `Toolang`, `executor`, optional `sandbox`, then `home`:
 
 ```text
-Toolang   v0.3.0+69439a4e*
+Toolang   v0.2.7-87-g69439a4e*
 executor  http://localhost:7001 · v0.3.0
 sandbox   docker:pyslim-3.11 · 2f0f8934abcd
 home      ~/.toolang/agents/eve

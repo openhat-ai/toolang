@@ -19,13 +19,17 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Check version matches tag
+      - name: Check release source matches tag
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          python - <<'PY'
+          uv run python - <<'PY'
           from pathlib import Path
           import tomllib
           import os
+
+          from dulwich.repo import Repo
+
+          from toolang.cli.common.version import repository_source_version
 
           version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
           tag = os.environ["GITHUB_REF_NAME"]
@@ -34,10 +38,87 @@ jobs:
               raise SystemExit(
                   f"tag/version mismatch: expected {expected!r}, got {tag!r}"
               )
+          source_version = repository_source_version(Path.cwd())
+          if source_version != tag:
+              raise SystemExit(
+                  f"tag/source mismatch: expected {tag!r}, got {source_version!r}"
+              )
+          with Repo.discover(".") as repository:
+              print(f"release revision: {repository.head().decode('ascii')}")
           PY
 
       - name: Build distributions
         run: uv build
+
+      - name: Check distribution provenance
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          uv run python - <<'PY'
+          from email.parser import Parser
+          import json
+          import os
+          from pathlib import Path
+          import tarfile
+          import tomllib
+          from zipfile import ZipFile
+
+          from dulwich.repo import Repo
+
+          def only(paths: list[Path], label: str) -> Path:
+              if len(paths) != 1:
+                  raise SystemExit(f"expected one {label}, found {len(paths)}")
+              return paths[0]
+
+          dist = Path("dist")
+          wheel = only(list(dist.glob("*.whl")), "wheel")
+          sdist = only(list(dist.glob("*.tar.gz")), "sdist")
+          with ZipFile(wheel) as archive:
+              metadata_name = only(
+                  [Path(name) for name in archive.namelist() if name.endswith(".dist-info/METADATA")],
+                  "wheel METADATA",
+              ).as_posix()
+              wheel_info = json.loads(archive.read("toolang/_build_info.json"))
+              metadata = Parser().parsestr(archive.read(metadata_name).decode("utf-8"))
+          with tarfile.open(sdist, "r:gz") as archive:
+              build_info_member = only(
+                  [
+                      Path(member.name)
+                      for member in archive.getmembers()
+                      if member.name.endswith("/src/toolang/_build_info.json")
+                  ],
+                  "sdist build info",
+              ).as_posix()
+              extracted = archive.extractfile(build_info_member)
+              if extracted is None:
+                  raise SystemExit("sdist build info is not a regular file")
+              sdist_info = json.load(extracted)
+
+          project_version = tomllib.loads(
+              Path("pyproject.toml").read_text(encoding="utf-8")
+          )["project"]["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          with Repo.discover(".") as repository:
+              revision = repository.head().decode("ascii")
+          if metadata["Version"] != project_version:
+              raise SystemExit(
+                  f"wheel/project mismatch: expected {project_version!r}, "
+                  f"got {metadata['Version']!r}"
+              )
+          if wheel_info != sdist_info:
+              raise SystemExit("wheel and sdist build provenance differ")
+          if wheel_info.get("source_version") != tag:
+              raise SystemExit(
+                  f"artifact/tag mismatch: expected {tag!r}, "
+                  f"got {wheel_info.get('source_version')!r}"
+              )
+          if wheel_info.get("revision") != revision:
+              raise SystemExit(
+                  f"artifact/revision mismatch: expected {revision!r}, "
+                  f"got {wheel_info.get('revision')!r}"
+              )
+          if wheel_info.get("dirty") is not False:
+              raise SystemExit("release artifact provenance is dirty")
+          PY
 
       - name: Check distributions
         run: uvx --from twine==7.0.0 twine check dist/*

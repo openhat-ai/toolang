@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from importlib.metadata import PackageNotFoundError
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from dulwich import porcelain
 
 import toolang.cli.common.version as version
+
+
+@pytest.fixture(autouse=True)
+def clear_toolang_version_cache() -> Iterator[None]:
+    version.toolang_version.cache_clear()
+    yield
+    version.toolang_version.cache_clear()
 
 
 def test_base_toolang_version_reads_nearest_source_pyproject(
@@ -31,25 +40,133 @@ def test_base_toolang_version_reads_nearest_source_pyproject(
     assert version.base_toolang_version() == "1.2.3"
 
 
-@pytest.mark.parametrize(
-    ("sha", "status", "suffix"),
-    (("abc123", "", "+abc123"), ("abc123", " M file", "+abc123*"), (None, "", "")),
-)
-def test_source_state_suffix_reports_revision_and_dirty_state(
+def test_toolang_version_describes_development_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    sha: str | None,
-    status: str,
-    suffix: str,
 ) -> None:
-    monkeypatch.setattr(version, "source_tree_root", lambda: tmp_path)
+    monkeypatch.setattr(version, "development_source", lambda: (True, tmp_path))
     monkeypatch.setattr(
         version,
-        "git_output",
-        lambda _root, command, *_args: sha if command == "rev-parse" else status,
+        "embedded_source_version",
+        lambda: pytest.fail("development source must ignore embedded build info"),
+    )
+    monkeypatch.setattr(
+        version,
+        "repository_source_version",
+        lambda root: "v0.2.7-87-g3b492a92*" if root == tmp_path else None,
     )
 
-    assert version.source_state_suffix() == suffix
+    assert version.toolang_version() == "v0.2.7-87-g3b492a92*"
+
+
+def test_toolang_version_reads_embedded_info_without_git(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_path = tmp_path / "toolang" / "cli" / "common" / "version.py"
+    module_path.parent.mkdir(parents=True)
+    module_path.touch()
+    (tmp_path / "toolang" / "_build_info.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "source_version": "v0.2.7-87-g3b492a92*",
+                "revision": "3b492a92f1ed6282fc5b57a02d091339059cabcf",
+                "dirty": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(version, "__file__", str(module_path))
+    monkeypatch.setattr(version, "development_source", lambda: (False, None))
+    monkeypatch.setattr(
+        version,
+        "repository_source_version",
+        lambda *_args: pytest.fail("installed artifacts must not inspect a repository"),
+    )
+
+    assert version.toolang_version() == "v0.2.7-87-g3b492a92*"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        None,
+        {},
+        {"schema": 2, "source_version": "v0.3.0"},
+        {
+            "schema": 1,
+            "source_version": "v0.3.0",
+            "revision": None,
+            "dirty": "false",
+        },
+    ),
+)
+def test_embedded_source_version_rejects_missing_or_invalid_info(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    payload: object,
+) -> None:
+    module_path = tmp_path / "toolang" / "cli" / "common" / "version.py"
+    module_path.parent.mkdir(parents=True)
+    module_path.touch()
+    if payload is not None:
+        (tmp_path / "toolang" / "_build_info.json").write_text(
+            json.dumps(payload),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(version, "__file__", str(module_path))
+
+    assert version.embedded_source_version() == "unknown"
+
+
+def test_toolang_version_is_cached_once_per_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def describe(_root: Path) -> str:
+        nonlocal calls
+        calls += 1
+        return "v0.3.0"
+
+    monkeypatch.setattr(version, "development_source", lambda: (True, tmp_path))
+    monkeypatch.setattr(version, "repository_source_version", describe)
+
+    assert version.toolang_version() == "v0.3.0"
+    assert version.toolang_version() == "v0.3.0"
+    assert calls == 1
+
+
+def test_repository_source_version_uses_tags_and_tracked_dirty_state(
+    tmp_path: Path,
+) -> None:
+    porcelain.init(tmp_path)
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("clean\n", encoding="utf-8")
+    porcelain.add(tmp_path, tracked.name)
+    porcelain.commit(
+        tmp_path,
+        message=b"Initial commit",
+        author=b"Test Author <test@example.com>",
+        committer=b"Test Author <test@example.com>",
+    )
+    porcelain.tag_create(
+        tmp_path,
+        "v0.3.0",
+        author=b"Test Author <test@example.com>",
+        message=b"Release v0.3.0",
+        annotated=True,
+    )
+
+    assert version.repository_source_version(tmp_path) == "v0.3.0"
+
+    (tmp_path / "untracked.txt").write_text("ignored\n", encoding="utf-8")
+    assert version.repository_source_version(tmp_path) == "v0.3.0"
+
+    tracked.write_text("dirty\n", encoding="utf-8")
+    assert version.repository_source_version(tmp_path) == "v0.3.0*"
 
 
 def test_development_source_reads_editable_distribution_metadata(

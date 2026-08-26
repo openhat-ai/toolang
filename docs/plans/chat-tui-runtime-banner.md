@@ -33,20 +33,20 @@ The detail grid has the following three forms. The remote endpoint's visible
 text and hyperlink target are the same normalized origin.
 
 ```text
-Toolang   v0.3.0+69439a4e*
+Toolang   v0.2.7-87-g69439a4e*
 executor  http://localhost:7001 · v0.3.0
 sandbox   docker:pyslim-3.11 · 2f0f8934abcd
 home      ~/.toolang/agents/eve
 ```
 
 ```text
-Toolang   v0.3.0+69439a4e*
+Toolang   v0.2.7-87-g69439a4e*
 executor  http://localhost:7001 · v0.3.0
 home      ~/.toolang/agents/eve
 ```
 
 ```text
-Toolang   v0.3.0+69439a4e*
+Toolang   v0.2.7-87-g69439a4e*
 executor  embedded
 home      ~/.toolang/agents/eve
 ```
