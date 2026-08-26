@@ -479,6 +479,7 @@ def _run(
                         store=store,
                         ids=ids,
                         run_id=run_id,
+                        sandbox=runtime.sandbox,
                         runnable=runnable,
                         commands=commands,
                         input=input,
@@ -778,6 +779,7 @@ async def _execute(
     store: RunStore,
     ids: IdIssuer,
     run_id: str,
+    sandbox: str,
     runnable: str,
     commands: tuple[RunOverride, ...],
     input: RunnableInputRaw,
@@ -795,6 +797,7 @@ async def _execute(
         )
     setup = await SetupWatcher(
         layout,
+        sandbox=sandbox,
         ceiling_overrides=resolve_ceiling_overrides(environ, allow_options),
         binding_overrides={
             **resolve_binding_overrides(environ),

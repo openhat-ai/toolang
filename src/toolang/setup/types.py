@@ -33,11 +33,12 @@ class AgentEnvironment:
         cls,
         layout: AgentLayout,
         *,
-        envs: Mapping[str, str],
+        sandbox: str,
     ) -> AgentEnvironment:
         """Capture non-secret environment facts from explicit setup inputs."""
 
-        sandbox = envs.get("TOOLANG_SANDBOX", "host").strip() or "host"
+        if not sandbox or sandbox != sandbox.strip():
+            raise ValueError("agent environment requires a canonical sandbox")
         return cls(
             sandbox=sandbox,
             system=platform.system(),

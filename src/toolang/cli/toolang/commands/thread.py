@@ -736,6 +736,7 @@ async def _restart_run(
     }
     setup = await SetupWatcher(
         layout,
+        sandbox="host",
         model_catalog=model_catalog,
         ceiling_overrides=resolve_ceiling_overrides(environ, allow_options or ()),
         binding_overrides=binding_overrides,

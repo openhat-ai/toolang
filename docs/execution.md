@@ -229,9 +229,12 @@ left behind by a terminal run is `wontapply`.
 
 Every newly accepted preparation control stores top-level `RunBindings`,
 `RunLimits`, `RunnableInput`, and final `AgentResources` snapshots. Steer stores a
-`Message`; stop stores an optional reason. These values are not duplicated in
-the control context. A durable run is a root exactly when `parent is None`;
-callers that need a root run ID derive it by following parent-run ownership.
+`Message`; stop stores an optional reason. Root preparation controls also store
+the canonical sandbox in which the executor accepted them. Nested starts omit
+that redundant value, while its absence on a legacy root means unknown rather
+than `host`. These values are not duplicated in the control context. A durable
+run is a root exactly when `parent is None`; callers that need a root run ID
+derive it by following parent-run ownership.
 
 Every run-control insert or status change receives a monotonically increasing
 SQLite revision. Each executor remembers the latest revision it observed and

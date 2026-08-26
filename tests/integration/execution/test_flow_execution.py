@@ -128,7 +128,7 @@ def _setup() -> AgentSetup:
         models=(),
         tools={},
         envs={},
-        environment=AgentEnvironment.capture(layout, envs={}),
+        environment=AgentEnvironment.capture(layout, sandbox="host"),
     )
 
 
@@ -142,7 +142,7 @@ def _model_setup() -> AgentSetup:
         models=provider.list_models(environ={}),
         tools={},
         envs={},
-        environment=AgentEnvironment.capture(layout, envs={}),
+        environment=AgentEnvironment.capture(layout, sandbox="host"),
     )
 
 

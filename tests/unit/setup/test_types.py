@@ -67,7 +67,7 @@ def test_agent_environment_captures_safe_sandbox_context(
 
     environment = AgentEnvironment.capture(
         layout,
-        envs={"TOOLANG_SANDBOX": "docker:python:3.13-slim"},
+        sandbox="docker:python:3.13-slim",
     )
 
     assert environment.sandbox == "docker:python:3.13-slim"

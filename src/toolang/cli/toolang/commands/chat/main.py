@@ -176,6 +176,7 @@ def _chat_runtime(
             environ = load_runtime_environ(layout, base_environ=os.environ)
             local = LocalChatSession(
                 layout,
+                sandbox=runtime.sandbox,
                 **(
                     {"model_catalog": model_catalog}
                     if model_catalog is not None

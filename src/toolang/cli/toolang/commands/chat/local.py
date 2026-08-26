@@ -59,6 +59,7 @@ class LocalChatSession:
         self,
         layout: AgentLayout,
         *,
+        sandbox: str = "host",
         model_catalog: Path | None = None,
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         binding_overrides: Mapping[str, str | None] | None = None,
@@ -75,6 +76,7 @@ class LocalChatSession:
         self.threads = ThreadManager(self.store, self.ids)
         self.setup_watcher = SetupWatcher(
             layout,
+            sandbox=sandbox,
             model_catalog=model_catalog,
             ceiling_overrides=ceiling_overrides,
             binding_overrides=binding_overrides,

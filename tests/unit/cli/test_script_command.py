@@ -341,6 +341,7 @@ def test_script_validates_before_creating_a_thread(tmp_path, monkeypatch) -> Non
                     store=harness.store,
                     ids=harness.ids,
                     run_id="run_test",
+                    sandbox="host",
                     runnable="demo",
                     commands=commands,
                     input=input,

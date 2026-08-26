@@ -57,12 +57,14 @@ class SetupWatcher:
         self,
         layout: AgentLayout,
         *,
+        sandbox: str = "host",
         model_catalog: Path | None = None,
         ceiling_overrides: Mapping[str, tuple[str, ...] | None] | None = None,
         binding_overrides: Mapping[str, str | None] | None = None,
         limit_overrides: Mapping[str, int | Decimal | None] | None = None,
     ) -> None:
         self.layout = layout
+        self._sandbox = sandbox
         self._model_catalog_override = model_catalog
         self._ceiling_overrides = dict(ceiling_overrides or {})
         self._binding_overrides = dict(binding_overrides or {})
@@ -191,7 +193,10 @@ class SetupWatcher:
                 envs=envs,
                 catalog=resolved_catalog,
                 provider_configs=provider_configs,
-                environment=AgentEnvironment.capture(self.layout, envs=envs),
+                environment=AgentEnvironment.capture(
+                    self.layout,
+                    sandbox=self._sandbox,
+                ),
                 ceiling=ceiling,
                 bindings=bindings,
                 limits=limits,

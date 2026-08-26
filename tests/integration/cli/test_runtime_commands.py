@@ -17,6 +17,7 @@ import toolang.cli.toolang.main as cli
 from toolang.cli.toolang.commands import runtime as runtime_commands
 from toolang.common.layout import AgentLayout
 from toolang.up import sandbox as sandbox_runtime
+from toolang.up import server as agent_server
 from toolang.up.server import ServeSpec
 
 
@@ -108,6 +109,59 @@ def _launch_spec(
         log_path=log_path,
         dev_artifact=dev,
     )
+
+
+@pytest.mark.parametrize(
+    ("process_sandbox", "expected", "merged"),
+    [
+        (None, "host", "docker:spoofed"),
+        (
+            "docker:python:3.13-slim",
+            "docker:python:3.13-slim",
+            "docker:python:3.13-slim",
+        ),
+    ],
+)
+def test_serve_uses_process_sandbox_instead_of_dotenv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    process_sandbox: str | None,
+    expected: str,
+    merged: str,
+) -> None:
+    root = tmp_path / "toolang"
+    layout = _create_agent(root)
+    layout.env.write_text(
+        "TOOLANG_SANDBOX=docker:spoofed\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    def serve(
+        spec: ServeSpec,
+        *,
+        environ: Mapping[str, str],
+        sandbox: str,
+    ) -> int:
+        captured["spec"] = spec
+        captured["environ"] = environ
+        captured["sandbox"] = sandbox
+        return 0
+
+    if process_sandbox is None:
+        monkeypatch.delenv("TOOLANG_SANDBOX", raising=False)
+    else:
+        monkeypatch.setenv("TOOLANG_SANDBOX", process_sandbox)
+    monkeypatch.setattr(agent_server, "serve", serve)
+
+    result = runner.invoke(
+        cli.app,
+        ["--root", str(root), "serve", "alice"],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert captured["sandbox"] == expected
+    assert cast(Mapping[str, str], captured["environ"])["TOOLANG_SANDBOX"] == merged
 
 
 def test_run_resolves_sandbox_inputs_and_runs_in_foreground(

@@ -603,6 +603,7 @@ def serve(
     from toolang.up.server import resolve_serve, serve as serve_agent
 
     layout = AgentLayout.resident(context_root(ctx), agent)
+    sandbox = os.environ.get("TOOLANG_SANDBOX", "host").strip() or "host"
     environ = load_runtime_environ(layout, base_environ=os.environ)
     environ["TOOLANG_ROOT"] = str(layout.root)
     if model_catalog := context_model_catalog(ctx):
@@ -619,7 +620,14 @@ def serve(
         file_inboxes=inboxes,
         log_spec=log_spec,
     )
-    raise typer.Exit(user_call(serve_agent, spec, environ=environ))
+    raise typer.Exit(
+        user_call(
+            serve_agent,
+            spec,
+            environ=environ,
+            sandbox=sandbox,
+        )
+    )
 
 
 def resolve_startup(
