@@ -822,6 +822,11 @@ def test_multiple_tool_failures_are_reported_in_order_and_can_recover(
         },
         error=RuntimeError("calculator unavailable"),
     )
+    silent = RecordingTool(
+        "math__silent",
+        output={},
+        error=RuntimeError(),
+    )
     calls = (
         ToolCall(
             tool_call_id="tool-1",
@@ -832,6 +837,12 @@ def test_multiple_tool_failures_are_reported_in_order_and_can_recover(
         ToolCall(
             tool_call_id="tool-2",
             call_id="call-2",
+            name=silent.name,
+            input={},
+        ),
+        ToolCall(
+            tool_call_id="tool-3",
+            call_id="call-3",
             name="missing__tool",
             input={"value": 4},
         ),
@@ -849,7 +860,7 @@ agic calculate(_: Text) -> Text:
             ModelCallResult(tool_calls=calls),
             ModelCallResult(message=Message.assistant("recovered")),
         ],
-        tools={broken.name: broken},
+        tools={broken.name: broken, silent.name: silent},
     )
     tracer = RecordingRunTracer()
 
@@ -871,14 +882,17 @@ agic calculate(_: Text) -> Text:
                 ("model", "succeeded"),
                 ("tool", "failed"),
                 ("tool", "failed"),
+                ("tool", "failed"),
                 ("model", "succeeded"),
             ]
-            assert [step.error for step in steps[1:3]] == [
+            assert [step.error for step in steps[1:4]] == [
                 "calculator unavailable",
+                "RuntimeError",
                 "unknown tool call: missing__tool",
             ]
-            assert [step.noted for step in steps[1:3]] == [
+            assert [step.noted for step in steps[1:4]] == [
                 ToolStepNoted(summary="Failed broken 3"),
+                ToolStepNoted(summary="Failed silent"),
                 ToolStepNoted(summary="Failed tool"),
             ]
             followup = harness.adapter.invocations[1].call.messages
@@ -891,9 +905,11 @@ agic calculate(_: Text) -> Text:
             assert [result.tool_call_id for result in results] == [
                 "tool-1",
                 "tool-2",
+                "tool-3",
             ]
             assert [result.error for result in results] == [
                 "calculator unavailable",
+                "RuntimeError",
                 "unknown tool call: missing__tool",
             ]
             assert harness.store.run_output_text(run_id=record.id) == ("recovered")
