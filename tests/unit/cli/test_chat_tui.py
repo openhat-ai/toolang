@@ -1563,7 +1563,7 @@ def test_chat_header_uses_wide_local_executor_layout() -> None:
     block = blocks.HeaderBlock(
         home="/tmp/toolang/agents/alice",
         executor_metadata=ChatExecutorMetadata(),
-        version_label="0.1.0",
+        version_label="v0.1.0",
     )
     rendered = _render_text(block.render(), width=80)
 
@@ -1619,7 +1619,7 @@ def test_chat_header_stacks_without_clipping_in_a_narrow_terminal() -> None:
                 sandbox="docker:python:3.13-slim",
                 instance=_CONTAINER_ID,
             ),
-            version_label="0.1.0",
+            version_label="v0.1.0",
         ).render(),
         width=40,
     )
@@ -1670,7 +1670,7 @@ def test_chat_header_supports_remote_executor_identity(
         blocks.HeaderBlock(
             home="~/.toolang/agents/alice",
             executor_metadata=executor_metadata,
-            version_label="0.1.0",
+            version_label="v0.1.0",
         ).render(),
         width=120,
     )
@@ -1713,6 +1713,7 @@ def test_chat_header_links_remote_endpoint_and_preserves_vertical_padding() -> N
     sandboxed_lines = _render_text(sandboxed.render(), width=120).splitlines()
     sandboxed_segments = rendering.render_segments(sandboxed.render(), width=120)
 
+    assert "Toolang v0.2.7-87-g69439a4e*" in " ".join(" ".join(local_lines).split())
     assert len(remote_lines) == len(local_lines)
     assert len(sandboxed_lines) == len(remote_lines) + 1
     for lines in (local_lines, remote_lines, sandboxed_lines):
@@ -1743,7 +1744,7 @@ def test_chat_header_keeps_logo_cells_selectable_and_styles_metadata() -> None:
         blocks.HeaderBlock(
             home="/tmp/toolang/agents/alice",
             executor_metadata=ChatExecutorMetadata(),
-            version_label="0.1.0",
+            version_label="v0.1.0",
         ).render(),
         width=80,
     )

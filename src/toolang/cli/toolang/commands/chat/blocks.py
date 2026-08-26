@@ -488,7 +488,7 @@ class HeaderBlock:
         details.add_column(no_wrap=False, overflow="fold")
         details.add_row(
             Text("Toolang", style=f"bold {TOOLANG_COLOR}"),
-            Text(f"v{self.version_label}", style="dim"),
+            Text(self.version_label, style="dim"),
         )
         executor_value, sandbox_value = _header_executor_values(self.executor_metadata)
         details.add_row(Text("executor", style="dim"), executor_value)
@@ -503,7 +503,7 @@ class HeaderBlock:
             display_width("executor")
             + _HEADER_FIELD_GAP
             + max(
-                1 + display_width(self.version_label),
+                display_width(self.version_label),
                 display_width(self.home),
                 display_width(executor_value.plain),
                 display_width(sandbox_value.plain) if sandbox_value else 0,
