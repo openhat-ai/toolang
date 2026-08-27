@@ -45,7 +45,7 @@ from .rendering import (
     CONTROL_BAR_BACKGROUND,
     ACCENT_CELL,
     QUICK_COMMAND_CONTROL_ACCENT,
-    START_CONTROL_ACCENT,
+    RUN_CONTROL_ACCENT,
     STEER_CONTROL_ACCENT,
     bar,
     display_len,
@@ -187,13 +187,13 @@ class ExecutionProgressBlock(MutableBlock):
 
 
 @dataclass(slots=True)
-class RunStartBlock(MutableBlock):
+class RunControlBlock(MutableBlock):
     """Created by a local submission and finalized by run_begin/run_end."""
 
     message: str
 
     @classmethod
-    def create(cls, message: str) -> RunStartBlock:
+    def create(cls, message: str) -> RunControlBlock:
         return cls(message=message)
 
     def update(self, event: RunEvent) -> None:
@@ -203,7 +203,7 @@ class RunStartBlock(MutableBlock):
         return Group(
             *_control_bar_lines(
                 self.message,
-                accent=START_CONTROL_ACCENT,
+                accent=RUN_CONTROL_ACCENT,
             ),
             Text(),
         )
@@ -257,7 +257,7 @@ class RunSteerBlock(MutableBlock):
 
 
 @dataclass(slots=True)
-class RunStopBlock(MutableBlock):
+class RunSummaryBlock(MutableBlock):
     """Created by Run begin and finalized by Run end."""
 
     run_id: str
@@ -275,7 +275,7 @@ class RunStopBlock(MutableBlock):
         event: RunBegin | RunEnd,
         *,
         max_width: int = DEFAULT_MAX_PROGRESS_WIDTH,
-    ) -> RunStopBlock:
+    ) -> RunSummaryBlock:
         if isinstance(event, RunBegin):
             return cls(
                 run_id=event.run or "run",

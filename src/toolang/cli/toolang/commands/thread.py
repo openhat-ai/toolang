@@ -760,6 +760,7 @@ async def _execute_retry_or_rerun(
         if show_progress
         else None
     )
+    executor.start()
     try:
         handle = (
             executor.retry(

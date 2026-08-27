@@ -298,9 +298,9 @@ same canonical event sequence and never filter a synthetic top-level step.
 
 ## Control Observation
 
-Any process may call `steer()`, `stop()`, or `cancel_control()` because these
-operations only mutate shared SQLite truth. `start(spec)` is also process-safe,
-but the process that calls it owns and executes that run; start is not a
+Any process may call `steer()`, `cancel()`, or `cancel_control()` because these
+operations only mutate shared SQLite truth. `run(spec)` is also process-safe,
+but the process that calls it owns and executes that run; run is not a
 cross-process dispatch queue.
 
 Every inserted or changed control receives a global monotonic revision inside
@@ -310,14 +310,14 @@ pending controls are merged into the matching `_ActiveRun` cache, while
 `applied`, `wontapply`, and `revoked` controls are removed. Runtime checkpoints
 read the cache rather than querying SQLite once per active run.
 
-An `immediate` stop cancels the owner task. `next_step` and `next_call` controls
+An `immediate` cancel cancels the owner task. `next_step` and `next_call` controls
 are consumed at runtime checkpoints. Flows check before statements and calls;
 agics check before model and tool calls.
 
 Local submissions update the cache immediately after their durable write.
 Remote submissions and cancellations use the same revision feed, so SQLite
 remains the cross-process source of truth without an additional wake channel.
-Runtime atomically claims a pending steer or stop immediately before applying
+Runtime atomically claims a pending steer or cancel immediately before applying
 it. A cancellation updates only an unclaimed pending control, making
 application and cancellation linearizable without exposing an intermediate
 public status.
@@ -349,7 +349,7 @@ and runs reference that step. An exception outside a step stores its message
 directly on the run without a synthetic step. Cancellation unwinds steps and
 child runs before the root `RunEnd(canceled)`.
 
-If cancellation came from a cancel control, `RunEnd.input` references it. The
+If cancellation came from a cancel control, `RunEnd.control` references it. The
 runtime marks that control `applied` and marks all other pending controls
 `wontapply` because they can no longer reach an applicable checkpoint.
 

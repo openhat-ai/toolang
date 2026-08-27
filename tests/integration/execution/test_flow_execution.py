@@ -259,21 +259,21 @@ def test_run_executor_persists_before_tracing(tmp_path: Path) -> None:
         "run_end",
     ]
     assert tracer.thread_ids == {owner_thread}
-    start = store.get_run_control(run_id=record.id, index=0)
-    assert start is not None and start.status == "applied"
-    assert isinstance(start.payload, RunControlPayload)
-    assert start.payload.runnable == "flow:pipeline"
-    assert start.payload.model == "none"
-    assert start.payload.limits == _setup().limits
-    assert start.payload.locals == ()
-    assert start.payload.resources is not None
+    run_control = store.get_run_control(run_id=record.id, index=0)
+    assert run_control is not None and run_control.status == "applied"
+    assert isinstance(run_control.payload, RunControlPayload)
+    assert run_control.payload.runnable == "flow:pipeline"
+    assert run_control.payload.model == "none"
+    assert run_control.payload.limits == _setup().limits
+    assert run_control.payload.locals == ()
+    assert run_control.payload.resources is not None
     detail = RunHistory(store).get_run(record.id)
     assert detail is not None
     assert detail.runnable_kind == "flow"
     assert detail.runnable_name == "pipeline"
     assert detail.input_text == ""
     assert [control.index for control in detail.controls] == [0]
-    assert detail.controls[0].payload == start.payload
+    assert detail.controls[0].payload == run_control.payload
     assert [step.kind for step in detail.steps] == ["value"]
     assert detail.steps[0].output == RecordLocal.typed(
         "Part[]", (TextPart(text="done"),), "_", 0

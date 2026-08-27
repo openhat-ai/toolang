@@ -641,6 +641,9 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
             assert endpoint == self.endpoint
             del client
 
+        async def connect(self) -> None:
+            calls.append("connect")
+
         async def run(self, request, *, tracer=None):
             calls.append(("run", request, tracer))
             return Handle()
@@ -693,6 +696,7 @@ def test_remote_script_cancellation_cancels_the_accepted_run(
     assert cancel[1] == "run_remote"
     assert cast(dict[str, object], cancel[2])["reason"] == "script interrupted"
     assert calls.count("wait") == 2
+    assert calls[0] == "connect"
     assert calls[-1] == "disconnect"
 
 

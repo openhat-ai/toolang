@@ -251,18 +251,18 @@ flow staged(_: Part[]) -> Part[]:
             assert [step.path.index for step in historical] == [0, 1, 2]
             assert historical[1].ejected_by is not None
             retry = harness.store.list_run_controls(run_id=retried.id)[-1]
-            start = harness.store.get_run_control(run_id=retried.id, index=0)
-            assert start is not None
+            run_control = harness.store.get_run_control(run_id=retried.id, index=0)
+            assert run_control is not None
             assert retry.kind == "retry"
             assert isinstance(retry.payload, RetryControlPayload)
-            assert isinstance(start.payload, RunControlPayload)
+            assert isinstance(run_control.payload, RunControlPayload)
             assert retry.payload.retry_from == historical[1].path
-            assert retry.payload.runnable == start.payload.runnable
-            assert retry.payload.model == start.payload.model
-            assert retry.payload.limits == start.payload.limits
-            assert retry.payload.locals == start.payload.locals
-            assert retry.payload.resources == start.payload.resources
-            assert retry.payload.sandbox == start.payload.sandbox == "host"
+            assert retry.payload.runnable == run_control.payload.runnable
+            assert retry.payload.model == run_control.payload.model
+            assert retry.payload.limits == run_control.payload.limits
+            assert retry.payload.locals == run_control.payload.locals
+            assert retry.payload.resources == run_control.payload.resources
+            assert retry.payload.sandbox == run_control.payload.sandbox == "host"
             assert historical[1].ejected_by == RunControlRef(retried.id, retry.index)
             visible_runs = harness.store.list_runs(thread_id=thread, limit=None)
             assert all(
@@ -1841,11 +1841,11 @@ flow relay(_: Text, suffix: Text) -> Text:
                 )
                 if run.parent is not None
             )
-            start = harness.store.get_run_control(run_id=child.id, index=0)
-            assert start is not None
-            assert isinstance(start.payload, RunControlPayload)
+            run_control = harness.store.get_run_control(run_id=child.id, index=0)
+            assert run_control is not None
+            assert isinstance(run_control.payload, RunControlPayload)
             suffix = next(
-                local for local in start.payload.locals if local.name == "suffix"
+                local for local in run_control.payload.locals if local.name == "suffix"
             )
             assert suffix.value == TypedPointer(
                 "Text", Pointer.control(root.id, 0, "suffix")
@@ -1894,11 +1894,13 @@ flow relay(_: Text) -> Number:
                 for run in harness.store.list_runs(thread_id=thread, limit=None)
                 if run.parent is not None
             )
-            start = harness.store.get_run_control(run_id=child.id, index=0)
-            assert start is not None
-            assert isinstance(start.payload, RunControlPayload)
-            assert start.payload.locals == (Local.typed("Number", 42, "_", 0),)
-            assert harness.store.resolve_local(start.payload.locals[0]).value == 42
+            run_control = harness.store.get_run_control(run_id=child.id, index=0)
+            assert run_control is not None
+            assert isinstance(run_control.payload, RunControlPayload)
+            assert run_control.payload.locals == (Local.typed("Number", 42, "_", 0),)
+            assert (
+                harness.store.resolve_local(run_control.payload.locals[0]).value == 42
+            )
             assert harness.store.run_output_text(run_id=root.id) == "7"
 
     asyncio.run(scenario())

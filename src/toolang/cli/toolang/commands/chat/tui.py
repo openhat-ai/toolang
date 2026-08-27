@@ -572,7 +572,7 @@ class ChatTuiApp:
         self._set_status_running(False)
         self.status_bar.clear_error()
         if self.queue:
-            self.start_run(self.queue.pop(0))
+            self.submit_run(self.queue.pop(0))
 
     def handle_submit(self, message: str) -> None:
         self.interrupt_exit_pending = False
@@ -627,7 +627,7 @@ class ChatTuiApp:
         if self.active_run_id is not None or self.run_in_flight.is_set():
             self.queue.append(queued)
         else:
-            self.start_run(queued)
+            self.submit_run(queued)
 
     def _handle_run_error(self, message: str) -> None:
         friendly = friendly_error(message)
@@ -665,7 +665,7 @@ class ChatTuiApp:
             )
 
         for block in reversed(self.unfinalized_blocks):
-            if isinstance(block, blocks.RunStopBlock) and block.run_id == run_id:
+            if isinstance(block, blocks.RunSummaryBlock) and block.run_id == run_id:
                 block.mark_canceling()
                 break
         threading.Thread(target=consume, daemon=True).start()
@@ -729,9 +729,9 @@ class ChatTuiApp:
             self.transport_notice = None
             events.handle_run_state(state, self.app_context)
 
-    def start_run(self, call: QueuedCall) -> None:
+    def submit_run(self, call: QueuedCall) -> None:
         self.status_bar.set_active_runnable(self._runnable_label(call.selects))
-        self.unfinalized_blocks.append(blocks.RunStartBlock.create(call.source))
+        self.unfinalized_blocks.append(blocks.RunControlBlock.create(call.source))
         self.app.invalidate()
         try:
             thread_id = self.app_context.ensure_thread_id()

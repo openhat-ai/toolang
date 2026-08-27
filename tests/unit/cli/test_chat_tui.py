@@ -144,21 +144,21 @@ def test_chat_tui_pty_treats_linux_eio_as_eof(
 
 def test_chat_run_begin_finalizes_local_submission_block() -> None:
     app = FakeApp()
-    app.live_blocks.append(blocks.RunStartBlock.create("hello"))
+    app.live_blocks.append(blocks.RunControlBlock.create("hello"))
 
-    assert [block.type for block in app.live_blocks] == ["RunStartBlock"]
+    assert [block.type for block in app.live_blocks] == ["RunControlBlock"]
     assert "hello" in _render_text(app.live_blocks[0].render())
 
     events.handle_run_event(_run_begin(), app)
 
-    assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
-    assert [block.type for block in app.finalized] == ["RunStartBlock"]
+    assert [block.type for block in app.live_blocks] == ["RunSummaryBlock"]
+    assert [block.type for block in app.finalized] == ["RunControlBlock"]
     assert "run_1" not in _render_text(app.finalized[0].render())
 
 
 def test_chat_first_agic_step_has_exactly_one_gap_after_submission() -> None:
     app = FakeApp()
-    app.live_blocks.append(blocks.RunStartBlock.create("hello"))
+    app.live_blocks.append(blocks.RunControlBlock.create("hello"))
 
     events.handle_run_event(_run_begin(), app)
     events.handle_run_event(_model_step_begin(), app)
@@ -166,7 +166,7 @@ def test_chat_first_agic_step_has_exactly_one_gap_after_submission() -> None:
     transcript = "".join(
         _render_text(block.render())
         for block in (*app.finalized, *app.live_blocks)
-        if not isinstance(block, blocks.RunStopBlock)
+        if not isinstance(block, blocks.RunSummaryBlock)
     )
     control_bottom = " " * 80
     assert f"{control_bottom}\n\n• Thinking..." in transcript
@@ -180,7 +180,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
     events.handle_run_event(_model_step_begin(), app)
     assert [block.type for block in app.live_blocks] == [
         "ExecutionProgressBlock",
-        "RunStopBlock",
+        "RunSummaryBlock",
     ]
     assert "• Thinking..." in _render_text(app.live_blocks[0].render())
 
@@ -213,7 +213,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
     )
     events.handle_run_event(_model_step_end(output="drafting"), app)
 
-    assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
+    assert [block.type for block in app.live_blocks] == ["RunSummaryBlock"]
     assert [block.type for block in app.finalized] == ["ExecutionProgressBlock"]
     rendered = _render_text(app.finalized[0].render())
     assert "• drafting" in rendered
@@ -232,7 +232,7 @@ def test_chat_uses_shared_progress_blocks_for_live_and_finalized_model_output() 
     events.handle_run_event(_run_end(status="succeeded", output_step_index=1), app)
     assert [block.type for block in app.finalized] == [
         "ExecutionProgressBlock",
-        "RunStopBlock",
+        "RunSummaryBlock",
     ]
     transcript = "".join(_render_text(block.render()) for block in app.finalized)
     assert "• drafting\n\n∎ run_1 succeeded" in transcript
@@ -243,10 +243,10 @@ def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None
 
     events.handle_run_event(_run_begin(), app)
     events.handle_run_event(_model_step_begin(), app)
-    stop = app.live_blocks[-1]
+    summary = app.live_blocks[-1]
     assert [block.type for block in app.live_blocks] == [
         "ExecutionProgressBlock",
-        "RunStopBlock",
+        "RunSummaryBlock",
     ]
 
     events.handle_run_event(
@@ -268,15 +268,15 @@ def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None
     )
 
     assert app.finalized == []
-    assert app.live_blocks == [stop]
+    assert app.live_blocks == [summary]
 
     events.handle_run_event(_tool_step_begin(step_index=2), app)
 
     assert [block.type for block in app.live_blocks] == [
         "ExecutionProgressBlock",
-        "RunStopBlock",
+        "RunSummaryBlock",
     ]
-    assert app.live_blocks[-1] is stop
+    assert app.live_blocks[-1] is summary
     rendered = _render_text(app.live_blocks[0].render())
     assert "executing shell__execute" in rendered
     assert "Thinking..." not in rendered
@@ -285,7 +285,7 @@ def test_chat_tool_call_only_model_step_vacates_live_position_for_tool() -> None
 
 def test_chat_flow_keeps_one_blank_row_at_each_finalized_boundary() -> None:
     app = FakeApp()
-    app.live_blocks.append(blocks.RunStartBlock.create("map the items"))
+    app.live_blocks.append(blocks.RunControlBlock.create("map the items"))
 
     events.handle_run_event(_run_begin(executable_kind="flow"), app)
     events.handle_run_event(_flow_step_begin(), app)
@@ -344,7 +344,7 @@ def test_chat_moves_stable_markdown_to_scrollback_while_the_tail_stays_live() ->
         "",
         "  Paragraph",
     ]
-    assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
+    assert [block.type for block in app.live_blocks] == ["RunSummaryBlock"]
 
     events.handle_run_event(
         _model_step_end(output="# Heading\n\nParagraph"),
@@ -425,7 +425,7 @@ def test_chat_parallel_terminal_update_replaces_every_lane_atomically() -> None:
         app,
     )
 
-    assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
+    assert [block.type for block in app.live_blocks] == ["RunSummaryBlock"]
     finalized = _render_text(app.finalized[-1].render())
     assert (
         "• Parallel execution stopped: 0/2 succeeded, 1 failed, and 1 was canceled"
@@ -459,7 +459,7 @@ def test_script_and_chat_sinks_preserve_the_same_semantic_rows(
 
 
 def test_chat_submission_has_no_status_before_run_begin() -> None:
-    block = blocks.RunStartBlock.create("hello")
+    block = blocks.RunControlBlock.create("hello")
 
     rendered = _render_text(block.render(), width=20)
 
@@ -478,14 +478,14 @@ def test_chat_submission_has_no_status_before_run_begin() -> None:
 
 def test_chat_preaccept_error_does_not_render_a_failed_run() -> None:
     app = FakeApp()
-    app.live_blocks.append(blocks.RunStartBlock.create(":flow missing\n\nInput"))
+    app.live_blocks.append(blocks.RunControlBlock.create(":flow missing\n\nInput"))
 
     handled = events.handle_run_error(app, "Runnable not found: missing")
 
     assert handled is True
     assert app.live_blocks == []
     assert [block.type for block in app.finalized] == [
-        "RunStartBlock",
+        "RunControlBlock",
         "SubmissionErrorBlock",
     ]
     rendered = "\n".join(_render_text(block.render()) for block in app.finalized)
@@ -498,31 +498,31 @@ def test_chat_preaccept_error_does_not_render_a_failed_run() -> None:
     assert "\n\n\n• Runnable not found: missing" not in transcript
 
 
-def test_chat_local_stop_updates_existing_run_stop_block() -> None:
+def test_chat_cancel_updates_existing_run_summary_block() -> None:
     app = FakeApp()
 
     events.handle_run_event(_run_begin(), app)
-    stop = cast(blocks.RunStopBlock, app.live_blocks[0])
-    stop.mark_canceling()
+    summary = cast(blocks.RunSummaryBlock, app.live_blocks[0])
+    summary.mark_canceling()
 
-    assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
+    assert [block.type for block in app.live_blocks] == ["RunSummaryBlock"]
     assert "canceling" in _render_text(app.live_blocks[0].render())
 
 
-def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
+def test_chat_run_summary_block_shows_canceling_then_canceled() -> None:
     app = FakeApp()
 
     events.handle_run_event(_run_begin(), app)
-    stop = cast(blocks.RunStopBlock, app.live_blocks[0])
-    stop.mark_canceling()
+    summary = cast(blocks.RunSummaryBlock, app.live_blocks[0])
+    summary.mark_canceling()
 
-    assert [block.type for block in app.live_blocks] == ["RunStopBlock"]
+    assert [block.type for block in app.live_blocks] == ["RunSummaryBlock"]
     assert "canceling" in _render_text(app.live_blocks[0].render())
 
     events.handle_run_event(_run_end(status="canceled"), app)
 
     assert app.live_blocks == []
-    assert [block.type for block in app.finalized] == ["RunStopBlock"]
+    assert [block.type for block in app.finalized] == ["RunSummaryBlock"]
     rendered = _render_text(app.finalized[0].render())
     lines = rendered.splitlines()
     assert lines[0] == ""
@@ -533,7 +533,7 @@ def test_chat_run_stop_block_shows_canceling_then_canceled() -> None:
 
 
 def test_chat_root_footer_counts_child_runs_for_any_runnable_kind() -> None:
-    block = blocks.RunStopBlock.create(_run_begin(), max_width=72)
+    block = blocks.RunSummaryBlock.create(_run_begin(), max_width=72)
     block.update(_run_end(status="succeeded"))
     block.set_metrics(
         Metrics(
@@ -559,7 +559,7 @@ def test_chat_root_footer_counts_child_runs_for_any_runnable_kind() -> None:
 
 
 def test_chat_root_footer_omits_zero_child_runs() -> None:
-    block = blocks.RunStopBlock.create(_run_begin())
+    block = blocks.RunSummaryBlock.create(_run_begin())
     block.update(_run_end(status="succeeded"))
     block.set_metrics(Metrics(runs=1))
 
@@ -631,7 +631,7 @@ def test_progress_cost_omits_trailing_fractional_zeroes(
 
 
 def test_chat_root_footer_keeps_short_facts_inline() -> None:
-    block = blocks.RunStopBlock.create(_run_begin(run_id="run_pmqv7gfc"))
+    block = blocks.RunSummaryBlock.create(_run_begin(run_id="run_pmqv7gfc"))
     block.update(_run_end(run_id="run_pmqv7gfc", status="succeeded"))
 
     lines = [line for line in _render_text(block.render()).splitlines() if line]
@@ -643,7 +643,7 @@ def test_chat_root_footer_keeps_short_facts_inline() -> None:
 
 
 def test_chat_root_footer_wraps_every_facts_line_at_the_step_text_indent() -> None:
-    block = blocks.RunStopBlock.create(_run_begin(), max_width=32)
+    block = blocks.RunSummaryBlock.create(_run_begin(), max_width=32)
     block.update(_run_end(status="failed"))
     block.set_metrics(
         Metrics(
@@ -1088,7 +1088,7 @@ def test_chat_run_footer_styles_caption_separately_from_facts(
     status: Literal["succeeded", "failed", "canceled"],
     color: str | None,
 ) -> None:
-    root_summary = blocks.RunStopBlock.create(_run_begin())
+    root_summary = blocks.RunSummaryBlock.create(_run_begin())
     root_summary.update(_run_end(status=status))
     segments = [
         segment
@@ -1113,13 +1113,13 @@ def test_chat_run_footer_styles_caption_separately_from_facts(
     assert not facts.style.bold
 
 
-def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
-    start = blocks.RunStartBlock.create("hello")
-    start.update(_run_begin())
-    start_text = _render_text(start.render())
-    assert f"{rendering.ACCENT_CELL} hello" in start_text
-    assert ">" not in start_text
-    assert "run_1" not in start_text
+def test_chat_command_blocks_render_run_and_steer_states() -> None:
+    run_control = blocks.RunControlBlock.create("hello")
+    run_control.update(_run_begin())
+    run_text = _render_text(run_control.render())
+    assert f"{rendering.ACCENT_CELL} hello" in run_text
+    assert ">" not in run_text
+    assert "run_1" not in run_text
 
     steer = blocks.RunSteerBlock.create(
         message="adjust",
@@ -1131,7 +1131,7 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     assert "pending for next step" not in steer_text
     assert "run_1" not in steer_text
     assert not steer_text.splitlines()[0].strip()
-    assert start_text.splitlines() == [
+    assert run_text.splitlines() == [
         " " * 80,
         f"{rendering.ACCENT_CELL} hello" + " " * 73,
         " " * 80,
@@ -1143,24 +1143,24 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
         " " * 80,
     ]
 
-    start_fragments = rendering.renderable_to_prompt_toolkit(start.render())
+    run_fragments = rendering.renderable_to_prompt_toolkit(run_control.render())
     steer_fragments = rendering.renderable_to_prompt_toolkit(steer.render())
-    stable_start = rendering.renderables_output([start.render()])
-    start_segments = rendering.render_segments(start.render())
-    start_message_segment = next(
-        segment for segment in start_segments if "hello" in segment.text
+    stable_run = rendering.renderables_output([run_control.render()])
+    run_segments = rendering.render_segments(run_control.render())
+    run_message_segment = next(
+        segment for segment in run_segments if "hello" in segment.text
     )
-    assert start_message_segment.style is not None
-    assert start_message_segment.style.color is None
-    assert start_message_segment.style.dim is False
-    start_prompt_accent = rendering._prompt_toolkit_color(
-        Color.parse(rendering.START_CONTROL_ACCENT)
+    assert run_message_segment.style is not None
+    assert run_message_segment.style.color is None
+    assert run_message_segment.style.dim is False
+    run_prompt_accent = rendering._prompt_toolkit_color(
+        Color.parse(rendering.RUN_CONTROL_ACCENT)
     )
-    start_accent = next(
+    run_accent = next(
         fragment[0]
-        for fragment in start_fragments
+        for fragment in run_fragments
         if fragment[1] == rendering.ACCENT_CELL
-        and f"bg:{start_prompt_accent}" in fragment[0]
+        and f"bg:{run_prompt_accent}" in fragment[0]
     )
     steer_accent = next(
         fragment[0]
@@ -1168,21 +1168,21 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
         if fragment[1] == rendering.ACCENT_CELL
         and f"bg:{rendering.STEER_CONTROL_ACCENT}" in fragment[0]
     )
-    start_message = next(
-        fragment[0] for fragment in start_fragments if "hello" in fragment[1]
+    run_message = next(
+        fragment[0] for fragment in run_fragments if "hello" in fragment[1]
     )
     steer_message = next(
         fragment[0] for fragment in steer_fragments if "adjust" in fragment[1]
     )
 
-    assert rendering.START_CONTROL_ACCENT == "bright_cyan"
-    assert start_accent == f"bg:{start_prompt_accent} nodim"
+    assert rendering.RUN_CONTROL_ACCENT == "bright_cyan"
+    assert run_accent == f"bg:{run_prompt_accent} nodim"
     assert steer_accent == f"bg:{rendering.STEER_CONTROL_ACCENT} nodim"
-    assert f"bg:{rendering.INPUT_BACKGROUND}" in start_message
+    assert f"bg:{rendering.INPUT_BACKGROUND}" in run_message
     assert f"bg:{rendering.INPUT_BACKGROUND}" in steer_message
-    assert "nodim" in start_message.split()
+    assert "nodim" in run_message.split()
     assert "nodim" in steer_message.split()
-    assert "\x1b[22m" in stable_start
+    assert "\x1b[22m" in stable_run
 
     steer.update(_model_step_begin(step_index=2))
     assert _render_text(steer.render()) == steer_text
@@ -1192,8 +1192,8 @@ def test_chat_command_blocks_render_start_steer_and_stop_states() -> None:
     ("block", "accent"),
     [
         (
-            blocks.RunStartBlock.create("first\nsecond"),
-            rendering.START_CONTROL_ACCENT,
+            blocks.RunControlBlock.create("first\nsecond"),
+            rendering.RUN_CONTROL_ACCENT,
         ),
         (
             blocks.RunSteerBlock.create(
@@ -1233,11 +1233,11 @@ def test_chat_two_line_control_bars_add_only_top_padding(
 
 def test_chat_control_bar_uses_three_row_minimum() -> None:
     two_lines = _render_text(
-        blocks.RunStartBlock.create("first\nsecond").render(),
+        blocks.RunControlBlock.create("first\nsecond").render(),
         width=20,
     ).splitlines()
     three_lines = _render_text(
-        blocks.RunStartBlock.create("first\nsecond\nthird").render(),
+        blocks.RunControlBlock.create("first\nsecond\nthird").render(),
         width=20,
     ).splitlines()
 
@@ -1268,7 +1268,7 @@ def test_chat_control_bar_wraps_every_physical_row(
     rendered_lines = [
         line
         for line in _render_text(
-            blocks.RunStartBlock.create(message).render(),
+            blocks.RunControlBlock.create(message).render(),
             width=20,
         ).splitlines()
         if line.strip()
@@ -1280,7 +1280,7 @@ def test_chat_control_bar_wraps_every_physical_row(
     assert "".join(line[2:].rstrip() for line in rendered_lines) == message
 
 
-def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> None:
+def test_chat_prompt_uses_the_run_control_accent_without_a_prompt_marker() -> None:
     prompt = widgets.PromptBox(lambda _event: None, lambda: None)
 
     container = prompt.container()
@@ -1289,9 +1289,9 @@ def test_chat_prompt_uses_the_start_control_accent_without_a_prompt_marker() -> 
     accent, content = container.children
     assert isinstance(accent, Window)
     assert accent.width == 1
-    assert accent.style == "class:control.start"
+    assert accent.style == "class:control.run"
     assert accent.char == rendering.ACCENT_CELL
-    assert widgets._chat_ui_palette()["control.start"] == "bg:ansibrightcyan"
+    assert widgets._chat_ui_palette()["control.run"] == "bg:ansibrightcyan"
     assert rendering.CONTROL_BAR_BACKGROUND == "bright_black"
     assert rendering.INPUT_BACKGROUND == "ansibrightblack"
     assert (
@@ -1580,7 +1580,7 @@ def test_chat_slash_block_renders_command_usage_as_table_rows() -> None:
         for segment in quick_accents
     )
     assert rendering.QUICK_COMMAND_CONTROL_ACCENT not in {
-        rendering.START_CONTROL_ACCENT,
+        rendering.RUN_CONTROL_ACCENT,
         rendering.STEER_CONTROL_ACCENT,
     }
     assert command.style is not None
@@ -2064,7 +2064,7 @@ def test_chat_status_palette_uses_state_colors_for_markers() -> None:
     assert palette["status"] == ""
     assert palette["status.marker"] == "dim"
     assert palette["status.spinner"] == (
-        f"fg:{rendering.START_CONTROL_ACCENT_PROMPT_TOOLKIT}"
+        f"fg:{rendering.RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}"
     )
     assert palette["status.elapsed"] == "dim"
     assert palette["status.error.marker"] == "fg:ansired"
@@ -2281,7 +2281,7 @@ def test_chat_tui_run_lifecycle_starts_and_stops_status_activity() -> None:
         client=FakeClient(),
     )
 
-    app.start_run(QueuedCall("hello", {}))
+    app.submit_run(QueuedCall("hello", {}))
 
     assert app.run_in_flight.is_set()
     assert app.status_bar.running
@@ -2544,7 +2544,7 @@ def test_chat_thread_creation_error_is_a_submission_error_in_scrollback(
         lambda value: rendered.append(_render_text(value)),
     )
 
-    app.start_run(QueuedCall("hello", {}))
+    app.submit_run(QueuedCall("hello", {}))
 
     output = "\n".join(rendered)
     assert f"{rendering.ACCENT_CELL} hello" in output
@@ -2627,7 +2627,7 @@ def test_chat_tui_recovers_from_durable_terminal_truth(
         client=FakeClient(),
     )
     app.run_in_flight.set()
-    app.unfinalized_blocks.append(blocks.RunStartBlock.create("hello"))
+    app.unfinalized_blocks.append(blocks.RunControlBlock.create("hello"))
     begin = _run_begin(run_id="run_remote")
     app.handle_ui_event(ChatUIEvent("run_state", RunAccepted("run_remote")))
     app.handle_run_event(begin)
@@ -2847,7 +2847,7 @@ def test_chat_tui_removes_live_block_before_writing_scrollback(
         input_history=None,
         client=FakeClient(),
     )
-    block = blocks.RunStopBlock.create(_run_begin())
+    block = blocks.RunSummaryBlock.create(_run_begin())
     block.update(_run_end(status="canceled"))
     app.unfinalized_blocks.append(block)
 

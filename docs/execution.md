@@ -75,14 +75,16 @@ execution of a run tree.
 ## Run Execution
 
 `RunClient` is the transport-neutral caller boundary used by Terminal Chat. It
-accepts unresolved `RunRequest` values, exposes asynchronous start, stop, steer,
-and close operations, and returns a transport-neutral `RunHandle` plus
+accepts unresolved `RunRequest` values, exposes asynchronous connect, run,
+cancel, steer, and disconnect operations, and returns a transport-neutral
+`RunHandle` plus
 caller-facing `RunDetail` and `ControlInfo` values. The boundary deliberately
 excludes stores, setup and state snapshots, local tasks, and durable records so
-local and remote execution preserve the same interaction shape.
+local and remote execution preserve the same interaction shape. Clients are
+disconnected after construction and reject operations until `connect()`.
 
-`LocalRunClient` implements that boundary over an owned `RunExecutor`. It reads
-the current setup and state once for each start, selects the first explicit
+`LocalRunClient` implements that boundary over a `RunExecutor`. It reads the
+current setup and state once for each run, selects the first explicit
 caller fallback that exists, resolves authored input through `resolve_spec()`,
 and converts terminal and control records through the existing caller-facing
 schemas. Terminal Chat still owns its watchers, store, thread manager, result
@@ -95,8 +97,8 @@ HTTP origin. It sends unresolved requests to
 the accepted run's SSE response, and uses the existing run detail, cancel, and
 steer endpoints. The server owns setup/state snapshots, fallback selection,
 policy and authored-input resolution, and file includes. The client never
-retries a start or reconnects an incomplete stream because the live event
-protocol has no replay cursor. Closing the client detaches its readers and
+retries a run or reconnects an incomplete stream because the live event
+protocol has no replay cursor. Disconnecting the client detaches its readers and
 owned HTTP resources without canceling server runs or managing the server
 process.
 
@@ -107,7 +109,7 @@ command-owned temporary AgentServer for a non-host sandbox. Remote execution is
 used only after endpoint health and profile checks. Non-run HTTP operations
 remain in the Chat client: runtime/model/runnable inspection, thread creation,
 session validation, and result reads. A stream failure after acceptance is
-recovered from durable run detail without retrying the start or synthesizing
+recovered from durable run detail without retrying the run or synthesizing
 missing `RunEvent` values. Closing Chat never stops an attached server and
 stops and releases only a temporary server created by that command.
 
@@ -116,38 +118,38 @@ The process-local executor remains the execution engine:
 `RunExecutor` is the public run entry point:
 
 ```text
-start(RunSpec, run_id?, request_id?, tracer?)          -> LocalRunHandle
-stop(run_id, timing, request_id?, reason?)     -> RunControlRecord
-steer(run_id, message, timing, request_id?)    -> RunControlRecord
-cancel_control(run_id, index)                  -> RunControlRecord
-shutdown()                                     -> None
+start()                                             -> None
+run(RunSpec, run_id?, request_id?, tracer?)         -> LocalRunHandle
+cancel(run_id, timing, request_id?, reason?)         -> RunControlRecord
+steer(run_id, message, timing, request_id?)          -> RunControlRecord
+cancel_control(run_id, index)                        -> RunControlRecord
+stop()                                               -> None
 ```
 
-`start()` accepts durable truth, creates the owner task, and immediately
+`start()` is an idempotent lifecycle hook. `run()` accepts durable truth,
+creates the owner task, and immediately
 returns an awaitable `LocalRunHandle`. Awaiting the handle returns the terminal
 `RunRecord`; canceling one waiter does not cancel execution. The handle also
-provides same-process `stop()`, `steer()`, and `cancel_control()` conveniences.
+provides same-process `cancel()`, `steer()`, and `cancel_control()` conveniences.
 Cross-process callers address the run by ID through their local `RunExecutor`.
 
-`steer()` and `stop()` only accept durable controls; `cancel_control()` changes
-one pending steer or stop to `revoked`. None of these operations needs the
-target run to be owned by the submitting process. Start remains local: the
-process that calls `start(spec)` accepts and executes that run. The executor is
-ready after construction and therefore has no separate `open()` method.
-`shutdown()` is terminal and cancels the run tasks owned by that executor
-instance. The process owner closes the shared `RunStore` after the executor
-shuts down.
+`steer()` and `cancel()` only accept durable controls; `cancel_control()` changes
+one pending steer or cancel to `revoked`. None of these operations needs the
+target run to be owned by the submitting process. Run execution remains local:
+the process that calls `run(spec)` accepts and executes that run. `stop()` is
+terminal and cancels the run tasks owned by that executor instance. The process
+owner closes the shared `RunStore` after the executor stops.
 
 Callers resolve the captured `AgentSetup` defaults and any session or run
-policy into `RunSpec.limits` before `start()`. Per-agic model and tool call
+policy into `RunSpec.limits` before `run()`. Per-agic model and tool call
 limits reset on each agic invocation, while token, cost, and time limits are
-shared by all recursive runs. Effective limits are stored on the root start
+shared by all recursive runs. Effective limits are stored on the root run
 control and on each retry control.
 
-`start()` requires an existing thread. Thread creation belongs to
+`run()` requires an existing thread. Thread creation belongs to
 `ThreadManager` or to the package that owns a deterministic external thread id.
 
-The start operation atomically inserts the pending run and its index-zero start
+The run operation atomically inserts the pending run and its index-zero run
 control. Run IDs are globally unique within `RunStore`; duplicates are
 rejected. A non-null request ID is unique within its control table and is never
 treated as a replay key. Clients either generate a globally unique request ID
@@ -170,7 +172,7 @@ runtime produces event
 
 The private projector never creates or updates run controls. Tracer failures
 are logged and isolated from execution. One tracer observes the complete run
-tree started by its `start()` call, including child runs, steps, parts, and
+tree started by its `run()` call, including child runs, steps, parts, and
 terminal events. Each event already contains its complete durable references
 and output edge; the private projector does not reconstruct runtime locals or
 infer alternate output. `RunTracer.on_event()` is asynchronous. The executor
@@ -196,10 +198,10 @@ There are no waiting, starting, steering, or stopping events. Control
 acceptance is durable record truth. Control application is represented by data
 edges:
 
-- `RunBegin.input` references the run control;
+- `RunBegin.control` references the run control;
 - `StepBegin.input` references every run control or prior step output consumed by
   the step;
-- `RunEnd.input` references the cancel control that canceled the run.
+- `RunEnd.control` references the cancel control that canceled the run.
 
 Providers stream deltas when supported. A tracer may ignore `PartDelta` and
 observe only higher-level events.
@@ -246,8 +248,8 @@ all pending controls for every active run.
 
 Local submissions update the same cache immediately after their durable write.
 Remote submissions and cancellations arrive through revision polling. An
-immediate stop cancels the owning task after the owner observes the durable
-control. Before applying a steer or stop, runtime atomically claims it in
+immediate cancel cancels the owning task after the owner observes the durable
+control. Before applying a steer or cancel, runtime atomically claims it in
 SQLite. Cancellation is allowed only while a control remains unclaimed, so a
 cross-process claim/cancel race has exactly one winner without adding another
 public control status.
@@ -278,7 +280,7 @@ A fork stores its source thread and anchor run but does not copy run, step, or
 run-control rows. Its inherited history includes the anchor. It may select an
 earlier terminal anchor even when the source thread has a later active run. A
 rewind discards its anchor and the visible suffix after it, and is rejected
-while any visible top-level run is pending or running. The caller must stop
+while any visible top-level run is pending or running. The caller must cancel
 active runs before retrying; `ThreadManager` never writes run controls. Runs
 owned by the rewound thread are marked with `ejected`; an inherited
 source run is never modified. Forks and rewinds are serialized across

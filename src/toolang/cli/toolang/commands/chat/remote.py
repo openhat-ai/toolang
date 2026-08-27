@@ -209,6 +209,7 @@ class RemoteChatSession:
             timeout=httpx.Timeout(3.0),
         )
         self.run_client = RemoteRunClient(self._endpoint, client=self._http)
+        await self.run_client.connect()
         health = await self._request_json("GET", "/healthz", operation="health")
         if health != {"ok": True}:
             raise _RemoteChatProtocolError(

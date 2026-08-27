@@ -817,7 +817,7 @@ For multipart payload details:
   be a full `data:...;base64,...` URL
 - `file_id` references a document already uploaded to the selected provider
 
-Both run-start endpoints return the canonical `RunEvent` SSE protocol. A WebUI
+Both run-streaming endpoints return the canonical `RunEvent` SSE protocol. A WebUI
 that needs another presentation shape adapts these events client-side; the API
 does not maintain a second chat event vocabulary.
 

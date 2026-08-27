@@ -94,7 +94,7 @@ ceiling types and resolver functions are removed.
 
 ## Records And Controls
 
-Preparation controls (`start`, `rerun`, `retry`, and child `start`) store these
+Preparation controls (`run`, `rerun`, `retry`, and child `run`) store these
 top-level typed fields:
 
 ```text
@@ -106,7 +106,7 @@ resources: AgentResources
 
 Each is the effective snapshot for that accepted preparation. Retry records a
 self-contained snapshot even when its input is unchanged. Steer uses a message
-and stop uses a reason rather than overloading `RunnableInput`.
+and cancel uses a reason rather than overloading `RunnableInput`.
 
 `AgentCeiling` is not durable run truth and is not stored. Historical ceiling
 data may be decoded only for migration and is not projected as final resources.
@@ -137,8 +137,8 @@ shared limit accounting.
   events, and SQLite without losing names or declared types.
 - Setup, session, run, runnable, flow, and agic resource restrictions select the
   same ordered resources as before and never widen a base set.
-- Root start, rerun, retry, direct child, and parallel child controls store the
-  four preparation snapshots; steer and stop reject preparation-only fields.
+- Root run, rerun, retry, direct child, and parallel child controls store the
+  four preparation snapshots; steer and cancel reject preparation-only fields.
 - Root identity is derived correctly for roots, nested children, parallel
   children, and reruns.
 - Historical database migration remains readable without inventing resolved

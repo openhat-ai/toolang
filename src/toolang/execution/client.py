@@ -30,7 +30,7 @@ class RunHandle(Protocol):
 
 
 class RunClient(Protocol):
-    """Connected caller operations for running and controlling runs."""
+    """Connectable caller operations for running and controlling runs."""
 
     async def connect(self) -> None: ...
 
@@ -100,7 +100,7 @@ class LocalRunClient:
         self._refresh_state = refresh_state
         self._include = include
         self._history = RunHistory(executor.store)
-        self._connected = True
+        self._connected = False
 
     async def connect(self) -> None:
         self._connected = True

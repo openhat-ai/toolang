@@ -258,6 +258,8 @@ class LocalChatSession:
         self.store.close()
 
     async def _initialize(self) -> None:
+        self.executor.start()
+        await self.run_client.connect()
         state = await self.state_watcher.refresh()
         setup = await self.setup_watcher.refresh()
         validate_agent_ceiling(setup, state, setup.ceiling)

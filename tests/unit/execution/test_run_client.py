@@ -162,6 +162,7 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
     tracer = RecordingRunTracer()
 
     async def scenario() -> None:
+        await client.connect()
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
         fallback_handle = await client.run(
             _request(
@@ -244,6 +245,7 @@ def test_local_client_rejects_preparation_without_persisting_a_run(
     )
 
     async def scenario() -> None:
+        await client.connect()
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
         request = _request(
             thread,
@@ -287,6 +289,7 @@ flow chat(_: Part[]) -> Part[]:
     )
 
     async def scenario() -> None:
+        await client.connect()
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
         handle = await client.run(
             _request(
@@ -328,6 +331,7 @@ def test_local_client_returns_caller_facing_steer_and_cancel_controls(
     )
 
     async def scenario() -> None:
+        await client.connect()
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
         handle = await client.run(_request(thread))
         await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
@@ -396,6 +400,11 @@ def test_local_client_disconnect_is_idempotent_without_stopping_executor(
 
     async def scenario() -> None:
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        with pytest.raises(RuntimeError, match="run client is disconnected"):
+            await client.run(_request(thread, request_id="before_connect"))
+
+        await client.connect()
+        await client.connect()
         handle = await client.run(_request(thread))
         await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
 
@@ -405,7 +414,7 @@ def test_local_client_disconnect_is_idempotent_without_stopping_executor(
         assert stored is not None
         assert stored.status == "running"
         with pytest.raises(RuntimeError, match="run client is disconnected"):
-            await client.run(_request(thread, request_id="after_close"))
+            await client.run(_request(thread, request_id="after_disconnect"))
 
         await client.connect()
         await client.cancel(handle.run_id, reason="owner canceled")

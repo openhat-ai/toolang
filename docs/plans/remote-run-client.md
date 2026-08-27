@@ -1,6 +1,6 @@
 # Define Remote Run Client And Required Endpoints
 
-Status: Draft for human approval.
+Status: Implemented; lifecycle vocabulary amended on 2026-08-27.
 
 ## Work Type
 
@@ -11,13 +11,14 @@ scope.
 
 ## Verified Current Behavior
 
-- `RunClient` exposes async `start`, `stop`, `steer`, and `close`; an accepted
-  `RunHandle` exposes `run_id` and async `wait()` returning `RunDetail`.
+- `RunClient` exposes async `connect`, `run`, `cancel`, `steer`, and
+  `disconnect`; an accepted `RunHandle` exposes `run_id` and async `wait()`
+  returning `RunDetail`.
 - `RunRequest` carries unresolved run/session overrides, authored primary and
   named input, ordered runnable fallbacks, an existing thread, and a required
   globally unique request ID.
 - `LocalRunClient` reads setup and state once, selects a runnable fallback,
-  resolves the request with server-local includes, starts the executor, sends
+  resolves the request with server-local includes, runs the executor, sends
   canonical recursive `RunEvent` values to an optional tracer, and converts the
   terminal durable run to `RunDetail`.
 - `POST /api/v1/runs/stream` accepts a different, already selected runnable and
@@ -27,10 +28,10 @@ scope.
 - `GET /api/v1/runs/{run_id}`, `POST /api/v1/runs/{run_id}/cancel`, and
   `POST /api/v1/runs/{run_id}/steer` already expose durable detail and control
   acceptance.
-- Live run events are transient and have no replay IDs. A separate start request
+- Live run events are transient and have no replay IDs. A separate run request
   followed by `GET /api/v1/runs/{run_id}/stream` can miss events between run
   acceptance and subscription.
-- Run acceptance is durable while status is `pending`. `RunExecutor.stop()` and
+- Run acceptance is durable while status is `pending`. `RunExecutor.cancel()` and
   `steer()` accept pending or running runs, but the HTTP control routes currently
   reject pending runs before delegating.
 
@@ -61,16 +62,16 @@ only the server behavior that this mapping lacks.
   stream order; no transport-specific event vocabulary is added.
 - Existing detail, cancel, and steer endpoints are reused, with only the active
   run compatibility change required by the client contract.
-- The client never retries a start, reconnects an incomplete event stream,
-  fabricates missing events, cancels server work on close, or manages the remote
-  process lifecycle.
+- The client never retries a run, reconnects an incomplete event stream,
+  fabricates missing events, cancels server work on disconnect, or manages the
+  remote process lifecycle.
 
 ## Scope
 
 In scope:
 
 - strict wire schemas and conversion for `RunRequest`;
-- one authored-run start-and-stream endpoint;
+- one authored-run execution-and-stream endpoint;
 - shared request resolution used by local and HTTP entry points;
 - async HTTP/SSE `RemoteRunClient` and its private remote handle;
 - mapping existing detail, cancel, and steer endpoints;
@@ -156,7 +157,7 @@ The API reconstructs the existing immutable `RunOverride`, `RunnableInputRaw`,
 and `RunRequest` values before resolution. No second request vocabulary enters
 the executor.
 
-## Start And Event Streaming
+## Run And Event Streaming
 
 The authored route performs the following synchronously in one owner event-loop
 turn before returning its streaming response:
@@ -166,7 +167,7 @@ turn before returning its streaming response:
 3. reconstruct and resolve `RunRequest` with the shared execution helper;
 4. resolve file includes relative to the setup working directory, falling back
    to the agent home;
-5. call `RunExecutor.start()` with the supplied request ID and the live relay
+5. call `RunExecutor.run()` with the supplied request ID and the live relay
    tracer;
 6. subscribe the relay to the accepted root run before yielding control.
 
@@ -181,7 +182,7 @@ after acceptance remain canonical terminal `RunEnd` events. The existing
 non-interactive stream endpoint retains its request and response behavior.
 
 The header is required instead of waiting for `RunBegin`: it preserves the
-protocol meaning that `start()` returns a durably accepted handle and keeps the
+protocol meaning that `run()` returns a durably accepted handle and keeps the
 run addressable even if the stream fails before its first event. Atomic
 subscription avoids the event gap of a separate POST followed by GET.
 
@@ -205,17 +206,19 @@ RemoteRunClient(
 `endpoint` is the absolute HTTP or HTTPS agent-runtime origin reported by the
 runtime, with no user information, query, fragment, or path other than `/`;
 trailing slashes are ignored. Invalid endpoints fail during construction.
+Construction is otherwise inert: the client is disconnected, and an owned
+HTTP client is created by `connect()`.
 Every operation builds a full absolute URL by appending its `/api/v1/...` path
 to this normalized endpoint, so an injected client's `base_url` is ignored.
 The injected client still supplies transport, authentication, connection
-pooling, and default timeout configuration. The remote client closes only a
-client it constructed itself.
+pooling, and default timeout configuration. On disconnect, the remote client
+closes only an HTTP client it constructed itself.
 
-### `start()`
+### `run()`
 
-`start()`:
+`run()`:
 
-1. requires an open client and serializes `RunRequest` to the authored wire
+1. requires a connected client and serializes `RunRequest` to the authored wire
    shape;
 2. opens `POST /api/v1/runs/authored/stream` without a finite response-body
    read timeout;
@@ -232,13 +235,17 @@ client it constructed itself.
    event to be the matching root `RunBegin`, rejects any later second root
    `RunBegin`, and sends valid recursive events to the optional tracer
    sequentially;
-8. treats the matching root `RunEnd` as successful stream completion.
+8. treats the matching root `RunEnd` as successful stream completion;
+9. waits for either durable acceptance or reader termination, so disconnecting
+   before acceptance fails promptly instead of leaving the caller pending.
 
 SSE comments are ignored. Malformed JSON, invalid native events, a wrong first
 event, a header/event root mismatch, a second root begin, or EOF before the root
 `RunEnd` raises `RemoteRunClientError`. As in local execution, tracer exceptions
 are logged and isolated from run completion. A matching root `RunEnd` wins over
-a subsequent connection close. Start is never automatically submitted again.
+a subsequent connection close. Run is never automatically submitted again. If
+durable acceptance and reader termination race, the accepted run ID wins so the
+caller can still address work that disconnect does not cancel.
 
 ### `wait()`
 
@@ -255,10 +262,10 @@ remain a later surface-level decision under #262.
 
 ### Controls
 
-`stop()` posts the existing cancel body and returns the response's decoded
+`cancel()` posts the existing cancel body and returns the response's decoded
 `command` as `ControlInfo`. `steer()` requires the same user `Message` accepted
 by `RunExecutor`, serializes `Message.to_data()`, posts the existing steer body,
-and returns `command` as `ControlInfo`. Timing, optional request ID, stop reason,
+and returns `command` as `ControlInfo`. Timing, optional request ID, cancel reason,
 message parts, and server error details are preserved.
 
 Change the existing cancel and steer precondition from exactly `running` to
@@ -267,7 +274,7 @@ acceptance, matching the executor. Allow an empty user parts array in the HTTP
 steer schema because it is valid at the `RunClient` boundary. Terminal runs
 remain `409` and unknown runs remain `404`.
 
-### Errors And Close
+### Errors And Disconnect
 
 `RemoteRunClientError` is the one transport/protocol exception exposed by the
 implementation. It retains a useful HTTP status and FastAPI string `detail`
@@ -275,23 +282,25 @@ when available, but does not expose response bodies, endpoints, request input,
 policy values, or tracebacks. Connection failures, invalid response JSON, and
 schema decode failures use concise operation-specific messages.
 
-`close()` is idempotent. It prevents new operations, cancels and awaits active
-reader tasks, closes only an internally owned HTTP client, and releases an
-injected client without closing it. It does not call cancel, wait for server
-runs, or manage the server process. Handles whose readers are interrupted by
-close fail with the client-closed error rather than leaking `CancelledError`.
+`connect()` and `disconnect()` are idempotent. Operations require a connected
+client. Disconnect prevents new
+operations, cancels and awaits active reader tasks, closes only an internally
+owned HTTP client, and releases an injected client without closing it. It does
+not call cancel, wait for server runs, or manage the server process. Handles
+whose readers are interrupted by disconnect fail with the client-disconnected
+error rather than leaking `CancelledError`.
 
 ## Existing Endpoint Mapping
 
 | `RunClient` operation | HTTP mapping | Change |
 | --- | --- | --- |
-| `start` + native events | `POST /api/v1/runs/authored/stream` | new atomic endpoint and run-ID header |
+| `run` + native events | `POST /api/v1/runs/authored/stream` | new atomic endpoint and run-ID header |
 | `RunHandle.wait` | stream root `RunEnd`, then `GET /api/v1/runs/{run_id}` | reuse detail endpoint |
-| `stop` | `POST /api/v1/runs/{run_id}/cancel` | accept pending runs |
+| `cancel` | `POST /api/v1/runs/{run_id}/cancel` | accept pending runs |
 | `steer` | `POST /api/v1/runs/{run_id}/steer` | accept pending runs and empty user parts |
-| `close` | client-local resource cleanup | no server endpoint |
+| `connect` / `disconnect` | client-local resource lifecycle | no server endpoint |
 
-No endpoint is added for client construction, validation, retry, reconnect,
+No endpoint is added for client connection, validation, retry, reconnect,
 history, lists, results, or shutdown.
 
 ## Design Touchpoints
@@ -325,26 +334,26 @@ from their owning modules.
 2. Prove local and API paths call the shared resolver with one setup/state pair
    and preserve fallback, session/run policy precedence, prompts, named input,
    and server-relative includes.
-3. Start an authored HTTP run and assert the accepted header matches the first
+3. Run an authored HTTP request and assert the accepted header matches the first
    root `RunBegin`, every recursive canonical event is delivered once in order,
    the stream ends at root `RunEnd`, and durable detail matches the handle ID.
 4. Assert missing thread is `404`; invalid policy, fallback, input, include, and
    duplicate request ID are pre-header `422` responses that do not create an
    unintended run.
-5. Exercise endpoint normalization, injected-client base URL and ownership,
-   `RemoteRunClient.start()`, and repeatable `wait()` over deterministic HTTP/SSE
-   fixtures, with and without a tracer. Assert no tracer callback occurs before
-   `start()` returns, decode the returned `RunDetail`, and isolate tracer failures
-   as they are locally.
+5. Exercise disconnected construction, connect/disconnect, endpoint
+   normalization, injected-client base URL and ownership, `RemoteRunClient.run()`,
+   and repeatable `wait()` over deterministic HTTP/SSE fixtures, with and without
+   a tracer. Assert no tracer callback occurs before `run()` returns, decode the
+   returned `RunDetail`, and isolate tracer failures as they are locally.
 6. Cover malformed JSON/event data, wrong first/root IDs, premature EOF,
    pre-header transport failure, HTTP detail errors, invalid detail/control
    responses, and the no-retry rule.
-7. Stop and steer a pending and a running run; preserve timing, request ID,
+7. Cancel and steer a pending and a running run; preserve timing, request ID,
    reason, empty and nonempty user messages, `ControlInfo`, and existing
    terminal/unknown rejection.
-8. Close during active streams and after completion; assert idempotence, no
-   leaked tasks, no server-run cancellation, injected-client ownership, and
-   closed-operation errors.
+8. Disconnect before acceptance, during active streams, and after completion;
+   assert prompt settlement, idempotence, no leaked tasks, no server-run
+   cancellation, injected-client ownership, and disconnected-operation errors.
 9. Keep the existing non-interactive stream request, event order, controls,
    local client, Terminal Chat, Script, Scheduler, Inbox, and `AgentCore`
    behavior green.
@@ -353,14 +362,15 @@ from their owning modules.
 
 ## Risks And Mitigations
 
-- **Events lost between start and subscribe:** accept and subscribe in one owner
+- **Events lost between acceptance and subscription:** accept and subscribe in one owner
   event-loop turn before response headers.
 - **Resolution drift:** one execution-owned helper serves local and HTTP paths.
-- **Duplicate work after ambiguous transport failure:** never retry start;
+- **Duplicate work after ambiguous transport failure:** never retry run;
   request IDs remain uniqueness guards, not idempotency keys.
 - **Incomplete presentation after stream loss:** fail explicitly without
   fabricating or replaying events; leave TUI recovery to its owning scope.
-- **Closing the UI stops server work unexpectedly:** remote close detaches only.
+- **Disconnecting the UI stops server work unexpectedly:** remote disconnect
+  detaches only.
 - **API/client model coupling:** document JSON, keep strict API schemas on the
   server, and keep the execution client independent of `toolang.api`.
 

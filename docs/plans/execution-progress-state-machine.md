@@ -386,7 +386,7 @@ Submission UI is not an execution Run header.
 
 ## Chat Control Blocks
 
-`RunStartBlock` represents a submitted request and `RunSteerBlock` represents a
+`RunControlBlock` represents a submitted request and `RunSteerBlock` represents a
 steer control attached to an active Run. Their rendered bars contain only the
 authored message: Run ids, pending state, and other execution status belong to
 execution progress rather than the control.

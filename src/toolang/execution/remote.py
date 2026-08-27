@@ -72,10 +72,10 @@ class RemoteRunClient:
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._endpoint = _normalize_endpoint(endpoint)
-        self._http = client or httpx.AsyncClient()
+        self._http = client
         self._owns_http = client is None
         self._readers: set[asyncio.Task[None]] = set()
-        self._connected = True
+        self._connected = False
 
     @property
     def connected(self) -> bool:
@@ -93,7 +93,7 @@ class RemoteRunClient:
             return
         if self._owns_http:
             self._http = httpx.AsyncClient()
-        elif self._http.is_closed:
+        elif self._http is None or self._http.is_closed:
             raise RemoteRunClientError("remote run HTTP client is closed")
         self._connected = True
 
@@ -119,8 +119,10 @@ class RemoteRunClient:
         self._readers.add(reader)
         reader.add_done_callback(self._reader_done)
         try:
-            run_id = await accepted
+            run_id = await self._wait_for_acceptance(accepted, reader)
         except BaseException:
+            if not accepted.done():
+                accepted.cancel()
             if not reader.done():
                 reader.cancel()
             await asyncio.gather(reader, return_exceptions=True)
@@ -182,8 +184,24 @@ class RemoteRunClient:
             reader.cancel()
         if readers:
             await asyncio.gather(*readers, return_exceptions=True)
-        if self._owns_http:
+        if self._owns_http and self._http is not None:
             await self._http.aclose()
+
+    async def _wait_for_acceptance(
+        self,
+        accepted: asyncio.Future[str],
+        reader: asyncio.Task[None],
+    ) -> str:
+        done, _pending = await asyncio.wait(
+            (accepted, reader),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if accepted in done:
+            return accepted.result()
+        if reader.cancelled():
+            raise RemoteRunClientError("remote run client is disconnected")
+        await reader
+        raise RemoteRunClientError("remote run ended before acceptance")
 
     async def _read_run_stream(
         self,
@@ -193,8 +211,8 @@ class RemoteRunClient:
         accepted: asyncio.Future[str],
         delivery: asyncio.Event,
     ) -> None:
-        http = self._require_connected()
         try:
+            http = self._require_connected()
             async with aconnect_sse(
                 http,
                 "POST",
@@ -365,9 +383,10 @@ class RemoteRunClient:
     def _require_connected(self) -> httpx.AsyncClient:
         if not self._connected:
             raise RemoteRunClientError("remote run client is disconnected")
-        if self._http.is_closed:
+        http = self._http
+        if http is None or http.is_closed:
             raise RemoteRunClientError("remote run HTTP client is closed")
-        return self._http
+        return http
 
     def _reader_done(self, reader: asyncio.Task[None]) -> None:
         self._readers.discard(reader)

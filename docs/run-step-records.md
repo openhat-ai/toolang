@@ -96,13 +96,13 @@ created_at
 finished_at
 ```
 
-`(run, index)` is the durable identity. Kinds are `start`, `rerun`, `retry`,
-`steer`, and `stop`.
+`(run, index)` is the durable identity. Kinds are `run`, `rerun`, `retry`,
+`steer`, and `cancel`.
 Timing is `immediate`, `next_step`, or `next_call`. A non-null request is
 unique across the `run_controls` table. Duplicate requests are rejected;
 they do not replay a previous result.
 
-The index-zero `start` or `rerun` control and `RunRecord` are inserted in one
+The index-zero `run` or `rerun` control and `RunRecord` are inserted in one
 transaction. A rerun control references its source root through `source`.
 `retry` is appended to the existing root and records the resolved `StepPath` in
 `anchor`.
@@ -127,7 +127,7 @@ context. `cost` is decimal USD text; the other values are integers or null.
 `runs.db` also stores an internal monotonic revision on every run-control
 insert and status change. The revision is a polling cursor, not part of
 `RunControlRecord`'s protocol shape. It lets an owning executor observe remote
-steer, stop, and cancellation changes without rescanning controls for every
+steer, cancel, and control-revocation changes without rescanning controls for every
 active run. A storage-only claim flag serializes runtime application against
 cross-process cancellation; it is not another `ControlStatus`.
 
@@ -283,9 +283,9 @@ The runtime projects each event fact and its referenced control transitions in
 one SQLite write transaction:
 
 ```text
-RunBegin.input  -> apply run control
+RunBegin.control -> apply run control
 StepBegin.input -> apply steer controls
-RunEnd.input    -> apply cancel control
+RunEnd.control   -> apply cancel control
 RunEnd          -> mark remaining pending controls wontapply
 ```
 

@@ -1,6 +1,6 @@
 # Define the Run Client Boundary
 
-Status: Approved on 2026-08-25.
+Status: Approved on 2026-08-25; lifecycle vocabulary amended on 2026-08-27.
 
 ## Work Type
 
@@ -11,13 +11,13 @@ client or change the agent API.
 ## Verified Current Behavior
 
 - `RunExecutor` combines run acceptance, local task ownership, durable store
-  mutation, control observation, recursive execution, and shutdown.
+  mutation, control observation, recursive execution, and lifecycle shutdown.
 - `RunSpec` contains process-local `AgentSetup` and `AgentState` snapshots.
 - `LocalRunHandle` contains a local `asyncio.Task` and returns a local
   `RunRecord`.
 - `LocalChatSession` constructs `RunStore`, `IdIssuer`, `RunExecutor`, setup and
   state watchers, and its own event-loop thread. It calls the executor directly
-  for start, stop, steer, and shutdown.
+  for run, cancel, steer, and lifecycle stop.
 - Other local owners, including Script, Scheduler, Inbox, and `AgentCore`, also
   use `RunExecutor` directly and have independent lifecycle requirements.
 
@@ -37,14 +37,14 @@ replacement abstraction for every `RunExecutor` caller.
 
 ## Success Criteria
 
-- Terminal Chat depends on `RunClient`, not `RunExecutor`, for run start,
-  stop, steer, and client-owned lifecycle cleanup.
+- Terminal Chat depends on `RunClient`, not `RunExecutor`, for run, cancel,
+  steer, and client connection lifecycle.
 - `LocalRunClient` preserves current authored-input resolution, native event
-  order, controls, errors, results, and shutdown behavior.
+  order, controls, errors, and results without owning executor shutdown.
 - The client contract contains no `RunStore`, `IdIssuer`, `AgentSetup`,
   `AgentState`, `asyncio.Task`, `RunRecord`, or HTTP types.
 - Existing Script, Scheduler, Inbox, API, and `AgentCore` execution behavior
-  remains unchanged; their executor handle imports use the explicit local name.
+  remains unchanged while their executor operations use the canonical names.
 - No HTTP endpoint, schema, runtime-selection rule, or Chat presentation changes.
 
 ## Scope
@@ -56,6 +56,7 @@ In scope:
   transport-neutral boundary owns the unqualified name;
 - a local adapter over `RunExecutor`;
 - migration of `LocalChatSession` to that adapter;
+- canonical executor and client operation/lifecycle vocabulary;
 - focused unit, integration, and existing Chat regression coverage;
 - concise execution-architecture documentation.
 
@@ -66,9 +67,8 @@ Out of scope:
 - adding or changing API endpoints and request schemas;
 - retry, rerun, validation, pending-control cancellation, inspection, thread
   management, model/runnable listing, or result lookup in `RunClient`;
-- migrating Script, Scheduler, Inbox, API routers, or `AgentCore`;
-- changing `RunExecutor`, `RunSpec`, or `LocalRunHandle` behavior beyond the
-  approved type rename;
+- changing Script, Scheduler, Inbox, API routers, or `AgentCore` behavior;
+- changing `RunSpec` or `LocalRunHandle` behavior beyond the approved names;
 - changing terminal Chat commands, policy, rendering, or error text.
 
 ## Boundary Design
@@ -124,7 +124,7 @@ Define a handle protocol with:
 - `wait()`, which completes when the accepted root run becomes terminal and
   returns caller-facing `RunDetail`.
 
-Do not expose `LocalRunHandle` through the client contract. Stop and steer
+Do not expose `LocalRunHandle` through the client contract. Cancel and steer
 remain client methods so the protocol handle has no back-reference to a
 concrete implementation.
 
@@ -134,14 +134,16 @@ The initial protocol contains:
 
 ```python
 class RunClient(Protocol):
-    async def start(
+    async def connect(self) -> None: ...
+
+    async def run(
         self,
         request: RunRequest,
         *,
         tracer: RunTracer | None = None,
     ) -> RunHandle: ...
 
-    async def stop(
+    async def cancel(
         self,
         run_id: str,
         *,
@@ -159,14 +161,16 @@ class RunClient(Protocol):
         request_id: str | None = None,
     ) -> ControlInfo: ...
 
-    async def close(self) -> None: ...
+    async def disconnect(self) -> None: ...
 ```
 
 All operations are async so callers do not depend on whether work is performed
-in-process or across a future transport. `close()` releases resources owned by
-the client. It does not define a universal "cancel every referenced run"
-operation; the local implementation cancels its runs only because it owns its
-executor, matching current embedded Chat behavior.
+in-process or across a future transport. A client is disconnected after
+construction and must be connected before use. `connect()` and `disconnect()`
+own only client transport or reader resources. Disconnecting never defines a
+universal "cancel every referenced run" operation and does not stop the local
+executor. The component that owns an executor remains responsible for stopping
+it.
 
 Do not include:
 
@@ -178,27 +182,28 @@ Do not include:
 
 ## `LocalRunClient`
 
-`LocalRunClient` adapts an owned `RunExecutor` and receives narrow dependencies
+`LocalRunClient` adapts a `RunExecutor` and receives narrow dependencies
 for current setup, current state, and include resolution. It must not own or
 construct watchers.
 
-On `start()` it:
+On `run()` it:
 
 1. reads setup and state exactly once;
 2. selects the first explicit runnable fallback present in that state;
 3. calls the existing `resolve_spec()` with the request's run commands, input,
    session commands, selected fallback, and local include resolver;
-4. calls `RunExecutor.start()` with the request ID and tracer;
+4. calls `RunExecutor.run()` with the request ID and tracer;
 5. returns a client handle wrapping only the accepted run ID and an internal
    await operation;
 6. converts the terminal durable result to `RunDetail` through `RunHistory`.
 
-On `stop()` and `steer()` it delegates to the executor and converts the accepted
+On `cancel()` and `steer()` it delegates to the executor and converts the accepted
 control to caller-facing `ControlInfo`. It preserves timing, request ID, reason,
 message validation, and existing exceptions.
 
-`close()` is idempotent and calls `RunExecutor.shutdown()` once. The surrounding
-`LocalChatSession` continues to close its store after the client has closed.
+`connect()` and `disconnect()` are idempotent. Disconnecting does not stop the
+executor or cancel accepted runs. `LocalChatSession` owns executor shutdown and
+closes its store only after `RunExecutor.stop()` completes.
 
 The adapter does not duplicate preparation, resource resolution, persistence,
 control observation, or execution logic.
@@ -211,11 +216,12 @@ control observation, or execution logic.
 - model/runnable listing, thread creation, settings validation, and result lookup;
 - Chat-specific conversion from callback functions to `RunTracer`.
 
-It constructs one `LocalRunClient` around its executor and passes snapshot and
-include dependencies. Its run path parses the authored call into `RunRequest`,
-then awaits `client.start()` and the returned handle. Stop and steer delegate to
-the client. Shutdown closes the client before stopping watchers and closing the
-event loop.
+It constructs one `LocalRunClient` around its executor, passes snapshot and
+include dependencies, and explicitly connects it during session initialization.
+Its run path parses the authored call into `RunRequest`, then awaits
+`client.run()` and the returned handle. Cancel and steer delegate to the client.
+Shutdown disconnects the client, stops the owned executor, then stops watchers
+and closes the event loop and store.
 
 The `ChatClient` presentation protocol is unchanged in this prerequisite. Its
 synchronous callback surface continues to bridge to the owned event-loop thread.
@@ -238,19 +244,20 @@ Keep the execution package facade narrow; callers may import from
 
 1. `RunRequest` rejects invalid field shapes and contains no local runtime or
    transport values.
-2. Local start captures one setup/state pair, preserves include resolution and
+2. Local run captures one setup/state pair, preserves include resolution and
    session/run policy precedence, returns the accepted ID, forwards every native
    event once, and resolves `wait()` to matching `RunDetail`.
 3. Preparation rejection creates no run and surfaces the existing error.
-4. Stop and steer preserve timing, request IDs, reason/message payloads, and
+4. Cancel and steer preserve timing, request IDs, reason/message payloads, and
    caller-facing control results.
-5. Closing is idempotent, cancels and awaits client-owned active runs, and leaves
-   them durably terminal before the store closes.
+5. Operations reject a disconnected client; connect and disconnect are
+   idempotent and do not stop the executor or cancel accepted runs. The executor
+   owner stops active runs before closing the store.
 6. Local Chat model/runnable lists, settings, thread creation, result lookup,
    plain input, named input, includes, prompts, queueing, cancellation, steering,
    scripted mode, and presentation remain unchanged.
-7. Script, Scheduler, Inbox, API, `AgentCore`, and direct `RunExecutor` tests have
-   no production changes and remain green.
+7. Script, Scheduler, Inbox, API, `AgentCore`, and direct `RunExecutor` behavior
+   remains green under the canonical operation names.
 8. The default offline verification suite passes.
 
 ## Risks

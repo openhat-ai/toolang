@@ -281,7 +281,7 @@ execution/
 ├── tools/                  # agent-specific built-in tools
 └── executor/               # RunExecutor and execution implementation helpers
     ├── __init__.py         # RunExecutor, RunSpec, and LocalRunHandle exports
-    ├── executor.py         # public run contract and private per-start _Execution
+    ├── executor.py         # public run contract and private per-run _Execution
     ├── common.py           # bound runs, locals, and shared execution helpers
     ├── prepare.py          # agic resolution and complete model-input preparation
     ├── diagnostics.py      # bounded model and tool diagnostics

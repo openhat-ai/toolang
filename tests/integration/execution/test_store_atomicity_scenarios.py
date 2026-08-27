@@ -305,9 +305,9 @@ def test_retry_reopens_root_from_a_failed_value_step(
             error="temporary failure",
         )
 
-        start = store.get_run_control(run_id=run.id, index=0)
-        assert start is not None
-        assert isinstance(start.payload, RunControlPayload)
+        run_control = store.get_run_control(run_id=run.id, index=0)
+        assert run_control is not None
+        assert isinstance(run_control.payload, RunControlPayload)
         with pytest.raises(
             ValueError,
             match="retry state no longer matches original run.*use rerun",
@@ -315,11 +315,11 @@ def test_retry_reopens_root_from_a_failed_value_step(
             store.accept_retry(
                 run_id=run.id,
                 anchor=None,
-                resources=start.payload.resources,
-                limits=start.payload.limits,
-                runnable=start.payload.runnable,
-                model=start.payload.model,
-                locals=start.payload.locals,
+                resources=run_control.payload.resources,
+                limits=run_control.payload.limits,
+                runnable=run_control.payload.runnable,
+                model=run_control.payload.model,
+                locals=run_control.payload.locals,
                 sandbox="host",
                 state="1" * 64,
                 request_id="retry-mismatch",
@@ -330,13 +330,13 @@ def test_retry_reopens_root_from_a_failed_value_step(
         reopened, control, ejected = store.accept_retry(
             run_id=run.id,
             anchor=None,
-            resources=start.payload.resources,
-            limits=start.payload.limits,
-            runnable=start.payload.runnable,
-            model=start.payload.model,
-            locals=start.payload.locals,
+            resources=run_control.payload.resources,
+            limits=run_control.payload.limits,
+            runnable=run_control.payload.runnable,
+            model=run_control.payload.model,
+            locals=run_control.payload.locals,
             sandbox="host",
-            state=start.payload.state,
+            state=run_control.payload.state,
             request_id="retry-1",
             created_at="2026-01-01T00:00:03Z",
         )
@@ -379,10 +379,10 @@ def test_retry_rejects_unknown_or_mismatched_sandbox_without_mutation(
             input=Message.user("hello"),
         )
         project_run_end(store, run_id=run.id, status="succeeded")
-        start = store.get_run_control(run_id=run.id, index=0)
-        assert start is not None
-        assert isinstance(start.payload, RunControlPayload)
-        run_payload = start.payload
+        run_control = store.get_run_control(run_id=run.id, index=0)
+        assert run_control is not None
+        assert isinstance(run_control.payload, RunControlPayload)
+        run_payload = run_control.payload
         assert run_payload.sandbox == "host"
 
         def accept_retry(sandbox: str):
@@ -496,19 +496,19 @@ def test_retry_anchor_selection_distinguishes_run_outcomes_and_explicit_values(
             error="runtime failure" if run_status == "failed" else None,
         )
 
-        start = store.get_run_control(run_id=run.id, index=0)
-        assert start is not None
-        assert isinstance(start.payload, RunControlPayload)
+        run_control = store.get_run_control(run_id=run.id, index=0)
+        assert run_control is not None
+        assert isinstance(run_control.payload, RunControlPayload)
         _reopened, control, ejected = store.accept_retry(
             run_id=run.id,
             anchor=steps[explicit_anchor].path if explicit_anchor is not None else None,
-            resources=start.payload.resources,
-            limits=start.payload.limits,
-            runnable=start.payload.runnable,
-            model=start.payload.model,
-            locals=start.payload.locals,
+            resources=run_control.payload.resources,
+            limits=run_control.payload.limits,
+            runnable=run_control.payload.runnable,
+            model=run_control.payload.model,
+            locals=run_control.payload.locals,
             sandbox="host",
-            state=start.payload.state,
+            state=run_control.payload.state,
             request_id=None,
             created_at="2026-01-01T00:00:03Z",
         )

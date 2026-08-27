@@ -172,7 +172,7 @@ A run has:
 - one globally unique run id
 - one thread
 - one runnable name
-- one start-control input
+- one run-control input
 - one status
 - zero or more steps
 

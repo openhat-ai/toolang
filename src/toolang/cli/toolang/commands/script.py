@@ -591,6 +591,7 @@ async def _execute_remote(
     ) as http:
         client = RemoteRunClient(endpoint, client=http)
         try:
+            await client.connect()
             await inspect_remote_runtime(
                 http,
                 client.endpoint,
@@ -831,12 +832,13 @@ async def _execute(
         if not quiet
         else None
     )
-    handle = executor.run(
-        spec,
-        run_id=run_id,
-        tracer=tracer,
-    )
+    executor.start()
     try:
+        handle = executor.run(
+            spec,
+            run_id=run_id,
+            tracer=tracer,
+        )
         return await _await_script_run(handle)
     finally:
         try:
