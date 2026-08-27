@@ -41,8 +41,6 @@ class AgentCore:
         self.layout = layout
         self.store = RunStore(layout.run_store)
         self.ids = IdIssuer(layout.id_state)
-        self.executor = RunExecutor(self.store, self.ids)
-        self.executor.start()
         self.threads = ThreadManager(self.store, self.ids)
         self.history = RunHistory(self.store)
         self.setup = SetupWatcher(
@@ -53,6 +51,14 @@ class AgentCore:
             limit_overrides=limit_overrides,
         )
         self.state = StateWatcher(layout)
+        self.executor = RunExecutor(
+            self.store,
+            self.ids,
+            setup=lambda: self.setup.current(),
+            state=lambda: self.state.current(),
+            load_state=lambda revision: self.state.load(revision),
+        )
+        self.executor.start()
 
     async def close(self) -> None:
         """Stop local execution and close durable storage."""

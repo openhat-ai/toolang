@@ -239,6 +239,19 @@ class AuthoredRunValidationRequest(ApiRequest):
     runnable_fallbacks: list[StrictText] = Field(min_length=1)
 
 
+class AuthoredRerunRequest(ApiRequest):
+    """One unresolved rerun request for server-owned resolution."""
+
+    request_id: StrictText
+    commands: list[RunOverridePayload] = Field(default_factory=list)
+
+
+class AuthoredRetryRequest(AuthoredRerunRequest):
+    """One unresolved retry request for server-owned resolution."""
+
+    anchor: StepPath | None = None
+
+
 class RuntimeSandboxPayload(ApiRequest):
     """Public identity of the sandbox hosting the current server process."""
 

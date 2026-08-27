@@ -19,7 +19,13 @@ from pydantic import TypeAdapter, ValidationError
 from toolang.base.types.message import Message
 from toolang.execution.client import RunHandle
 from toolang.execution.events import RunBegin, RunEnd, RunTracer, run_event_from_data
-from toolang.execution.schemas import ControlInfo, RunDetail, RunRequest
+from toolang.execution.schemas import (
+    ControlInfo,
+    RerunRequest,
+    RetryRequest,
+    RunDetail,
+    RunRequest,
+)
 from toolang.execution.types import ControlTiming, RunOverride, validate_execution_id
 
 
@@ -103,18 +109,70 @@ class RemoteRunClient:
         *,
         tracer: RunTracer | None = None,
     ) -> RunHandle:
+        return await self._submit_stream(
+            operation="run",
+            path="/api/v1/runs/authored/stream",
+            payload=_run_request_data(request),
+            request_id=request.request_id,
+            source_run_id=None,
+            tracer=tracer,
+        )
+
+    async def retry(
+        self,
+        request: RetryRequest,
+        *,
+        tracer: RunTracer | None = None,
+    ) -> RunHandle:
+        return await self._submit_stream(
+            operation="retry",
+            path=f"/api/v1/runs/{request.source}/retry/stream",
+            payload=_restart_request_data(request),
+            request_id=request.request_id,
+            source_run_id=request.source,
+            tracer=tracer,
+        )
+
+    async def rerun(
+        self,
+        request: RerunRequest,
+        *,
+        tracer: RunTracer | None = None,
+    ) -> RunHandle:
+        return await self._submit_stream(
+            operation="rerun",
+            path=f"/api/v1/runs/{request.source}/rerun/stream",
+            payload=_restart_request_data(request),
+            request_id=request.request_id,
+            source_run_id=request.source,
+            tracer=tracer,
+        )
+
+    async def _submit_stream(
+        self,
+        *,
+        operation: str,
+        path: str,
+        payload: dict[str, object],
+        request_id: str,
+        source_run_id: str | None,
+        tracer: RunTracer | None,
+    ) -> RunHandle:
         self._require_connected()
         loop = asyncio.get_running_loop()
         accepted: asyncio.Future[str] = loop.create_future()
         delivery = asyncio.Event()
         reader = asyncio.create_task(
             self._read_run_stream(
-                request,
+                operation=operation,
+                path=path,
+                payload=payload,
+                source_run_id=source_run_id,
                 tracer=tracer,
                 accepted=accepted,
                 delivery=delivery,
             ),
-            name=f"toolang-remote-run-{request.request_id}",
+            name=f"toolang-remote-{operation}-{request_id}",
         )
         self._readers.add(reader)
         reader.add_done_callback(self._reader_done)
@@ -205,8 +263,11 @@ class RemoteRunClient:
 
     async def _read_run_stream(
         self,
-        request: RunRequest,
         *,
+        operation: str,
+        path: str,
+        payload: dict[str, object],
+        source_run_id: str | None,
         tracer: RunTracer | None,
         accepted: asyncio.Future[str],
         delivery: asyncio.Event,
@@ -216,16 +277,24 @@ class RemoteRunClient:
             async with aconnect_sse(
                 http,
                 "POST",
-                self._url("/api/v1/runs/authored/stream"),
-                json=_run_request_data(request),
+                self._url(path),
+                json=payload,
                 timeout=_stream_timeout(http.timeout),
             ) as source:
                 response = source.response
                 if not response.is_success:
                     await response.aread()
-                    raise _http_error(response, operation="run")
+                    raise _http_error(response, operation=operation)
                 _require_event_stream(response)
                 run_id = _response_run_id(response)
+                if operation == "retry" and run_id != source_run_id:
+                    raise RemoteRunClientError(
+                        "remote retry did not accept the source run ID"
+                    )
+                if operation == "rerun" and run_id == source_run_id:
+                    raise RemoteRunClientError(
+                        "remote rerun did not accept a new run ID"
+                    )
                 accepted.set_result(run_id)
                 await delivery.wait()
                 await self._consume_events(source.aiter_sse(), run_id, tracer=tracer)
@@ -240,7 +309,7 @@ class RemoteRunClient:
                 accepted.set_exception(exc)
             raise
         except httpx.HTTPError as exc:
-            error = _transport_error("run", exc)
+            error = _transport_error(operation, exc)
             if not accepted.done():
                 accepted.set_exception(error)
             raise error from exc
@@ -470,6 +539,16 @@ def _run_request_data(request: RunRequest) -> dict[str, object]:
         ],
         "runnable_fallbacks": list(request.runnable_fallbacks),
     }
+
+
+def _restart_request_data(request: RetryRequest | RerunRequest) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "request_id": request.request_id,
+        "commands": [_run_override_data(item) for item in request.commands],
+    }
+    if isinstance(request, RetryRequest):
+        payload["anchor"] = str(request.anchor) if request.anchor is not None else None
+    return payload
 
 
 def _run_override_data(command: RunOverride) -> dict[str, object]:

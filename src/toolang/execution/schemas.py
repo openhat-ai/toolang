@@ -38,6 +38,7 @@ from .types import (
     ThreadPeerType,
     Pointer,
     RunOverride,
+    validate_execution_id,
     validate_occurrence,
     validate_step_given,
     validate_step_noted,
@@ -118,6 +119,65 @@ class RunRequest:
             raise TypeError("run request ID must be a string")
         if not self.request_id or self.request_id != self.request_id.strip():
             raise ValueError("run request requires a canonical request ID")
+
+
+@dataclass(frozen=True, slots=True)
+class RetryRequest:
+    """One unresolved caller request to reopen a root run."""
+
+    source: str
+    commands: tuple[RunOverride, ...]
+    request_id: str
+    anchor: StepPath | None = None
+
+    def __post_init__(self) -> None:
+        _validate_restart_request(
+            source=self.source,
+            commands=self.commands,
+            request_id=self.request_id,
+        )
+        if self.anchor is not None and not isinstance(self.anchor, StepPath):
+            raise TypeError("retry request anchor must be a StepPath or none")
+        if self.anchor is not None and self.anchor.run != self.source:
+            raise ValueError("retry request anchor must belong to its source run")
+
+
+@dataclass(frozen=True, slots=True)
+class RerunRequest:
+    """One unresolved caller request to start a new root from a source run."""
+
+    source: str
+    commands: tuple[RunOverride, ...]
+    request_id: str
+
+    def __post_init__(self) -> None:
+        _validate_restart_request(
+            source=self.source,
+            commands=self.commands,
+            request_id=self.request_id,
+        )
+
+
+def _validate_restart_request(
+    *,
+    source: str,
+    commands: tuple[RunOverride, ...],
+    request_id: str,
+) -> None:
+    validate_execution_id(source, label="restart source run")
+    if not isinstance(commands, tuple) or not all(
+        isinstance(command, RunOverride) for command in commands
+    ):
+        raise TypeError("restart request commands must be RunOverride objects")
+    if any(
+        command.group == "default" and command.field == "runnable"
+        for command in commands
+    ):
+        raise ValueError("restart request cannot replace the persisted runnable")
+    if not isinstance(request_id, str):
+        raise TypeError("restart request ID must be a string")
+    if not request_id or request_id != request_id.strip():
+        raise ValueError("restart request requires a canonical request ID")
 
 
 @dataclass(frozen=True, slots=True)

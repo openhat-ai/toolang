@@ -993,6 +993,8 @@ Delete is destructive and is available only through archived routes.
 - `GET /api/v1/runs`
 - `GET /api/v1/runs/{run_id}`
 - `GET /api/v1/runs/{run_id}/stream`
+- `POST /api/v1/runs/{run_id}/retry/stream`
+- `POST /api/v1/runs/{run_id}/rerun/stream`
 - `POST /api/v1/runs/{run_id}/retry`
 - `POST /api/v1/runs/{run_id}/rerun`
 - `POST /api/v1/runs/{run_id}/steer`

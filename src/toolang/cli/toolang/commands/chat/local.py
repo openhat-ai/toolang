@@ -15,11 +15,7 @@ from uuid import uuid4
 from toolang.base.types.message import Message
 from toolang.common.ids import IdIssuer
 from toolang.common.layout import AgentLayout
-from toolang.execution.calls import (
-    IncludeResolver,
-    parse_call,
-    validate_session_commands,
-)
+from toolang.execution.calls import parse_call, validate_session_commands
 from toolang.execution.client import LocalRunClient, RunClient
 from toolang.execution.events import RunEvent, RunTracer
 from toolang.execution.executor import RunExecutor
@@ -33,9 +29,8 @@ from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.execution.schemas import RunRequest
 from toolang.execution.types import RunOverride, ThreadPrefix
-from toolang.lang.includes import resolve_file_include
 from toolang.plugin.sandboxes.host import host_sandbox_description
-from toolang.setup import AgentSetup, SetupWatcher
+from toolang.setup import SetupWatcher
 from toolang.state.watcher import StateWatcher
 from toolang.execution.values import parts_from_local
 from .base import ChatExecutorMetadata, ChatResult, ChatRunState, RunAccepted
@@ -83,14 +78,14 @@ class LocalChatSession:
             limit_overrides=limit_overrides,
         )
         self.state_watcher = StateWatcher(layout)
-        self.executor = RunExecutor(self.store, self.ids)
-        self.run_client: RunClient = LocalRunClient(
-            self.executor,
+        self.executor = RunExecutor(
+            self.store,
+            self.ids,
             setup=self.setup_watcher.current,
             state=self.state_watcher.current,
-            refresh_state=self.state_watcher.refresh,
-            include=self._include_resolver,
+            load_state=lambda revision: self.state_watcher.load(revision),
         )
+        self.run_client: RunClient = LocalRunClient(self.executor)
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
         self._stop_signal: asyncio.Event | None = None
@@ -311,14 +306,6 @@ class LocalChatSession:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*self._watch_tasks, return_exceptions=True)
-
-    def _include_resolver(self, setup: AgentSetup) -> IncludeResolver:
-        base = (
-            setup.environment.working_directory
-            if setup.environment is not None
-            else self.layout.home
-        )
-        return lambda reference: resolve_file_include(reference, base=base)
 
     def _submit_control(
         self,

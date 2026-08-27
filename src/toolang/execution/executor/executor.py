@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Generator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 import logging
 from decimal import Decimal, InvalidOperation
@@ -30,6 +30,7 @@ from toolang.lang.input import (
     resolve_runnable_input,
     validate_value,
 )
+from toolang.lang.includes import resolve_file_include
 from toolang.lang.types import Value
 from toolang.plugin.models.config import (
     ProviderConfig,
@@ -40,6 +41,7 @@ from toolang.state.state import AgentState, state_program_module
 from toolang.setup import AgentSetup
 
 from ..accounting import selected_usd_cost
+from ..calls import IncludeResolver, resolve_restart_request, resolve_run_request
 from ..events import RunBegin, RunEnd, RunEvent, RunTracer, StepBegin
 from ..records import (
     PreparationControlPayload,
@@ -48,6 +50,7 @@ from ..records import (
     StepRecord,
 )
 from ..store import RunStore
+from ..schemas import RerunRequest, RetryRequest, RunRequest
 from ..types import (
     ControlTiming,
     AgentResources,
@@ -91,6 +94,11 @@ from ._persist import _PersistSink
 
 _LOGGER = logging.getLogger(__name__)
 _CONTROL_POLL_INTERVAL = 0.05
+
+SetupSource = Callable[[], AgentSetup]
+StateSource = Callable[[], AgentState]
+StateLoad = Callable[[str], AgentState]
+IncludeSource = Callable[[AgentSetup], IncludeResolver]
 
 
 class _RunCanceled(asyncio.CancelledError):
@@ -187,9 +195,28 @@ class LocalRunHandle(Awaitable[RunRecord]):
 class RunExecutor:
     """Accept, control, and execute runs against durable execution truth."""
 
-    def __init__(self, store: RunStore, ids: IdIssuer) -> None:
+    def __init__(
+        self,
+        store: RunStore,
+        ids: IdIssuer,
+        *,
+        setup: SetupSource | None = None,
+        state: StateSource | None = None,
+        load_state: StateLoad | None = None,
+        include: IncludeSource | None = None,
+    ) -> None:
+        if (setup is None) != (state is None) or (setup is None) != (
+            load_state is None
+        ):
+            raise TypeError(
+                "run request execution requires setup, state, and load_state together"
+            )
         self.store = store
         self.ids = ids
+        self._setup = setup
+        self._state = state
+        self._load_state = load_state
+        self._include = include
         self._persist = _PersistSink(self.store)
         self._control_poll_interval = _CONTROL_POLL_INTERVAL
         self._active: dict[str, _ActiveRun] = {}
@@ -206,7 +233,7 @@ class RunExecutor:
 
     def run(
         self,
-        spec: RunSpec,
+        spec: RunSpec | RunRequest,
         *,
         run_id: str | None = None,
         request_id: str | None = None,
@@ -215,6 +242,19 @@ class RunExecutor:
         """Accept one top-level run and immediately return its local handle."""
 
         self._require_available()
+        if isinstance(spec, RunRequest):
+            if run_id is not None or request_id is not None:
+                raise ValueError(
+                    "resolved run identity cannot override a caller run request"
+                )
+            setup, state = self._current_snapshots()
+            request_id = spec.request_id
+            spec = resolve_run_request(
+                spec,
+                setup=setup,
+                state=state,
+                include=self._include_resolver(setup),
+            )
         loop = asyncio.get_running_loop()
         sandbox = _setup_sandbox(spec.setup)
         executable, input, agent_resources, resources = _prepare_run_spec(spec)
@@ -247,10 +287,10 @@ class RunExecutor:
 
     def rerun(
         self,
-        source: str,
+        source: str | RerunRequest,
         *,
-        setup: AgentSetup,
-        state: AgentState,
+        setup: AgentSetup | None = None,
+        state: AgentState | None = None,
         ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
         limits: RunLimits | None = None,
@@ -261,6 +301,23 @@ class RunExecutor:
         """Start a new root run from one visible source run's invocation."""
 
         self._require_available()
+        if isinstance(source, RerunRequest):
+            if setup is not None or state is not None or request_id is not None:
+                raise ValueError(
+                    "resolved rerun inputs cannot override a caller rerun request"
+                )
+            request = source
+            setup, state = self._current_snapshots()
+            resolved = resolve_restart_request(request, setup=setup, state=state)
+            source = request.source
+            setup = resolved.setup
+            state = resolved.state
+            ceiling = resolved.ceiling
+            model = resolved.model
+            limits = resolved.limits
+            request_id = request.request_id
+        if setup is None or state is None:
+            raise TypeError("rerun requires resolved setup and state")
         loop = asyncio.get_running_loop()
         sandbox = _setup_sandbox(setup)
         spec = self._source_spec(
@@ -301,10 +358,10 @@ class RunExecutor:
 
     def retry(
         self,
-        run_id: str,
+        run_id: str | RetryRequest,
         *,
-        setup: AgentSetup,
-        state: AgentState,
+        setup: AgentSetup | None = None,
+        state: AgentState | None = None,
         anchor: StepPath | str | None = None,
         ceiling: AgentCeiling = AgentCeiling(),
         model: str | None = None,
@@ -315,6 +372,25 @@ class RunExecutor:
         """Reopen one terminal root run from a durable step boundary."""
 
         self._require_available()
+        if isinstance(run_id, RetryRequest):
+            if setup is not None or state is not None or request_id is not None:
+                raise ValueError(
+                    "resolved retry inputs cannot override a caller retry request"
+                )
+            request = run_id
+            setup = self._current_setup()
+            state = self._recorded_state(request.source)
+            resolved = resolve_restart_request(request, setup=setup, state=state)
+            run_id = request.source
+            setup = resolved.setup
+            state = resolved.state
+            anchor = request.anchor
+            ceiling = resolved.ceiling
+            model = resolved.model
+            limits = resolved.limits
+            request_id = request.request_id
+        if setup is None or state is None:
+            raise TypeError("retry requires resolved setup and state")
         loop = asyncio.get_running_loop()
         sandbox = _setup_sandbox(setup)
         self._require_retry_compatible(run_id, state, sandbox=sandbox)
@@ -356,6 +432,55 @@ class RunExecutor:
             tracer=tracer,
             retry=control,
         )
+
+    def _current_setup(self) -> AgentSetup:
+        source = self._setup
+        if source is None:
+            raise RuntimeError("run executor has no request snapshot sources")
+        return source()
+
+    def _current_snapshots(self) -> tuple[AgentSetup, AgentState]:
+        source = self._state
+        if source is None:
+            raise RuntimeError("run executor has no request snapshot sources")
+        return self._current_setup(), source()
+
+    def _include_resolver(self, setup: AgentSetup) -> IncludeResolver:
+        if self._include is not None:
+            return self._include(setup)
+        base = (
+            setup.environment.working_directory
+            if setup.environment is not None
+            else setup.layout.home
+        )
+        return lambda reference: resolve_file_include(reference, base=base)
+
+    def _recorded_state(self, run_id: str) -> AgentState:
+        load = self._load_state
+        if load is None:
+            raise RuntimeError("run executor has no request snapshot sources")
+        run = self.store.get_run(run_id=run_id)
+        if run is None or run.parent is not None:
+            raise ValueError(f"root run not found: {run_id}")
+        control = self.store.get_run_control(
+            run_id=run.control.target,
+            index=run.control.index,
+        )
+        if control is None or not isinstance(
+            control.payload,
+            PreparationControlPayload,
+        ):
+            raise ValueError(f"run preparation not found: {run_id}")
+        revision = control.payload.state
+        try:
+            state = load(revision)
+        except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"retry state snapshot is not available: {revision}"
+            ) from exc
+        if not isinstance(state, AgentState) or state.revision != revision:
+            raise ValueError(f"retry state snapshot is not available: {revision}")
+        return state
 
     def _source_spec(
         self,

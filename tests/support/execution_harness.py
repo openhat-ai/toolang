@@ -12,7 +12,7 @@ from types import TracebackType
 from typing import Any, Self
 
 from toolang.base.protocols.tool import AgentTool
-from toolang.base.types.message import Part
+from toolang.base.types.message import Part, TextPart
 from toolang.base.types.model import ModelInfo, ModelTarget, Provider, ResolvedProvider
 from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.base.types.run import (
@@ -96,6 +96,10 @@ class ScriptedModelTurn:
 
 
 ScriptedResponse = ModelCallResult | ScriptedModelTurn | Exception
+
+
+def _missing_state_revision(revision: str) -> AgentState:
+    raise ValueError(f"state revision not found: {revision}")
 
 
 class ScriptedModelAdapter:
@@ -336,7 +340,18 @@ class ExecutionHarness:
             state=state,
             store=store,
             ids=ids,
-            executor=RunExecutor(store, ids),
+            executor=RunExecutor(
+                store,
+                ids,
+                setup=lambda: setup,
+                state=lambda: state,
+                load_state=lambda revision: (
+                    state
+                    if revision == state.revision
+                    else _missing_state_revision(revision)
+                ),
+                include=lambda _setup: lambda reference: TextPart(reference),
+            ),
             threads=ThreadManager(store, ids),
             adapter=adapter,
         )

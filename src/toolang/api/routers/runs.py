@@ -9,14 +9,18 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from toolang.api.app import AgentCoreDep, LiveEventRelayDep
 from toolang.api.common import RUN_ID_HEADER, EventSubscription, sse_stream
 from toolang.api.conversion import (
+    parse_authored_rerun,
     parse_authored_run_validation,
     parse_authored_run,
+    parse_authored_retry,
     parse_parts,
     parse_user_message,
 )
 from toolang.api.schemas import (
+    AuthoredRerunRequest,
     AuthoredRunValidationRequest,
     AuthoredRunRequest,
+    AuthoredRetryRequest,
     RunCancelRequest,
     RunCommandResult,
     RunCreateRequest,
@@ -26,7 +30,7 @@ from toolang.api.schemas import (
 )
 from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
-from toolang.execution.calls import resolve_run_request, validate_session_commands
+from toolang.execution.calls import validate_session_commands
 from toolang.execution.executor import LocalRunHandle, RunSpec
 from toolang.execution.records import (
     PreparationControlPayload,
@@ -37,7 +41,6 @@ from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
 from toolang.lang.input import resolve_runnable_input
 from toolang.execution.runnables import parse_runnable_ref, resolve_state_runnable
-from toolang.lang.includes import resolve_file_include
 from toolang.state.state import AgentState
 from toolang.up import AgentCore
 
@@ -109,36 +112,76 @@ async def _run_authored_stream(
 ) -> AsyncIterator[_AcceptedRunStream]:
     thread_id = _run_thread(core, payload.thread)
     run_request = parse_authored_run(payload)
-    setup = core.setup.current()
-    state = await _fresh_state(core)
-    include_base = (
-        setup.environment.working_directory
-        if setup.environment is not None
-        else core.layout.home
-    )
     try:
-        spec = resolve_run_request(
-            run_request,
-            setup=setup,
-            state=state,
-            include=lambda reference: resolve_file_include(
-                reference,
-                base=include_base,
-            ),
-        )
         handle = core.executor.run(
-            spec,
-            request_id=run_request.request_id,
+            run_request,
             tracer=live.trace(thread_id=thread_id),
         )
     except (OSError, ToolangError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    subscription = live.subscribe_run(handle.run_id)
-    response.headers[RUN_ID_HEADER] = handle.run_id
+    subscription = _subscribe_accepted_run(live, response, handle)
     try:
         yield handle, subscription
     finally:
         subscription.close()
+
+
+async def _retry_authored_stream(
+    core: AgentCoreDep,
+    live: LiveEventRelayDep,
+    response: Response,
+    run_id: str,
+    payload: AuthoredRetryRequest,
+) -> AsyncIterator[_AcceptedRunStream]:
+    source = _terminal_root_or_409(core, run_id)
+    request = parse_authored_retry(source.id, payload)
+    try:
+        handle = core.executor.retry(
+            request,
+            tracer=live.trace(thread_id=source.thread),
+        )
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    subscription = _subscribe_accepted_run(live, response, handle)
+    try:
+        yield handle, subscription
+    finally:
+        subscription.close()
+
+
+async def _rerun_authored_stream(
+    core: AgentCoreDep,
+    live: LiveEventRelayDep,
+    response: Response,
+    run_id: str,
+    payload: AuthoredRerunRequest,
+) -> AsyncIterator[_AcceptedRunStream]:
+    source = _terminal_root_or_409(core, run_id)
+    request = parse_authored_rerun(source.id, payload)
+    try:
+        handle = core.executor.rerun(
+            request,
+            tracer=live.trace(thread_id=source.thread),
+        )
+    except (ToolangError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    subscription = _subscribe_accepted_run(live, response, handle)
+    try:
+        yield handle, subscription
+    finally:
+        subscription.close()
+
+
+def _subscribe_accepted_run(
+    live: LiveEventRelayDep,
+    response: Response,
+    handle: LocalRunHandle,
+) -> EventSubscription:
+    """Register one accepted root before the dependency yields its event loop."""
+
+    subscription = live.subscribe_run(handle.run_id)
+    response.headers[RUN_ID_HEADER] = handle.run_id
+    return subscription
 
 
 async def _subscribe_root_run(
@@ -205,6 +248,46 @@ async def execute_authored_run_stream(
     core: AgentCoreDep,
     request: Request,
     accepted: Annotated[_AcceptedRunStream, Depends(_run_authored_stream)],
+) -> AsyncIterator[ServerSentEvent]:
+    handle, subscription = accepted
+    async for event in sse_stream(
+        request,
+        subscription,
+        terminal_run_id=handle.run_id,
+        stopped=lambda: _run_terminal(core, handle.run_id),
+    ):
+        yield event
+
+
+@router.post(
+    "/{run_id}/retry/stream",
+    summary="Retry Authored Run Stream",
+    response_class=EventSourceResponse,
+)
+async def retry_authored_run_stream(
+    core: AgentCoreDep,
+    request: Request,
+    accepted: Annotated[_AcceptedRunStream, Depends(_retry_authored_stream)],
+) -> AsyncIterator[ServerSentEvent]:
+    handle, subscription = accepted
+    async for event in sse_stream(
+        request,
+        subscription,
+        terminal_run_id=handle.run_id,
+        stopped=lambda: _run_terminal(core, handle.run_id),
+    ):
+        yield event
+
+
+@router.post(
+    "/{run_id}/rerun/stream",
+    summary="Rerun Authored Run Stream",
+    response_class=EventSourceResponse,
+)
+async def rerun_authored_run_stream(
+    core: AgentCoreDep,
+    request: Request,
+    accepted: Annotated[_AcceptedRunStream, Depends(_rerun_authored_stream)],
 ) -> AsyncIterator[ServerSentEvent]:
     handle, subscription = accepted
     async for event in sse_stream(

@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
 from toolang.base.types.message import Message
-from toolang.execution.calls import IncludeResolver, resolve_run_request
 from toolang.execution.events import RunTracer
 from toolang.execution.executor import LocalRunHandle, RunExecutor
 from toolang.execution.history import RunHistory
 from toolang.execution.records import RunControlRecord
-from toolang.execution.schemas import ControlInfo, RunDetail, RunRequest
+from toolang.execution.schemas import (
+    ControlInfo,
+    RerunRequest,
+    RetryRequest,
+    RunDetail,
+    RunRequest,
+)
 from toolang.execution.types import ControlTiming
-from toolang.setup import AgentSetup
-from toolang.state.state import AgentState
 
 
 class RunHandle(Protocol):
@@ -41,6 +43,20 @@ class RunClient(Protocol):
         tracer: RunTracer | None = None,
     ) -> RunHandle: ...
 
+    async def retry(
+        self,
+        request: RetryRequest,
+        *,
+        tracer: RunTracer | None = None,
+    ) -> RunHandle: ...
+
+    async def rerun(
+        self,
+        request: RerunRequest,
+        *,
+        tracer: RunTracer | None = None,
+    ) -> RunHandle: ...
+
     async def cancel(
         self,
         run_id: str,
@@ -62,12 +78,6 @@ class RunClient(Protocol):
     async def disconnect(self) -> None: ...
 
 
-SetupSource = Callable[[], AgentSetup]
-StateSource = Callable[[], AgentState]
-StateRefresh = Callable[[], Awaitable[AgentState]]
-IncludeSource = Callable[[AgentSetup], IncludeResolver]
-
-
 @dataclass(frozen=True, slots=True)
 class _LocalRunClientHandle:
     run_id: str
@@ -83,22 +93,10 @@ class _LocalRunClientHandle:
 
 
 class LocalRunClient:
-    """Resolve caller requests and execute them in the current process."""
+    """Forward caller requests to an executor in the current process."""
 
-    def __init__(
-        self,
-        executor: RunExecutor,
-        *,
-        setup: SetupSource,
-        state: StateSource,
-        refresh_state: StateRefresh | None = None,
-        include: IncludeSource,
-    ) -> None:
+    def __init__(self, executor: RunExecutor) -> None:
         self._executor = executor
-        self._setup = setup
-        self._state = state
-        self._refresh_state = refresh_state
-        self._include = include
         self._history = RunHistory(executor.store)
         self._connected = False
 
@@ -112,28 +110,37 @@ class LocalRunClient:
         tracer: RunTracer | None = None,
     ) -> RunHandle:
         self._require_connected()
-        setup = self._setup()
-        state = (
-            await self._refresh_state()
-            if self._refresh_state is not None
-            else self._state()
-        )
-        spec = resolve_run_request(
-            request,
-            setup=setup,
-            state=state,
-            include=self._include(setup),
-        )
         handle = self._executor.run(
-            spec,
-            request_id=request.request_id,
+            request,
             tracer=tracer,
         )
-        return _LocalRunClientHandle(
-            run_id=handle.run_id,
-            _handle=handle,
-            _history=self._history,
+        return self._handle(handle)
+
+    async def retry(
+        self,
+        request: RetryRequest,
+        *,
+        tracer: RunTracer | None = None,
+    ) -> RunHandle:
+        self._require_connected()
+        handle = self._executor.retry(
+            request,
+            tracer=tracer,
         )
+        return self._handle(handle)
+
+    async def rerun(
+        self,
+        request: RerunRequest,
+        *,
+        tracer: RunTracer | None = None,
+    ) -> RunHandle:
+        self._require_connected()
+        handle = self._executor.rerun(
+            request,
+            tracer=tracer,
+        )
+        return self._handle(handle)
 
     async def cancel(
         self,
@@ -171,6 +178,13 @@ class LocalRunClient:
 
     async def disconnect(self) -> None:
         self._connected = False
+
+    def _handle(self, handle: LocalRunHandle) -> RunHandle:
+        return _LocalRunClientHandle(
+            run_id=handle.run_id,
+            _handle=handle,
+            _history=self._history,
+        )
 
     def _control_info(
         self,

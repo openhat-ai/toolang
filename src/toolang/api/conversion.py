@@ -5,12 +5,14 @@ from decimal import Decimal, InvalidOperation
 from fastapi import HTTPException
 
 from toolang.base.types.message import Message, Part
-from toolang.execution.schemas import RunRequest
+from toolang.execution.schemas import RerunRequest, RetryRequest, RunRequest
 from toolang.execution.types import RunOverride
 from toolang.lang.input import parse_input
 from .schemas import (
     AuthoredRunRequest,
     AuthoredRunValidationRequest,
+    AuthoredRerunRequest,
+    AuthoredRetryRequest,
     InputMessagePayload,
     InputPart,
     RunOverridePayload,
@@ -55,6 +57,39 @@ def parse_authored_run_validation(
             request_id="term_validation",
         )
         return commands, fallbacks
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def parse_authored_retry(
+    source: str,
+    payload: AuthoredRetryRequest,
+) -> RetryRequest:
+    """Reconstruct one transport-neutral retry request from strict HTTP data."""
+
+    try:
+        return RetryRequest(
+            source=source,
+            commands=tuple(_parse_run_override(item) for item in payload.commands),
+            request_id=payload.request_id,
+            anchor=payload.anchor,
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def parse_authored_rerun(
+    source: str,
+    payload: AuthoredRerunRequest,
+) -> RerunRequest:
+    """Reconstruct one transport-neutral rerun request from strict HTTP data."""
+
+    try:
+        return RerunRequest(
+            source=source,
+            commands=tuple(_parse_run_override(item) for item in payload.commands),
+            request_id=payload.request_id,
+        )
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

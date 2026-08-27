@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
@@ -26,7 +27,10 @@ import toolang.cli.toolang.commands.plugin as plugin_commands
 import toolang.cli.toolang.commands.thread as thread_commands
 import toolang.cli.toolang.main as cli
 from toolang.cli.common.output import shorten_home_path
+from toolang.cli.common.execution_runtime import ExecutionRuntime
 from toolang.common.layout import AgentLayout
+from toolang.execution.client import LocalRunClient
+from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
 from toolang.execution.records import (
     RerunControlPayload,
@@ -34,6 +38,7 @@ from toolang.execution.records import (
     SteerControlPayload,
 )
 from toolang.execution.store import RunStore
+from toolang.execution.schemas import RerunRequest, RetryRequest
 from toolang.execution.types import Local, StepPath, ThreadPrefix
 from toolang.lang.input import resolve_input_parts
 from toolang.setup import AgentSetup
@@ -499,42 +504,52 @@ agic reply(_: Part[]) -> Part[]:
     )
     _create_agent(harness.setup.layout.root)
 
-    class _SetupSnapshot:
-        def __init__(
-            self,
-            _layout: AgentLayout,
-            *,
-            limit_overrides: Mapping[str, object] | None = None,
-            **_kwargs: object,
-        ) -> None:
-            self.setup = replace(
-                harness.setup,
-                limits=replace(
-                    harness.setup.limits,
-                    **dict(limit_overrides or {}),
-                ),
-            )
+    state_reads: list[None] = []
+    runtime_selections: list[str | None] = []
 
-        async def refresh(self) -> AgentSetup:
-            return self.setup
+    def current_state():
+        state_reads.append(None)
+        return harness.state
 
-    state_refreshes: list[None] = []
+    def load_state(revision: str):
+        if harness.state.revision != revision:
+            raise ValueError(f"snapshot revision not found: {revision}")
+        return harness.state
 
-    class _StateSnapshot:
-        def __init__(self, _layout: AgentLayout) -> None:
-            pass
+    @contextmanager
+    def execution_runtime(
+        _layout: AgentLayout,
+        *,
+        sandbox: str | None,
+        **_kwargs: object,
+    ):
+        runtime_selections.append(sandbox)
+        yield ExecutionRuntime(sandbox=sandbox or "host", mode="embedded")
 
-        async def refresh(self):
-            state_refreshes.append(None)
-            return harness.state
+    @asynccontextmanager
+    async def run_client(
+        _layout: AgentLayout,
+        _runtime: ExecutionRuntime,
+        **_kwargs: object,
+    ):
+        executor = RunExecutor(
+            harness.store,
+            harness.ids,
+            setup=lambda: harness.setup,
+            state=current_state,
+            load_state=load_state,
+            include=lambda _setup: lambda _reference: TextPart("unused"),
+        )
+        client = LocalRunClient(executor)
+        await client.connect()
+        try:
+            yield client
+        finally:
+            await client.disconnect()
+            await executor.stop()
 
-        def load(self, revision: str):
-            if harness.state.revision != revision:
-                raise ValueError(f"snapshot revision not found: {revision}")
-            return harness.state
-
-    monkeypatch.setattr(thread_commands, "SetupWatcher", _SetupSnapshot)
-    monkeypatch.setattr(thread_commands, "StateWatcher", _StateSnapshot)
+    monkeypatch.setattr(thread_commands, "open_execution_runtime", execution_runtime)
+    monkeypatch.setattr(thread_commands, "open_run_client", run_client)
 
     async def run_source():
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
@@ -570,7 +585,7 @@ agic reply(_: Part[]) -> Part[]:
             retried.error if retried is not None else None,
             harness.adapter.pending_responses,
         )
-        assert state_refreshes == []
+        assert state_reads == []
         rerun = _invoke(
             harness.setup.layout.root,
             "alice",
@@ -582,7 +597,8 @@ agic reply(_: Part[]) -> Part[]:
         )
 
         assert rerun.exit_code == 0, rerun.stderr
-        assert state_refreshes == [None]
+        assert state_reads == [None]
+        assert runtime_selections == ["host", None]
         rerun_records = [
             run
             for run in harness.store.list_runs(thread_id=source.thread)
@@ -630,6 +646,137 @@ agic reply(_: Part[]) -> Part[]:
         assert isinstance(rerun_control.payload, RerunControlPayload)
         assert rerun_control.payload.rerun_from == source.id
         assert rerun_control.payload.limits.time == 30
+    finally:
+        harness.store.close()
+
+
+def test_retry_and_rerun_use_the_remote_run_client_for_an_active_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = ExecutionHarness.create(
+        tmp_path / "toolang",
+        source="""
+agic reply(_: Part[]) -> Part[]:
+  recall = none
+  context: none
+  instruct: none
+  user: {{_}}
+""",
+        responses=[ModelCallResult(message=Message.assistant("source"))],
+    )
+    _create_agent(harness.setup.layout.root)
+    observed_requests: list[RetryRequest | RerunRequest] = []
+    runtime_selections: list[tuple[str | None, Path | None]] = []
+
+    async def run_source():
+        thread = harness.threads.create(prefix=ThreadPrefix.TERM)
+        source = await harness.executor.run(
+            harness.run_spec(
+                thread=thread,
+                runnable="reply",
+                primary=resolve_input_parts("hello"),
+            )
+        )
+        await harness.executor.stop()
+        return source
+
+    source = asyncio.run(run_source())
+    source_detail = RunHistory(harness.store).get_run(source.id)
+    assert source_detail is not None
+    rerun_detail = replace(
+        source_detail,
+        id="run_remote_rerun",
+        root_run_id="run_remote_rerun",
+    )
+
+    class _Handle:
+        def __init__(self, detail):
+            self.run_id = detail.id
+            self.detail = detail
+
+        async def wait(self):
+            return self.detail
+
+    class _Client:
+        async def retry(self, request, *, tracer=None):
+            del tracer
+            observed_requests.append(request)
+            return _Handle(source_detail)
+
+        async def rerun(self, request, *, tracer=None):
+            del tracer
+            observed_requests.append(request)
+            return _Handle(rerun_detail)
+
+    @contextmanager
+    def execution_runtime(
+        _layout: AgentLayout,
+        *,
+        sandbox: str | None,
+        dev: Path | None,
+        **_kwargs: object,
+    ):
+        runtime_selections.append((sandbox, dev))
+        yield ExecutionRuntime(
+            sandbox=sandbox or "host",
+            mode="remote",
+            endpoint="http://runtime.test",
+        )
+
+    @asynccontextmanager
+    async def run_client(
+        _layout: AgentLayout,
+        _runtime: ExecutionRuntime,
+        **_kwargs: object,
+    ):
+        yield _Client()
+
+    monkeypatch.setattr(thread_commands, "open_execution_runtime", execution_runtime)
+    monkeypatch.setattr(thread_commands, "open_run_client", run_client)
+    dev = tmp_path / "dist"
+    dev.mkdir()
+
+    try:
+        retry = _invoke(
+            harness.setup.layout.root,
+            "alice",
+            "retry",
+            source.id,
+            "--dev",
+            str(dev),
+            "--limit",
+            "time=10",
+        )
+        rerun = _invoke(
+            harness.setup.layout.root,
+            "alice",
+            "rerun",
+            source.id,
+            "--sandbox",
+            "docker:python:3.13-slim",
+            "--dev",
+            str(dev),
+            "--limit",
+            "time=20",
+        )
+
+        assert retry.exit_code == rerun.exit_code == 0
+        assert runtime_selections == [
+            ("host", dev),
+            ("docker:python:3.13-slim", dev),
+        ]
+        assert len(observed_requests) == 2
+        assert isinstance(observed_requests[0], RetryRequest)
+        assert observed_requests[0].source == source.id
+        assert observed_requests[0].commands[-1].value == 10
+        assert isinstance(observed_requests[1], RerunRequest)
+        assert observed_requests[1].source == source.id
+        assert observed_requests[1].commands[-1].value == 20
+        assert retry.stdout.strip() == f"retried {source.id}: succeeded"
+        assert rerun.stdout.strip() == (
+            f"reran {source.id} as {rerun_detail.id}: succeeded"
+        )
     finally:
         harness.store.close()
 

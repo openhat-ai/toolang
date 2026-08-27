@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from toolang.base.types.message import Part
-from toolang.base.types.policy import RunBindings
+from toolang.base.types.policy import AgentCeiling, RunBindings, RunLimits
 from toolang.lang.input import (
     NamedInputSources,
     RunnableInputRaw,
@@ -20,13 +21,24 @@ from toolang.state.state import AgentState
 
 from .policy import parse_policy_prefix, resolve_commands
 from .runnables import parse_runnable_ref, resolve_state_runnable
-from .schemas import RunRequest
+from .schemas import RerunRequest, RetryRequest, RunRequest
 from .types import RunOverride
 
 if TYPE_CHECKING:
     from .executor.executor import RunSpec
 
 IncludeResolver = Callable[[str], Part]
+
+
+@dataclass(frozen=True, slots=True)
+class RestartSpec:
+    """One restart request resolved against immutable runtime snapshots."""
+
+    setup: AgentSetup
+    state: AgentState
+    ceiling: AgentCeiling
+    model: str | None
+    limits: RunLimits
 
 
 def parse_call(source: str) -> tuple[tuple[RunOverride, ...], RunnableInputRaw]:
@@ -58,6 +70,26 @@ def resolve_run_request(
         ),
         session_commands=request.session_commands,
         include=include,
+    )
+
+
+def resolve_restart_request(
+    request: RetryRequest | RerunRequest,
+    *,
+    setup: AgentSetup,
+    state: AgentState,
+) -> RestartSpec:
+    """Resolve restart policy against exactly one setup and state snapshot pair."""
+
+    ceilings, bindings, limits = resolve_commands(setup, run=request.commands)
+    if len(ceilings) > 1:  # pragma: no cover - one request contributes one layer
+        raise RuntimeError("restart request resolved multiple run ceilings")
+    return RestartSpec(
+        setup=setup,
+        state=state,
+        ceiling=ceilings[0] if ceilings else AgentCeiling(),
+        model=bindings.model,
+        limits=limits,
     )
 
 
