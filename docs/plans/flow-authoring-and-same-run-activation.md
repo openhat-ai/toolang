@@ -6,18 +6,18 @@ Proposed.
 
 ## Goal
 
-Let an agent save a home flow module, explicitly activate the latest valid
+Let an agent manage home flow modules, explicitly activate the latest valid
 prepared state at the next step boundary, and call a public runnable from that
 state within the same root run.
 
-Saving source and applying state are separate actions. Phase 1 next-root
+Changing source and applying state are separate actions. Phase 1 next-root
 refresh, last-valid watcher behavior, and static Flow calls remain unchanged.
 
 ## Success Criteria
 
-- Core actions can read and atomically save only
+- Core actions can list, read, create, update, and delete only
   `agents/<agent>/flows/<name>.too`.
-- Saving never prepares or applies state.
+- Source mutations never prepare or apply state.
 - Explicit apply returns Phase 1 diagnostics or advances the root state head at
   `next_step` without rebinding accepted runs.
 - A model can call a public agic or flow from the active state head as a normal
@@ -96,8 +96,11 @@ _me__get_prompt
 _me__create_prompt
 _me__update_prompt
 _me__delete_prompt
+_me__list_flows
 _me__get_flow
-_me__save_flow
+_me__create_flow
+_me__update_flow
+_me__delete_flow
 ```
 
 This phase also adds the executor-owned `_too` tools:
@@ -113,31 +116,30 @@ ceilings. No legacy aliases are exposed.
 
 ## Flow Source Actions
 
-`_me__get_flow(name)` returns the home-relative path, exact UTF-8 source, and
-SHA-256 digest.
+`_me__list_flows()` lists direct flow modules by name with home-relative path,
+SHA-256 digest, and byte count. It reads source files, not the active runnable
+catalog, so unapplied modules remain visible.
 
-`_me__save_flow` accepts:
+`_me__get_flow(name)` adds the exact UTF-8 source to the same metadata.
+
+The mutation actions are:
 
 ```text
-name
-source
-if_digest?      required when replacing different existing bytes
+create_flow(name, source)
+update_flow(name, source, if_digest)
+delete_flow(name, if_digest)
 ```
 
-The destination is always derived as `flows/<name>.too`. The action applies the
-Phase 1 filename rules, rejects traversal, symlinks, and non-regular targets,
-creates `flows/` if needed, and atomically replaces through a temporary sibling.
+The destination is always derived as `flows/<name>.too`. All actions apply the
+Phase 1 filename rules and reject traversal, symlinks, and non-regular targets.
+Create makes `flows/` when needed and fails if the target exists. Update and
+delete require the exact current digest; a mismatch leaves the file unchanged.
+Create and update publish atomically through a temporary sibling. Identical
+updates return `changed = false`.
 
-Save is optimistic and idempotent:
-
-- a missing target is created without `if_digest`;
-- identical bytes return `changed = false`;
-- different existing bytes require the exact current digest; and
-- a mismatch leaves the file unchanged.
-
-The result includes path, digest, byte count, and `changed`. Save does not parse
-or prepare source. Invalid authored source remains on disk for repair; the
-watcher retains its last valid state.
+Results include path, digest, byte count, and the mutation outcome. Mutations do
+not parse or prepare source. Invalid authored source remains on disk for repair
+or deletion; the watcher retains its last valid state.
 
 ## State Semantics
 
@@ -223,12 +225,12 @@ including after apply.
 Progress classifies core actions by `_me`, `_too`, and future `_hat`, not Python
 package or leaf-name heuristics:
 
-- flow reads are quiet;
-- changed saves show `Saved flow <name>`;
+- flow lists and reads are quiet;
+- mutations show `Created`, `Updated`, or `Deleted flow <name>`;
 - apply shows the new state or validation diagnostic; and
 - `_too__run` wrappers are hidden while the child run remains visible.
 
-Raw inspection and logs retain the calls and controls. Read/save conflicts are
+Raw inspection and logs retain the calls and controls. Source conflicts are
 normal tool errors. Invalid state is a successful apply result with
 `applied = false`. Dynamic resolution fails before child acceptance; failures
 after acceptance use existing child-run error pointers. The state head advances
@@ -238,7 +240,7 @@ only after the prepared state and durable transition are both available.
 
 Included:
 
-- the `agent_state` to `_me` migration, four new core actions, and reserved
+- the `agent_state` to `_me` migration, seven new core actions, and reserved
   toolset-name enforcement;
 - public toolset renames;
 - root state head and durable `next_step` apply;
@@ -250,9 +252,9 @@ Excluded:
 
 - Toolang grammar or tree-sitter changes, including `run "name"`;
 - dynamic expressions in authored Flow statements;
-- automatic apply after save;
+- automatic apply after source mutation;
 - root flows, shared-flow wiring, `with` attachment, or installation;
-- flow delete/rename actions;
+- flow rename actions;
 - same-run setup, plugin, environment, model-catalog, or policy changes;
 - public state-apply API/CLI;
 - legacy tool-name aliases or historical-run migration; and
@@ -271,9 +273,10 @@ Excluded:
 
 ## Acceptance Tests
 
-1. Flow get/save is confined to direct home flow files and safely handles
-   create, identical save, digest-guarded replace, traversal, and symlinks.
-2. Saving valid or invalid source never changes the root state head.
+1. Flow CRUD is confined to direct home flow files and safely handles listing,
+   create conflicts, identical update, digest-guarded update/delete, traversal,
+   and symlinks.
+2. Creating, updating, or deleting source never changes the root state head.
 3. Invalid apply returns ordered Phase 1 diagnostics; repaired apply records
    exact old/new fingerprints and takes effect at the next step.
 4. Active static execution keeps its bound state after apply.
@@ -287,8 +290,8 @@ Excluded:
 9. Tool directives and ceilings can exclude core actions; defaults include them.
 10. Toolset and tool names enforce the portable component grammar; core toolset
     names are reserved and `_hat` means Human Agent Teaming.
-11. Progress hides raw wrappers and preserves useful save, apply, child, and
-    diagnostic output.
+11. Progress hides raw wrappers and preserves useful mutation, apply, child,
+    and diagnostic output.
 12. Concurrent applies install whole serialized state snapshots.
 13. Retry rejects an applied transition; rerun uses current state.
 14. Built-in identities migrate to `fs`, `web`, `shell`, and `service`, while
@@ -297,8 +300,8 @@ Excluded:
 
 ## Risks
 
-- Public tool renames intentionally break legacy selectors, configuration, and
-  historical resource snapshots.
+- Toolset and tool renames intentionally break legacy selectors, configuration,
+  and historical resource snapshots.
 - Rebinding an active run would violate module isolation; only the root state
   head may change.
 - A dynamic child streams below a tool step, so event order and error pointers
