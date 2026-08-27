@@ -1,4 +1,4 @@
-# Define Root-Run Agent State Application
+# Define Agent State Reload Controls
 
 ## Status
 
@@ -6,66 +6,73 @@ Proposed.
 
 ## Goal
 
-Give execution records and `RunExecutor` one explicit, durable model for the
-Agent State bound to every run and effective at every step. A newly published
-State is available to the next root run through normal acceptance, or may be
-explicitly applied to an active root tree at its next step boundary.
+Give execution records and `RunExecutor` one explicit model for the Agent State
+bound to every run and used by every step. A newly published State is available
+to the next root run through normal acceptance. An active root tree may switch
+its executor State through a durable `reload` control using the existing control
+timings.
 
 This is an execution foundation. It is independent of flow authoring, model
-tools, dynamic runnable calls, and watcher orchestration.
+tools, dynamic runnable calls, and watcher refresh policy.
 
 ## Success Criteria
 
-- Every accepted run and step has one durable State binding reference.
-- A root run owns its initial State binding and every later State transition.
-- Run and step records reference root-owned bindings instead of copying State
-  revisions.
-- A newly accepted root can use the latest caller-supplied durable State while
-  existing root trees remain unchanged.
-- Applying State records one exact pending revision for an active root tree and
-  installs it before the next step begins.
-- The step that requests application uses the previous binding; the next
-  `StepBegin` and all later checkpoints use the new binding.
-- Concurrent applications use an expected binding and cannot silently reorder.
-- Accepted runs, their modules, and their resources never change after an
-  application.
-- Applying the current revision is an idempotent no-op.
-- A pending application becomes `wontapply` if the root ends without another
-  step.
-- Retry does not attempt to reconstruct a root tree containing State
-  transitions.
-- Existing execution behavior is unchanged when State is never applied.
+- Every accepted run and physical step has one durable State binding reference.
+- A root entry control and each applied `reload` control own one State revision.
+- Run and step records reference those controls instead of copying revisions.
+- A new root run can use the latest caller-supplied State while existing roots
+  retain their own current State.
+- `reload` supports `immediate`, `next_step`, and `next_call` with the same
+  checkpoint vocabulary as existing run controls.
+- The executor starts from the root run State and changes its current State only
+  when a `reload` control becomes effective.
+- A step keeps the State captured at its `StepBegin`; a reload never changes an
+  already-started step.
+- Static run declarations, modules, and prepared resources remain bound to the
+  accepting run State.
+- Pending reloads are ordered, revocable before claim, and terminalized when no
+  matching checkpoint remains.
+- Existing execution behavior is unchanged when no reload is submitted.
 - The default verification suite passes.
 
-## Vocabulary And Ownership
+## Current Control Timing
+
+`ControlTiming` already contains exactly:
+
+```text
+immediate | next_step | next_call
+```
+
+The timing names describe when a control becomes eligible; the effect remains
+kind-specific:
+
+- `immediate` is applied as soon as the owning executor observes and claims the
+  control;
+- `next_step` is applied at the next physical step checkpoint; and
+- `next_call` waits until the next existing call checkpoint, skipping Flow
+  statements that do not make a call.
+
+Flows already checkpoint before statements and call-bearing statements. Agics
+checkpoint before model and tool calls. Reload reuses those boundaries rather
+than adding a fourth timing. `next-run` is not a control timing: it is normal
+top-level acceptance against a new caller-supplied `RunSpec.state`.
+
+## State Vocabulary And Ownership
 
 | Term | Meaning |
 | --- | --- |
 | run State | Immutable `AgentState` used to accept and prepare one run |
-| step State | Root state head effective when one step begins |
-| State binding | Durable root-owned control reference naming one revision |
-| State head | Binding selected at later step checkpoints in one root tree |
-| State transition | Durable compare-and-set change from one binding to another |
+| step State | Executor State captured when one physical step begins |
+| current State | Mutable root-tree pointer maintained by `_Execution` |
+| State binding | Root-owned control reference that resolves to one revision |
 
-The root entry `run` or `rerun` control is the initial State binding. Later
-bindings are root-owned `state` controls. A run's State binding is immutable.
-Each step captures the state head at `StepBegin`, after applying any transition
-scheduled for that boundary.
-
-The two availability paths are separate:
-
-- **Next run:** a top-level caller refreshes State and puts the concrete result
-  in `RunSpec`. That new root records its own entry binding. Other active roots
-  retain their own heads.
-- **Next step:** an explicit executor operation queues a transition on one
-  active root. The first step checkpoint after the request installs it. Steps
-  already begun retain their recorded binding.
+The root entry `run` or `rerun` control is the initial State binding. Each
+applied `reload` control becomes another binding. The executor current State is
+the `AgentState` object resolved by its current binding.
 
 `AgentState` preparation and publication remain owned by `StateWatcher`.
-`RunExecutor` never asks for the "latest" State, reads authored source, or
-loads a revision implicitly. Its application API receives one concrete
-`AgentState` from the call site, following the existing rule that environment
-and freshness decisions are resolved before entering execution core.
+Callers decide freshness before root acceptance or reload submission. The
+executor never parses authored source or prepares State.
 
 ## Durable Records
 
@@ -76,286 +83,320 @@ RunRecord.state: ControlRef
 StepRecord.state: ControlRef
 ```
 
-`RunRecord.state` identifies the root-owned State binding used to accept and
-prepare that run. For a root it initially points to its own entry control. A
-static child inherits its parent's run binding. A future state-aware or dynamic
-child may instead receive the step's current binding explicitly.
+`RunRecord.state` identifies the State used to resolve the runnable, owner
+module, inputs, and resources for that run. A root initially points to its own
+entry control. A static child inherits its parent's run binding. A future
+state-aware child may instead be explicitly accepted from a step State.
 
-`StepRecord.state` identifies the state head captured for that physical step.
-It is required on every new step, including nested and structural steps. A step
-that does not consult Agent State still records the head available at its
-boundary, so execution order and later state-aware behavior remain
-deterministic. Module source, static calls, prepared frames, and resources come
-from `RunRecord.state`; a step State does not reinterpret its containing run.
+`StepRecord.state` identifies the executor State captured for that physical
+step. It is required on model, tool, run, value, structural, and nested steps.
+A step that does not read Agent State still records the binding available at
+its boundary. State-aware step preparation receives the same captured
+`AgentState` object and must not reread the mutable executor pointer later.
 
-`RunStore.accept_run()` must receive the binding choice, and every `StepBegin`
-must carry the checkpoint binding. Neither store path infers whether a call is
-static or state-aware.
-
-One transition therefore produces this record graph without repeating a
-revision on each consumer:
+One reload therefore produces this graph without repeating revisions on its
+consumers:
 
 ```text
 root control 0  run(state = revision A)
   <- root RunRecord.state
-  <- requesting StepRecord.state
+  <- steps begun before reload
 
-root control 1  state(previous = root:0, state = revision B)
-  <- next and later StepRecord.state
-  <- future runs intentionally accepted from the State head
+root control 1  reload(state = revision B, timing = next_step)
+  <- steps begun after reload applies
+  <- future runs explicitly accepted from those step bindings
 ```
 
-An existing static child still points its `RunRecord.state` to `root:0`, even
-when its calling step points to `root:1`. The two references deterministically
-express immutable module preparation versus the State available at that step.
+An existing static child may still point `RunRecord.state` to `root:0` while
+its later steps point `StepRecord.state` to `root:1`. The two references express
+immutable run preparation and the executor State available to the step.
 
-`ControlKind` gains `state`, with this payload:
+`ControlKind` gains `reload`, with this payload:
 
 ```text
-StateControlPayload:
-  previous: ControlRef
+ReloadControlPayload:
   state: lowercase SHA-256 Agent State revision
 ```
 
-A `state` control:
+The control reference itself is the new State binding, so the payload does not
+repeat the previous revision or binding. Durable control index and application
+status determine transition order.
 
-- targets only a root run;
-- is inserted with `timing = next_step` and `status = pending`;
-- points to the exact previous root binding;
-- becomes `applied` and the new root state head at the next step checkpoint;
-- becomes `wontapply` if the root becomes terminal first;
-- is not revocable or submitted through the current public control API; and
-- stores no prepared State blob.
-
-Only one State application may be pending for a root. A later request must wait
-until the pending transition applies or becomes terminal. This avoids silently
-collapsing multiple revisions onto one step boundary.
-
-Preparation controls retain a State revision for root `run` and `rerun`
-acceptance. New child and `retry` controls do not duplicate it; their run's
-`state` reference is authoritative. Record readers continue accepting a State
-revision on historical child and retry payloads during the schema migration,
-but new writes omit it.
-
-The typed preparation payload makes `state` optional for storage compatibility.
-Store acceptance enforces it as present for a new root `run` or `rerun` and
-absent for a child `run` or `retry`; caller-facing encoding omits an absent
-value. State revisions otherwise appear only on root entry and `state` control
-payloads.
+Preparation controls keep `state` only for a new root `run` or `rerun`. New
+child `run` and `retry` controls omit it because `RunRecord.state` is
+authoritative. The typed preparation payload accepts an optional State field
+for storage compatibility; store acceptance enforces presence for new root
+entries and absence for new child/retry writes. Readers continue accepting
+historical duplicated revisions.
 
 The runs database adds `state_target` and `state_index` to both `runs` and
-`steps`. Migration maps every historical run and step to its root's index-zero
-entry control. Existing behavior guarantees one revision per historical tree;
-migration verifies that all preparation revisions agree before committing. A
-disagreement fails the migration without partially updating the database.
+`steps`. Migration maps every historical run and step to its tree's root
+index-zero entry control. Existing behavior guarantees one revision per
+historical tree; migration verifies all historical preparation revisions agree
+before committing. An inconsistency fails the migration atomically.
 
-Caller-facing run and step detail expose their State binding references. The
-revision is resolved for inspection through the referenced control payload
-rather than duplicated into either projection.
+Caller-facing run and step detail expose the binding reference. Inspection
+resolves its revision through the referenced root entry or reload control and
+does not duplicate the revision into run or step projections.
 
-## Store Operations
+## Reload Control Lifecycle
 
-The store provides explicit operations to:
+`RunExecutor.reload()` accepts an active run ID, one concrete durable
+`AgentState`, a `ControlTiming`, and an optional request ID. It normalizes any
+active child ID to the locally owned root and inserts a root-targeted pending
+`reload` control containing the State revision.
 
-1. resolve any run or step binding to a canonical State revision;
-2. read the current root state head; and
-3. append one pending root State transition; and
-4. apply that transition at a step checkpoint.
+Only the process owning the active root exposes reload in this phase. There is
+no public HTTP, CLI, Chat, scheduler, or generic remote-control submission. The
+store still uses the ordinary control revision feed and claim flag, so the
+lifecycle remains compatible with cross-process observation.
 
-Accepting a transition runs under `BEGIN IMMEDIATE` and requires:
+At most one reload may be pending for a root. A second request is rejected
+until the first becomes `applied`, `revoked`, or `wontapply`. Requesting the
+already-current revision is an idempotent no-op and creates no control.
 
-- an existing active root run;
-- an expected `previous` reference equal to the durable current head;
-- no other pending `state` control for that root;
-- a canonical target revision; and
-- a target revision different from the current revision.
+A pending reload may be revoked through the existing control-cancellation path
+until the executor claims it. Claim and revocation retain the current
+linearizable SQLite race: exactly one succeeds.
 
-The store allocates the next root control index and inserts the `state` control
-as pending in that transaction. A stale expected binding raises a conflict.
-Requesting the current revision returns the existing binding without allocating
-a control. The store accepts no arbitrary target run, alternate timing, or
-caller-supplied control index.
+When the timing becomes eligible, the executor claims the reload and the store
+marks it `applied` before the in-memory current State changes. There is no await
+point between the durable application and pointer replacement. If the root
+ends before a `next_step` or `next_call` checkpoint, terminal projection marks
+the reload `wontapply` with the existing control error behavior.
 
-At the next executor step checkpoint, the store atomically claims and marks the
-pending control `applied` after verifying that its `previous` reference is still
-the head. The returned control is the new binding written into `StepBegin`. If
-there is no pending transition, the checkpoint returns the existing head. The
-first checkpoint to acquire the root application lock wins; steps already
-recorded as begun keep their prior binding. Existing terminal projection marks
-an unconsumed pending transition `wontapply`.
+### Immediate
 
-State reference resolution rejects missing controls, non-State-bearing control
-kinds, cross-root references, malformed revisions, and cycles. These checks
-also protect migrated and manually modified databases.
+An `immediate` reload applies when the owner observes it. It does not cancel,
+restart, or rewrite an already-started step. That step continues with its
+captured State; the next step captures the new current State. This preserves
+one deterministic State per step while still advancing the executor pointer
+without waiting for another planned checkpoint.
 
-## Executor Semantics
+### Next Step
 
-Each private `_Execution` owns an immutable pair for its current State head and
-an optional pending candidate:
+A `next_step` reload applies immediately before the next physical `StepBegin`
+in the root tree. The step that requested the reload has already begun and
+keeps its previous reference. The next step records the reload control as its
+State binding.
+
+Parallel branches serialize the short root checkpoint. The first physical step
+to acquire it receives the new State, and durable `StepBegin` order makes the
+result inspectable. Steps already begun keep their earlier binding.
+
+### Next Call
+
+A `next_call` reload applies at the next existing call checkpoint. Non-call
+Flow steps may begin first and continue recording the previous binding. The
+first subsequent call-bearing step captures the reload binding. The call
+classification is the same one currently used by next-call cancel checks; no
+reload-specific statement list is introduced.
+
+## Deterministic Step Boundaries
+
+Step State is recorded directly; it is never reconstructed later from the
+mutable executor pointer, `StepPath` ordering, timestamps, or reload-control
+timestamps. Those values cannot globally order parallel Flow branches.
+
+Reload application and `StepBegin` persistence are the two durable
+linearization operations. Control acceptance only makes a reload pending; it
+does not retroactively determine a step State from wall-clock time. A step uses
+the binding selected when its `StepBegin` boundary commits.
+
+The existing `_ActiveRun.event_lock` already serializes event projection for
+every run in one root tree. It becomes the single root event/boundary lock used
+for reload application and step start. Agic model/tool steps normally enter it
+sequentially. Parallel Flow branches may execute concurrently, but every
+physical step must enter this lock before it begins.
+
+For each step, one boundary operation performs:
+
+1. refresh the root's observed control cache;
+2. select a pending reload only when its timing matches this boundary;
+3. choose the exact `AgentState` object and root-owned control reference;
+4. perform any pure state-aware step preparation against that object;
+5. in one SQLite transaction, mark the selected reload `applied` and project
+   `StepBegin(state=<binding>)`; and
+6. after commit and before releasing the lock, update the in-memory current
+   State and control cache.
+
+Without an eligible reload, the same operation projects `StepBegin` with the
+existing current binding. It returns an immutable step State snapshot used for
+the complete step. External model, tool, human, agent, and child-run work starts
+only after the transaction commits and the boundary lock is released.
+
+For parallel Flow execution, the coroutine that acquires this lock first owns
+the next durable step boundary. If reload application is ordered between two
+parallel `StepBegin` commits, the earlier step records the old binding and the
+later step records the new one. If both begin transactions commit before reload
+application, both keep the old State even when they finish afterward. The
+explicit references make the result deterministic without imposing serial step
+execution.
+
+Immediate reload observation also enters the same boundary lock. Its control
+application and current-State swap are ordered before or after any concurrent
+`StepBegin` transaction. It does not alter the State snapshot of a step whose
+begin transaction already committed.
+
+## Executor State
+
+Each private `_Execution` owns:
 
 ```text
-current: AgentState object + root-owned ControlRef
-pending: AgentState object + pending RunControlRecord, or none
+current State: AgentState object + root-owned ControlRef
+pending reload: AgentState object + RunControlRecord, or none
 ```
 
-It starts from the accepted root's bound State and entry reference. The
-executor exposes an asynchronous process-local operation equivalent to:
+The current pair starts from the accepted root's `BoundRun.state` and entry
+control. `RunExecutor.reload()` validates that the candidate is a durable State
+for the same `AgentLayout`, persists its revision, and retains the exact object
+beside the pending control.
 
-```python
-await executor.apply_state(run_id, state)
-```
+Immediate observation and step/call checkpoints use the shared root
+event/boundary lock described above rather than a separate reload lock. The
+matching path claims the pending control, finishes it in the store, swaps the
+current pair, clears the pending value, and returns an immutable snapshot.
 
-`run_id` may identify any active run in the locally owned tree; the executor
-normalizes it to the root. `state` is the exact candidate to schedule. The
-operation rejects an inactive, terminal, remotely owned, or unknown run and an
-`AgentState` whose durable revision directory does not belong to the root
-run's `AgentLayout`.
+A later reload cannot change that snapshot. Model instructions, tools, or
+dynamic resolution that intentionally use executor State must receive the
+captured step object, not access `_Execution.current_state` again during the
+step.
 
-Applications are serialized by one lock per `_Execution`. Inside that lock the
-executor:
+`BoundRun` separately keeps its immutable run State and binding. Existing
+static child acceptance copies those values from the parent. Reload therefore
+does not reinterpret an accepted declaration, module-local structs, static
+calls, prepared frames, caps, model selection, or resources.
 
-1. reads the current in-memory binding;
-2. returns without writing when the candidate revision is unchanged;
-3. rejects a second pending candidate;
-4. asks the store to compare and append the pending transition; and
-5. retains the exact `AgentState` object beside that control until a checkpoint.
+Future runs intentionally accepted from a step State must resolve and validate
+their own runnable, module, inputs, and resources against the captured State
+and the root's original `AgentSetup`, ceilings, and limits.
 
-Every physical step obtains its binding through one executor checkpoint before
-state-aware step preparation or `StepBegin`. Under the same root lock, the
-checkpoint applies the pending control in the store, replaces the in-memory
-head with its retained `AgentState`, and returns the new reference. There is no
-await point between durable application and in-memory replacement. The step
-then records that reference. The step that called `apply_state()` has already
-begun and therefore retains the previous reference.
+## Next-Run Behavior
 
-Parallel branches serialize only this short checkpoint. Durable `StepBegin`
-order determines which physical step was first after the request; that step and
-all later steps use the new binding. Steps whose `StepBegin` was already
-recorded continue with their old binding.
+Top-level run callers continue refreshing State before constructing `RunSpec`.
+`RunExecutor.run()` binds exactly that concrete State and records its revision
+once on the new root entry control. The executor holds no process-global State,
+so a new root using revision B can coexist with an older active root whose
+current State remains revision A.
 
-If the store reports a stale binding, the executor reloads the durable head,
-requires it to match its own State object, and otherwise fails the application
-instead of guessing which snapshot to install.
+Rerun is also a new root and uses the caller-supplied current State. It does not
+inherit the source root's current binding or reload history.
 
-`BoundRun` carries both its immutable `AgentState` and binding reference.
-Existing static child acceptance copies the parent's run State, so application
-does not change static module semantics. Its calling run step still records the
-current step State. Executor code that intentionally wants the applied State
-must use that checkpoint binding explicitly; this is the extension point for
-later dynamic calls and state-aware model instructions.
+## Retry
 
-Model aliases, default models, runnable declarations, module-local structs,
-caps, prepared frames, and effective resources already captured by accepted
-runs remain unchanged. Future runs accepted from the state head must resolve
-and validate their own module and resources against that head and the root's
-captured `AgentSetup`, ceilings, and limits.
-
-## Retry And Rerun
-
-Retry rejects a root containing any `state` control, applied or pending, before
-trimming or reopening records. This phase does not reconstruct multiple State
-bindings. Retry behavior is otherwise unchanged and continues using the root's
-original run State.
-
-Rerun remains a new root run and uses the concrete current State supplied by
-its caller. It does not inherit the source root's state head or transition
-records.
+Retry rejects a root containing an applied `reload` control before trimming or
+reopening records. This phase does not reconstruct a root executor State
+timeline. Revoked and `wontapply` reloads did not change current State and do
+not block retry; a terminal root has no valid pending reload. Retry otherwise
+continues using the root's original run State.
 
 ## Scope
 
 Included:
 
-- execution State-binding and State-transition vocabulary;
-- record codecs and caller-facing run/step binding projection;
-- the runs database migration and transactional State operations;
-- next-run acceptance and next-step root state-head application;
-- step checkpoint binding and pending-control lifecycle;
-- immutable binding propagation through existing static child runs;
-- retry rejection for multi-State roots; and
-- focused unit, integration, migration, and concurrency tests.
+- `reload` control vocabulary and all existing timing values;
+- root-owned State bindings for every run and physical step;
+- revision de-duplication through control references;
+- record codecs, database migration, binding resolution, claim/revocation, and
+  terminal control behavior;
+- root-tree current State ownership and timing-aware reload application;
+- immutable static run binding and step State snapshots;
+- next-run coexistence and retry rejection for applied reload histories; and
+- focused unit, integration, migration, timing, and concurrency tests.
 
 Excluded:
 
-- changes to `StateWatcher`, State preparation, or publication;
-- automatic refresh or application;
+- changes to State preparation, publication, or watcher refresh policy;
+- automatic reload after source changes;
 - flow source CRUD or other authored-data tools;
 - model-facing internal actions or tool naming;
 - dynamic public runnable calls or runnable-catalog instructions;
-- API, CLI, Chat, task, or scheduler endpoints for State application;
+- public API, CLI, Chat, task, or scheduler reload endpoints;
 - applying setup, plugin, environment, or policy changes; and
-- multi-State retry reconstruction.
+- reload-aware retry reconstruction.
 
 ## Implementation Touchpoints
 
-- `src/toolang/execution/types.py` and `records.py`: State control vocabulary,
-  binding references, validation, and codecs;
-- `src/toolang/execution/store.py`: schema migration, binding resolution,
-  compare-and-set transition insertion, checkpoint application, child
+- `src/toolang/execution/types.py` and `records.py`: `reload` vocabulary,
+  payload, binding references, validation, and codecs;
+- `src/toolang/execution/store.py`: schema migration, root binding resolution,
+  reload insertion, claim/revocation, application, terminalization, child
   acceptance, and retry guard;
 - `src/toolang/execution/events.py` and `schemas.py`: `StepBegin` State binding
   and caller-facing run/step binding projection;
-- `src/toolang/execution/executor/common.py` and `executor.py`: immutable bound
-  references, root state head, pending application, step checkpoints, and
-  static inheritance;
-- `src/toolang/execution/executor/steps`: acquire the binding checkpoint before
-  each physical step begins;
+- `src/toolang/execution/executor/common.py` and `executor.py`: immutable run
+  bindings, current State, retained reload candidate, the shared event/boundary
+  lock, timing checkpoints, and static inheritance;
+- `src/toolang/execution/executor/runs` and `steps`: capture the current State
+  before every physical step and reuse existing step/call classification;
 - execution record/store/executor unit tests and root-tree integration tests;
   and
-- `docs/agent-state.md`, `docs/executor.md`, and `docs/run-step-records.md` when
-  the implementation lands.
+- `docs/agent-state.md`, `docs/execution.md`, `docs/executor.md`, and
+  `docs/run-step-records.md` when implementation lands.
 
 ## Acceptance Tests
 
-1. Record codecs round-trip `state` controls and reject malformed revisions or
-   references.
-2. Database migration assigns every historical run and step its root entry
-   binding and preserves all existing records; an inconsistent historical tree
-   is rejected atomically.
-3. Root `run` and `rerun` acceptance bind to their entry control; new child and
-   retry controls do not copy the revision.
-4. A second root accepted with a newer caller-supplied State uses it while an
-   already-active first root retains its own State head.
-5. Every new physical step records the root-owned binding returned by its
-   checkpoint; resolving that reference yields the exact revision effective at
-   `StepBegin` without a copied revision on the step.
-6. Applying a different durable State appends one pending root `state` control
-   linked to the previous binding; the requesting step keeps the previous
-   binding.
-7. The next physical step atomically applies the control before `StepBegin`,
-   records the new binding, and advances only that root's in-memory head.
-8. Existing static children accepted before or after application retain the
-   parent's run State even when their steps record the newer head.
-9. A terminal root with no later step marks its pending transition `wontapply`.
-10. Applying the current revision creates no control and returns the existing
-    binding; a second pending application is rejected.
-11. Parallel checkpoints and applications serialize deterministically; a stale
-    expected binding cannot overwrite or reorder a committed transition.
-12. Applying through an active child targets its root; another active root is
+1. `ControlTiming` remains exactly `immediate`, `next_step`, and `next_call`.
+2. Record codecs round-trip `ReloadControlPayload` and reject malformed State
+   revisions.
+3. Database migration assigns every historical run and step its root entry
+   binding, preserves all records, and atomically rejects inconsistent legacy
+   revisions.
+4. Root `run` and `rerun` controls store one revision; new child and retry
+   controls omit it and use `RunRecord.state`.
+5. Every physical step records a root-owned binding whose control resolves to
+   the exact revision captured at `StepBegin`.
+6. A second root accepted with a newer caller-supplied State uses it while an
+   active older root retains its own current State.
+7. An immediate reload becomes applied when observed, leaves an already-started
+   step on its old binding, and changes the next step binding.
+8. A next-step reload leaves the requesting step unchanged and applies before
+   the next physical `StepBegin`, including across parallel branches.
+9. A next-call reload allows intervening non-call Flow steps to retain the old
+   binding and applies before the next call-bearing step.
+10. State-aware step preparation receives the same `AgentState` object named by
+    `StepRecord.state` and cannot observe a later pointer swap.
+11. Reload application and the first `StepBegin` using it commit in one SQLite
+    transaction; parallel Step paths and timestamps are never used to infer the
+    boundary.
+12. Two parallel steps whose begin commits are ordered on opposite sides of
+    reload application record the old and new bindings respectively, while
+    steps already begun retain their original State through completion.
+13. Existing static children retain their parent's run State even when their
+    calling and nested steps capture a newer executor State.
+14. Reloading the current revision creates no control; a second pending reload
+    is rejected.
+15. Pending reload cancellation and executor claim have exactly one winner.
+16. A root ending before the requested checkpoint marks reload `wontapply`.
+17. Reload through an active child targets its root; another active root is
     unchanged.
-13. Missing, terminal, remotely owned, cross-layout, and non-durable candidates
-    are rejected without writing a transition.
-14. State reference resolution detects missing, cross-root, wrong-kind, and
-    cyclic bindings.
-15. Retry rejects a root with a pending or applied State transition before
-    modifying records; rerun starts from the caller-supplied State normally.
-16. Runs that never apply State retain existing execution records and behavior.
-17. `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`,
+18. Missing, terminal, remotely owned, cross-layout, and non-durable candidates
+    are rejected without writing a reload.
+19. Binding resolution rejects missing, cross-root, wrong-kind, and malformed
+    references.
+20. Retry rejects a root with an applied reload before modifying records, but
+    permits revoked or `wontapply` reloads; rerun starts from the caller-supplied
+    State normally.
+21. Runs without reload retain existing records and behavior except for the new
+    binding-reference fields.
+22. `uv run ruff check .`, `uv run ruff format --check .`, `uv run ty check`,
     and `uv run pytest` pass.
 
 ## Risks
 
-- Adding required run and step binding references needs an exact migration for
-  durable history and all fixture builders.
-- A pending control and its in-memory `AgentState`, then an applied control and
-  current head, must never diverge. Root serialization and store-first
-  application make failures explicit.
-- Accidentally reading the root state head from static execution would mix
-  module versions. Static child tests must lock inheritance to the parent
-  binding.
-- Parallel steps make "next" meaningful only through checkpoint order; every
-  `StepBegin` records that order's binding so inspection remains deterministic.
-- The foundation intentionally has no user-facing trigger, so integration tests
-  must exercise the process-local executor operation directly.
+- Required run and step binding references need an exact migration for durable
+  history and all fixture builders.
+- The pending control and retained `AgentState`, then the applied control and
+  current pointer, must never diverge. Root serialization and store-first swaps
+  make failures explicit.
+- Immediate reload must not let a running step reread mutable executor State;
+  step-local snapshots enforce the one-State-per-step invariant.
+- Parallel branches make next-step order meaningful only at the shared root
+  event/boundary lock; every `StepBegin` records the resulting binding.
+- Accidentally using executor current State for static execution would mix
+  module versions. Static child tests must lock inheritance to run State.
+- This foundation has no user-facing reload trigger, so integration tests call
+  the process-local executor operation directly.
 
 ## Open Questions
 
