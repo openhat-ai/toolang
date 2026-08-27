@@ -269,7 +269,7 @@ Valid examples:
 
 ```text
 reviewer[here]
-*[file]
+*[authored]
 [scope:home]
 ```
 

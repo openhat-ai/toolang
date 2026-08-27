@@ -858,6 +858,7 @@ def _cap_resolutions(
             resolution.name,
             resolution.form,
             resolution.definition,
+            resolution.materialized,
         )
     )
     return tuple(resolutions)

@@ -1732,7 +1732,7 @@ def _collect_program_use_entries(
     progress: ProgressSink | None = None,
     program_source: ProgramSource | None = None,
 ) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
-    if scope == "root" or authored.program_path is None:
+    if scope == "root" or (program_source is None and authored.program_path is None):
         return (), {}
     program_source = program_source or authored.load_program()
     program = program_source.parse()
@@ -1775,7 +1775,7 @@ def _collect_program_embedded_entries(
     program_source: ProgramSource | None = None,
 ) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
     del materialize
-    if scope == "root" or authored.program_path is None:
+    if scope == "root" or (program_source is None and authored.program_path is None):
         return (), {}
     program_source = program_source or authored.load_program()
     program = program_source.parse()

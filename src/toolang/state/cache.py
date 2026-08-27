@@ -765,8 +765,14 @@ def _cap_key(cap: StateCap) -> tuple[str, str, str]:
     return cap.kind, cap.name, cap.ref
 
 
-def _resolution_key(item: CapResolution) -> tuple[str, str, str, str]:
-    return item.kind, item.name, item.form, item.declared_ref
+def _resolution_key(item: CapResolution) -> tuple[str, str, str, str, str]:
+    return (
+        item.kind,
+        item.name,
+        item.form,
+        item.definition,
+        item.materialized,
+    )
 
 
 def _quarantine_revision(path: Path) -> None:

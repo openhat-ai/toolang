@@ -152,6 +152,24 @@ def test_prepare_does_not_create_missing_agent_program(tmp_path: Path) -> None:
     assert not (home / "agent.too").exists()
 
 
+def test_flow_module_keeps_inline_caps_without_agent_program(tmp_path: Path) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    flows = home / "flows"
+    flows.mkdir(parents=True)
+    (flows / "report.too").write_text(
+        "prompt style:\n  Flow style.\n\nflow:\n  pass\n",
+        encoding="utf-8",
+    )
+
+    state = prepare_agent_state(_layout(toolang_root))
+
+    cap = state.module("flow_report").here_caps[0]
+    assert cap.name == "style"
+    assert cap.read_content() == "Flow style."
+    assert not (home / "agent.too").exists()
+
+
 def test_prepare_ignores_legacy_state_cache_layout(tmp_path: Path) -> None:
     toolang_root = tmp_path / "toolang"
     home = toolang_root / "agents" / "alice"
@@ -703,3 +721,39 @@ def test_module_here_caps_are_isolated_and_reload_from_cache(tmp_path: Path) -> 
     loaded = load_home_layer(_layout(toolang_root), state.home_revision)
     loaded_flow = next(item for item in loaded.modules if item.name == "flow_research")
     assert loaded_flow.program.find_flow("main") is not None
+
+
+def test_flow_modules_can_reference_the_same_cap(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    toolang_root = tmp_path / "toolang"
+    home = toolang_root / "agents" / "alice"
+    flows = home / "flows"
+    flows.mkdir(parents=True)
+    source = "with skill acme/reviewer\n\nflow:\n  pass\n"
+    (flows / "one.too").write_text(source, encoding="utf-8")
+    (flows / "two.too").write_text(source, encoding="utf-8")
+    monkeypatch.setattr(
+        cap_state, "_github_repo_default_branch", lambda _owner, _repo: "main"
+    )
+    monkeypatch.setattr(cap_state, "_github_remote_exists", lambda _kind, _ref: True)
+    monkeypatch.setattr(
+        cap_state,
+        "_remote_materialized_files",
+        lambda *, relative_entry_path, **_kwargs: {
+            relative_entry_path.as_posix(): (
+                b"---\ndescription: Review\n---\nReview carefully.\n"
+            )
+        },
+    )
+
+    state = prepare_agent_state(_layout(toolang_root))
+
+    one = state.module("flow_one").here_caps[0]
+    two = state.module("flow_two").here_caps[0]
+    assert one.ref == two.ref
+    assert one.path != two.path
+    assert one.read_content() == "Review carefully."
+    assert two.read_content() == "Review carefully."
+    assert not (home / "agent.too").exists()

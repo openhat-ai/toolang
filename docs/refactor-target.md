@@ -162,9 +162,9 @@ persists missing ids before publishing ready-job state.
 Agent source state is represented by three immutable values:
 
 ```text
-HomePrepared = home source + resolution + config + Program + home caps
-RootPrepared = root source + resolution + config + shared caps
-AgentState   = one exact RootPrepared + HomePrepared pair
+HomeLayer = home source + resolutions + config + modules + home caps
+RootLayer = root source + resolutions + config + root caps
+AgentState = one exact RootLayer + HomeLayer pair
 ```
 
 `AgentState` contains the effective config, authored program source path, exact
@@ -173,7 +173,7 @@ jobs collection; program-declared jobs remain available as
 `AgentState.program.jobs`.
 
 `StateWatcher` monitors the relevant files and publishes new immutable
-`AgentState` versions. It owns invalidation and reuse of unchanged parsed
+`AgentState` revisions. It owns invalidation and reuse of unchanged parsed
 sources. It does not know about `RunExecutor` or `JobScheduler`. Every API process
 that can accept runs starts its watcher as process infrastructure; watching is
 not an optional runtime component.
@@ -464,8 +464,8 @@ target APIs.
 
 1. Consolidate language behavior in `toolang.lang` and introduce the focused
    agent, cap, and job value types and catalogs.
-2. Replace prepared/live state layers with `Source`, `HomePrepared`,
-   `RootPrepared`, `AgentState`, and their watcher.
+2. Replace prepared/live state layers with `SourceTree`, `HomeLayer`,
+   `RootLayer`, `AgentState`, and their watcher.
 3. Extract `RunStore`, persistence, reply sinks, and the final executor entry
    point from the current execution stack.
 4. Introduce `Job`, `JobWatcher`, `JobStore`, and the self-driven
