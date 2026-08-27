@@ -20,7 +20,7 @@ from toolang.common.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool, Toolset
 from toolang.base.types.tool import ToolContext
 from toolang.base.utils.function_tools import create_function_tool, tool
-from toolang.state.state import PreparedCap, PreparedVisibility
+from toolang.state.state import StateCap, CapScope
 from toolang.work.authoring import (
     allocate_authored_job_id,
     assign_missing_authored_job_ids,
@@ -28,7 +28,7 @@ from toolang.work.authoring import (
 )
 from toolang.work.state import job_thread_id
 
-VisibilityFilter = Literal["all", "private", "shared"]
+VisibilityFilter = Literal["all", "home", "root"]
 
 
 @dataclass(slots=True)
@@ -226,7 +226,7 @@ class AgentStateToolset:
         @tool(name="psyche_get", description="Get one psyche definition by name.")
         def psyche_get(
             name: str,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return {
@@ -239,7 +239,7 @@ class AgentStateToolset:
         def psyche_create(
             name: str,
             body: str,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return {
@@ -256,7 +256,7 @@ class AgentStateToolset:
         def psyche_update(
             name: str,
             body: str,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return {
@@ -272,7 +272,7 @@ class AgentStateToolset:
         @tool(name="psyche_delete", description="Delete one local psyche definition.")
         def psyche_delete(
             name: str,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return _delete_cap("psyche", name, visibility=visibility, context=context)
@@ -291,7 +291,7 @@ class AgentStateToolset:
         @tool(name="skill_get", description="Get one skill definition by name.")
         def skill_get(
             name: str,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return {
@@ -303,7 +303,7 @@ class AgentStateToolset:
             name: str,
             description: str,
             body: str,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             text = _markdown_text(body, {"description": description})
@@ -318,7 +318,7 @@ class AgentStateToolset:
             name: str,
             description: str | None = None,
             body: str | None = None,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             scope = _scope(context)
@@ -336,7 +336,7 @@ class AgentStateToolset:
         @tool(name="skill_delete", description="Delete one local skill definition.")
         def skill_delete(
             name: str,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return _delete_cap("skill", name, visibility=visibility, context=context)
@@ -357,7 +357,7 @@ class AgentStateToolset:
         @tool(name="service_get", description="Get one service definition by name.")
         def service_get(
             name: str,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return {
@@ -375,7 +375,7 @@ class AgentStateToolset:
             body: str = "",
             headers: dict[str, str] | None = None,
             env: list[str] | None = None,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             text = _service_text(
@@ -401,7 +401,7 @@ class AgentStateToolset:
             body: str | None = None,
             headers: dict[str, str] | None = None,
             env: list[str] | None = None,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             scope = _scope(context)
@@ -429,7 +429,7 @@ class AgentStateToolset:
         @tool(name="service_delete", description="Delete one local service definition.")
         def service_delete(
             name: str,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return _delete_cap("service", name, visibility=visibility, context=context)
@@ -448,7 +448,7 @@ class AgentStateToolset:
         @tool(name="prompt_get", description="Get one prompt definition by name.")
         def prompt_get(
             name: str,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return {
@@ -461,7 +461,7 @@ class AgentStateToolset:
         def prompt_create(
             name: str,
             body: str,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return {
@@ -478,7 +478,7 @@ class AgentStateToolset:
         def prompt_update(
             name: str,
             body: str,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return {
@@ -494,7 +494,7 @@ class AgentStateToolset:
         @tool(name="prompt_delete", description="Delete one local prompt definition.")
         def prompt_delete(
             name: str,
-            visibility: str = "private",
+            visibility: str = "home",
             context: ToolContext | None = None,
         ) -> dict[str, Any]:
             return _delete_cap("prompt", name, visibility=visibility, context=context)
@@ -625,7 +625,7 @@ def _list_caps(
     entries = cap_state.list_entries(
         scope.layout.root,
         scope.layout.name,
-        visibility=None if filter_visibility == "all" else filter_visibility,
+        scope=None if filter_visibility == "all" else filter_visibility,
         kinds={kind},
     )
     return [_cap_payload(scope, entry) for entry in entries]
@@ -660,7 +660,7 @@ def _create_cap(
         raise ToolangError(f"local {kind} already exists: {name}")
     catalog.create(caps.CapFile.parse(text, kind=kind, name=name))
     entry = _find_cap_entry(
-        scope, kind, name, visibility=cap_visibility, source_form="file"
+        scope, kind, name, visibility=cap_visibility, source_form="authored"
     )
     return _cap_payload(scope, entry, include_content=True)
 
@@ -675,12 +675,14 @@ def _update_cap(
 ) -> dict[str, Any]:
     scope = _scope(context)
     cap_visibility = _visibility(visibility)
-    _find_cap_entry(scope, kind, name, visibility=cap_visibility, source_form="file")
+    _find_cap_entry(
+        scope, kind, name, visibility=cap_visibility, source_form="authored"
+    )
     _authored_caps(scope, cap_visibility).update(
         caps.CapFile.parse(text, kind=kind, name=name)
     )
     entry = _find_cap_entry(
-        scope, kind, name, visibility=cap_visibility, source_form="file"
+        scope, kind, name, visibility=cap_visibility, source_form="authored"
     )
     return _cap_payload(scope, entry, include_content=True)
 
@@ -695,7 +697,7 @@ def _delete_cap(
     scope = _scope(context)
     cap_visibility = _visibility(visibility)
     entry = _find_cap_entry(
-        scope, kind, name, visibility=cap_visibility, source_form="file"
+        scope, kind, name, visibility=cap_visibility, source_form="authored"
     )
     deleted_path = scope.layout.root / entry.path
     if entry.shape == "dir":
@@ -704,7 +706,7 @@ def _delete_cap(
     return {
         "kind": kind,
         "name": name,
-        "visibility": cap_visibility,
+        "scope": cap_visibility,
         "path": str(deleted_path),
         "deleted": True,
     }
@@ -715,15 +717,15 @@ def _find_cap_entry(
     kind: CapKind,
     name: str,
     *,
-    visibility: VisibilityFilter | PreparedVisibility,
+    visibility: VisibilityFilter | CapScope,
     source_origin: str | None = None,
     source_form: str | None = None,
-) -> PreparedCap:
+) -> StateCap:
     entry_visibility = None if visibility == "all" else visibility
     entries = cap_state.list_entries(
         scope.layout.root,
         scope.layout.name,
-        visibility=entry_visibility,
+        scope=entry_visibility,
         kinds={kind},
     )
     matches = [
@@ -746,11 +748,11 @@ def _find_cap_entry(
 
 def _cap_payload(
     scope: _AgentStateScope,
-    entry: PreparedCap,
+    entry: StateCap,
     *,
     include_content: bool = False,
 ) -> dict[str, Any]:
-    visibility = cap_state.entry_visibility(entry, agent_name=scope.layout.name)
+    visibility = cap_state.entry_scope(entry, agent_name=scope.layout.name)
     item: dict[str, Any] = {
         "kind": entry.kind,
         "name": entry.name,
@@ -765,7 +767,7 @@ def _cap_payload(
     line = cap_state.entry_line(entry)
     if line is not None:
         item["line"] = line
-    if include_content and entry.source.form == "file":
+    if include_content and entry.source.form == "authored":
         cap = _authored_caps(scope, visibility).get(entry.kind, entry.name)
         if cap is None:
             raise ToolangError(f"local {entry.kind} not found: {entry.name}")
@@ -789,23 +791,23 @@ def _load_local_cap_parts(
 
 def _authored_caps(
     scope: _AgentStateScope,
-    visibility: PreparedVisibility,
+    visibility: CapScope,
 ) -> caps.AuthoredCaps:
-    directory = scope.layout.root if visibility == "shared" else scope.layout.home
+    directory = scope.layout.root if visibility == "root" else scope.layout.home
     return caps.AuthoredCaps(directory)
 
 
-def _visibility(value: str) -> PreparedVisibility:
+def _visibility(value: str) -> CapScope:
     text = value.strip().lower()
-    if text not in {"private", "shared"}:
-        raise ToolangError(f"visibility must be private or shared: {value}")
-    return cast(PreparedVisibility, text)
+    if text not in {"home", "root"}:
+        raise ToolangError(f"visibility must be home or root: {value}")
+    return cast(CapScope, text)
 
 
 def _visibility_filter(value: str) -> VisibilityFilter:
     text = value.strip().lower()
-    if text not in {"all", "private", "shared"}:
-        raise ToolangError(f"visibility must be all, private, or shared: {value}")
+    if text not in {"all", "home", "root"}:
+        raise ToolangError(f"visibility must be all, home, or root: {value}")
     return cast(VisibilityFilter, text)
 
 

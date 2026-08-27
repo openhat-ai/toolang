@@ -428,7 +428,7 @@ def test_legacy_model_noted_data_projects_version_zero_accounting() -> None:
             "tokens": {"input": 12, "output": 3},
             "price": {"input": "0.000001", "output": "0.000002"},
             "cost": "0.000018",
-            "state": None,
+            "cont": None,
         },
     )
 

@@ -84,7 +84,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 28
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 29
         finally:
             connection.close()
     finally:
@@ -321,7 +321,7 @@ def test_retry_reopens_root_from_a_failed_value_step(
                 model=start.payload.model,
                 locals=start.payload.locals,
                 sandbox="host",
-                state="different-state",
+                state="1" * 64,
                 request_id="retry-mismatch",
                 created_at="2026-01-01T00:00:03Z",
             )

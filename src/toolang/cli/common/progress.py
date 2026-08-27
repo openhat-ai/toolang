@@ -123,7 +123,7 @@ class CliProgress:
             self._record_prepare(event)
 
     def _record_prepare(self, event: ProgressEvent) -> None:
-        key = event.id if event.phase == "prepare.visibility" else event.phase
+        key = event.id if event.phase == "prepare.scope" else event.phase
         self._prepare[key] = event.status
         if event.detail:
             self._prepare_details[key] = event.detail
@@ -358,13 +358,13 @@ class CliProgress:
         return self._has_visible_items() or self._agent_name is not None
 
     def _prepare_is_cached(self) -> bool:
-        visibility_phases = tuple(
-            phase for phase in self._prepare if phase.startswith("prepare.visibility:")
+        scope_phases = tuple(
+            phase for phase in self._prepare if phase.startswith("prepare.scope:")
         )
-        return bool(visibility_phases) and all(
+        return bool(scope_phases) and all(
             self._prepare.get(phase) == "ok"
             and self._prepare_details.get(phase) == "cached"
-            for phase in visibility_phases
+            for phase in scope_phases
         )
 
     def _item_groups(self) -> tuple[tuple[_ProgressItem, ...], ...]:

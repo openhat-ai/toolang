@@ -20,7 +20,7 @@ from .types import CAP_DIR_BY_KIND, CAP_KINDS, CapKind
 
 @dataclass(frozen=True, slots=True)
 class CapRef:
-    """One named wired capability reference from a config file."""
+    """One named configured capability reference."""
 
     kind: CapKind
     name: str
@@ -33,7 +33,7 @@ class CapRef:
             raise ValueError("cap ref cannot be empty")
 
 
-class WiredCaps:
+class ConfiguredCaps:
     """CRUD for capability references in one explicitly supplied config file."""
 
     def __init__(self, config_path: Path) -> None:
@@ -44,7 +44,7 @@ class WiredCaps:
         return self.config_path.with_name(f".{self.config_path.name}.lock")
 
     def write_lock(self) -> AbstractContextManager[None]:
-        """Return the shared lock used by all wired-cap mutations."""
+        """Return the lock shared by configured-cap mutations."""
 
         return file_write_lock(self.lock_path)
 
@@ -85,7 +85,7 @@ class WiredCaps:
         with self.write_lock():
             if self.get(cap.kind, cap.name) is not None:
                 raise CatalogConflictError(
-                    f"wired {cap.kind} already exists: {cap.name}"
+                    f"configured {cap.kind} already exists: {cap.name}"
                 )
             self._write(cap)
             return cap
@@ -93,12 +93,14 @@ class WiredCaps:
     def update(self, cap: CapRef) -> CapRef:
         with self.write_lock():
             if self.get(cap.kind, cap.name) is None:
-                raise CatalogNotFoundError(f"wired {cap.kind} not found: {cap.name}")
+                raise CatalogNotFoundError(
+                    f"configured {cap.kind} not found: {cap.name}"
+                )
             self._write(cap)
             return cap
 
     def upsert(self, cap: CapRef) -> CapRef:
-        """Create or replace one wired capability atomically."""
+        """Create or replace one configured capability atomically."""
 
         with self.write_lock():
             self._write(cap)
@@ -108,11 +110,11 @@ class WiredCaps:
         with self.write_lock():
             cap = self.get(kind, name)
             if cap is None:
-                raise CatalogNotFoundError(f"wired {kind} not found: {name}")
+                raise CatalogNotFoundError(f"configured {kind} not found: {name}")
             document = _load_document(self.config_path)
             table = _document_kind_table(document, kind, create=False)
             if table is None or name not in table:
-                raise CatalogNotFoundError(f"wired {kind} not found: {name}")
+                raise CatalogNotFoundError(f"configured {kind} not found: {name}")
             del table[name]
             atomic_write_text(self.config_path, tomlkit.dumps(document))
             return cap
@@ -137,7 +139,7 @@ def _kind_table(data: dict[str, object], kind: CapKind) -> dict[str, object] | N
     if isinstance(value, dict):
         return cast(dict[str, object], value)
     if value is not None:
-        raise ValueError(f"invalid wired cap table: {CAP_DIR_BY_KIND[kind]}")
+        raise ValueError(f"invalid configured cap table: {CAP_DIR_BY_KIND[kind]}")
     return None
 
 
@@ -146,7 +148,7 @@ def _config_ref(item: object) -> str:
         ref = cast(dict[str, object], item).get("ref")
         if isinstance(ref, str) and ref.strip():
             return ref
-    raise ValueError(f"invalid wired cap config entry: {item!r}")
+    raise ValueError(f"invalid configured cap config entry: {item!r}")
 
 
 def _load_document(path: Path) -> Any:
@@ -159,7 +161,7 @@ def _document_kind_table(document: Any, kind: CapKind, *, create: bool) -> Any |
     value = document.get(key)
     if value is not None:
         if not isinstance(value, Mapping):
-            raise ValueError(f"invalid wired cap table: {key}")
+            raise ValueError(f"invalid configured cap table: {key}")
         return value
     if not create:
         return None

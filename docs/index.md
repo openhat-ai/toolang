@@ -29,7 +29,7 @@ Use this directory for:
 | [flow-syntax.md](./flow-syntax.md) | Flow declarations, statements, result binding, and clauses |
 | [input-syntax.md](./input-syntax.md) | Policy commands, chat and runnable input, Content evaluation, and coercion |
 | [layout.md](./layout.md) | Layout and storage, including Toolang root, agent home, and runtime room paths |
-| [prepared-state.md](./prepared-state.md) | Immutable prepared generations, versioning, publication, and watching |
+| [agent-state.md](./agent-state.md) | Immutable Agent State layers, revisions, publication, loading, and watching |
 | [caps.md](./caps.md) | Capability model, including form, scope, origin, refs, precedence, and effective-cap rules |
 | [selectors.md](./selectors.md) | Shared selector-list syntax for filters, runtime allow lists, and runnable directives |
 | [work.md](./work.md) | Task and chore scheduling, checkpoints, event-loop ownership, and recovery |

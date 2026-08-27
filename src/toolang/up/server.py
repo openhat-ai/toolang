@@ -372,7 +372,7 @@ def _log_state_loaded(
 ) -> None:
     logger.info(
         "Agent loaded state=%s models=%s tools=%s psyches=%s skills=%s services=%s",
-        state.fingerprint[:12],
+        state.revision[:12],
         _model_count(setup, state, ceiling=ceiling),
         len(setup.tools),
         _cap_count(state, "psyche"),

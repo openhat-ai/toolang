@@ -7,16 +7,16 @@ from fastapi.responses import Response
 from pydantic import TypeAdapter
 
 from toolang.api.app import AgentCoreDep, CapsManagerDep
-from toolang.api.schemas import PutCapRequest, WiredCapRequest
+from toolang.api.schemas import PutCapRequest, ConfiguredCapRequest
 from toolang.up import AgentCore
 from toolang.catalog import cap as caps, templates
 from toolang.catalog import config as cap_config
 from toolang.catalog.types import CapKind
 from toolang.state import state as cap_state
 from toolang.state.schemas import CapDetail, CapInfo
-from toolang.state.state import PreparedCap, PreparedVisibility
+from toolang.state.state import StateCap, CapScope
 
-ApiVisibility = Literal["private", "shared"]
+MutableCapScope = Literal["home", "root"]
 
 _CAP_INFOS = TypeAdapter(tuple[CapInfo, ...])
 
@@ -32,18 +32,24 @@ router = APIRouter(tags=["caps"])
 
 
 @router.put(
-    "/prompts/{name}/file", summary="Upsert File Prompt", response_model=CapDetail
+    "/prompts/{name}/authored",
+    summary="Upsert Authored Prompt",
+    response_model=CapDetail,
 )
 @router.put(
-    "/services/{name}/file", summary="Upsert File Service", response_model=CapDetail
+    "/services/{name}/authored",
+    summary="Upsert Authored Service",
+    response_model=CapDetail,
 )
 @router.put(
-    "/skills/{name}/file", summary="Upsert File Skill", response_model=CapDetail
+    "/skills/{name}/authored", summary="Upsert Authored Skill", response_model=CapDetail
 )
 @router.put(
-    "/psyches/{name}/file", summary="Upsert File Psyche", response_model=CapDetail
+    "/psyches/{name}/authored",
+    summary="Upsert Authored Psyche",
+    response_model=CapDetail,
 )
-def put_file_cap(
+def put_authored_cap(
     core: AgentCoreDep,
     manager: CapsManagerDep,
     request: Request,
@@ -51,11 +57,11 @@ def put_file_cap(
     payload: PutCapRequest,
 ) -> CapDetail:
     kind = _collection_kind(_collection_from_path(str(request.url.path)))
-    visibility = payload.visibility
+    scope = payload.scope
     if payload.content is None:
         raise HTTPException(status_code=400, detail="missing cap content")
 
-    catalog = _authored_caps(manager.home_authoring, manager.root_authoring, visibility)
+    catalog = _authored_caps(manager.home_authoring, manager.root_authoring, scope)
     cap = _wrap_user_error(
         caps.CapFile.parse,
         payload.content or "",
@@ -63,73 +69,81 @@ def put_file_cap(
         name=name,
     )
     _wrap_user_error(catalog.upsert, cap)
-    entry = _find_authored_entry(core, visibility=visibility, kind=kind, name=name)
+    entry = _find_authored_entry(core, scope=scope, kind=kind, name=name)
     return CapDetail.from_cap(entry, agent_name=core.layout.name)
 
 
-@router.put("/prompts/{name}/wired", summary="Wire Prompt", response_model=CapDetail)
-@router.put("/services/{name}/wired", summary="Wire Service", response_model=CapDetail)
-@router.put("/skills/{name}/wired", summary="Wire Skill", response_model=CapDetail)
-@router.put("/psyches/{name}/wired", summary="Wire Psyche", response_model=CapDetail)
-def put_wired_cap(
+@router.put(
+    "/prompts/{name}/configured", summary="Configure Prompt", response_model=CapDetail
+)
+@router.put(
+    "/services/{name}/configured", summary="Configure Service", response_model=CapDetail
+)
+@router.put(
+    "/skills/{name}/configured", summary="Configure Skill", response_model=CapDetail
+)
+@router.put(
+    "/psyches/{name}/configured", summary="Configure Psyche", response_model=CapDetail
+)
+def put_configured_cap(
     core: AgentCoreDep,
     manager: CapsManagerDep,
     request: Request,
     name: str,
-    payload: WiredCapRequest,
+    payload: ConfiguredCapRequest,
 ) -> CapDetail:
     kind = _collection_kind(_collection_from_path(str(request.url.path)))
-    visibility = payload.visibility
+    scope = payload.scope
     canonical_ref = _wrap_user_error(cap_state.resolve_remote_ref, kind, payload.ref)
     if cap_state.remote_entry_name(kind, canonical_ref) != name:
         raise HTTPException(
             status_code=400,
-            detail=f"Wired {kind} ref {payload.ref!r} does not match requested name {name!r}.",
+            detail=f"Configured {kind} ref {payload.ref!r} does not match requested name {name!r}.",
         )
-    catalog = _wired_caps(manager.home_wiring, manager.root_wiring, visibility)
+    catalog = _configured_caps(manager.home_configured, manager.root_configured, scope)
     cap = cap_config.CapRef(kind=kind, name=name, ref=canonical_ref)
     _wrap_user_error(catalog.upsert, cap)
-    entry = _find_authored_entry(core, visibility=visibility, kind=kind, name=name)
+    entry = _find_authored_entry(core, scope=scope, kind=kind, name=name)
     return CapDetail.from_cap(entry, agent_name=core.layout.name)
 
 
 @router.delete(
-    "/prompts/{name}/file",
-    summary="Delete File Prompt",
+    "/prompts/{name}/authored",
+    summary="Delete Authored Prompt",
     status_code=204,
     response_class=Response,
 )
 @router.delete(
-    "/services/{name}/file",
-    summary="Delete File Service",
+    "/services/{name}/authored",
+    summary="Delete Authored Service",
     status_code=204,
     response_class=Response,
 )
 @router.delete(
-    "/skills/{name}/file",
-    summary="Delete File Skill",
+    "/skills/{name}/authored",
+    summary="Delete Authored Skill",
     status_code=204,
     response_class=Response,
 )
 @router.delete(
-    "/psyches/{name}/file",
-    summary="Delete File Psyche",
+    "/psyches/{name}/authored",
+    summary="Delete Authored Psyche",
     status_code=204,
     response_class=Response,
 )
-def delete_file_cap(
+def delete_authored_cap(
     manager: CapsManagerDep,
     request: Request,
     name: str,
-    visibility: ApiVisibility = Query(default="private"),
+    scope: MutableCapScope = Query(default="home"),
 ) -> None:
     kind = _collection_kind(_collection_from_path(str(request.url.path)))
-    requested_visibility = visibility
+    requested_scope = scope
     _wrap_user_error(
         _authored_caps(
             manager.home_authoring,
             manager.root_authoring,
-            requested_visibility,
+            requested_scope,
         ).remove,
         kind,
         name,
@@ -137,42 +151,42 @@ def delete_file_cap(
 
 
 @router.delete(
-    "/prompts/{name}/wired",
-    summary="Unwire Prompt",
+    "/prompts/{name}/configured",
+    summary="Remove Configured Prompt",
     status_code=204,
     response_class=Response,
 )
 @router.delete(
-    "/services/{name}/wired",
-    summary="Unwire Service",
+    "/services/{name}/configured",
+    summary="Remove Configured Service",
     status_code=204,
     response_class=Response,
 )
 @router.delete(
-    "/skills/{name}/wired",
-    summary="Unwire Skill",
+    "/skills/{name}/configured",
+    summary="Remove Configured Skill",
     status_code=204,
     response_class=Response,
 )
 @router.delete(
-    "/psyches/{name}/wired",
-    summary="Unwire Psyche",
+    "/psyches/{name}/configured",
+    summary="Remove Configured Psyche",
     status_code=204,
     response_class=Response,
 )
-def delete_wired_cap(
+def delete_configured_cap(
     manager: CapsManagerDep,
     request: Request,
     name: str,
-    visibility: ApiVisibility = Query(default="private"),
+    scope: MutableCapScope = Query(default="home"),
 ) -> None:
     kind = _collection_kind(_collection_from_path(str(request.url.path)))
-    requested_visibility = visibility
+    requested_scope = scope
     _wrap_user_error(
-        _wired_caps(
-            manager.home_wiring,
-            manager.root_wiring,
-            requested_visibility,
+        _configured_caps(
+            manager.home_configured,
+            manager.root_configured,
+            requested_scope,
         ).remove,
         kind,
         name,
@@ -276,23 +290,23 @@ def _collection_kind(collection: str) -> CapKind:
 
 
 def _authored_caps(
-    private: caps.AuthoredCaps,
-    shared: caps.AuthoredCaps,
-    visibility: ApiVisibility,
+    home: caps.AuthoredCaps,
+    root: caps.AuthoredCaps,
+    scope: MutableCapScope,
 ) -> caps.AuthoredCaps:
-    if visibility == "shared":
-        return shared
-    return private
+    if scope == "root":
+        return root
+    return home
 
 
-def _wired_caps(
-    private: cap_config.WiredCaps,
-    shared: cap_config.WiredCaps,
-    visibility: ApiVisibility,
-) -> cap_config.WiredCaps:
-    if visibility == "shared":
-        return shared
-    return private
+def _configured_caps(
+    home: cap_config.ConfiguredCaps,
+    root: cap_config.ConfiguredCaps,
+    scope: MutableCapScope,
+) -> cap_config.ConfiguredCaps:
+    if scope == "root":
+        return root
+    return home
 
 
 def _collection_from_path(path: str) -> str:
@@ -305,14 +319,14 @@ def _collection_from_path(path: str) -> str:
 def _find_authored_entry(
     core: AgentCore,
     *,
-    visibility: PreparedVisibility,
+    scope: CapScope,
     kind: CapKind,
     name: str,
-) -> PreparedCap:
+) -> StateCap:
     for entry in cap_state.list_entries(
         core.layout.root,
         core.layout.name,
-        visibility=visibility,
+        scope=scope,
         kinds={kind},
     ):
         if entry.name == name:
@@ -321,7 +335,7 @@ def _find_authored_entry(
 
 
 def _cap_infos(
-    entries: tuple[PreparedCap, ...], *, agent_name: str, kind: CapKind
+    entries: tuple[StateCap, ...], *, agent_name: str, kind: CapKind
 ) -> tuple[CapInfo, ...]:
     return tuple(
         CapInfo.from_cap(entry, agent_name=agent_name)

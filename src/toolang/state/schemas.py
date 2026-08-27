@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .state import (
-    PreparedCap,
+    StateCap,
     entry_definition_file,
     entry_form,
     entry_line,
@@ -14,7 +14,7 @@ from .state import (
     entry_ref,
     entry_scope,
 )
-from .types import EntryForm, EntryKind, EntryOrigin, EntryScope
+from .types import CapForm, CapScope, EntryKind, SourceOrigin
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,17 +24,17 @@ class CapInfo:
     kind: EntryKind
     name: str
     description: str | None
-    scope: EntryScope
-    origin: EntryOrigin
-    form: EntryForm
+    scope: CapScope
+    origin: SourceOrigin
+    form: CapForm
     ref: str
     definition_file: str
     editable: bool
     line: int | None = None
 
     @classmethod
-    def from_cap(cls, cap: PreparedCap, *, agent_name: str) -> CapInfo:
-        """Build caller-facing capability information from prepared state."""
+    def from_cap(cls, cap: StateCap, *, agent_name: str) -> CapInfo:
+        """Build caller-facing capability information from Agent State."""
 
         description = cap.meta.get("description")
         return cls(
@@ -46,7 +46,7 @@ class CapInfo:
             form=entry_form(cap),
             ref=entry_ref(cap, agent_name=agent_name),
             definition_file=entry_definition_file(cap),
-            editable=cap.source.form == "file",
+            editable=cap.source.form == "authored",
             line=entry_line(cap),
         )
 
@@ -59,8 +59,8 @@ class CapDetail(CapInfo):
     files: tuple[str, ...] | None = None
 
     @classmethod
-    def from_cap(cls, cap: PreparedCap, *, agent_name: str) -> CapDetail:
-        """Build complete caller-facing capability detail from prepared state."""
+    def from_cap(cls, cap: StateCap, *, agent_name: str) -> CapDetail:
+        """Build complete caller-facing capability detail from Agent State."""
 
         info = CapInfo.from_cap(cap, agent_name=agent_name)
         content_path = Path(cap.path)

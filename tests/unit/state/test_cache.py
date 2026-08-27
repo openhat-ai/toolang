@@ -1,212 +1,197 @@
 from __future__ import annotations
 
+from hashlib import sha256
+import json
 from pathlib import Path
 
 import pytest
 
 from toolang.common.layout import AgentLayout
 from toolang.lang.ast import Program, SettleStmt
-from toolang.state.state import (
-    CapResolution,
-    PreparedProgramModule,
-    agent_state_version,
-)
 from toolang.state.cache import (
-    load_current_version,
-    load_version_prepared,
-    load_version_resolved,
-    load_version_source,
-    load_home_prepared,
-    publish_current,
-    prepared_version_dir,
-    prepared_version,
-    write_prepared,
+    canonical_json,
+    layer_revision_dir,
+    load_agent_revisions,
+    load_current_agent_revision,
+    load_current_revision,
+    load_home_layer,
+    load_root_layer,
+    persist_agent_revision,
+    publish_layer_current,
+    write_layer,
 )
 from toolang.state.source import scan_source
+from toolang.state.state import StateModule, agent_state_revision
 
 
-def test_prepared_version_includes_scope_source_and_resolution(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "source"
-    source.mkdir()
-    (source / "config.toml").write_text("[caps]\n", encoding="utf-8")
-    tree = scan_source(source, ("config.toml",))
-    resolutions: tuple[CapResolution, ...] = ()
+def _layout(root: Path) -> AgentLayout:
+    return AgentLayout.resident(root, "alice")
 
-    root = prepared_version(
+
+def _write_root(layout: AgentLayout) -> str:
+    return write_layer(
+        layout=layout,
         scope="root",
-        source=tree,
-        resolutions=resolutions,
+        source=scan_source(layout.root, ()),
+        resolutions=(),
+        config={},
+        caps=(),
+        modules=(),
+        files={},
     )
-    home = prepared_version(
+
+
+def _write_home(
+    layout: AgentLayout,
+    source_text: str = "agic default:\n  Ready.\n",
+) -> str:
+    layout.home.mkdir(parents=True, exist_ok=True)
+    layout.program.write_text(source_text, encoding="utf-8")
+    source = scan_source(layout.home, ("agent.too",))
+    return write_layer(
+        layout=layout,
         scope="home",
-        source=tree,
-        resolutions=resolutions,
-    )
-    upgraded = prepared_version(
-        scope="root",
-        source=tree,
-        resolutions=resolutions,
-    )
-    refreshed = prepared_version(
-        scope="root",
-        source=tree,
-        resolutions=(
-            CapResolution(
-                kind="prompt",
-                name="rewrite",
-                form="wired",
-                authored_ref="repo@main",
-                resolved_ref="repo@abc",
-                definition="config.toml",
-                materialized="files/wired/prompts/rewrite.md",
-                content_hash="00" * 32,
-                files=(),
-            ),
-        ),
-    )
-
-    assert len(root) == 32
-    assert upgraded == root
-    assert len({root, home, refreshed}) == 3
-
-
-def test_agent_state_version_preserves_root_home_order(tmp_path: Path) -> None:
-    root = bytes.fromhex("01" * 32)
-    home = bytes.fromhex("02" * 32)
-
-    version = agent_state_version(root, home)
-
-    assert len(version) == 32
-    assert version != agent_state_version(home, root)
-    layout = AgentLayout.resident(tmp_path, "alice")
-    assert prepared_version_dir(layout, "root", root) == (
-        tmp_path / ".state" / "versions" / root.hex()
-    )
-
-
-def test_agent_state_version_rejects_non_sha256_values() -> None:
-    with pytest.raises(ValueError, match="root version must contain 32 bytes"):
-        agent_state_version(b"short", bytes(32))
-
-
-def test_prepared_version_is_self_contained_and_can_be_published(
-    tmp_path: Path,
-) -> None:
-    source_dir = tmp_path / "source"
-    source_dir.mkdir()
-    (source_dir / "agent.too").write_text("agent alice\n", encoding="utf-8")
-    source = scan_source(source_dir, ("agent.too",))
-    prepared = {
-        "schema": 2,
-        "scope": "home",
-        "toolang_version": "0.2.7",
-        "config": {"models": {"default": "fast"}},
-        "modules": [
-            PreparedProgramModule(
-                identity="agent",
+        source=source,
+        resolutions=(),
+        config={"models": {"default": "fast"}},
+        caps=(),
+        modules=(
+            StateModule(
+                name="agent",
                 kind="agent",
                 authored_path="agent.too",
-                prepared_path="files/agent.too",
-                digest="00" * 32,
-                program=Program.from_source("agic hello:\n  Hello.\n"),
-            ).to_data()
-        ],
-        "caps": [],
-    }
-
-    version = write_prepared(
-        layout=AgentLayout.resident(tmp_path, "alice"),
-        scope="home",
-        source=source,
-        resolutions=(),
-        prepared=prepared,
-        files={
-            "agent.too": b"agent alice\n",
-            "authored/prompts/review.md": b"# Review\n",
-        },
-    )
-    layout = AgentLayout.resident(tmp_path, "alice")
-    version_dir = prepared_version_dir(layout, "home", version)
-    publish_current(layout, "home", version)
-
-    assert load_current_version(layout, "home") == version
-    assert load_version_source(version_dir) == source
-    assert load_version_resolved(version_dir) == {"schema": 2, "entries": []}
-    assert load_version_prepared(version_dir) == prepared
-    home = load_home_prepared(layout)
-    assert home.version == version
-    assert home.config == {"models": {"default": "fast"}}
-    assert home.program.find_agic("hello") is not None
-    assert (version_dir / "files" / "agent.too").read_bytes() == b"agent alice\n"
-    assert (
-        version_dir / "files" / "authored" / "prompts" / "review.md"
-    ).read_bytes() == b"# Review\n"
-
-
-def test_home_prepared_loads_program_without_reparsing_source(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source_dir = tmp_path / "source"
-    source_dir.mkdir()
-    source_text = "agic hello:\n  Hello.\n\nflow work:\n  settle hello\n"
-    (source_dir / "agent.too").write_text(source_text, encoding="utf-8")
-    source = scan_source(source_dir, ("agent.too",))
-    version = write_prepared(
-        layout=AgentLayout.resident(tmp_path, "alice"),
-        scope="home",
-        source=source,
-        resolutions=(),
-        prepared={
-            "schema": 2,
-            "scope": "home",
-            "toolang_version": "0.2.7",
-            "modules": [
-                PreparedProgramModule(
-                    identity="agent",
-                    kind="agent",
-                    authored_path="agent.too",
-                    prepared_path="files/agent.too",
-                    digest="00" * 32,
-                    program=Program.from_source(source_text),
-                ).to_data()
-            ],
-            "caps": [],
-        },
+                materialized_path="files/agent.too",
+                digest=sha256(source_text.encode()).hexdigest(),
+                program=Program.from_source(source_text),
+            ),
+        ),
         files={"agent.too": source_text.encode()},
     )
-    layout = AgentLayout.resident(tmp_path, "alice")
-    publish_current(layout, "home", version)
+
+
+def test_layer_json_exact_bytes_are_the_revision(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    revision = _write_root(layout)
+    revision_dir = layer_revision_dir(layout, "root", revision)
+    encoded = (revision_dir / "layer.json").read_bytes()
+
+    assert encoded == canonical_json(json.loads(encoded))
+    assert sha256(encoded).hexdigest() == revision
+    assert revision_dir.name == revision
+    assert len(revision) == 64
+    assert not encoded.endswith(b"\n")
+
+
+def test_canonical_json_rejects_nonfinite_numbers() -> None:
+    with pytest.raises(ValueError):
+        canonical_json({"value": float("nan")})
+
+
+def test_agent_state_revision_round_trips_exact_layers(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    root_revision = _write_root(layout)
+    home_revision = _write_home(layout)
+    revision = persist_agent_revision(
+        layout,
+        root_revision=root_revision,
+        home_revision=home_revision,
+    )
+
+    assert revision == agent_state_revision(root_revision, home_revision)
+    assert load_current_agent_revision(layout) == revision
+    assert load_agent_revisions(layout, revision) == (
+        revision,
+        root_revision,
+        home_revision,
+    )
+    layers = layout.agent_state / "revs" / revision / "layers.json"
+    assert sha256(layers.read_bytes()).hexdigest() == revision
+
+
+def test_layer_publish_and_load_use_revision_strings(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    root_revision = _write_root(layout)
+    home_revision = _write_home(layout, "agic hello:\n  Hello.\n")
+    publish_layer_current(layout, "root", root_revision)
+    publish_layer_current(layout, "home", home_revision)
+
+    assert load_current_revision(layout, "root") == root_revision
+    assert load_current_revision(layout, "home") == home_revision
+    assert load_root_layer(layout).revision == root_revision
+    home = load_home_layer(layout)
+    assert home.revision == home_revision
+    assert home.config == {"models": {"default": "fast"}}
+    assert home.program.find_agic("hello") is not None
+
+
+def test_home_layer_loads_program_without_reparsing_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout = _layout(tmp_path)
+    source_text = "agic hello:\n  Hello.\n\nflow work:\n  settle hello\n"
+    revision = _write_home(layout, source_text)
+    publish_layer_current(layout, "home", revision)
 
     def fail_parse(_cls: type[Program], _source: str) -> Program:
-        raise AssertionError("prepared program must not be reparsed")
+        raise AssertionError("persisted program must not be reparsed")
 
     monkeypatch.setattr(Program, "from_source", classmethod(fail_parse))
 
-    program = load_home_prepared(layout).program
+    program = load_home_layer(layout).program
     assert program.find_agic("hello")
     flow = program.find_flow("work")
     assert flow is not None
     assert isinstance(flow.stmts[0], SettleStmt)
 
 
-def test_prepared_version_rejects_files_outside_its_files_directory(
+@pytest.mark.parametrize("damage", ["missing", "extra", "modified"])
+def test_layer_manifest_rejects_file_set_and_content_damage(
     tmp_path: Path,
+    damage: str,
 ) -> None:
-    source = scan_source(tmp_path, ())
+    layout = _layout(tmp_path)
+    revision = _write_home(layout)
+    revision_dir = layer_revision_dir(layout, "home", revision)
+    program = revision_dir / "files" / "agent.too"
+    if damage == "missing":
+        program.unlink()
+    elif damage == "extra":
+        (revision_dir / "files" / "extra.txt").write_text("extra", encoding="utf-8")
+    else:
+        program.write_text("changed", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="cache file path must be relative"):
-        write_prepared(
-            layout=AgentLayout.resident(tmp_path, "alice"),
+    with pytest.raises(ValueError):
+        load_home_layer(layout, revision)
+
+
+def test_layer_loader_rejects_noncanonical_json(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    revision = _write_root(layout)
+    layer = layer_revision_dir(layout, "root", revision) / "layer.json"
+    document = json.loads(layer.read_text(encoding="utf-8"))
+    layer.write_text(json.dumps(document, indent=2), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="not canonical JSON"):
+        load_root_layer(layout, revision)
+
+
+def test_layer_rejects_nonportable_file_path(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+
+    with pytest.raises(ValueError, match="portable and relative"):
+        write_layer(
+            layout=layout,
             scope="root",
-            source=source,
+            source=scan_source(tmp_path, ()),
             resolutions=(),
-            prepared={
-                "schema": 2,
-                "scope": "root",
-                "toolang_version": "0.2.7",
-                "caps": [],
-            },
+            config={},
+            caps=(),
+            modules=(),
             files={"../escape": b"bad"},
         )
+
+
+def test_agent_state_revision_rejects_noncanonical_revision() -> None:
+    with pytest.raises(ValueError, match="root revision"):
+        agent_state_revision("short", "0" * 64)

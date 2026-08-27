@@ -134,7 +134,7 @@ def test_agent_state_tool_creates_updates_gets_and_deletes_skill(
     deleted = _invoke(tools["skill_delete"], {"name": "reviewer"}, context)
 
     assert created["skill"]["scope"] == "home"
-    assert created["skill"]["form"] == "file"
+    assert created["skill"]["form"] == "authored"
     assert created["skill"]["meta"]["description"] == "Review code changes."
     assert updated["skill"]["meta"]["description"] == "Review implementation changes."
     assert "Check correctness, tests, and docs." in loaded["skill"]["content"]

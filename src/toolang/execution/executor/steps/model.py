@@ -23,6 +23,7 @@ from toolang.base.types.message import (
 )
 from toolang.base.types.run import (
     ModelCall,
+    ModelContinuation,
     ModelCallResult,
     ModelPartDelta,
     ModelPartEnd,
@@ -103,7 +104,7 @@ async def execute(state: _AgicState) -> ModelCallResult:
             if prepared.model.tools and not state.repairing_output
             else ()
         ),
-        state=state.model_state,
+        cont=state.cont,
     )
     await state.emit(
         StepBegin(
@@ -220,7 +221,7 @@ async def _apply_response(
     output = tuple(part for _, part in sorted(output_parts, key=lambda item: item[0]))
     if output:
         state.messages.append(Message(role="assistant", parts=output))
-    state.model_state = current.state
+    state.cont = current.cont
     accounting = state.account_usage(current.usage)
     await state.emit(
         StepEnd(
@@ -228,7 +229,7 @@ async def _apply_response(
             kind="model",
             status="succeeded",
             output=Local.typed("Part[]", output, "_", 0),
-            noted=_model_step_noted(accounting, state=current.state),
+            noted=_model_step_noted(accounting, cont=current.cont),
             finished_at=utc_now(),
         )
     )
@@ -517,7 +518,7 @@ def _partial_part(stream: _ModelStream, part_index: int) -> Part:
 def _model_step_noted(
     accounting: _ModelAccounting,
     *,
-    state: dict[str, object] | None,
+    cont: ModelContinuation | None,
 ) -> ModelStepNoted:
     usage = accounting.usage
     price = accounting.price
@@ -537,7 +538,7 @@ def _model_step_noted(
         ),
         cost=_decimal_text(accounting.cost),
         accounting=accounting.accounting,
-        state=dict(state) if state is not None else None,
+        cont=dict(cont) if cont is not None else None,
     )
 
 

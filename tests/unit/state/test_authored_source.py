@@ -47,8 +47,8 @@ def test_cap_projection_uses_captured_files(tmp_path: Path) -> None:
     )
 
     projected = authored_entries_snapshot(snapshot)
-    shared = cast(list[dict[str, object]], projected["shared_entries"])
-    private = cast(list[dict[str, object]], projected["private_entries"])
-    assert shared[0]["meta"] == {"description": "First style"}
-    assert private[0]["name"] == "old"
-    assert private[0]["ref"] == "github://acme/agents/prompts/old.md@main"
+    root_entries = cast(list[dict[str, object]], projected["root_entries"])
+    home_entries = cast(list[dict[str, object]], projected["home_entries"])
+    assert root_entries[0]["meta"] == {"description": "First style"}
+    assert home_entries[0]["name"] == "old"
+    assert home_entries[0]["ref"] == "github://acme/agents/prompts/old.md@main"

@@ -31,7 +31,7 @@ from toolang.execution.store import RunStore
 from toolang.execution.threads import ThreadManager
 from toolang.lang import Program
 from toolang.lang.input import resolve_runnable_input
-from toolang.state.state import AgentState, agent_state_version
+from toolang.state.state import AgentState, agent_state_revision
 from toolang.setup import AgentEnvironment, AgentSetup
 
 TEST_MODEL_REF = "test/scripted"
@@ -294,20 +294,18 @@ class ExecutionHarness:
         home = root / "agents" / "alice"
         runtime = home / ".runtime"
         program = Program.from_source(source)
-        root_version = sha256(b"execution-test-root").digest()
-        home_version = sha256(source.encode("utf-8")).digest()
+        root_revision = sha256(b"execution-test-root").hexdigest()
+        home_revision = sha256(source.encode("utf-8")).hexdigest()
         state = AgentState(
-            version=agent_state_version(root_version, home_version),
-            root_version=root_version,
-            home_version=home_version,
-            toolang_version="test",
+            revision=agent_state_revision(root_revision, home_revision),
+            root_revision=root_revision,
+            home_revision=home_revision,
             root_config={},
             home_config={},
             config={},
             program_source="agents/alice/agent.too",
             program=program,
             caps=(),
-            loaded_at="2026-01-01T00:00:00Z",
         )
         provider = FakeModels(streaming=streaming)
         adapter = ScriptedModelAdapter(responses)

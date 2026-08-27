@@ -53,9 +53,9 @@ _CAP_SHORTHANDS = {
     "home": ("scope", "home"),
     "here": ("scope", "here"),
     "inline": ("form", "inline"),
-    "ref": ("form", "ref"),
-    "wired": ("form", "wired"),
-    "file": ("form", "file"),
+    "referenced": ("form", "referenced"),
+    "configured": ("form", "configured"),
+    "authored": ("form", "authored"),
     "local": ("origin", "local"),
     "remote": ("origin", "remote"),
 }

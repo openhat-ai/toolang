@@ -8,7 +8,7 @@ from pathlib import Path
 from toolang.common.layout import AgentLayout
 from toolang.lang import Program
 from toolang.setup import AgentSetup, SetupWatcher
-from toolang.state.state import AgentState, agent_state_version
+from toolang.state.state import AgentState, agent_state_revision
 
 LIVE_PROVIDER_SOURCE = """
 agic smoke(_: Text) -> Text:
@@ -32,20 +32,18 @@ async def create_live_agent(
     """Create fixed agent snapshots that resolve one real model selector."""
 
     program = Program.from_source(LIVE_PROVIDER_SOURCE)
-    root_version = sha256(b"live-provider-smoke-root").digest()
-    home_version = sha256(LIVE_PROVIDER_SOURCE.encode("utf-8")).digest()
+    root_revision = sha256(b"live-provider-smoke-root").hexdigest()
+    home_revision = sha256(LIVE_PROVIDER_SOURCE.encode("utf-8")).hexdigest()
     state = AgentState(
-        version=agent_state_version(root_version, home_version),
-        root_version=root_version,
-        home_version=home_version,
-        toolang_version="test",
+        revision=agent_state_revision(root_revision, home_revision),
+        root_revision=root_revision,
+        home_revision=home_revision,
         root_config={},
         home_config={},
         config={},
         program_source="agents/alice/agent.too",
         program=program,
         caps=(),
-        loaded_at="2026-01-01T00:00:00Z",
     )
     setup = await SetupWatcher(
         AgentLayout.resident(root, "alice"),

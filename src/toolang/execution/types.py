@@ -22,7 +22,7 @@ from toolang.base.types.message import (
     ToolResultPart,
     part_from_data,
 )
-from toolang.base.types.run import ModelCall, ToolCall
+from toolang.base.types.run import ModelCall, ModelContinuation, ToolCall
 from toolang.lang.ast import (
     AskStmt,
     DropStmt,
@@ -128,7 +128,7 @@ class AgentToolResource:
 
 @dataclass(frozen=True, slots=True)
 class AgentCapResource:
-    """Stable identity of one prepared cap available to an agent."""
+    """Stable identity of one State capability available to an agent."""
 
     kind: str
     name: str
@@ -1059,13 +1059,13 @@ class ModelAccounting:
 
 @dataclass(frozen=True, slots=True)
 class ModelStepNoted:
-    """Accounting and continuation state learned when a model Step ends."""
+    """Accounting and continuation learned when a model Step ends."""
 
     tokens: ModelTokenCount | None = None
     price: ModelTokenPrice | None = None
     cost: str | None = None
     accounting: ModelAccounting | None = None
-    state: dict[str, Any] | None = None
+    cont: ModelContinuation | None = None
 
     def __post_init__(self) -> None:
         if self.tokens is not None and not isinstance(self.tokens, ModelTokenCount):
@@ -1077,8 +1077,8 @@ class ModelStepNoted:
             self.accounting, ModelAccounting
         ):
             raise TypeError("model Step accounting requires ModelAccounting")
-        if self.state is not None and not isinstance(self.state, dict):
-            raise TypeError("model Step state must be an object")
+        if self.cont is not None and not isinstance(self.cont, dict):
+            raise TypeError("model Step cont must be an object")
 
 
 @dataclass(frozen=True, slots=True)

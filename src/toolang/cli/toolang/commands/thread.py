@@ -23,11 +23,12 @@ from toolang.cli.common.policy import (
 from toolang.common.layout import AgentLayout
 from toolang.execution.executor import RunExecutor
 from toolang.execution.history import RunHistory
-from toolang.execution.records import RunRecord
+from toolang.execution.records import PreparationControlPayload, RunRecord
 from toolang.execution.schemas import RunDetail, StepData
 from toolang.execution.threads import ThreadManager
 from toolang.execution.types import Local, RunStatus, StepPath, local_to_protocol_data
 from toolang.setup import SetupWatcher
+from toolang.state.state import AgentState
 from toolang.state.watcher import StateWatcher
 
 from ...common.context import (
@@ -742,7 +743,13 @@ async def _restart_run(
         binding_overrides=binding_overrides,
         limit_overrides=resolve_limit_overrides(environ, limit_options or ()),
     ).refresh()
-    state = await StateWatcher(layout).refresh()
+    state_watcher = StateWatcher(layout)
+    current_state = await state_watcher.refresh()
+    state = (
+        _recorded_state(state_watcher, resources, source)
+        if kind == "retry"
+        else current_state
+    )
     executor = RunExecutor(resources.store, resources.ids)
     run_id = source if kind == "retry" else resources.ids.issue_run()
     tracer = (
@@ -781,6 +788,23 @@ async def _restart_run(
         finally:
             if tracer is not None:
                 tracer.close()
+
+
+def _recorded_state(
+    watcher: StateWatcher,
+    resources: ExecutionResources,
+    run_id: str,
+) -> AgentState:
+    run = resources.store.get_run(run_id=run_id)
+    if run is None or run.parent is not None:
+        raise ValueError(f"root run not found: {run_id}")
+    control = resources.store.get_run_control(
+        run_id=run.control.target,
+        index=run.control.index,
+    )
+    if control is None or not isinstance(control.payload, PreparationControlPayload):
+        raise ValueError(f"run preparation not found: {run_id}")
+    return watcher.load(control.payload.state)
 
 
 def _retry_anchor(run_id: str, value: str | None) -> StepPath | None:

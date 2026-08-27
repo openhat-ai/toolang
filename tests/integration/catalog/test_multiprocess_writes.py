@@ -7,7 +7,7 @@ from pathlib import Path
 import frontmatter
 
 from toolang.catalog.cap import AuthoredCaps, CapFile
-from toolang.catalog.config import CapRef, WiredCaps
+from toolang.catalog.config import CapRef, ConfiguredCaps
 from toolang.catalog.errors import CatalogConflictError
 from toolang.catalog.job import AuthoredJobs, JobFile, JobKind
 from toolang.common.layout import AgentLayout
@@ -19,7 +19,7 @@ from toolang.work.authoring import (
 
 
 def _wire_prompt(config_path: str, index: int) -> None:
-    WiredCaps(Path(config_path)).create(
+    ConfiguredCaps(Path(config_path)).create(
         CapRef(
             kind="prompt",
             name=f"prompt-{index}",
@@ -31,7 +31,7 @@ def _wire_prompt(config_path: str, index: int) -> None:
 def _create_same_prompt(directory: str, body: str) -> str:
     catalog = AuthoredCaps(Path(directory))
     try:
-        catalog.create(CapFile.parse(body, kind="prompt", name="shared"))
+        catalog.create(CapFile.parse(body, kind="prompt", name="root"))
     except CatalogConflictError:
         return "conflict"
     return "created"
@@ -65,14 +65,14 @@ def _allocate_and_create_job(root: str) -> None:
     )
 
 
-def test_wired_caps_preserves_all_concurrent_writes(tmp_path: Path) -> None:
+def test_configured_caps_preserves_all_concurrent_writes(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     context = multiprocessing.get_context("spawn")
 
     with ProcessPoolExecutor(max_workers=4, mp_context=context) as executor:
         tuple(executor.map(_wire_prompt, [str(config_path)] * 12, range(12)))
 
-    assert len(WiredCaps(config_path).list()) == 12
+    assert len(ConfiguredCaps(config_path).list()) == 12
 
 
 def test_authored_caps_serializes_conflicting_creates(tmp_path: Path) -> None:

@@ -1,8 +1,8 @@
-"""Versioned prepared cache models, paths, loading, and atomic publication."""
+"""Canonical, content-addressed Agent State layer storage."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import fcntl
@@ -11,245 +11,299 @@ import json
 import os
 from pathlib import Path
 import shutil
-from typing import Literal, Mapping, cast
+from typing import Literal, cast
 from uuid import uuid4
 
 from toolang.common.layout import AgentLayout
 
 from ..common.immutable import freeze_mapping
 from ..lang.ast import Program
+from .source import SourceTree
 from .state import (
     CapResolution,
-    PreparedCap,
-    PreparedProgramModule,
+    StateCap,
+    StateModule,
     public_runnable_catalog,
 )
-from .source import Source
 
-PreparedScope = Literal["root", "home"]
-PREPARED_VERSION_SCHEMA = 2
-_PREPARED_VERSION_DOMAIN = b"toolang-prepared-v2\0"
-_SOURCE_FILE = "source.json"
-_RESOLVED_FILE = "resolved.json"
-_PREPARED_FILE = "prepared.json"
+LayerScope = Literal["root", "home"]
+LAYER_SCHEMA = 1
+AGENT_STATE_SCHEMA = 1
+_LAYER_FILE = "layer.json"
+_LAYERS_FILE = "layers.json"
 _FILES_DIR = "files"
-_DOCUMENT_SCHEMA = 2
-_INVALID_VERSION_ERRORS = (OSError, KeyError, TypeError, ValueError)
+_REVS_DIR = "revs"
+_INVALID_REVISION_ERRORS = (OSError, KeyError, TypeError, ValueError)
 
 
 @dataclass(frozen=True, slots=True)
-class RootPrepared:
-    """One immutable prepared root version shared by all agents."""
+class RootLayer:
+    """One immutable root State layer shared by all agents."""
 
-    version: bytes
-    toolang_version: str
-    version_dir: Path
-    source: Source
+    revision: str
+    revision_dir: Path
+    source: SourceTree
     resolutions: tuple[CapResolution, ...]
     config: Mapping[str, object]
-    caps: tuple[PreparedCap, ...]
+    caps: tuple[StateCap, ...]
 
     def __post_init__(self) -> None:
+        _require_revision(self.revision)
+        if self.revision_dir.name != self.revision:
+            raise ValueError("root State layer directory does not match its revision")
         object.__setattr__(self, "config", freeze_mapping(self.config))
 
 
 @dataclass(frozen=True, slots=True)
-class HomePrepared:
-    """One immutable prepared version for an agent home."""
+class HomeLayer:
+    """One immutable State layer for an agent home."""
 
-    version: bytes
-    toolang_version: str
-    version_dir: Path
-    source: Source
+    revision: str
+    revision_dir: Path
+    source: SourceTree
     resolutions: tuple[CapResolution, ...]
     config: Mapping[str, object]
     program: Program
-    caps: tuple[PreparedCap, ...]
-    modules: tuple[PreparedProgramModule, ...]
+    caps: tuple[StateCap, ...]
+    modules: tuple[StateModule, ...]
 
     def __post_init__(self) -> None:
+        _require_revision(self.revision)
+        if self.revision_dir.name != self.revision:
+            raise ValueError("home State layer directory does not match its revision")
         object.__setattr__(self, "config", freeze_mapping(self.config))
 
 
-def state_root(layout: AgentLayout, scope: PreparedScope) -> Path:
-    """Return the root- or home-scoped prepared-state directory."""
+def state_root(layout: AgentLayout, scope: LayerScope) -> Path:
+    """Return the persistent directory for one State layer scope."""
 
     return layout.root_state if scope == "root" else layout.home_state
 
 
-def prepared_current_path(layout: AgentLayout, scope: PreparedScope) -> Path:
-    """Return the current-version pointer path for one prepared scope."""
-
+def layer_current_path(layout: AgentLayout, scope: LayerScope) -> Path:
     return state_root(layout, scope) / "current"
 
 
-def prepared_lock_path(layout: AgentLayout, scope: PreparedScope) -> Path:
-    """Return the writer lock path for one prepared scope."""
-
+def layer_lock_path(layout: AgentLayout, scope: LayerScope) -> Path:
     return state_root(layout, scope) / "prepare.lock"
 
 
-def prepared_version_dir(
+def layer_revision_dir(
     layout: AgentLayout,
-    scope: PreparedScope,
-    version: bytes,
+    scope: LayerScope,
+    revision: str,
 ) -> Path:
-    """Return the immutable directory for one prepared version."""
-
-    _require_sha256(version, name="prepared version")
-    return state_root(layout, scope) / "versions" / version.hex()
+    _require_revision(revision)
+    return state_root(layout, scope) / _REVS_DIR / revision
 
 
-def load_current_version(layout: AgentLayout, scope: PreparedScope) -> bytes:
-    """Load the current prepared version for one scope."""
-
-    value = prepared_current_path(layout, scope).read_text(encoding="utf-8").strip()
-    try:
-        version = bytes.fromhex(value)
-    except ValueError as exc:
-        raise ValueError(f"invalid prepared version: {value!r}") from exc
-    _require_sha256(version, name="prepared version")
-    return version
+def agent_current_path(layout: AgentLayout) -> Path:
+    return layout.agent_state / "current"
 
 
-def load_version_source(version_dir: Path) -> Source:
-    """Load source metadata from one immutable prepared version."""
-
-    return Source.load(version_dir / _SOURCE_FILE)
+def agent_lock_path(layout: AgentLayout) -> Path:
+    return layout.agent_state / "prepare.lock"
 
 
-def load_version_resolved(version_dir: Path) -> dict[str, object]:
-    """Load resolved remote-reference data from one prepared version."""
-
-    return _load_json_object(version_dir / _RESOLVED_FILE)
-
-
-def load_version_prepared(version_dir: Path) -> dict[str, object]:
-    """Load parsed runtime data from one prepared version."""
-
-    return _load_json_object(version_dir / _PREPARED_FILE)
+def agent_revision_dir(layout: AgentLayout, revision: str) -> Path:
+    _require_revision(revision)
+    return layout.agent_state / _REVS_DIR / revision
 
 
-def load_root_prepared(
+def load_current_revision(layout: AgentLayout, scope: LayerScope) -> str:
+    """Load one layer's current revision pointer."""
+
+    return _read_revision(layer_current_path(layout, scope))
+
+
+def load_current_agent_revision(layout: AgentLayout) -> str:
+    """Load the current Agent State revision pointer."""
+
+    return _read_revision(agent_current_path(layout))
+
+
+def load_layer_source(
     layout: AgentLayout,
-    version: bytes | None = None,
-) -> RootPrepared:
-    """Load and validate one root prepared version."""
+    scope: LayerScope,
+    revision: str,
+) -> SourceTree:
+    """Load the source tree from a validated State layer."""
 
-    effective_version = version or load_current_version(layout, "root")
-    version_dir = prepared_version_dir(layout, "root", effective_version)
-    source, resolutions, prepared, caps = _load_validated_version(
-        version_dir,
-        version=effective_version,
-        scope="root",
-    )
-    return RootPrepared(
-        version=effective_version,
-        toolang_version=_document_toolang_version(prepared),
-        version_dir=version_dir,
-        source=source,
-        resolutions=resolutions,
-        config=_prepared_config(prepared),
-        caps=caps,
-    )
+    document, _ = _load_validated_layer(layout, scope, revision)
+    return _source_tree(document)
 
 
-def load_home_prepared(
+def load_root_layer(
     layout: AgentLayout,
-    version: bytes | None = None,
-) -> HomePrepared:
-    """Load and validate one agent-home prepared version."""
+    revision: str | None = None,
+) -> RootLayer:
+    """Load and validate one root State layer."""
 
-    effective_version = version or load_current_version(layout, "home")
-    version_dir = prepared_version_dir(layout, "home", effective_version)
-    source, resolutions, prepared, caps = _load_validated_version(
-        version_dir,
-        version=effective_version,
-        scope="home",
+    effective = revision or load_current_revision(layout, "root")
+    document, revision_dir = _load_validated_layer(layout, "root", effective)
+    return RootLayer(
+        revision=effective,
+        revision_dir=revision_dir,
+        source=_source_tree(document),
+        resolutions=_resolutions(document),
+        config=_config(document),
+        caps=_caps(document, revision_dir=revision_dir),
     )
-    modules = _prepared_modules(prepared, version_dir=version_dir)
+
+
+def load_home_layer(
+    layout: AgentLayout,
+    revision: str | None = None,
+) -> HomeLayer:
+    """Load and validate one home State layer."""
+
+    effective = revision or load_current_revision(layout, "home")
+    document, revision_dir = _load_validated_layer(layout, "home", effective)
+    modules = _modules(document, revision_dir=revision_dir)
     agent_module = next(module for module in modules if module.kind == "agent")
-    return HomePrepared(
-        version=effective_version,
-        toolang_version=_document_toolang_version(prepared),
-        version_dir=version_dir,
-        source=source,
-        resolutions=resolutions,
-        config=_prepared_config(prepared),
+    return HomeLayer(
+        revision=effective,
+        revision_dir=revision_dir,
+        source=_source_tree(document),
+        resolutions=_resolutions(document),
+        config=_config(document),
         program=agent_module.program,
-        caps=caps,
+        caps=_caps(document, revision_dir=revision_dir),
         modules=modules,
     )
 
 
-def write_prepared(
+def write_layer(
     *,
     layout: AgentLayout,
-    scope: PreparedScope,
-    source: Source,
+    scope: LayerScope,
+    source: SourceTree,
     resolutions: tuple[CapResolution, ...],
-    prepared: Mapping[str, object],
+    config: Mapping[str, object],
+    caps: tuple[StateCap, ...],
+    modules: tuple[StateModule, ...],
     files: Mapping[str, bytes],
-) -> bytes:
-    """Atomically publish one complete, immutable prepared version."""
+) -> str:
+    """Atomically store one complete immutable State layer."""
 
-    version = prepared_version(
+    normalized_files = _normalized_files(files)
+    document = _layer_document(
         scope=scope,
         source=source,
         resolutions=resolutions,
+        config=config,
+        caps=caps,
+        modules=modules,
+        files=normalized_files,
     )
-    target = prepared_version_dir(layout, scope, version)
-    versions_dir = target.parent
-    versions_dir.mkdir(parents=True, exist_ok=True)
+    encoded = canonical_json(document)
+    revision = sha256(encoded).hexdigest()
+    target = layer_revision_dir(layout, scope, revision)
+    revs = target.parent
+    revs.mkdir(parents=True, exist_ok=True)
     if target.exists() or target.is_symlink():
         try:
-            _load_validated_version(target, version=version, scope=scope)
-        except _INVALID_VERSION_ERRORS:
-            _quarantine_version(target)
+            _load_validated_layer(layout, scope, revision)
+        except _INVALID_REVISION_ERRORS:
+            _quarantine_revision(target)
         else:
-            return version
-    staging = versions_dir / f".{version.hex()}.tmp-{uuid4().hex}"
+            return revision
+    staging = revs / f".{revision}.tmp-{uuid4().hex}"
     try:
         staging.mkdir()
-        source.save(staging / _SOURCE_FILE)
-        _write_json(staging / _RESOLVED_FILE, _resolution_document(resolutions))
-        _write_json(staging / _PREPARED_FILE, prepared)
+        (staging / _LAYER_FILE).write_bytes(encoded)
         files_dir = staging / _FILES_DIR
         files_dir.mkdir()
-        for relative_path, content in sorted(files.items()):
-            relative = _cache_file_path(relative_path)
+        for relative, content in normalized_files.items():
             destination = files_dir / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
-        _load_validated_version(staging, version=version, scope=scope)
+        _validate_layer_dir(staging, scope=scope, revision=revision)
         os.replace(staging, target)
     finally:
         if staging.exists():
             shutil.rmtree(staging)
-    return version
+    return revision
 
 
-def publish_current(
+def publish_layer_current(
     layout: AgentLayout,
-    scope: PreparedScope,
-    version: bytes,
+    scope: LayerScope,
+    revision: str,
 ) -> None:
-    """Atomically point one scope at an existing prepared version."""
+    """Atomically publish one already persisted State layer."""
 
-    target = prepared_version_dir(layout, scope, version)
-    _load_validated_version(target, version=version, scope=scope)
-    current = prepared_current_path(layout, scope)
-    current.parent.mkdir(parents=True, exist_ok=True)
-    temporary = current.with_name(f".{current.name}.tmp-{uuid4().hex}")
-    temporary.write_text(f"{version.hex()}\n", encoding="utf-8")
-    os.replace(temporary, current)
+    _load_validated_layer(layout, scope, revision)
+    _write_revision(layer_current_path(layout, scope), revision)
+
+
+def persist_agent_revision(
+    layout: AgentLayout,
+    *,
+    root_revision: str,
+    home_revision: str,
+) -> str:
+    """Persist and publish one exact root/home Agent State composition."""
+
+    with _file_lock(agent_lock_path(layout)):
+        load_root_layer(layout, root_revision)
+        load_home_layer(layout, home_revision)
+        document = agent_layers_document(
+            root_revision=root_revision,
+            home_revision=home_revision,
+        )
+        encoded = canonical_json(document)
+        revision = sha256(encoded).hexdigest()
+        target = agent_revision_dir(layout, revision)
+        revs = target.parent
+        revs.mkdir(parents=True, exist_ok=True)
+        if target.exists() or target.is_symlink():
+            try:
+                load_agent_revisions(layout, revision)
+            except _INVALID_REVISION_ERRORS:
+                _quarantine_revision(target)
+            else:
+                _write_revision(agent_current_path(layout), revision)
+                return revision
+        staging = revs / f".{revision}.tmp-{uuid4().hex}"
+        try:
+            staging.mkdir()
+            (staging / _LAYERS_FILE).write_bytes(encoded)
+            _validate_agent_dir(staging, revision=revision)
+            os.replace(staging, target)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+        _write_revision(agent_current_path(layout), revision)
+        return revision
+
+
+def load_agent_revisions(
+    layout: AgentLayout,
+    revision: str | None = None,
+) -> tuple[str, str, str]:
+    """Load a validated Agent State revision and its layer revisions."""
+
+    effective = revision or load_current_agent_revision(layout)
+    revision_dir = agent_revision_dir(layout, effective)
+    document = _validate_agent_dir(revision_dir, revision=effective)
+    root_revision = _revision_field(document, "root_revision")
+    home_revision = _revision_field(document, "home_revision")
+    load_root_layer(layout, root_revision)
+    load_home_layer(layout, home_revision)
+    return effective, root_revision, home_revision
 
 
 @contextmanager
-def prepare_lock(layout: AgentLayout, scope: PreparedScope) -> Iterator[None]:
-    """Serialize prepared writers for the root or one agent home."""
+def layer_lock(layout: AgentLayout, scope: LayerScope) -> Iterator[None]:
+    """Serialize preparation writers for one State layer."""
 
-    path = prepared_lock_path(layout, scope)
+    with _file_lock(layer_lock_path(layout, scope)):
+        yield
+
+
+@contextmanager
+def _file_lock(path: Path) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+b") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
@@ -259,285 +313,462 @@ def prepare_lock(layout: AgentLayout, scope: PreparedScope) -> Iterator[None]:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
-def prepared_version(
-    *,
-    scope: PreparedScope,
-    source: Source,
-    resolutions: tuple[CapResolution, ...],
-) -> bytes:
-    """Return the content-addressed version for one prepared layer."""
+def canonical_json(value: object) -> bytes:
+    """Encode the canonical JSON used as State revision identity."""
 
-    payload = {
-        "schema": PREPARED_VERSION_SCHEMA,
-        "scope": scope,
-        "source": source.to_data(),
-        "resolved": _resolution_document(resolutions),
-    }
-    digest = sha256()
-    digest.update(_PREPARED_VERSION_DOMAIN)
-    digest.update(_canonical_json(payload))
-    return digest.digest()
-
-
-def _canonical_json(value: object) -> bytes:
     return json.dumps(
         value,
+        allow_nan=False,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
 
 
-def _write_json(path: Path, value: Mapping[str, object]) -> None:
-    path.write_text(
-        json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-
-def _resolution_document(
-    resolutions: tuple[CapResolution, ...],
+def agent_layers_document(
+    *,
+    root_revision: str,
+    home_revision: str,
 ) -> dict[str, object]:
+    _require_revision(root_revision)
+    _require_revision(home_revision)
     return {
-        "schema": _DOCUMENT_SCHEMA,
-        "entries": [resolution.to_data() for resolution in resolutions],
+        "home_revision": home_revision,
+        "root_revision": root_revision,
+        "schema": AGENT_STATE_SCHEMA,
     }
 
 
-def _cap_resolutions(
-    document: Mapping[str, object],
-) -> tuple[CapResolution, ...]:
-    raw_entries = document.get("entries")
-    if not isinstance(raw_entries, list):
-        raise TypeError("resolved entries must be a list")
-    return tuple(
-        CapResolution.from_data(cast(dict[str, object], entry))
-        for entry in raw_entries
-        if isinstance(entry, dict)
-    )
-
-
-def _load_json_object(path: Path) -> dict[str, object]:
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise TypeError(f"prepared document must be an object: {path}")
-    return {str(key): item for key, item in value.items()}
-
-
-def _load_version(
-    version_dir: Path,
-) -> tuple[Source, dict[str, object], dict[str, object]]:
-    _validate_version_layout(version_dir)
-    return (
-        load_version_source(version_dir),
-        load_version_resolved(version_dir),
-        load_version_prepared(version_dir),
-    )
-
-
-def _load_validated_version(
-    version_dir: Path,
+def _layer_document(
     *,
-    version: bytes,
-    scope: PreparedScope,
-) -> tuple[
-    Source,
-    tuple[CapResolution, ...],
-    dict[str, object],
-    tuple[PreparedCap, ...],
-]:
-    source, resolved, prepared = _load_version(version_dir)
-    _validate_loaded_version(
-        version=version,
-        scope=scope,
-        source=source,
-        resolutions=_cap_resolutions(resolved),
-    )
-    _validate_prepared_document(prepared, scope=scope)
-    _validate_resolved_document(resolved, version_dir=version_dir)
-    resolutions = _cap_resolutions(resolved)
-    caps = _prepared_caps(prepared, version_dir=version_dir)
-    _prepared_config(prepared)
-    _document_toolang_version(prepared)
-    if scope == "home":
-        _prepared_modules(prepared, version_dir=version_dir)
-    return source, resolutions, prepared, caps
+    scope: LayerScope,
+    source: SourceTree,
+    resolutions: tuple[CapResolution, ...],
+    config: Mapping[str, object],
+    caps: tuple[StateCap, ...],
+    modules: tuple[StateModule, ...],
+    files: Mapping[str, bytes],
+) -> dict[str, object]:
+    if scope == "root" and modules:
+        raise ValueError("root State layer cannot contain program modules")
+    return {
+        "caps": [cap.to_data() for cap in sorted(caps, key=_cap_key)],
+        "config": dict(config),
+        "files": [
+            {
+                "path": f"files/{path}",
+                "sha256": sha256(content).hexdigest(),
+                "size": len(content),
+            }
+            for path, content in files.items()
+        ],
+        "modules": [
+            module.to_data() for module in sorted(modules, key=lambda item: item.name)
+        ],
+        "resolutions": [
+            item.to_data() for item in sorted(resolutions, key=_resolution_key)
+        ],
+        "schema": LAYER_SCHEMA,
+        "scope": scope,
+        "source": source.to_data(),
+    }
 
 
-def _prepared_caps(
-    prepared: Mapping[str, object],
+def _load_validated_layer(
+    layout: AgentLayout,
+    scope: LayerScope,
+    revision: str,
+) -> tuple[dict[str, object], Path]:
+    revision_dir = layer_revision_dir(layout, scope, revision)
+    return _validate_layer_dir(
+        revision_dir, scope=scope, revision=revision
+    ), revision_dir
+
+
+def _validate_layer_dir(
+    revision_dir: Path,
     *,
-    version_dir: Path,
-) -> tuple[PreparedCap, ...]:
-    raw_caps = prepared.get("caps", [])
-    if not isinstance(raw_caps, list):
-        raise TypeError("prepared caps must be a list")
-    entries: list[PreparedCap] = []
-    for raw in raw_caps:
-        if not isinstance(raw, dict):
-            raise TypeError("prepared cap must be an object")
-        entry = PreparedCap.from_data(
-            {str(key): value for key, value in cast(dict[object, object], raw).items()}
+    scope: LayerScope,
+    revision: str,
+) -> dict[str, object]:
+    _validate_top_level(revision_dir, required={_LAYER_FILE, _FILES_DIR})
+    encoded = (revision_dir / _LAYER_FILE).read_bytes()
+    document = _canonical_object(encoded, label="layer.json")
+    if sha256(encoded).hexdigest() != revision:
+        raise ValueError("State layer revision does not match layer.json")
+    required = {
+        "caps",
+        "config",
+        "files",
+        "modules",
+        "resolutions",
+        "schema",
+        "scope",
+        "source",
+    }
+    if set(document) != required:
+        raise ValueError("layer.json fields do not match the State layer schema")
+    if document["schema"] != LAYER_SCHEMA:
+        raise ValueError(f"unsupported State layer schema: {document['schema']!r}")
+    if document["scope"] != scope:
+        raise ValueError(
+            f"State layer scope mismatch: expected {scope!r}, found {document['scope']!r}"
         )
-        relative_path = _prepared_file_path(entry.path)
-        path = version_dir / relative_path
-        if not path.is_file():
-            raise FileNotFoundError(f"prepared cap file not found: {path}")
-        entries.append(replace(entry, path=str(path)))
-    return tuple(entries)
+    _source_tree(document)
+    _config(document)
+    manifest = _validate_file_manifest(revision_dir, document)
+    resolutions = _resolutions(document)
+    caps = _caps(document, revision_dir=revision_dir)
+    modules = _modules(document, revision_dir=revision_dir, required=scope == "home")
+    if scope == "root" and modules:
+        raise ValueError("root State layer cannot contain program modules")
+    if any(cap.scope != scope for cap in caps):
+        raise ValueError(f"{scope} State layer contains a cap from another scope")
+    referenced = {file.path for resolution in resolutions for file in resolution.files}
+    referenced.update(resolution.definition for resolution in resolutions)
+    referenced.update(resolution.materialized for resolution in resolutions)
+    referenced.update(_document_file_references(document))
+    missing = referenced - set(manifest)
+    if missing:
+        raise FileNotFoundError(
+            f"State layer references files outside its manifest: {sorted(missing)!r}"
+        )
+    for module in modules:
+        if manifest[module.materialized_path][1] != module.digest:
+            raise ValueError(f"State module digest mismatch: {module.name}")
+    for resolution in resolutions:
+        for file in resolution.files:
+            if manifest[file.path] != (file.size, file.sha256):
+                raise ValueError(
+                    f"resolved cap file does not match the manifest: {file.path}"
+                )
+    all_caps = (*caps, *(cap for module in modules for cap in module.here_caps))
+    for resolution in resolutions:
+        matches = tuple(
+            cap
+            for cap in all_caps
+            if (
+                cap.kind == resolution.kind
+                and cap.name == resolution.name
+                and cap.source.form == resolution.form
+                and cap.source.declared_ref == resolution.declared_ref
+                and cap.ref == resolution.resolved_ref
+                and _stored_cap_path(cap, revision_dir=revision_dir)
+                == resolution.materialized
+            )
+        )
+        if len(matches) != 1:
+            raise ValueError(
+                f"resolved cap does not match exactly one State capability: "
+                f"{resolution.kind}/{resolution.name}"
+            )
+    return document
 
 
-def _prepared_config(prepared: Mapping[str, object]) -> dict[str, object]:
-    raw = prepared.get("config", {})
-    if not isinstance(raw, dict):
-        raise TypeError("prepared config must be an object")
-    return {str(key): value for key, value in raw.items()}
+def _stored_cap_path(cap: StateCap, *, revision_dir: Path) -> str:
+    path = Path(cap.path)
+    return (
+        path.relative_to(revision_dir).as_posix()
+        if path.is_absolute()
+        else path.as_posix()
+    )
 
 
-def _prepared_modules(
-    prepared: Mapping[str, object],
-    *,
-    version_dir: Path,
-) -> tuple[PreparedProgramModule, ...]:
-    raw_modules = prepared.get("modules")
-    if not isinstance(raw_modules, list) or not raw_modules:
-        raise ValueError("home prepared document is missing program modules")
-    modules: list[PreparedProgramModule] = []
-    identities: set[str] = set()
+def _document_file_references(document: Mapping[str, object]) -> set[str]:
+    references: set[str] = set()
+    raw_caps = document.get("caps", [])
+    raw_modules = document.get("modules", [])
+    if not isinstance(raw_caps, list) or not isinstance(raw_modules, list):
+        raise TypeError("State layer caps and modules must be lists")
+    for raw in raw_caps:
+        if isinstance(raw, dict):
+            raw_cap = cast(dict[object, object], raw)
+            references.add(str(raw_cap.get("path", "")))
     for raw in raw_modules:
         if not isinstance(raw, dict):
-            raise TypeError("prepared program module must be an object")
-        module = PreparedProgramModule.from_data(
-            {str(key): value for key, value in raw.items()}
+            continue
+        raw_module = cast(dict[object, object], raw)
+        references.add(str(raw_module.get("materialized_path", "")))
+        raw_here_caps = raw_module.get("here_caps", [])
+        if not isinstance(raw_here_caps, list):
+            raise TypeError("State module here_caps must be a list")
+        for raw_cap in raw_here_caps:
+            if isinstance(raw_cap, dict):
+                cap = cast(dict[object, object], raw_cap)
+                references.add(str(cap.get("path", "")))
+    for path in references:
+        _layer_file_path(path)
+    return references
+
+
+def _validate_agent_dir(
+    revision_dir: Path,
+    *,
+    revision: str,
+) -> dict[str, object]:
+    _validate_top_level(revision_dir, required={_LAYERS_FILE})
+    encoded = (revision_dir / _LAYERS_FILE).read_bytes()
+    document = _canonical_object(encoded, label="layers.json")
+    if sha256(encoded).hexdigest() != revision:
+        raise ValueError("Agent State revision does not match layers.json")
+    if set(document) != {"home_revision", "root_revision", "schema"}:
+        raise ValueError("layers.json fields do not match the Agent State schema")
+    if document["schema"] != AGENT_STATE_SCHEMA:
+        raise ValueError(f"unsupported Agent State schema: {document['schema']!r}")
+    _revision_field(document, "root_revision")
+    _revision_field(document, "home_revision")
+    return document
+
+
+def _validate_file_manifest(
+    revision_dir: Path,
+    document: Mapping[str, object],
+) -> dict[str, tuple[int, str]]:
+    raw_files = document.get("files")
+    if not isinstance(raw_files, list):
+        raise TypeError("State layer files must be a list")
+    declared: dict[str, tuple[int, str]] = {}
+    for raw in raw_files:
+        if not isinstance(raw, dict):
+            raise TypeError("State layer file must be an object")
+        item = cast(dict[object, object], raw)
+        path = str(item.get("path", ""))
+        _layer_file_path(path)
+        size = item.get("size")
+        digest = str(item.get("sha256", ""))
+        if not isinstance(size, int) or isinstance(size, bool):
+            raise TypeError("State layer file size must be an integer")
+        _require_revision(digest)
+        if path in declared:
+            raise ValueError(f"duplicate State layer file: {path}")
+        declared[path] = (size, digest)
+    if list(declared) != sorted(declared):
+        raise ValueError("State layer files must be sorted by path")
+    files_dir = revision_dir / _FILES_DIR
+    actual: dict[str, Path] = {}
+    for path in sorted(files_dir.rglob("*")):
+        if path.is_symlink():
+            raise ValueError(f"State layer files cannot be symbolic links: {path}")
+        if path.is_file():
+            actual[f"files/{path.relative_to(files_dir).as_posix()}"] = path
+    if set(actual) != set(declared):
+        missing = sorted(set(declared) - set(actual))
+        extra = sorted(set(actual) - set(declared))
+        raise ValueError(
+            f"State layer file manifest mismatch: missing={missing!r}, extra={extra!r}"
         )
-        if module.identity in identities:
-            raise ValueError(f"duplicate prepared program module: {module.identity}")
-        identities.add(module.identity)
-        program_path = version_dir / _prepared_file_path(module.prepared_path)
-        if not program_path.is_file():
-            raise FileNotFoundError(f"prepared program file not found: {program_path}")
-        caps = tuple(
-            _prepared_cap(cap, version_dir=version_dir) for cap in module.here_caps
+    for relative, path in actual.items():
+        expected_size, expected_hash = declared[relative]
+        content = path.read_bytes()
+        if len(content) != expected_size:
+            raise ValueError(f"State layer file size mismatch: {relative}")
+        if sha256(content).hexdigest() != expected_hash:
+            raise ValueError(f"State layer file hash mismatch: {relative}")
+    return declared
+
+
+def _caps(
+    document: Mapping[str, object],
+    *,
+    revision_dir: Path,
+) -> tuple[StateCap, ...]:
+    raw_caps = document.get("caps")
+    if not isinstance(raw_caps, list):
+        raise TypeError("State layer caps must be a list")
+    caps = tuple(_state_cap(raw, revision_dir=revision_dir) for raw in raw_caps)
+    if tuple(sorted(caps, key=_cap_key)) != caps:
+        raise ValueError("State layer caps must be sorted")
+    if len({_cap_key(cap) for cap in caps}) != len(caps):
+        raise ValueError("State layer caps must be unique")
+    return caps
+
+
+def _modules(
+    document: Mapping[str, object],
+    *,
+    revision_dir: Path,
+    required: bool = True,
+) -> tuple[StateModule, ...]:
+    raw_modules = document.get("modules")
+    if not isinstance(raw_modules, list):
+        raise TypeError("State layer modules must be a list")
+    if required and not raw_modules:
+        raise ValueError("home State layer requires program modules")
+    modules: list[StateModule] = []
+    names: set[str] = set()
+    for raw in raw_modules:
+        if not isinstance(raw, dict):
+            raise TypeError("State module must be an object")
+        module = StateModule.from_data(
+            {str(key): value for key, value in cast(dict[object, object], raw).items()}
         )
-        modules.append(replace(module, here_caps=caps))
-    if sum(module.kind == "agent" for module in modules) != 1:
-        raise ValueError("home prepared document requires exactly one agent module")
+        folded_name = module.name.casefold()
+        if folded_name in names:
+            raise ValueError(f"duplicate State module: {module.name}")
+        names.add(folded_name)
+        modules.append(
+            replace(
+                module,
+                here_caps=tuple(
+                    _materialize_cap(cap, revision_dir=revision_dir)
+                    for cap in module.here_caps
+                ),
+            )
+        )
     result = tuple(modules)
-    public_runnable_catalog(result)
+    if tuple(sorted(result, key=lambda item: item.name)) != result:
+        raise ValueError("State modules must be sorted by name")
+    if required and sum(module.kind == "agent" for module in result) != 1:
+        raise ValueError("home State layer requires exactly one agent module")
+    if result:
+        public_runnable_catalog(result)
     return result
 
 
-def _prepared_cap(cap: PreparedCap, *, version_dir: Path) -> PreparedCap:
-    relative_path = _prepared_file_path(cap.path)
-    path = version_dir / relative_path
+def _state_cap(raw: object, *, revision_dir: Path) -> StateCap:
+    if not isinstance(raw, dict):
+        raise TypeError("State cap must be an object")
+    cap = StateCap.from_data(
+        {str(key): value for key, value in cast(dict[object, object], raw).items()}
+    )
+    return _materialize_cap(cap, revision_dir=revision_dir)
+
+
+def _materialize_cap(cap: StateCap, *, revision_dir: Path) -> StateCap:
+    relative = _layer_file_path(cap.path)
+    path = revision_dir / relative
     if not path.is_file():
-        raise FileNotFoundError(f"prepared cap file not found: {path}")
+        raise FileNotFoundError(f"State cap file not found: {path}")
     return replace(cap, path=str(path))
 
 
-def _validate_loaded_version(
-    *,
-    version: bytes,
-    scope: PreparedScope,
-    source: Source,
-    resolutions: tuple[CapResolution, ...],
-) -> None:
-    expected = prepared_version(
-        scope=scope,
-        source=source,
-        resolutions=resolutions,
+def _resolutions(document: Mapping[str, object]) -> tuple[CapResolution, ...]:
+    raw = document.get("resolutions")
+    if not isinstance(raw, list):
+        raise TypeError("State layer resolutions must be a list")
+    result = tuple(
+        CapResolution.from_data(cast(dict[str, object], item))
+        for item in raw
+        if isinstance(item, dict)
     )
-    if expected != version:
+    if len(result) != len(raw):
+        raise TypeError("State layer resolution must be an object")
+    if tuple(sorted(result, key=_resolution_key)) != result:
+        raise ValueError("State layer resolutions must be sorted")
+    if len({_resolution_key(item) for item in result}) != len(result):
+        raise ValueError("State layer resolutions must be unique")
+    return result
+
+
+def _source_tree(document: Mapping[str, object]) -> SourceTree:
+    raw = document.get("source")
+    if not isinstance(raw, dict):
+        raise TypeError("State layer source must be an object")
+    return SourceTree.from_data(
+        {str(key): value for key, value in cast(dict[object, object], raw).items()}
+    )
+
+
+def _config(document: Mapping[str, object]) -> dict[str, object]:
+    raw = document.get("config")
+    if not isinstance(raw, dict):
+        raise TypeError("State layer config must be an object")
+    return {str(key): value for key, value in raw.items()}
+
+
+def _canonical_object(encoded: bytes, *, label: str) -> dict[str, object]:
+    value = json.loads(encoded.decode("utf-8"))
+    if not isinstance(value, dict):
+        raise TypeError(f"{label} must contain an object")
+    document = {str(key): item for key, item in value.items()}
+    if canonical_json(document) != encoded:
+        raise ValueError(f"{label} is not canonical JSON")
+    return document
+
+
+def _normalized_files(files: Mapping[str, bytes]) -> dict[str, bytes]:
+    result: dict[str, bytes] = {}
+    for value, content in files.items():
+        relative = _relative_file_path(value.replace("\\", "/"))
+        key = relative.as_posix()
+        if key in result:
+            raise ValueError(f"duplicate State layer file: {key}")
+        result[key] = bytes(content)
+    return dict(sorted(result.items()))
+
+
+def _relative_file_path(value: str) -> Path:
+    path = Path(value)
+    if (
+        not value
+        or path.is_absolute()
+        or ".." in path.parts
+        or path.as_posix() != value
+    ):
         raise ValueError(
-            f"prepared version mismatch: expected {expected.hex()}, "
-            f"found {version.hex()}"
+            f"State layer file path must be portable and relative: {value!r}"
         )
+    return path
 
 
-def _document_toolang_version(prepared: Mapping[str, object]) -> str:
-    value = prepared.get("toolang_version")
-    if not isinstance(value, str) or not value:
-        raise ValueError("prepared document is missing toolang_version")
+def _layer_file_path(value: str) -> Path:
+    path = _relative_file_path(value)
+    if path.parts[:1] != (_FILES_DIR,) or len(path.parts) < 2:
+        raise ValueError(f"State layer path must be inside files/: {value!r}")
+    return path
+
+
+def _validate_top_level(path: Path, *, required: set[str]) -> None:
+    if not path.is_dir() or path.is_symlink():
+        raise FileNotFoundError(f"State revision directory not found: {path}")
+    actual = {item.name for item in path.iterdir()}
+    if actual != required:
+        raise ValueError(
+            f"State revision layout mismatch: expected={sorted(required)!r}, "
+            f"found={sorted(actual)!r}"
+        )
+    for name in required:
+        if (path / name).is_symlink():
+            raise ValueError(
+                f"State revision entries cannot be symbolic links: {path / name}"
+            )
+
+
+def _read_revision(path: Path) -> str:
+    revision = path.read_text(encoding="utf-8").strip()
+    _require_revision(revision)
+    return revision
+
+
+def _write_revision(path: Path, revision: str) -> None:
+    _require_revision(revision)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp-{uuid4().hex}")
+    temporary.write_text(f"{revision}\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _revision_field(document: Mapping[str, object], key: str) -> str:
+    value = document.get(key)
+    if not isinstance(value, str):
+        raise TypeError(f"{key} must be a string")
+    _require_revision(value)
     return value
 
 
-def _cache_file_path(value: str) -> Path:
-    path = Path(value)
-    if not value or path.is_absolute() or ".." in path.parts:
-        raise ValueError(f"cache file path must be relative: {value!r}")
-    return path
+def _require_revision(value: str) -> None:
+    if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+        raise ValueError("revision must be a lowercase SHA-256 hex digest")
 
 
-def _prepared_file_path(value: str) -> Path:
-    path = _cache_file_path(value)
-    if path.parts[:1] != (_FILES_DIR,):
-        raise ValueError(f"prepared file path must be inside files/: {value!r}")
-    return path
+def _cap_key(cap: StateCap) -> tuple[str, str, str]:
+    return cap.kind, cap.name, cap.ref
 
 
-def _validate_prepared_document(
-    prepared: Mapping[str, object],
-    *,
-    scope: PreparedScope,
-) -> None:
-    if prepared.get("schema") != _DOCUMENT_SCHEMA:
-        raise ValueError(
-            f"unsupported prepared document schema: {prepared.get('schema')!r}"
-        )
-    if prepared.get("scope") != scope:
-        raise ValueError(
-            f"prepared document scope mismatch: expected {scope!r}, "
-            f"found {prepared.get('scope')!r}"
-        )
+def _resolution_key(item: CapResolution) -> tuple[str, str, str, str]:
+    return item.kind, item.name, item.form, item.declared_ref
 
 
-def _validate_resolved_document(
-    resolved: Mapping[str, object],
-    *,
-    version_dir: Path,
-) -> None:
-    if resolved.get("schema") != _DOCUMENT_SCHEMA:
-        raise ValueError(
-            f"unsupported resolved document schema: {resolved.get('schema')!r}"
-        )
-    raw_entries = resolved.get("entries")
-    if not isinstance(raw_entries, list):
-        raise TypeError("resolved entries must be a list")
-    for raw_entry in raw_entries:
-        if not isinstance(raw_entry, dict):
-            raise TypeError("resolved entry must be an object")
-        entry = cast(dict[object, object], raw_entry)
-        raw_files = entry.get("files")
-        if not isinstance(raw_files, list):
-            raise TypeError("resolved entry files must be a list")
-        for raw_file in raw_files:
-            if not isinstance(raw_file, dict):
-                raise TypeError("resolved file must be an object")
-            file = cast(dict[object, object], raw_file)
-            relative_path = _prepared_file_path(str(file.get("path", "")))
-            path = version_dir / relative_path
-            if not path.is_file():
-                raise FileNotFoundError(f"resolved file not found: {path}")
-            expected_size = file.get("size")
-            if not isinstance(expected_size, int) or isinstance(expected_size, bool):
-                raise TypeError("resolved file size must be an integer")
-            if path.stat().st_size != expected_size:
-                raise ValueError(f"resolved file size mismatch: {path}")
-
-
-def _validate_version_layout(path: Path) -> None:
-    for name in (_SOURCE_FILE, _RESOLVED_FILE, _PREPARED_FILE):
-        if not (path / name).is_file():
-            raise FileNotFoundError(f"prepared version is missing {name}: {path}")
-    if not (path / _FILES_DIR).is_dir():
-        raise FileNotFoundError(f"prepared version is missing files: {path}")
-
-
-def _quarantine_version(path: Path) -> None:
+def _quarantine_revision(path: Path) -> None:
     quarantine = path.with_name(f".{path.name}.invalid-{uuid4().hex}")
     os.replace(path, quarantine)
-
-
-def _require_sha256(value: bytes, *, name: str) -> None:
-    if len(value) != sha256().digest_size:
-        raise ValueError(f"{name} must contain 32 bytes")

@@ -59,8 +59,8 @@ stable system temporary root derived from the canonical remote ref:
 
 - `/tmp/toolang-<agent>-<hash:8>/`
 
-The hash is derived from `<agent-source>`. The stable visiting root lets
-prepared state and the last runtime port be reused across repeated foreground
+The hash is derived from `<agent-source>`. The stable visiting root lets Agent
+State and the last runtime port be reused across repeated foreground
 runs of the same remote agent ref, independent of the local `TOOLANG_ROOT`,
 while remaining disposable across machine restarts or normal
 temporary-directory cleanup. The cached remote `agent.too` is refetched after
@@ -80,7 +80,7 @@ Key paths:
 | `drafts/` | Draft task and chore documents |
 | `archive/` | Retired task and chore documents |
 | `.setup/` | Rebuildable installed-environment caches |
-| `.state/` | Immutable prepared state generations |
+| `.state/` | Immutable Agent State revisions |
 | `.runtime/` | Live runtime state |
 
 
@@ -97,8 +97,8 @@ state, and runtime path from that identity.
 | `roaming` | `<source-directory>/.toolang/` |
 
 All three placements use the same layout below their calculated root:
-`agents/<agent>/` is the agent home, rebuildable setup and prepared state use
-`.setup/` and `.state/`, and durable operational data uses `.runtime/`.
+`agents/<agent>/` is the agent home, rebuildable setup uses `.setup/`, Agent
+State uses `.state/`, and durable operational data uses `.runtime/`.
 
 
 ## Setup Cache
@@ -137,21 +137,21 @@ Key paths:
 | `channels/`    | Per-channel plugin working directories                       |
 
 
-## Prepared State
+## Agent State
 
-Prepared state is immutable runtime input derived from durable authored state.
+Agent State is immutable runtime input derived from durable authored source.
 
-Prepared directories:
+State directories:
 
-| Scope | Directory |
+| Value | Directory |
 | --- | --- |
-| Global | `${TOOLANG_ROOT}/.state/` |
-| Per-agent | `${TOOLANG_ROOT}/agents/<agent>/.state/` |
+| Root layer | `${TOOLANG_ROOT}/.state/root/` |
+| Home layer | `${TOOLANG_ROOT}/agents/<agent>/.state/home/` |
+| Agent composition | `${TOOLANG_ROOT}/agents/<agent>/.state/agent/` |
 
-Each prepared directory stores a current-version pointer, a per-scope writer
-lock, and immutable generation directories. See
-[prepared-state.md](./prepared-state.md) for the generation format and
-publication rules.
+Each directory stores a current-revision pointer, a writer lock, and immutable
+revision directories. See [agent-state.md](./agent-state.md) for the canonical
+documents, revision calculation, validation, and publication rules.
 
 
 ## Durable State

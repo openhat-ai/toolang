@@ -19,7 +19,7 @@ from toolang.up import process as agents
 from toolang.catalog import templates
 from toolang.setup import AgentSetup, SetupWatcher
 from toolang.state.prepare import prepare_agent_state
-from toolang.state.state import AgentState, PreparedCap
+from toolang.state.state import AgentState, StateCap
 from ...common.context import (
     cli_context,
     context_model_catalog,
@@ -39,7 +39,6 @@ from ...common.output import (
     shorten_home_path,
 )
 from ...common.progress import as_progress_sink, make_cli_progress
-from toolang.common.version import toolang_version
 from . import plugin
 
 
@@ -228,7 +227,7 @@ def _caps_summary(state: AgentState) -> str:
     )
 
 
-def _cap_counts(entries: Sequence[PreparedCap]) -> dict[str, int]:
+def _cap_counts(entries: Sequence[StateCap]) -> dict[str, int]:
     counts = {"psyches": 0, "skills": 0, "services": 0, "prompts": 0}
     for entry in entries:
         key = f"{entry.kind}s"
@@ -245,7 +244,6 @@ def _prepare_state(layout: AgentLayout) -> AgentState:
             user_call(
                 prepare_agent_state,
                 layout,
-                toolang_version=toolang_version(),
                 progress=as_progress_sink(progress),
             ),
         )

@@ -202,7 +202,7 @@ def test_prepare_agic_builds_one_complete_model_input(tmp_path: Path) -> None:
             program=program,
             program_source="agents/alice/agent.too",
             caps=(),
-            fingerprint="state-1",
+            revision="0" * 64,
         ),
     )
     run = BoundRun(
@@ -304,7 +304,7 @@ def test_prepare_agic_includes_declared_output_contract(tmp_path: Path) -> None:
             program=program,
             program_source="agents/alice/agent.too",
             caps=(),
-            fingerprint="state-1",
+            revision="0" * 64,
         ),
     )
     run = BoundRun(
@@ -395,7 +395,7 @@ def test_prepare_agic_preserves_typed_multimodal_splices(tmp_path: Path) -> None
             program=program,
             program_source="agents/alice/agent.too",
             caps=(),
-            fingerprint="state-1",
+            revision="0" * 64,
         ),
     )
     image = ImagePart(file_id="image-1")
@@ -520,7 +520,7 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
                     },
                 }
             },
-            fingerprint="state-1",
+            revision="0" * 64,
         ),
     )
     store = RunStore(home / ".runtime" / "runs.db")

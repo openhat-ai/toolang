@@ -1,9 +1,8 @@
-"""Build self-contained root and home prepared versions."""
+"""Prepare self-contained root and home State layers."""
 
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
 from hashlib import sha256
 import logging
 from pathlib import Path
@@ -15,49 +14,51 @@ from ..common.progress import ProgressSink
 from ..lang.ast import Program
 from .state import (
     AgentState,
-    PreparedProgramModule,
+    KIND_BY_DIR_NAME,
+    StateModule,
     ProgramModuleExport,
     compose_agent_state,
+    flow_module_name,
     public_runnable_catalog,
 )
 from .errors import StateDiagnostic, StatePreparationError, StateValidationLayer
 from .config import parse_config
 from .state import (
     materialize_program_caps,
-    materialize_visibility,
-    prepared_remote_cache,
+    materialize_scope,
+    layer_remote_cache,
 )
 from .source import (
-    AuthoredFile,
-    AuthoredSource,
+    SourceFile,
+    SourceSnapshot,
     ProgramSource,
     read_authored_source,
     read_root_source,
 )
 from .cache import (
-    HomePrepared,
-    PreparedScope,
-    RootPrepared,
-    load_current_version,
-    load_version_source,
-    load_home_prepared,
-    load_root_prepared,
-    prepare_lock,
-    prepared_version_dir,
-    publish_current,
-    write_prepared,
+    HomeLayer,
+    LayerScope,
+    RootLayer,
+    agent_revision_dir,
+    load_agent_revisions,
+    load_current_revision,
+    load_home_layer,
+    load_layer_source,
+    load_root_layer,
+    layer_lock,
+    persist_agent_revision,
+    publish_layer_current,
+    write_layer,
 )
 from .state import (
     CapResolution,
-    PreparedCap,
-    PreparedVisibility,
-    ResolvedFile,
+    StateCap,
+    CapScope,
+    MaterializedFile,
 )
-from .source import Source, scan_home_source, scan_root_source
+from .source import SourceTree, scan_home_source, scan_root_source
 
-_PREPARED_SCHEMA = 2
 _MAX_SOURCE_SNAPSHOT_ATTEMPTS = 3
-_RUNNABLE_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*$")
 _ERROR_LINE_RE = re.compile(r"\bline (\d+)\b", re.IGNORECASE)
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,6 @@ logger = logging.getLogger(__name__)
 def prepare_agent_state(
     layout: AgentLayout,
     *,
-    toolang_version: str,
     force: bool = False,
     progress: ProgressSink | None = None,
 ) -> AgentState:
@@ -73,29 +73,34 @@ def prepare_agent_state(
 
     root, home = prepare_root_home(
         layout,
-        toolang_version=toolang_version,
         force=force,
         progress=progress,
     )
-    return compose_prepared_state(
+    revision = persist_agent_revision(
+        layout,
+        root_revision=root.revision,
+        home_revision=home.revision,
+    )
+    return compose_layer_state(
         root,
         home,
-        program_source=str(layout.program.relative_to(layout.root)),
+        program_source=layout.program.relative_to(layout.root).as_posix(),
+        revision_dir=agent_revision_dir(layout, revision),
     )
 
 
-def compose_prepared_state(
-    root: RootPrepared,
-    home: HomePrepared,
+def compose_layer_state(
+    root: RootLayer,
+    home: HomeLayer,
     *,
     program_source: str,
+    revision_dir: Path | None = None,
 ) -> AgentState:
-    """Compose runtime state from one exact pair of prepared cache layers."""
+    """Compose runtime State from one exact root/home layer pair."""
 
     return compose_agent_state(
-        root_version=root.version,
-        home_version=home.version,
-        toolang_version=root.toolang_version,
+        root_revision=root.revision,
+        home_revision=home.revision,
         root_config=root.config,
         home_config=home.config,
         program_source=program_source,
@@ -103,21 +108,37 @@ def compose_prepared_state(
         root_caps=root.caps,
         home_caps=home.caps,
         modules=home.modules,
-        loaded_at=datetime.now(timezone.utc).isoformat(),
+        revision_dir=revision_dir,
     )
+
+
+def load_agent_state(
+    layout: AgentLayout,
+    revision: str | None = None,
+) -> AgentState:
+    """Load one durable Agent State without consulting authored source."""
+
+    effective, root_revision, home_revision = load_agent_revisions(layout, revision)
+    state = compose_layer_state(
+        load_root_layer(layout, root_revision),
+        load_home_layer(layout, home_revision),
+        program_source=layout.program.relative_to(layout.root).as_posix(),
+        revision_dir=agent_revision_dir(layout, effective),
+    )
+    if state.revision != effective:
+        raise ValueError("Agent State composition revision mismatch")
+    return state
 
 
 def refresh_agent_state(
     layout: AgentLayout,
     *,
-    toolang_version: str,
     progress: ProgressSink | None = None,
 ) -> AgentState:
     """Explicitly refresh remote resolutions and prepare one agent state."""
 
     return prepare_agent_state(
         layout,
-        toolang_version=toolang_version,
         force=True,
         progress=progress,
     )
@@ -126,23 +147,20 @@ def refresh_agent_state(
 def prepare_root_home(
     layout: AgentLayout,
     *,
-    toolang_version: str,
     force: bool = False,
     progress: ProgressSink | None = None,
-) -> tuple[RootPrepared, HomePrepared]:
+) -> tuple[RootLayer, HomeLayer]:
     """Prepare and load the shared root and one agent home."""
 
     _require_root(layout)
     _require_agent_home(layout)
     root = prepare_root(
         layout,
-        toolang_version=toolang_version,
         force=force,
         progress=progress,
     )
     home = prepare_home(
         layout,
-        toolang_version=toolang_version,
         force=force,
         progress=progress,
     )
@@ -152,11 +170,10 @@ def prepare_root_home(
 def prepare_root(
     layout: AgentLayout,
     *,
-    toolang_version: str,
     force: bool = False,
     progress: ProgressSink | None = None,
-) -> RootPrepared:
-    """Build or reuse the root prepared cache shared by every agent."""
+) -> RootLayer:
+    """Build or reuse the root State layer shared by every agent."""
 
     _require_root(layout)
     source = scan_root_source(layout.root)
@@ -167,7 +184,7 @@ def prepare_root(
     )
     if current is not None:
         return current
-    with prepare_lock(layout, "root"):
+    with layer_lock(layout, "root"):
         source = scan_root_source(layout.root)
         current = _matching_root(
             layout,
@@ -176,25 +193,23 @@ def prepare_root(
         )
         if current is not None:
             return current
-        _build_prepared(
+        _prepare_layer(
             layout,
             scope="root",
-            visibility="shared",
-            toolang_version=toolang_version,
+            cap_scope="root",
             reuse_remote=not force,
             progress=progress,
         )
-        return load_root_prepared(layout)
+        return load_root_layer(layout)
 
 
 def prepare_home(
     layout: AgentLayout,
     *,
-    toolang_version: str,
     force: bool = False,
     progress: ProgressSink | None = None,
-) -> HomePrepared:
-    """Build or reuse one agent-home prepared cache."""
+) -> HomeLayer:
+    """Build or reuse one agent-home State layer."""
 
     _require_agent_home(layout)
     source = scan_home_source(layout.root, layout.name)
@@ -205,7 +220,7 @@ def prepare_home(
     )
     if current is not None:
         return current
-    with prepare_lock(layout, "home"):
+    with layer_lock(layout, "home"):
         source = scan_home_source(layout.root, layout.name)
         current = _matching_home(
             layout,
@@ -214,31 +229,29 @@ def prepare_home(
         )
         if current is not None:
             return current
-        _build_prepared(
+        _prepare_layer(
             layout,
             scope="home",
-            visibility="private",
-            toolang_version=toolang_version,
+            cap_scope="home",
             reuse_remote=not force,
             progress=progress,
         )
-        return load_home_prepared(layout)
+        return load_home_layer(layout)
 
 
 def _matching_root(
     layout: AgentLayout,
     *,
-    source: Source,
+    source: SourceTree,
     force: bool,
-) -> RootPrepared | None:
+) -> RootLayer | None:
     if force:
         return None
     try:
-        version = load_current_version(layout, "root")
-        version_dir = prepared_version_dir(layout, "root", version)
-        if load_version_source(version_dir) != source:
+        revision = load_current_revision(layout, "root")
+        if load_layer_source(layout, "root", revision) != source:
             return None
-        return load_root_prepared(layout, version)
+        return load_root_layer(layout, revision)
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
 
@@ -246,30 +259,28 @@ def _matching_root(
 def _matching_home(
     layout: AgentLayout,
     *,
-    source: Source,
+    source: SourceTree,
     force: bool,
-) -> HomePrepared | None:
+) -> HomeLayer | None:
     if force:
         return None
     try:
-        version = load_current_version(layout, "home")
-        version_dir = prepared_version_dir(layout, "home", version)
-        if load_version_source(version_dir) != source:
+        revision = load_current_revision(layout, "home")
+        if load_layer_source(layout, "home", revision) != source:
             return None
-        return load_home_prepared(layout, version)
+        return load_home_layer(layout, revision)
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return None
 
 
-def _build_prepared(
+def _prepare_layer(
     layout: AgentLayout,
     *,
-    scope: PreparedScope,
-    visibility: PreparedVisibility,
-    toolang_version: str,
+    scope: LayerScope,
+    cap_scope: CapScope,
     reuse_remote: bool,
     progress: ProgressSink | None,
-) -> bytes:
+) -> str:
     for _ in range(_MAX_SOURCE_SNAPSHOT_ATTEMPTS):
         source = _scan_scope_source(layout, scope=scope)
         authored = (
@@ -278,46 +289,42 @@ def _build_prepared(
             else read_authored_source(layout.root, layout.name)
         )
         previous_entries = (
-            _previous_prepared_caps(
+            _previous_state_caps(
                 layout,
                 scope=scope,
             )
             if reuse_remote
             else ()
         )
-        remote_cache = prepared_remote_cache(
+        remote_cache = layer_remote_cache(
             authored,
-            visibility=visibility,
+            scope=cap_scope,
             entries=previous_entries,
         )
-        entries, generated_files = materialize_visibility(
+        entries, generated_files = materialize_scope(
             authored,
-            visibility=visibility,
+            scope=cap_scope,
             remote_cache=remote_cache or None,
             progress=progress,
             include_program=scope == "root",
         )
-        modules: tuple[PreparedProgramModule, ...] = ()
-        module_entries: tuple[PreparedCap, ...] = ()
+        modules: tuple[StateModule, ...] = ()
+        module_entries: tuple[StateCap, ...] = ()
         module_sources: dict[str, ProgramSource] = {}
         if scope == "home":
             drafts = _program_module_drafts(authored)
             previous_modules = _previous_program_modules(layout)
-            materialized: list[PreparedProgramModule] = []
-            all_module_entries: list[PreparedCap] = []
+            materialized: list[StateModule] = []
+            all_module_entries: list[StateCap] = []
             for draft, module_source in drafts:
-                module_sources[draft.identity] = module_source
+                module_sources[draft.name] = module_source
                 previous = next(
-                    (
-                        item
-                        for item in previous_modules
-                        if item.identity == draft.identity
-                    ),
+                    (item for item in previous_modules if item.name == draft.name),
                     None,
                 )
-                module_cache = prepared_remote_cache(
+                module_cache = layer_remote_cache(
                     authored,
-                    visibility="private",
+                    scope="home",
                     entries=previous.here_caps if previous is not None else (),
                 )
                 try:
@@ -335,7 +342,7 @@ def _build_prepared(
                         error=exc,
                     ) from exc
                 here_entries, here_files = _namespace_module_materialization(
-                    draft.identity,
+                    draft.name,
                     here_entries,
                     here_files,
                 )
@@ -347,17 +354,17 @@ def _build_prepared(
         files = _snapshot_files(
             authored,
             generated_files,
-            visibility=visibility,
+            cap_scope=cap_scope,
         )
         for module in modules:
-            source_text = module_sources[module.identity].source_text
+            source_text = module_sources[module.name].source_text
             files.setdefault(module.authored_path, source_text.encode("utf-8"))
         entries = tuple(
             _snapshot_entry(
                 entry,
                 agent_name=authored.agent_name,
                 files=files,
-                visibility=visibility,
+                cap_scope=cap_scope,
             )
             for entry in entries
         )
@@ -370,7 +377,7 @@ def _build_prepared(
                             entry,
                             agent_name=authored.agent_name,
                             files=files,
-                            visibility=visibility,
+                            cap_scope=cap_scope,
                         )
                         for entry in module.here_caps
                     ),
@@ -381,51 +388,45 @@ def _build_prepared(
                 entry for module in modules for entry in module.here_caps
             )
         resolutions = _cap_resolutions((*entries, *module_entries), files)
-        prepared = _prepared_document(
-            entries,
-            modules=modules,
-            authored=authored,
-            files=files,
-            scope=scope,
-            toolang_version=toolang_version,
-        )
         if source != _scan_scope_source(layout, scope=scope):
             continue
-        version = write_prepared(
+        revision = write_layer(
             layout=layout,
             scope=scope,
             source=source,
             resolutions=resolutions,
-            prepared=prepared,
+            config=_snapshot_config(files),
+            caps=entries,
+            modules=modules,
             files=files,
         )
-        publish_current(
+        publish_layer_current(
             layout,
             scope,
-            version,
+            revision,
         )
-        return version
+        return revision
     raise RuntimeError(f"{scope} source changed repeatedly while preparing")
 
 
-def _previous_prepared_caps(
+def _previous_state_caps(
     layout: AgentLayout,
     *,
-    scope: PreparedScope,
-) -> tuple[PreparedCap, ...]:
+    scope: LayerScope,
+) -> tuple[StateCap, ...]:
     try:
         if scope == "root":
-            return load_root_prepared(layout).caps
-        return load_home_prepared(layout).caps
+            return load_root_layer(layout).caps
+        return load_home_layer(layout).caps
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return ()
 
 
 def _previous_program_modules(
     layout: AgentLayout,
-) -> tuple[PreparedProgramModule, ...]:
+) -> tuple[StateModule, ...]:
     try:
-        return load_home_prepared(layout).modules
+        return load_home_layer(layout).modules
     except (FileNotFoundError, KeyError, TypeError, ValueError):
         return ()
 
@@ -433,8 +434,8 @@ def _previous_program_modules(
 def _scan_scope_source(
     layout: AgentLayout,
     *,
-    scope: PreparedScope,
-) -> Source:
+    scope: LayerScope,
+) -> SourceTree:
     if scope == "root":
         return scan_root_source(layout.root)
     return scan_home_source(layout.root, layout.name)
@@ -451,8 +452,8 @@ def _require_agent_home(layout: AgentLayout) -> None:
 
 
 def _program_module_drafts(
-    authored: AuthoredSource,
-) -> tuple[tuple[PreparedProgramModule, ProgramSource], ...]:
+    authored: SourceSnapshot,
+) -> tuple[tuple[StateModule, ProgramSource], ...]:
     sources = authored.load_programs()
     programs: list[tuple[ProgramSource, Program]] = []
     diagnostics: list[StateDiagnostic] = []
@@ -471,17 +472,22 @@ def _program_module_drafts(
     if diagnostics:
         raise StatePreparationError(*diagnostics)
 
-    drafts: list[tuple[PreparedProgramModule, ProgramSource]] = []
+    flow_sources = tuple(
+        source for source, _program in programs if source.kind == "flow"
+    )
+    _validate_flow_source_names(flow_sources)
+
+    drafts: list[tuple[StateModule, ProgramSource]] = []
     extension_diagnostics: list[StateDiagnostic] = []
     for source, program in programs:
         if source.kind == "agent":
             drafts.append(
                 (
-                    PreparedProgramModule(
-                        identity="agent",
+                    StateModule(
+                        name="agent",
                         kind="agent",
                         authored_path=source.authored_path,
-                        prepared_path=f"files/{source.authored_path}",
+                        materialized_path=f"files/{source.authored_path}",
                         digest=source.digest,
                         program=program,
                     ),
@@ -503,11 +509,11 @@ def _program_module_drafts(
             continue
         drafts.append(
             (
-                PreparedProgramModule(
-                    identity=f"flow:{export.public_name}",
+                StateModule(
+                    name=flow_module_name(source.authored_path),
                     kind="flow",
                     authored_path=source.authored_path,
-                    prepared_path=f"files/{source.authored_path}",
+                    materialized_path=f"files/{source.authored_path}",
                     digest=source.digest,
                     program=program,
                     export=export,
@@ -539,8 +545,7 @@ def _flow_module_export(
     program: Program,
 ) -> ProgramModuleExport:
     name = Path(source.authored_path).stem
-    if _RUNNABLE_NAME_RE.fullmatch(name) is None:
-        raise ValueError(f"Flow module filename is not a runnable name: {name!r}")
+    flow_module_name(source.authored_path)
     candidates = tuple(
         flow for flow in program.flows if not flow.name_explicit or flow.name == name
     )
@@ -552,6 +557,36 @@ def _flow_module_export(
     if len(candidates) > 1:
         raise ValueError(f"Flow module entry is ambiguous: {source.authored_path}")
     return ProgramModuleExport(public_name=name, local_name=candidates[0].name)
+
+
+def _validate_flow_source_names(sources: tuple[ProgramSource, ...]) -> None:
+    seen: dict[str, str] = {}
+    diagnostics: list[StateDiagnostic] = []
+    for source in sources:
+        name = Path(source.authored_path).stem
+        error: ValueError | None = None
+        try:
+            flow_module_name(source.authored_path)
+        except ValueError as exc:
+            error = exc
+        if error is None and (existing := seen.get(name.casefold())):
+            error = ValueError(
+                f"Flow module filenames collide under case folding: "
+                f"{existing!r} and {name!r}"
+            )
+        elif error is None:
+            seen[name.casefold()] = name
+        if error is not None:
+            diagnostics.append(
+                _diagnostic(
+                    source,
+                    layer="flow-extension",
+                    code="invalid-flow-filename",
+                    error=error,
+                )
+            )
+    if diagnostics:
+        raise StatePreparationError(*diagnostics)
 
 
 def _diagnostic(
@@ -586,61 +621,79 @@ def _module_error(
 
 
 def _namespace_module_materialization(
-    identity: str,
-    entries: tuple[PreparedCap, ...],
+    module: str,
+    entries: tuple[StateCap, ...],
     files: dict[str, bytes],
-) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
-    namespace = identity.replace(":", "-")
-    prefix = Path("modules") / namespace
-    return (
-        tuple(replace(entry, path=str(prefix / entry.path)) for entry in entries),
-        {str(prefix / path): content for path, content in files.items()},
-    )
+) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
+    remapped_entries: list[StateCap] = []
+    remapped_files: dict[str, bytes] = {}
+    for entry in entries:
+        source_path = Path(entry.path)
+        target_path = _generated_cap_path(source_path, module=module)
+        remapped_entries.append(replace(entry, path=target_path.as_posix()))
+        source_root = (
+            source_path.parent if entry.shape == "file" else source_path.parent
+        )
+        target_root = target_path.parent
+        for path, content in files.items():
+            candidate = Path(path)
+            if candidate == source_path:
+                remapped_files[target_path.as_posix()] = content
+            elif entry.shape == "dir" and candidate.is_relative_to(source_root):
+                remapped_files[
+                    (target_root / candidate.relative_to(source_root)).as_posix()
+                ] = content
+    return tuple(remapped_entries), remapped_files
 
 
 def _snapshot_files(
-    authored: AuthoredSource,
+    authored: SourceSnapshot,
     generated_files: dict[str, bytes],
     *,
-    visibility: PreparedVisibility,
+    cap_scope: CapScope,
 ) -> dict[str, bytes]:
     files: dict[str, bytes] = {}
     for item in authored.files:
-        if not _file_belongs_to_visibility(item, visibility=visibility):
+        if not _file_belongs_to_cap_scope(item, cap_scope=cap_scope):
             continue
         target = _authored_snapshot_path(
             item,
             agent_name=authored.agent_name,
-            visibility=visibility,
+            cap_scope=cap_scope,
         )
-        files[str(target)] = item.content
+        files[target.as_posix()] = item.content
     for path, content in generated_files.items():
         target = _generated_snapshot_path(Path(path))
-        files[str(target)] = content
+        files[target.as_posix()] = content
     return files
 
 
-def _file_belongs_to_visibility(
-    item: AuthoredFile,
+def _file_belongs_to_cap_scope(
+    item: SourceFile,
     *,
-    visibility: PreparedVisibility,
+    cap_scope: CapScope,
 ) -> bool:
-    return item.origin == ("root" if visibility == "shared" else "agent")
+    return item.origin == ("root" if cap_scope == "root" else "agent")
 
 
 def _authored_snapshot_path(
-    item: AuthoredFile,
+    item: SourceFile,
     *,
     agent_name: str,
-    visibility: PreparedVisibility,
+    cap_scope: CapScope,
 ) -> Path:
     relative = _scope_relative_path(
         Path(item.relative_path),
         agent_name=agent_name,
-        visibility=visibility,
+        cap_scope=cap_scope,
     )
     if item.category == "cap":
-        return Path("authored") / relative
+        if len(relative.parts) < 2:
+            raise ValueError(f"unexpected authored cap path: {relative}")
+        kind = KIND_BY_DIR_NAME.get(relative.parts[0])
+        if kind is None:
+            raise ValueError(f"unexpected authored cap directory: {relative.parts[0]}")
+        return Path("caps") / "authored" / kind / Path(*relative.parts[1:])
     if item.category == "program":
         return relative
     if item.category == "config":
@@ -651,24 +704,33 @@ def _authored_snapshot_path(
 def _generated_snapshot_path(
     path: Path,
 ) -> Path:
+    if path.parts[:1] == ("caps",):
+        return path
+    return _generated_cap_path(path)
+
+
+def _generated_cap_path(path: Path, *, module: str | None = None) -> Path:
     if len(path.parts) < 3:
         raise ValueError(f"unexpected materialized cap path: {path}")
-    if path.parts[0] == "modules":
-        if len(path.parts) < 5 or path.parts[2] not in {"cited", "inline"}:
-            raise ValueError(f"unexpected module cap path: {path}")
-        return path
-    if path.parts[0] not in {"cited", "inline", "wired"}:
+    form = path.parts[0]
+    if form not in {"inline", "configured", "referenced"}:
         raise ValueError(f"unexpected materialized cap bucket: {path.parts[0]}")
-    return path
+    kind = KIND_BY_DIR_NAME.get(path.parts[1])
+    if kind is None:
+        raise ValueError(f"unexpected materialized cap directory: {path.parts[1]}")
+    prefix = Path("caps") / form
+    if module is not None:
+        prefix /= module
+    return prefix / kind / Path(*path.parts[2:])
 
 
 def _scope_relative_path(
     path: Path,
     *,
     agent_name: str,
-    visibility: PreparedVisibility,
+    cap_scope: CapScope,
 ) -> Path:
-    if visibility == "shared":
+    if cap_scope == "root":
         return path
     prefix = Path("agents") / agent_name
     try:
@@ -678,16 +740,16 @@ def _scope_relative_path(
 
 
 def _snapshot_entry(
-    entry: PreparedCap,
+    entry: StateCap,
     *,
     agent_name: str,
     files: dict[str, bytes],
-    visibility: PreparedVisibility,
-) -> PreparedCap:
+    cap_scope: CapScope,
+) -> StateCap:
     path = _entry_snapshot_path(
         entry,
         agent_name=agent_name,
-        visibility=visibility,
+        cap_scope=cap_scope,
     )
     source = replace(entry.source, path=entry.source.path)
     if source.origin == "remote":
@@ -702,24 +764,26 @@ def _snapshot_entry(
         )
     return replace(
         entry,
-        path=f"files/{path}",
+        path=f"files/{path.as_posix()}",
         source=source,
     )
 
 
 def _entry_snapshot_path(
-    entry: PreparedCap,
+    entry: StateCap,
     *,
     agent_name: str,
-    visibility: PreparedVisibility,
+    cap_scope: CapScope,
 ) -> Path:
-    if entry.source.form == "file":
+    if entry.source.form == "authored":
         relative = _scope_relative_path(
             Path(entry.path),
             agent_name=agent_name,
-            visibility=visibility,
+            cap_scope=cap_scope,
         )
-        return Path("authored") / relative
+        if len(relative.parts) < 2:
+            raise ValueError(f"unexpected authored cap path: {relative}")
+        return Path("caps") / "authored" / entry.kind / Path(*relative.parts[1:])
     return _generated_snapshot_path(Path(entry.path))
 
 
@@ -731,8 +795,8 @@ def _remote_snapshot_fingerprint(
     files: dict[str, bytes],
 ) -> str:
     selected = (
-        [(str(path), files[str(path)])]
-        if shape == "file" and str(path) in files
+        [(path.as_posix(), files[path.as_posix()])]
+        if shape == "file" and path.as_posix() in files
         else [
             (candidate, content)
             for candidate, content in files.items()
@@ -751,7 +815,7 @@ def _remote_snapshot_fingerprint(
 
 
 def _cap_resolutions(
-    entries: tuple[PreparedCap, ...],
+    entries: tuple[StateCap, ...],
     files: dict[str, bytes],
 ) -> tuple[CapResolution, ...]:
     resolutions: list[CapResolution] = []
@@ -761,7 +825,7 @@ def _cap_resolutions(
         materialized = Path(entry.path)
         selected = _entry_materialized_files(entry, files)
         resolved_files = [
-            ResolvedFile(
+            MaterializedFile(
                 path=f"files/{path}",
                 size=len(content),
                 sha256=sha256(content).hexdigest(),
@@ -779,11 +843,11 @@ def _cap_resolutions(
                 kind=entry.kind,
                 name=entry.name,
                 form=entry.source.form,
-                authored_ref=entry.source.authored_ref or entry.ref,
+                declared_ref=entry.source.declared_ref or entry.ref,
                 resolved_ref=entry.ref,
                 line=entry.source.line,
-                definition=f"files/{_resolved_definition_path(entry)}",
-                materialized=str(materialized),
+                definition=(f"files/{_resolved_definition_path(entry).as_posix()}"),
+                materialized=materialized.as_posix(),
                 content_hash=digest.hexdigest(),
                 files=tuple(resolved_files),
             )
@@ -799,8 +863,8 @@ def _cap_resolutions(
     return tuple(resolutions)
 
 
-def _resolved_definition_path(entry: PreparedCap) -> Path:
-    if entry.source.form == "wired":
+def _resolved_definition_path(entry: StateCap) -> Path:
+    if entry.source.form == "configured":
         return Path("config.toml")
     path = Path(entry.source.path)
     if path.parts[:1] == ("agents",) and len(path.parts) >= 3:
@@ -809,41 +873,20 @@ def _resolved_definition_path(entry: PreparedCap) -> Path:
 
 
 def _entry_materialized_files(
-    entry: PreparedCap,
+    entry: StateCap,
     files: dict[str, bytes],
 ) -> list[tuple[str, bytes]]:
     path = Path(entry.path)
     relative = Path(*path.parts[1:])
     if entry.shape == "file":
-        content = files.get(str(relative))
-        return [] if content is None else [(str(relative), content)]
+        content = files.get(relative.as_posix())
+        return [] if content is None else [(relative.as_posix(), content)]
     root = relative.parent
     return sorted(
         (candidate, content)
         for candidate, content in files.items()
         if Path(candidate).is_relative_to(root)
     )
-
-
-def _prepared_document(
-    entries: tuple[PreparedCap, ...],
-    *,
-    modules: tuple[PreparedProgramModule, ...],
-    authored: AuthoredSource,
-    files: dict[str, bytes],
-    scope: PreparedScope,
-    toolang_version: str,
-) -> dict[str, object]:
-    document: dict[str, object] = {
-        "schema": _PREPARED_SCHEMA,
-        "scope": scope,
-        "toolang_version": toolang_version,
-        "config": _snapshot_config(files),
-        "caps": [entry.to_data() for entry in entries],
-    }
-    if scope == "home":
-        document["modules"] = [module.to_data() for module in modules]
-    return document
 
 
 def _snapshot_config(files: dict[str, bytes]) -> dict[str, object]:

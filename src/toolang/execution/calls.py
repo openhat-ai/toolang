@@ -172,7 +172,7 @@ def validate_commands(
         setup,
         state,
         setup.ceiling,
-        module=resolved.module.identity,
+        module=resolved.module.name,
     )
     for ceiling in ceilings:
         resources = apply_agent_ceiling(
@@ -180,7 +180,7 @@ def validate_commands(
             state,
             resources,
             ceiling,
-            module=resolved.module.identity,
+            module=resolved.module.name,
         )
     resources = resolve_runnable_resources(
         snapshot_model_selection(setup, state),
@@ -188,7 +188,7 @@ def validate_commands(
         base=resources,
         setup=setup,
         state=state,
-        module=resolved.module.identity,
+        module=resolved.module.name,
     )
     validate_model_binding(
         snapshot_model_selection(setup, state),

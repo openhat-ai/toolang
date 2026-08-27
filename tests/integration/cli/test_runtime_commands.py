@@ -584,7 +584,7 @@ def test_remove_deletes_stopped_agent_home_without_authored_source(
     root = tmp_path / "toolang"
     layout = AgentLayout.resident(root, "alice")
     layout.runtime.mkdir(parents=True)
-    layout.home_state.mkdir()
+    layout.home_state.mkdir(parents=True)
 
     listed = runner.invoke(cli.app, ["--root", str(root), "list"])
     removed = runner.invoke(cli.app, ["--root", str(root), "remove", "alice"])

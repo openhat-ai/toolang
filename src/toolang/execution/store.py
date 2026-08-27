@@ -84,8 +84,8 @@ from .types import (
 )
 from .values import parts_from_local
 
-_SCHEMA_VERSION = 28
-_MIGRATABLE_SCHEMA_VERSIONS = (_SCHEMA_VERSION,)
+_SCHEMA_VERSION = 29
+_MIGRATABLE_SCHEMA_VERSIONS = (28, _SCHEMA_VERSION)
 
 
 class RunStore:
@@ -2089,7 +2089,7 @@ class RunStore:
                 instructions=instruction_ref,
                 messages=tuple(message_refs),
                 tools=toolset_ref,
-                state=dict(call.state) if call.state is not None else None,
+                cont=dict(call.cont) if call.cont is not None else None,
             ),
         )
 
@@ -2119,12 +2119,12 @@ class RunStore:
             instruction_ref = call.instructions
             message_refs = call.messages
             toolset_ref = call.tools
-            state = dict(call.state) if call.state is not None else None
+            cont = dict(call.cont) if call.cont is not None else None
             references[step.path] = (
                 instruction_ref,
                 message_refs,
                 toolset_ref,
-                state,
+                cont,
             )
             instruction_hashes.add(instruction_ref)
             message_hashes.update(message_refs)
@@ -2139,7 +2139,7 @@ class RunStore:
             instruction_ref,
             message_refs,
             toolset_ref,
-            state,
+            cont,
         ) in references.items():
             instructions = texts.get(instruction_ref)
             if instructions is None:
@@ -2155,7 +2155,7 @@ class RunStore:
                 instructions=instructions,
                 messages=[messages[item] for item in message_refs],
                 tools=toolsets[toolset_ref] if toolset_ref is not None else (),
-                state=state,
+                cont=cont,
             )
         return calls
 
@@ -2515,6 +2515,8 @@ class RunStore:
                 """
             )
             _create_steps_table(self._conn)
+            if version == 28:
+                _migrate_model_cont(self._conn)
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS model_texts (
@@ -2590,6 +2592,44 @@ def _create_steps_table(connection: sqlite3.Connection) -> None:
         )
         """
     )
+
+
+def _migrate_model_cont(connection: sqlite3.Connection) -> None:
+    """Rename model continuation keys without touching Agent State records."""
+
+    rows = connection.execute(
+        "SELECT run, path, given, noted FROM steps WHERE kind = 'model'"
+    ).fetchall()
+    for row in rows:
+        given = _load_json(str(row["given"]))
+        noted = _load_json(str(row["noted"]))
+        changed = _rename_cont_key(given, nested="call")
+        changed = _rename_cont_key(noted) or changed
+        if not changed:
+            continue
+        connection.execute(
+            "UPDATE steps SET given = ?, noted = ? WHERE run = ? AND path = ?",
+            (
+                _dump_json(given),
+                _dump_json(noted),
+                str(row["run"]),
+                str(row["path"]),
+            ),
+        )
+
+
+def _rename_cont_key(value: object, *, nested: str | None = None) -> bool:
+    if not isinstance(value, dict):
+        return False
+    document = cast(dict[str, object], value)
+    target = document.get(nested) if nested is not None else document
+    if not isinstance(target, dict) or "state" not in target:
+        return False
+    target = cast(dict[str, object], target)
+    if "cont" in target:
+        raise ValueError("model continuation contains both state and cont")
+    target["cont"] = target.pop("state")
+    return True
 
 
 def _dump_json(value: Any) -> str:

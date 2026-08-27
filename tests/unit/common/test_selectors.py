@@ -51,7 +51,7 @@ def test_parse_selector_supports_empty_pattern_and_repeated_filter_union() -> No
 
 def test_parse_selector_normalizes_domain_scoped_shorthand() -> None:
     model = parse_selector("*[remote,streaming,tools:false]", domain="model")
-    cap = parse_selector("skill/*[here,wired]", domain="cap")
+    cap = parse_selector("skill/*[here,configured]", domain="cap")
 
     assert model.filters == {
         "scope": ("remote",),
@@ -60,7 +60,7 @@ def test_parse_selector_normalizes_domain_scoped_shorthand() -> None:
     }
     assert cap.filters == {
         "scope": ("here",),
-        "form": ("wired",),
+        "form": ("configured",),
     }
     assert parse_selector("*[openai]", domain="model").filters == {
         "provider": ("openai",)

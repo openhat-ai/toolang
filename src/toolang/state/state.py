@@ -1,4 +1,4 @@
-"""Resolved and prepared cap state plus immutable runtime agent state."""
+"""Resolved capability data and immutable runtime Agent State."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from hashlib import sha256
 import io
 import json
 from pathlib import Path
+import re
 import tarfile
 from typing import Literal, cast
 from urllib.error import HTTPError, URLError
@@ -20,15 +21,15 @@ from urllib.request import Request, urlopen
 
 import frontmatter
 
-from toolang.catalog.config import WiredCaps
+from toolang.catalog.config import ConfiguredCaps
 from toolang.catalog.types import (
     CAP_DIR_BY_KIND,
     CAP_KIND_BY_DIR,
     CAP_KINDS as CATALOG_CAP_KINDS,
 )
 from toolang.state.source import (
-    AuthoredFile,
-    AuthoredSource,
+    SourceFile,
+    SourceSnapshot,
     ProgramSource,
     read_authored_source,
 )
@@ -50,17 +51,13 @@ from toolang.common.github import (
 )
 
 from .types import (
-    EntryForm,
     EntryKind,
-    EntryOrigin,
-    EntryScope,
     EntryShape,
-    PreparedVisibility,
+    CapScope,
     ProgramModuleKind,
     RunnableKind,
-    SourceForm,
+    CapForm,
     SourceOrigin,
-    Visibility,
 )
 
 CAP_KINDS: tuple[EntryKind, ...] = CATALOG_CAP_KINDS
@@ -69,22 +66,37 @@ FILE_BACKED_KINDS = frozenset({"psyche", "service", "prompt"})
 DIR_NAME_BY_KIND: dict[EntryKind, str] = CAP_DIR_BY_KIND
 KIND_BY_DIR_NAME: dict[str, EntryKind] = CAP_KIND_BY_DIR
 REMOTE_CAP_MATERIALIZE_WORKERS = 4
-_AGENT_STATE_VERSION_DOMAIN = b"toolang-agent-state-v1\0"
+_FLOW_FILENAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
+_WINDOWS_RESERVED_FILENAMES = {
+    "aux",
+    "clock$",
+    "con",
+    "nul",
+    "prn",
+    *(f"com{number}" for number in range(1, 10)),
+    *(f"lpt{number}" for number in range(1, 10)),
+}
 
 
 @dataclass(frozen=True, slots=True)
-class ResolvedFile:
+class MaterializedFile:
     """One file fixed by a remote cap resolution."""
 
     path: str
     size: int
     sha256: str
 
+    def __post_init__(self) -> None:
+        _require_layer_path(self.path, label="materialized file")
+        if self.size < 0:
+            raise ValueError("materialized file size must be non-negative")
+        _require_revision(self.sha256, name="materialized file sha256")
+
     def to_data(self) -> dict[str, object]:
         return {"path": self.path, "size": self.size, "sha256": self.sha256}
 
     @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> ResolvedFile:
+    def from_data(cls, data: Mapping[str, object]) -> MaterializedFile:
         size = data["size"]
         if not isinstance(size, int) or isinstance(size, bool):
             raise TypeError("resolved file size must be an integer")
@@ -97,25 +109,54 @@ class ResolvedFile:
 
 @dataclass(frozen=True, slots=True)
 class CapResolution:
-    """Persisted resolution of one cited or wired cap reference."""
+    """Persisted resolution of one referenced or configured capability."""
 
     kind: EntryKind
     name: str
-    form: SourceForm
-    authored_ref: str
+    form: CapForm
+    declared_ref: str
     resolved_ref: str
     definition: str
     materialized: str
     content_hash: str
-    files: tuple[ResolvedFile, ...]
+    files: tuple[MaterializedFile, ...]
     line: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.form not in {"configured", "referenced"}:
+            raise ValueError(f"invalid resolved cap form: {self.form!r}")
+        if (
+            not self.name
+            or not self.declared_ref.strip()
+            or not self.resolved_ref.strip()
+        ):
+            raise ValueError("resolved cap names and refs must not be empty")
+        _require_layer_path(self.definition, label="resolved cap definition")
+        _require_layer_path(self.materialized, label="resolved cap materialization")
+        if not self.files:
+            raise ValueError("resolved cap must contain materialized files")
+        if tuple(sorted(self.files, key=lambda item: item.path)) != self.files:
+            raise ValueError("resolved cap files must be sorted by path")
+        if len({file.path for file in self.files}) != len(self.files):
+            raise ValueError("resolved cap files must be unique")
+        _require_revision(self.content_hash, name="resolved cap content hash")
+        digest = sha256()
+        for file in self.files:
+            digest.update(file.path.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(file.sha256.encode("ascii"))
+            digest.update(b"\n")
+        if digest.hexdigest() != self.content_hash:
+            raise ValueError("resolved cap content hash does not match its files")
+        if self.line is not None and self.line < 1:
+            raise ValueError("resolved cap line must be positive")
 
     def to_data(self) -> dict[str, object]:
         data: dict[str, object] = {
             "kind": self.kind,
             "name": self.name,
             "form": self.form,
-            "authored_ref": self.authored_ref,
+            "declared_ref": self.declared_ref,
             "resolved_ref": self.resolved_ref,
             "definition": self.definition,
             "materialized": self.materialized,
@@ -135,14 +176,14 @@ class CapResolution:
         return cls(
             kind=cast(EntryKind, str(data["kind"])),
             name=str(data["name"]),
-            form=cast(SourceForm, str(data["form"])),
-            authored_ref=str(data["authored_ref"]),
+            form=cast(CapForm, str(data["form"])),
+            declared_ref=str(data["declared_ref"]),
             resolved_ref=str(data["resolved_ref"]),
             definition=str(data["definition"]),
             materialized=str(data["materialized"]),
             content_hash=str(data["content_hash"]),
             files=tuple(
-                ResolvedFile.from_data(cast(dict[str, object], file))
+                MaterializedFile.from_data(cast(dict[str, object], file))
                 for file in raw_files
                 if isinstance(file, dict)
             ),
@@ -152,15 +193,38 @@ class CapResolution:
 
 @dataclass(frozen=True, slots=True)
 class CapSource:
-    """Authored provenance retained by one prepared cap."""
+    """Authored provenance retained by one State capability."""
 
     origin: SourceOrigin
-    form: SourceForm
+    form: CapForm
     path: str
     updated_at: str
     fingerprint: str
-    authored_ref: str | None = None
+    declared_ref: str | None = None
     line: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.origin not in {"local", "remote"}:
+            raise ValueError(f"invalid cap source origin: {self.origin!r}")
+        if self.form not in {"authored", "inline", "configured", "referenced"}:
+            raise ValueError(f"invalid cap form: {self.form!r}")
+        if self.origin == "local" and self.form not in {"authored", "inline"}:
+            raise ValueError("local cap source must be authored or inline")
+        if self.origin == "remote" and self.form not in {"configured", "referenced"}:
+            raise ValueError("remote cap source must be configured or referenced")
+        if self.form in {"configured", "referenced"} and not self.declared_ref:
+            raise ValueError("configured and referenced caps require a declared ref")
+        if self.form in {"authored", "inline"} and self.declared_ref is not None:
+            raise ValueError("authored and inline caps cannot declare a ref")
+        if (
+            not self.path
+            or Path(self.path).is_absolute()
+            or ".." in Path(self.path).parts
+        ):
+            raise ValueError("cap source path must be relative")
+        if self.line is not None and self.line < 1:
+            raise ValueError("cap source line must be positive")
+        _require_revision(self.fingerprint, name="cap source fingerprint")
 
     def to_data(self) -> dict[str, object]:
         data: dict[str, object] = {
@@ -172,8 +236,8 @@ class CapSource:
         }
         if self.line is not None:
             data["line"] = self.line
-        if self.authored_ref is not None:
-            data["authored_ref"] = self.authored_ref
+        if self.declared_ref is not None:
+            data["declared_ref"] = self.declared_ref
         return data
 
     @classmethod
@@ -181,13 +245,13 @@ class CapSource:
         raw_line = data.get("line")
         return cls(
             origin=cast(SourceOrigin, str(data["origin"])),
-            form=cast(SourceForm, str(data["form"])),
+            form=cast(CapForm, str(data["form"])),
             path=str(data["path"]),
             updated_at=str(data["updated_at"]),
             fingerprint=str(data["fingerprint"]),
-            authored_ref=(
-                str(data["authored_ref"])
-                if data.get("authored_ref") is not None
+            declared_ref=(
+                str(data["declared_ref"])
+                if data.get("declared_ref") is not None
                 else None
             ),
             line=raw_line if isinstance(raw_line, int) else None,
@@ -195,8 +259,8 @@ class CapSource:
 
 
 @dataclass(frozen=True, slots=True)
-class PreparedCap:
-    """One cap backed by an immutable prepared filesystem path."""
+class StateCap:
+    """One capability backed by an immutable State layer path."""
 
     kind: EntryKind
     name: str
@@ -208,12 +272,16 @@ class PreparedCap:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "meta", freeze_mapping(self.meta))
+        if self.source.form in {"authored", "configured"} and self.scope == "here":
+            raise ValueError(f"{self.source.form} cap cannot have here scope")
+        if self.source.form in {"inline", "referenced"} and self.scope != "here":
+            raise ValueError(f"{self.source.form} cap must have here scope")
 
     @property
-    def visibility(self) -> PreparedVisibility:
-        if self.source.form in {"inline", "ref"}:
-            return "private"
-        return "private" if self.source.path.startswith("agents/") else "shared"
+    def scope(self) -> CapScope:
+        if self.source.form in {"inline", "referenced"}:
+            return "here"
+        return "home" if self.source.path.startswith("agents/") else "root"
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -227,12 +295,12 @@ class PreparedCap:
         }
 
     def read_text(self) -> str:
-        """Read this cap from its immutable prepared file."""
+        """Read this capability from its immutable layer file."""
 
         return Path(self.path).read_text(encoding="utf-8")
 
     def read_content(self) -> str:
-        """Read the cap body lazily from its immutable prepared file."""
+        """Read the capability body lazily from its immutable layer file."""
 
         return frontmatter.loads(self.read_text()).content.strip()
 
@@ -240,7 +308,7 @@ class PreparedCap:
         return self.to_data()
 
     @classmethod
-    def from_data(cls, data: dict[str, object]) -> PreparedCap:
+    def from_data(cls, data: dict[str, object]) -> StateCap:
         return cls(
             kind=cast(EntryKind, str(data["kind"])),
             name=str(data["name"]),
@@ -274,32 +342,82 @@ class ProgramModuleExport:
 
 
 @dataclass(frozen=True, slots=True)
-class PreparedProgramModule:
-    """One independently validated program fixed in prepared home state."""
+class StateModule:
+    """One independently validated program fixed in a home State layer."""
 
-    identity: str
+    name: str
     kind: ProgramModuleKind
     authored_path: str
-    prepared_path: str
+    materialized_path: str
     digest: str
     program: Program
     export: ProgramModuleExport | None = None
-    here_caps: tuple[PreparedCap, ...] = ()
+    here_caps: tuple[StateCap, ...] = ()
+
+    def __post_init__(self) -> None:
+        authored = Path(self.authored_path)
+        if self.kind == "agent":
+            if self.name != "agent" or authored.as_posix() != "agent.too":
+                raise ValueError("agent State module must be named agent.too")
+            if self.export is not None:
+                raise ValueError("agent State module cannot declare a module export")
+        else:
+            if self.name != flow_module_name(self.authored_path):
+                raise ValueError("flow State module name must match its source path")
+            if self.export is None:
+                raise ValueError("flow State module requires one export")
+            candidates = tuple(
+                flow
+                for flow in self.program.flows
+                if not flow.name_explicit or flow.name == authored.stem
+            )
+            if (
+                len(candidates) != 1
+                or self.export.public_name != authored.stem
+                or self.export.local_name != candidates[0].name
+            ):
+                raise ValueError("flow State module export does not match its program")
+        if self.materialized_path != f"files/{self.authored_path}":
+            raise ValueError(
+                "State module materialized path must match its source path"
+            )
+        _require_revision(self.digest, name="State module digest")
+        if any(cap.scope != "here" for cap in self.here_caps):
+            raise ValueError("State module caps must have here scope")
+        if tuple(sorted(self.here_caps, key=_entry_sort_key)) != self.here_caps:
+            raise ValueError("State module capabilities must be sorted")
+        if len({_entry_sort_key(cap) for cap in self.here_caps}) != len(self.here_caps):
+            raise ValueError("State module capabilities must be unique")
+        for cap in self.here_caps:
+            path = Path(cap.path)
+            if path.is_absolute():
+                continue
+            parts = path.parts[1:] if path.parts[:1] == ("files",) else path.parts
+            expected = (
+                "caps",
+                cap.source.form,
+                self.name,
+                cap.kind,
+            )
+            if parts[:4] != expected:
+                raise ValueError("State module cap path must include its module name")
 
     def to_data(self) -> dict[str, object]:
         return {
-            "identity": self.identity,
+            "name": self.name,
             "kind": self.kind,
             "authored_path": self.authored_path,
-            "prepared_path": self.prepared_path,
+            "materialized_path": self.materialized_path,
             "digest": self.digest,
             "program": to_data(self.program),
             "export": self.export.to_data() if self.export is not None else None,
-            "here_caps": [cap.to_data() for cap in self.here_caps],
+            "here_caps": [
+                cap.to_data() for cap in sorted(self.here_caps, key=_entry_sort_key)
+            ],
         }
 
     @classmethod
-    def from_data(cls, data: Mapping[str, object]) -> PreparedProgramModule:
+    def from_data(cls, data: Mapping[str, object]) -> StateModule:
         raw_export = data.get("export")
         if raw_export is not None and not isinstance(raw_export, Mapping):
             raise TypeError("program module export must be an object")
@@ -312,10 +430,10 @@ class PreparedProgramModule:
         if kind not in {"agent", "flow"}:
             raise ValueError(f"invalid program module kind: {kind!r}")
         return cls(
-            identity=str(data["identity"]),
+            name=str(data["name"]),
             kind=cast(ProgramModuleKind, kind),
             authored_path=str(data["authored_path"]),
-            prepared_path=str(data["prepared_path"]),
+            materialized_path=str(data["materialized_path"]),
             digest=str(data["digest"]),
             program=program_from_data(data["program"]),
             export=(
@@ -326,7 +444,7 @@ class PreparedProgramModule:
                 else None
             ),
             here_caps=tuple(
-                PreparedCap.from_data(
+                StateCap.from_data(
                     {
                         str(key): value
                         for key, value in cast(dict[object, object], raw).items()
@@ -348,9 +466,9 @@ class PublicRunnable:
 
 
 def public_runnable_catalog(
-    modules: tuple[PreparedProgramModule, ...],
+    modules: tuple[StateModule, ...],
 ) -> dict[str, PublicRunnable]:
-    """Compose unique public runnable bindings from prepared program modules."""
+    """Compose unique public runnable bindings from State modules."""
 
     result: dict[str, PublicRunnable] = {}
 
@@ -361,13 +479,13 @@ def public_runnable_catalog(
 
     agent = next((module for module in modules if module.kind == "agent"), None)
     if agent is None:
-        raise ValueError("prepared home state is missing the agent module")
+        raise ValueError("home State layer is missing the agent module")
     for agic in agent.program.agics:
-        add(PublicRunnable(agic.name, "agic", agent.identity, agic.name))
+        add(PublicRunnable(agic.name, "agic", agent.name, agic.name))
     for flow in agent.program.flows:
-        add(PublicRunnable(flow.name, "flow", agent.identity, flow.name))
+        add(PublicRunnable(flow.name, "flow", agent.name, flow.name))
     if agent.program.find_agic("default") is None:
-        add(PublicRunnable("default", "agic", agent.identity, "default"))
+        add(PublicRunnable("default", "agic", agent.name, "default"))
     for module in modules:
         if module.kind != "flow":
             continue
@@ -379,7 +497,7 @@ def public_runnable_catalog(
             PublicRunnable(
                 module.export.public_name,
                 "flow",
-                module.identity,
+                module.name,
                 module.export.local_name,
             )
         )
@@ -388,73 +506,89 @@ def public_runnable_catalog(
 
 def state_program_module(
     state: object,
-    identity: str = "agent",
-) -> PreparedProgramModule:
+    name: str = "agent",
+) -> StateModule:
     """Return a module while preserving legacy single-Program state fixtures."""
 
     resolver = getattr(state, "module", None)
     if callable(resolver):
-        return cast(PreparedProgramModule, resolver(identity))
-    if identity != "agent":
-        raise ValueError(f"Program module not found: {identity}")
+        return cast(StateModule, resolver(name))
+    if name != "agent":
+        raise ValueError(f"Program module not found: {name}")
     program = getattr(state, "program", None)
     if not isinstance(program, Program):
         raise TypeError("agent state is missing its program")
-    return PreparedProgramModule(
-        identity="agent",
+    return StateModule(
+        name="agent",
         kind="agent",
         authored_path="agent.too",
-        prepared_path="files/agent.too",
-        digest="",
+        materialized_path="files/agent.too",
+        digest="0" * 64,
         program=program,
     )
 
 
 def state_module_caps(
     state: object,
-    identity: str = "agent",
-) -> tuple[PreparedCap, ...]:
+    name: str = "agent",
+) -> tuple[StateCap, ...]:
     """Return module-effective caps with legacy single-Program compatibility."""
 
     resolver = getattr(state, "caps_for", None)
     if callable(resolver):
-        return cast(tuple[PreparedCap, ...], resolver(identity))
-    return cast(tuple[PreparedCap, ...], tuple(getattr(state, "caps", ())))
+        return cast(tuple[StateCap, ...], resolver(name))
+    return cast(tuple[StateCap, ...], tuple(getattr(state, "caps", ())))
 
 
 @dataclass(frozen=True, slots=True)
 class AgentState:
-    """Program and effective prepared caps fixed for one top-level run."""
+    """Program, modules, config, and capabilities fixed for one top-level run."""
 
-    version: bytes
-    root_version: bytes
-    home_version: bytes
-    toolang_version: str
+    revision: str
+    root_revision: str
+    home_revision: str
     root_config: Mapping[str, object]
     home_config: Mapping[str, object]
     config: Mapping[str, object]
     program_source: str
     program: Program
-    caps: tuple[PreparedCap, ...]
-    loaded_at: str
-    modules: tuple[PreparedProgramModule, ...] = ()
+    caps: tuple[StateCap, ...]
+    modules: tuple[StateModule, ...] = ()
     catalog: Mapping[str, PublicRunnable] = field(default_factory=dict)
-    base_caps: tuple[PreparedCap, ...] | None = None
+    base_caps: tuple[StateCap, ...] | None = None
+    revision_dir: Path | None = None
 
     def __post_init__(self) -> None:
+        _require_revision(self.revision, name="Agent State revision")
+        if self.revision != agent_state_revision(
+            self.root_revision,
+            self.home_revision,
+        ):
+            raise ValueError("Agent State revision does not match its layer revisions")
+        if self.revision_dir is not None and self.revision_dir.name != self.revision:
+            raise ValueError(
+                "Agent State revision directory does not match its revision"
+            )
         object.__setattr__(self, "root_config", freeze_mapping(self.root_config))
         object.__setattr__(self, "home_config", freeze_mapping(self.home_config))
         object.__setattr__(self, "config", freeze_mapping(self.config))
         modules = self.modules or (
-            PreparedProgramModule(
-                identity="agent",
+            StateModule(
+                name="agent",
                 kind="agent",
                 authored_path="agent.too",
-                prepared_path="files/agent.too",
-                digest="",
+                materialized_path="files/agent.too",
+                digest="0" * 64,
                 program=self.program,
             ),
         )
+        if tuple(sorted(modules, key=lambda item: item.name)) != modules:
+            raise ValueError("Agent State modules must be sorted by name")
+        if sum(module.kind == "agent" for module in modules) != 1:
+            raise ValueError("Agent State requires exactly one agent module")
+        agent_module = next(module for module in modules if module.kind == "agent")
+        if agent_module.program != self.program:
+            raise ValueError("Agent State program must match its agent module")
         object.__setattr__(self, "modules", modules)
         object.__setattr__(
             self,
@@ -462,29 +596,19 @@ class AgentState:
             freeze_mapping(self.catalog or public_runnable_catalog(modules)),
         )
 
-    @property
-    def fingerprint(self) -> str:
-        return self.version.hex()
+    def module(self, name: str) -> StateModule:
+        """Return one State module by stable name."""
 
-    @property
-    def updated_at(self) -> str:
-        return self.loaded_at
-
-    def module(self, identity: str) -> PreparedProgramModule:
-        """Return one prepared program module by stable identity."""
-
-        module = next(
-            (item for item in self.modules if item.identity == identity), None
-        )
+        module = next((item for item in self.modules if item.name == name), None)
         if module is None:
-            raise ValueError(f"Program module not found: {identity}")
+            raise ValueError(f"Program module not found: {name}")
         return module
 
     @property
-    def agent_module(self) -> PreparedProgramModule:
+    def agent_module(self) -> StateModule:
         return next(item for item in self.modules if item.kind == "agent")
 
-    def caps_for(self, module: str) -> tuple[PreparedCap, ...]:
+    def caps_for(self, module: str) -> tuple[StateCap, ...]:
         """Return effective root/home/here caps for one executing module."""
 
         base = self.caps if self.base_caps is None else self.base_caps
@@ -502,13 +626,9 @@ class AgentState:
 
     def to_snapshot(self) -> dict[str, object]:
         return {
-            "fingerprint": self.fingerprint,
-            "version": self.version.hex(),
-            "root_version": self.root_version.hex(),
-            "home_version": self.home_version.hex(),
-            "toolang_version": self.toolang_version,
-            "updated_at": self.loaded_at,
-            "loaded_at": self.loaded_at,
+            "revision": self.revision,
+            "root_revision": self.root_revision,
+            "home_revision": self.home_revision,
             "program_source": self.program_source,
             "program": to_data(self.program),
             "caps": [cap.path for cap in self.caps],
@@ -518,19 +638,18 @@ class AgentState:
 
 def compose_agent_state(
     *,
-    root_version: bytes,
-    home_version: bytes,
-    toolang_version: str,
+    root_revision: str,
+    home_revision: str,
     root_config: Mapping[str, object],
     home_config: Mapping[str, object],
     program_source: str,
     program: Program,
-    root_caps: tuple[PreparedCap, ...],
-    home_caps: tuple[PreparedCap, ...],
-    modules: tuple[PreparedProgramModule, ...] = (),
-    loaded_at: str,
+    root_caps: tuple[StateCap, ...],
+    home_caps: tuple[StateCap, ...],
+    modules: tuple[StateModule, ...] = (),
+    revision_dir: Path | None = None,
 ) -> AgentState:
-    """Compose runtime state without retaining prepared cache layers."""
+    """Compose runtime State from one exact root/home layer pair."""
 
     effective_base = effective_caps(root_caps, home_caps)
     agent_here = (
@@ -542,20 +661,19 @@ def compose_agent_state(
         else ()
     )
     return AgentState(
-        version=agent_state_version(root_version, home_version),
-        root_version=root_version,
-        home_version=home_version,
-        toolang_version=toolang_version,
+        revision=agent_state_revision(root_revision, home_revision),
+        root_revision=root_revision,
+        home_revision=home_revision,
         root_config=root_config,
         home_config=home_config,
         config=_merge_config(root_config, home_config),
         program_source=program_source,
         program=program,
         caps=effective_caps(effective_base, agent_here),
-        loaded_at=loaded_at,
         modules=modules,
         catalog=public_runnable_catalog(modules) if modules else {},
         base_caps=effective_base,
+        revision_dir=revision_dir,
     )
 
 
@@ -575,25 +693,46 @@ def _merge_config(
     return merged
 
 
-def agent_state_version(root_version: bytes, home_version: bytes) -> bytes:
-    """Return the version of one exact root and home prepared pair."""
+def agent_state_revision(root_revision: str, home_revision: str) -> str:
+    """Return the canonical revision of one exact root/home layer pair."""
 
-    _require_sha256(root_version, name="root version")
-    _require_sha256(home_version, name="home version")
-    digest = sha256()
-    digest.update(_AGENT_STATE_VERSION_DOMAIN)
-    digest.update(root_version)
-    digest.update(home_version)
-    return digest.digest()
+    _require_revision(root_revision, name="root revision")
+    _require_revision(home_revision, name="home revision")
+    document = {
+        "home_revision": home_revision,
+        "root_revision": root_revision,
+        "schema": 1,
+    }
+    encoded = json.dumps(
+        document,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+def flow_module_name(authored_path: str) -> str:
+    """Return the stable portable module name for one direct flow source."""
+
+    path = Path(authored_path)
+    if len(path.parts) != 2 or path.parts[0] != "flows" or path.suffix != ".too":
+        raise ValueError(f"Flow module source path is invalid: {authored_path!r}")
+    stem = path.stem
+    if _FLOW_FILENAME_RE.fullmatch(stem) is None:
+        raise ValueError(f"Flow module filename is not portable: {stem!r}")
+    if stem.casefold() in _WINDOWS_RESERVED_FILENAMES:
+        raise ValueError(f"Flow module filename is reserved on Windows: {stem!r}")
+    return f"flow_{stem}"
 
 
 def effective_caps(
-    root: tuple[PreparedCap, ...],
-    home: tuple[PreparedCap, ...],
-) -> tuple[PreparedCap, ...]:
-    """Overlay private prepared caps over shared caps."""
+    root: tuple[StateCap, ...],
+    home: tuple[StateCap, ...],
+) -> tuple[StateCap, ...]:
+    """Overlay home capabilities over root capabilities."""
 
-    effective: dict[tuple[str, str], PreparedCap] = {}
+    effective: dict[tuple[str, str], StateCap] = {}
     for cap in (*root, *home):
         effective[(cap.kind, cap.name)] = cap
     return tuple(
@@ -604,9 +743,21 @@ def effective_caps(
     )
 
 
-def _require_sha256(value: bytes, *, name: str) -> None:
-    if len(value) != sha256().digest_size:
-        raise ValueError(f"{name} must contain 32 bytes")
+def _require_revision(value: str, *, name: str) -> None:
+    if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+        raise ValueError(f"{name} must be a lowercase SHA-256 hex digest")
+
+
+def _require_layer_path(value: str, *, label: str) -> None:
+    path = Path(value)
+    if (
+        not value
+        or path.is_absolute()
+        or ".." in path.parts
+        or path.parts[:1] != ("files",)
+        or "\\" in value
+    ):
+        raise ValueError(f"{label} path must be portable and inside files/")
 
 
 def resolve_remote_ref(
@@ -686,7 +837,7 @@ def canonicalize_remote_ref(kind: EntryKind, ref: str) -> str:
                 github_ref = GitHubRef(
                     owner=github_ref.owner,
                     repo=github_ref.repo,
-                    path=str(Path(github_ref.path).parent),
+                    path=Path(github_ref.path).parent.as_posix(),
                     rev=github_ref.rev,
                 )
             return github_ref.render()
@@ -798,7 +949,7 @@ def _github_remote_exists(kind: EntryKind, ref: str) -> bool:
         probe_ref = GitHubRef(
             owner=github_ref.owner,
             repo=github_ref.repo,
-            path=str(Path(github_ref.path) / "SKILL.md"),
+            path=(Path(github_ref.path) / "SKILL.md").as_posix(),
             rev=github_ref.rev,
         )
     request = Request(
@@ -840,14 +991,14 @@ def _github_repo_default_branch(owner: str, repo: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class _RemoteEntryRequest:
-    visibility: PreparedVisibility
+    scope: CapScope
     kind: EntryKind
     ref: str
     name: str | None
     relative_config_path: Path
     source_fingerprint: str
     source_mtime_ns: int
-    form: Literal["wired", "ref"]
+    form: Literal["configured", "referenced"]
     source_line: int | None = None
 
 
@@ -858,7 +1009,7 @@ class _CachedRemoteEntry:
 
 
 _RemoteEntryCacheKey = tuple[
-    PreparedVisibility,
+    CapScope,
     EntryKind,
     str,
     str | None,
@@ -871,67 +1022,55 @@ def list_entries(
     toolang_root: Path,
     agent_name: str,
     *,
-    visibility: PreparedVisibility | None = None,
+    scope: CapScope | None = None,
     kinds: set[EntryKind] | None = None,
-) -> tuple[PreparedCap, ...]:
-    """List effective cap entries projected from authored authored state."""
+) -> tuple[StateCap, ...]:
+    """List effective capabilities projected from authored source."""
 
     authored = read_authored_source(toolang_root, agent_name)
-    entries, _ = _collect_visibility_entries_with_files(
-        authored, visibility=visibility, kinds=kinds
-    )
+    entries, _ = _collect_scope_entries_with_files(authored, scope=scope, kinds=kinds)
     return entries
 
 
-def entry_visibility(entry: PreparedCap, *, agent_name: str) -> Visibility:
-    """Return the external visibility for one prepared entry."""
-
-    del agent_name
-    return entry.visibility
-
-
-def entry_origin(entry: PreparedCap) -> EntryOrigin:
-    """Return where one prepared entry's content originates."""
+def entry_origin(entry: StateCap) -> SourceOrigin:
+    """Return where one State capability's content originates."""
 
     return entry.source.origin
 
 
-def entry_form(entry: PreparedCap) -> EntryForm:
-    """Return how one prepared entry is authored or attached."""
+def entry_form(entry: StateCap) -> CapForm:
+    """Return how one State capability enters State."""
 
     return entry.source.form
 
 
-def entry_scope(entry: PreparedCap, *, agent_name: str) -> EntryScope:
-    """Return where one prepared entry is available."""
+def entry_scope(entry: StateCap, *, agent_name: str) -> CapScope:
+    """Return where one State capability is available."""
 
-    if entry.source.form in {"inline", "ref"}:
-        return "here"
-    if entry_visibility(entry, agent_name=agent_name) == "shared":
-        return "root"
-    return "home"
+    del agent_name
+    return entry.scope
 
 
-def entry_ref(entry: PreparedCap, *, agent_name: str) -> str:
-    """Return the canonical external ref for one prepared entry."""
+def entry_ref(entry: StateCap, *, agent_name: str) -> str:
+    """Return the canonical external ref for one State capability."""
 
     origin = entry_origin(entry)
     if origin == "remote":
         return entry.ref
     if entry.source.form == "inline":
         return f"inline://{DIR_NAME_BY_KIND[entry.kind]}/{entry.name}"
-    visibility = entry_visibility(entry, agent_name=agent_name)
-    return f"{'root' if visibility == 'shared' else 'home'}://{DIR_NAME_BY_KIND[entry.kind]}/{entry.name}"
+    scope = entry_scope(entry, agent_name=agent_name)
+    return f"{scope}://{DIR_NAME_BY_KIND[entry.kind]}/{entry.name}"
 
 
-def entry_definition_file(entry: PreparedCap) -> str:
-    """Return the authored file that defines or links one prepared entry."""
+def entry_definition_file(entry: StateCap) -> str:
+    """Return the authored file that defines or links one State capability."""
 
     return entry.source.path
 
 
-def entry_line(entry: PreparedCap) -> int | None:
-    """Return the authored source line for one prepared entry when known."""
+def entry_line(entry: StateCap) -> int | None:
+    """Return the authored source line for one State capability when known."""
 
     return entry.source.line
 
@@ -943,7 +1082,7 @@ def split_cap_selectors(items: list[str] | tuple[str, ...] | None) -> tuple[str,
 
 
 def cap_entry_matches_selector(
-    entry: PreparedCap,
+    entry: StateCap,
     selector: str | Selector,
     *,
     agent_name: str,
@@ -970,12 +1109,12 @@ def cap_entry_matches_selector(
 
 
 def select_cap_entries(
-    entries: tuple[PreparedCap, ...],
+    entries: tuple[StateCap, ...],
     selectors: list[str] | tuple[str, ...] | None,
     *,
     agent_name: str,
     implicit_kind: EntryKind | None = None,
-) -> tuple[PreparedCap, ...]:
+) -> tuple[StateCap, ...]:
     """Return entries selected by a selector list."""
 
     parsed = tuple(
@@ -984,7 +1123,7 @@ def select_cap_entries(
     )
     if not parsed:
         return entries
-    selected: list[PreparedCap] = []
+    selected: list[StateCap] = []
     seen: set[tuple[str, str, str]] = set()
     for selector in parsed:
         for entry in entries:
@@ -1003,7 +1142,7 @@ def select_cap_entries(
 
 
 def _entry_selector_filter_value(
-    entry: PreparedCap,
+    entry: StateCap,
     key: str,
     *,
     agent_name: str,
@@ -1018,22 +1157,20 @@ def _entry_selector_filter_value(
 
 
 def collect_local_entries(
-    authored: AuthoredSource,
+    authored: SourceSnapshot,
     *,
-    visibility: PreparedVisibility | None = None,
+    scope: CapScope | None = None,
     kinds: set[EntryKind] | None = None,
-) -> tuple[PreparedCap, ...]:
-    """Collect local prepared entries from authored authored files."""
+) -> tuple[StateCap, ...]:
+    """Collect local capabilities from authored files."""
 
-    entries: dict[str, PreparedCap] = {}
+    entries: dict[str, StateCap] = {}
     for item in authored.files:
         entry = _local_entry_from_file(authored, item)
         if entry is None:
             continue
-        entry_visibility_value: PreparedVisibility = (
-            "shared" if item.origin == "root" else "private"
-        )
-        if visibility is not None and entry_visibility_value != visibility:
+        entry_scope_value: CapScope = "root" if item.origin == "root" else "home"
+        if scope is not None and entry_scope_value != scope:
             continue
         if kinds is not None and entry.kind not in kinds:
             continue
@@ -1041,20 +1178,20 @@ def collect_local_entries(
     return tuple(sorted(entries.values(), key=_entry_sort_key))
 
 
-def _collect_visibility_entries_with_files(
-    authored: AuthoredSource,
+def _collect_scope_entries_with_files(
+    authored: SourceSnapshot,
     *,
-    visibility: PreparedVisibility | None = None,
+    scope: CapScope | None = None,
     kinds: set[EntryKind] | None = None,
     materialize_remote: bool = False,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
     include_program: bool = True,
-) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
-    local_entries = collect_local_entries(authored, visibility=visibility, kinds=kinds)
+) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
+    local_entries = collect_local_entries(authored, scope=scope, kinds=kinds)
     remote_entries, files = _collect_remote_entries(
         authored,
-        visibility=visibility,
+        scope=scope,
         kinds=kinds,
         materialize=materialize_remote,
         remote_cache=remote_cache,
@@ -1063,7 +1200,7 @@ def _collect_visibility_entries_with_files(
     embedded_entries, embedded_files = (
         _collect_program_embedded_entries(
             authored,
-            visibility=visibility,
+            scope=scope,
             kinds=kinds,
             materialize=materialize_remote,
         )
@@ -1073,7 +1210,7 @@ def _collect_visibility_entries_with_files(
     use_entries, use_files = (
         _collect_program_use_entries(
             authored,
-            visibility=visibility,
+            scope=scope,
             kinds=kinds,
             materialize=materialize_remote,
             remote_cache=remote_cache,
@@ -1090,27 +1227,27 @@ def _collect_visibility_entries_with_files(
     return entries, files
 
 
-def materialize_visibility(
-    authored: AuthoredSource,
+def materialize_scope(
+    authored: SourceSnapshot,
     *,
-    visibility: PreparedVisibility,
+    scope: CapScope,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
     include_program: bool = True,
-) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
-    """Build prepared cap entries and materialized files for one visibility."""
+) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
+    """Build State capabilities and materialized files for one scope."""
 
     emit_progress(
         progress,
-        id=f"prepare.visibility:{visibility}",
-        phase="prepare.visibility",
-        label=f"Prepare {visibility} caps",
+        id=f"prepare.scope:{scope}",
+        phase="prepare.scope",
+        label=f"Prepare {scope} caps",
         status="running",
         detail=authored.agent_name,
     )
-    entries, files = _collect_visibility_entries_with_files(
+    entries, files = _collect_scope_entries_with_files(
         authored,
-        visibility=visibility,
+        scope=scope,
         materialize_remote=True,
         remote_cache=remote_cache,
         progress=progress,
@@ -1119,9 +1256,9 @@ def materialize_visibility(
     _ensure_no_conflicts(entries)
     emit_progress(
         progress,
-        id=f"prepare.visibility:{visibility}",
-        phase="prepare.visibility",
-        label=f"Prepare {visibility} caps",
+        id=f"prepare.scope:{scope}",
+        phase="prepare.scope",
+        label=f"Prepare {scope} caps",
         status="ok",
         detail=f"{len(entries)} entries",
     )
@@ -1129,57 +1266,57 @@ def materialize_visibility(
 
 
 def materialize_program_caps(
-    authored: AuthoredSource,
+    authored: SourceSnapshot,
     source: ProgramSource,
     *,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
-) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
+) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
     """Materialize only the here-scoped caps owned by one program module."""
 
     embedded, embedded_files = _collect_program_embedded_entries(
         authored,
-        visibility="private",
+        scope="home",
         materialize=True,
         program_source=source,
     )
-    cited, cited_files = _collect_program_use_entries(
+    referenced, referenced_files = _collect_program_use_entries(
         authored,
-        visibility="private",
+        scope="home",
         materialize=True,
         remote_cache=remote_cache,
         progress=progress,
         program_source=source,
     )
     files = dict(embedded_files)
-    files.update(cited_files)
-    entries = _dedupe_entries((*embedded, *cited))
+    files.update(referenced_files)
+    entries = _dedupe_entries((*embedded, *referenced))
     _ensure_no_conflicts(entries)
     return entries, files
 
 
-def prepared_remote_cache(
-    authored: AuthoredSource,
+def layer_remote_cache(
+    authored: SourceSnapshot,
     *,
-    visibility: PreparedVisibility,
-    entries: tuple[PreparedCap, ...],
+    scope: CapScope,
+    entries: tuple[StateCap, ...],
 ) -> _RemoteEntryCache:
-    """Build reusable remote inputs from one immutable prepared version."""
+    """Build reusable remote inputs from one immutable State layer."""
 
     cache: _RemoteEntryCache = {}
     for entry in entries:
         if entry.source.origin != "remote":
             continue
         files = _cache_entry_files(authored.toolang_root, entry)
-        authored_ref = entry.source.authored_ref
-        if files is None or authored_ref is None:
+        declared_ref = entry.source.declared_ref
+        if files is None or declared_ref is None:
             continue
         key = _remote_entry_cache_key(
-            visibility=visibility,
+            scope=scope,
             kind=entry.kind,
             form=entry.source.form,
-            name=entry.name if entry.source.form == "wired" else None,
-            authored_ref=authored_ref,
+            name=entry.name if entry.source.form == "configured" else None,
+            declared_ref=declared_ref,
         )
         cache[key] = _CachedRemoteEntry(
             ref=entry.ref,
@@ -1190,24 +1327,24 @@ def prepared_remote_cache(
 
 def _remote_entry_cache_key(
     *,
-    visibility: PreparedVisibility,
+    scope: CapScope,
     kind: EntryKind,
-    form: SourceForm,
+    form: CapForm,
     name: str | None,
-    authored_ref: str,
+    declared_ref: str,
 ) -> _RemoteEntryCacheKey:
     return (
-        visibility,
+        scope,
         kind,
         form,
-        name if form == "wired" else None,
-        authored_ref,
+        name if form == "configured" else None,
+        declared_ref,
     )
 
 
 def _cache_entry_files(
     toolang_root: Path,
-    entry: PreparedCap,
+    entry: StateCap,
 ) -> tuple[tuple[str, bytes], ...] | None:
     entry_path = toolang_root / entry.path
     if entry.shape == "dir":
@@ -1215,7 +1352,7 @@ def _cache_entry_files(
         if not root.is_dir():
             return None
         return tuple(
-            (str(path.relative_to(root)), path.read_bytes())
+            (path.relative_to(root).as_posix(), path.read_bytes())
             for path in sorted(item for item in root.rglob("*") if item.is_file())
         )
     if not entry_path.is_file():
@@ -1230,11 +1367,11 @@ def _cached_remote_entry(
     if remote_cache is None:
         return None
     key = _remote_entry_cache_key(
-        visibility=request.visibility,
+        scope=request.scope,
         kind=request.kind,
         form=request.form,
         name=request.name,
-        authored_ref=request.ref,
+        declared_ref=request.ref,
     )
     return remote_cache.get(key)
 
@@ -1244,10 +1381,11 @@ def _remap_cached_remote_files(
     relative_entry_path: Path,
 ) -> dict[str, bytes]:
     if len(cached.files) == 1 and cached.files[0][0] == "":
-        return {str(relative_entry_path): cached.files[0][1]}
+        return {relative_entry_path.as_posix(): cached.files[0][1]}
     root = relative_entry_path.parent
     return {
-        str(root / relative_path): content for relative_path, content in cached.files
+        (root / relative_path).as_posix(): content
+        for relative_path, content in cached.files
     }
 
 
@@ -1279,34 +1417,30 @@ def _emit_cached_remote_progress(
 
 
 def authored_entries_snapshot(
-    authored: AuthoredSource,
+    authored: SourceSnapshot,
 ) -> dict[str, object]:
     """Return a JSON-friendly authored definitions snapshot."""
 
-    shared_entries, _ = _collect_visibility_entries_with_files(
-        authored, visibility="shared"
-    )
-    private_entries, _ = _collect_visibility_entries_with_files(
-        authored, visibility="private"
-    )
+    root_entries, _ = _collect_scope_entries_with_files(authored, scope="root")
+    home_entries, _ = _collect_scope_entries_with_files(authored, scope="home")
     return {
         "program_source": authored.program_path,
         "config_paths": list(authored.config_paths),
-        "shared_entries": [entry.to_snapshot() for entry in shared_entries],
-        "private_entries": [entry.to_snapshot() for entry in private_entries],
+        "root_entries": [entry.to_snapshot() for entry in root_entries],
+        "home_entries": [entry.to_snapshot() for entry in home_entries],
     }
 
 
 def _local_entry_from_file(
-    authored: AuthoredSource,
-    item: AuthoredFile,
-) -> PreparedCap | None:
+    authored: SourceSnapshot,
+    item: SourceFile,
+) -> StateCap | None:
     if item.category != "cap":
         return None
-    visibility: PreparedVisibility = "shared" if item.origin == "root" else "private"
+    scope: CapScope = "root" if item.origin == "root" else "home"
     relative_path = Path(item.relative_path)
     local_parts = _local_parts(
-        relative_path, agent_name=authored.agent_name, visibility=visibility
+        relative_path, agent_name=authored.agent_name, scope=scope
     )
     if len(local_parts) < 2:
         return None
@@ -1317,28 +1451,28 @@ def _local_entry_from_file(
     if kind == "skill":
         if tuple(local_parts[2:]) != ("SKILL.md",):
             return None
-        return _skill_entry(authored, item, visibility=visibility, name=local_parts[1])
+        return _skill_entry(authored, item, scope=scope, name=local_parts[1])
     if kind in FILE_BACKED_KINDS and len(local_parts) == 2:
         return _file_entry(item, kind=kind)
     return None
 
 
 def _skill_entry(
-    authored: AuthoredSource,
-    definition: AuthoredFile,
+    authored: SourceSnapshot,
+    definition: SourceFile,
     *,
-    visibility: PreparedVisibility,
+    scope: CapScope,
     name: str,
-) -> PreparedCap:
-    prefix = Path() if visibility == "shared" else Path("agents") / authored.agent_name
+) -> StateCap:
+    prefix = Path() if scope == "root" else Path("agents") / authored.agent_name
     root_relative_dir = prefix / DIR_NAME_BY_KIND["skill"] / name
     root_relative_file = root_relative_dir / "SKILL.md"
-    return PreparedCap(
+    return StateCap(
         kind="skill",
         name=name,
         shape="dir",
-        ref=_local_cap_ref(visibility, "skill", name),
-        path=str(root_relative_file),
+        ref=_local_cap_ref(scope, "skill", name),
+        path=root_relative_file.as_posix(),
         source=_snapshot_source_record(
             authored,
             root_relative_path=root_relative_dir,
@@ -1348,19 +1482,19 @@ def _skill_entry(
 
 
 def _file_entry(
-    item: AuthoredFile,
+    item: SourceFile,
     *,
     kind: EntryKind,
-) -> PreparedCap:
+) -> StateCap:
     relative_path = Path(item.relative_path)
-    return PreparedCap(
+    return StateCap(
         kind=kind,
         name=relative_path.stem,
         shape="file",
         ref=_local_cap_ref(
-            _visibility_from_relative_path(relative_path), kind, relative_path.stem
+            _scope_from_relative_path(relative_path), kind, relative_path.stem
         ),
-        path=str(relative_path),
+        path=relative_path.as_posix(),
         source=_snapshot_file_source_record(
             item,
             root_relative_path=relative_path,
@@ -1370,7 +1504,7 @@ def _file_entry(
 
 
 def _snapshot_source_record(
-    authored: AuthoredSource,
+    authored: SourceSnapshot,
     *,
     root_relative_path: Path,
 ) -> CapSource:
@@ -1382,29 +1516,29 @@ def _snapshot_source_record(
     digest = hashlib.sha256()
     for item in sorted(files, key=lambda candidate: candidate.relative_path):
         relative_path = Path(item.relative_path).relative_to(root_relative_path)
-        digest.update(str(relative_path).encode("utf-8"))
+        digest.update(relative_path.as_posix().encode("utf-8"))
         digest.update(b"\0")
         digest.update(item.digest.encode("utf-8"))
         digest.update(b"\n")
     latest_mtime_ns = max(item.mtime_ns for item in files)
     return CapSource(
         origin="local",
-        form="file",
-        path=str(root_relative_path),
+        form="authored",
+        path=root_relative_path.as_posix(),
         updated_at=_mtime_text(latest_mtime_ns),
         fingerprint=digest.hexdigest(),
     )
 
 
 def _snapshot_file_source_record(
-    item: AuthoredFile,
+    item: SourceFile,
     *,
     root_relative_path: Path,
 ) -> CapSource:
     return CapSource(
         origin="local",
-        form="file",
-        path=str(root_relative_path),
+        form="authored",
+        path=root_relative_path.as_posix(),
         updated_at=_mtime_text(item.mtime_ns),
         fingerprint=item.digest,
     )
@@ -1421,8 +1555,8 @@ def _source_record(
     *,
     root_relative_path: Path,
     absolute_path: Path,
-    origin: EntryOrigin,
-    form: EntryForm,
+    origin: SourceOrigin,
+    form: CapForm,
     shape: Literal["file", "dir"],
     line: int | None = None,
 ) -> CapSource:
@@ -1434,7 +1568,7 @@ def _source_record(
     return CapSource(
         origin=origin,
         form=form,
-        path=str(root_relative_path),
+        path=root_relative_path.as_posix(),
         updated_at=_updated_at(absolute_path, shape=shape),
         fingerprint=fingerprint,
         line=line,
@@ -1445,20 +1579,20 @@ def _file_fingerprint(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _ensure_no_conflicts(entries: tuple[PreparedCap, ...]) -> None:
+def _ensure_no_conflicts(entries: tuple[StateCap, ...]) -> None:
     seen: dict[tuple[str, str], str] = {}
     for entry in entries:
         key = (entry.kind, entry.name)
         existing = seen.get(key)
         if existing is not None and existing != entry.ref:
             raise ValueError(
-                f"conflicting entries in one visibility: kind={entry.kind} name={entry.name}"
+                f"conflicting capabilities in one scope: kind={entry.kind} name={entry.name}"
             )
         seen[key] = entry.ref
 
 
-def _dedupe_entries(entries: tuple[PreparedCap, ...]) -> tuple[PreparedCap, ...]:
-    by_ref: dict[str, PreparedCap] = {}
+def _dedupe_entries(entries: tuple[StateCap, ...]) -> tuple[StateCap, ...]:
+    by_ref: dict[str, StateCap] = {}
     for entry in sorted(entries, key=_entry_sort_key):
         by_ref.setdefault(entry.ref, entry)
     return tuple(sorted(by_ref.values(), key=_entry_sort_key))
@@ -1468,7 +1602,7 @@ def _dir_fingerprint(path: Path) -> str:
     digest = hashlib.sha256()
     files = sorted(item for item in path.rglob("*") if item.is_file())
     for item in files:
-        digest.update(str(item.relative_to(path)).encode("utf-8"))
+        digest.update(item.relative_to(path).as_posix().encode("utf-8"))
         digest.update(b"\0")
         digest.update(hashlib.sha256(item.read_bytes()).hexdigest().encode("utf-8"))
         digest.update(b"\n")
@@ -1504,43 +1638,42 @@ def _json_compatible(value: object) -> object:
     return str(value)
 
 
-def _entry_sort_key(entry: PreparedCap) -> tuple[str, str, str]:
+def _entry_sort_key(entry: StateCap) -> tuple[str, str, str]:
     return (entry.kind, entry.name, entry.ref)
 
 
-def _visibility_from_relative_path(relative_path: Path) -> PreparedVisibility:
-    return "private" if relative_path.parts[:1] == ("agents",) else "shared"
+def _scope_from_relative_path(relative_path: Path) -> CapScope:
+    return "home" if relative_path.parts[:1] == ("agents",) else "root"
 
 
 def _local_cap_ref(
-    visibility: PreparedVisibility,
+    scope: CapScope,
     kind: EntryKind,
     name: str,
 ) -> str:
-    scope = "root" if visibility == "shared" else "home"
     return f"{scope}://{DIR_NAME_BY_KIND[kind]}/{name}"
 
 
 def _local_parts(
-    relative_path: Path, *, agent_name: str, visibility: PreparedVisibility
+    relative_path: Path, *, agent_name: str, scope: CapScope
 ) -> tuple[str, ...]:
-    if visibility == "private" and relative_path.parts[:2] == ("agents", agent_name):
+    if scope == "home" and relative_path.parts[:2] == ("agents", agent_name):
         return relative_path.parts[2:]
     return relative_path.parts
 
 
 def _collect_remote_entries(
-    authored: AuthoredSource,
+    authored: SourceSnapshot,
     *,
-    visibility: PreparedVisibility | None = None,
+    scope: CapScope | None = None,
     kinds: set[EntryKind] | None = None,
     materialize: bool = False,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
-) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
+) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
     requests = _collect_remote_entry_requests(
         authored,
-        visibility=visibility,
+        scope=scope,
         kinds=kinds,
     )
     return _materialize_remote_entry_requests(
@@ -1552,15 +1685,15 @@ def _collect_remote_entries(
 
 
 def _collect_remote_entry_requests(
-    authored: AuthoredSource,
+    authored: SourceSnapshot,
     *,
-    visibility: PreparedVisibility | None,
+    scope: CapScope | None,
     kinds: set[EntryKind] | None,
 ) -> tuple[_RemoteEntryRequest, ...]:
-    visibilities = ("shared", "private") if visibility is None else (visibility,)
+    scopes = ("root", "home") if scope is None else (scope,)
     requests: list[_RemoteEntryRequest] = []
-    for item_visibility in visibilities:
-        config_origin = "root" if item_visibility == "shared" else "agent"
+    for item_scope in scopes:
+        config_origin = "root" if item_scope == "root" else "agent"
         config_file = next(
             (
                 item
@@ -1571,35 +1704,35 @@ def _collect_remote_entry_requests(
         )
         if config_file is None:
             continue
-        for entry in WiredCaps(config_file.path).parse(
+        for entry in ConfiguredCaps(config_file.path).parse(
             config_file.read_text(), kinds=kinds
         ):
             requests.append(
                 _RemoteEntryRequest(
-                    visibility=item_visibility,
+                    scope=item_scope,
                     kind=entry.kind,
                     ref=entry.ref,
                     name=entry.name,
                     relative_config_path=Path(config_file.relative_path),
                     source_fingerprint=config_file.digest,
                     source_mtime_ns=config_file.mtime_ns,
-                    form="wired",
+                    form="configured",
                 )
             )
     return tuple(requests)
 
 
 def _collect_program_use_entries(
-    authored: AuthoredSource,
+    authored: SourceSnapshot,
     *,
-    visibility: PreparedVisibility | None = None,
+    scope: CapScope | None = None,
     kinds: set[EntryKind] | None = None,
     materialize: bool = False,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
     program_source: ProgramSource | None = None,
-) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
-    if visibility == "shared" or authored.program_path is None:
+) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
+    if scope == "root" or authored.program_path is None:
         return (), {}
     program_source = program_source or authored.load_program()
     program = program_source.parse()
@@ -1614,14 +1747,14 @@ def _collect_program_use_entries(
             continue
         requests.append(
             _RemoteEntryRequest(
-                visibility="private",
+                scope="home",
                 kind=kind,
                 ref=use.reference,
                 name=None,
                 relative_config_path=relative_program_path,
                 source_fingerprint=program_source.digest,
                 source_mtime_ns=(program_file.mtime_ns if program_file else 0),
-                form="ref",
+                form="referenced",
                 source_line=use.span.line,
             )
         )
@@ -1634,21 +1767,21 @@ def _collect_program_use_entries(
 
 
 def _collect_program_embedded_entries(
-    authored: AuthoredSource,
+    authored: SourceSnapshot,
     *,
-    visibility: PreparedVisibility | None = None,
+    scope: CapScope | None = None,
     kinds: set[EntryKind] | None = None,
     materialize: bool = False,
     program_source: ProgramSource | None = None,
-) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
+) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
     del materialize
-    if visibility == "shared" or authored.program_path is None:
+    if scope == "root" or authored.program_path is None:
         return (), {}
     program_source = program_source or authored.load_program()
     program = program_source.parse()
     relative_program_path = Path(program_source.source_path)
     program_path = authored.toolang_root / relative_program_path
-    entries: list[PreparedCap] = []
+    entries: list[StateCap] = []
     files: dict[str, bytes] = {}
     seen: dict[tuple[EntryKind, str], int] = {}
     for cap in program.caps:
@@ -1690,16 +1823,16 @@ def _embedded_entry_from_cap(
     relative_program_path: Path,
     program_path: Path,
     source_line: int,
-) -> tuple[PreparedCap, dict[str, bytes]]:
+) -> tuple[StateCap, dict[str, bytes]]:
     relative_entry_path = _relative_embedded_entry_path(kind=kind, name=cap.name)
     content = _embedded_materialized_content(cap)
     return (
-        PreparedCap(
+        StateCap(
             kind=kind,
             name=cap.name,
             shape="file",
             ref=f"inline://{DIR_NAME_BY_KIND[kind]}/{cap.name}",
-            path=str(relative_entry_path),
+            path=relative_entry_path.as_posix(),
             source=_source_record(
                 root_relative_path=relative_program_path,
                 absolute_path=program_path,
@@ -1710,7 +1843,7 @@ def _embedded_entry_from_cap(
             ),
             meta=_load_meta_text(content.decode("utf-8")),
         ),
-        {str(relative_entry_path): content},
+        {relative_entry_path.as_posix(): content},
     )
 
 
@@ -1731,21 +1864,21 @@ def _embedded_materialized_content(cap: CapDecl) -> bytes:
 
 def _remote_entry_from_ref(
     *,
-    visibility: PreparedVisibility,
+    scope: CapScope,
     kind: EntryKind,
     ref: str,
     name: str | None,
     relative_config_path: Path,
     source_fingerprint: str,
     source_mtime_ns: int,
-    form: Literal["wired", "ref"],
+    form: Literal["configured", "referenced"],
     source_line: int | None = None,
     materialize: bool,
     remote_cache: _RemoteEntryCache | None = None,
     progress: ProgressSink | None = None,
-) -> tuple[PreparedCap, dict[str, bytes]]:
+) -> tuple[StateCap, dict[str, bytes]]:
     request = _RemoteEntryRequest(
-        visibility=visibility,
+        scope=scope,
         kind=kind,
         ref=ref,
         name=name,
@@ -1789,7 +1922,7 @@ def _remote_entry_from_ref(
         )
     else:
         entry_files = {
-            str(relative_entry_path): _remote_placeholder_content(
+            relative_entry_path.as_posix(): _remote_placeholder_content(
                 kind=kind,
                 name=name,
                 ref=canonical_ref,
@@ -1805,20 +1938,20 @@ def _remote_entry_from_ref(
             detail=str(relative_entry_path),
         )
     try:
-        entry_content = entry_files[str(relative_entry_path)]
-        entry = PreparedCap(
+        entry_content = entry_files[relative_entry_path.as_posix()]
+        entry = StateCap(
             kind=kind,
             name=name,
             shape="dir" if kind == "skill" else "file",
             ref=canonical_ref,
-            path=str(relative_entry_path),
+            path=relative_entry_path.as_posix(),
             source=CapSource(
                 origin="remote",
                 form=form,
-                path=str(relative_config_path),
+                path=relative_config_path.as_posix(),
                 updated_at=_mtime_text(source_mtime_ns),
                 fingerprint=source_fingerprint,
-                authored_ref=ref,
+                declared_ref=ref,
                 line=source_line,
             ),
             meta=_load_meta_text(entry_content.decode("utf-8")),
@@ -1866,7 +1999,7 @@ def _materialize_remote_entry_requests(
     materialize: bool,
     remote_cache: _RemoteEntryCache | None,
     progress: ProgressSink | None,
-) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
+) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
     if not requests:
         return (), {}
     if not materialize:
@@ -1878,9 +2011,9 @@ def _materialize_remote_entry_requests(
         )
     for request in requests:
         _emit_remote_entry_pending(request, progress=progress)
-    entries: list[PreparedCap] = []
+    entries: list[StateCap] = []
     files: dict[str, bytes] = {}
-    results: list[tuple[PreparedCap, dict[str, bytes]] | None] = [None] * len(requests)
+    results: list[tuple[StateCap, dict[str, bytes]] | None] = [None] * len(requests)
     first_error: BaseException | None = None
     executor = ThreadPoolExecutor(max_workers=REMOTE_CAP_MATERIALIZE_WORKERS)
     try:
@@ -1924,8 +2057,8 @@ def _materialize_remote_entry_requests_serial(
     materialize: bool,
     remote_cache: _RemoteEntryCache | None,
     progress: ProgressSink | None,
-) -> tuple[tuple[PreparedCap, ...], dict[str, bytes]]:
-    entries: list[PreparedCap] = []
+) -> tuple[tuple[StateCap, ...], dict[str, bytes]]:
+    entries: list[StateCap] = []
     files: dict[str, bytes] = {}
     for request in requests:
         entry, entry_files = _remote_entry_from_request(
@@ -1945,9 +2078,9 @@ def _remote_entry_from_request(
     materialize: bool,
     remote_cache: _RemoteEntryCache | None,
     progress: ProgressSink | None,
-) -> tuple[PreparedCap, dict[str, bytes]]:
+) -> tuple[StateCap, dict[str, bytes]]:
     return _remote_entry_from_ref(
-        visibility=request.visibility,
+        scope=request.scope,
         kind=request.kind,
         ref=request.ref,
         name=request.name,
@@ -1996,10 +2129,9 @@ def _relative_remote_entry_path(
     *,
     kind: EntryKind,
     name: str,
-    form: Literal["wired", "ref"],
+    form: Literal["configured", "referenced"],
 ) -> Path:
-    bucket = "cited" if form == "ref" else "wired"
-    root = Path(bucket) / DIR_NAME_BY_KIND[kind] / name
+    root = Path(form) / DIR_NAME_BY_KIND[kind] / name
     if kind == "skill":
         return root / "SKILL.md"
     return root.with_suffix(".md")
@@ -2065,12 +2197,14 @@ def _remote_materialized_files(
             raise ValueError(f"remote skill is missing SKILL.md: {ref}")
         root = relative_entry_path.parent
         materialized = {
-            str(root / relative_path): content
+            (root / relative_path).as_posix(): content
             for relative_path, content in files.items()
         }
     else:
         try:
-            materialized = {str(relative_entry_path): _fetch_github_file(github_ref)}
+            materialized = {
+                relative_entry_path.as_posix(): _fetch_github_file(github_ref)
+            }
         except Exception as exc:
             emit_progress(
                 progress,

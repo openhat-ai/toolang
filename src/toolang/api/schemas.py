@@ -131,14 +131,14 @@ class ThreadForkRequest(ThreadRewindRequest):
 class PutCapRequest(ApiRequest):
     """One authored cap write request."""
 
-    visibility: Literal["private", "shared"] = "private"
+    scope: Literal["home", "root"] = "home"
     content: str | None = None
 
 
-class WiredCapRequest(ApiRequest):
-    """One wired cap ref mutation request."""
+class ConfiguredCapRequest(ApiRequest):
+    """One configured cap ref mutation request."""
 
-    visibility: Literal["private", "shared"] = "private"
+    scope: Literal["home", "root"] = "home"
     ref: str
 
 

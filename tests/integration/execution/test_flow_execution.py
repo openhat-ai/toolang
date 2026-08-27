@@ -114,7 +114,7 @@ def _state(*flows: FlowDecl) -> Any:
             root_config={},
             home_config={},
             caps=(),
-            fingerprint="state-test",
+            revision="0" * 64,
         ),
     )
 
@@ -398,7 +398,7 @@ def test_top_level_agic_has_no_containing_step_events(
             root_config={},
             home_config={},
             caps=(),
-            fingerprint="state-test",
+            revision="0" * 64,
         ),
     )
     executor = _executor(tmp_path)
@@ -431,7 +431,7 @@ def test_runtime_failure_is_recorded_directly_on_the_run(
             root_config={},
             home_config={},
             caps=(),
-            fingerprint="state-test",
+            revision="0" * 64,
         ),
     )
     executor = _executor(tmp_path)
@@ -491,7 +491,7 @@ def test_start_rejects_ambiguous_runnable_name(tmp_path: Path) -> None:
             root_config={},
             home_config={},
             caps=(),
-            fingerprint="state-test",
+            revision="0" * 64,
         ),
     )
     executor = _executor(tmp_path)
@@ -689,7 +689,7 @@ def test_nested_flow_resets_resources_and_restores_parent_scope(
             root_config={},
             home_config={},
             caps=(),
-            fingerprint="state-test",
+            revision="0" * 64,
         ),
     )
     tools = {

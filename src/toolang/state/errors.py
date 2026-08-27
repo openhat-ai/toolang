@@ -1,4 +1,4 @@
-"""Structured diagnostics for rejected prepared-state candidates."""
+"""Structured diagnostics for rejected Agent State candidates."""
 
 from __future__ import annotations
 

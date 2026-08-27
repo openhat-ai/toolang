@@ -28,7 +28,11 @@ from toolang.base.types.policy import RunBindings
 from toolang.common.errors import ToolangError
 from toolang.execution.calls import resolve_run_request, validate_session_commands
 from toolang.execution.executor import LocalRunHandle, RunSpec
-from toolang.execution.records import RunControlRecord, RunRecord
+from toolang.execution.records import (
+    PreparationControlPayload,
+    RunControlRecord,
+    RunRecord,
+)
 from toolang.execution.schemas import ControlInfo, RunDetail, RunInfo
 from toolang.execution.types import RunStatus
 from toolang.lang.input import resolve_runnable_input
@@ -330,7 +334,7 @@ async def retry_run(
         handle = core.executor.retry(
             source.id,
             setup=setup,
-            state=await _fresh_state(core),
+            state=_recorded_state(core, source),
             anchor=request.anchor,
             model=(
                 request.model if request.model is not None else setup.bindings.model
@@ -398,6 +402,19 @@ def _run_or_404(core: AgentCore, run_id: str) -> RunRecord:
 async def _fresh_state(core: AgentCore) -> AgentState:
     refresh = getattr(core.state, "refresh", None)
     return await refresh() if callable(refresh) else core.state.current()
+
+
+def _recorded_state(core: AgentCore, run: RunRecord) -> AgentState:
+    control = core.store.get_run_control(
+        run_id=run.control.target,
+        index=run.control.index,
+    )
+    if control is None or not isinstance(
+        control.payload,
+        PreparationControlPayload,
+    ):
+        raise ValueError(f"run preparation not found: {run.id}")
+    return core.state.load(control.payload.state)
 
 
 def _active_run_or_409(core: AgentCore, run_id: str) -> RunRecord:

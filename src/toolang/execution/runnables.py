@@ -9,7 +9,7 @@ from toolang.base.errors import ToolangError
 from toolang.lang.ast import AgicDecl, FlowDecl, Parameter, Program, Span
 from toolang.state.state import (
     AgentState,
-    PreparedProgramModule,
+    StateModule,
     PublicRunnable,
     state_program_module,
 )
@@ -23,7 +23,7 @@ class ResolvedRunnable:
     """One public runnable resolved with its owning program module."""
 
     public: PublicRunnable
-    module: PreparedProgramModule
+    module: StateModule
     executable: Runnable
 
 
@@ -82,7 +82,7 @@ def resolve_state_runnable(
         public = PublicRunnable(
             name,
             cast(RunnableKind, executable.kind),
-            module.identity,
+            module.name,
             executable.name,
         )
         return ResolvedRunnable(

@@ -229,7 +229,7 @@ class RunExecutor:
             thread=bound.thread,
             resources=resources,
             limits=bound.limits,
-            state=bound.state.fingerprint,
+            state=bound.state.revision,
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             locals=bound.control_locals,
@@ -281,7 +281,7 @@ class RunExecutor:
             thread=bound.thread,
             resources=resources,
             limits=bound.limits,
-            state=bound.state.fingerprint,
+            state=bound.state.revision,
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             locals=bound.control_locals,
@@ -335,7 +335,7 @@ class RunExecutor:
             anchor=StepPath.parse(anchor) if anchor is not None else None,
             resources=resources,
             limits=bound.limits,
-            state=bound.state.fingerprint,
+            state=bound.state.revision,
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             locals=bound.control_locals,
@@ -424,7 +424,7 @@ class RunExecutor:
             control.payload, PreparationControlPayload
         ):
             raise ValueError(f"run preparation not found: {run_id}")
-        if control.payload.state != state.fingerprint:
+        if control.payload.state != state.revision:
             raise ValueError(
                 f"retry state no longer matches original run: {run_id}; use rerun"
             )
@@ -1202,7 +1202,7 @@ class _Execution:
             thread=binding.thread,
             resources=resources,
             limits=binding.limits,
-            state=binding.state.fingerprint,
+            state=binding.state.revision,
             runnable=_bound_runnable(binding),
             model=_bound_model(binding),
             locals=binding.control_locals,
@@ -1558,7 +1558,7 @@ def _bind_run(
         control_locals=control_locals,
         state=spec.state,
         setup=spec.setup,
-        module=resolved.module.identity,
+        module=resolved.module.name,
         limits=spec.limits,
         ceilings=spec.ceilings,
         agent_resources=agent_resources,
@@ -1601,7 +1601,7 @@ def _prepare_start_spec(
         spec.setup,
         spec.state,
         spec.setup.ceiling,
-        module=resolved.module.identity,
+        module=resolved.module.name,
     )
     for ceiling in spec.ceilings:
         agent_resources = apply_agent_ceiling(
@@ -1609,7 +1609,7 @@ def _prepare_start_spec(
             spec.state,
             agent_resources,
             ceiling,
-            module=resolved.module.identity,
+            module=resolved.module.name,
         )
     selection = snapshot_model_selection(spec.setup, spec.state)
     resources = resolve_runnable_resources(
@@ -1618,7 +1618,7 @@ def _prepare_start_spec(
         base=agent_resources,
         setup=spec.setup,
         state=spec.state,
-        module=resolved.module.identity,
+        module=resolved.module.name,
     )
     validate_model_binding(
         selection,

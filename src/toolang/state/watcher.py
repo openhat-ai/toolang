@@ -10,17 +10,16 @@ from pathlib import Path
 from watchfiles import Change, awatch
 
 from toolang.common.layout import AgentLayout
-from toolang.common.version import base_toolang_version
-
 from .state import AgentState
 from .errors import StateDiagnostic, StatePreparationError
 from .cache import (
-    load_current_version,
-    load_version_source,
-    prepared_current_path,
-    prepared_version_dir,
+    agent_current_path,
+    layer_current_path,
+    load_current_agent_revision,
+    load_current_revision,
+    load_layer_source,
 )
-from .prepare import prepare_agent_state
+from .prepare import load_agent_state, prepare_agent_state
 from .source import scan_home_source, scan_root_source
 from toolang.state.source import is_source_path
 
@@ -35,9 +34,11 @@ class StateWatcher:
 
     def __init__(self, layout: AgentLayout) -> None:
         self.layout = layout
-        self._state: AgentState | None = None
+        try:
+            self._state: AgentState | None = load_agent_state(layout)
+        except (FileNotFoundError, KeyError, TypeError, ValueError):
+            self._state = None
         self._diagnostics: tuple[StateDiagnostic, ...] = ()
-        self._toolang_version = base_toolang_version()
         self._refresh_lock = asyncio.Lock()
 
     def current(self) -> AgentState:
@@ -52,6 +53,11 @@ class StateWatcher:
 
         return self._diagnostics
 
+    def load(self, revision: str) -> AgentState:
+        """Load a durable Agent State revision without publishing it."""
+
+        return load_agent_state(self.layout, revision)
+
     async def refresh(self, *, force: bool = False) -> AgentState:
         """Prepare a fresh state snapshot, optionally refreshing remote sources."""
 
@@ -60,7 +66,6 @@ class StateWatcher:
                 candidate = await asyncio.to_thread(
                     prepare_agent_state,
                     self.layout,
-                    toolang_version=self._toolang_version,
                     force=force,
                 )
             except StatePreparationError as exc:
@@ -126,16 +131,16 @@ class StateWatcher:
                 if kind in _RELEVANT_CHANGES
                 and (
                     is_source_path(self.layout.root, self.layout.name, Path(path))
-                    or _is_prepared_current_path(self.layout, Path(path))
+                    or _is_state_current_path(self.layout, Path(path))
                 )
             }
             if changes and not paths:
                 continue
             if not changes and not self._needs_refresh():
                 continue
-            previous = self.current().fingerprint
+            previous = self.current().revision
             state = await self.refresh()
-            if state.fingerprint != previous:
+            if state.revision != previous:
                 yield state
 
     async def run(
@@ -160,32 +165,30 @@ class StateWatcher:
         state = self._state
         try:
             return (
-                load_current_version(self.layout, "root") != state.root_version
-                or load_current_version(self.layout, "home") != state.home_version
+                load_current_agent_revision(self.layout) != state.revision
+                or load_current_revision(self.layout, "root") != state.root_revision
+                or load_current_revision(self.layout, "home") != state.home_revision
                 or scan_root_source(self.layout.root)
-                != load_version_source(
-                    prepared_version_dir(
-                        self.layout,
-                        "root",
-                        state.root_version,
-                    )
+                != load_layer_source(
+                    self.layout,
+                    "root",
+                    state.root_revision,
                 )
                 or scan_home_source(self.layout.root, self.layout.name)
-                != load_version_source(
-                    prepared_version_dir(
-                        self.layout,
-                        "home",
-                        state.home_version,
-                    )
+                != load_layer_source(
+                    self.layout,
+                    "home",
+                    state.home_revision,
                 )
             )
         except (FileNotFoundError, TypeError, ValueError):
             return True
 
 
-def _is_prepared_current_path(layout: AgentLayout, path: Path) -> bool:
+def _is_state_current_path(layout: AgentLayout, path: Path) -> bool:
     candidate = path.resolve(strict=False)
     return candidate in {
-        prepared_current_path(layout, "root").resolve(strict=False),
-        prepared_current_path(layout, "home").resolve(strict=False),
+        layer_current_path(layout, "root").resolve(strict=False),
+        layer_current_path(layout, "home").resolve(strict=False),
+        agent_current_path(layout).resolve(strict=False),
     }
