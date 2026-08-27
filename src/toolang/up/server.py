@@ -166,7 +166,12 @@ def build_serve_argv(
     return tuple(command)
 
 
-def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
+def serve(
+    spec: ServeSpec,
+    *,
+    environ: Mapping[str, str],
+    sandbox: str,
+) -> int:
     """Run one AgentServer as the current process's primary workload."""
 
     _restore_termination_signal_defaults()
@@ -175,9 +180,9 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
     for name, interval_ms in DEFAULT_TRIGGER_INTERVAL_MS.items():
         if interval_ms <= 0:
             raise ValueError(f"trigger interval must be positive: {name}")
-
     core = AgentCore(
         spec.layout,
+        sandbox=sandbox,
         ceiling_overrides=spec.ceiling_overrides,
         binding_overrides=spec.binding_overrides,
         limit_overrides=spec.limit_overrides,
@@ -221,7 +226,7 @@ def serve(spec: ServeSpec, *, environ: Mapping[str, str]) -> int:
                 started_at=started_at,
                 pid=os.getpid(),
                 models=ceiling.models or (),
-                sandbox=environ.get("TOOLANG_SANDBOX", "host"),
+                sandbox=sandbox,
                 sandbox_description=environ.get(HOST_SANDBOX_DESCRIPTION_ENV),
                 sandbox_instance=environ.get("TOOLANG_SANDBOX_INSTANCE"),
             )

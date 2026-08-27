@@ -197,6 +197,7 @@ class RunStore:
         runnable: str,
         model: str,
         locals: tuple[Local, ...],
+        sandbox: str | None,
         occurrence: Occurrence | None,
         request_id: str | None,
         created_at: str,
@@ -207,6 +208,8 @@ class RunStore:
 
         validate_execution_id(run_id, label="run id")
         validate_execution_id(thread, label="thread id")
+        if parent is None:
+            _validate_canonical_sandbox(sandbox)
         if kind == "start" and source is not None:
             raise ValueError("start control cannot have a source run")
         if kind == "rerun" and source is None:
@@ -320,6 +323,7 @@ class RunStore:
                         runnable=runnable,
                         model=model,
                         locals=locals,
+                        sandbox=sandbox,
                     )
                     if kind == "start"
                     else RerunControlPayload(
@@ -330,6 +334,7 @@ class RunStore:
                         model=model,
                         locals=locals,
                         rerun_from=cast(str, source),
+                        sandbox=sandbox,
                     )
                 )
                 self._insert_control(
@@ -510,12 +515,14 @@ class RunStore:
         runnable: str,
         model: str,
         locals: tuple[Local, ...] | None,
+        sandbox: str,
         request_id: str | None,
         created_at: str,
     ) -> tuple[RunRecord, RunControlRecord, tuple[StepPath, ...]]:
         """Atomically cut one root run at a step and reopen it for execution."""
 
         validate_execution_id(run_id, label="run id")
+        _validate_canonical_sandbox(sandbox)
         _validate_request_id(request_id)
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -562,6 +569,15 @@ class RunStore:
                     raise ValueError(
                         f"retry state no longer matches original run: {run_id}; use rerun"
                     )
+                if preparation_payload.sandbox is None:
+                    raise ValueError(
+                        f"retry sandbox is unknown for run {run_id}; use rerun"
+                    )
+                if preparation_payload.sandbox != sandbox:
+                    raise ValueError(
+                        f"retry sandbox {sandbox} does not match original sandbox "
+                        f"{preparation_payload.sandbox} for run {run_id}; use rerun"
+                    )
                 tree_runs = self._root_tree_runs(run_id)
                 resolved_anchor = self._resolve_retry_anchor(
                     run_id=run_id,
@@ -597,6 +613,7 @@ class RunStore:
                         model=model,
                         locals=locals,
                         retry_from=resolved_anchor,
+                        sandbox=sandbox,
                     ),
                     request=request_id,
                     status="applied",
@@ -2695,6 +2712,11 @@ def _validate_request_id(request_id: str | None) -> None:
         not request_id.strip() or request_id != request_id.strip()
     ):
         raise ValueError(f"invalid request id: {request_id!r}")
+
+
+def _validate_canonical_sandbox(sandbox: str | None) -> None:
+    if not isinstance(sandbox, str) or not sandbox or sandbox != sandbox.strip():
+        raise ValueError("root run requires a canonical sandbox")
 
 
 def _history_tail(

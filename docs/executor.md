@@ -148,7 +148,7 @@ ID. The supplied or allocated ID must be globally unique in `RunStore`.
 2. reject a conflicting run ID;
 3. insert the pending `RunRecord`;
 4. insert start `RunControlRecord(index=0)` with effective `bindings`,
-   `limits`, `input`, and final `resources` snapshots;
+   `limits`, `input`, final `resources`, and canonical root sandbox snapshots;
 5. commit the accepted run before its owner task is scheduled.
 
 Duplicate run IDs and duplicate non-null request IDs are rejected. Request IDs
@@ -157,20 +157,23 @@ globally unique across both run and thread controls; `None` disables request
 identity without weakening the run or control primary keys.
 
 Rerun acceptance atomically inserts the new root and its index-zero `rerun`
-control, then marks the source root tree as ejected by that control. The source
-records remain available for audit but disappear from effective thread and run
-projection. The source must be the latest visible root in its thread.
-It must also be terminal, so rerun cannot detach a still-owned execution.
+control with the current canonical sandbox, then marks the source root tree as
+ejected by that control. The source records remain available for audit but
+disappear from effective thread and run projection. The source must be the
+latest visible root in its thread. It must also be terminal, so rerun cannot
+detach a still-owned execution.
 
 Retry acceptance atomically appends an applied `retry` control to the existing
 root, resolves and records its anchor, ejects the invalid structural step
 suffix, fails stale pending controls, and reopens the root as pending. New
-steps use fresh physical indexes; ejected steps are never overwritten. A flow
-retry restores typed locals from the succeeded top-level prefix and begins at
-the first invalid statement. When a nested failed step is selected, its
-unfinished containing step is also invalidated because only a succeeded
-container is a reusable commit. Agic retry invalidates the agic step sequence
-and starts a fresh model-tool cycle under the same root.
+steps use fresh physical indexes; ejected steps are never overwritten. Before
+mutation, retry requires the source preparation to have sandbox provenance and
+requires it to equal the current canonical sandbox. Accepted retry controls
+repeat that value. A flow retry restores typed locals from the succeeded
+top-level prefix and begins at the first invalid statement. When a nested failed
+step is selected, its unfinished containing step is also invalidated because
+only a succeeded container is a reusable commit. Agic retry invalidates the
+agic step sequence and starts a fresh model-tool cycle under the same root.
 
 
 ## Active Ownership

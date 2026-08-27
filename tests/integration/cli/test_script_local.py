@@ -70,8 +70,9 @@ def test_local_script_saves_only_to_an_explicit_destination(
     setup = replace(harness.setup, layout=layout)
 
     class _SetupWatcher:
-        def __init__(self, actual_layout, **_kwargs) -> None:
+        def __init__(self, actual_layout, **kwargs) -> None:
             assert actual_layout == layout
+            assert kwargs["sandbox"] == "host"
 
         async def refresh(self):
             return setup

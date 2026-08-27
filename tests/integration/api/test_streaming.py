@@ -443,17 +443,21 @@ agic answer(_: Part[]) -> Part[]:
         assert retry.status_code == 202
         assert retry.json()["command"]["kind"] == "retry"
         assert retry.json()["command"]["request_id"] == "retry-request"
+        assert retry.json()["command"]["payload"]["sandbox"] == "host"
         assert rerun.status_code == 202
         assert rerun.json()["command"]["kind"] == "rerun"
         assert rerun.json()["command"]["payload"]["rerun_from"] == source_id
+        assert rerun.json()["command"]["payload"]["sandbox"] == "host"
 
         retry_control = core.store.list_run_controls(run_id=source_id)[-1]
         rerun_control = core.store.get_run_control(run_id=rerun_id, index=0)
         assert isinstance(retry_control.payload, RetryControlPayload)
         assert retry_control.payload.limits == RunLimits(tokens=10)
+        assert retry_control.payload.sandbox == "host"
         assert rerun_control is not None
         assert isinstance(rerun_control.payload, RerunControlPayload)
         assert rerun_control.payload.limits == RunLimits(tokens=100, time=30)
+        assert rerun_control.payload.sandbox == "host"
     finally:
         asyncio.run(core.close())
 

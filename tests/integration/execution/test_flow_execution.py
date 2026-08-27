@@ -63,7 +63,7 @@ from toolang.lang.ast import (
     RunStmt,
     Span,
 )
-from toolang.setup import AgentSetup
+from toolang.setup import AgentEnvironment, AgentSetup
 from tests.support.execution_fixtures import accept_run_start
 from tests.support.execution_harness import FakeModels, RecordingTool
 
@@ -120,25 +120,29 @@ def _state(*flows: FlowDecl) -> Any:
 
 
 def _setup() -> AgentSetup:
+    layout = AgentLayout.resident(Path("/"), "alice")
     return AgentSetup(
-        layout=AgentLayout.resident(Path("/"), "alice"),
+        layout=layout,
         providers={},
         adapters={},
         models=(),
         tools={},
         envs={},
+        environment=AgentEnvironment.capture(layout, sandbox="host"),
     )
 
 
 def _model_setup() -> AgentSetup:
     provider = FakeModels(streaming=False)
+    layout = AgentLayout.resident(Path("/"), "alice")
     return AgentSetup(
-        layout=AgentLayout.resident(Path("/"), "alice"),
+        layout=layout,
         providers={provider.name: provider.catalog_provider()},
         adapters={},
         models=provider.list_models(environ={}),
         tools={},
         envs={},
+        environment=AgentEnvironment.capture(layout, sandbox="host"),
     )
 
 
@@ -700,6 +704,7 @@ def test_nested_flow_resets_resources_and_restores_parent_scope(
         models=base_setup.models,
         tools=tools,
         envs=base_setup.envs,
+        environment=base_setup.environment,
     )
     observed: list[tuple[str, tuple[str, ...]]] = []
 

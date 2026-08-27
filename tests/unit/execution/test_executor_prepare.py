@@ -473,6 +473,16 @@ def test_run_executor_uses_prepared_model_input_end_to_end(tmp_path: Path) -> No
         models=(),
         tools={tool.name: tool},
         envs={},
+        environment=AgentEnvironment(
+            sandbox="host",
+            system="test",
+            release="test",
+            machine="test",
+            container=False,
+            root=root,
+            home=home,
+            working_directory=tmp_path,
+        ),
     )
     agic = AgicDecl(
         name="chat",

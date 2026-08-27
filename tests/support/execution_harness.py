@@ -32,7 +32,7 @@ from toolang.execution.threads import ThreadManager
 from toolang.lang import Program
 from toolang.lang.input import resolve_runnable_input
 from toolang.state.state import AgentState, agent_state_version
-from toolang.setup import AgentSetup
+from toolang.setup import AgentEnvironment, AgentSetup
 
 TEST_MODEL_REF = "test/scripted"
 
@@ -311,13 +311,24 @@ class ExecutionHarness:
         )
         provider = FakeModels(streaming=streaming)
         adapter = ScriptedModelAdapter(responses)
+        layout = AgentLayout.resident(root, "alice")
         setup = AgentSetup(
-            layout=AgentLayout.resident(root, "alice"),
+            layout=layout,
             providers={provider.name: provider.catalog_provider()},
             adapters={adapter.name: adapter},
             models=provider.list_models(environ={}),
             tools=tools or {},
             envs={},
+            environment=AgentEnvironment(
+                sandbox="host",
+                system="test",
+                release="test",
+                machine="test",
+                container=False,
+                root=root,
+                home=home,
+                working_directory=home,
+            ),
         )
         store = RunStore(runtime / "runs.db")
         ids = IdIssuer(runtime / "ids.json")

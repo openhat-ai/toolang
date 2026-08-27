@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -100,9 +101,14 @@ flow relay(_: Part[]) -> Part[]:
             assert child.parent == StepPath.parse(f"{root.id}.0")
             assert harness.store.root_run_id(run_id=child.id) == root.id
             child_start = harness.store.get_run_control(run_id=child.id, index=0)
+            root_start = harness.store.get_run_control(run_id=root.id, index=0)
             assert child_start is not None
+            assert root_start is not None
             assert isinstance(child_start.payload, StartControlPayload)
+            assert isinstance(root_start.payload, StartControlPayload)
             assert child_start.payload.runnable == "agic:echo"
+            assert child_start.payload.sandbox is None
+            assert root_start.payload.sandbox == "host"
             assert harness.store.run_output(run_id=root.id) == (TextPart("relayed"),)
             assert _root_step_kinds(harness, root.id) == ["run"]
             assert [
@@ -198,6 +204,26 @@ flow staged(_: Part[]) -> Part[]:
                 (1, "failed"),
             ]
             assert before[1].input == (Pointer.control(failed.id, 0, "_"),)
+            environment = harness.setup.environment
+            assert environment is not None
+            mismatched_setup = replace(
+                harness.setup,
+                environment=replace(
+                    environment,
+                    sandbox="docker:python:3.13-slim",
+                    container=True,
+                ),
+            )
+            with pytest.raises(
+                ValueError,
+                match="does not match original sandbox.*use rerun",
+            ):
+                harness.executor.retry(
+                    failed.id,
+                    setup=mismatched_setup,
+                    state=harness.state,
+                )
+            assert len(harness.store.list_run_controls(run_id=failed.id)) == 1
 
             retried = await harness.executor.retry(
                 failed.id,
@@ -236,6 +262,7 @@ flow staged(_: Part[]) -> Part[]:
             assert retry.payload.limits == start.payload.limits
             assert retry.payload.locals == start.payload.locals
             assert retry.payload.resources == start.payload.resources
+            assert retry.payload.sandbox == start.payload.sandbox == "host"
             assert historical[1].ejected_by == RunControlRef(retried.id, retry.index)
             visible_runs = harness.store.list_runs(thread_id=thread, limit=None)
             assert all(
@@ -354,9 +381,19 @@ agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
                 index=0,
             )
             assert source_control is not None
+            environment = harness.setup.environment
+            assert environment is not None
+            docker_setup = replace(
+                harness.setup,
+                environment=replace(
+                    environment,
+                    sandbox="docker:python:3.13-slim",
+                    container=True,
+                ),
+            )
             rerun = await harness.executor.rerun(
                 source.id,
-                setup=harness.setup,
+                setup=docker_setup,
                 state=harness.state,
             )
 
@@ -374,6 +411,8 @@ agic reply(_: Part[], tone: Text, tags: Text[]) -> Part[]:
             assert rerun_control.kind == "rerun"
             assert isinstance(rerun_control.payload, RerunControlPayload)
             assert isinstance(source_control.payload, StartControlPayload)
+            assert source_control.payload.sandbox == "host"
+            assert rerun_control.payload.sandbox == "docker:python:3.13-slim"
             assert rerun_control.payload.rerun_from == source.id
             assert rerun_control.payload.runnable == source_control.payload.runnable
             assert rerun_control.payload.model == source_control.payload.model

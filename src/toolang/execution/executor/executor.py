@@ -211,6 +211,7 @@ class RunExecutor:
 
         self._require_available()
         loop = asyncio.get_running_loop()
+        sandbox = _setup_sandbox(spec.setup)
         executable, input, agent_resources, resources = _prepare_start_spec(spec)
         if not isinstance(spec.limits, RunLimits):
             raise TypeError("run limits must be RunLimits")
@@ -232,6 +233,7 @@ class RunExecutor:
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             locals=bound.control_locals,
+            sandbox=sandbox,
             occurrence=bound.occurrence,
             request_id=request_id,
             created_at=bound.created_at,
@@ -255,6 +257,7 @@ class RunExecutor:
 
         self._require_available()
         loop = asyncio.get_running_loop()
+        sandbox = _setup_sandbox(setup)
         spec = self._source_spec(
             source,
             setup=setup,
@@ -282,6 +285,7 @@ class RunExecutor:
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             locals=bound.control_locals,
+            sandbox=sandbox,
             occurrence=bound.occurrence,
             request_id=request_id,
             created_at=bound.created_at,
@@ -307,7 +311,8 @@ class RunExecutor:
 
         self._require_available()
         loop = asyncio.get_running_loop()
-        self._require_retry_state(run_id, state)
+        sandbox = _setup_sandbox(setup)
+        self._require_retry_compatible(run_id, state, sandbox=sandbox)
         spec = self._source_spec(
             run_id,
             setup=setup,
@@ -334,6 +339,7 @@ class RunExecutor:
             runnable=_bound_runnable(bound),
             model=_bound_model(bound),
             locals=bound.control_locals,
+            sandbox=sandbox,
             request_id=request_id,
             created_at=bound.created_at,
         )
@@ -402,8 +408,10 @@ class RunExecutor:
             ),
         )
 
-    def _require_retry_state(self, run_id: str, state: AgentState) -> None:
-        """Reject retry before mutation when its program snapshot changed."""
+    def _require_retry_compatible(
+        self, run_id: str, state: AgentState, *, sandbox: str
+    ) -> None:
+        """Reject retry before mutation when its execution snapshot changed."""
 
         run = self.store.get_run(run_id=run_id)
         if run is None or run.parent is not None:
@@ -419,6 +427,13 @@ class RunExecutor:
         if control.payload.state != state.fingerprint:
             raise ValueError(
                 f"retry state no longer matches original run: {run_id}; use rerun"
+            )
+        if control.payload.sandbox is None:
+            raise ValueError(f"retry sandbox is unknown for run {run_id}; use rerun")
+        if control.payload.sandbox != sandbox:
+            raise ValueError(
+                f"retry sandbox {sandbox} does not match original sandbox "
+                f"{control.payload.sandbox} for run {run_id}; use rerun"
             )
 
     def _launch(
@@ -1191,6 +1206,7 @@ class _Execution:
             runnable=_bound_runnable(binding),
             model=_bound_model(binding),
             locals=binding.control_locals,
+            sandbox=None,
             occurrence=binding.occurrence,
             request_id=None,
             created_at=binding.created_at,
@@ -1611,6 +1627,16 @@ def _prepare_start_spec(
         model=spec.bindings.model,
     )
     return executable, input, agent_resources, resources
+
+
+def _setup_sandbox(setup: AgentSetup) -> str:
+    environment = setup.environment
+    if environment is None:
+        raise ValueError("agent setup requires an execution environment")
+    sandbox = environment.sandbox
+    if not sandbox or sandbox != sandbox.strip():
+        raise ValueError("agent setup requires a canonical sandbox")
+    return sandbox
 
 
 def _prepare_child_run(

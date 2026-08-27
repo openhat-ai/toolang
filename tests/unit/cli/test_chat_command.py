@@ -305,6 +305,7 @@ def test_chat_runtime_builds_process_local_execution_resources(
 
     assert captured["layout"] == layout
     assert captured["kwargs"] == {
+        "sandbox": "host",
         "ceiling_overrides": {
             "models": ("test/model",),
             "tools": ("shell/*",),

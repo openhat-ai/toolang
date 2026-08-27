@@ -138,10 +138,11 @@ class StartControlPayload:
     runnable: str
     model: str
     locals: tuple[Local, ...]
+    sandbox: str | None = None
 
     def __post_init__(self) -> None:
         _validate_preparation_payload(
-            self.state, self.runnable, self.model, self.locals
+            self.state, self.runnable, self.model, self.locals, self.sandbox
         )
 
 
@@ -156,10 +157,11 @@ class RerunControlPayload:
     model: str
     locals: tuple[Local, ...]
     rerun_from: RunId
+    sandbox: str | None = None
 
     def __post_init__(self) -> None:
         _validate_preparation_payload(
-            self.state, self.runnable, self.model, self.locals
+            self.state, self.runnable, self.model, self.locals, self.sandbox
         )
         if not self.rerun_from:
             raise ValueError("rerun payload requires rerun_from")
@@ -176,10 +178,11 @@ class RetryControlPayload:
     model: str
     locals: tuple[Local, ...] | None
     retry_from: StepPath | None
+    sandbox: str | None = None
 
     def __post_init__(self) -> None:
         _validate_preparation_payload(
-            self.state, self.runnable, self.model, self.locals
+            self.state, self.runnable, self.model, self.locals, self.sandbox
         )
 
 
@@ -626,6 +629,7 @@ def _control_payload_from_data(
         state = _required_payload_text(payload, "state")
         runnable = _required_payload_text(payload, "runnable")
         model = _required_payload_text(payload, "model")
+        sandbox = _optional_payload_text(payload, "sandbox")
         raw_locals = payload.get("locals")
         if raw_locals is None:
             locals_value = None
@@ -649,6 +653,7 @@ def _control_payload_from_data(
                 runnable=runnable,
                 model=model,
                 locals=locals_value or (),
+                sandbox=sandbox,
             )
         if kind == "rerun":
             return RerunControlPayload(
@@ -659,6 +664,7 @@ def _control_payload_from_data(
                 model=model,
                 locals=locals_value or (),
                 rerun_from=_required_payload_text(payload, "rerun_from"),
+                sandbox=sandbox,
             )
         raw_retry_from = payload.get("retry_from")
         return RetryControlPayload(
@@ -673,6 +679,7 @@ def _control_payload_from_data(
                 if raw_retry_from is not None
                 else None
             ),
+            sandbox=sandbox,
         )
     if kind in {"steer", "stop"}:
         raw_locals = payload.get("locals", ())
@@ -1449,10 +1456,19 @@ def _required_payload_text(payload: Mapping[str, object], name: str) -> str:
     return value
 
 
+def _optional_payload_text(payload: Mapping[str, object], name: str) -> str | None:
+    value = payload.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"control payload requires canonical {name}")
+    return value
+
+
 def _preparation_payload_data(
     payload: StartControlPayload | RerunControlPayload | RetryControlPayload,
 ) -> dict[str, object]:
-    return {
+    data: dict[str, object] = {
         "resources": payload.resources.to_data(),
         "limits": run_limits_to_data(payload.limits),
         "state": payload.state,
@@ -1464,6 +1480,9 @@ def _preparation_payload_data(
             else None
         ),
     }
+    if payload.sandbox is not None:
+        data["sandbox"] = payload.sandbox
+    return data
 
 
 def _validate_preparation_payload(
@@ -1471,6 +1490,7 @@ def _validate_preparation_payload(
     runnable: str,
     model: str,
     locals: tuple[Local, ...] | None,
+    sandbox: str | None,
 ) -> None:
     if not isinstance(state, str) or not state:
         raise ValueError("preparation payload requires a state fingerprint")
@@ -1478,6 +1498,10 @@ def _validate_preparation_payload(
         raise ValueError("preparation payload requires runnable")
     if not model:
         raise ValueError("preparation payload requires model")
+    if sandbox is not None and (
+        not isinstance(sandbox, str) or not sandbox or sandbox != sandbox.strip()
+    ):
+        raise ValueError("preparation payload requires a canonical sandbox")
     if locals is not None:
         _validate_control_locals(locals)
 

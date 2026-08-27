@@ -86,6 +86,7 @@ def accept_run_start(
     bindings: RunBindings | None = None,
     limits: RunLimits | None = None,
     resources: AgentResources | None = None,
+    sandbox: str | None = None,
 ) -> tuple[RunRecord, RunControlRecord]:
     """Accept a run with explicit default preparation snapshots for store tests."""
 
@@ -123,6 +124,9 @@ def accept_run_start(
         runnable=resolved_bindings.runnable or "agic:test",
         model=resolved_bindings.model or "test",
         locals=tuple(locals_value),
+        sandbox=sandbox
+        if sandbox is not None
+        else ("host" if parent is None else None),
         occurrence=_occurrence_from_context(context),
         state=_TEST_STATE,
         request_id=request_id,
@@ -177,6 +181,7 @@ def project_run_start(
         ),
         model="test",
         locals=(Local.typed("Part[]", tuple(input.parts), "_", 0),),
+        sandbox="host" if parent_path is None else None,
         occurrence=_occurrence_from_context(run_context),
         state=_TEST_STATE,
         request_id=request_id,

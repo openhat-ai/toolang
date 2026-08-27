@@ -47,6 +47,32 @@ def test_setup_watcher_loads_catalog_without_persistent_model_cache(
     assert not (tmp_path / ".setup" / "models").exists()
 
 
+def test_setup_watcher_keeps_runtime_sandbox_separate_from_dotenv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_catalog(tmp_path / "models.json", ("one",))
+    watcher = _watcher(
+        monkeypatch,
+        tmp_path,
+        envs={"TOOLANG_SANDBOX": "docker:spoofed"},
+    )
+
+    setup = asyncio.run(watcher.refresh())
+    docker_setup = asyncio.run(
+        SetupWatcher(
+            AgentLayout.resident(tmp_path, "alice"),
+            sandbox="docker:python:3.13-slim",
+        ).refresh()
+    )
+
+    assert setup.envs["TOOLANG_SANDBOX"] == "docker:spoofed"
+    assert setup.environment is not None
+    assert setup.environment.sandbox == "host"
+    assert docker_setup.environment is not None
+    assert docker_setup.environment.sandbox == "docker:python:3.13-slim"
+
+
 def test_setup_watcher_reuses_static_parse_and_reprobes_local_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -320,6 +320,7 @@ def test_retry_reopens_root_from_a_failed_value_step(
                 runnable=start.payload.runnable,
                 model=start.payload.model,
                 locals=start.payload.locals,
+                sandbox="host",
                 state="different-state",
                 request_id="retry-mismatch",
                 created_at="2026-01-01T00:00:03Z",
@@ -334,6 +335,7 @@ def test_retry_reopens_root_from_a_failed_value_step(
             runnable=start.payload.runnable,
             model=start.payload.model,
             locals=start.payload.locals,
+            sandbox="host",
             state=start.payload.state,
             request_id="retry-1",
             created_at="2026-01-01T00:00:03Z",
@@ -360,6 +362,69 @@ def test_retry_reopens_root_from_a_failed_value_step(
         assert historical[2].ejected_by is not None
         assert historical[2].ejected_by.run == run.id
         assert historical[2].ejected_by.index == control.index
+    finally:
+        store.close()
+
+
+def test_retry_rejects_unknown_or_mismatched_sandbox_without_mutation(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_sandbox_retry",
+            thread_id="term_sandbox_retry",
+            origin="chat",
+            input=Message.user("hello"),
+        )
+        project_run_end(store, run_id=run.id, status="succeeded")
+        start = store.get_run_control(run_id=run.id, index=0)
+        assert start is not None
+        assert isinstance(start.payload, StartControlPayload)
+        start_payload = start.payload
+        assert start_payload.sandbox == "host"
+
+        def accept_retry(sandbox: str):
+            return store.accept_retry(
+                run_id=run.id,
+                anchor=None,
+                resources=start_payload.resources,
+                limits=start_payload.limits,
+                state=start_payload.state,
+                runnable=start_payload.runnable,
+                model=start_payload.model,
+                locals=start_payload.locals,
+                sandbox=sandbox,
+                request_id=None,
+                created_at="2026-01-01T00:00:03Z",
+            )
+
+        with pytest.raises(
+            ValueError,
+            match="does not match original sandbox.*use rerun",
+        ):
+            accept_retry("docker:python:3.13-slim")
+        assert len(store.list_run_controls(run_id=run.id)) == 1
+
+        _execute_sql(
+            store.db_path,
+            """
+            UPDATE controls
+            SET payload = json_remove(payload, '$.sandbox')
+            WHERE target = 'run_sandbox_retry' AND "index" = 0;
+            """,
+        )
+        legacy = store.get_run_control(run_id=run.id, index=0)
+        assert legacy is not None
+        assert isinstance(legacy.payload, StartControlPayload)
+        assert legacy.payload.sandbox is None
+
+        with pytest.raises(ValueError, match="sandbox is unknown.*use rerun"):
+            accept_retry("host")
+        unchanged = store.get_run(run_id=run.id)
+        assert unchanged is not None and unchanged.status == "succeeded"
+        assert len(store.list_run_controls(run_id=run.id)) == 1
     finally:
         store.close()
 
@@ -442,6 +507,7 @@ def test_retry_anchor_selection_distinguishes_run_outcomes_and_explicit_values(
             runnable=start.payload.runnable,
             model=start.payload.model,
             locals=start.payload.locals,
+            sandbox="host",
             state=start.payload.state,
             request_id=None,
             created_at="2026-01-01T00:00:03Z",
