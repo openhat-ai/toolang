@@ -67,6 +67,7 @@ applies, raise the ambiguity and ask the human before proceeding.
 - Before final handoff, fetch and rebase PR branches onto the latest
   `origin/main`, rerun verification, and push rebased history with
   `--force-with-lease`.
+- Resolve every pull request review thread before final handoff.
 - Keep diffs minimal, composable, and limited to one concern.
 - Prefer simple, explicit designs and mature libraries over unnecessary layers.
 - Use `types.py` for vocabulary, `records.py` for persistence, `events.py` for
