@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests.support.execution_fixtures import (
-    accept_run_start,
+    accept_run,
     project_run_end,
     project_run_start,
     project_step,
@@ -237,7 +237,7 @@ def test_run_history_reads_ejection_scope_from_the_control_record(
             input=Message.user("source"),
         )
         project_run_end(store, run_id=source.id)
-        accept_run_start(
+        accept_run(
             store,
             run_id="replacement",
             parent=None,

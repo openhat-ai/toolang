@@ -71,7 +71,7 @@ def persist_event(store: RunStore, event: RunEvent) -> None:
     cast(_PersistSink, sink).on_event(event)
 
 
-def accept_run_start(
+def accept_run(
     store: RunStore,
     *,
     run_id: str,
@@ -81,7 +81,7 @@ def accept_run_start(
     context: Mapping[str, Any],
     request_id: str | None,
     created_at: str,
-    kind: Literal["start", "rerun"] = "start",
+    kind: Literal["run", "rerun"] = "run",
     source: str | None = None,
     bindings: RunBindings | None = None,
     limits: RunLimits | None = None,
@@ -115,7 +115,7 @@ def accept_run_start(
         for name, value in resolved_input.named.items()
     )
 
-    return store.accept_start(
+    return store.accept_run(
         run_id=run_id,
         parent=parent,
         thread=thread,
@@ -168,7 +168,7 @@ def project_run_start(
             created_at=created,
         )
     parent_path = StepPath.parse(parent) if parent is not None else None
-    store.accept_start(
+    store.accept_run(
         run_id=run_id,
         parent=parent_path,
         thread=thread_id,
@@ -220,10 +220,10 @@ def project_run_control(
     request_id: str | None = None,
     created_at: str | None = None,
 ) -> RunControlRecord:
-    """Project one accepted steer or stop run control."""
+    """Project one accepted steer or cancel run control."""
 
-    if kind == "start":
-        raise ValueError("start controls are created by project_run_start")
+    if kind == "run":
+        raise ValueError("run controls are created by project_run_start")
     if kind == "steer" and input is None:
         raise ValueError("steer control requires input")
     return store.accept_run_control(
@@ -234,7 +234,7 @@ def project_run_control(
             (Local.typed("Part[]", tuple(input.parts), "_", 0),)
             if kind == "steer" and input is not None
             else (Local.typed("Text", input.content, "_", 0),)
-            if kind == "stop" and input is not None
+            if kind == "cancel" and input is not None
             else ()
         ),
         request_id=request_id,

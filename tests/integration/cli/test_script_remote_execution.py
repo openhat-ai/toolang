@@ -13,7 +13,7 @@ from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, JobsManager
 from toolang.cli.toolang.commands import script
-from toolang.execution.records import StartControlPayload
+from toolang.execution.records import RunControlPayload
 from toolang.lang.input import RunnableInputRaw
 from toolang.up import AgentCore, process as agents
 from tests.support.execution_harness import ExecutionHarness
@@ -89,7 +89,7 @@ def test_remote_script_uses_a_script_thread_and_native_progress(
         assert threads[0].origin == "script"
         assert core.store.run_output(run_id=record.id) == (TextPart("remote result"),)
         assert control is not None
-        assert isinstance(control.payload, StartControlPayload)
+        assert isinstance(control.payload, RunControlPayload)
         assert control.payload.runnable == "agic:echo"
         output = capsys.readouterr()
         assert output.out == ""

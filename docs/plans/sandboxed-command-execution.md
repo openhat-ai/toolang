@@ -19,11 +19,12 @@ used by interactive and one-shot CLI commands.
 - Direct `.too` script commands have no `--sandbox` option and construct a local
   `RunExecutor` in the CLI process.
 - `retry` and `rerun` construct a local `RunExecutor` even when an AgentServer
-  already owns execution for the same agent. Their existing HTTP endpoints start
+  already owns execution for the same agent. Their existing HTTP endpoints begin
   execution before a separate event subscription can be established.
-- `RunClient` deliberately contains only start, stop, steer, and close. Its local
-  and HTTP implementations provide equivalent authored-run behavior, and the
-  HTTP start-and-stream operation subscribes before execution can emit events.
+- `RunClient` deliberately contains only connect, run, cancel, steer, and
+  disconnect. Its local and HTTP implementations provide equivalent authored-run
+  behavior, and the HTTP execution-and-stream operation subscribes before
+  execution can emit events.
 - Root preparation controls persist resources, limits, state, runnable, model,
   and locals, but not the sandbox in which the run was accepted.
 - Sandbox lifecycle code already resolves canonical selectors, waits for API
@@ -70,9 +71,9 @@ In scope:
 - one CLI-owned execution-runtime selection and lifecycle boundary;
 - temporary AgentServer startup for non-host Chat, Script, Retry, and Rerun;
 - `--sandbox` for direct Script and Rerun commands;
-- canonical sandbox provenance on root start, rerun, and retry controls;
+- canonical sandbox provenance on root run, rerun, and retry controls;
 - a separate retry/rerun client boundary with local and HTTP implementations;
-- atomic retry/rerun start-and-stream HTTP operations;
+- atomic retry/rerun execution-and-stream HTTP operations;
 - consistent progress, diagnostics, interruption, and cleanup behavior;
 - deterministic unit, CLI, API, and sandbox-lifecycle tests;
 - Linux, macOS, and WSL2 behavior supported by the existing sandbox plugins.
@@ -190,7 +191,7 @@ root run, so it follows normal runtime selection and records the new environment
 
 ## Sandbox Provenance
 
-Add nullable `sandbox` provenance to the durable start, rerun, and retry
+Add nullable `sandbox` provenance to the durable run, rerun, and retry
 preparation payloads. New root controls must write the nonempty canonical value
 captured by `AgentSetup.environment.sandbox`; nested controls may omit it.
 Serialization continues to read older payloads that lack the field as unknown
@@ -210,11 +211,12 @@ provenance tells the user to use Rerun, which can safely choose a new sandbox.
 No value is inferred from current configuration, process location, or historical
 runtime status.
 
-## Restart Client And HTTP Contract
+## Retry And Rerun Client Contract
 
-Do not expand the Chat-focused `RunClient`. Add a small `RunRestartClient`
-boundary with `retry`, `rerun`, and `close`, reusing the existing `RunHandle`,
-`RunDetail`, native `RunEvent`, `RunTracer`, and `RunOverride` vocabulary.
+Extend the single `RunClient` boundary with `retry` and `rerun`; do not add a
+specialized restart client. Reuse the existing `RunHandle`, `RunDetail`, native
+`RunEvent`, `RunTracer`, and `RunOverride` vocabulary. Client resource ownership
+continues to use `connect` and `disconnect`.
 
 A restart request contains the source run, caller-issued request ID, ordered
 policy overrides, and an optional retry anchor. Retry and rerun are separate
@@ -289,7 +291,7 @@ Likely files include:
   status, Ctrl-C exit code, and run/step footers in local and remote modes.
 - Attached AgentServers survive command completion and Ctrl-C; owned temporary
   AgentServers do not.
-- New root start/rerun/retry controls round-trip canonical sandbox provenance;
+- New root run/rerun/retry controls round-trip canonical sandbox provenance;
   older payloads round-trip with missing provenance.
 - Retry succeeds only on the source sandbox and rejects missing or mismatched
   provenance before adding a control.

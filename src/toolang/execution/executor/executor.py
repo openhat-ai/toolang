@@ -93,7 +93,7 @@ _LOGGER = logging.getLogger(__name__)
 _CONTROL_POLL_INTERVAL = 0.05
 
 
-class _RunStopped(asyncio.CancelledError):
+class _RunCanceled(asyncio.CancelledError):
     def __init__(self, control: RunControlRecord) -> None:
         super().__init__(control_text(control) or "canceled")
         self.control = control
@@ -127,22 +127,22 @@ class RunSpec:
 
 @dataclass(frozen=True, slots=True)
 class LocalRunHandle(Awaitable[RunRecord]):
-    """One locally started run that can be controlled and awaited."""
+    """One locally accepted run that can be controlled and awaited."""
 
     run_id: str
     executor: RunExecutor = field(repr=False)
     task: asyncio.Task[RunRecord] = field(repr=False)
 
-    def stop(
+    def cancel(
         self,
         *,
         timing: ControlTiming = "immediate",
         request_id: str | None = None,
         reason: str | None = None,
     ) -> RunControlRecord:
-        """Persist a stop control for this run."""
+        """Persist a cancel control for this run."""
 
-        return self.executor.stop(
+        return self.executor.cancel(
             run_id=self.run_id,
             timing=timing,
             request_id=request_id,
@@ -166,7 +166,7 @@ class LocalRunHandle(Awaitable[RunRecord]):
         )
 
     def cancel_control(self, index: int) -> RunControlRecord:
-        """Cancel one pending steer or stop control for this run."""
+        """Revoke one pending steer or cancel control for this run."""
 
         return self.executor.cancel_control(run_id=self.run_id, index=index)
 
@@ -197,9 +197,14 @@ class RunExecutor:
         self._active_lock = threading.Lock()
         self._monitor_task: asyncio.Task[None] | None = None
         self._control_revision = self.store.latest_run_control_revision()
-        self._shutdown = False
+        self._stopped = False
 
-    def start(
+    def start(self) -> None:
+        """Start this executor lifecycle."""
+
+        self._require_available()
+
+    def run(
         self,
         spec: RunSpec,
         *,
@@ -212,7 +217,7 @@ class RunExecutor:
         self._require_available()
         loop = asyncio.get_running_loop()
         sandbox = _setup_sandbox(spec.setup)
-        executable, input, agent_resources, resources = _prepare_start_spec(spec)
+        executable, input, agent_resources, resources = _prepare_run_spec(spec)
         if not isinstance(spec.limits, RunLimits):
             raise TypeError("run limits must be RunLimits")
         bound = _bind_run(
@@ -223,7 +228,7 @@ class RunExecutor:
             agent_resources=agent_resources,
             resources=resources,
         )
-        self.store.accept_start(
+        self.store.accept_run(
             run_id=bound.run_id,
             parent=None,
             thread=bound.thread,
@@ -266,7 +271,7 @@ class RunExecutor:
             model=model,
             limits=limits if limits is not None else setup.limits,
         )
-        executable, input, agent_resources, resources = _prepare_start_spec(spec)
+        executable, input, agent_resources, resources = _prepare_run_spec(spec)
         bound = _bind_run(
             spec,
             executable=executable,
@@ -275,7 +280,7 @@ class RunExecutor:
             agent_resources=agent_resources,
             resources=resources,
         )
-        self.store.accept_start(
+        self.store.accept_run(
             run_id=bound.run_id,
             parent=None,
             thread=bound.thread,
@@ -321,7 +326,7 @@ class RunExecutor:
             model=model,
             limits=limits if limits is not None else setup.limits,
         )
-        executable, input, agent_resources, resources = _prepare_start_spec(spec)
+        executable, input, agent_resources, resources = _prepare_run_spec(spec)
         bound = _bind_run(
             spec,
             executable=executable,
@@ -460,7 +465,7 @@ class RunExecutor:
     def validate(self, spec: RunSpec) -> None:
         """Validate one immutable run spec without accepting a run."""
 
-        _prepare_start_spec(spec)
+        _prepare_run_spec(spec)
 
     async def _execute_owned(
         self,
@@ -519,7 +524,7 @@ class RunExecutor:
         )
         return result
 
-    def stop(
+    def cancel(
         self,
         *,
         run_id: str,
@@ -527,12 +532,12 @@ class RunExecutor:
         request_id: str | None = None,
         reason: str | None = None,
     ) -> RunControlRecord:
-        """Persist one stop control for the process that owns the run."""
+        """Persist one cancel control for the process that owns the run."""
 
         self._require_available()
         control = self.store.accept_run_control(
             run_id=run_id,
-            kind="stop",
+            kind="cancel",
             timing=timing,
             locals=(RecordLocal.typed("Text", reason, "_", 0),)
             if reason is not None
@@ -569,7 +574,7 @@ class RunExecutor:
         return control
 
     def cancel_control(self, *, run_id: str, index: int) -> RunControlRecord:
-        """Cancel one pending steer or stop control from any local process."""
+        """Revoke one pending steer or cancel control from any local process."""
 
         self._require_available()
         control = self.store.cancel_run_control(
@@ -580,12 +585,12 @@ class RunExecutor:
         self._observe_control(control)
         return control
 
-    async def shutdown(self) -> None:
+    async def stop(self) -> None:
         """Cancel and await all runs owned by this executor."""
 
-        if self._shutdown:
+        if self._stopped:
             return
-        self._shutdown = True
+        self._stopped = True
         owned = tuple(self._tasks.items())
         for task, _run in owned:
             if not task.done():
@@ -613,8 +618,8 @@ class RunExecutor:
             await asyncio.gather(monitor, return_exceptions=True)
 
     def _require_available(self) -> None:
-        if self._shutdown:
-            raise RuntimeError("run executor is shut down")
+        if self._stopped:
+            raise RuntimeError("run executor is stopped")
 
     def _task_done(self, task: asyncio.Task[RunRecord]) -> None:
         owned = self._tasks.pop(task, None)
@@ -699,7 +704,7 @@ class RunExecutor:
             self._active[run_id] = active
 
     def _observe_control(self, control: RunControlRecord) -> None:
-        if control.kind == "start":
+        if control.kind == "run":
             return
         cancel: asyncio.Task[RunRecord] | None = None
         loop: asyncio.AbstractEventLoop | None = None
@@ -713,7 +718,7 @@ class RunExecutor:
                 controls[control.index] = control
                 if (
                     not observed
-                    and control.kind in {"steer", "stop"}
+                    and control.kind in {"steer", "cancel"}
                     and control.timing == "immediate"
                 ):
                     cancel = active.task
@@ -723,7 +728,7 @@ class RunExecutor:
                 if not controls:
                     active.controls.pop(control.run, None)
         if cancel is not None and loop is not None and not cancel.done():
-            if control.kind == "stop":
+            if control.kind == "cancel":
                 claimed = self.store.claim_run_controls(
                     run_id=control.run,
                     indexes=(control.index,),
@@ -823,15 +828,20 @@ class RunExecutor:
         record = self.store.get_run(run_id=run_id)
         if record is not None and record.status not in {"pending", "running"}:
             return
-        stop = next(
-            iter(self.store.pending_run_controls(run_id=run_id, kind="stop")), None
+        cancellation = next(
+            iter(self.store.pending_run_controls(run_id=run_id, kind="cancel")),
+            None,
         )
         await emit(
             RunEnd(
                 run=run_id,
                 status=status,
-                control=ControlRef(run_id, stop.index) if stop is not None else None,
-                error=error or control_text(stop) or status,
+                control=(
+                    ControlRef(run_id, cancellation.index)
+                    if cancellation is not None
+                    else None
+                ),
+                error=error or control_text(cancellation) or status,
                 finished_at=utc_now(),
             )
         )
@@ -1054,11 +1064,11 @@ class _Execution:
                 raise _RunLimitExceeded(error) from exc
             control = (
                 exc.control
-                if isinstance(exc, _RunStopped)
+                if isinstance(exc, _RunCanceled)
                 else next(
                     (
                         item
-                        for item in self.pending_controls(binding.run_id, "stop")
+                        for item in self.pending_controls(binding.run_id, "cancel")
                         if item.timing == "immediate"
                     ),
                     None,
@@ -1196,7 +1206,7 @@ class _Execution:
         resources = binding.resources
         if resources is None:
             raise RuntimeError(f"run resources missing: {binding.run_id}")
-        self.store.accept_start(
+        self.store.accept_run(
             run_id=binding.run_id,
             parent=step,
             thread=binding.thread,
@@ -1375,14 +1385,14 @@ class _Execution:
             for control in self.pending_controls(run_id, "steer")
         )
 
-    def raise_if_stopping(self, run_id: str, *, call: bool) -> None:
+    def raise_if_canceling(self, run_id: str, *, call: bool) -> None:
         allowed = {"immediate", "next_step"}
         if call:
             allowed.add("next_call")
         control = next(
             (
                 item
-                for item in self.pending_controls(run_id, "stop")
+                for item in self.pending_controls(run_id, "cancel")
                 if item.timing in allowed
             ),
             None,
@@ -1394,7 +1404,7 @@ class _Execution:
             controls=(control,),
         )
         if claimed:
-            raise _RunStopped(claimed[0])
+            raise _RunCanceled(claimed[0])
 
     def record_output(self, run_id: str, ref: Pointer) -> None:
         step = next(
@@ -1579,7 +1589,7 @@ def _step_local(step: StepRecord, store: RunStore) -> Local:
     )
 
 
-def _prepare_start_spec(
+def _prepare_run_spec(
     spec: RunSpec,
 ) -> tuple[AgicDecl | FlowDecl, RunnableInput, AgentResources, AgentResources]:
     if spec.bindings.runnable is None:

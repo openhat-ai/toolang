@@ -504,7 +504,7 @@ class JobScheduler:
                     thread_id=job.thread_id,
                     origin=job.kind,
                 )
-            return await self.executor.start(spec, run_id=run_id)
+            return await self.executor.run(spec, run_id=run_id)
 
         future = asyncio.run_coroutine_threadsafe(execute(), execution_loop)
         waiter = asyncio.create_task(

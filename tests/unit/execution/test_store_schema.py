@@ -6,8 +6,11 @@ import sqlite3
 
 import pytest
 
+from toolang.base.types.policy import RunLimits
 from toolang.execution.errors import RunStoreSchemaError
+from toolang.execution.records import CancelControlPayload, RunControlPayload
 from toolang.execution.store import RunStore
+from toolang.execution.types import AgentResources
 
 
 def test_run_store_rejects_a_newer_schema_without_modifying_it(
@@ -17,18 +20,18 @@ def test_run_store_rejects_a_newer_schema_without_modifying_it(
     connection = sqlite3.connect(path)
     connection.execute("CREATE TABLE future_state (value TEXT NOT NULL)")
     connection.execute("INSERT INTO future_state VALUES ('preserved')")
-    connection.execute("PRAGMA user_version=30")
+    connection.execute("PRAGMA user_version=31")
     connection.commit()
     connection.close()
 
     with pytest.raises(RunStoreSchemaError) as raised:
         RunStore(path)
 
-    assert raised.value.version == 30
-    assert raised.value.current == 29
+    assert raised.value.version == 31
+    assert raised.value.current == 30
     connection = sqlite3.connect(path)
     try:
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 30
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 31
         assert connection.execute("SELECT value FROM future_state").fetchone() == (
             "preserved",
         )
@@ -36,7 +39,7 @@ def test_run_store_rejects_a_newer_schema_without_modifying_it(
         connection.close()
 
 
-def test_run_store_migrates_only_model_continuation_state(tmp_path: Path) -> None:
+def test_run_store_migrates_model_continuation_state(tmp_path: Path) -> None:
     path = tmp_path / "runs.db"
     RunStore(path).close()
     connection = sqlite3.connect(path)
@@ -93,6 +96,66 @@ def test_run_store_migrates_only_model_continuation_state(tmp_path: Path) -> Non
         assert "state" not in migrated_noted
         payload = connection.execute("SELECT payload FROM controls").fetchone()
         assert payload == ('{"state":"agent-revision"}',)
-        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 29
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 30
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("schema_version", (28, 29))
+def test_run_store_migrates_run_and_cancel_control_kinds(
+    tmp_path: Path,
+    schema_version: int,
+) -> None:
+    path = tmp_path / "runs.db"
+    store = RunStore(path)
+    store.create_thread(
+        thread_id="term_test",
+        origin="test",
+        created_at="2026-08-27T00:00:00Z",
+    )
+    store.accept_run(
+        run_id="run_test",
+        parent=None,
+        thread="term_test",
+        resources=AgentResources(),
+        limits=RunLimits(),
+        state="0" * 64,
+        runnable="flow:test",
+        model="none",
+        locals=(),
+        sandbox="host",
+        occurrence=None,
+        request_id="run_request",
+        created_at="2026-08-27T00:00:00Z",
+    )
+    store.accept_run_control(
+        run_id="run_test",
+        kind="cancel",
+        timing="immediate",
+        locals=(),
+        request_id="cancel_request",
+        created_at="2026-08-27T00:00:01Z",
+    )
+    store.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("UPDATE controls SET kind = 'start' WHERE kind = 'run'")
+    connection.execute("UPDATE controls SET kind = 'stop' WHERE kind = 'cancel'")
+    connection.execute(f"PRAGMA user_version={schema_version}")
+    connection.commit()
+    connection.close()
+
+    migrated = RunStore(path)
+    try:
+        controls = migrated.list_run_controls(run_id="run_test")
+        assert [control.kind for control in controls] == ["run", "cancel"]
+        assert isinstance(controls[0].payload, RunControlPayload)
+        assert isinstance(controls[1].payload, CancelControlPayload)
+    finally:
+        migrated.close()
+
+    connection = sqlite3.connect(path)
+    try:
+        assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 30
     finally:
         connection.close()

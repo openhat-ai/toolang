@@ -10,7 +10,9 @@ ahead of external observation.
 class RunExecutor:
     def __init__(self, store: RunStore, ids: IdIssuer) -> None: ...
 
-    def start(
+    def start(self) -> None: ...
+
+    def run(
         self,
         spec: RunSpec,
         *,
@@ -47,7 +49,7 @@ class RunExecutor:
         tracer: RunTracer | None = None,
     ) -> LocalRunHandle: ...
 
-    def stop(
+    def cancel(
         self,
         *,
         run_id: str,
@@ -72,14 +74,14 @@ class RunExecutor:
         index: int,
     ) -> RunControlRecord: ...
 
-    async def shutdown(self) -> None: ...
+    async def stop(self) -> None: ...
 ```
 
-Construction makes the executor immediately available; there is no separate
-`open()` phase. `shutdown()` is terminal, cancels all run tasks owned by the
-executor, and stops its control monitor. The process composition root owns and
-closes the shared `RunStore`; `RunExecutor` and `ThreadManager` receive the same
-store and `IdIssuer` instances.
+Construction makes the executor immediately available. `start()` is an
+idempotent lifecycle hook, while `stop()` is terminal: it cancels all run tasks
+owned by the executor and stops its control monitor. The process composition
+root owns and closes the shared `RunStore`; `RunExecutor` and `ThreadManager`
+receive the same store and `IdIssuer` instances.
 
 Control polling currently uses an internal default and can move into executor
 options when runtime tuning becomes public.
@@ -109,16 +111,16 @@ OR matching. `input.primary` is the primary multimodal input;
 `input.named` contains typed values for the runnable's declared `params`.
 The executor validates both before
 accepting the run and constructs the user message internally. It
-keeps the original canonical `Percept` for the start control and durable
+keeps the original canonical `Percept` for the run control and durable
 history, while language-owned input coercion initializes `_` with the
 runnable's declared primary type.
 
 `AgentSetup.limits` is the captured default for a new run. Policy resolution
-produces the effective `RunSpec.limits` before `start()`. Config, CLI, chat, and
+produces the effective `RunSpec.limits` before `run()`. Config, CLI, chat, and
 HTTP parsing remain caller concerns and are not part of the executor contract.
 
-There is no `run()`, `execute()`, or `spawn()` variant. `start()`, `rerun()`,
-and `retry()` create an owner task and return an awaitable `LocalRunHandle`.
+There is no `execute()` or `spawn()` variant. `run()`, `rerun()`, and `retry()`
+create an owner task and return an awaitable `LocalRunHandle`.
 `rerun()` loads the source invocation from durable truth and starts a new root
 against the supplied current setup and state. `retry()` keeps the root ID,
 reopens a terminal run, and resumes after its effective committed prefix. An
@@ -126,7 +128,7 @@ omitted retry anchor uses the latest visible failed, canceled, or running Step.
 For a failed or canceled Run with no incomplete Step, it uses the latest visible
 Step. For a succeeded Run, it prefers the latest non-value Step and falls back
 to the latest value Step. The handle exposes its run ID, executor, and task, and
-delegates same-process `stop()`, `steer()`, and `cancel_control()` operations.
+delegates same-process `cancel()`, `steer()`, and `cancel_control()` operations.
 Its await path shields the owner task so
 canceling a waiting HTTP request or TUI action does not cancel the durable run.
 
@@ -134,7 +136,7 @@ canceling a waiting HTTP request or TUI action does not cancel the durable run.
 ## Acceptance
 
 Binding validates explicit runtime inputs and asks `IdIssuer` for a run ID when
-`start()` does not receive one. `RunSpec.thread` must identify an existing
+`run()` does not receive one. `RunSpec.thread` must identify an existing
 thread. The executor never allocates or implicitly creates threads.
 
 Supplying a run ID is intentionally limited to one-shot script invocation so
@@ -142,12 +144,12 @@ logging can be configured at a path containing that ID before execution.
 Interactive, job, file, channel, and API callers let the executor allocate the
 ID. The supplied or allocated ID must be globally unique in `RunStore`.
 
-`RunStore.accept_start()` uses `BEGIN IMMEDIATE` to:
+`RunStore.accept_run()` uses `BEGIN IMMEDIATE` to:
 
 1. validate the thread;
 2. reject a conflicting run ID;
 3. insert the pending `RunRecord`;
-4. insert start `RunControlRecord(index=0)` with effective `bindings`,
+4. insert `run` `RunControlRecord(index=0)` with effective `bindings`,
    `limits`, `input`, final `resources`, and canonical root sandbox snapshots;
 5. commit the accepted run before its owner task is scheduled.
 
@@ -183,7 +185,7 @@ top-level owner task and tracer. It is a task-ownership index, not the durable
 source of admission truth.
 
 Child runs receive their own process-safe IDs, run records, and index-zero
-start controls before `RunBegin`. They execute in the top-level owner task and
+run controls before `RunBegin`. They execute in the top-level owner task and
 inherit its setup, state, and tracer.
 
 
@@ -212,7 +214,7 @@ separate effective-resource, invocation, model-call assembly, or tool-snapshot
 layers.
 
 `AgentSetup.ceiling` contains stable selector lists, not resolved resources. At
-`start()`, the executor resolves it against the captured `AgentSetup` and
+`run()`, the executor resolves it against the captured `AgentSetup` and
 `AgentState`, intersects every `RunSpec.ceilings` restriction, and creates
 the tree-level `AgentResources`. A ceiling cannot expand the preceding resource
 set. Invalid selectors are rejected before the run is durably accepted.
@@ -262,7 +264,7 @@ selected model. Time expiry cancels an in-flight operation while recording
 affected runs as failed rather than user-canceled.
 
 The effective value is persisted on every preparation control. Child runs
-inherit the same in-memory value and their start controls repeat it so each
+inherit the same in-memory value and their run controls repeat it so each
 accepted preparation is self-contained. Decimal cost is serialized as text so
 durable round trips do not lose precision.
 
@@ -296,9 +298,9 @@ same canonical event sequence and never filter a synthetic top-level step.
 
 ## Control Observation
 
-Any process may call `steer()`, `stop()`, or `cancel_control()` because these
-operations only mutate shared SQLite truth. `start(spec)` is also process-safe,
-but the process that calls it owns and executes that run; start is not a
+Any process may call `steer()`, `cancel()`, or `cancel_control()` because these
+operations only mutate shared SQLite truth. `run(spec)` is also process-safe,
+but the process that calls it owns and executes that run; run is not a
 cross-process dispatch queue.
 
 Every inserted or changed control receives a global monotonic revision inside
@@ -308,14 +310,14 @@ pending controls are merged into the matching `_ActiveRun` cache, while
 `applied`, `wontapply`, and `revoked` controls are removed. Runtime checkpoints
 read the cache rather than querying SQLite once per active run.
 
-An `immediate` stop cancels the owner task. `next_step` and `next_call` controls
+An `immediate` cancel cancels the owner task. `next_step` and `next_call` controls
 are consumed at runtime checkpoints. Flows check before statements and calls;
 agics check before model and tool calls.
 
 Local submissions update the cache immediately after their durable write.
 Remote submissions and cancellations use the same revision feed, so SQLite
 remains the cross-process source of truth without an additional wake channel.
-Runtime atomically claims a pending steer or stop immediately before applying
+Runtime atomically claims a pending steer or cancel immediately before applying
 it. A cancellation updates only an unclaimed pending control, making
 application and cancellation linearizable without exposing an intermediate
 public status.
@@ -347,7 +349,7 @@ and runs reference that step. An exception outside a step stores its message
 directly on the run without a synthetic step. Cancellation unwinds steps and
 child runs before the root `RunEnd(canceled)`.
 
-If cancellation came from a stop control, `RunEnd.input` references it. The
+If cancellation came from a cancel control, `RunEnd.control` references it. The
 runtime marks that control `applied` and marks all other pending controls
 `wontapply` because they can no longer reach an applicable checkpoint.
 

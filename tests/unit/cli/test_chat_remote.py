@@ -473,7 +473,7 @@ def test_remote_chat_uses_remote_run_client_native_events() -> None:
     states: list[object] = []
     errors: list[str] = []
     try:
-        session.start_run(
+        session.run(
             "term_remote",
             "hello",
             {},
@@ -534,7 +534,7 @@ def test_remote_chat_recovers_without_replaying_or_retrying(
     states: list[object] = []
     errors: list[str] = []
     try:
-        session.start_run(
+        session.run(
             "term_remote",
             "hello",
             {},
@@ -580,7 +580,7 @@ def test_remote_chat_blocks_ambiguous_pre_acceptance_failure() -> None:
     errors: list[str] = []
     try:
         for _ in range(2):
-            session.start_run(
+            session.run(
                 "term_remote",
                 "hello",
                 {},

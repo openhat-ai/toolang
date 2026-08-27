@@ -216,9 +216,9 @@ Execution and scheduling have separate owner loops:
 - A dedicated scheduler thread and event loop own `JobScheduler`, `JobWatcher`,
   RRULE timers, the due heap, and `jobs.db` transitions.
 
-The scheduler never calls `RunExecutor.start()` from its own loop and execution
+The scheduler never calls `RunExecutor.run()` from its own loop and execution
 never calls back into the scheduler. The scheduler submits one coroutine with
-`asyncio.run_coroutine_threadsafe()`. That coroutine invokes `start()` and
+`asyncio.run_coroutine_threadsafe()`. That coroutine invokes `run()` and
 awaits the returned handle entirely on the execution loop. The scheduler awaits
 the resulting `concurrent.futures.Future` on its own loop and applies the
 terminal result after it resolves. Dependency therefore remains one-way from
@@ -278,12 +278,12 @@ run:
 2. Preallocate a run id.
 3. Atomically claim the activation in `jobs.db`, including its trigger and
    timestamp.
-4. Submit and await `RunExecutor.start(run_id=...)` through one cross-loop
+4. Submit and await `RunExecutor.run(run_id=...)` through one cross-loop
    future.
 5. Persist the terminal run in `runs.db` before reporting completion.
 6. Apply the terminal result to `jobs.db` on the scheduler loop.
 
-If `RunExecutor` explicitly rejects a submitted start, the scheduler consumes
+If `RunExecutor` explicitly rejects a submitted run, the scheduler consumes
 the activation as a scheduler failure and records the error. A crash between
 claim and acceptance instead leaves a recoverable active checkpoint. At
 startup the scheduler loads the ready snapshot and looks up only recorded
@@ -315,7 +315,7 @@ or run error. The small control surface retains source meaning:
 - list and get jobs;
 - reopen or cancel a task;
 - manually run a chore;
-- stop an active run through `RunExecutor`.
+- cancel an active run through `RunExecutor`.
 
 There is no public claim, occurrence, generic Work, or scheduler-run control
 abstraction.

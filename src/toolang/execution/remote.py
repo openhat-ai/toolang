@@ -54,14 +54,16 @@ class _RemoteRunHandle:
         try:
             await asyncio.shield(self._reader)
         except asyncio.CancelledError:
-            if self._client.closed:
-                raise RemoteRunClientError("remote run client is closed") from None
+            if not self._client.connected:
+                raise RemoteRunClientError(
+                    "remote run client is disconnected"
+                ) from None
             raise
         return await self._client._run_detail(self.run_id)
 
 
 class RemoteRunClient:
-    """Start and control runs through one agent HTTP endpoint."""
+    """Run and control runs through one agent HTTP endpoint."""
 
     def __init__(
         self,
@@ -70,14 +72,14 @@ class RemoteRunClient:
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._endpoint = _normalize_endpoint(endpoint)
-        self._http = client or httpx.AsyncClient()
+        self._http = client
         self._owns_http = client is None
         self._readers: set[asyncio.Task[None]] = set()
-        self._closed = False
+        self._connected = False
 
     @property
-    def closed(self) -> bool:
-        return self._closed
+    def connected(self) -> bool:
+        return self._connected
 
     @property
     def endpoint(self) -> str:
@@ -85,13 +87,23 @@ class RemoteRunClient:
 
         return self._endpoint
 
-    async def start(
+    async def connect(self) -> None:
+        if self._connected:
+            self._require_connected()
+            return
+        if self._owns_http:
+            self._http = httpx.AsyncClient()
+        elif self._http is None or self._http.is_closed:
+            raise RemoteRunClientError("remote run HTTP client is closed")
+        self._connected = True
+
+    async def run(
         self,
         request: RunRequest,
         *,
         tracer: RunTracer | None = None,
     ) -> RunHandle:
-        self._require_open()
+        self._require_connected()
         loop = asyncio.get_running_loop()
         accepted: asyncio.Future[str] = loop.create_future()
         delivery = asyncio.Event()
@@ -107,8 +119,10 @@ class RemoteRunClient:
         self._readers.add(reader)
         reader.add_done_callback(self._reader_done)
         try:
-            run_id = await accepted
+            run_id = await self._wait_for_acceptance(accepted, reader)
         except BaseException:
+            if not accepted.done():
+                accepted.cancel()
             if not reader.done():
                 reader.cancel()
             await asyncio.gather(reader, return_exceptions=True)
@@ -121,7 +135,7 @@ class RemoteRunClient:
         delivery.set()
         return handle
 
-    async def stop(
+    async def cancel(
         self,
         run_id: str,
         *,
@@ -161,17 +175,33 @@ class RemoteRunClient:
             },
         )
 
-    async def close(self) -> None:
-        if self._closed:
+    async def disconnect(self) -> None:
+        if not self._connected:
             return
-        self._closed = True
+        self._connected = False
         readers = tuple(self._readers)
         for reader in readers:
             reader.cancel()
         if readers:
             await asyncio.gather(*readers, return_exceptions=True)
-        if self._owns_http:
+        if self._owns_http and self._http is not None:
             await self._http.aclose()
+
+    async def _wait_for_acceptance(
+        self,
+        accepted: asyncio.Future[str],
+        reader: asyncio.Task[None],
+    ) -> str:
+        done, _pending = await asyncio.wait(
+            (accepted, reader),
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if accepted in done:
+            return accepted.result()
+        if reader.cancelled():
+            raise RemoteRunClientError("remote run client is disconnected")
+        await reader
+        raise RemoteRunClientError("remote run ended before acceptance")
 
     async def _read_run_stream(
         self,
@@ -182,26 +212,27 @@ class RemoteRunClient:
         delivery: asyncio.Event,
     ) -> None:
         try:
+            http = self._require_connected()
             async with aconnect_sse(
-                self._http,
+                http,
                 "POST",
                 self._url("/api/v1/runs/authored/stream"),
                 json=_run_request_data(request),
-                timeout=_stream_timeout(self._http.timeout),
+                timeout=_stream_timeout(http.timeout),
             ) as source:
                 response = source.response
                 if not response.is_success:
                     await response.aread()
-                    raise _http_error(response, operation="start")
+                    raise _http_error(response, operation="run")
                 _require_event_stream(response)
                 run_id = _response_run_id(response)
                 accepted.set_result(run_id)
                 await delivery.wait()
                 await self._consume_events(source.aiter_sse(), run_id, tracer=tracer)
         except asyncio.CancelledError:
-            if not accepted.done() and self._closed:
+            if not accepted.done() and not self._connected:
                 accepted.set_exception(
-                    RemoteRunClientError("remote run client is closed")
+                    RemoteRunClientError("remote run client is disconnected")
                 )
             raise
         except RemoteRunClientError as exc:
@@ -209,19 +240,17 @@ class RemoteRunClient:
                 accepted.set_exception(exc)
             raise
         except httpx.HTTPError as exc:
-            error = _transport_error("start", exc)
+            error = _transport_error("run", exc)
             if not accepted.done():
                 accepted.set_exception(error)
             raise error from exc
         except (SSEError, ValidationError, ValueError) as exc:
-            error = RemoteRunClientError("remote run start returned invalid data")
+            error = RemoteRunClientError("remote run returned invalid data")
             if not accepted.done():
                 accepted.set_exception(error)
             raise error from exc
         except Exception as exc:
-            error = RemoteRunClientError(
-                f"remote run start failed: {type(exc).__name__}"
-            )
+            error = RemoteRunClientError(f"remote run failed: {type(exc).__name__}")
             if not accepted.done():
                 accepted.set_exception(error)
             raise error from exc
@@ -324,7 +353,7 @@ class RemoteRunClient:
             raise RemoteRunClientError(
                 f"remote run {action} returned invalid control data"
             ) from exc
-        expected_kind = "stop" if action == "cancel" else "steer"
+        expected_kind = "cancel" if action == "cancel" else "steer"
         if control.run_id != run_id or control.kind != expected_kind:
             raise RemoteRunClientError(
                 f"remote run {action} returned invalid control data"
@@ -339,9 +368,9 @@ class RemoteRunClient:
         operation: str,
         **kwargs: Any,
     ) -> httpx.Response:
-        self._require_open()
+        http = self._require_connected()
         try:
-            response = await self._http.request(method, self._url(path), **kwargs)
+            response = await http.request(method, self._url(path), **kwargs)
         except (httpx.HTTPError, RuntimeError) as exc:
             raise _transport_error(operation, exc) from exc
         if not response.is_success:
@@ -351,11 +380,13 @@ class RemoteRunClient:
     def _url(self, path: str) -> str:
         return f"{self._endpoint}{path}"
 
-    def _require_open(self) -> None:
-        if self._closed:
-            raise RemoteRunClientError("remote run client is closed")
-        if self._http.is_closed:
+    def _require_connected(self) -> httpx.AsyncClient:
+        if not self._connected:
+            raise RemoteRunClientError("remote run client is disconnected")
+        http = self._http
+        if http is None or http.is_closed:
             raise RemoteRunClientError("remote run HTTP client is closed")
+        return http
 
     def _reader_done(self, reader: asyncio.Task[None]) -> None:
         self._readers.discard(reader)
@@ -470,7 +501,7 @@ def _require_event_stream(response: httpx.Response) -> None:
         response.headers.get("content-type", "").partition(";")[0].strip().lower()
     )
     if content_type != "text/event-stream":
-        raise RemoteRunClientError("remote run start returned a non-SSE response")
+        raise RemoteRunClientError("remote run returned a non-SSE response")
 
 
 def _response_run_id(response: httpx.Response) -> str:
@@ -479,7 +510,7 @@ def _response_run_id(response: httpx.Response) -> str:
         return validate_execution_id(value, label="accepted run id")
     except ValueError as exc:
         raise RemoteRunClientError(
-            "remote run start returned an invalid accepted run ID"
+            "remote run returned an invalid accepted run ID"
         ) from exc
 
 
@@ -488,7 +519,7 @@ def _response_json(response: httpx.Response, *, operation: str) -> object:
         return response.json()
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RemoteRunClientError(
-            f"remote run {operation} returned invalid JSON"
+            f"{_operation_label(operation)} returned invalid JSON"
         ) from exc
 
 
@@ -502,7 +533,7 @@ def _http_error(response: httpx.Response, *, operation: str) -> RemoteRunClientE
         if isinstance(payload, dict) and isinstance(payload.get("detail"), str):
             detail = cast(str, payload["detail"])
     return RemoteRunClientError(
-        f"remote run {operation} failed: HTTP {response.status_code} {detail}",
+        f"{_operation_label(operation)} failed: HTTP {response.status_code} {detail}",
         status_code=response.status_code,
         detail=detail,
     )
@@ -510,5 +541,9 @@ def _http_error(response: httpx.Response, *, operation: str) -> RemoteRunClientE
 
 def _transport_error(operation: str, error: Exception) -> RemoteRunClientError:
     return RemoteRunClientError(
-        f"remote run {operation} transport failed: {type(error).__name__}"
+        f"{_operation_label(operation)} transport failed: {type(error).__name__}"
     )
+
+
+def _operation_label(operation: str) -> str:
+    return "remote run" if operation == "run" else f"remote run {operation}"

@@ -17,7 +17,7 @@ Chat uses the same runtime units as the rest of Toolang:
 
 One terminal `ChatInput` resolves to one `QuickCommand`, one or more
 `RunOverride` values, or a policy-command sequence paired with
-`RunnableInputRaw`. Only the runnable-input branch creates a start control and a
+`RunnableInputRaw`. Only the runnable-input branch creates a run control and a
 run in an existing thread. A client creates the thread explicitly before the
 first run.
 
@@ -80,7 +80,7 @@ User messages contain only `PerceptPart` values. Assistant messages may
 additionally contain `ToolCallPart` values, while tool messages contain only
 `ToolResultPart` values.
 
-The initial `start` control projects to the user message. Later `steer`
+The initial `run` control projects to the user message. Later `steer`
 controls project to additional user messages in the same run. Step output
 projects to assistant or tool messages.
 
@@ -163,7 +163,7 @@ Both lifecycle request bodies may identify the anchor with `run_id`. Omitting
 it selects the last visible top-level run. An anchor must be terminal. Fork
 includes its anchor and may select an earlier terminal run while a later run
 remains active. Rewind discards its anchor and requires the entire thread to
-have no pending or running runs; callers must stop active runs before rewinding.
+have no pending or running runs; callers must cancel active runs before rewinding.
 
 Task and chore thread ids are derived from job ids, so job threads cannot be
 rewound or forked. Job execution commands expose explicit job semantics such as
@@ -213,7 +213,7 @@ On exit, Chat reports the stop and sandbox-release stages while it cleans up a
 temporary runtime. Attached AgentServers are left running and need no cleanup
 progress.
 
-Remote acceptance records the root run id before the first event so stop and
+Remote acceptance records the root run id before the first event so cancel and
 steer remain addressable. If an accepted stream disconnects, the TUI keeps the
 queue paused and polls durable run detail after 500 ms, 1 s, 2 s, and then every
 5 s. Terminal durable truth finalizes the run without inventing missed events

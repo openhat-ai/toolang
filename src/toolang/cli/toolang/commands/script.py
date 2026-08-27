@@ -591,13 +591,14 @@ async def _execute_remote(
     ) as http:
         client = RemoteRunClient(endpoint, client=http)
         try:
+            await client.connect()
             await inspect_remote_runtime(
                 http,
                 client.endpoint,
                 expected_sandbox=sandbox,
             )
             thread = await _create_remote_script_thread(http, client.endpoint)
-            handle = await client.start(
+            handle = await client.run(
                 RunRequest(
                     thread=thread,
                     commands=_remote_script_commands(commands, runnable=runnable),
@@ -613,7 +614,7 @@ async def _execute_remote(
             try:
                 detail = await handle.wait()
             except BaseException as exc:
-                await _stop_remote_script_run(
+                await _cancel_remote_script_run(
                     client,
                     handle.run_id,
                     handle.wait,
@@ -631,7 +632,7 @@ async def _execute_remote(
                 )
             return record
         finally:
-            await client.close()
+            await client.disconnect()
             if tracer is not None:
                 tracer.close()
 
@@ -734,7 +735,7 @@ async def _create_remote_script_thread(
     return thread.id
 
 
-async def _stop_remote_script_run(
+async def _cancel_remote_script_run(
     client: RemoteRunClient,
     run_id: str,
     wait: Callable[[], Awaitable[object]],
@@ -742,7 +743,7 @@ async def _stop_remote_script_run(
     reason: str,
 ) -> None:
     try:
-        await client.stop(
+        await client.cancel(
             run_id,
             request_id=f"term_{uuid4().hex}",
             reason=reason,
@@ -831,30 +832,31 @@ async def _execute(
         if not quiet
         else None
     )
-    handle = executor.start(
-        spec,
-        run_id=run_id,
-        tracer=tracer,
-    )
+    executor.start()
     try:
+        handle = executor.run(
+            spec,
+            run_id=run_id,
+            tracer=tracer,
+        )
         return await _await_script_run(handle)
     finally:
         try:
-            await executor.shutdown()
+            await executor.stop()
         finally:
             if tracer is not None:
                 tracer.close()
 
 
 async def _await_script_run(handle: LocalRunHandle) -> RunRecord:
-    """Stop an owned one-shot run when its script caller is interrupted."""
+    """Cancel an owned one-shot run when its script caller is interrupted."""
 
     try:
         return await handle
     except asyncio.CancelledError:
         if not handle.task.done():
             try:
-                handle.stop(reason="script interrupted")
+                handle.cancel(reason="script interrupted")
             except ValueError:
                 record = handle.executor.store.get_run(run_id=handle.run_id)
                 if record is None or record.status in {"pending", "running"}:

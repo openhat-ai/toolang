@@ -44,7 +44,7 @@ class ChatRunPresenter:
             return False
         if active_run_id is None and self._root_run_id is None:
             for block in list(app.get_live_blocks()):
-                if isinstance(block, blocks.RunStartBlock):
+                if isinstance(block, blocks.RunControlBlock):
                     app.finalize_block(block)
                 else:
                     self._discard(block, app)
@@ -54,23 +54,23 @@ class ChatRunPresenter:
             return True
 
         for block in list(app.get_live_blocks()):
-            if isinstance(block, (blocks.RunStartBlock, blocks.RunSteerBlock)):
+            if isinstance(block, (blocks.RunControlBlock, blocks.RunSteerBlock)):
                 app.finalize_block(block)
         self._apply(self._projector.diagnostic(friendly_error(message)), app)
-        stop = self._run_stop(app, active_run_id or self._root_run_id or "run")
-        if stop is None:
-            stop = blocks.RunStopBlock(
+        summary = self._run_summary(app, active_run_id or self._root_run_id or "run")
+        if summary is None:
+            summary = blocks.RunSummaryBlock(
                 run_id=active_run_id or self._root_run_id or "run",
                 status="failed",
                 max_width=self._max_width,
             )
-            self._append_tail(stop, app)
+            self._append_tail(summary, app)
         else:
-            stop.status = "failed"
-            stop.error = ""
-        stop.set_metrics(self._projector.root_metrics)
-        stop.gap_before = self._projector.needs_footer_gap
-        app.finalize_block(stop)
+            summary.status = "failed"
+            summary.error = ""
+        summary.set_metrics(self._projector.root_metrics)
+        summary.gap_before = self._projector.needs_footer_gap
+        app.finalize_block(summary)
         app.finish_run()
         self.reset()
         return True
@@ -84,7 +84,7 @@ class ChatRunPresenter:
         if active_run_id not in {None, detail.id}:
             return False
         for block in list(app.get_live_blocks()):
-            if isinstance(block, (blocks.RunStartBlock, blocks.RunSteerBlock)):
+            if isinstance(block, (blocks.RunControlBlock, blocks.RunSteerBlock)):
                 app.finalize_block(block)
         self._apply(
             self._projector.diagnostic(
@@ -93,23 +93,23 @@ class ChatRunPresenter:
             ),
             app,
         )
-        stop = self._run_stop(app, detail.id)
-        if stop is None:
-            stop = blocks.RunStopBlock(
+        summary = self._run_summary(app, detail.id)
+        if summary is None:
+            summary = blocks.RunSummaryBlock(
                 run_id=detail.id,
                 status=detail.status,
                 started_at=detail.started_at,
                 finished_at=detail.finished_at or "",
                 max_width=self._max_width,
             )
-            self._append_tail(stop, app)
+            self._append_tail(summary, app)
         else:
-            stop.status = detail.status
-            stop.finished_at = detail.finished_at or stop.finished_at
-        stop.error = friendly_error(detail.error) if detail.error else ""
-        stop.set_metrics(self._projector.root_metrics)
-        stop.gap_before = self._projector.needs_footer_gap
-        app.finalize_block(stop)
+            summary.status = detail.status
+            summary.finished_at = detail.finished_at or summary.finished_at
+        summary.error = friendly_error(detail.error) if detail.error else ""
+        summary.set_metrics(self._projector.root_metrics)
+        summary.gap_before = self._projector.needs_footer_gap
+        app.finalize_block(summary)
         app.finish_run()
         self.reset()
         return True
@@ -124,25 +124,25 @@ class ChatRunPresenter:
             return False
         self._root_run_id = event.run
         app.set_active_run(event.run)
-        self._finalize_commands(app, blocks.RunStartBlock, event)
+        self._finalize_commands(app, blocks.RunControlBlock, event)
         self._append_tail(
-            blocks.RunStopBlock.create(event, max_width=self._max_width),
+            blocks.RunSummaryBlock.create(event, max_width=self._max_width),
             app,
         )
         return True
 
     def _end_root(self, event: RunEnd, app: AppContext) -> None:
         self._finalize_commands(app, blocks.RunSteerBlock, event)
-        stop = self._run_stop(app, event.run)
-        if stop is None:
-            stop = blocks.RunStopBlock.create(event, max_width=self._max_width)
-            self._append_tail(stop, app)
+        summary = self._run_summary(app, event.run)
+        if summary is None:
+            summary = blocks.RunSummaryBlock.create(event, max_width=self._max_width)
+            self._append_tail(summary, app)
         else:
-            stop.update(event)
-        stop.error = ""
-        stop.set_metrics(self._projector.root_metrics)
-        stop.gap_before = self._projector.needs_footer_gap
-        app.finalize_block(stop)
+            summary.update(event)
+        summary.error = ""
+        summary.set_metrics(self._projector.root_metrics)
+        summary.gap_before = self._projector.needs_footer_gap
+        app.finalize_block(summary)
         app.finish_run()
         self.reset()
 
@@ -191,12 +191,12 @@ class ChatRunPresenter:
         self._progress = desired
 
     @staticmethod
-    def _run_stop(app: AppContext, run_id: str) -> blocks.RunStopBlock | None:
+    def _run_summary(app: AppContext, run_id: str) -> blocks.RunSummaryBlock | None:
         return next(
             (
                 block
                 for block in app.get_live_blocks()
-                if isinstance(block, blocks.RunStopBlock) and block.run_id == run_id
+                if isinstance(block, blocks.RunSummaryBlock) and block.run_id == run_id
             ),
             None,
         )
@@ -210,7 +210,7 @@ class ChatRunPresenter:
     def _insert_before_run(block: blocks.MutableBlock, app: AppContext) -> None:
         live = app.get_live_blocks()
         for index in range(len(live) - 1, -1, -1):
-            if isinstance(live[index], blocks.RunStopBlock):
+            if isinstance(live[index], blocks.RunSummaryBlock):
                 live.insert(index, block)
                 return
         live.append(block)
@@ -222,7 +222,7 @@ class ChatRunPresenter:
     @staticmethod
     def _finalize_commands(
         app: AppContext,
-        block_type: type[blocks.RunStartBlock] | type[blocks.RunSteerBlock],
+        block_type: type[blocks.RunControlBlock] | type[blocks.RunSteerBlock],
         event: RunBegin | StepBegin | RunEnd,
     ) -> None:
         target_run = (

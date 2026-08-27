@@ -83,8 +83,9 @@ class LocalChatSession:
             limit_overrides=limit_overrides,
         )
         self.state_watcher = StateWatcher(layout)
+        self.executor = RunExecutor(self.store, self.ids)
         self.run_client: RunClient = LocalRunClient(
-            RunExecutor(self.store, self.ids),
+            self.executor,
             setup=self.setup_watcher.current,
             state=self.state_watcher.current,
             refresh_state=self.state_watcher.refresh,
@@ -201,7 +202,7 @@ class LocalChatSession:
             raise ValueError(f"Run has no result: {run.id}")
         return ChatResult(run_id=run.id, output=output)
 
-    def start_run(
+    def run(
         self,
         thread_id: str,
         message: str,
@@ -217,20 +218,20 @@ class LocalChatSession:
         except Exception as exc:
             on_error(_error_message(exc))
 
-    def stop_run(
+    def cancel(
         self,
         run_id: str,
         on_error: Callable[[str], None],
     ) -> None:
         self._submit_control(
-            self.run_client.stop(
+            self.run_client.cancel(
                 run_id,
                 request_id=f"term_{uuid4().hex}",
             ),
             on_error,
         )
 
-    def steer_run(
+    def steer(
         self,
         run_id: str,
         message: str,
@@ -257,6 +258,8 @@ class LocalChatSession:
         self.store.close()
 
     async def _initialize(self) -> None:
+        self.executor.start()
+        await self.run_client.connect()
         state = await self.state_watcher.refresh()
         setup = await self.setup_watcher.refresh()
         validate_agent_ceiling(setup, state, setup.ceiling)
@@ -290,7 +293,7 @@ class LocalChatSession:
             runnable_fallbacks=("agic:chat", "default"),
             request_id=f"term_{uuid4().hex}",
         )
-        handle = await self.run_client.start(
+        handle = await self.run_client.run(
             request,
             tracer=_CallbackTracer(on_event),
         )
@@ -301,7 +304,8 @@ class LocalChatSession:
     async def _close(self) -> None:
         if self._stop_signal is not None:
             self._stop_signal.set()
-        await self.run_client.close()
+        await self.run_client.disconnect()
+        await self.executor.stop()
         if self._watch_tasks:
             for task in self._watch_tasks:
                 if not task.done():

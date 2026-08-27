@@ -19,7 +19,7 @@ from toolang.base.types.message import Message, TextPart
 from toolang.base.types.run import ModelCallResult
 from toolang.execution.client import LocalRunClient, RunClient, RunHandle
 from toolang.execution.executor import LocalRunHandle
-from toolang.execution.records import SteerControlPayload, StopControlPayload
+from toolang.execution.records import SteerControlPayload, CancelControlPayload
 from toolang.execution.schemas import RunRequest
 from toolang.execution.types import RunOverride, ThreadPrefix
 from toolang.execution.values import parts_from_local
@@ -162,8 +162,9 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
     tracer = RecordingRunTracer()
 
     async def scenario() -> None:
+        await client.connect()
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-        fallback_handle = await client.start(
+        fallback_handle = await client.run(
             _request(
                 thread,
                 input=RunnableInputRaw(primary="@note.md"),
@@ -173,7 +174,7 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
         )
         client_handle: RunHandle = fallback_handle
         fallback = await fallback_handle.wait()
-        session_handle = await client.start(
+        session_handle = await client.run(
             _request(
                 thread,
                 session_commands=(RunOverride("default", "runnable", "agic:session"),),
@@ -181,7 +182,7 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
             )
         )
         session = await session_handle.wait()
-        selected_handle = await client.start(
+        selected_handle = await client.run(
             _request(
                 thread,
                 commands=(RunOverride("default", "runnable", "agic:selected"),),
@@ -224,7 +225,7 @@ def test_local_client_resolves_fallback_input_and_policy_precedence(
         assert state_reads == 3
         assert include_setups == [harness.setup, harness.setup, harness.setup]
 
-        await client.close()
+        await client.disconnect()
 
     try:
         asyncio.run(scenario())
@@ -244,6 +245,7 @@ def test_local_client_rejects_preparation_without_persisting_a_run(
     )
 
     async def scenario() -> None:
+        await client.connect()
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
         request = _request(
             thread,
@@ -251,10 +253,10 @@ def test_local_client_rejects_preparation_without_persisting_a_run(
         )
 
         with pytest.raises(ToolangError, match="Runnable not found"):
-            await client.start(request)
+            await client.run(request)
 
         assert harness.store.list_runs(thread_id=thread, limit=None) == []
-        await client.close()
+        await client.disconnect()
 
     try:
         asyncio.run(scenario())
@@ -287,8 +289,9 @@ flow chat(_: Part[]) -> Part[]:
     )
 
     async def scenario() -> None:
+        await client.connect()
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-        handle = await client.start(
+        handle = await client.run(
             _request(
                 thread,
                 runnable_fallbacks=("agic:chat", "default"),
@@ -298,7 +301,7 @@ flow chat(_: Part[]) -> Part[]:
 
         assert (detail.runnable_kind, detail.runnable_name) == ("agic", "default")
         assert len(harness.store.list_runs(thread_id=thread, limit=None)) == 1
-        await client.close()
+        await client.disconnect()
 
     try:
         asyncio.run(scenario())
@@ -306,7 +309,7 @@ flow chat(_: Part[]) -> Part[]:
         harness.store.close()
 
 
-def test_local_client_returns_caller_facing_steer_and_stop_controls(
+def test_local_client_returns_caller_facing_steer_and_cancel_controls(
     tmp_path: Path,
 ) -> None:
     gate = AsyncGate()
@@ -328,8 +331,9 @@ def test_local_client_returns_caller_facing_steer_and_stop_controls(
     )
 
     async def scenario() -> None:
+        await client.connect()
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-        handle = await client.start(_request(thread))
+        handle = await client.run(_request(thread))
         await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
 
         steer = await client.steer(
@@ -338,10 +342,10 @@ def test_local_client_returns_caller_facing_steer_and_stop_controls(
             timing="next_call",
             request_id="steer_request",
         )
-        stop = await client.stop(
+        cancellation = await client.cancel(
             handle.run_id,
             timing="immediate",
-            request_id="stop_request",
+            request_id="cancel_request",
             reason="user canceled",
         )
         detail = await asyncio.wait_for(handle.wait(), timeout=2)
@@ -353,17 +357,19 @@ def test_local_client_returns_caller_facing_steer_and_stop_controls(
         )
         assert isinstance(steer.payload, SteerControlPayload)
         assert parts_from_local(steer.payload.locals[0]) == (TextPart("new direction"),)
-        assert (stop.kind, stop.timing, stop.request_id) == (
-            "stop",
+        assert (cancellation.kind, cancellation.timing, cancellation.request_id) == (
+            "cancel",
             "immediate",
-            "stop_request",
+            "cancel_request",
         )
-        assert isinstance(stop.payload, StopControlPayload)
-        assert parts_from_local(stop.payload.locals[0]) == (TextPart("user canceled"),)
+        assert isinstance(cancellation.payload, CancelControlPayload)
+        assert parts_from_local(cancellation.payload.locals[0]) == (
+            TextPart("user canceled"),
+        )
         assert detail.status == "canceled"
         assert detail.error == "user canceled"
 
-        await client.close()
+        await client.disconnect()
 
     try:
         asyncio.run(scenario())
@@ -371,7 +377,7 @@ def test_local_client_returns_caller_facing_steer_and_stop_controls(
         harness.store.close()
 
 
-def test_local_client_close_is_idempotent_and_finishes_owned_runs(
+def test_local_client_disconnect_is_idempotent_without_stopping_executor(
     tmp_path: Path,
 ) -> None:
     gate = AsyncGate()
@@ -394,19 +400,27 @@ def test_local_client_close_is_idempotent_and_finishes_owned_runs(
 
     async def scenario() -> None:
         thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-        handle = await client.start(_request(thread))
+        with pytest.raises(RuntimeError, match="run client is disconnected"):
+            await client.run(_request(thread, request_id="before_connect"))
+
+        await client.connect()
+        await client.connect()
+        handle = await client.run(_request(thread))
         await asyncio.wait_for(gate.wait_until_entered(), timeout=1)
 
-        await client.close()
-        await client.close()
-        detail = await handle.wait()
-
-        assert detail.status == "canceled"
+        await client.disconnect()
+        await client.disconnect()
         stored = harness.store.get_run(run_id=handle.run_id)
         assert stored is not None
-        assert stored.status == "canceled"
-        with pytest.raises(RuntimeError, match="run client is closed"):
-            await client.start(_request(thread, request_id="after_close"))
+        assert stored.status == "running"
+        with pytest.raises(RuntimeError, match="run client is disconnected"):
+            await client.run(_request(thread, request_id="after_disconnect"))
+
+        await client.connect()
+        await client.cancel(handle.run_id, reason="owner canceled")
+        detail = await asyncio.wait_for(handle.wait(), timeout=2)
+        assert detail.status == "canceled"
+        await client.disconnect()
 
     try:
         asyncio.run(scenario())

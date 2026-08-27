@@ -78,7 +78,7 @@ class _LiveExecution:
         traceback: TracebackType | None,
     ) -> None:
         del exc_type, exc, traceback
-        await self.executor.shutdown()
+        await self.executor.stop()
         self.store.close()
 
     async def run(self, runnable: str, marker: str) -> tuple[str, str]:
@@ -90,7 +90,7 @@ class _LiveExecution:
             kind=runnable_kind,
         )
         record = await asyncio.wait_for(
-            self.executor.start(
+            self.executor.run(
                 RunSpec(
                     setup=self.setup,
                     state=self.state,

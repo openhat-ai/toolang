@@ -129,7 +129,7 @@ class ThreadPeer:
 
 
 @dataclass(frozen=True, slots=True)
-class StartControlPayload:
+class RunControlPayload:
     """Resolved preparation snapshot for one new run."""
 
     resources: AgentResources
@@ -197,8 +197,8 @@ class SteerControlPayload:
 
 
 @dataclass(frozen=True, slots=True)
-class StopControlPayload:
-    """Optional stop reason values."""
+class CancelControlPayload:
+    """Optional run cancellation reason values."""
 
     locals: tuple[Local, ...] = ()
 
@@ -228,17 +228,19 @@ class RewindControlPayload:
 
 
 PreparationControlPayload = (
-    StartControlPayload | RerunControlPayload | RetryControlPayload
+    RunControlPayload | RerunControlPayload | RetryControlPayload
 )
-RunControlPayload = PreparationControlPayload | SteerControlPayload | StopControlPayload
+RunScopedControlPayload = (
+    PreparationControlPayload | SteerControlPayload | CancelControlPayload
+)
 ThreadControlPayload = CreateControlPayload | ForkControlPayload | RewindControlPayload
-ControlPayload = RunControlPayload | ThreadControlPayload
+ControlPayload = RunScopedControlPayload | ThreadControlPayload
 _CONTROL_PAYLOAD_TYPES = {
-    "start": StartControlPayload,
+    "run": RunControlPayload,
     "rerun": RerunControlPayload,
     "retry": RetryControlPayload,
     "steer": SteerControlPayload,
-    "stop": StopControlPayload,
+    "cancel": CancelControlPayload,
     "create": CreateControlPayload,
     "fork": ForkControlPayload,
     "rewind": RewindControlPayload,
@@ -263,8 +265,8 @@ ControlPayloadField = Annotated[
     ControlPayload,
     BeforeValidator(_control_payload_variant),
 ]
-RunControlPayloadField = Annotated[
-    RunControlPayload,
+RunScopedControlPayloadField = Annotated[
+    RunScopedControlPayload,
     BeforeValidator(_control_payload_variant),
 ]
 ThreadControlPayloadField = Annotated[
@@ -396,8 +398,8 @@ class ControlRecordBase:
 class RunControlRecord(ControlRecordBase):
     """One durable control sent to a run."""
 
-    kind: Literal["start", "rerun", "retry", "steer", "stop"]
-    payload: RunControlPayloadField
+    kind: Literal["run", "rerun", "retry", "steer", "cancel"]
+    payload: RunScopedControlPayloadField
 
     @property
     def run(self) -> RunId:
@@ -617,7 +619,7 @@ def _control_payload_from_data(
     if not isinstance(data, Mapping):
         raise ValueError("control payload must be an object")
     payload = cast(Mapping[str, object], data)
-    if kind in {"start", "rerun", "retry"}:
+    if kind in {"run", "rerun", "retry"}:
         resources_raw = payload.get("resources")
         limits_raw = payload.get("limits")
         if not isinstance(resources_raw, Mapping) or not isinstance(
@@ -645,8 +647,8 @@ def _control_payload_from_data(
             raise ValueError(f"{kind} payload locals must be an array or null")
         if kind != "retry" and locals_value is None:
             raise ValueError(f"{kind} payload requires locals")
-        if kind == "start":
-            return StartControlPayload(
+        if kind == "run":
+            return RunControlPayload(
                 resources=resources,
                 limits=limits,
                 state=state,
@@ -681,7 +683,7 @@ def _control_payload_from_data(
             ),
             sandbox=sandbox,
         )
-    if kind in {"steer", "stop"}:
+    if kind in {"steer", "cancel"}:
         raw_locals = payload.get("locals", ())
         if not isinstance(raw_locals, Sequence) or isinstance(
             raw_locals, (str, bytes, bytearray)
@@ -697,7 +699,7 @@ def _control_payload_from_data(
         return (
             SteerControlPayload(locals_value)
             if kind == "steer"
-            else StopControlPayload(locals_value)
+            else CancelControlPayload(locals_value)
         )
     if kind == "create":
         if payload:
@@ -722,7 +724,7 @@ def _control_payload_from_data(
 def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
     """Serialize one typed control payload."""
 
-    if isinstance(payload, StartControlPayload):
+    if isinstance(payload, RunControlPayload):
         return _preparation_payload_data(payload)
     if isinstance(payload, RerunControlPayload):
         return {**_preparation_payload_data(payload), "rerun_from": payload.rerun_from}
@@ -738,7 +740,7 @@ def control_payload_to_data(payload: ControlPayload) -> dict[str, object]:
                 str(payload.retry_from) if payload.retry_from is not None else None
             ),
         }
-    if isinstance(payload, SteerControlPayload | StopControlPayload):
+    if isinstance(payload, SteerControlPayload | CancelControlPayload):
         return {"locals": [local_to_data(local) for local in payload.locals]}
     if isinstance(payload, CreateControlPayload):
         return {}
@@ -1466,7 +1468,7 @@ def _optional_payload_text(payload: Mapping[str, object], name: str) -> str | No
 
 
 def _preparation_payload_data(
-    payload: StartControlPayload | RerunControlPayload | RetryControlPayload,
+    payload: RunControlPayload | RerunControlPayload | RetryControlPayload,
 ) -> dict[str, object]:
     data: dict[str, object] = {
         "resources": payload.resources.to_data(),

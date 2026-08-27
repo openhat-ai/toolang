@@ -225,7 +225,7 @@ checkpoints, and atomic claims. Run counters, results, and history remain in
 `JobScheduler` owns a dedicated thread and event loop after `start()`. The API
 loop remains the sole owner of `RunExecutor` and every run task. The scheduler
 submits one coroutine through a thread-safe future; that coroutine invokes and
-awaits `RunExecutor.start()` only on the execution loop. Execution has no
+awaits `RunExecutor.run()` only on the execution loop. Execution has no
 scheduler callback or dependency.
 
 The scheduler uses one in-memory due heap and point-updates `jobs.db`; it does
@@ -240,15 +240,15 @@ The public execution concepts are:
 
 - `RunSpec`: immutable setup, state, thread, effective bindings and limits,
   ceiling restrictions, primary `Percept`, and named inputs
-- `LocalRunHandle`: an awaitable locally started run with control conveniences
+- `LocalRunHandle`: an awaitable locally accepted run with control conveniences
 - `RunExecutor`: run acceptance, control, and agic/flow execution
 - `ThreadManager`: synchronous thread creation, rewind, and fork orchestration
 - `RunEvent`: the complete ordered execution event stream
 - `RunStore`: thread controls, run controls, runs, steps, and transcript messages
 - private run-event projection: mandatory run/step persistence into `RunStore`
-- `RunTracer`: optional per-start observation of live run events
+- `RunTracer`: optional per-run observation of live run events
 
-`RunExecutor.start()` receives one `RunSpec` carrying explicit immutable
+`RunExecutor.run()` receives one `RunSpec` carrying explicit immutable
 `AgentSetup` and `AgentState` values for each top-level run. It does not know
 `StateWatcher`, jobs, CLI, or HTTP.
 
@@ -261,8 +261,8 @@ At run entry, the caller captures the current `AgentState`. All child runs use
 that same state version. File changes produce a newer state only for later
 top-level runs.
 
-`RunExecutor.start()` is the external execution entry point. It uses mandatory
-internal persistence and an optional per-start tracer. Internal child runs
+`RunExecutor.run()` is the external execution entry point. It uses mandatory
+internal persistence and an optional per-run tracer. Internal child runs
 reuse private runtime logic and never call the public entry point. Runtime
 owners retain or await the returned `LocalRunHandle`; `RunExecutor` does not
 provide `spawn()`.
@@ -281,7 +281,7 @@ execution/
 ├── tools/                  # agent-specific built-in tools
 └── executor/               # RunExecutor and execution implementation helpers
     ├── __init__.py         # RunExecutor, RunSpec, and LocalRunHandle exports
-    ├── executor.py         # public run contract and private per-start _Execution
+    ├── executor.py         # public run contract and private per-run _Execution
     ├── common.py           # bound runs, locals, and shared execution helpers
     ├── prepare.py          # agic resolution and complete model-input preparation
     ├── diagnostics.py      # bounded model and tool diagnostics
@@ -340,16 +340,17 @@ Responsibilities are:
 - `toolang.commands`: Typer parameters, calls to concept objects, and
   presentation
 - `toolang.commands.script`: local script command, executable argument
-  coercion, generated Typer help, and direct `RunExecutor.start()` orchestration
+  coercion, generated Typer help, and direct `RunExecutor.run()` orchestration
 - `toolang.commands.chat`: process-local chat orchestration, interactive TUI
   state, mutable blocks, widgets, and slash commands
 - `caps`: one cap command implementation reused by `too` and the standalone
   `caps` entry point
 - `common`: only code used by at least two first-level CLI areas
 
-`RuntimeClient` owns semantic HTTP and SSE operations such as `start_run()`,
-`stop_run()`, `steer_run()`, `list_runs()`, and `stream_events()`. Raw request
-helpers must not remain scattered through command modules.
+`RunClient` owns transport-neutral `connect()`, `run()`, `cancel()`, `steer()`,
+and `disconnect()` operations. Inspection and event APIs remain separate from
+that run-control boundary. Raw request helpers must not remain scattered
+through command modules.
 
 CLI command functions should resolve inputs, call `Catalog`, `Store`,
 `RunExecutor`, `AgentProcess`, or `RuntimeClient`, and format the returned values.

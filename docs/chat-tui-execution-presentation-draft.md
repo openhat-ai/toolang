@@ -86,7 +86,7 @@ both places.
 The following existing chat elements remain surface-specific:
 
 - the startup header;
-- the full-width start control bar;
+- the full-width run control bar;
 - the full-width steer control bar;
 - slash-command results;
 - queued-message presentation;
@@ -102,7 +102,7 @@ shared execution transcript vocabulary described below.
 Chat does not initially expose script-style `-v` or `-vv` switches. It uses one
 conversation-oriented visibility policy:
 
-- always show the submitted start or steer control;
+- always show the submitted run or steer control;
 - show mutable activity while it is useful;
 - retain completed tool calls when they are directly visible work;
 - retain flow statement headers and meaningful statement outcomes;
@@ -127,8 +127,8 @@ by its durable `/show` reference rather than an inline model preview.
 Run controls and step paths keep their existing distinct forms:
 
 ```text
-run_abc@0       accepted start control
-run_abc@1       later steer or stop control
+run_abc@0       accepted run control
+run_abc@1       later steer or cancel control
 run_abc.2       top-level step
 run_abc.2.0     nested step
 ```
@@ -228,9 +228,9 @@ characters.
 
 ## Control Bars
 
-### Start
+### Run
 
-Submitting a message immediately creates one mutable start control:
+Submitting a message immediately creates one mutable run control:
 
 ```text
 <full-width neutral bar>
@@ -493,7 +493,7 @@ compact dim footer follows it when useful facts are known:
 
 The assistant response is rendered as Markdown; the example uses plain text
 only to illustrate alignment. Chat does not copy script's full success frame
-because the start bar already identifies the run and the response should
+because the run bar already identifies the run and the response should
 remain visually primary.
 
 A flow keeps its stable statement progress, reports its child-run count in the
@@ -566,7 +566,7 @@ Stable content moves to scrollback at these boundaries:
 
 | Content | Finalization boundary |
 | --- | --- |
-| start control | root `RunBegin` |
+| run control | root `RunBegin` |
 | steer control | consuming `StepBegin` or root `RunEnd` |
 | direct tool activity | tool `StepEnd` |
 | parallel lanes | owning statement `StepEnd`, as one aggregate |
@@ -698,7 +698,7 @@ events or recreate historical lane assignments.
 
 The restored transcript uses the same stable rendering policy:
 
-- controls become start or steer bars;
+- controls become run or steer bars;
 - a confirmed agic root output becomes assistant Markdown;
 - a flow root output becomes a durable `/show` reference;
 - durable tool and statement facts may produce stable progress blocks;

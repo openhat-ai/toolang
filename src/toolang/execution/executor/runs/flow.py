@@ -88,7 +88,7 @@ async def execute_statements(
 
     index = start
     for statement in statements:
-        execution.raise_if_stopping(
+        execution.raise_if_canceling(
             binding.run_id,
             call=statement_has_call(statement),
         )

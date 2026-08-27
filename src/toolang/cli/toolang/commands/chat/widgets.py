@@ -22,7 +22,7 @@ from .history import ChatInputHistoryStore
 from .rendering import (
     ACCENT_CELL,
     INPUT_BACKGROUND,
-    START_CONTROL_ACCENT_PROMPT_TOOLKIT,
+    RUN_CONTROL_ACCENT_PROMPT_TOOLKIT,
 )
 
 MAX_INPUT_ROWS = 6
@@ -47,14 +47,14 @@ def _chat_ui_palette() -> dict[str, str]:
         "": "",
         "queue": "fg:#f2f2f2 bg:#3a3a3a",
         "queue.dim": "fg:#b8b8b8 bg:#3a3a3a",
-        "control.start": f"bg:{START_CONTROL_ACCENT_PROMPT_TOOLKIT}",
+        "control.run": f"bg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
         "input": f"fg:#f5f5f5 bg:{INPUT_BACKGROUND}",
         "input.placeholder": f"fg:#b8b8b8 bg:{INPUT_BACKGROUND}",
         "cursor": "fg:#111111 bg:#eeeeee",
         "input.cursor": "fg:#111111 bg:#eeeeee",
         "status": "",
         "status.marker": "dim",
-        "status.spinner": f"fg:{START_CONTROL_ACCENT_PROMPT_TOOLKIT}",
+        "status.spinner": f"fg:{RUN_CONTROL_ACCENT_PROMPT_TOOLKIT}",
         "status.elapsed": "dim",
         "status.error.marker": "fg:ansired",
         "status.error": "fg:ansired",
@@ -210,7 +210,7 @@ class PromptBox:
             [
                 Window(
                     width=1,
-                    style="class:control.start",
+                    style="class:control.run",
                     always_hide_cursor=True,
                     char=ACCENT_CELL,
                 ),

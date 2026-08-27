@@ -139,7 +139,7 @@ def cancel_task(
 ) -> None:
     record = _scheduler_call(scheduler.cancel_task_sync, task_id)
     if record.active_run_id is not None:
-        core.executor.stop(run_id=record.active_run_id, reason="task canceled")
+        core.executor.cancel(run_id=record.active_run_id, reason="task canceled")
 
 
 @router.post(
@@ -178,7 +178,7 @@ def cancel_chore(
         raise HTTPException(status_code=404, detail=f"chore not found: {chore_id}")
     if record.active_run_id is None:
         raise HTTPException(status_code=409, detail="chore has no active run")
-    core.executor.stop(run_id=record.active_run_id, reason="chore canceled")
+    core.executor.cancel(run_id=record.active_run_id, reason="chore canceled")
 
 
 @router.patch(

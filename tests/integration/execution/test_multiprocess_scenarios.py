@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from tests.support.execution_fixtures import (
-    accept_run_start,
+    accept_run,
     project_run_end,
     project_run_start,
 )
@@ -116,7 +116,7 @@ def _fork_thread(
         store.close()
 
 
-def _race_start(
+def _race_run(
     db_path: str,
     ready: Any,
     start: Any,
@@ -124,21 +124,21 @@ def _race_start(
 ) -> None:
     store = RunStore(Path(db_path))
     try:
-        ready.put("start")
+        ready.put("run")
         start.wait()
-        accept_run_start(
+        accept_run(
             store,
-            run_id="run_racing_start",
+            run_id="run_racing_run",
             parent=None,
             thread="term_race",
             input=Message.user("new input"),
             context={"runnable": {"kind": "agic", "name": "chat"}},
-            request_id="racing-start",
+            request_id="racing-run",
             created_at="2026-01-01T00:00:03Z",
         )
-        results.put(("start", "accepted"))
+        results.put(("run", "accepted"))
     except ValueError as exc:
-        results.put(("start", f"rejected:{exc}"))
+        results.put(("run", f"rejected:{exc}"))
     finally:
         store.close()
 
@@ -261,7 +261,7 @@ def test_remote_process_can_steer_an_owned_run(tmp_path: Path) -> None:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            handle = harness.executor.start(
+            handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
@@ -319,7 +319,7 @@ def test_remote_process_can_cancel_a_pending_steer(tmp_path: Path) -> None:
     async def scenario() -> None:
         async with harness:
             thread = harness.threads.create(prefix=ThreadPrefix.TERM)
-            handle = harness.executor.start(
+            handle = harness.executor.run(
                 harness.run_spec(
                     thread=thread,
                     runnable="chat",
@@ -368,7 +368,7 @@ def test_duplicate_run_control_request_has_one_process_winner(
     try:
         store.create_thread(thread_id="term_requests")
         for run_id in ("run_request_a", "run_request_b"):
-            accept_run_start(
+            accept_run(
                 store,
                 run_id=run_id,
                 parent=None,
@@ -409,7 +409,7 @@ def test_pending_control_has_one_cross_process_cancellation_winner(
     store = RunStore(db_path)
     try:
         store.create_thread(thread_id="term_cancel_race")
-        accept_run_start(
+        accept_run(
             store,
             run_id="run_cancel_race",
             parent=None,
@@ -462,7 +462,7 @@ def test_control_claim_and_cross_process_cancellation_are_linearizable(
     store = RunStore(db_path)
     try:
         store.create_thread(thread_id="term_claim_cancel_race")
-        accept_run_start(
+        accept_run(
             store,
             run_id="run_claim_cancel_race",
             parent=None,
@@ -513,7 +513,7 @@ def test_only_one_process_can_claim_a_pending_control(tmp_path: Path) -> None:
     store = RunStore(db_path)
     try:
         store.create_thread(thread_id="term_claim_race")
-        accept_run_start(
+        accept_run(
             store,
             run_id="run_claim_race",
             parent=None,
@@ -597,7 +597,7 @@ def test_concurrent_forks_preserve_one_terminal_anchor(
         reopened.close()
 
 
-def test_start_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
+def test_run_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
     db_path = tmp_path / "runs.db"
     store = RunStore(db_path)
     try:
@@ -613,15 +613,15 @@ def test_start_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
         store.close()
 
     outcomes = _race_processes(
-        (_race_start, (str(db_path),)),
+        (_race_run, (str(db_path),)),
         (_race_rewind, (str(db_path),)),
     )
     by_kind = {str(outcome[0]): outcome for outcome in outcomes}
 
-    assert by_kind["start"] == ("start", "accepted")
+    assert by_kind["run"] == ("run", "accepted")
     reopened = RunStore(db_path)
     try:
-        new_run = reopened.get_run(run_id="run_racing_start")
+        new_run = reopened.get_run(run_id="run_racing_run")
         thread = reopened.get_thread(thread_id="term_race")
         assert new_run is not None
         assert new_run.ejected_by is None
@@ -639,7 +639,7 @@ def test_start_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
                 for run in reopened.list_thread_history_chronological(
                     thread_id="term_race"
                 )
-            ] == ["run_racing_start"]
+            ] == ["run_racing_run"]
         else:
             assert str(rewind[1]).startswith("rejected:thread is running")
             assert thread.head == ThreadControlRef("term_race", 0)
@@ -648,6 +648,6 @@ def test_start_and_rewind_race_is_linearizable(tmp_path: Path) -> None:
                 for run in reopened.list_thread_history_chronological(
                     thread_id="term_race"
                 )
-            ] == ["run_race_anchor", "run_racing_start"]
+            ] == ["run_race_anchor", "run_racing_run"]
     finally:
         reopened.close()

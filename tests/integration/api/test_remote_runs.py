@@ -24,7 +24,7 @@ from toolang.base.types.message import Message
 from toolang.base.types.run import ModelCallResult
 from toolang.catalog import CapsManager, JobsManager
 from toolang.execution.calls import resolve_run_request
-from toolang.execution.records import StartControlPayload
+from toolang.execution.records import RunControlPayload
 from toolang.execution.schemas import RunDetail, RunRequest
 from toolang.execution.types import ThreadPrefix
 from toolang.lang.input import RunnableInputRaw
@@ -231,7 +231,7 @@ agic selected(_: Part[], tone: Text) -> Part[]:
             == "host"
         )
         assert fallback_control is not None
-        assert isinstance(fallback_control.payload, StartControlPayload)
+        assert isinstance(fallback_control.payload, RunControlPayload)
         assert fallback_control.payload.limits.cost == Decimal("2.50")
         assert fallback_control.payload.sandbox == "host"
         assert selected.status_code == 200
@@ -302,7 +302,7 @@ agic chat(_: Part[]) -> Part[]:
             runnable_fallbacks=("agic:chat", "default"),
             request_id="pending_request",
         )
-        handle = core.executor.start(
+        handle = core.executor.run(
             resolve_run_request(
                 request,
                 setup=harness.setup,
@@ -321,20 +321,20 @@ agic chat(_: Part[]) -> Part[]:
                 message=InputMessagePayload(parts=[]),
             ),
         )
-        stop = cancel_run(
+        cancellation = cancel_run(
             core,
             handle.run_id,
             RunCancelRequest(
-                request_id="stop_request",
-                reason="stop pending",
+                request_id="cancel_request",
+                reason="cancel pending",
             ),
         )
         await handle
 
         assert steer.command.kind == "steer"
         assert steer.command.request_id == "steer_request"
-        assert stop.command.kind == "stop"
-        assert stop.command.request_id == "stop_request"
+        assert cancellation.command.kind == "cancel"
+        assert cancellation.command.request_id == "cancel_request"
         terminal = core.store.get_run(run_id=handle.run_id)
         assert terminal is not None
         assert terminal.status in {"succeeded", "canceled"}
@@ -359,7 +359,7 @@ def test_http_controls_map_transaction_state_races_to_conflict(
 
     async def scenario() -> None:
         thread = core.threads.create(prefix=ThreadPrefix.TERM)
-        handle = core.executor.start(
+        handle = core.executor.run(
             resolve_run_request(
                 RunRequest(
                     thread=thread,
@@ -378,10 +378,10 @@ def test_http_controls_map_transaction_state_races_to_conflict(
         def reject_control(**_kwargs: object) -> None:
             raise ValueError(f"run is not active: {handle.run_id}")
 
-        monkeypatch.setattr(core.executor, "stop", reject_control)
+        monkeypatch.setattr(core.executor, "cancel", reject_control)
         monkeypatch.setattr(core.executor, "steer", reject_control)
 
-        with pytest.raises(HTTPException) as stop_error:
+        with pytest.raises(HTTPException) as cancel_error:
             cancel_run(core, handle.run_id)
         with pytest.raises(HTTPException) as steer_error:
             steer_run(
@@ -390,8 +390,8 @@ def test_http_controls_map_transaction_state_races_to_conflict(
                 RunSteerRequest(message=InputMessagePayload(parts=[])),
             )
 
-        assert stop_error.value.status_code == 409
-        assert stop_error.value.detail == f"run is not active: {handle.run_id}"
+        assert cancel_error.value.status_code == 409
+        assert cancel_error.value.detail == f"run is not active: {handle.run_id}"
         assert steer_error.value.status_code == 409
         assert steer_error.value.detail == f"run is not active: {handle.run_id}"
         await handle

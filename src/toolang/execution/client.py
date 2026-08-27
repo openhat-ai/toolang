@@ -30,16 +30,18 @@ class RunHandle(Protocol):
 
 
 class RunClient(Protocol):
-    """Caller operations required to start and control runs."""
+    """Connectable caller operations for running and controlling runs."""
 
-    async def start(
+    async def connect(self) -> None: ...
+
+    async def run(
         self,
         request: RunRequest,
         *,
         tracer: RunTracer | None = None,
     ) -> RunHandle: ...
 
-    async def stop(
+    async def cancel(
         self,
         run_id: str,
         *,
@@ -57,7 +59,7 @@ class RunClient(Protocol):
         request_id: str | None = None,
     ) -> ControlInfo: ...
 
-    async def close(self) -> None: ...
+    async def disconnect(self) -> None: ...
 
 
 SetupSource = Callable[[], AgentSetup]
@@ -98,15 +100,18 @@ class LocalRunClient:
         self._refresh_state = refresh_state
         self._include = include
         self._history = RunHistory(executor.store)
-        self._closed = False
+        self._connected = False
 
-    async def start(
+    async def connect(self) -> None:
+        self._connected = True
+
+    async def run(
         self,
         request: RunRequest,
         *,
         tracer: RunTracer | None = None,
     ) -> RunHandle:
-        self._require_open()
+        self._require_connected()
         setup = self._setup()
         state = (
             await self._refresh_state()
@@ -119,7 +124,7 @@ class LocalRunClient:
             state=state,
             include=self._include(setup),
         )
-        handle = self._executor.start(
+        handle = self._executor.run(
             spec,
             request_id=request.request_id,
             tracer=tracer,
@@ -130,7 +135,7 @@ class LocalRunClient:
             _history=self._history,
         )
 
-    async def stop(
+    async def cancel(
         self,
         run_id: str,
         *,
@@ -138,8 +143,8 @@ class LocalRunClient:
         request_id: str | None = None,
         reason: str | None = None,
     ) -> ControlInfo:
-        self._require_open()
-        control = self._executor.stop(
+        self._require_connected()
+        control = self._executor.cancel(
             run_id=run_id,
             timing=timing,
             request_id=request_id,
@@ -155,7 +160,7 @@ class LocalRunClient:
         timing: ControlTiming = "next_step",
         request_id: str | None = None,
     ) -> ControlInfo:
-        self._require_open()
+        self._require_connected()
         control = self._executor.steer(
             run_id=run_id,
             message=message,
@@ -164,11 +169,8 @@ class LocalRunClient:
         )
         return self._control_info(run_id, control)
 
-    async def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        await self._executor.shutdown()
+    async def disconnect(self) -> None:
+        self._connected = False
 
     def _control_info(
         self,
@@ -180,6 +182,6 @@ class LocalRunClient:
             raise RuntimeError(f"accepted run control has no run: {run_id}")
         return ControlInfo.from_record(run, control)
 
-    def _require_open(self) -> None:
-        if self._closed:
-            raise RuntimeError("run client is closed")
+    def _require_connected(self) -> None:
+        if not self._connected:
+            raise RuntimeError("run client is disconnected")

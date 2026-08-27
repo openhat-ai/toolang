@@ -295,7 +295,7 @@ def _chat_interactive_scripted_local(
             continue
         errors: list[str] = []
         renderer.reset()
-        client.start_run(
+        client.run(
             ensure_thread_id(),
             normalize_chat_input(text),
             selectors,

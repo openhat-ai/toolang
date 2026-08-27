@@ -143,8 +143,7 @@ decoder.
 | apply settings | merge locally, then validate the complete session remotely |
 | explicit result | existing `GET /api/v1/runs/{run_id}` |
 | latest result | new latest-result read owned by the thread resource |
-| start / wait / stop / steer | `RemoteRunClient` only |
-| close | detach and close client-owned HTTP resources |
+| connect / run / wait / cancel / steer / disconnect | `RemoteRunClient` only |
 
 Responses are decoded into existing execution schemas before use. Run outputs
 are converted from `Local` to canonical message parts with the execution value
@@ -185,7 +184,7 @@ unknown or has no result. Explicit run lookup continues to use the existing run
 detail endpoint. The history package owns the reusable latest-result lookup;
 the API router does not inspect records directly.
 
-No chat-specific start, stream, cancel, steer, model, or runnable event endpoint
+No chat-specific run, stream, cancel, steer, model, or runnable event endpoint
 is added.
 
 ## Acceptance, Disconnects, And Queue Safety
@@ -200,7 +199,7 @@ addition to canonical run events and ordinary definitive errors:
 - `blocked(run_id?, message)`: prevents further submissions when acceptance or
   durable identity cannot be established safely.
 
-Both local and remote sessions emit `accepted` immediately after `start()`
+Both local and remote sessions emit `accepted` immediately after `run()`
 returns. Local Chat emits no other transport state. A matching `RunBegin` still
 owns normal presentation, and all received canonical events remain unchanged.
 
@@ -258,7 +257,7 @@ CLI composition root.
    recovery, and queue release only after terminal truth.
 6. Drop before acceptance and return missing/mismatched recovery data; assert
    blocked submissions, retained queue, no retry/local fallback, usable read-only
-   commands, and detach-on-close.
+   commands, and detach-on-disconnect.
 7. Keep all existing embedded Chat, API, Script, Scheduler, and executor tests
    green, then pass the default repository verification.
 
