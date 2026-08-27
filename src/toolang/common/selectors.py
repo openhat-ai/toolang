@@ -14,7 +14,7 @@ SelectorDomain = Literal["model", "tool", "cap"]
 SelectorOperator = Literal["=", "+=", "-="]
 _T = TypeVar("_T")
 
-_IDENTITY_FILTER_KEYS = frozenset({"family", "kind", "name", "namespace", "ref"})
+_IDENTITY_FILTER_KEYS = frozenset({"family", "kind", "name", "toolset", "ref"})
 _ALLOWED_FILTER_KEYS: dict[SelectorDomain, frozenset[str]] = {
     "model": frozenset(
         {

@@ -71,7 +71,7 @@ Its leaf tools are `start_bridge`, `stop_bridge`, `init`, `start_auth`,
 ## Current Agent
 
 `_me` exposes structured operations for the current agent's authored data. The
-leading underscore marks it as a Toolang-owned internal action namespace; it
+leading underscore marks it as a Toolang-owned internal action toolset; it
 still follows normal resource selection and can be denied by policy.
 
 The executor injects the current agent layout through `ToolContext`. `_me`

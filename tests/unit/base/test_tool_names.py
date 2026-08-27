@@ -7,7 +7,7 @@ from toolang.base.utils.tools import encode_tool_name
 
 
 @pytest.mark.parametrize(
-    ("namespace", "leaf", "encoded"),
+    ("toolset", "leaf", "encoded"),
     [
         ("fs", "read", "fs__read"),
         ("public_tools", "run_task", "public_tools__run_task"),
@@ -15,15 +15,15 @@ from toolang.base.utils.tools import encode_tool_name
     ],
 )
 def test_encode_tool_name_accepts_canonical_components(
-    namespace: str,
+    toolset: str,
     leaf: str,
     encoded: str,
 ) -> None:
-    assert encode_tool_name(namespace, leaf) == encoded
+    assert encode_tool_name(toolset, leaf) == encoded
 
 
 @pytest.mark.parametrize(
-    "namespace",
+    "toolset",
     [
         "",
         "_",
@@ -37,9 +37,9 @@ def test_encode_tool_name_accepts_canonical_components(
         "文件",
     ],
 )
-def test_encode_tool_name_rejects_invalid_namespace(namespace: str) -> None:
-    with pytest.raises(ToolangError, match="namespace name"):
-        encode_tool_name(namespace, "read")
+def test_encode_tool_name_rejects_invalid_toolset(toolset: str) -> None:
+    with pytest.raises(ToolangError, match="toolset name"):
+        encode_tool_name(toolset, "read")
 
 
 @pytest.mark.parametrize(

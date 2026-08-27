@@ -14,7 +14,7 @@ from toolang.plugin.loading import LoadedPlugin, load_plugins_with_sources
 from .registry import (
     ToolRef,
     parse_tool_registration_key,
-    require_toolset_name,
+    require_toolset_plugin_name,
     selected_tool_names,
     tool_ref_for_model_tool,
 )
@@ -24,7 +24,7 @@ from .registry import (
 class LoadedTool(AgentTool):
     """One model-facing tool loaded from a named toolset."""
 
-    toolset_name: str
+    plugin_name: str
     ref: ToolRef
     leaf_tool: AgentTool
 
@@ -33,8 +33,8 @@ class LoadedTool(AgentTool):
         return self.ref.model_name
 
     @property
-    def namespace(self) -> str:
-        return self.ref.namespace
+    def toolset(self) -> str:
+        return self.ref.toolset
 
     @property
     def public_name(self) -> str:
@@ -79,12 +79,12 @@ def load_tools(
     toolsets = _load_toolsets_with_sources(config=toolset_config)
     registrations: list[tuple[str, ToolRef, AgentTool]] = []
     model_names: set[str] = set()
-    for toolset_name, loaded in toolsets.items():
+    for plugin_name, loaded in toolsets.items():
         toolset = cast(Toolset, loaded.plugin)
-        require_toolset_name(toolset_name, source=loaded.source)
+        require_toolset_plugin_name(plugin_name, source=loaded.source)
         for leaf_name, leaf_tool in toolset.tools().items():
             ref = parse_tool_registration_key(
-                toolset_name,
+                plugin_name,
                 leaf_name,
                 leaf_tool.name,
                 source=loaded.source,
@@ -92,11 +92,11 @@ def load_tools(
             if ref.model_name in model_names:
                 raise ValueError(f"duplicate tool name: {ref.selector}")
             model_names.add(ref.model_name)
-            registrations.append((toolset_name, ref, leaf_tool))
+            registrations.append((plugin_name, ref, leaf_tool))
 
-    for toolset_name, ref, leaf_tool in registrations:
+    for plugin_name, ref, leaf_tool in registrations:
         loaded = LoadedTool(
-            toolset_name=toolset_name,
+            plugin_name=plugin_name,
             ref=ref,
             leaf_tool=leaf_tool,
         )
@@ -115,11 +115,11 @@ def _load_toolsets_with_sources(
         built_ins_first=True,
     )
     for loaded in loaded_plugins:
-        require_toolset_name(loaded.entry_point_name, source=loaded.source)
+        require_toolset_plugin_name(loaded.entry_point_name, source=loaded.source)
         raw_name = getattr(loaded.plugin, "name", None)
         if not isinstance(raw_name, str):
             raise ToolangError("toolset plugin name must be text")
-        require_toolset_name(raw_name, source=loaded.source)
+        require_toolset_plugin_name(raw_name, source=loaded.source)
         if raw_name != loaded.name:
             raise ToolangError("toolset plugin name must not be normalized")
         existing = toolsets.get(loaded.name)

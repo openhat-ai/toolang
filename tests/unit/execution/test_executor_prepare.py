@@ -94,7 +94,8 @@ class _Adapter:
 
 class _Tool(AgentTool):
     name = "shell__execute"
-    toolset_name = "shell"
+    plugin_name = "shell"
+    toolset = "shell"
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(name=self.name, description="Run a command.")
@@ -123,7 +124,7 @@ def _resources(setup: AgentSetup) -> AgentResources:
             AgentToolResource(
                 model_name=name,
                 plugin=ref.plugin,
-                namespace=ref.namespace,
+                toolset=ref.toolset,
                 name=ref.name,
             )
             for name, tool in setup.tools.items()

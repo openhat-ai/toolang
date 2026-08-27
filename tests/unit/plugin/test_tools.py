@@ -244,7 +244,7 @@ def test_web_search_enforces_an_outer_timeout(
         )
 
 
-def test_web_search_validation_uses_the_canonical_namespace() -> None:
+def test_web_search_validation_uses_the_canonical_toolset() -> None:
     with pytest.raises(ToolangError, match="^web integer argument is invalid$"):
         create_web_search_tool({"top_k": "invalid"})
 

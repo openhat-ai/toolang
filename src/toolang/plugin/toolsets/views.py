@@ -34,11 +34,11 @@ def tool_list_rows(
             _tool_candidate(name, tool, plugin_sources=plugin_sources)
             for name, tool in tools.items()
         ),
-        key=lambda item: (item.ref.namespace, item.ref.name, item.ref.plugin),
+        key=lambda item: (item.ref.toolset, item.ref.name, item.ref.plugin),
     )
     selected = _select_candidates(candidates, selectors)
     return [
-        (candidate.ref.namespace, candidate.ref.name, candidate.description)
+        (candidate.ref.toolset, candidate.ref.name, candidate.description)
         for candidate in selected
     ]
 
@@ -65,10 +65,10 @@ def _tool_ref(
 ) -> ToolRef:
     ref = tool_ref_for_model_tool(model_name, tool)
     plugin_name = ref.plugin
-    namespace_name = ref.namespace
-    if plugin_name == "-" and namespace_name in plugin_sources:
-        plugin_name = namespace_name
-    return ToolRef(plugin=plugin_name, namespace=namespace_name, name=ref.name)
+    toolset_name = ref.toolset
+    if plugin_name == "-" and toolset_name in plugin_sources:
+        plugin_name = toolset_name
+    return ToolRef(plugin=plugin_name, toolset=toolset_name, name=ref.name)
 
 
 def _select_candidates(

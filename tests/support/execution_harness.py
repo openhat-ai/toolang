@@ -239,7 +239,8 @@ class RecordingTool:
         if "__" not in name:
             raise ValueError("recording tool names must include their plugin prefix")
         self.name = name
-        self.toolset_name = name.split("__", 1)[0]
+        self.plugin_name = name.split("__", 1)[0]
+        self.toolset = self.plugin_name
         self.output = dict(output)
         self.description = description
         self.parameters = dict(parameters or {"type": "object"})

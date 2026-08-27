@@ -90,7 +90,7 @@ The meaning of `family` is domain-specific:
 | `cap` | cap kind | cap name | `skill/reviewer` |
 
 Filters must not use identity keys such as `family`, `kind`, `name`,
-`namespace`, or `ref`. Identity belongs in the pattern.
+`toolset`, or `ref`. Identity belongs in the pattern.
 
 
 ## Shorthand
@@ -189,7 +189,7 @@ service/call_tool,_me/*
 *[plugin:core]
 ```
 
-Internal namespaces use the same selector path and resource policy as public
+Internal toolsets use the same selector path and resource policy as public
 toolsets. For example, `_me/*` selects every current-agent authoring tool; an
 allow list that omits it does not grant those tools implicitly.
 

@@ -260,7 +260,7 @@ def test_load_tools_uses_encoded_model_names(monkeypatch) -> None:
     )
 
 
-def test_canonical_tool_selectors_include_internal_namespace(monkeypatch) -> None:
+def test_canonical_tool_selectors_include_internal_toolset(monkeypatch) -> None:
     _patch_tool_entry_points(monkeypatch)
     tools = load_tools()
 
@@ -274,7 +274,7 @@ def test_canonical_tool_selectors_include_internal_namespace(monkeypatch) -> Non
         validate_tool_selectors(tools, ("filesystem/*",))
 
 
-def test_load_tools_accepts_namespaced_toolset_keys(monkeypatch) -> None:
+def test_load_tools_accepts_explicit_toolset_keys(monkeypatch) -> None:
     @tool(name="search", description="Search issues.")
     def search() -> dict[str, object]:
         return {}
@@ -311,11 +311,11 @@ def test_load_tools_accepts_namespaced_toolset_keys(monkeypatch) -> None:
 
     assert sorted(tools) == ["issues__create", "issues__search"]
     assert getattr(tools["issues__search"], "ref") == ToolRef(
-        plugin="tracker", namespace="issues", name="search"
+        plugin="tracker", toolset="issues", name="search"
     )
 
 
-def test_toolang_distribution_can_register_an_internal_namespace(monkeypatch) -> None:
+def test_toolang_distribution_can_register_an_internal_toolset(monkeypatch) -> None:
     entry = _FakeEntryPoint(
         "_me",
         _test_toolset_factory("_me", "create_task", "create_task"),
@@ -330,7 +330,7 @@ def test_toolang_distribution_can_register_an_internal_namespace(monkeypatch) ->
 
     assert tuple(tools) == ("_me__create_task",)
     assert getattr(tools["_me__create_task"], "ref") == ToolRef(
-        plugin="_me", namespace="_me", name="create_task"
+        plugin="_me", toolset="_me", name="create_task"
     )
 
 
@@ -375,21 +375,21 @@ def test_builtin_toolset_precedes_and_rejects_an_external_name_collision(
     assert calls == ["built-in", "external"]
 
 
-@pytest.mark.parametrize("namespace", ["_me", "_too", "_hat", "_private"])
-def test_external_toolset_cannot_register_internal_namespace(
+@pytest.mark.parametrize("toolset", ["_me", "_too", "_hat", "_private"])
+def test_external_plugin_cannot_register_internal_toolset(
     monkeypatch,
-    namespace: str,
+    toolset: str,
 ) -> None:
     entry = _FakeEntryPoint(
         "tracker",
-        _test_toolset_factory("tracker", f"{namespace}/run", "run"),
+        _test_toolset_factory("tracker", f"{toolset}/run", "run"),
     )
     monkeypatch.setattr(
         "toolang.plugin.loading.entry_points",
         lambda *, group: [entry] if group == "toolang.toolset" else [],
     )
 
-    with pytest.raises(ToolangError, match="cannot register internal namespace"):
+    with pytest.raises(ToolangError, match="cannot register internal toolset"):
         load_tools()
 
 
@@ -458,7 +458,7 @@ def test_external_toolset_rejects_invalid_effective_plugin_name(
 
 
 @pytest.mark.parametrize(
-    "namespace",
+    "toolset",
     [
         "",
         "tools1",
@@ -472,13 +472,13 @@ def test_external_toolset_rejects_invalid_effective_plugin_name(
         "工具",
     ],
 )
-def test_external_toolset_rejects_invalid_public_namespace(
+def test_external_plugin_rejects_invalid_public_toolset(
     monkeypatch,
-    namespace: str,
+    toolset: str,
 ) -> None:
     entry = _FakeEntryPoint(
         "tracker",
-        _test_toolset_factory("tracker", f"{namespace}/run", "run"),
+        _test_toolset_factory("tracker", f"{toolset}/run", "run"),
     )
     monkeypatch.setattr(
         "toolang.plugin.loading.entry_points",

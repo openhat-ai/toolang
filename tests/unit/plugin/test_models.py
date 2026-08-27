@@ -60,7 +60,8 @@ def load_config_layers(root: Path, agent_name: str) -> tuple[dict[str, object], 
 
 class _FakeTool(AgentTool):
     name = "shell__execute"
-    toolset_name = "shell"
+    plugin_name = "shell"
+    toolset = "shell"
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(

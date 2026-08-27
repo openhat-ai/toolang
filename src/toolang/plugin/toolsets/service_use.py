@@ -61,7 +61,6 @@ class _LeafTool(AgentTool):
 
 @dataclass(frozen=True, slots=True)
 class _ServiceUseAdapter:
-    toolset_name: str
     connection_version: int | None
     write_connection_file: ConnectionFileWriter
 
@@ -546,7 +545,6 @@ class ServiceUseToolset:
 
     def __post_init__(self) -> None:
         adapter = _ServiceUseAdapter(
-            toolset_name=self.name,
             connection_version=self.connection_version,
             write_connection_file=self.write_connection_file,
         )

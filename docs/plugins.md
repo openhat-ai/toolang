@@ -95,17 +95,17 @@ entry points. File parsing uses `read_*`, such as
 `read_model_catalog_snapshot`, rather than a plugin loader name.
 
 Toolset entry-point names, effective `Toolset.name` identities, public
-namespaces, and leaf names start with an ASCII letter and contain only ASCII
+toolset names, and leaf names start with an ASCII letter and contain only ASCII
 letters and underscores. They cannot contain `__`, which is reserved as the
-provider-facing separator. A toolset may return either a bare leaf key or a
-`<namespace>/<leaf>` key. Selectors use `<namespace>/<leaf>` while model APIs
-receive `<namespace>__<leaf>`.
+provider-facing separator. A toolset plugin may return either a bare leaf key or
+an explicit `<toolset>/<leaf>` key. Selectors use `<toolset>/<leaf>` while model
+APIs receive `<toolset>__<leaf>`.
 
-A namespace with exactly one leading underscore is internal to Toolang. Only
+A toolset with exactly one leading underscore is internal to Toolang. Only
 entry points whose installed distribution metadata identifies the `toolang`
 distribution may register one; a `toolang.*` Python module target alone grants
-no authority. External toolsets may register one or more public namespaces but
-cannot claim internal namespaces.
+no authority. External plugins may register one or more public toolsets but
+cannot claim internal toolsets.
 
 ## Configuration Rule
 

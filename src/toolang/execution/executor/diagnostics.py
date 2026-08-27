@@ -88,7 +88,7 @@ def log_tool_call_input(
     thread_id: str,
     run_id: str,
     step_index: int,
-    toolset_name: str,
+    plugin_name: str,
 ) -> None:
     if not _LOGGER.isEnabledFor(logging.DEBUG):
         return
@@ -97,7 +97,7 @@ def log_tool_call_input(
         thread_id,
         run_id,
         step_index,
-        toolset_name,
+        plugin_name,
         call.name,
         call.call_id or call.tool_call_id,
         _data(call.input),
@@ -110,7 +110,7 @@ def log_tool_call_output(
     thread_id: str,
     run_id: str,
     step_index: int,
-    toolset_name: str,
+    plugin_name: str,
 ) -> None:
     if not _LOGGER.isEnabledFor(logging.DEBUG):
         return
@@ -119,7 +119,7 @@ def log_tool_call_output(
         thread_id,
         run_id,
         step_index,
-        toolset_name,
+        plugin_name,
         result.name,
         result.call_id or result.tool_call_id,
         _data(result.output),

@@ -1,4 +1,4 @@
-# Define Tool Names And Internal Namespaces
+# Define Tool Names And Internal Toolsets
 
 ## Status
 
@@ -6,9 +6,8 @@ Approved for implementation on 2026-08-27.
 
 ## Goal
 
-Give every model-facing tool one short, stable namespace and verb-first leaf
-name, while reserving underscore-prefixed namespaces for Toolang-owned internal
-actions.
+Give every model-facing tool one short, stable toolset and verb-first leaf name,
+while reserving underscore-prefixed toolsets for Toolang-owned internal actions.
 
 This change renames the existing built-in toolsets and moves the current
 `agent_state` tools under `_me`. It establishes the naming and registration
@@ -17,15 +16,15 @@ actions without implementing those actions yet.
 
 ## Success Criteria
 
-- Public toolset namespaces and all leaf tool names contain only ASCII letters
+- Public toolset names and all leaf tool names contain only ASCII letters
   and underscores, start with a letter, and never contain `__`.
 - External toolset plugin identities follow the same public-name grammar.
-- External toolset plugins cannot register an underscore-prefixed namespace,
-  including through a namespaced tool key.
-- Toolang-owned built-ins may register a namespace with exactly one leading
-  underscore; the remaining component follows the public namespace rules.
-- Model-facing names remain encoded as `<namespace>__<leaf>` for every provider.
-- Selectors and human-readable identities remain `<namespace>/<leaf>`.
+- External toolset plugins cannot register an underscore-prefixed toolset,
+  including through an explicit toolset key.
+- Toolang-owned built-ins may register a toolset with exactly one leading
+  underscore; the remaining component follows the public toolset rules.
+- Model-facing names remain encoded as `<toolset>__<leaf>` for every provider.
+- Selectors and human-readable identities remain `<toolset>/<leaf>`.
 - Built-in toolset and leaf names use the mappings in this plan with no legacy
   aliases.
 - Tool behavior, resource selection, execution records, and presentation
@@ -35,14 +34,14 @@ actions without implementing those actions yet.
 ## Current Behavior
 
 Toolset plugins are loaded from the `toolang.toolset` entry-point group. A
-toolset may return either a bare leaf key or a `<namespace>/<leaf>` key. The
-loader converts that identity to `<namespace>__<leaf>` for model APIs.
+toolset plugin may return either a bare leaf key or a `<toolset>/<leaf>` key.
+The loader converts that identity to `<toolset>__<leaf>` for model APIs.
 
 Name validation currently accepts letters, digits, and underscores. It allows
 leading underscores and embedded `__`. Plugin source is available during entry
 point inspection but is discarded before tool registration, so an external
-plugin can currently claim a future internal namespace through either its
-toolset name or a namespaced key.
+plugin can currently claim a future internal toolset through either its plugin
+name or an explicit toolset key.
 
 The built-in runtime names are currently `filesystem`, `web_search`, `shell`,
 `service_use`, and `agent_state`. Several leaf names use noun-first forms such
@@ -52,8 +51,8 @@ as `task_create`, `tool_call`, and `resource_read`.
 
 This change includes:
 
-- canonical tool namespace and leaf-name validation;
-- built-in versus external namespace authority during tool registration;
+- canonical toolset and leaf-name validation;
+- built-in versus external toolset authority during tool registration;
 - built-in toolset renames to `fs`, `web`, `shell`, `service`, and `_me`;
 - verb-first renames for existing `service` and `_me` leaf tools;
 - selector, configuration, example, documentation, and test updates; and
@@ -74,12 +73,12 @@ This change does not include:
 
 | Concept | Form | Meaning |
 | --- | --- | --- |
-| Public namespace | `fs`, `web`, `shell`, `service` | User-facing built-in or external toolset namespace |
-| Internal namespace | `_me`, `_too`, `_hat` | Toolang-owned model action family |
-| Leaf name | `read`, `create_task` | Verb or verb phrase within one namespace |
+| Public toolset | `fs`, `web`, `shell`, `service` | User-facing built-in or external tool family |
+| Internal toolset | `_me`, `_too`, `_hat` | Toolang-owned model action family |
+| Leaf name | `read`, `create_task` | Verb or verb phrase within one toolset |
 | Selector identity | `fs/read` | Authored and CLI tool selection form |
 | Model name | `fs__read` | Provider-facing encoded name |
-| Plugin | entry-point implementation | Owner that may expose one or more public namespaces |
+| Plugin | entry-point implementation | Owner that may expose one or more public toolsets |
 
 `_me` means mutation or inspection of data authored for the current agent. It
 does not redefine formal Agent State: independent `tasks/*.md` and
@@ -98,24 +97,24 @@ The two component grammars are:
 
 ```text
 public-name       := ASCII_LETTER (ASCII_LETTER | "_")*
-internal-namespace := "_" public-name
+internal-toolset := "_" public-name
 ```
 
 Additional rules apply:
 
 - `__` is forbidden inside every component because it is the model-name
   separator;
-- a leaf name always uses `public-name`, even inside an internal namespace;
+- a leaf name always uses `public-name`, even inside an internal toolset;
 - digits, hyphens, dots, slashes, whitespace, and non-ASCII letters are not
   valid component characters;
-- `/` is accepted only as the separator in a toolset's namespaced registration
+- `/` is accepted only as the separator in an explicit toolset registration
   key; and
 - `__` is introduced only by the model adapter boundary through the shared
   encoder.
 
 An external toolset's entry-point name and effective plugin name also use
-`public-name`. A Toolang-owned internal toolset may use `internal-namespace` as
-its entry-point name, plugin name, and default namespace.
+`public-name`. A Toolang-owned internal toolset may use `internal-toolset` as
+its entry-point name, plugin name, and default toolset.
 
 The provider-facing encoding remains unchanged:
 
@@ -127,15 +126,15 @@ encode("_me", "create_task") = "_me__create_task"
 No provider adapter replaces `__` with a dot. A frontend may later render a
 friendlier display name without changing stored or provider-facing identity.
 
-## Namespace Authority
+## Toolset Authority
 
 Tool registration must retain the source of the entry point until every leaf
 tool has been validated:
 
-- a Toolang built-in entry point may register a public or internal namespace;
-- an external entry point may register only a public namespace;
-- the rule applies to both the toolset's default namespace and every explicit
-  `<namespace>/<leaf>` key; and
+- a Toolang built-in entry point may register a public or internal toolset;
+- an external entry point may register only a public toolset;
+- the rule applies to both the plugin's default toolset and every explicit
+  `<toolset>/<leaf>` key; and
 - all plugins, including built-ins, use the same leaf-name validation.
 
 Internal authority comes only from installed distribution metadata whose
@@ -155,9 +154,9 @@ bypass resource policy. Default tool listings and progress output remain
 unchanged in this change. The prefix alone provides a stable classifier for a
 later presentation policy.
 
-## Built-In Namespace Renames
+## Built-In Toolset Renames
 
-| Old namespace | New namespace | Source module |
+| Old toolset | New toolset | Source module |
 | --- | --- | --- |
 | `filesystem` | `fs` | `toolang.plugin.toolsets.filesystem` |
 | `web_search` | `web` | `toolang.plugin.toolsets.web_search` |
@@ -166,8 +165,8 @@ later presentation policy.
 | `agent_state` | `_me` | `toolang.execution.tools.agent_state` |
 
 Python source-module and class names may remain descriptive. Runtime plugin,
-namespace, selector, model-name, configuration, and tool-room identities use
-the new names.
+toolset, selector, model-name, configuration, and tool-room identities use the
+new names.
 
 ## Leaf Tool Renames
 
@@ -244,19 +243,20 @@ adapter-specific name rewrites.
 - `src/toolang/plugin/loading.py`: preserve entry-point source while loading
   toolsets.
 - `src/toolang/plugin/toolsets/registry.py`: registration validation and
-  internal namespace authority.
+  internal toolset authority.
 - `src/toolang/plugin/toolsets/loading.py`: pass source provenance into every
   tool registration.
 - `pyproject.toml`: canonical built-in entry-point names.
 - `src/toolang/plugin/toolsets/{filesystem,web_search,shell,service_use}.py`:
-  runtime namespace and leaf identities.
-- `src/toolang/execution/tools/agent_state.py`: `_me` namespace and verb-first
+  runtime toolset and leaf identities.
+- `src/toolang/execution/tools/agent_state.py`: `_me` toolset and verb-first
   leaves.
 - `docs/tools.md`, `docs/selectors.md`, `docs/plugins.md`, examples, and tests:
   current public names and migration examples.
 
-Execution records, model adapters, StateWatcher, and State persistence require
-no schema changes.
+New tool resource snapshots persist `toolset`; existing snapshots using the
+former `namespace` field remain readable without rewriting. Model adapters,
+StateWatcher, and State persistence require no other schema changes.
 
 ## Acceptance Tests
 
@@ -265,23 +265,24 @@ no schema changes.
    model names.
 2. Selector resolution accepts `fs/*`, `service/call_tool`, and `_me/*` and
    rejects selectors that reference removed names.
-3. External plugin identities, public namespaces, and leaf names reject empty
+3. External plugin identities, public toolsets, and leaf names reject empty
    values, leading underscores, digits, hyphens, dots, embedded `__`, slashes,
    whitespace, and non-ASCII letters.
 4. A built-in can register `_me/create_task`.
 5. An external plugin cannot register `_me`, `_too`, `_hat`, another leading-
-   underscore plugin or namespace, or an internal namespace through a
-   namespaced key; a `toolang.*` target path grants no exception.
-6. An external plugin may still expose multiple valid public namespaces through
-   namespaced keys.
+   underscore plugin or toolset, or an internal toolset through an explicit
+   toolset key; a `toolang.*` target path grants no exception.
+6. An external plugin may still expose multiple valid public toolsets through
+   explicit toolset keys.
 7. Built-ins are processed before external toolsets, and any duplicate effective
    toolset name is rejected explicitly rather than silently shadowing a built-in.
 8. `_me` schemas expose no agent, path, or layer selector; cap reads and writes
    use only the current agent's home layer and never observe root-layer caps.
 9. Every renamed built-in tool otherwise retains its existing inputs, outputs,
    validation, side effects, and tool-call recording.
-10. Tool resource snapshots persist the new plugin, namespace, leaf, and encoded
-   model names and resolve them exactly within new runs.
+10. Tool resource snapshots persist the plugin, toolset, leaf, and encoded model
+    names, read the former `namespace` field for historical snapshots, and
+    resolve current identities exactly within new runs.
 11. Tool configuration, CLI inspection, authored selectors, repository examples,
    and documentation use only canonical names.
 12. The default offline verification suite passes.
@@ -294,8 +295,8 @@ no schema changes.
   accepted consequence of having no aliases; rerun remains the migration path.
 - An incomplete rename could leave two model-facing identities for one action.
   Tests assert both the complete new catalog and absence of old identities.
-- Losing plugin provenance before registration would reopen internal namespace
-  spoofing. Authority tests cover default and explicitly namespaced keys.
+- Losing plugin provenance before registration would reopen internal toolset
+  spoofing. Authority tests cover default and explicit toolset keys.
 
 ## Open Questions
 

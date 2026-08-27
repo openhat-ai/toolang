@@ -9,9 +9,9 @@ from toolang.base.errors import ToolangError
 from toolang.base.protocols.tool import AgentTool
 from toolang.base.utils.tools import (
     encode_tool_name,
-    is_internal_tool_namespace,
+    is_internal_toolset_name,
     require_public_tool_name,
-    require_tool_namespace,
+    require_toolset_name,
 )
 from toolang.common.selectors import (
     Selector,
@@ -28,16 +28,16 @@ class ToolRef:
     """One structured public identity for a model-facing tool."""
 
     plugin: str
-    namespace: str
+    toolset: str
     name: str
 
     @property
     def selector(self) -> str:
-        return f"{self.namespace}/{self.name}"
+        return f"{self.toolset}/{self.name}"
 
     @property
     def model_name(self) -> str:
-        return encode_tool_name(self.namespace, self.name)
+        return encode_tool_name(self.toolset, self.name)
 
 
 def split_tool_selectors(items: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
@@ -47,7 +47,7 @@ def split_tool_selectors(items: list[str] | tuple[str, ...] | None) -> tuple[str
 
 
 def parse_tool_registration_key(
-    toolset_name: str,
+    plugin_name: str,
     key: str,
     leaf_tool_name: str,
     *,
@@ -55,46 +55,44 @@ def parse_tool_registration_key(
 ) -> ToolRef:
     """Resolve one plugin tool key into a public tool ref."""
 
-    require_toolset_name(toolset_name, source=source)
+    require_toolset_plugin_name(plugin_name, source=source)
     if not isinstance(key, str):
         raise ToolangError(
-            f"toolset plugin {toolset_name!r} returned a non-text tool key"
+            f"toolset plugin {plugin_name!r} returned a non-text tool key"
         )
     text = key
     if not text:
-        raise ToolangError(
-            f"toolset plugin {toolset_name!r} returned an empty tool key"
-        )
+        raise ToolangError(f"toolset plugin {plugin_name!r} returned an empty tool key")
     if text.count("/") > 1:
         raise ToolangError(
-            f"toolset plugin {toolset_name!r} returned an invalid tool key: {text!r}"
+            f"toolset plugin {plugin_name!r} returned an invalid tool key: {text!r}"
         )
-    namespace, separator, name = text.partition("/")
+    toolset, separator, name = text.partition("/")
     if not separator:
-        namespace = toolset_name
+        toolset = plugin_name
         name = text
     if name != leaf_tool_name:
         raise ToolangError(
-            f"toolset plugin {toolset_name!r} returned mismatched leaf tool name: "
+            f"toolset plugin {plugin_name!r} returned mismatched leaf tool name: "
             f"{text!r} != {leaf_tool_name!r}"
         )
-    require_tool_namespace(namespace)
-    if source == "external" and is_internal_tool_namespace(namespace):
+    require_toolset_name(toolset)
+    if source == "external" and is_internal_toolset_name(toolset):
         raise ToolangError(
-            f"external toolset plugin {toolset_name!r} cannot register internal "
-            f"namespace {namespace!r}"
+            f"external toolset plugin {plugin_name!r} cannot register internal "
+            f"toolset {toolset!r}"
         )
     require_public_tool_name(name, kind="tool")
-    return ToolRef(plugin=toolset_name, namespace=namespace, name=name)
+    return ToolRef(plugin=plugin_name, toolset=toolset, name=name)
 
 
-def require_toolset_name(toolset_name: str, *, source: PluginSource) -> None:
+def require_toolset_plugin_name(plugin_name: str, *, source: PluginSource) -> None:
     """Require one effective toolset plugin identity allowed by its source."""
 
     if source == "built-in":
-        require_tool_namespace(toolset_name)
+        require_toolset_name(plugin_name)
         return
-    require_public_tool_name(toolset_name, kind="toolset plugin")
+    require_public_tool_name(plugin_name, kind="toolset plugin")
 
 
 def tool_ref_for_model_tool(model_name: str, tool: AgentTool) -> ToolRef:
@@ -103,20 +101,18 @@ def tool_ref_for_model_tool(model_name: str, tool: AgentTool) -> ToolRef:
     ref = getattr(tool, "ref", None)
     if isinstance(ref, ToolRef):
         return ref
-    toolset = getattr(tool, "toolset_name", None)
-    toolset_name = toolset if isinstance(toolset, str) and toolset else "-"
-    namespace = getattr(tool, "namespace", None)
-    namespace_name = (
-        namespace if isinstance(namespace, str) and namespace else toolset_name
-    )
+    plugin = getattr(tool, "plugin_name", None)
+    plugin_name = plugin if isinstance(plugin, str) and plugin else "-"
+    toolset = getattr(tool, "toolset", None)
+    toolset_name = toolset if isinstance(toolset, str) and toolset else plugin_name
     leaf = _tool_leaf_name(tool)
-    if namespace_name == "-" and "/" in model_name:
-        namespace_name, _separator, leaf = model_name.partition("/")
-    elif namespace_name == "-" and "__" in model_name:
-        namespace_name, _separator, leaf = model_name.partition("__")
-    elif namespace_name == "-" and "_" in model_name:
-        namespace_name, _separator, leaf = model_name.partition("_")
-    return ToolRef(plugin=toolset_name, namespace=namespace_name, name=leaf)
+    if toolset_name == "-" and "/" in model_name:
+        toolset_name, _separator, leaf = model_name.partition("/")
+    elif toolset_name == "-" and "__" in model_name:
+        toolset_name, _separator, leaf = model_name.partition("__")
+    elif toolset_name == "-" and "_" in model_name:
+        toolset_name, _separator, leaf = model_name.partition("_")
+    return ToolRef(plugin=plugin_name, toolset=toolset_name, name=leaf)
 
 
 def tool_ref_matches(ref: ToolRef, selector: str) -> bool:
@@ -132,7 +128,7 @@ def tool_ref_matches_selector(ref: ToolRef, selector: Selector) -> bool:
     """Return whether one public tool ref matches a parsed selector."""
 
     if not selector_identity_matches(
-        family=ref.namespace,
+        family=ref.toolset,
         name=ref.name,
         selector=selector,
     ):

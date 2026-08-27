@@ -299,9 +299,9 @@ def resource_tools(
         if tool is None:
             raise ToolangError(f"run tool resource is unavailable: {item.model_name}")
         ref = tool_ref_for_model_tool(item.model_name, tool)
-        if (ref.plugin, ref.namespace, ref.name) != (
+        if (ref.plugin, ref.toolset, ref.name) != (
             item.plugin,
-            item.namespace,
+            item.toolset,
             item.name,
         ):
             raise ToolangError(f"run tool resource changed: {item.model_name}")
@@ -353,7 +353,7 @@ def _agent_resources(
             AgentToolResource(
                 model_name=model_name,
                 plugin=ref.plugin,
-                namespace=ref.namespace,
+                toolset=ref.toolset,
                 name=ref.name,
             )
             for model_name, tool in tools.items()

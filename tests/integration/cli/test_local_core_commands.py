@@ -902,7 +902,7 @@ class _EmptySetupWatcher:
 class _FakeTool:
     name = "echo"
     plugin_name = "shell"
-    namespace = "shell"
+    toolset = "shell"
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(name=self.name, description="Echo text.")
