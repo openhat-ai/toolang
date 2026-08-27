@@ -31,7 +31,7 @@ from toolang.execution.executor.common import BoundRun
 from toolang.execution.executor.prepare import _AgicFrame
 from toolang.execution.executor.runs.agic import _AgicState, _execute
 from toolang.execution.records import RunControlRecord, SteerControlPayload
-from toolang.execution.types import Local
+from toolang.execution.types import ControlRef, Local
 from toolang.plugin.models.discovery import missing_provider_env_vars
 from toolang.plugin.models.resolution import resolve_model, select_model_selectors
 from toolang.plugin.models.views import _format_decimal_unit
@@ -2728,6 +2728,7 @@ def _prepared_agic(
             input=RunnableInput(),
             control_locals=(),
             state=cast(Any, state),
+            state_ref=ControlRef("run-1", 0),
             setup=AgentSetup(
                 layout=AgentLayout.resident(Path("/"), "alice"),
                 providers={},

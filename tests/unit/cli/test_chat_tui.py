@@ -2649,6 +2649,7 @@ def test_chat_tui_recovers_from_durable_terminal_truth(
         runnable_kind="agic",
         runnable_name="chat",
         call_kind="top",
+        state=RunControlRefData(run="run_remote", index=0),
         occurrence=None,
         input_text="hello",
         summary="done",

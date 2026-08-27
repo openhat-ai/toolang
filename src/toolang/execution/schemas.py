@@ -293,6 +293,7 @@ class RunInfo:
     runnable_kind: str
     runnable_name: str | None
     call_kind: str
+    state: RunControlRefData
     occurrence: Occurrence | None
     input_text: str
     summary: str
@@ -348,6 +349,7 @@ class RunInfo:
             runnable_kind=kind if separator else "",
             runnable_name=name if separator else preparation.runnable,
             call_kind="top" if run.parent is None else "run",
+            state=RunControlRefData.from_ref(run.state),
             occurrence=run.occurrence,
             input_text=input_text,
             summary=summary,
@@ -400,6 +402,7 @@ class StepData:
     kind: StepKind
     input: list[StepInputData]
     given: StepGiven
+    state: RunControlRefData
     output: Local | None
     occurrence: Occurrence | None = None
     noted: StepNoted = None
@@ -435,6 +438,7 @@ class StepData:
             output=step.output,
             occurrence=step.occurrence,
             given=given,
+            state=RunControlRefData.from_ref(step.state),
             noted=step.noted,
             status=step.status,
             error=step.error,

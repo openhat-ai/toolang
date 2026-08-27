@@ -1354,6 +1354,7 @@ ControlKind = Literal[
     "run",
     "rerun",
     "retry",
+    "reload",
     "steer",
     "cancel",
     "create",

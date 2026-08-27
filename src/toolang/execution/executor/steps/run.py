@@ -43,6 +43,7 @@ async def execute(
 
     return await execute_step(
         execution.emit,
+        begin_step=execution.begin_step,
         kind="run",
         path=path,
         binding=binding,

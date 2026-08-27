@@ -29,10 +29,11 @@ async def execute(
     occurrence: Occurrence | None,
 ) -> Local:
     async def evaluate() -> Local:
+        state, _state_ref = execution.state_for_step(path)
         return Local(
             resolve_input_parts(
                 statement.value,
-                program=state_program_module(binding.state, binding.module).program,
+                program=state_program_module(state, binding.module).program,
                 values={
                     name: local.value
                     for name, local in locals.items()
@@ -50,6 +51,7 @@ async def execute(
 
     return await value_step.execute(
         execution.emit,
+        begin_step=execution.begin_step,
         binding=binding,
         path=path,
         statement=statement,

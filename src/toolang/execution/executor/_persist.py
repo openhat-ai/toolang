@@ -33,12 +33,21 @@ class _PersistSink:
             self._finish_run(event)
 
     def _begin_step(self, event: StepBegin) -> None:
+        state = event.state
+        if state is None:
+            run = self._store.get_run(run_id=event.step.run)
+            if run is None:
+                raise ValueError(
+                    f"step begin requires an Agent State reference: {event.step}"
+                )
+            state = run.state
         self._store.begin_step(
             path=event.step,
             kind=event.kind,
             input=event.input,
             occurrence=event.occurrence,
             given=event.given,
+            state=state,
             started_at=event.started_at,
         )
 

@@ -8,12 +8,13 @@ from toolang.lang.ast import FlowStmt
 
 from ...records import RunControlRecord, StepPath
 from ...types import Occurrence
-from ..common import BoundRun, EventEmitter, Local, execute_step
+from ..common import BoundRun, EventEmitter, Local, StepBoundary, execute_step
 
 
 async def execute(
     emit: EventEmitter,
     *,
+    begin_step: StepBoundary | None = None,
     binding: BoundRun,
     path: StepPath,
     statement: FlowStmt,
@@ -26,6 +27,7 @@ async def execute(
 
     return await execute_step(
         emit,
+        begin_step=begin_step,
         kind="par",
         path=path,
         binding=binding,

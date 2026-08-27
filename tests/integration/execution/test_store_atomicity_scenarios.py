@@ -19,11 +19,19 @@ from toolang.base.types.tool import ToolDefinition
 from toolang.execution.errors import RunStoreSchemaError
 from toolang.execution.records import (
     RerunControlPayload,
+    ReloadControlPayload,
     RetryControlPayload,
     RunControlPayload,
 )
 from toolang.execution.store import RunStore
-from toolang.execution.types import Local, ModelStepGiven, RunStatus, StepPath, Pointer
+from toolang.execution.types import (
+    ControlRef,
+    Local,
+    ModelStepGiven,
+    Pointer,
+    RunStatus,
+    StepPath,
+)
 from toolang.lang.ast import LetStmt, Span
 
 
@@ -83,7 +91,7 @@ def test_run_store_persists_dot_separated_step_paths(tmp_path: Path) -> None:
             assert connection.execute(
                 "SELECT parent FROM runs WHERE id = 'run_dot_child'"
             ).fetchone() == ("run_dot_path.2.3",)
-            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 30
+            assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 31
         finally:
             connection.close()
     finally:
@@ -386,6 +394,189 @@ def test_retry_reopens_root_from_a_failed_value_step(
             first,
             upstream,
         ]
+    finally:
+        store.close()
+
+
+def test_reload_control_records_state_and_has_one_claim_or_revocation_winner(
+    tmp_path: Path,
+) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_reload_lifecycle",
+            thread_id="term_reload_lifecycle",
+            origin="chat",
+            input=Message.user("hello"),
+            executable_kind="flow",
+        )
+        assert run.state == ControlRef(run.id, 0)
+        step = project_step(
+            store,
+            run_id=run.id,
+            step_index=0,
+            kind="value",
+            status="succeeded",
+            input=(),
+            output=(),
+            started_at="2026-01-01T00:00:00Z",
+            finished_at="2026-01-01T00:00:01Z",
+        )
+        assert step.state == run.state
+
+        with pytest.raises(ValueError, match="immediate timing"):
+            store.accept_reload_control(
+                run_id=run.id,
+                state="1" * 64,
+                timing="next_step",
+                request_id="reload-invalid-timing",
+                created_at="2026-01-01T00:00:02Z",
+            )
+        claimed = store.accept_reload_control(
+            run_id=run.id,
+            state="1" * 64,
+            request_id="reload-claimed",
+            created_at="2026-01-01T00:00:02Z",
+        )
+        assert isinstance(claimed.payload, ReloadControlPayload)
+        assert store.resolve_state_revision(ControlRef(run.id, claimed.index)) == (
+            "1" * 64
+        )
+        assert store.claim_run_controls(run_id=run.id, indexes=(claimed.index,)) == {
+            claimed.index
+        }
+        with pytest.raises(ValueError, match="already being applied"):
+            store.cancel_run_control(
+                run_id=run.id,
+                index=claimed.index,
+                canceled_at="2026-01-01T00:00:03Z",
+            )
+        store.finish_run_controls(
+            run_id=run.id,
+            indexes=(claimed.index,),
+            finished_at="2026-01-01T00:00:03Z",
+        )
+
+        revoked = store.accept_reload_control(
+            run_id=run.id,
+            state="2" * 64,
+            request_id="reload-revoked",
+            created_at="2026-01-01T00:00:04Z",
+        )
+        store.cancel_run_control(
+            run_id=run.id,
+            index=revoked.index,
+            canceled_at="2026-01-01T00:00:05Z",
+        )
+        assert (
+            store.claim_run_controls(run_id=run.id, indexes=(revoked.index,)) == set()
+        )
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("unapplied_status", ("revoked", "wontapply"))
+def test_retry_allows_unapplied_reload_history(
+    tmp_path: Path,
+    unapplied_status: str,
+) -> None:
+    store = RunStore(tmp_path / f"{unapplied_status}.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id=f"run_reload_{unapplied_status}",
+            thread_id=f"term_reload_{unapplied_status}",
+            origin="chat",
+            input=Message.user("hello"),
+            executable_kind="flow",
+        )
+        reload_control = store.accept_reload_control(
+            run_id=run.id,
+            state="1" * 64,
+            request_id=f"reload-{unapplied_status}",
+            created_at="2026-01-01T00:00:01Z",
+        )
+        if unapplied_status == "revoked":
+            store.cancel_run_control(
+                run_id=run.id,
+                index=reload_control.index,
+                canceled_at="2026-01-01T00:00:02Z",
+            )
+        else:
+            store.fail_pending_run_controls(
+                run_id=run.id,
+                finished_at="2026-01-01T00:00:02Z",
+                error="run ended before the control could be applied",
+            )
+        project_run_end(store, run_id=run.id)
+        entry = store.get_run_control(run_id=run.id, index=0)
+        assert entry is not None and isinstance(entry.payload, RunControlPayload)
+        reopened, retry, _trimmed = store.accept_retry(
+            run_id=run.id,
+            anchor=None,
+            resources=entry.payload.resources,
+            limits=entry.payload.limits,
+            state=entry.payload.state,
+            runnable=entry.payload.runnable,
+            model=entry.payload.model,
+            locals=entry.payload.locals,
+            sandbox="host",
+            request_id=f"retry-{unapplied_status}",
+            created_at="2026-01-01T00:00:03Z",
+        )
+        assert reopened.state == ControlRef(run.id, 0)
+        assert isinstance(retry.payload, RetryControlPayload)
+        assert retry.payload.state is None
+    finally:
+        store.close()
+
+
+def test_retry_rejects_applied_reload_history_without_mutation(tmp_path: Path) -> None:
+    store = RunStore(tmp_path / "runs.db")
+    try:
+        run = project_run_start(
+            store,
+            run_id="run_reload_applied",
+            thread_id="term_reload_applied",
+            origin="chat",
+            input=Message.user("hello"),
+            executable_kind="flow",
+        )
+        reload_control = store.accept_reload_control(
+            run_id=run.id,
+            state="1" * 64,
+            request_id="reload-applied",
+            created_at="2026-01-01T00:00:01Z",
+        )
+        assert store.claim_run_controls(
+            run_id=run.id, indexes=(reload_control.index,)
+        ) == {reload_control.index}
+        store.finish_run_controls(
+            run_id=run.id,
+            indexes=(reload_control.index,),
+            finished_at="2026-01-01T00:00:02Z",
+        )
+        project_run_end(store, run_id=run.id)
+        entry = store.get_run_control(run_id=run.id, index=0)
+        assert entry is not None and isinstance(entry.payload, RunControlPayload)
+
+        with pytest.raises(ValueError, match="applied Agent State reloads.*use rerun"):
+            store.accept_retry(
+                run_id=run.id,
+                anchor=None,
+                resources=entry.payload.resources,
+                limits=entry.payload.limits,
+                state=entry.payload.state,
+                runnable=entry.payload.runnable,
+                model=entry.payload.model,
+                locals=entry.payload.locals,
+                sandbox="host",
+                request_id="retry-applied-reload",
+                created_at="2026-01-01T00:00:03Z",
+            )
+        unchanged = store.get_run(run_id=run.id)
+        assert unchanged is not None and unchanged.status == "succeeded"
     finally:
         store.close()
 
@@ -965,6 +1156,7 @@ def test_model_blobs_roll_back_when_the_model_step_cannot_be_inserted(
                 input=(),
                 occurrence=None,
                 given=ModelStepGiven(model="test/model", call=call),
+                state=ControlRef("run_atomic_model", 0),
                 started_at="2026-01-01T00:00:00Z",
             )
 

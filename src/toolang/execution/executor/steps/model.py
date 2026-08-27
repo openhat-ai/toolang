@@ -32,6 +32,7 @@ from toolang.base.types.run import (
 )
 from toolang.common.time import elapsed_ms, utc_now
 from toolang.lang.types import Array
+from toolang.state.state import AgentState
 
 from ...events import PartBegin, PartDelta, PartEnd, StepBegin, StepEnd
 from ...records import (
@@ -44,6 +45,7 @@ from ...types import (
     ModelStepNoted,
     ModelTokenCount,
     ModelTokenPrice,
+    ControlRef,
     Pointer,
     StepPath,
 )
@@ -73,15 +75,13 @@ class _ModelStream:
 async def execute(state: _AgicState) -> ModelCallResult:
     """Perform one model call and emit its complete step event stream."""
 
-    prepared = state.prepared
-    run = prepared.run
+    run = state.prepared.run
     state.before_model_call()
     step_index = state.next_step
     state.next_step += 1
     step_started = time.perf_counter()
     started_at = utc_now()
     consumed_inputs = state.claimed_inputs or state.pending_inputs()
-    next_messages = _messages_with_inputs(state.messages, consumed_inputs)
     step_input = (
         *_step_input(state),
         *(Pointer.control(run.run_id, item.index, "_") for item in consumed_inputs),
@@ -93,28 +93,47 @@ async def execute(state: _AgicState) -> ModelCallResult:
         run.run_id,
         step_index,
     )
-    request = ModelCall(
-        instructions=prepared.instructions,
-        messages=list(next_messages),
-        tools=(
-            tuple(
-                tool.definition()
-                for tool in sorted(prepared.tools.values(), key=lambda item: item.name)
-            )
-            if prepared.model.tools and not state.repairing_output
-            else ()
-        ),
-        cont=state.cont,
-    )
-    await state.emit(
-        StepBegin(
+    prepared = state.prepared
+    request: ModelCall | None = None
+    next_messages: list[Message] | None = None
+
+    def begin_step(agent_state: AgentState, state_ref: ControlRef) -> StepBegin:
+        nonlocal prepared, request, next_messages
+        prepared = state.frame_for_step(agent_state, state_ref)
+        next_messages = _messages_with_inputs(
+            prepared.messages if state.last_step is None else state.messages,
+            consumed_inputs,
+        )
+        request = ModelCall(
+            instructions=prepared.instructions,
+            messages=list(next_messages),
+            tools=(
+                tuple(
+                    tool.definition()
+                    for tool in sorted(
+                        prepared.tools.values(), key=lambda item: item.name
+                    )
+                )
+                if prepared.model.tools and not state.repairing_output
+                else ()
+            ),
+            cont=state.cont,
+        )
+        return StepBegin(
             step=StepPath(run.run_id, (step_index,)),
             kind="model",
+            state=state_ref,
             input=step_input,
             started_at=started_at,
             given=ModelStepGiven(model=prepared.model.ref, call=request),
         )
-    )
+
+    await state.start_step(begin_step)
+    if (
+        request is None or next_messages is None
+    ):  # pragma: no cover - boundary builder invariant
+        raise RuntimeError("model step boundary did not build its request")
+    state.prepared = prepared
     state.claimed_inputs = ()
     state.messages = next_messages
     log_model_target(

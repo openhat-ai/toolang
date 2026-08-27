@@ -116,6 +116,7 @@ def _detail(run_id: str = "run_remote") -> RunDetail:
         runnable_kind="agic",
         runnable_name="chat",
         call_kind="top",
+        state=RunControlRefData(run=run_id, index=0),
         occurrence=None,
         input_text="hello",
         summary="done",
